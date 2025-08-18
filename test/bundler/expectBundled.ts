@@ -149,6 +149,8 @@ export interface BundlerTestInput {
   outputPaths?: string[];
   /** Use --compile */
   compile?: boolean;
+  /** Use --compile-exec-argv to prepend arguments to standalone executable */
+  compileArgv?: string | string[];
 
   /** force using cli or js api. defaults to api if possible, then cli otherwise */
   backend?: "cli" | "api";
@@ -430,6 +432,7 @@ function expectBundled(
     chunkNaming,
     cjs2esm,
     compile,
+    compileArgv,
     conditions,
     dce,
     dceKeepMarkerCount,
@@ -693,6 +696,9 @@ function expectBundled(
               ...(entryPointsRaw ?? []),
               bundling === false ? "--no-bundle" : [],
               compile ? "--compile" : [],
+              compileArgv
+                ? `--compile-exec-argv=${Array.isArray(compileArgv) ? compileArgv.join(" ") : compileArgv}`
+                : [],
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
               `--target=${target}`,
@@ -1607,11 +1613,6 @@ for (const [key, blob] of build.outputs) {
 
           // no idea why this logs. ¯\_(ツ)_/¯
           result = result.replace(/\[Event_?Loop\] enqueueTaskConcurrent\(RuntimeTranspilerStore\)\n/gi, "");
-          // when the inspector runs (can be due to VSCode extension), there is
-          // a bug that in debug modes the console logs extra stuff
-          if (name === "stderr" && process.env.BUN_INSPECT_CONNECT_TO) {
-            result = result.replace(/(?:^|\n)\/[^\n]*: CONSOLE LOG[^\n]*(\n|$)/g, "$1").trim();
-          }
 
           if (typeof expected === "string") {
             expected = dedent(expected).trim();

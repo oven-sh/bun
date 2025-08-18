@@ -13,23 +13,35 @@ on:
 jobs:
   claude:
     if: |
+      github.repository == 'oven-sh/bun' &&
+      (
+        (github.event_name == 'issue_comment' && (github.event.comment.author_association == 'MEMBER' || github.event.comment.author_association == 'OWNER' || github.event.comment.author_association == 'COLLABORATOR')) ||
+        (github.event_name == 'pull_request_review_comment' && (github.event.comment.author_association == 'MEMBER' || github.event.comment.author_association == 'OWNER' || github.event.comment.author_association == 'COLLABORATOR')) ||
+        (github.event_name == 'pull_request_review' && (github.event.review.author_association == 'MEMBER' || github.event.review.author_association == 'OWNER' || github.event.review.author_association == 'COLLABORATOR')) ||
+        (github.event_name == 'issues' && (github.event.issue.author_association == 'MEMBER' || github.event.issue.author_association == 'OWNER' || github.event.issue.author_association == 'COLLABORATOR'))
+      ) &&
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
-    runs-on: ubuntu-latest
+    runs-on: claude
+    env:
+      IS_SANDBOX: 1
+    container:
+      image: claude-bun:latest
+      options: --privileged
     permissions:
       contents: read
       id-token: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
+      - run: cd /workspace/bun
       - name: Run Claude Code
         id: claude
-        uses: anthropics/claude-code-action@beta
+        # TODO: switch this out once they merge their v1
+        uses: km-anthropic/claude-code-action@v1-dev
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-
+          timeout_minutes: "180"
+          claude_args: |
+            --dangerously-skip-permissions
+            --system-prompt "You are working on the Bun codebase"
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

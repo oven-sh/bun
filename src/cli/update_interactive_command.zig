@@ -891,6 +891,8 @@ pub const UpdateInteractiveCommand = struct {
         packages: []OutdatedPackage,
         selected: []bool,
         cursor: usize = 0,
+        viewport_start: usize = 0,
+        viewport_height: usize = 20, // Default viewport height
         toggle_all: bool = false,
         max_name_len: usize = 0,
         max_current_len: usize = 0,
@@ -932,7 +934,45 @@ pub const UpdateInteractiveCommand = struct {
             }
         }
 
-        // Use natural widths without any limits
+        // Get terminal width to apply smart limits if needed
+        const term_size = getTerminalSize();
+
+        // Apply smart column width limits based on terminal width
+        if (term_size.width < 60) {
+            // Very narrow terminal - aggressive truncation, hide workspace
+            max_name_len = @min(max_name_len, 12);
+            max_current_len = @min(max_current_len, 7);
+            max_target_len = @min(max_target_len, 7);
+            max_latest_len = @min(max_latest_len, 7);
+            has_workspaces = false;
+        } else if (term_size.width < 80) {
+            // Narrow terminal - moderate truncation, hide workspace
+            max_name_len = @min(max_name_len, 20);
+            max_current_len = @min(max_current_len, 10);
+            max_target_len = @min(max_target_len, 10);
+            max_latest_len = @min(max_latest_len, 10);
+            has_workspaces = false;
+        } else if (term_size.width < 120) {
+            // Medium terminal - light truncation
+            max_name_len = @min(max_name_len, 35);
+            max_current_len = @min(max_current_len, 15);
+            max_target_len = @min(max_target_len, 15);
+            max_latest_len = @min(max_latest_len, 15);
+            max_workspace_len = @min(max_workspace_len, 15);
+            // Show workspace only if terminal is wide enough for all columns
+            if (term_size.width < 100) {
+                has_workspaces = false;
+            }
+        } else if (term_size.width < 160) {
+            // Wide terminal - minimal truncation for very long names
+            max_name_len = @min(max_name_len, 45);
+            max_current_len = @min(max_current_len, 20);
+            max_target_len = @min(max_target_len, 20);
+            max_latest_len = @min(max_latest_len, 20);
+            max_workspace_len = @min(max_workspace_len, 20);
+        }
+        // else: wide terminal - use natural widths
+
         return ColumnWidths{
             .name = max_name_len,
             .current = max_current_len,
@@ -941,6 +981,68 @@ pub const UpdateInteractiveCommand = struct {
             .workspace = max_workspace_len,
             .show_workspace = has_workspaces,
         };
+    }
+
+    const TerminalSize = struct {
+        height: usize,
+        width: usize,
+    };
+
+    fn getTerminalSize() TerminalSize {
+        // Try to get terminal size
+        if (comptime Environment.isPosix) {
+            var size: std.posix.winsize = undefined;
+            if (std.posix.system.ioctl(std.posix.STDOUT_FILENO, std.posix.T.IOCGWINSZ, @intFromPtr(&size)) == 0) {
+                // Reserve space for prompt (1 line) + scroll indicators (2 lines) + some buffer
+                const usable_height = if (size.row > 6) size.row - 4 else 20;
+                return .{
+                    .height = usable_height,
+                    .width = size.col,
+                };
+            }
+        } else if (comptime Environment.isWindows) {
+            const windows = std.os.windows;
+            const handle = windows.GetStdHandle(windows.STD_OUTPUT_HANDLE) catch {
+                return .{ .height = 20, .width = 80 };
+            };
+
+            var csbi: windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
+            const kernel32 = windows.kernel32;
+            if (kernel32.GetConsoleScreenBufferInfo(handle, &csbi) != windows.FALSE) {
+                const width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+                const height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+                // Reserve space for prompt + scroll indicators + buffer
+                const usable_height = if (height > 6) height - 4 else 20;
+                return .{
+                    .height = @intCast(usable_height),
+                    .width = @intCast(width),
+                };
+            }
+        }
+        return .{ .height = 20, .width = 80 }; // Default fallback
+    }
+
+    fn truncateWithEllipsis(allocator: std.mem.Allocator, text: []const u8, max_width: usize, only_end: bool) ![]const u8 {
+        if (text.len <= max_width) {
+            return try allocator.dupe(u8, text);
+        }
+
+        if (max_width <= 3) {
+            return try allocator.dupe(u8, "…");
+        }
+
+        // Put ellipsis in the middle to show both start and end of package name
+        const ellipsis = "…";
+        const available_chars = max_width - 1; // Reserve 1 char for ellipsis
+        const start_chars = if (only_end) available_chars else available_chars / 2;
+        const end_chars = available_chars - start_chars;
+
+        const result = try allocator.alloc(u8, start_chars + ellipsis.len + end_chars);
+        @memcpy(result[0..start_chars], text[0..start_chars]);
+        @memcpy(result[start_chars .. start_chars + ellipsis.len], ellipsis);
+        @memcpy(result[start_chars + ellipsis.len ..], text[text.len - end_chars ..]);
+
+        return result;
     }
 
     fn promptForUpdates(allocator: std.mem.Allocator, packages: []OutdatedPackage) ![]bool {
@@ -956,15 +1058,19 @@ pub const UpdateInteractiveCommand = struct {
         // Calculate optimal column widths based on terminal width and content
         const columns = calculateColumnWidths(packages);
 
+        // Get terminal size for viewport and width optimization
+        const terminal_size = getTerminalSize();
+
         var state = MultiSelectState{
             .packages = packages,
             .selected = selected,
+            .viewport_height = terminal_size.height,
             .max_name_len = columns.name,
             .max_current_len = columns.current,
             .max_update_len = columns.target,
             .max_latest_len = columns.latest,
             .max_workspace_len = columns.workspace,
-            .show_workspace = columns.show_workspace,
+            .show_workspace = columns.show_workspace, // Show workspace if packages have workspaces
         };
 
         // Set raw mode
@@ -991,7 +1097,7 @@ pub const UpdateInteractiveCommand = struct {
             }
         }
 
-        const result = processMultiSelect(&state) catch |err| {
+        const result = processMultiSelect(&state, terminal_size) catch |err| {
             if (err == error.EndOfStream) {
                 Output.flush();
                 Output.prettyln("\n<r><red>x<r> Cancelled", .{});
@@ -1004,7 +1110,76 @@ pub const UpdateInteractiveCommand = struct {
         return result;
     }
 
-    fn processMultiSelect(state: *MultiSelectState) ![]bool {
+    fn ensureCursorInViewport(state: *MultiSelectState) void {
+        // If cursor is not in viewport, position it sensibly
+        if (state.cursor < state.viewport_start) {
+            // Cursor is above viewport - put it at the start of viewport
+            state.cursor = state.viewport_start;
+        } else if (state.cursor >= state.viewport_start + state.viewport_height) {
+            // Cursor is below viewport - put it at the end of viewport
+            if (state.packages.len > 0) {
+                const max_cursor = if (state.packages.len > 1) state.packages.len - 1 else 0;
+                const viewport_end = state.viewport_start + state.viewport_height;
+                state.cursor = @min(viewport_end - 1, max_cursor);
+            }
+        }
+    }
+
+    fn updateViewport(state: *MultiSelectState) void {
+        // Ensure cursor is visible with context (2 packages below, 2 above if possible)
+        const context_below: usize = 2;
+        const context_above: usize = 1;
+
+        // If cursor is below viewport
+        if (state.cursor >= state.viewport_start + state.viewport_height) {
+            // Scroll down to show cursor with context
+            const desired_start = if (state.cursor + context_below + 1 > state.packages.len)
+                // Can't show full context, align bottom
+                if (state.packages.len > state.viewport_height)
+                    state.packages.len - state.viewport_height
+                else
+                    0
+            else
+                // Show cursor with context below
+                if (state.viewport_height > context_below and state.cursor > state.viewport_height - context_below)
+                    state.cursor - (state.viewport_height - context_below)
+                else
+                    0;
+
+            state.viewport_start = desired_start;
+        }
+        // If cursor is above viewport
+        else if (state.cursor < state.viewport_start) {
+            // Scroll up to show cursor with context above
+            if (state.cursor >= context_above) {
+                state.viewport_start = state.cursor - context_above;
+            } else {
+                state.viewport_start = 0;
+            }
+        }
+        // If cursor is near bottom of viewport, adjust to maintain context
+        else if (state.viewport_height > context_below and state.cursor > state.viewport_start + state.viewport_height - context_below) {
+            const max_start = if (state.packages.len > state.viewport_height)
+                state.packages.len - state.viewport_height
+            else
+                0;
+            const desired_start = if (state.viewport_height > context_below)
+                state.cursor - (state.viewport_height - context_below)
+            else
+                state.cursor;
+            state.viewport_start = @min(desired_start, max_start);
+        }
+        // If cursor is near top of viewport, adjust to maintain context
+        else if (state.cursor < state.viewport_start + context_above and state.viewport_start > 0) {
+            if (state.cursor >= context_above) {
+                state.viewport_start = state.cursor - context_above;
+            } else {
+                state.viewport_start = 0;
+            }
+        }
+    }
+
+    fn processMultiSelect(state: *MultiSelectState, initial_terminal_size: TerminalSize) ![]bool {
         const colors = Output.enable_ansi_colors;
 
         // Clear any previous progress output
@@ -1012,21 +1187,26 @@ pub const UpdateInteractiveCommand = struct {
         Output.print("\x1B[1A\x1B[2K", .{}); // Move up one line and clear it too
         Output.flush();
 
-        // Print the prompt
-        Output.prettyln("<r><cyan>?<r> Select packages to update<d> - Space to toggle, Enter to confirm, a to select all, n to select none, i to invert, l to toggle latest<r>", .{});
-
-        Output.prettyln("", .{});
-
-        if (colors) Output.print("\x1b[?25l", .{}); // hide cursor
-        defer if (colors) Output.print("\x1b[?25h", .{}); // show cursor
+        // Enable mouse tracking for scrolling (if terminal supports it)
+        if (colors) {
+            Output.print("\x1b[?25l", .{}); // hide cursor
+            Output.print("\x1b[?1000h", .{}); // Enable basic mouse tracking
+            Output.print("\x1b[?1006h", .{}); // Enable SGR extended mouse mode
+        }
+        defer if (colors) {
+            Output.print("\x1b[?25h", .{}); // show cursor
+            Output.print("\x1b[?1000l", .{}); // Disable mouse tracking
+            Output.print("\x1b[?1006l", .{}); // Disable SGR extended mouse mode
+        };
 
         var initial_draw = true;
         var reprint_menu = true;
         var total_lines: usize = 0;
+        var last_terminal_width = initial_terminal_size.width;
         errdefer reprint_menu = false;
         defer {
             if (!initial_draw) {
-                Output.up(total_lines + 2);
+                Output.up(total_lines);
             }
             Output.clearToEnd();
 
@@ -1040,26 +1220,76 @@ pub const UpdateInteractiveCommand = struct {
         }
 
         while (true) {
+            // Check for terminal resize
+            const current_size = getTerminalSize();
+            if (current_size.width != last_terminal_width) {
+                // Terminal was resized, update viewport and redraw
+                state.viewport_height = current_size.height;
+                const columns = calculateColumnWidths(state.packages);
+                state.show_workspace = columns.show_workspace and current_size.width > 100;
+                state.max_name_len = columns.name;
+                state.max_current_len = columns.current;
+                state.max_update_len = columns.target;
+                state.max_latest_len = columns.latest;
+                state.max_workspace_len = columns.workspace;
+                last_terminal_width = current_size.width;
+                updateViewport(state);
+                // Force full redraw
+                initial_draw = true;
+            }
+
             if (!initial_draw) {
                 Output.up(total_lines);
+                Output.print("\x1B[1G", .{});
                 Output.clearToEnd();
             }
             initial_draw = false;
-            total_lines = 0;
 
-            var displayed_lines: usize = 0;
+            const help_text = "Space to toggle, Enter to confirm, a to select all, n to select none, i to invert, l to toggle latest";
+            const elipsised_help_text = try truncateWithEllipsis(bun.default_allocator, help_text, current_size.width - "? Select packages to update - ".len, true);
+            defer bun.default_allocator.free(elipsised_help_text);
+            Output.prettyln("<r><cyan>?<r> Select packages to update<d> - {s}<r>", .{elipsised_help_text});
+
+            // Calculate how many lines the prompt will actually take due to terminal wrapping
+            total_lines = 1;
+
+            // Calculate available space for packages (reserve space for scroll indicators if needed)
+            const needs_scrolling = state.packages.len > state.viewport_height;
+            const show_top_indicator = needs_scrolling and state.viewport_start > 0;
+
+            // First calculate preliminary viewport end to determine if we need bottom indicator
+            const preliminary_viewport_end = @min(state.viewport_start + state.viewport_height, state.packages.len);
+            const show_bottom_indicator = needs_scrolling and preliminary_viewport_end < state.packages.len;
+
+            // const is_bottom_scroll = needs_scrolling and state.viewport_start + state.viewport_height <= state.packages.len;
+
+            // Show top scroll indicator if needed
+            if (show_top_indicator) {
+                Output.pretty("  <d>↑ {d} more package{s} above<r>", .{ state.viewport_start, if (state.viewport_start == 1) "" else "s" });
+            }
+
+            // Calculate how many packages we can actually display
+            // The simple approach: just try to show viewport_height packages
+            // The display loop will stop when it runs out of room
+            const viewport_end = @min(state.viewport_start + state.viewport_height, state.packages.len);
 
             // Group by dependency type
             var current_dep_type: ?[]const u8 = null;
 
-            for (state.packages, state.selected, 0..) |*pkg, selected, i| {
-                // Print dependency type header with column headers if changed
-                if (current_dep_type == null or !strings.eql(current_dep_type.?, pkg.dependency_type)) {
-                    if (displayed_lines > 0) {
-                        Output.print("\n", .{});
-                        displayed_lines += 1;
-                    }
+            // Track how many lines we've actually displayed (headers take 2 lines)
+            var lines_displayed: usize = 0;
+            var packages_displayed: usize = 0;
 
+            // Only display packages within viewport
+            for (state.viewport_start..viewport_end) |i| {
+                const pkg = &state.packages[i];
+                const selected = state.selected[i];
+
+                // Check if we need a header and if we have room for it
+                const needs_header = current_dep_type == null or !strings.eql(current_dep_type.?, pkg.dependency_type);
+
+                // Print dependency type header with column headers if changed
+                if (needs_header) {
                     // Count selected packages in this dependency type
                     var selected_count: usize = 0;
                     for (state.packages, state.selected) |p, sel| {
@@ -1069,7 +1299,7 @@ pub const UpdateInteractiveCommand = struct {
                     }
 
                     // Print dependency type - bold if any selected
-                    Output.print("  ", .{});
+                    Output.print("\n  ", .{});
                     if (selected_count > 0) {
                         Output.pretty("<r><b>{s} {d}<r>", .{ pkg.dependency_type, selected_count });
                     } else {
@@ -1116,9 +1346,11 @@ pub const UpdateInteractiveCommand = struct {
                         Output.print("Workspace", .{});
                     }
                     Output.print("\x1B[0K\n", .{});
-                    displayed_lines += 1;
+
+                    lines_displayed += 2;
                     current_dep_type = pkg.dependency_type;
                 }
+
                 const is_cursor = i == state.cursor;
                 const checkbox = if (selected) "■" else "□";
 
@@ -1200,7 +1432,12 @@ pub const UpdateInteractiveCommand = struct {
                     Output.print("{s} ", .{checkbox});
                 }
 
-                // Package name - make it a hyperlink if colors are enabled and using default registry
+                // Package name - truncate if needed and make it a hyperlink if colors are enabled and using default registry
+                // Calculate available space for name (accounting for dev/peer/optional tags)
+                const available_name_width = if (state.max_name_len > dev_tag_len) state.max_name_len - dev_tag_len else state.max_name_len;
+                const display_name = try truncateWithEllipsis(bun.default_allocator, pkg.name, available_name_width, false);
+                defer bun.default_allocator.free(display_name);
+
                 const uses_default_registry = pkg.manager.options.scope.url_hash == Install.Npm.Registry.default_url_hash and
                     pkg.manager.scopeForPackageName(pkg.name).url_hash == Install.Npm.Registry.default_url_hash;
                 const package_url = if (Output.enable_ansi_colors and uses_default_registry)
@@ -1219,7 +1456,7 @@ pub const UpdateInteractiveCommand = struct {
                     "";
                 defer if (package_url.len > 0) bun.default_allocator.free(package_url);
 
-                const hyperlink = TerminalHyperlink.new(package_url, pkg.name, package_url.len > 0);
+                const hyperlink = TerminalHyperlink.new(package_url, display_name, package_url.len > 0);
 
                 if (selected) {
                     if (strings.eqlComptime(checkbox_color, "red")) {
@@ -1248,11 +1485,13 @@ pub const UpdateInteractiveCommand = struct {
                     Output.print(" ", .{});
                 }
 
-                // Current version
-                Output.pretty("<r>{s}<r>", .{pkg.current_version});
+                // Current version - truncate if needed
+                const truncated_current = try truncateWithEllipsis(bun.default_allocator, pkg.current_version, state.max_current_len, false);
+                defer bun.default_allocator.free(truncated_current);
+                Output.pretty("<r>{s}<r>", .{truncated_current});
 
                 // Print padding after current version (2 spaces)
-                const current_padding = if (pkg.current_version.len >= state.max_current_len) 0 else state.max_current_len - pkg.current_version.len;
+                const current_padding = if (truncated_current.len >= state.max_current_len) 0 else state.max_current_len - truncated_current.len;
                 j = 0;
                 while (j < current_padding + 2) : (j += 1) {
                     Output.print(" ", .{});
@@ -1261,9 +1500,12 @@ pub const UpdateInteractiveCommand = struct {
                 // Target version with diffFmt coloring - bold if not using latest
                 const target_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.update_version, pkg.update_version));
 
-                // For width calculation, use the plain version string length
-                // since diffFmt only adds colors, not visible characters
-                const target_width: usize = pkg.update_version.len;
+                // Truncate target version if needed
+                const truncated_target = try truncateWithEllipsis(bun.default_allocator, pkg.update_version, state.max_update_len, false);
+                defer bun.default_allocator.free(truncated_target);
+
+                // For width calculation, use the truncated version string length
+                const target_width: usize = truncated_target.len;
 
                 if (current_ver_parsed.valid and target_ver_parsed.valid) {
                     const current_full = Semver.Version{
@@ -1279,15 +1521,21 @@ pub const UpdateInteractiveCommand = struct {
                         .tag = target_ver_parsed.version.tag,
                     };
 
-                    // Print target version
+                    // Print target version (use truncated version for narrow terminals)
                     if (selected and !pkg.use_latest) {
                         Output.print("\x1B[4m", .{}); // Start underline
                     }
-                    Output.pretty("{}", .{target_full.diffFmt(
-                        current_full,
-                        pkg.update_version,
-                        pkg.current_version,
-                    )});
+                    if (truncated_target.len < pkg.update_version.len) {
+                        // If truncated, use plain display instead of diffFmt to avoid confusion
+                        Output.pretty("<r>{s}<r>", .{truncated_target});
+                    } else {
+                        // Use diffFmt for full versions
+                        Output.pretty("{}", .{target_full.diffFmt(
+                            current_full,
+                            pkg.update_version,
+                            pkg.current_version,
+                        )});
+                    }
                     if (selected and !pkg.use_latest) {
                         Output.print("\x1B[24m", .{}); // End underline
                     }
@@ -1296,7 +1544,7 @@ pub const UpdateInteractiveCommand = struct {
                     if (selected and !pkg.use_latest) {
                         Output.print("\x1B[4m", .{}); // Start underline
                     }
-                    Output.pretty("<r>{s}<r>", .{pkg.update_version});
+                    Output.pretty("<r>{s}<r>", .{truncated_target});
                     if (selected and !pkg.use_latest) {
                         Output.print("\x1B[24m", .{}); // End underline
                     }
@@ -1310,6 +1558,10 @@ pub const UpdateInteractiveCommand = struct {
 
                 // Latest version with diffFmt coloring - bold if using latest
                 const latest_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.latest_version, pkg.latest_version));
+
+                // Truncate latest version if needed
+                const truncated_latest = try truncateWithEllipsis(bun.default_allocator, pkg.latest_version, state.max_latest_len, false);
+                defer bun.default_allocator.free(truncated_latest);
                 if (current_ver_parsed.valid and latest_ver_parsed.valid) {
                     const current_full = Semver.Version{
                         .major = current_ver_parsed.version.major orelse 0,
@@ -1333,11 +1585,17 @@ pub const UpdateInteractiveCommand = struct {
                     if (selected and pkg.use_latest) {
                         Output.print("\x1B[4m", .{}); // Start underline
                     }
-                    Output.pretty("{}", .{latest_full.diffFmt(
-                        current_full,
-                        pkg.latest_version,
-                        pkg.current_version,
-                    )});
+                    if (truncated_latest.len < pkg.latest_version.len) {
+                        // If truncated, use plain display instead of diffFmt to avoid confusion
+                        Output.pretty("<r>{s}<r>", .{truncated_latest});
+                    } else {
+                        // Use diffFmt for full versions
+                        Output.pretty("{}", .{latest_full.diffFmt(
+                            current_full,
+                            pkg.latest_version,
+                            pkg.current_version,
+                        )});
+                    }
                     if (selected and pkg.use_latest) {
                         Output.print("\x1B[24m", .{}); // End underline
                     }
@@ -1353,7 +1611,7 @@ pub const UpdateInteractiveCommand = struct {
                     if (selected and pkg.use_latest) {
                         Output.print("\x1B[4m", .{}); // Start underline
                     }
-                    Output.pretty("<r>{s}<r>", .{pkg.latest_version});
+                    Output.pretty("<r>{s}<r>", .{truncated_latest});
                     if (selected and pkg.use_latest) {
                         Output.print("\x1B[24m", .{}); // End underline
                     }
@@ -1364,20 +1622,30 @@ pub const UpdateInteractiveCommand = struct {
 
                 // Workspace column
                 if (state.show_workspace) {
-                    const latest_width: usize = pkg.latest_version.len;
+                    const latest_width: usize = truncated_latest.len;
                     const latest_padding = if (latest_width >= state.max_latest_len) 0 else state.max_latest_len - latest_width;
                     j = 0;
                     while (j < latest_padding + 2) : (j += 1) {
                         Output.print(" ", .{});
                     }
-                    Output.pretty("<r><d>{s}<r>", .{pkg.workspace_name});
+                    // Truncate workspace name if needed
+                    const truncated_workspace = try truncateWithEllipsis(bun.default_allocator, pkg.workspace_name, state.max_workspace_len, true);
+                    defer bun.default_allocator.free(truncated_workspace);
+                    Output.pretty("<r><d>{s}<r>", .{truncated_workspace});
                 }
 
                 Output.print("\x1B[0K\n", .{});
-                displayed_lines += 1;
+                lines_displayed += 1;
+                packages_displayed += 1;
             }
 
-            total_lines = displayed_lines;
+            // Show bottom scroll indicator if needed
+            if (show_bottom_indicator) {
+                Output.pretty("  <d>↓ {d} more package{s} below<r>", .{ state.packages.len - viewport_end, if (state.packages.len - viewport_end == 1) "" else "s" });
+                lines_displayed += 1;
+            }
+
+            total_lines = lines_displayed + 1;
             Output.clearToEnd();
             Output.flush();
 
@@ -1433,6 +1701,7 @@ pub const UpdateInteractiveCommand = struct {
                     } else {
                         state.cursor = 0;
                     }
+                    updateViewport(state);
                     state.toggle_all = false;
                 },
                 'k' => {
@@ -1441,6 +1710,7 @@ pub const UpdateInteractiveCommand = struct {
                     } else {
                         state.cursor = state.packages.len - 1;
                     }
+                    updateViewport(state);
                     state.toggle_all = false;
                 },
                 27 => { // escape sequence
@@ -1454,12 +1724,81 @@ pub const UpdateInteractiveCommand = struct {
                                 } else {
                                     state.cursor = state.packages.len - 1;
                                 }
+                                updateViewport(state);
                             },
                             'B' => { // down arrow
                                 if (state.cursor < state.packages.len - 1) {
                                     state.cursor += 1;
                                 } else {
                                     state.cursor = 0;
+                                }
+                                updateViewport(state);
+                            },
+                            'C' => { // right arrow - switch to Latest version and select
+                                state.packages[state.cursor].use_latest = true;
+                                state.selected[state.cursor] = true;
+                            },
+                            'D' => { // left arrow - switch to Target version and select
+                                state.packages[state.cursor].use_latest = false;
+                                state.selected[state.cursor] = true;
+                            },
+                            '5' => { // Page Up
+                                const tilde = std.io.getStdIn().reader().readByte() catch continue;
+                                if (tilde == '~') {
+                                    // Move up by viewport height
+                                    if (state.cursor >= state.viewport_height) {
+                                        state.cursor -= state.viewport_height;
+                                    } else {
+                                        state.cursor = 0;
+                                    }
+                                    updateViewport(state);
+                                }
+                            },
+                            '6' => { // Page Down
+                                const tilde = std.io.getStdIn().reader().readByte() catch continue;
+                                if (tilde == '~') {
+                                    // Move down by viewport height
+                                    if (state.cursor + state.viewport_height < state.packages.len) {
+                                        state.cursor += state.viewport_height;
+                                    } else {
+                                        state.cursor = state.packages.len - 1;
+                                    }
+                                    updateViewport(state);
+                                }
+                            },
+                            '<' => { // SGR extended mouse mode
+                                // Read until 'M' or 'm' for button press/release
+                                var buffer: [32]u8 = undefined;
+                                var buf_idx: usize = 0;
+                                while (buf_idx < buffer.len) : (buf_idx += 1) {
+                                    const c = std.io.getStdIn().reader().readByte() catch break;
+                                    if (c == 'M' or c == 'm') {
+                                        // Parse SGR mouse event: ESC[<button;col;row(M or m)
+                                        // button: 64 = scroll up, 65 = scroll down
+                                        var parts = std.mem.tokenizeScalar(u8, buffer[0..buf_idx], ';');
+                                        if (parts.next()) |button_str| {
+                                            const button = std.fmt.parseInt(u32, button_str, 10) catch 0;
+                                            // Mouse wheel events
+                                            if (button == 64) { // Scroll up
+                                                if (state.viewport_start > 0) {
+                                                    // Scroll up by 3 lines
+                                                    const scroll_amount = @min(1, state.viewport_start);
+                                                    state.viewport_start -= scroll_amount;
+                                                    ensureCursorInViewport(state);
+                                                }
+                                            } else if (button == 65) { // Scroll down
+                                                if (state.viewport_start + state.viewport_height < state.packages.len) {
+                                                    // Scroll down by 3 lines
+                                                    const max_scroll = state.packages.len - (state.viewport_start + state.viewport_height);
+                                                    const scroll_amount = @min(1, max_scroll);
+                                                    state.viewport_start += scroll_amount;
+                                                    ensureCursorInViewport(state);
+                                                }
+                                            }
+                                        }
+                                        break;
+                                    }
+                                    buffer[buf_idx] = c;
                                 }
                             },
                             else => {},

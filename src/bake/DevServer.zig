@@ -2038,7 +2038,7 @@ pub fn finalizeBundle(
     const targets = bv2.graph.ast.items(.target);
     const scbs = bv2.graph.server_component_boundaries.slice();
 
-    var sfa = std.heap.stackFallback(65536, bv2.graph.allocator);
+    var sfa = std.heap.stackFallback(65536, bv2.allocator());
     const stack_alloc = sfa.get();
     var scb_bitset = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(stack_alloc, input_file_sources.len);
     for (
@@ -2052,7 +2052,7 @@ pub fn finalizeBundle(
             scb_bitset.set(ssr_index);
     }
 
-    const resolved_index_cache = try bv2.graph.allocator.alloc(u32, input_file_sources.len * 2);
+    const resolved_index_cache = try bv2.allocator().alloc(u32, input_file_sources.len * 2);
     @memset(resolved_index_cache, @intFromEnum(IncrementalGraph(.server).FileIndex.Optional.none));
 
     var ctx: bun.bake.DevServer.HotUpdateContext = .{
@@ -2214,12 +2214,12 @@ pub fn finalizeBundle(
     }
 
     var gts = try dev.initGraphTraceState(
-        bv2.graph.allocator,
+        bv2.allocator(),
         if (result.cssChunks().len > 0) bv2.graph.input_files.len else 0,
     );
-    defer gts.deinit(bv2.graph.allocator);
+    defer gts.deinit(bv2.allocator());
     ctx.gts = &gts;
-    ctx.server_seen_bit_set = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(bv2.graph.allocator, dev.server_graph.bundled_files.count());
+    ctx.server_seen_bit_set = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(bv2.allocator(), dev.server_graph.bundled_files.count());
 
     dev.incremental_result.had_adjusted_edges = false;
 
@@ -2230,17 +2230,17 @@ pub fn finalizeBundle(
     // have been modified.
     for (js_chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
         switch (targets[part_range.source_index.get()].bakeGraph()) {
-            .server, .ssr => try dev.server_graph.processChunkDependencies(&ctx, .normal, part_range.source_index, bv2.graph.allocator),
-            .client => try dev.client_graph.processChunkDependencies(&ctx, .normal, part_range.source_index, bv2.graph.allocator),
+            .server, .ssr => try dev.server_graph.processChunkDependencies(&ctx, .normal, part_range.source_index, bv2.allocator()),
+            .client => try dev.client_graph.processChunkDependencies(&ctx, .normal, part_range.source_index, bv2.allocator()),
         }
     }
     for (result.htmlChunks()) |*chunk| {
         const index = bun.ast.Index.init(chunk.entry_point.source_index);
-        try dev.client_graph.processChunkDependencies(&ctx, .normal, index, bv2.graph.allocator);
+        try dev.client_graph.processChunkDependencies(&ctx, .normal, index, bv2.allocator());
     }
     for (result.cssChunks()) |*chunk| {
         const entry_index = bun.ast.Index.init(chunk.entry_point.source_index);
-        try dev.client_graph.processChunkDependencies(&ctx, .css, entry_index, bv2.graph.allocator);
+        try dev.client_graph.processChunkDependencies(&ctx, .css, entry_index, bv2.allocator());
     }
 
     // Index all failed files now that the incremental graph has been updated.
@@ -2506,7 +2506,7 @@ pub fn finalizeBundle(
                 mapLog("inc {x}, for {d} sockets", .{ script_id.get(), sockets });
                 const entry = switch (try dev.source_maps.putOrIncrementRefCount(script_id, sockets)) {
                     .uninitialized => |entry| brk: {
-                        try dev.client_graph.takeSourceMap(bv2.graph.allocator, dev.allocator, entry);
+                        try dev.client_graph.takeSourceMap(bv2.allocator(), dev.allocator, entry);
                         break :brk entry;
                     },
                     .shared => |entry| entry,
@@ -2754,9 +2754,9 @@ pub fn getLogForResolutionFailures(dev: *DevServer, abs_path: []const u8, graph:
                 .insertStale(abs_path, !is_client and graph == .ssr),
         ).encode(),
     };
-    const gop = try current_bundle.resolution_failure_entries.getOrPut(current_bundle.bv2.graph.allocator, owner);
+    const gop = try current_bundle.resolution_failure_entries.getOrPut(current_bundle.bv2.allocator(), owner);
     if (!gop.found_existing) {
-        gop.value_ptr.* = bun.logger.Log.init(current_bundle.bv2.graph.allocator);
+        gop.value_ptr.* = bun.logger.Log.init(current_bundle.bv2.allocator());
     }
     return gop.value_ptr;
 }

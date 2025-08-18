@@ -62,7 +62,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                                 try this.log.addErrorFmt(
                                     &input_files[record.source_index.get()],
                                     compose.loc,
-                                    this.allocator,
+                                    this.allocator(),
                                     "The name \"{s}\" never appears in \"{s}\" as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
                                     .{
                                         name.v,
@@ -202,7 +202,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                 .import_records = import_records_list,
                 .exports_kind = exports_kind,
                 .entry_point_kinds = entry_point_kinds,
-                .export_star_map = std.AutoHashMap(u32, void).init(this.allocator),
+                .export_star_map = std.AutoHashMap(u32, void).init(this.allocator()),
                 .export_star_records = export_star_import_records,
                 .output_format = output_format,
             };
@@ -271,14 +271,14 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                 if (export_star_ids.len > 0) {
                     if (export_star_ctx == null) {
                         export_star_ctx = ExportStarContext{
-                            .allocator = this.allocator,
+                            .allocator = this.allocator(),
                             .resolved_exports = resolved_exports,
                             .import_records_list = import_records_list,
                             .export_star_records = export_star_import_records,
 
                             .imports_to_bind = this.graph.meta.items(.imports_to_bind),
 
-                            .source_index_stack = std.ArrayList(u32).initCapacity(this.allocator, 32) catch unreachable,
+                            .source_index_stack = std.ArrayList(u32).initCapacity(this.allocator(), 32) catch unreachable,
                             .exports_kind = exports_kind,
                             .named_exports = this.graph.ast.items(.named_exports),
                         };
@@ -367,7 +367,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
         // imported using an import star statement.
         // Note: `do` will wait for all to finish before moving forward
         try this.parse_graph.pool.worker_pool.each(
-            this.allocator,
+            this.allocator(),
             this,
             LinkerContext.doStep5,
             this.graph.reachable_files,
@@ -439,7 +439,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                 break :brk count;
             };
 
-            const string_buffer = this.allocator.alloc(u8, string_buffer_len) catch unreachable;
+            const string_buffer = this.allocator().alloc(u8, string_buffer_len) catch unreachable;
             var builder = bun.StringBuilder{
                 .len = 0,
                 .cap = string_buffer.len,
@@ -452,7 +452,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
             // are necessary later. This is done now because the symbols map cannot be
             // mutated later due to parallelism.
             if (is_entry_point and output_format == .esm) {
-                const copies = this.allocator.alloc(Ref, aliases.len) catch unreachable;
+                const copies = this.allocator().alloc(Ref, aliases.len) catch unreachable;
 
                 for (aliases, copies) |alias, *copy| {
                     const original_name = builder.fmt("export_{}", .{bun.fmt.fmtIdentifier(alias)});
@@ -537,7 +537,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
 
                         const total_len = parts_declaring_symbol.len + @as(usize, import.re_exports.len) + @as(usize, part.dependencies.len);
                         if (part.dependencies.cap < total_len) {
-                            var list = std.ArrayList(Dependency).init(this.allocator);
+                            var list = std.ArrayList(Dependency).init(this.allocator());
                             list.ensureUnusedCapacity(total_len) catch unreachable;
                             list.appendSliceAssumeCapacity(part.dependencies.slice());
                             part.dependencies.update(list);
@@ -568,7 +568,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                 const extra_count = @as(usize, @intFromBool(force_include_exports)) +
                     @as(usize, @intFromBool(add_wrapper));
 
-                var dependencies = std.ArrayList(js_ast.Dependency).initCapacity(this.allocator, extra_count) catch bun.outOfMemory();
+                var dependencies = std.ArrayList(js_ast.Dependency).initCapacity(this.allocator(), extra_count) catch bun.outOfMemory();
 
                 var resolved_exports_list: *ResolvedExports = &this.graph.meta.items(.resolved_exports)[id];
                 for (aliases) |alias| {

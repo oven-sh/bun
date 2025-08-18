@@ -82,14 +82,7 @@ pub const Row = struct {
                 if (this.bigint) {
                     if (column.flags.UNSIGNED) {
                         const val: u64 = std.fmt.parseInt(u64, value.slice(), 10) catch 0;
-                        // if is bigger than i64, it will be a string
-                        // TODO: check we can handle this as bigint too currently we dont have .uint8 we need to add it
-                        if (val < std.math.maxInt(i64)) {
-                            cell.* = SQLDataCell{ .tag = .int8, .value = .{ .int8 = @intCast(val) } };
-                        } else {
-                            const slice = value.slice();
-                            cell.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
-                        }
+                        cell.* = SQLDataCell{ .tag = .uint8, .value = .{ .uint8 = val } };
                     } else {
                         const val: i64 = std.fmt.parseInt(i64, value.slice(), 10) catch std.math.minInt(i64);
                         cell.* = SQLDataCell{ .tag = .int8, .value = .{ .int8 = val } };

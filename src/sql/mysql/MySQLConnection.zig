@@ -131,7 +131,7 @@ pub fn hasPendingActivity(this: *MySQLConnection) bool {
 }
 
 fn updateHasPendingActivity(this: *MySQLConnection) void {
-    const a: u32 = if (this.requests.count > 0) 1 else 0;
+    const a: u32 = if (this.requests.readableLength() > 0) 1 else 0;
     const b: u32 = if (this.status != .disconnected) 1 else 0;
     this.pending_activity_count.store(a + b, .release);
 }
@@ -906,7 +906,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             };
         }
     }
-
+    ptr.setStatus(.connecting);
     ptr.updateHasPendingActivity();
     ptr.resetConnectionTimeout();
     ptr.poll_ref.ref(vm);

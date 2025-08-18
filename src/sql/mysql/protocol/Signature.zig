@@ -1,5 +1,5 @@
 const Signature = @This();
-fields: []const FieldType = &.{},
+fields: []Param = &.{},
 name: []const u8 = "",
 query: []const u8 = "",
 
@@ -31,7 +31,7 @@ pub fn hash(this: *const Signature) u64 {
 }
 
 pub fn generate(globalObject: *jsc.JSGlobalObject, query: []const u8, array_value: JSValue, columns: JSValue) !Signature {
-    var fields = std.ArrayList(types.FieldType).init(bun.default_allocator);
+    var fields = std.ArrayList(Param).init(bun.default_allocator);
     var name = try std.ArrayList(u8).initCapacity(bun.default_allocator, query.len);
 
     name.appendSliceAssumeCapacity(query);
@@ -46,14 +46,15 @@ pub fn generate(globalObject: *jsc.JSGlobalObject, query: []const u8, array_valu
     while (try iter.next()) |value| {
         if (value.isEmptyOrUndefinedOrNull()) {
             // Allow MySQL to decide the type
-            try fields.append(.MYSQL_TYPE_NULL);
+            try fields.append(.{ .type = .MYSQL_TYPE_NULL, .flags = .{} });
             try name.appendSlice(".null");
             continue;
         }
 
         const tag = try types.FieldType.fromJS(globalObject, value);
         try name.appendSlice(@tagName(tag));
-        try fields.append(tag);
+        // TODO: add flags if necessary right now the only relevant would be unsigned but is JS and is never unsigned
+        try fields.append(.{ .type = tag, .flags = .{} });
     }
 
     if (iter.anyFailed()) {
@@ -74,3 +75,4 @@ const FieldType = types.FieldType;
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
 const QueryBindingIterator = @import("../../shared/QueryBindingIterator.zig").QueryBindingIterator;
+const Param = @import("../MySQLStatement.zig").Param;

@@ -105,10 +105,13 @@ pub fn onWriteFail(
 pub fn bindAndExecute(this: *MySQLQuery, writer: anytype, statement: *MySQLStatement, globalObject: *jsc.JSGlobalObject) !void {
     debug("bindAndExecute", .{});
     bun.assertf(statement.params.len == statement.params_received and statement.statement_id > 0, "statement is not prepared", .{});
+    if (statement.signature.fields.len != statement.params.len) {
+        return error.WrongNumberOfParametersProvided;
+    }
     var packet = try writer.start(0);
     var execute = PreparedStatement.Execute{
         .statement_id = statement.statement_id,
-        .param_types = statement.params,
+        .param_types = statement.signature.fields,
         .new_params_bind_flag = statement.execution_flags.need_to_send_params,
         .iteration_count = 1,
     };

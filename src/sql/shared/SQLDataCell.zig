@@ -21,6 +21,7 @@ pub const SQLDataCell = extern struct {
         typed_array = 11,
         raw = 12,
         uint4 = 13,
+        uint8 = 14,
     };
 
     pub const Value = extern union {
@@ -38,6 +39,7 @@ pub const SQLDataCell = extern struct {
         typed_array: TypedArray,
         raw: Raw,
         uint4: u32,
+        uint8: u64,
     };
 
     pub const Array = extern struct {

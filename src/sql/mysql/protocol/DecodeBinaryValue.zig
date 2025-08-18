@@ -38,11 +38,7 @@ pub fn decodeBinaryValue(field_type: types.FieldType, raw: bool, bigint: bool, u
             if (unsigned) {
                 const val = try reader.int(u64);
                 if (bigint) {
-                    // if is bigger than i64, it will be a string
-                    // TODO: check we can handle this as bigint too currently we dont have .uint8 we need to add it
-                    if (val < std.math.maxInt(i64)) {
-                        return SQLDataCell{ .tag = .int8, .value = .{ .int8 = @intCast(val) } };
-                    }
+                    return SQLDataCell{ .tag = .uint8, .value = .{ .uint8 = val } };
                 }
                 var buffer: [21]u8 = undefined;
                 const slice = try std.fmt.bufPrint(&buffer, "{}", .{val});

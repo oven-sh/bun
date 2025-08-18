@@ -507,27 +507,36 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       expect(() => redis.unsubscribe(channel)).toThrow("Not in subscription mode");
     });
 
-    //test("callback errors don't crash the client", async () => {
-    //  const redis = await connectedRedis();
-    //  const channel = "error-callback-channel";
+    test("callback errors don't crash the client", async () => {
+      const redis = await connectedRedis();
+      const channel = "error-callback-channel";
 
-    //  let messageCount = 0;
-    //  await redis.subscribe(channel, () => {
-    //    messageCount++;
-    //    if (messageCount === 2) {
-    //      throw new Error("Intentional callback error");
-    //    }
-    //  });
+      const subscriber = await connectedRedis();
 
-    //  // Send multiple messages
-    //  expect(await redis.publish(channel, "message1")).toBe(1);
-    //  expect(await redis.publish(channel, "message2")).toBe(1);
-    //  expect(await redis.publish(channel, "message3")).toBe(1);
+      let messageCount = 0;
+      await subscriber.subscribe(channel, () => {
+        messageCount++;
+        if (messageCount === 2) {
+          throw new Error("Intentional callback error");
+        }
+      });
 
-    //  await sleep(flushTimeoutMs);
+      // Send multiple messages
+      console.log("Publishing messages to channel with error callback");
+      expect(await redis.publish(channel, "message1")).toBe(1);
+      expect(await redis.publish(channel, "message2")).toBe(1);
+      expect(await redis.publish(channel, "message3")).toBe(1);
+      console.log("Published messages, waiting for processing");
 
-    //  // Should have processed all messages despite the error
-    //  expect(messageCount).toBe(3);
-    //});
+      await sleep(flushTimeoutMs);
+
+      console.log("Checking message count after error callback");
+
+      // Should have processed all messages despite the error
+      expect(messageCount).toBe(3);
+
+      console.log("Unsubscribing from channel after error test");
+      await subscriber.unsubscribe(channel);
+    });
   });
 });

@@ -115,14 +115,13 @@ pub const SubscriptionCtx = struct {
             while (try iter.next()) |callback| {
                 if (callback.isCallable()) {
                     _ = callback.call(globalObject, .js_undefined, args) catch |e| {
-                        globalObject.reportActiveExceptionAsUnhandled(e);
+                        return e;
                     };
                 }
             }
         } else if (callbacks.isCallable()) {
-            // Single callback
             _ = callbacks.call(globalObject, .js_undefined, args) catch |e| {
-                globalObject.reportActiveExceptionAsUnhandled(e);
+                return e;
             };
         }
     }
@@ -666,7 +665,10 @@ pub const JSValkeyClient = struct {
         // Invoke callbacks for this channel with message and channel as arguments
         subscription_ctx.invokeCallback(globalObject, channel_value, &[_]JSValue{ message_value, channel_value }) catch |e| {
             debug("Failed to invoke callbacks: {}", .{e});
-            globalObject.reportActiveExceptionAsUnhandled(e);
+            this.client.onWritable();
+            this.updatePollRef();
+            globalObject.reportUncaughtExceptionFromError(e);
+            return;
         };
 
         this.client.onWritable();

@@ -352,28 +352,36 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       await subscriber.unsubscribe([channel1, channel3]);
     });
 
-    //test("subscribing to the same channel multiple times", async () => {
-    //  const redis = await connectedRedis();
-    //  const subscriber = await connectedRedis();
-    //  const channel = "duplicate-channel";
+    test("subscribing to the same channel multiple times", async () => {
+      const redis = await connectedRedis();
+      const subscriber = await connectedRedis();
+      const channel = "duplicate-channel";
 
-    //  let callCount = 0;
-    //  const listener = () => {
-    //    callCount++;
-    //  };
+      let callCount = 0;
+      const listener = () => {
+        callCount++;
+      };
 
-    //  // Subscribe to the same channel twice
-    //  await subscriber.subscribe(channel, listener);
-    //  await subscriber.subscribe(channel, listener);
+      let callCount2 = 0;
+      const listener2 = () => {
+        callCount2++;
+      };
 
-    //  // Publish a single message
-    //  expect(await redis.publish(channel, "test-message")).toBe(1);
+      // Subscribe to the same channel twice
+      await subscriber.subscribe(channel, listener);
+      await subscriber.subscribe(channel, listener2);
 
-    //  await sleep(flushTimeoutMs);
+      // Publish a single message
+      expect(await redis.publish(channel, "test-message")).toBe(1);
 
-    //  // Should only receive the message once (last subscription wins)
-    //  expect(callCount).toBe(1);
-    //});
+      await sleep(flushTimeoutMs);
+
+      // Should only receive the message once (last subscription wins)
+      expect(callCount).toBe(1);
+      expect(callCount2).toBe(1);
+
+      await subscriber.unsubscribe(channel);
+    });
 
     test("empty string messages", async () => {
       const redis = await connectedRedis();

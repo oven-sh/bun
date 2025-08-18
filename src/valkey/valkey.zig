@@ -614,42 +614,30 @@ pub const ValkeyClient = struct {
         const globalThis = this.globalObject();
         const loop = this.vm.eventLoop();
 
-        switch (value.*) {
-            .Error => |err| {
-                this.fail(err, protocol.RedisError.InvalidResponse);
-            },
-            .Push => |push| {
-                if (std.mem.eql(u8, push.kind, "subscribe")) {
-                    debug("A subscription message has been received: {any}", .{push.data});
-                    this.onValkeySubscribe(value);
-                } else if (std.mem.eql(u8, push.kind, "message")) {
-                    debug("Received a message: {any}", .{push.data});
-                } else if (std.mem.eql(u8, push.kind, "unsubscribe")) {
-                    debug("Received an unsubscribe message: {any}", .{push.data});
-                } else {
-                    this.fail("Unexpected push message kind", protocol.RedisError.InvalidResponseType);
-                }
-            },
-            else => {
-                return null;
-            }
-        }
-
+        debug("Handling a subscribe response: {any}", .{value.*});
         loop.enter();
         defer loop.exit();
 
-        debug("Processing data as a subscriber.", .{});
+        switch (value.*) {
+            .Error => |err| {
+                promise_ptr.reject(globalThis, value.toJS(globalThis) catch |inner| globalThis.takeError(inner));
+                this.fail(err, protocol.RedisError.InvalidResponse);
+            },
+            .Push => |push| {
+                if (!std.mem.eql(u8, push.kind, "subscribe")) {
+                    this.fail("Push message is not a subscription message.", protocol.RedisError.InvalidResponseType);
+                    return;
+                }
 
-        if (value.* == .Error) {
-            promise_ptr.reject(globalThis, value.toJS(globalThis) catch |err| globalThis.takeError(err));
-
-            // TODO(markovejnovic): This currently leaks the callbacks if an
-            // error occurs while subscribing. There is nothing cleaning up the
-            // callback map right now.
-        } else {
-            promise_ptr.resolve(globalThis, value);
+                this.onValkeySubscribe(value);
+                promise_ptr.resolve(globalThis, value);
+            },
+            else => {
+                // This may be a regular command response. Let's pass it down
+                // to the next handler.
+                return null;
+            },
         }
-
     }
 
     fn handleHelloResponse(this: *ValkeyClient, value: *protocol.RESPValue) void {
@@ -718,8 +706,65 @@ pub const ValkeyClient = struct {
             return;
         }
 
+        // Let's load the promise pair.
+        var pair_maybe = this.in_flight.readItem();
+
+        // We handle subscriptions specially because they are not regular
+        // commands and their failure will potentially cause the client to drop
+        // out of subscriber mode.
+        if (this.parent().isSubscriber()) {
+            debug("This client is a subscriber. Handling as subscriber...", .{});
+
+            // There are multiple different commands we may receive in
+            // subscriber mode. One is from a client.subscribe() call which
+            // requires that a promise is in-flight, but otherwise, we may also
+            // receive push messages from the server that do not have an
+            // associated promise.
+            if (pair_maybe) |*pair| {
+                debug("There is a request in flight. Handling as a subscribe request...", .{});
+                const res = this.handleSubscribeResponse(value, pair);
+                if (res != null) {
+                    return;
+                }
+            }
+
+            switch (value.*) {
+                .Error => |err| {
+                    this.fail(err, protocol.RedisError.InvalidResponse);
+                    return;
+                },
+                .Push => |push| {
+                    if (std.mem.eql(u8, push.kind, "subscribe")) {
+                        debug("Received subscription message without promise: {any}", .{push.data});
+                        return;
+                    }
+
+                    if (std.mem.eql(u8, push.kind, "message")) {
+                        debug("Received a message.", .{});
+                        this.onValkeyMessage(push.data);
+                        return;
+                    }
+
+                    if (std.mem.eql(u8, push.kind, "unsubscribe")) {
+                        debug("Received unsubscribe message without promise: {any}", .{push.data});
+                        return;
+                    }
+
+                    this.fail("Unexpected push message kind without promise", protocol.RedisError.InvalidResponseType);
+                    return;
+                },
+                else => {
+                    // In the else case, we fall through to the regular
+                    // handler. Subscribers can send .Push commands which have
+                    // the same semantics as regular commands.
+                },
+            }
+
+            debug("Treating subscriber response as a regular command...", .{});
+        }
+
         // For regular commands, get the next command+promise pair from the queue
-        var pair = this.in_flight.readItem() orelse {
+        var pair = pair_maybe orelse {
             debug("Received response but no promise in queue", .{});
             return;
         };
@@ -733,23 +778,6 @@ pub const ValkeyClient = struct {
                 const int_value = value.Integer;
                 value.* = .{ .Boolean = int_value > 0 };
             }
-        }
-
-        // We handle subscriptions specially because they are not regular
-        // commands and their failure will potentially cause the client to drop
-        // out of subscriber mode.
-        if (this.parent().isSubscriber()) {
-            // Note that even in subscriber mode we can receive
-            // non-subscription responses, like from a .publish command, as a
-            // consequence, handleSubscribeResponse will send us back a code
-            // saying it did not handle the response.
-            const res = this.handleSubscribeResponse(value, &pair);
-            if (res != null) {
-                return;
-            }
-
-            // Something else (like a .publish) may be in flight and we should
-            // go and service that.
         }
 
         // Resolve the promise with the potentially transformed value
@@ -1009,6 +1037,10 @@ pub const ValkeyClient = struct {
 
     pub fn onValkeySubscribe(this: *ValkeyClient, value: *protocol.RESPValue) void {
         this.parent().onValkeySubscribe(value);
+    }
+
+    pub fn onValkeyMessage(this: *ValkeyClient, value: []protocol.RESPValue) void {
+        this.parent().onValkeyMessage(value);
     }
 
     pub fn onValkeyReconnect(this: *ValkeyClient) void {

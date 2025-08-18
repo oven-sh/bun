@@ -96,6 +96,37 @@ pub const SubscriptionCtx = struct {
         return result;
     }
 
+    /// Invoke callbacks for a channel with the given arguments
+    /// Handles both single callbacks and arrays of callbacks
+    pub fn invokeCallback(
+        this: *Self,
+        globalObject: *jsc.JSGlobalObject,
+        channelName: JSValue,
+        args: []const JSValue,
+    ) bun.JSError!void {
+        const callbacks = try this.getCallbacks(globalObject, channelName) orelse {
+            debug("No callbacks found for channel", .{});
+            return;
+        };
+
+        // If callbacks is an array, iterate and call each one
+        if (callbacks.isArray()) {
+            var iter = try callbacks.arrayIterator(globalObject);
+            while (try iter.next()) |callback| {
+                if (callback.isCallable()) {
+                    _ = callback.call(globalObject, .js_undefined, args) catch |e| {
+                        globalObject.reportActiveExceptionAsUnhandled(e);
+                    };
+                }
+            }
+        } else if (callbacks.isCallable()) {
+            // Single callback
+            _ = callbacks.call(globalObject, .js_undefined, args) catch |e| {
+                globalObject.reportActiveExceptionAsUnhandled(e);
+            };
+        }
+    }
+
     pub fn deinit(self: *Self) void {
         self._callback_map.unprotect();
     }
@@ -585,6 +616,49 @@ pub const JSValkeyClient = struct {
         const event_loop = this.client.vm.eventLoop();
         event_loop.enter();
         defer event_loop.exit();
+
+        this.client.onWritable();
+        this.updatePollRef();
+    }
+
+    pub fn onValkeyMessage(this: *JSValkeyClient, value: []protocol.RESPValue) void {
+        if (!this.isSubscriber()) {
+            debug("onMessage called but client is not in subscriber mode", .{});
+            return;
+        }
+
+        const globalObject = this.globalObject;
+        const event_loop = this.client.vm.eventLoop();
+        event_loop.enter();
+        defer event_loop.exit();
+
+        // The message push should be an array with [channel, message]
+        if (value.len < 2) {
+            debug("Message array has insufficient elements: {}", .{value.len});
+            return;
+        }
+
+        // Extract channel and message
+        const channel_value = value[0].toJS(globalObject) catch {
+            debug("Failed to convert channel to JS", .{});
+            return;
+        };
+        const message_value = value[1].toJS(globalObject) catch {
+            debug("Failed to convert message to JS", .{});
+            return;
+        };
+
+        // Get the subscription context
+        const subscription_ctx = &(this.subscription_ctx orelse {
+            debug("No subscription context found", .{});
+            return;
+        });
+
+        // Invoke callbacks for this channel with message and channel as arguments
+        subscription_ctx.invokeCallback(globalObject, channel_value, &[_]JSValue{ message_value, channel_value }) catch |e| {
+            debug("Failed to invoke callbacks: {}", .{e});
+            globalObject.reportActiveExceptionAsUnhandled(e);
+        };
 
         this.client.onWritable();
         this.updatePollRef();

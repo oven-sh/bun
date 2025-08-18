@@ -198,7 +198,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       expect(await redis.publish(testChannel, testMessage)).toBe(1);
       console.log("Published message to the channel.");
-      
+
       // Clean up subscription to avoid affecting other tests
       await redis.unsubscribe(testChannel);
     });
@@ -209,7 +209,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       await redis.subscribe(testChannel, () => {});
 
       expect(() => redis.set(testKey, testValue)).toThrow("Cannot use in subscriber mode");
-      
+
       // Clean up subscription
       await redis.unsubscribe(testChannel);
     });
@@ -243,30 +243,32 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       await sleep(flushTimeoutMs);
 
       expect(receiveCount).toBe(TEST_MESSAGE_COUNT);
+
+      await subscriber.unsubscribe(testChannel);
     });
 
-    //test("messages are received in order", async () => {
-    //  const TEST_MESSAGE_COUNT = 1024;
-    //  const redis = await connectedRedis();
+    test("messages are received in order", async () => {
+      const TEST_MESSAGE_COUNT = 1024;
+      const redis = await connectedRedis();
 
-    //  var receivedMessages: string[] = [];
-    //  await redis.subscribe(testChannel, (message) => {
-    //    receivedMessages.push(message);
-    //  });
+      var receivedMessages: string[] = [];
+      await redis.subscribe(testChannel, (message) => {
+        receivedMessages.push(message);
+      });
 
-    //  var sentMessages: string[] = [];
-    //  Array.from({ length: TEST_MESSAGE_COUNT }).forEach(async () => {
-    //    const message = randomUUIDv7();
-    //    expect(await redis.publish(testChannel, message)).toBe(1);
-    //    sentMessages.push(message);
-    //  });
+      var sentMessages: string[] = [];
+      Array.from({ length: TEST_MESSAGE_COUNT }).forEach(async () => {
+        const message = randomUUIDv7();
+        expect(await redis.publish(testChannel, message)).toBe(1);
+        sentMessages.push(message);
+      });
 
-    //  // Wait a little bit just to ensure all the messages are flushed.
-    //  await sleep(flushTimeoutMs);
+      // Wait a little bit just to ensure all the messages are flushed.
+      await sleep(flushTimeoutMs);
 
-    //  expect(receivedMessages.length).toBe(sentMessages.length);
-    //  expect(receivedMessages).toEqual(sentMessages);
-    //});
+      expect(receivedMessages.length).toBe(sentMessages.length);
+      expect(receivedMessages).toEqual(sentMessages);
+    });
 
     //test("subscribing to multiple channels receives messages", async () => {
     //  const TEST_MESSAGE_COUNT = 128;

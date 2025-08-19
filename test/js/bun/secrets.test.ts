@@ -195,11 +195,11 @@ test("Bun.secrets API", async () => {
 
   // Test 3: SET new credential
   {
-    await Bun.secrets.set({ 
-      service: testService, 
-      name: testUser, 
+    await Bun.secrets.set({
+      service: testService,
+      name: testUser,
       value: testPassword,
-      ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true })
+      ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true }),
     });
     const retrieved = await Bun.secrets.get({ service: testService, name: testUser });
     expect(retrieved).toBe(testPassword);
@@ -207,11 +207,11 @@ test("Bun.secrets API", async () => {
 
   // Test 4: SET existing credential (should replace)
   {
-    await Bun.secrets.set({ 
-      service: testService, 
-      name: testUser, 
+    await Bun.secrets.set({
+      service: testService,
+      name: testUser,
       value: updatedPassword,
-      ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true })
+      ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true }),
     });
     const retrieved = await Bun.secrets.get({ service: testService, name: testUser });
     expect(retrieved).toBe(updatedPassword);
@@ -238,11 +238,11 @@ test("Bun.secrets API", async () => {
 
   // Test 8: SET after DELETE should work
   {
-    await Bun.secrets.set({ 
-      service: testService, 
-      name: testUser, 
+    await Bun.secrets.set({
+      service: testService,
+      name: testUser,
       value: testPassword,
-      ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true })
+      ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true }),
     });
     const retrieved = await Bun.secrets.get({ service: testService, name: testUser });
     expect(retrieved).toBe(testPassword);
@@ -251,11 +251,11 @@ test("Bun.secrets API", async () => {
   // Test 9: Verify multiple operations work correctly
   {
     // Set, get, delete, verify cycle
-    await Bun.secrets.set({ 
-      service: testService, 
-      name: testUser, 
+    await Bun.secrets.set({
+      service: testService,
+      name: testUser,
       value: testPassword,
-      ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true })
+      ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true }),
     });
     expect(await Bun.secrets.get({ service: testService, name: testUser })).toBe(testPassword);
 
@@ -266,29 +266,29 @@ test("Bun.secrets API", async () => {
   // Test 10: Empty string deletes credential
   {
     // Set a credential first
-    await Bun.secrets.set({ 
-      service: testService, 
-      name: testUser, 
+    await Bun.secrets.set({
+      service: testService,
+      name: testUser,
       value: testPassword,
-      ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true })
+      ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true }),
     });
     expect(await Bun.secrets.get({ service: testService, name: testUser })).toBe(testPassword);
-    
+
     // Empty string should delete it
-    await Bun.secrets.set({ 
-      service: testService, 
-      name: testUser, 
+    await Bun.secrets.set({
+      service: testService,
+      name: testUser,
       value: "",
-      ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true })
+      ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true }),
     });
     expect(await Bun.secrets.get({ service: testService, name: testUser })).toBeNull();
-    
+
     // Empty string on non-existent credential should not error
-    await Bun.secrets.set({ 
-      service: testService + "-empty", 
-      name: testUser, 
+    await Bun.secrets.set({
+      service: testService + "-empty",
+      name: testUser,
       value: "",
-      ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true })
+      ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true }),
     });
     expect(await Bun.secrets.get({ service: testService + "-empty", name: testUser })).toBeNull();
   }
@@ -370,31 +370,31 @@ test("Bun.secrets handles empty strings as delete", async () => {
   const testUser = "test-name-empty";
 
   // First, set a real credential
-  await Bun.secrets.set({ 
-    service: testService, 
-    name: testUser, 
+  await Bun.secrets.set({
+    service: testService,
+    name: testUser,
     value: "test-password",
-    ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true })
+    ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true }),
   });
   let result = await Bun.secrets.get({ service: testService, name: testUser });
   expect(result).toBe("test-password");
 
   // Test that empty string deletes the credential
-  await Bun.secrets.set({ 
-    service: testService, 
-    name: testUser, 
+  await Bun.secrets.set({
+    service: testService,
+    name: testUser,
     value: "",
-    ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true })
+    ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true }),
   });
   result = await Bun.secrets.get({ service: testService, name: testUser });
   expect(result).toBeNull(); // Should be null since credential was deleted
 
   // Test that setting empty string on non-existent credential doesn't error
-  await Bun.secrets.set({ 
-    service: testService + "-nonexistent", 
-    name: testUser, 
+  await Bun.secrets.set({
+    service: testService + "-nonexistent",
+    name: testUser,
     value: "",
-    ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true })
+    ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true }),
   });
   result = await Bun.secrets.get({ service: testService + "-nonexistent", name: testUser });
   expect(result).toBeNull();
@@ -405,11 +405,11 @@ test("Bun.secrets handles special characters", async () => {
   const testUser = "name@example.com";
   const testPassword = "p@$$w0rd!#$%^&*()_+-=[]{}|;':\",./<>?`~\n\t\r";
 
-  await Bun.secrets.set({ 
-    service: testService, 
-    name: testUser, 
+  await Bun.secrets.set({
+    service: testService,
+    name: testUser,
     value: testPassword,
-    ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true })
+    ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true }),
   });
   const result = await Bun.secrets.get({ service: testService, name: testUser });
   expect(result).toBe(testPassword);
@@ -423,11 +423,11 @@ test("Bun.secrets handles unicode", async () => {
   const testUser = "用户";
   const testPassword = "密码🔒🔑 emoji and 中文";
 
-  await Bun.secrets.set({ 
-    service: testService, 
-    name: testUser, 
+  await Bun.secrets.set({
+    service: testService,
+    name: testUser,
     value: testPassword,
-    ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true })
+    ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true }),
   });
   const result = await Bun.secrets.get({ service: testService, name: testUser });
   expect(result).toBe(testPassword);

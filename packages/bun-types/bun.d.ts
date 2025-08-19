@@ -2922,7 +2922,7 @@ declare module "bun" {
      * // Store credential with unrestricted access for CI environments
      * await Bun.secrets.set({
      *   service: "github-actions",
-     *   name: "deploy-token", 
+     *   name: "deploy-token",
      *   value: process.env.DEPLOY_TOKEN,
      *   allowUnrestrictedAccess: true // Allows access without user interaction on macOS
      * });
@@ -2958,10 +2958,10 @@ declare module "bun" {
 
       /**
        * Allow unrestricted access to stored credentials on macOS.
-       * 
+       *
        * When true, allows all applications to access this keychain item without user interaction.
        * This is useful for CI environments but reduces security.
-       * 
+       *
        * @default false
        * @platform macOS - Only affects macOS keychain behavior. Ignored on other platforms.
        */

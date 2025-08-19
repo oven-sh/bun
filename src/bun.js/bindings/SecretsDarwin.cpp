@@ -305,7 +305,7 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
         // Convert delete result to setPassword semantics
         // Delete errors (like NotFound) should not be propagated for empty string sets
         if (err.type == ErrorType::NotFound) {
-            err = Error{}; // Clear the error - deleting non-existent is not an error for set("")
+            err = Error {}; // Clear the error - deleting non-existent is not an error for set("")
         }
         return err;
     }
@@ -331,13 +331,13 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
     if (allowUnrestrictedAccess) {
         ScopedCFRef accessDescription(framework->CFStringCreateWithCString(
             framework->kCFAllocatorDefault, "Bun secrets access", kCFStringEncodingUTF8));
-        
+
         if (accessDescription) {
             OSStatus accessStatus = framework->SecAccessCreate(
-                (CFStringRef)accessDescription.get(), 
+                (CFStringRef)accessDescription.get(),
                 nullptr, // trustedList - nullptr means all applications
                 &accessRef);
-                
+
             if (accessStatus == errSecSuccess && accessRef) {
                 framework->CFDictionaryAddValue((CFMutableDictionaryRef)query.get(),
                     framework->kSecAttrAccess, accessRef);
@@ -347,7 +347,7 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
     }
 
     OSStatus status = framework->SecItemAdd((CFDictionaryRef)query.get(), NULL);
-    
+
     // Clean up accessRef if it was created
     if (accessRef) {
         framework->CFRelease(accessRef);

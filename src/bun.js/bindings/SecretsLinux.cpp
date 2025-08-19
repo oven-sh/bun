@@ -284,7 +284,7 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
         // Convert delete result to setPassword semantics
         // Delete errors (like NotFound) should not be propagated for empty string sets
         if (err.type == ErrorType::NotFound) {
-            err = Error{}; // Clear the error - deleting non-existent is not an error for set("")
+            err = Error {}; // Clear the error - deleting non-existent is not an error for set("")
         }
         return err;
     }

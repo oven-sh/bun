@@ -2154,6 +2154,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
                     JSC::JSValue result = constructResultObject<true>(lexicalGlobalObject, castedThis);
                     RETURN_IF_EXCEPTION(scope, {});
                     resultArray->push(lexicalGlobalObject, result);
+                    RETURN_IF_EXCEPTION(scope, {});
                     status = sqlite3_step(stmt);
                 } while (status == SQLITE_ROW);
             } else {
@@ -2161,6 +2162,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
                     JSC::JSValue result = constructResultObject<false>(lexicalGlobalObject, castedThis);
                     RETURN_IF_EXCEPTION(scope, {});
                     resultArray->push(lexicalGlobalObject, result);
+                    RETURN_IF_EXCEPTION(scope, {});
                     status = sqlite3_step(stmt);
                 } while (status == SQLITE_ROW);
             }
@@ -2299,6 +2301,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
                         RELEASE_AND_RETURN(scope, {});
                     }
                     resultArray->push(lexicalGlobalObject, row);
+                    RETURN_IF_EXCEPTION(scope, {});
                     status = sqlite3_step(stmt);
                 } while (status == SQLITE_ROW);
             }
@@ -2379,6 +2382,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
                         RELEASE_AND_RETURN(scope, {});
                     }
                     resultArray->push(lexicalGlobalObject, row);
+                    RETURN_IF_EXCEPTION(scope, {});
                     status = sqlite3_step(stmt);
                 } while (status == SQLITE_ROW);
             }

@@ -452,6 +452,7 @@ const Environment = bun.Environment;
 const ImportRecord = bun.ImportRecord;
 const MultiArrayList = bun.MultiArrayList;
 const Output = bun.Output;
+const Owned = bun.ptr.Owned;
 
 const js_ast = bun.ast;
 const Symbol = js_ast.Symbol;
@@ -469,4 +470,3 @@ const Ref = bun.bundle_v2.Ref;
 const ResolvedExports = bun.bundle_v2.ResolvedExports;
 const ServerComponentBoundary = bun.bundle_v2.ServerComponentBoundary;
 const TopLevelSymbolToParts = bun.bundle_v2.TopLevelSymbolToParts;
-const Owned = bun.ptr.Owned;

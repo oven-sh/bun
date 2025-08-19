@@ -469,5 +469,6 @@ const Allocator = std.mem.Allocator;
 const bun = @import("bun");
 const js_lexer = bun.js_lexer;
 const strings = bun.strings;
-const Owned = bun.ptr.Owned;
+
 const DynamicOwned = bun.ptr.DynamicOwned;
+const Owned = bun.ptr.Owned;

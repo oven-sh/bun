@@ -1891,6 +1891,7 @@ const assert_eql = bun.assert_eql;
 const bake = bun.bake;
 const DynamicBitSetUnmanaged = bun.bit_set.DynamicBitSetUnmanaged;
 const Log = bun.logger.Log;
+const Owned = bun.ptr.Owned;
 const VoidFieldTypes = bun.meta.VoidFieldTypes;
 
 const DevServer = bake.DevServer;
@@ -1919,4 +1920,3 @@ const std = @import("std");
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
 const Allocator = std.mem.Allocator;
-const Owned = bun.ptr.Owned;

@@ -102,6 +102,7 @@ export default [
 
       type: {
         getter: "getResponseType",
+        this: true,
       },
       headers: {
         getter: "getHeaders",
@@ -124,6 +125,8 @@ export default [
         getter: "getBodyUsed",
       },
     },
+    values: ["jsxElement"],
+    constructNeedsThis: true,
   }),
   define({
     name: "Blob",

@@ -562,11 +562,13 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, t
 
         // Special case for bake: allow `return new Response(<jsx> ... </jsx>, { ... }`
         // inside of a react component
-        if (globalThis.allowJSXInResponseConstructor() and try arguments[0].isJSXElement(globalThis)) {
-            // Store the JSX element for later retrieval
-            js.gc.jsxElement.set(this_value, globalThis, arguments[0]);
-            // Transform the Response object to look like a React element
-            JSValue.transformToReactElement(this_value, arguments[0], globalThis);
+        if (globalThis.allowJSXInResponseConstructor()) {
+            const arg = arguments[0];
+            // Check if it's a JSX element (object with $$typeof)
+            if (try arg.isJSXElement(globalThis)) {
+                js.gc.jsxElement.set(this_value, globalThis, arg);
+                JSValue.transformToReactElement(this_value, arg, globalThis);
+            }
         }
     }
     var init: Init = (brk: {

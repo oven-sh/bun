@@ -5901,40 +5901,16 @@ extern "C" bool JSC__JSValue__isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JS
 
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     
-    // If it's a function (React component), call it to get the element
-    if (value.isCallable()) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        
-        JSC::JSObject* function = value.getObject();
-        JSC::CallData callData = JSC::getCallData(function);
-        JSC::MarkedArgumentBuffer args;
-        
-        // Call the component function with no arguments
-        JSC::JSValue result = JSC::call(globalObject, function, callData, JSC::jsUndefined(), args);
-        RETURN_IF_EXCEPTION(scope, false);
-        
-        // Now check if the result is a JSX element
-        if (!result.isObject()) {
-            return false;
-        }
-        
-        JSC::JSObject* resultObject = result.getObject();
-        auto typeofProperty = JSC::Identifier::fromString(vm, "$$typeof"_s);
-        JSC::JSValue typeofValue = resultObject->get(globalObject, typeofProperty);
-        RETURN_IF_EXCEPTION(scope, false);
-        
-        if (typeofValue.isSymbol() && (typeofValue == react_legacy_element_symbol || typeofValue == react_element_symbol)) {
-            return true;
-        }
-    }
-    // If it's already an object, check directly for $$typeof
-    else if (value.isObject()) {
+    // TODO: primitive values (strings, numbers, booleans, null, undefined) are also valid
+    if (value.isObject()) {
         auto scope = DECLARE_THROW_SCOPE(vm);
         
         JSC::JSObject* object = value.getObject();
         auto typeofProperty = JSC::Identifier::fromString(vm, "$$typeof"_s);
         JSC::JSValue typeofValue = object->get(globalObject, typeofProperty);
         RETURN_IF_EXCEPTION(scope, false);
+
+        printf("IS SYMBOL: %s\n", typeofValue.isSymbol() ? "true" : "false");
         
         if (typeofValue.isSymbol() && (typeofValue == react_legacy_element_symbol || typeofValue == react_element_symbol)) {
             return true;
@@ -5962,42 +5938,25 @@ extern "C" void JSC__JSValue__transformToReactElement(JSC::EncodedJSValue respon
     // For now, use the transitional element symbol (React 19+)
     // TODO: check for legacy symbol as fallback
     auto react_element_symbol = JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.transitional.element"_s));
-    JSC::JSValue symbolToUse = react_element_symbol;
     
-    // Set $$typeof property
+    // Transform the Response object itself into a React element
+    // The component parameter is what will be stored in the 'type' field
+    
+    // Set $$typeof property to mark this as a React element
     auto typeofIdentifier = JSC::Identifier::fromString(vm, "$$typeof"_s);
-    responseObject->putDirect(vm, typeofIdentifier, symbolToUse, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+    responseObject->putDirect(vm, typeofIdentifier, react_element_symbol, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
     
-    // Set type property to the component if it's a function, otherwise keep the JSX element as-is
+    // Set type property - this is the component/element that was passed
     auto typeIdentifier = JSC::Identifier::fromString(vm, "type"_s);
-    if (component.isCallable()) {
-        responseObject->putDirect(vm, typeIdentifier, component, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
-    } else if (component.isObject()) {
-        // If it's already a JSX element, extract its type
-        JSC::JSObject* componentObject = component.getObject();
-        JSC::JSValue typeValue = componentObject->get(globalObject, typeIdentifier);
-        if (!scope.exception() && !typeValue.isUndefined()) {
-            responseObject->putDirect(vm, typeIdentifier, typeValue, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
-        }
-    }
+    responseObject->putDirect(vm, typeIdentifier, component, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
     
     // Set key property to null
     auto keyIdentifier = JSC::Identifier::fromString(vm, "key"_s);
     responseObject->putDirect(vm, keyIdentifier, JSC::jsNull(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
     
-    // Set props property to empty object (or extract from component if it's an element)
+    // Set props property to empty object
     auto propsIdentifier = JSC::Identifier::fromString(vm, "props"_s);
-    if (component.isObject()) {
-        JSC::JSObject* componentObject = component.getObject();
-        JSC::JSValue propsValue = componentObject->get(globalObject, propsIdentifier);
-        if (!scope.exception() && !propsValue.isUndefined()) {
-            responseObject->putDirect(vm, propsIdentifier, propsValue, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
-        } else {
-            responseObject->putDirect(vm, propsIdentifier, JSC::constructEmptyObject(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
-        }
-    } else {
-        responseObject->putDirect(vm, propsIdentifier, JSC::constructEmptyObject(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
-    }
+    responseObject->putDirect(vm, propsIdentifier, JSC::constructEmptyObject(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
     
     // Add _store object for dev mode
     auto storeIdentifier = JSC::Identifier::fromString(vm, "_store"_s);

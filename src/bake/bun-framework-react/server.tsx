@@ -64,6 +64,9 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
   // This is signaled by `client.tsx` via the `Accept` header.
   const skipSSR = request.headers.get("Accept")?.includes("text/x-component");
 
+  // Check if the page module has a streaming export, default to false
+  const streaming = meta.pageModule.streaming ?? false;
+
   // Do not render <link> tags if the request is skipping SSR.
   const page = getPage(meta, skipSSR ? [] : meta.styles);
 
@@ -107,11 +110,45 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
   }
 
   // The RSC payload is rendered into HTML
-  return new Response(renderToHtml(rscPayload, meta.modules, signal), {
-    headers: {
-      "Content-Type": "text/html; charset=utf8",
-    },
-  });
+  if (streaming) {
+    // Stream the response as before
+    return new Response(renderToHtml(rscPayload, meta.modules, signal), {
+      headers: {
+        "Content-Type": "text/html; charset=utf8",
+      },
+    });
+  } else {
+    // TODO: this seems shitty
+    // Buffer the entire response and return it all at once
+    const htmlStream = renderToHtml(rscPayload, meta.modules, signal);
+    const chunks: Uint8Array[] = [];
+    const reader = htmlStream.getReader();
+    
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    
+    // Combine all chunks into a single response
+    const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      result.set(chunk, offset);
+      offset += chunk.length;
+    }
+    
+    return new Response(result, {
+      headers: {
+        "Content-Type": "text/html; charset=utf8",
+      },
+    });
+  }
 }
 
 // When a production build is performed, pre-rendering is invoked here. If this

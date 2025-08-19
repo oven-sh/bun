@@ -37,6 +37,21 @@ jobs:
       - name: Checkout repository
         working-directory: /workspace/bun
         run: |
+          git config --global user.email "claude-bot@bun.sh" && \
+          git config --global user.name "Claude Bot" && \
+          git config --global url."git@github.com:".insteadOf "https://github.com/" && \
+          git config --global url."git@github.com:".insteadOf "http://github.com/" && \
+          git config --global --add safe.directory /workspace/bun && \
+          git config --global push.default current && \
+          git config --global pull.rebase true && \
+          git config --global init.defaultBranch main && \
+          git config --global core.editor "vim" && \
+          git config --global color.ui auto && \
+          git config --global fetch.prune true && \
+          git config --global diff.colorMoved zebra && \
+          git config --global merge.conflictStyle diff3 && \
+          git config --global rerere.enabled true && \
+          git config --global core.autocrlf input
           git fetch origin ${{ github.event.pull_request.head.sha }}
           git checkout ${{ github.event.pull_request.head.ref }}
           git reset --hard origin/${{ github.event.pull_request.head.ref }}

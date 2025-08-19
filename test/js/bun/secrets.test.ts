@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("Bun.secrets API", async () => {
   const testService = "bun-test-service-" + Date.now();

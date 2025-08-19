@@ -342,7 +342,7 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CS
     size_t length = strlen(raw_password);
     WTF::Vector<uint8_t> result;
     result.append(reinterpret_cast<const uint8_t*>(raw_password), length);
-    
+
     // Clear the password before freeing
     memset(raw_password, 0, length);
     framework->secret_password_free(raw_password);

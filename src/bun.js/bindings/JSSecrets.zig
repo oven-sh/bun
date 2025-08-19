@@ -1,8 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const jsc = bun.jsc;
-const Async = bun.Async;
-
 pub const SecretsJob = struct {
     vm: *jsc.VirtualMachine,
     task: jsc.WorkPoolTask,
@@ -83,3 +78,9 @@ pub fn fixDeadCodeElimination() void {
 comptime {
     _ = &fixDeadCodeElimination;
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Async = bun.Async;
+const jsc = bun.jsc;

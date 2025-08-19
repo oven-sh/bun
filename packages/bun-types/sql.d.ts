@@ -112,7 +112,7 @@ declare module "bun" {
        * - `:memory:`
        *
        * @default ":memory:"
-      */
+       */
       filename?: URL | ":memory:" | (string & {}) | undefined;
 
       /**

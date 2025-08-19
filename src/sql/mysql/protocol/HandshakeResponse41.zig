@@ -96,7 +96,7 @@ pub fn writeInternal(this: *HandshakeResponse41, comptime Context: type, writer:
 
 pub const write = writeWrap(HandshakeResponse41, writeInternal).write;
 
-const debug = bun.Output.scoped(.MySQLConnection, false);
+const debug = bun.Output.scoped(.MySQLConnection, .hidden);
 
 const Capabilities = @import("../Capabilities.zig");
 const bun = @import("bun");

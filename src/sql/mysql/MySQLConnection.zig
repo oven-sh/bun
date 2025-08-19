@@ -1852,7 +1852,7 @@ pub const toJS = js.toJS;
 const MAX_PIPELINE_SIZE = std.math.maxInt(u16); // about 64KB per connection
 
 const PreparedStatementsMap = std.HashMapUnmanaged(u64, *MySQLStatement, bun.IdentityContext(u64), 80);
-const debug = bun.Output.scoped(.MySQLConnection, false);
+const debug = bun.Output.scoped(.MySQLConnection, .hidden);
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 const Queue = std.fifo.LinearFifo(*MySQLQuery, .Dynamic);
 

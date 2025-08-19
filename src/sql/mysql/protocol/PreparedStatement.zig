@@ -142,7 +142,7 @@ pub const Reset = struct {
     pub const write = writeWrap(Reset, writeInternal).write;
 };
 
-const debug = bun.Output.scoped(.PreparedStatement, false);
+const debug = bun.Output.scoped(.PreparedStatement, .hidden);
 
 const bun = @import("bun");
 const std = @import("std");

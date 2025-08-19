@@ -533,7 +533,7 @@ pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 pub const toJS = js.toJS;
 
-const debug = bun.Output.scoped(.MySQLQuery, false);
+const debug = bun.Output.scoped(.MySQLQuery, .hidden);
 // TODO: move to shared IF POSSIBLE
 
 const ErrorPacket = @import("./protocol/ErrorPacket.zig");

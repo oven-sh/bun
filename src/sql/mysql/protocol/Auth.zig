@@ -193,7 +193,7 @@ pub const caching_sha2_password = struct {
         pub const write = writeWrap(PublicKeyRequest, writeInternal).write;
     };
 };
-const debug = bun.Output.scoped(.Auth, false);
+const debug = bun.Output.scoped(.Auth, .hidden);
 
 const Data = @import("../../shared/Data.zig").Data;
 

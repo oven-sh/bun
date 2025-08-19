@@ -161,7 +161,7 @@ pub const Param = struct {
     type: types.FieldType,
     flags: ColumnDefinition41.ColumnFlags,
 };
-const debug = bun.Output.scoped(.MySQLStatement, false);
+const debug = bun.Output.scoped(.MySQLStatement, .hidden);
 
 const CachedStructure = @import("../shared/CachedStructure.zig");
 const ColumnDefinition41 = @import("./protocol/ColumnDefinition41.zig");

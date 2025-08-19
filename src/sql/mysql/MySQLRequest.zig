@@ -24,7 +24,7 @@ pub fn prepareRequest(
     try packet.end();
 }
 
-const debug = bun.Output.scoped(.MySQLRequest, false);
+const debug = bun.Output.scoped(.MySQLRequest, .hidden);
 
 const bun = @import("bun");
 const CommandType = @import("./protocol/CommandType.zig").CommandType;

@@ -119,7 +119,7 @@ pub fn writeWrap(comptime Container: type, comptime writeFn: anytype) type {
     };
 }
 
-const debug = bun.Output.scoped(.NewWriter, false);
+const debug = bun.Output.scoped(.NewWriter, .hidden);
 
 const PacketHeader = @import("./PacketHeader.zig");
 const bun = @import("bun");

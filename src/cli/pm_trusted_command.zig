@@ -38,7 +38,9 @@ pub const UntrustedCommand = struct {
             // called alias because a dependency name is not always the package name
             const alias = dep.name.slice(buf);
 
-            if (!pm.lockfile.hasTrustedDependency(alias)) {
+            const is_trusted = pm.lockfile.hasTrustedDependency(alias, !pm.options.disable_default_trusted_dependencies);
+
+            if (!is_trusted) {
                 try untrusted_dep_ids.put(ctx.allocator, dep_id, {});
             }
         }
@@ -80,6 +82,7 @@ pub const UntrustedCommand = struct {
                         &node_modules_path,
                         alias,
                         resolution,
+                        !pm.options.disable_default_trusted_dependencies,
                     ) catch |err| {
                         if (err == error.ENOENT) continue;
                         return err;
@@ -187,7 +190,9 @@ pub const TrustCommand = struct {
 
             const alias = dep.name.slice(buf);
 
-            if (!pm.lockfile.hasTrustedDependency(alias)) {
+            const is_trusted = pm.lockfile.hasTrustedDependency(alias, !pm.options.disable_default_trusted_dependencies);
+
+            if (!is_trusted) {
                 try untrusted_dep_ids.put(ctx.allocator, dep_id, {});
             }
         }
@@ -246,6 +251,7 @@ pub const TrustCommand = struct {
                         &node_modules_path,
                         alias,
                         resolution,
+                        !pm.options.disable_default_trusted_dependencies,
                     ) catch |err| {
                         if (err == error.ENOENT) continue;
                         return err;
@@ -256,7 +262,9 @@ pub const TrustCommand = struct {
                             if (trust_all) break :brk false;
 
                             for (packages_to_trust.items) |package_name_from_cli| {
-                                if (strings.eqlLong(package_name_from_cli, alias, true) and !pm.lockfile.hasTrustedDependency(alias)) {
+                                const is_already_trusted = pm.lockfile.hasTrustedDependency(alias, !pm.options.disable_default_trusted_dependencies);
+
+                                if (strings.eqlLong(package_name_from_cli, alias, true) and !is_already_trusted) {
                                     break :brk false;
                                 }
                             }

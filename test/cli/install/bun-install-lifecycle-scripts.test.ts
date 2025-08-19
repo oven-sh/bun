@@ -1845,6 +1845,187 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
     });
 
+    describe("disableDefaultTrustedDependencies bunfig option", async () => {
+      test("install respects it", async () => {
+        await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false });
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+        // Append disableDefaultTrustedDependencies to the existing bunfig.toml
+        const existingBunfig = await file(join(packageDir, "bunfig.toml")).text();
+        await writeFile(join(packageDir, "bunfig.toml"), existingBunfig + "\ndisableDefaultTrustedDependencies = true");
+
+        await writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            version: "1.2.3",
+            dependencies: {
+              // electron is in the default trusted dependencies list
+              electron: "1.0.0",
+            },
+          }),
+        );
+
+        var { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: testEnv,
+        });
+
+        var err = await stderr.text();
+        var out = await stdout.text();
+        expect(err).toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
+          expect.stringContaining("bun install v1."),
+          "",
+          "+ electron@1.0.0",
+          "",
+          "1 package installed",
+          "",
+          "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+          "",
+        ]);
+        expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+
+        // electron scripts should NOT have run
+        expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
+
+        // Now add electron to trustedDependencies and it should run
+        await writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            version: "1.2.3",
+            dependencies: {
+              electron: "1.0.0",
+            },
+            trustedDependencies: ["electron"],
+          }),
+        );
+
+        ({ stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: testEnv,
+        }));
+
+        err = await stderr.text();
+        out = await stdout.text();
+        expect(err).toContain("Saved lockfile");
+        expect(await exited).toBe(0);
+
+        // Now electron scripts SHOULD have run
+        expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
+      });
+
+      test("bun pm untrusted respects it", async () => {
+        await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false });
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+        const existingBunfig = await file(join(packageDir, "bunfig.toml")).text();
+        await writeFile(join(packageDir, "bunfig.toml"), existingBunfig + "\ndisableDefaultTrustedDependencies = true");
+
+        await writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            version: "1.2.3",
+            dependencies: {
+              electron: "1.0.0",
+              "uses-what-bin": "1.0.0",
+            },
+          }),
+        );
+
+        var { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: testEnv,
+        });
+
+        await exited;
+
+        ({ stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "pm", "untrusted"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: testEnv,
+        }));
+
+        var out = await stdout.text();
+        expect(await exited).toBe(0);
+
+        // Both packages should be listed as untrusted
+        expect(out).toContain("electron");
+        expect(out).toContain("uses-what-bin");
+        expect(out).toContain("preinstall");
+        expect(out).toContain("install");
+      });
+
+      test("bun pm trust respects it", async () => {
+        await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false });
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+        const existingBunfig = await file(join(packageDir, "bunfig.toml")).text();
+        await writeFile(join(packageDir, "bunfig.toml"), existingBunfig + "\ndisableDefaultTrustedDependencies = true");
+
+        await writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            version: "1.2.3",
+            dependencies: {
+              electron: "1.0.0",
+            },
+          }),
+        );
+
+        var { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: testEnv,
+        });
+
+        await exited;
+
+        // electron script should not have run
+        expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
+
+        // Trust electron
+        ({ stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "pm", "trust", "electron"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: testEnv,
+        }));
+
+        var out = await stdout.text();
+        expect(await exited).toBe(0);
+
+        // electron script should now have run
+        expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
+      });
+    });
+
     describe("--trust", async () => {
       test("unhoisted untrusted scripts, none at root node_modules", async () => {
         const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;

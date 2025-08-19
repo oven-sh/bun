@@ -37,6 +37,9 @@ pub fn decodeBinaryValue(field_type: types.FieldType, raw: bool, bigint: bool, u
             }
             if (unsigned) {
                 const val = try reader.int(u64);
+                if (val <= std.math.maxInt(u32)) {
+                    return SQLDataCell{ .tag = .uint4, .value = .{ .uint4 = @intCast(val) } };
+                }
                 if (bigint) {
                     return SQLDataCell{ .tag = .uint8, .value = .{ .uint8 = val } };
                 }
@@ -45,6 +48,9 @@ pub fn decodeBinaryValue(field_type: types.FieldType, raw: bool, bigint: bool, u
                 return SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
             }
             const val = try reader.int(i64);
+            if (val >= std.math.minInt(i32) and val <= std.math.maxInt(i32)) {
+                return SQLDataCell{ .tag = .int4, .value = .{ .int4 = @intCast(val) } };
+            }
             if (bigint) {
                 return SQLDataCell{ .tag = .int8, .value = .{ .int8 = val } };
             }

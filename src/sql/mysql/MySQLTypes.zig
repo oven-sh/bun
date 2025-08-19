@@ -273,7 +273,7 @@ pub const FieldType = enum(u8) {
     MYSQL_TYPE_GEOMETRY = 0xff,
     _,
 
-    pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) bun.JSError!FieldType {
+    pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue, unsigned: *bool) bun.JSError!FieldType {
         if (value.isEmptyOrUndefinedOrNull()) {
             return .MYSQL_TYPE_NULL;
         }
@@ -293,12 +293,16 @@ pub const FieldType = enum(u8) {
             }
 
             if (tag == .HeapBigInt) {
-                return .MYSQL_TYPE_LONGLONG;
+                if (value.isBigIntInInt64Range(std.math.minInt(i64), std.math.maxInt(i64))) {
+                    return .MYSQL_TYPE_LONGLONG;
+                }
+                if (value.isBigIntInUInt64Range(0, std.math.maxInt(u64))) {
+                    unsigned.* = true;
+                    return .MYSQL_TYPE_LONGLONG;
+                }
+                return globalObject.ERR(.OUT_OF_RANGE, "The value is out of range. It must be >= {d} and <= {d}.", .{ std.math.minInt(i64), std.math.maxInt(u64) }).throw();
             }
 
-            if (tag.isArrayLike() and try value.getLength(globalObject) > 0) {
-                return FieldType.fromJS(globalObject, try value.getIndex(globalObject, 0));
-            }
             if (globalObject.hasException()) return error.JSError;
 
             // Ban these types:
@@ -324,6 +328,11 @@ pub const FieldType = enum(u8) {
         if (value.isAnyInt()) {
             const int = value.toInt64();
             if (int >= std.math.minInt(i32) and int <= std.math.maxInt(i32)) {
+                return .MYSQL_TYPE_LONG;
+            }
+
+            if (int >= 0 and int <= std.math.maxInt(u32)) {
+                unsigned.* = true;
                 return .MYSQL_TYPE_LONG;
             }
 
@@ -353,44 +362,8 @@ pub const FieldType = enum(u8) {
             .MYSQL_TYPE_DATE,
             .MYSQL_TYPE_DATETIME,
             .MYSQL_TYPE_TIMESTAMP,
-            // .MYSQL_TYPE_TINY_BLOB,
-            // .MYSQL_TYPE_MEDIUM_BLOB,
-            // .MYSQL_TYPE_LONG_BLOB,
-            // .MYSQL_TYPE_BLOB,
-            // .MYSQL_TYPE_STRING,
-            // .MYSQL_TYPE_VARCHAR,
-            // .MYSQL_TYPE_VAR_STRING,
-            // .MYSQL_TYPE_JSON,
             => true,
             else => false,
-        };
-    }
-
-    pub fn toJSType(this: FieldType) JSValue.JSType {
-        return switch (this) {
-            .MYSQL_TYPE_TINY,
-            .MYSQL_TYPE_SHORT,
-            .MYSQL_TYPE_LONG,
-            .MYSQL_TYPE_INT24,
-            .MYSQL_TYPE_YEAR,
-            => .NumberObject,
-
-            .MYSQL_TYPE_LONGLONG => .BigInt64Array,
-            .MYSQL_TYPE_FLOAT,
-            .MYSQL_TYPE_DOUBLE,
-            .MYSQL_TYPE_DECIMAL,
-            .MYSQL_TYPE_NEWDECIMAL,
-            => .Float64Array,
-
-            .MYSQL_TYPE_NULL => .Null,
-            .MYSQL_TYPE_JSON => .Object,
-            .MYSQL_TYPE_TIMESTAMP,
-            .MYSQL_TYPE_DATETIME,
-            .MYSQL_TYPE_DATE,
-            .MYSQL_TYPE_TIME,
-            => .JSDate,
-
-            else => .String,
         };
     }
 };
@@ -479,9 +452,9 @@ pub const Value = union(enum) {
             },
             .MYSQL_TYPE_LONGLONG => {
                 if (unsigned) {
-                    return Value{ .ulong = try globalObject.validateIntegerRange(value, u64, 0, .{ .field_name = "u64" }) };
+                    return Value{ .ulong = try globalObject.validateBigIntRange(value, u64, 0, .{ .field_name = "u64", .min = 0, .max = std.math.maxInt(u64) }) };
                 }
-                return Value{ .long = try globalObject.validateIntegerRange(value, i64, 0, .{ .min = std.math.minInt(i64), .max = std.math.maxInt(i64), .field_name = "i64" }) };
+                return Value{ .long = try globalObject.validateBigIntRange(value, i64, 0, .{ .min = std.math.minInt(i64), .max = std.math.maxInt(i64), .field_name = "i64" }) };
             },
 
             .MYSQL_TYPE_FLOAT => Value{ .float = @floatCast(try value.coerce(f64, globalObject)) },

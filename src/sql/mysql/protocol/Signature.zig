@@ -50,11 +50,11 @@ pub fn generate(globalObject: *jsc.JSGlobalObject, query: []const u8, array_valu
             try name.appendSlice(".null");
             continue;
         }
-
-        const tag = try types.FieldType.fromJS(globalObject, value);
+        var unsigned = true;
+        const tag = try types.FieldType.fromJS(globalObject, value, &unsigned);
         try name.appendSlice(@tagName(tag));
         // TODO: add flags if necessary right now the only relevant would be unsigned but is JS and is never unsigned
-        try fields.append(.{ .type = tag, .flags = .{} });
+        try fields.append(.{ .type = tag, .flags = .{ .UNSIGNED = unsigned } });
     }
 
     if (iter.anyFailed()) {

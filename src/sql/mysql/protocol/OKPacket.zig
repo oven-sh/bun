@@ -35,11 +35,6 @@ pub fn decodeInternal(this: *OKPacket, comptime Context: type, reader: NewReader
     if (reader.peek().len > 0) {
         this.info = try reader.readZ();
     }
-
-    // Session state changes if SESSION_TRACK_STATE_CHANGE is set
-    if (this.status_flags.SERVER_SESSION_STATE_CHANGED) {
-        this.session_state_changes = try reader.encodeLenString();
-    }
 }
 
 pub const decode = decoderWrap(OKPacket, decodeInternal).decode;

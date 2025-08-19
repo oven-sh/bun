@@ -79,18 +79,24 @@ pub const Row = struct {
                 }
             },
             .MYSQL_TYPE_LONGLONG => {
-                if (this.bigint) {
-                    if (column.flags.UNSIGNED) {
-                        const val: u64 = std.fmt.parseInt(u64, value.slice(), 10) catch 0;
+                if (column.flags.UNSIGNED) {
+                    const val: u64 = std.fmt.parseInt(u64, value.slice(), 10) catch 0;
+                    if (val <= std.math.maxInt(u32)) {
+                        cell.* = SQLDataCell{ .tag = .uint4, .value = .{ .uint4 = @intCast(val) } };
+                    } else if (this.bigint) {
                         cell.* = SQLDataCell{ .tag = .uint8, .value = .{ .uint8 = val } };
-                    } else {
-                        const val: i64 = std.fmt.parseInt(i64, value.slice(), 10) catch std.math.minInt(i64);
-                        cell.* = SQLDataCell{ .tag = .int8, .value = .{ .int8 = val } };
                     }
                 } else {
-                    const slice = value.slice();
-                    cell.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+                    const val: i64 = std.fmt.parseInt(i64, value.slice(), 10) catch 0;
+                    if (val >= std.math.minInt(i32) and val <= std.math.maxInt(i32)) {
+                        cell.* = SQLDataCell{ .tag = .int4, .value = .{ .int4 = @intCast(val) } };
+                    } else if (this.bigint) {
+                        cell.* = SQLDataCell{ .tag = .int8, .value = .{ .int8 = val } };
+                    }
                 }
+
+                const slice = value.slice();
+                cell.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
             },
             .MYSQL_TYPE_TINY_BLOB, .MYSQL_TYPE_MEDIUM_BLOB, .MYSQL_TYPE_LONG_BLOB, .MYSQL_TYPE_BLOB => {
                 cell.* = SQLDataCell.raw(value);

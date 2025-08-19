@@ -102,16 +102,14 @@ pub fn canPipeline(this: *@This()) bool {
         @branchHint(.unlikely);
         return false;
     }
-
     _ = this;
-    // TODO: understand better the rules for pipelining in MYSQL
-    return false;
     // return this.status == .connected and
     //     this.nonpipelinable_requests == 0 and // need to wait for non pipelinable requests to finish
     //     !this.flags.use_unnamed_prepared_statements and // unnamed statements are not pipelinable
     //     !this.flags.waiting_to_prepare and // cannot pipeline when waiting prepare
     //     !this.flags.has_backpressure and // dont make sense to buffer more if we have backpressure
     //     this.write_buffer.len() < MAX_PIPELINE_SIZE; // buffer is too big need to flush before pipeline more
+    return false;
 }
 pub const AuthState = union(enum) {
     pending: void,
@@ -542,7 +540,6 @@ fn advance(this: *@This()) void {
                         offset += 1;
                         continue;
                     };
-                    this.sequence_id = 0;
                     this.nonpipelinable_requests += 1;
                     this.flags.is_ready_for_query = false;
                     req.status = .running;
@@ -583,7 +580,6 @@ fn advance(this: *@This()) void {
                                     continue;
                                 };
 
-                                this.sequence_id = 0;
                                 req.flags.pipelined = true;
                                 this.pipelined_requests += 1;
                                 this.flags.is_ready_for_query = false;
@@ -622,7 +618,6 @@ fn advance(this: *@This()) void {
                                     debug("executeQuery failed: {s}", .{@errorName(err)});
                                     continue;
                                 };
-                                this.sequence_id = 0;
                                 this.flags.waiting_to_prepare = true;
                                 this.flags.is_ready_for_query = false;
                                 this.flushDataAndResetTimeout();
@@ -1355,10 +1350,11 @@ pub fn handleCommand(this: *MySQLConnection, comptime Context: type, reader: New
         debug("Received unexpected command response", .{});
         return error.UnexpectedPacket;
     };
+
     debug("handleCommand", .{});
     if (request.flags.simple) {
         // Regular query response
-        return try this.handleResultSet(Context, reader);
+        return try this.handleResultSet(Context, reader, header_length);
     }
 
     // Handle based on request type
@@ -1373,7 +1369,7 @@ pub fn handleCommand(this: *MySQLConnection, comptime Context: type, reader: New
             },
             .prepared => {
                 // We're waiting for execute response
-                try this.handleResultSet(Context, reader);
+                try this.handleResultSet(Context, reader, header_length);
             },
             .failed => {
                 // Statement failed, clean up
@@ -1551,6 +1547,17 @@ pub fn bufferedReader(this: *MySQLConnection) NewReader(Reader) {
     };
 }
 
+fn checkIfPreparedStatementIsDone(this: *MySQLConnection, statement: *MySQLStatement) void {
+    if (statement.columns_received == statement.columns.len and statement.params_received == statement.params.len) {
+        statement.status = .prepared;
+        this.flags.waiting_to_prepare = false;
+        this.flags.is_ready_for_query = true;
+        statement.reset();
+        this.advance();
+        this.registerAutoFlusher();
+    }
+}
+
 pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context), header_length: u24) !void {
     debug("handlePreparedStatement", .{});
     const first_byte = try reader.int(u8);
@@ -1579,19 +1586,12 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
             try statement.columns[statement.columns_received].decode(reader);
             statement.columns_received += 1;
         }
-        if (statement.columns_received == statement.columns.len and statement.params_received == statement.params.len) {
-            statement.status = .prepared;
-            this.flags.waiting_to_prepare = false;
-            this.flags.is_ready_for_query = true;
-            statement.reset();
-            this.advance();
-            this.registerAutoFlusher();
-        }
+        this.checkIfPreparedStatementIsDone(statement);
         return;
     }
 
-    switch (first_byte) {
-        @intFromEnum(PacketType.OK) => {
+    switch (PacketType.fromInt(first_byte, header_length)) {
+        .OK => {
             var ok = StmtPrepareOKPacket{
                 .packet_length = header_length,
             };
@@ -1612,9 +1612,11 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
                 statement.columns = try bun.default_allocator.alloc(ColumnDefinition41, ok.num_columns);
                 statement.columns_received = 0;
             }
+
+            this.checkIfPreparedStatementIsDone(statement);
         },
 
-        @intFromEnum(PacketType.ERROR) => {
+        .ERROR => {
             var err = ErrorPacket{};
             try err.decode(reader);
             defer err.deinit();
@@ -1631,7 +1633,19 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
     }
 }
 
-pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context)) !void {
+fn handleResultSetOK(this: *MySQLConnection, request: *MySQLQuery, statement: *MySQLStatement, status_flags: StatusFlags) void {
+    this.status_flags = status_flags;
+    this.flags.is_ready_for_query = !status_flags.SERVER_MORE_RESULTS_EXISTS;
+    defer {
+        this.advance();
+        this.registerAutoFlusher();
+    }
+
+    request.onResult(statement.result_count, this.globalObject, this.js_value, this.flags.is_ready_for_query);
+    statement.reset();
+}
+
+pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context), header_length: u24) !void {
     const first_byte = try reader.int(u8);
     debug("handleResultSet: {x:0>2}", .{first_byte});
 
@@ -1641,30 +1655,21 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
         debug("Unexpected result set packet", .{});
         return error.UnexpectedPacket;
     };
-
-    switch (first_byte) {
-        @intFromEnum(PacketType.EOF) => {
-            var eof = EOFPacket{};
-            try eof.decode(reader);
-
+    var ok = OKPacket{};
+    switch (PacketType.fromInt(first_byte, header_length)) {
+        .EOF => {
             const statement = request.statement orelse {
                 debug("Unexpected result set packet", .{});
                 return error.UnexpectedPacket;
             };
 
-            this.status_flags = eof.status_flags;
-            this.flags.is_ready_for_query = !this.status_flags.SERVER_MORE_RESULTS_EXISTS;
+            var eof = EOFPacket{};
+            try eof.decode(reader);
 
-            defer {
-                this.advance();
-                this.registerAutoFlusher();
-            }
-
-            request.onResult(statement.result_count, this.globalObject, this.js_value, this.flags.is_ready_for_query);
-            statement.reset();
+            this.handleResultSetOK(request, statement, ok.status_flags);
         },
 
-        @intFromEnum(PacketType.ERROR) => {
+        .ERROR => {
             var err = ErrorPacket{};
             try err.decode(reader);
             defer err.deinit();
@@ -1678,14 +1683,26 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
             request.onError(err, this.globalObject);
         },
 
-        else => {
+        else => |packet_type| {
             const statement = request.statement orelse {
                 debug("Unexpected result set packet", .{});
                 return error.UnexpectedPacket;
             };
             if (!statement.execution_flags.header_received) {
+                if (packet_type == .OK) {
+                    // if packet type is OK it means the query is done and no results are returned
+                    try ok.decode(reader);
+                    defer ok.deinit();
+                    this.handleResultSetOK(request, statement, ok.status_flags);
+                    return;
+                }
+
                 var header = ResultSetHeader{};
                 try header.decode(reader);
+                if (header.field_count == 0) {
+                    // Can't be 0
+                    return error.UnexpectedPacket;
+                }
 
                 if (statement.columns.len == 0) {
                     statement.columns = try bun.default_allocator.alloc(ColumnDefinition41, header.field_count);
@@ -1696,27 +1713,23 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 try statement.columns[statement.columns_received].decode(reader);
                 statement.columns_received += 1;
             } else {
-                // Read Row
-                if (first_byte == @intFromEnum(PacketType.OK)) {
-                    // this maybe OK packet or binary row packet depending
+                if (packet_type == .OK) {
                     if (request.flags.simple) {
-                        // if we know is not binary, then it's an OK packet
-                        var ok = OKPacket{};
+                        // if we are using the text protocol for sure this is a OK packet otherwise will be OK packet with 0xFE code
                         try ok.decode(reader);
                         defer ok.deinit();
-                        this.status_flags = ok.status_flags;
-                        this.flags.is_ready_for_query = !this.status_flags.SERVER_MORE_RESULTS_EXISTS;
 
-                        defer {
-                            this.advance();
-                            this.registerAutoFlusher();
-                        }
-
-                        request.onResult(statement.result_count, this.globalObject, this.js_value, this.flags.is_ready_for_query);
-                        statement.reset();
+                        this.handleResultSetOK(request, statement, ok.status_flags);
                         return;
                     }
+                } else if (first_byte == @intFromEnum(PacketType.OK)) {
+                    // this is actually a OK packet but with the flag EOF
+                    try ok.decode(reader);
+                    defer ok.deinit();
+                    this.handleResultSetOK(request, statement, ok.status_flags);
+                    return;
                 }
+
                 var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
                 const allocator = stack_fallback.get();
                 var row = ResultSet.Row{

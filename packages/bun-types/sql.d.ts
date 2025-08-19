@@ -116,14 +116,16 @@ declare module "bun" {
       filename?: URL | ":memory:" | (string & {}) | undefined;
 
       /**
-       * Callback function executed when a connection is established (SQLite)
+       * Callback executed when a connection attempt completes (SQLite)
+       * Receives an Error on failure, or null on success.
        */
-      onconnect?: ((client: SQL) => void) | undefined;
+      onconnect?: ((err: Error | null) => void) | undefined;
 
       /**
-       * Callback function executed when a connection is closed (SQLite)
+       * Callback executed when a connection is closed (SQLite)
+       * Receives the closing Error or null.
        */
-      onclose?: ((client: SQL) => void) | undefined;
+      onclose?: ((err: Error | null) => void) | undefined;
     }
 
     interface PostgresOptions {
@@ -273,14 +275,16 @@ declare module "bun" {
       // path?: string | undefined;
 
       /**
-       * Callback function executed when a connection is established
+       * Callback executed when a connection attempt completes
+       * Receives an Error on failure, or null on success.
        */
-      onconnect?: ((client: SQL) => void) | undefined;
+      onconnect?: ((err: Error | null) => void) | undefined;
 
       /**
-       * Callback function executed when a connection is closed
+       * Callback executed when a connection is closed
+       * Receives the closing Error or null.
        */
-      onclose?: ((client: SQL) => void) | undefined;
+      onclose?: ((err: Error | null) => void) | undefined;
 
       /**
        * Postgres client runtime configuration options

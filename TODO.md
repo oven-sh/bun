@@ -15,3 +15,7 @@ Follow-up:
 - [ ] console.log headers saying which test it is for
 - [ ] 'dot' test reporter like vitest?
 - [ ] `.concurrent.test.ts` to make all items concurrent. consider adding a concurrent directory for bunfig.toml?
+
+If this doesn't land:
+
+- [ ] Remove TestRunner.Callback, it doesn't need to exist

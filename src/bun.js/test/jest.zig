@@ -72,7 +72,6 @@ pub const TestRunner = struct {
     bail: u32 = 0,
 
     allocator: std.mem.Allocator,
-    callback: *Callback = undefined,
 
     drainer: jsc.AnyTask = undefined,
     queue: std.fifo.LinearFifo(*TestRunnerTask, .{ .Dynamic = {} }) = std.fifo.LinearFifo(*TestRunnerTask, .{ .Dynamic = {} }).init(default_allocator),
@@ -209,50 +208,62 @@ pub const TestRunner = struct {
         this.queue.head = 0;
 
         this.tests.shrinkRetainingCapacity(0);
-        this.callback.onUpdateCount(this.callback, 0, 0);
+        _ = string;
+        if (true) @panic("TODO: removed this.callback.onUpdateCount(this.callback, 0, 0)");
     }
-
-    pub const Callback = struct {
-        pub const OnUpdateCount = *const fn (this: *Callback, delta: u32, total: u32) void;
-        pub const OnTestStart = *const fn (this: *Callback, test_id: Test.ID) void;
-        pub const OnTestUpdate = *const fn (this: *Callback, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope) void;
-        onUpdateCount: OnUpdateCount,
-        onTestStart: OnTestStart,
-        onTestPass: OnTestUpdate,
-        onTestFail: OnTestUpdate,
-        onTestSkip: OnTestUpdate,
-        onTestFilteredOut: OnTestUpdate, // when a test is filtered out by a label
-        onTestTodo: OnTestUpdate,
-    };
 
     pub fn reportPass(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope, line_number: u32) void {
         this.tests.items(.status)[test_id] = .pass;
         this.tests.items(.line_number)[test_id] = line_number;
-        this.callback.onTestPass(this.callback, test_id, file, label, expectations, elapsed_ns, parent);
+        _ = file;
+        _ = label;
+        _ = parent;
+        _ = string;
+        _ = expectations;
+        _ = elapsed_ns;
+        if (true) @panic("TODO: removed onTestPass(this.callback, test_id, file, label, expectations, elapsed_ns, parent)");
     }
 
     pub fn reportFailure(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope, line_number: u32) void {
         this.tests.items(.status)[test_id] = .fail;
         this.tests.items(.line_number)[test_id] = line_number;
-        this.callback.onTestFail(this.callback, test_id, file, label, expectations, elapsed_ns, parent);
+        _ = file;
+        _ = label;
+        _ = parent;
+        _ = string;
+        _ = expectations;
+        _ = elapsed_ns;
+        if (true) @panic("TODO: removed onTestFail(this.callback, test_id, file, label, expectations, elapsed_ns, parent)");
     }
 
     pub fn reportSkip(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope, line_number: u32) void {
         this.tests.items(.status)[test_id] = .skip;
         this.tests.items(.line_number)[test_id] = line_number;
-        this.callback.onTestSkip(this.callback, test_id, file, label, 0, 0, parent);
+        _ = file;
+        _ = label;
+        _ = parent;
+        _ = string;
+        if (true) @panic("TODO: removed onTestSkip(this.callback, test_id, file, label, 0, 0, parent)");
     }
 
     pub fn reportTodo(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope, line_number: u32) void {
         this.tests.items(.status)[test_id] = .todo;
         this.tests.items(.line_number)[test_id] = line_number;
-        this.callback.onTestTodo(this.callback, test_id, file, label, 0, 0, parent);
+        _ = file;
+        _ = label;
+        _ = parent;
+        _ = string;
+        if (true) @panic("TODO: removed onTestTodo(this.callback, test_id, file, label, 0, 0, parent)");
     }
 
     pub fn reportFilteredOut(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope, line_number: u32) void {
         this.tests.items(.status)[test_id] = .skip;
         this.tests.items(.line_number)[test_id] = line_number;
-        this.callback.onTestFilteredOut(this.callback, test_id, file, label, 0, 0, parent);
+        _ = file;
+        _ = label;
+        _ = parent;
+        _ = string;
+        if (true) @panic("TODO: removed onTestFilteredOut(this.callback, test_id, file, label, 0, 0, parent)");
     }
 
     pub fn addTestCount(this: *TestRunner, count: u32) u32 {
@@ -261,7 +272,7 @@ pub const TestRunner = struct {
         this.tests.len += count;
         const statuses = this.tests.items(.status)[start..][0..count];
         @memset(statuses, Test.Status.pending);
-        this.callback.onUpdateCount(this.callback, count, count + start);
+        if (true) @panic("TODO: removed onUpdateCount(this.callback, count, count + start)");
         return start;
     }
 

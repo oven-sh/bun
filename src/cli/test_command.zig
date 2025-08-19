@@ -41,6 +41,7 @@ fn escapeXml(str: string, writer: anytype) !void {
 }
 fn fmtStatusTextLine(comptime status: @Type(.enum_literal), comptime emoji_or_color: bool) []const u8 {
     comptime {
+        if (true) @compileError("remove callsites");
         // emoji and color might be split into two different options in the future
         // some terminals support color, but not emoji.
         // For now, they are the same.
@@ -576,7 +577,6 @@ pub const JunitReporter = struct {
 
 pub const CommandLineReporter = struct {
     jest: TestRunner,
-    callback: TestRunner.Callback,
     last_dot: u32 = 0,
     prev_file: u64 = 0,
     repeat_count: u32 = 1,
@@ -1318,7 +1318,6 @@ pub const TestCommand = struct {
             .jest = TestRunner{
                 .allocator = ctx.allocator,
                 .log = ctx.log,
-                .callback = undefined,
                 .default_timeout_ms = ctx.test_options.default_timeout_ms,
                 .run_todo = ctx.test_options.run_todo,
                 .only = ctx.test_options.only,
@@ -1335,19 +1334,8 @@ pub const TestCommand = struct {
                 },
                 .describe2 = .init(ctx.allocator),
             },
-            .callback = undefined,
-        };
-        reporter.callback = TestRunner.Callback{
-            .onUpdateCount = CommandLineReporter.handleUpdateCount,
-            .onTestStart = CommandLineReporter.handleTestStart,
-            .onTestPass = CommandLineReporter.handleTestPass,
-            .onTestFail = CommandLineReporter.handleTestFail,
-            .onTestSkip = CommandLineReporter.handleTestSkip,
-            .onTestTodo = CommandLineReporter.handleTestTodo,
-            .onTestFilteredOut = CommandLineReporter.handleTestFilteredOut,
         };
         reporter.repeat_count = @max(ctx.test_options.repeat_count, 1);
-        reporter.jest.callback = &reporter.callback;
         jest.Jest.runner = &reporter.jest;
         reporter.jest.test_options = &ctx.test_options;
 

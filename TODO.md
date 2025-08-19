@@ -1,5 +1,6 @@
 Complete before merge:
 
+- [ ] make BunTest into a gc object so you can't deinit it while a .then() is still active
 - [ ] add back gc cleaning up an unused callback. need to identify when the callback will never be used again and swap it with null.
 - [ ] add tests & pass existing tests
 - [ ] add gc test (test that items referenced by a test callback are freed after the test is executed)
@@ -7,7 +8,7 @@ Complete before merge:
 - [ ] remove describe2.ts
 - [ ] remove describe2BeforeAll.ts
 - [ ] search for TODOs in the diff and fix them all
-- [ ] replace asserts with runtime throws or debug-only asserts
+- [ ] replace asserts with runtime throws or debug-only asserts (waitForPromise breaks many expectations)
 - [ ] decide what to do about strong
 - [ ] remove TODO.md
 

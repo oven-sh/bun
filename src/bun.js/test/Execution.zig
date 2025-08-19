@@ -18,6 +18,7 @@ pub const ExecutionSequence = struct {
     result: Result = .pending,
     executing: bool = false,
     started_at: bun.timespec = bun.timespec.epoch,
+    expect_call_count: u32 = 0, // TODO: impl incrementExpectCallCounter to increment this number and others
 };
 pub const Result = enum {
     pending,
@@ -126,7 +127,7 @@ fn onSequenceStarted(this: *Execution, sequence_index: usize) void {
 fn onSequenceCompleted(this: *Execution, sequence_index: usize) void {
     const sequence = &this._sequences.items[sequence_index];
     const elapsed_ns = sequence.started_at.sinceNow();
-    CommandLineReporter.CommandLineReporter.handleTestPass(this.buntest(), sequence, elapsed_ns, sequence.result);
+    test_command.CommandLineReporter.handleTestPass(this.bunTest(), sequence, sequence.test_entry orelse return, elapsed_ns);
 }
 pub fn resetGroup(this: *Execution, group_index: usize) void {
     groupLog.begin(@src());
@@ -327,7 +328,7 @@ const ExecutionEntry = describe2.ExecutionEntry;
 const TestScheduleEntry = describe2.TestScheduleEntry;
 const groupLog = describe2.group;
 
-const CommandLineReporter = @import("../../cli/test_command.zig");
+const test_command = @import("../../cli/test_command.zig");
 
 const bun = @import("bun");
 const jsc = bun.jsc;

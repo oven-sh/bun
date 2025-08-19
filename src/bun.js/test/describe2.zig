@@ -245,6 +245,13 @@ pub const BunTest = struct {
         return bun.create(this.gpa, RefData, .{ .buntest = this, .data = data });
     }
 
+    pub fn getFile(_: *BunTest) []const u8 {
+        return "/TODO/"; // TODO: store the file name (each file has its own BunTest instance)
+    }
+    pub fn getReporter(_: *BunTest) ?test_command.FileReporter {
+        return null; // TODO: get the reporter
+    }
+
     export const Bun__TestScope__Describe2__bunTestThen = jsc.toJSHostFn(bunTestThen);
     export const Bun__TestScope__Describe2__bunTestCatch = jsc.toJSHostFn(bunTestCatch);
     fn bunTestThenOrCatch(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, is_catch: bool) bun.JSError!jsc.JSValue {
@@ -483,6 +490,9 @@ pub const ExecutionEntry = struct {
         this.name.deinit();
         buntest.gpa.destroy(this);
     }
+    pub fn getName(_: *ExecutionEntry) ?[]const u8 {
+        return null; // TODO: store the name as a string rather than a Strong.Optional
+    }
 };
 pub const TestScheduleEntry = union(enum) {
     describe: *DescribeScope,
@@ -554,6 +564,7 @@ pub const group = struct {
 };
 
 const std = @import("std");
+const test_command = @import("../../cli/test_command.zig");
 
 const bun = @import("bun");
 const jsc = bun.jsc;

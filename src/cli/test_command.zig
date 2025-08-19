@@ -63,7 +63,7 @@ fn fmtStatusTextLine(comptime status: @Type(.enum_literal), comptime emoji_or_co
     }
 }
 
-pub fn writeTestStatusLine(comptime status: @Type(.enum_literal), writer: anytype) void {
+pub fn writeTestStatusLine(comptime status: @Type(.enum_literal), writer: *bun.Output.Source.BufferedStream.Writer) void {
     // When using AI agents, only print failures
     if (Output.isAIAgent() and status != .fail) {
         return;
@@ -604,19 +604,19 @@ pub const CommandLineReporter = struct {
     pub fn handleTestStart(_: *TestRunner.Callback, _: Test.ID) void {}
 
     fn printTestLine(
-        status: TestRunner.Test.Status,
-        label: string,
+        comptime status: TestRunner.Test.Status,
+        buntest: *describe2.BunTest,
+        sequence: *describe2.Execution.ExecutionSequence,
+        test_entry: *describe2.ExecutionEntry,
         elapsed_ns: u64,
-        parent: ?*jest.DescribeScope,
-        assertions: u32,
-        comptime skip: bool,
-        writer: anytype,
-        file: string,
-        file_reporter: ?FileReporter,
-        line_number: u32,
+        writer: *bun.Output.Source.BufferedStream.Writer,
     ) void {
-        var scopes_stack = std.BoundedArray(*jest.DescribeScope, 64).init(0) catch unreachable;
-        var parent_ = parent;
+        var scopes_stack = std.BoundedArray(*describe2.DescribeScope, 64).init(0) catch unreachable;
+        var parent_: ?*describe2.DescribeScope = test_entry.parent;
+        const assertions = sequence.expect_call_count;
+        const line_number = 0; // TODO: get the line number
+
+        const file = buntest.getFile();
 
         while (parent_) |scope| {
             scopes_stack.append(scope) catch break;
@@ -624,11 +624,11 @@ pub const CommandLineReporter = struct {
         }
 
         const scopes: []*jest.DescribeScope = scopes_stack.slice();
-        const display_label = if (label.len > 0) label else "test";
+        const display_label = if (test_entry.getName()) |name| name else "test";
 
         // Quieter output when claude code is in use.
         if (!Output.isAIAgent() or status == .fail) {
-            const color_code = comptime if (skip) "<d>" else "";
+            const color_code = comptime if (status == .skip) "<d>" else "";
 
             if (Output.enable_ansi_colors_stderr) {
                 for (scopes, 0..) |_, i| {
@@ -653,7 +653,7 @@ pub const CommandLineReporter = struct {
                 }
             }
 
-            const line_color_code = if (comptime skip) "<r><d>" else "<r><b>";
+            const line_color_code = if (status == .skip) "<r><d>" else "<r><b>";
 
             if (Output.enable_ansi_colors_stderr)
                 writer.print(comptime Output.prettyFmt(line_color_code ++ " {s}<r>", true), .{display_label}) catch unreachable
@@ -672,7 +672,7 @@ pub const CommandLineReporter = struct {
             writer.writeAll("\n") catch unreachable;
         }
 
-        if (file_reporter) |reporter| {
+        if (@as(?FileReporter, null)) |reporter| {
             switch (reporter) {
                 .junit => |junit| {
                     const filename = brk: {
@@ -797,14 +797,14 @@ pub const CommandLineReporter = struct {
     }
 
     const describe2 = @import("../bun.js/test/describe2.zig");
-    pub fn handleTestPass(buntest: *describe2.BunTest, sequence: *describe2.Execution.ExecutionSequence, elapsed_ns: u64) void {
-        const writer = Output.errorWriterBuffered();
+    pub fn handleTestPass(buntest: *describe2.BunTest, sequence: *describe2.Execution.ExecutionSequence, test_entry: *describe2.ExecutionEntry, elapsed_ns: u64) void {
+        var writer = Output.errorWriterBuffered();
         defer Output.flush();
 
         writeTestStatusLine(.pass, &writer);
 
         // const line_number = this.jest.tests.items(.line_number)[id];
-        printTestLine(.pass, buntest, sequence, elapsed_ns);
+        printTestLine(.pass, buntest, sequence, test_entry, elapsed_ns, &writer);
     }
 
     pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {

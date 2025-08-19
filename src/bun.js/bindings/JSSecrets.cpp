@@ -27,7 +27,7 @@ struct SecretsJobOptions {
     enum Operation {
         GET = 0,
         SET = 1,
-        DELETE_OP = 2  // Named DELETE_OP to avoid conflict with Windows DELETE macro
+        DELETE_OP = 2 // Named DELETE_OP to avoid conflict with Windows DELETE macro
     };
 
     Operation op;

@@ -252,7 +252,6 @@ pub const RouteBundle = @import("./DevServer/RouteBundle.zig");
 
 /// DevServer is stored on the heap, storing its allocator.
 pub fn init(options: Options) bun.JSOOM!*DevServer {
-    const unchecked_allocator = bun.default_allocator;
     bun.analytics.Features.dev_server +|= 1;
 
     var dump_dir = if (bun.FeatureFlags.bake_debugging_features)
@@ -270,7 +269,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
 
     const dev = bun.new(DevServer, .{
         // 'init' is a no-op in release
-        .allocation_scope = AllocationScope.init(unchecked_allocator),
+        .allocation_scope = AllocationScope.init(bun.default_allocator),
 
         .root = options.root,
         .vm = options.vm,
@@ -682,9 +681,14 @@ pub fn deinit(dev: *DevServer) void {
 }
 
 pub fn allocator(dev: *const DevServer) Allocator {
-    return @constCast(&dev.allocation_scope).allocator();
+    return dev.dev_allocator().get();
 }
 
+pub fn dev_allocator(dev: *const DevServer) DevAllocator {
+    return .init(dev.allocation_scope);
+}
+
+pub const DevAllocator = @import("./DevServer/DevAllocator.zig");
 pub const MemoryCost = @import("./DevServer/memory_cost.zig");
 pub const memoryCost = MemoryCost.memoryCost;
 pub const memoryCostDetailed = MemoryCost.memoryCostDetailed;
@@ -2989,8 +2993,8 @@ fn printMemoryLine(dev: *DevServer) void {
     if (!debug.isVisible()) return;
     Output.prettyErrorln("<d>DevServer tracked {}, measured: {} ({}), process: {}<r>", .{
         bun.fmt.size(dev.memoryCost(), .{}),
-        dev.allocation_scope.state.allocations.count(),
-        bun.fmt.size(dev.allocation_scope.state.total_memory_allocated, .{}),
+        dev.allocation_scope.numAllocations(),
+        bun.fmt.size(dev.allocation_scope.total(), .{}),
         bun.fmt.size(bun.sys.selfProcessMemoryUsage() orelse 0, .{}),
     });
 }
@@ -3282,7 +3286,7 @@ pub fn writeMemoryVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)
         .assets = @truncate(cost.assets),
         .other = @truncate(cost.other),
         .devserver_tracked = if (AllocationScope.enabled)
-            @truncate(dev.allocation_scope.state.total_memory_allocated)
+            @truncate(dev.allocation_scope.total())
         else
             0,
         .process_used = @truncate(bun.sys.selfProcessMemoryUsage() orelse 0),

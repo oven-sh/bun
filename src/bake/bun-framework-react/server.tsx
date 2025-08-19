@@ -3,6 +3,7 @@ import { renderToHtml, renderToStaticHtml } from "bun-framework-react/ssr.tsx" w
 import { serverManifest } from "bun:bake/server";
 import { PassThrough } from "node:stream";
 import { renderToPipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
+import type { AsyncLocalStorage } from "node:async_hooks";
 
 function assertReactComponent(Component: any) {
   if (typeof Component !== "function") {
@@ -53,8 +54,8 @@ function component(mod: any, params: Record<string, string> | null) {
 }
 
 // `server.tsx` exports a function to be used for handling user routes. It takes
-// in the Request object, the route's module, and extra route metadata.
-export async function render(request: Request, meta: Bake.RouteMetadata): Promise<Response> {
+// in the Request object, the route's module, extra route metadata, and the AsyncLocalStorage instance.
+export async function render(request: Request, meta: Bake.RouteMetadata, als?: AsyncLocalStorage<any>): Promise<Response> {
   // The framework generally has two rendering modes.
   // - Standard browser navigation
   // - Client-side navigation
@@ -106,6 +107,7 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
     return new Response(rscPayload as any, {
       status: 200,
       headers: { "Content-Type": "text/x-component" },
+      ...(als?.getStore() || {}),
     });
   }
 
@@ -116,6 +118,7 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
       headers: {
         "Content-Type": "text/html; charset=utf8",
       },
+      ...(als?.getStore() || {}),
     });
   } else {
     // TODO: this seems shitty
@@ -123,7 +126,7 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
     const htmlStream = renderToHtml(rscPayload, meta.modules, signal);
     const chunks: Uint8Array[] = [];
     const reader = htmlStream.getReader();
-    
+
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -133,7 +136,7 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
     } finally {
       reader.releaseLock();
     }
-    
+
     // Combine all chunks into a single response
     const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
     const result = new Uint8Array(totalLength);
@@ -142,11 +145,12 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
       result.set(chunk, offset);
       offset += chunk.length;
     }
-    
+
     return new Response(result, {
       headers: {
         "Content-Type": "text/html; charset=utf8",
       },
+      ...(als?.getStore() || {}),
     });
   }
 }

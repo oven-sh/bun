@@ -1,5 +1,9 @@
 const Response = @This();
 
+// C++ helper functions for AsyncLocalStorage integration
+extern fn Response__getAsyncLocalStorageStore(global: *JSGlobalObject, als: JSValue) JSValue;
+extern fn Response__mergeAsyncLocalStorageOptions(global: *JSGlobalObject, alsStore: JSValue, initOptions: JSValue) void;
+
 const ResponseMixin = BodyMixin(@This());
 pub const js = jsc.Codegen.JSResponse;
 // NOTE: toJS is overridden
@@ -525,7 +529,7 @@ pub fn constructError(
 }
 
 pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_value: jsc.JSValue) bun.JSError!*Response {
-    const arguments = callframe.argumentsAsArray(2);
+    var arguments = callframe.argumentsAsArray(2);
 
     if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
         if (arguments[0].as(Blob)) |blob| {
@@ -568,6 +572,20 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, t
             if (try arg.isJSXElement(globalThis)) {
                 js.gc.jsxElement.set(this_value, globalThis, arg);
                 JSValue.transformToReactElement(this_value, arg, globalThis);
+            }
+
+            // Get the AsyncLocalStorage instance from the VM
+            const vm = globalThis.bunVM();
+            if (arguments[1].isObject()) {
+                if (vm.getDevServerAsyncLocalStorage()) |als| {
+                    // Get the store from the AsyncLocalStorage instance
+                    const store = try bun.jsc.fromJSHostCall(globalThis, @src(), Response__getAsyncLocalStorageStore, .{ globalThis, als });
+                    if (store != .zero and store.isObject()) {
+                        // Merge properties from alsStore into initOptions (initOptions takes precedence)
+                        // This modifies arguments[1] in place
+                        try bun.jsc.fromJSHostCallGeneric(globalThis, @src(), Response__mergeAsyncLocalStorageOptions, .{ globalThis, store, arguments[1] });
+                    }
+                }
             }
         }
     }

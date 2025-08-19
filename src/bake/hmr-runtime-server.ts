@@ -8,6 +8,21 @@ if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
 }
 
+// Dynamic import of AsyncLocalStorage to work with bundling
+// The require is wrapped in eval to prevent bundler from trying to resolve it at bundle time
+const AsyncLocalStorage = eval('require("node:async_hooks").AsyncLocalStorage');
+
+// Create the AsyncLocalStorage instance for propagating response options
+const responseOptionsALS = new AsyncLocalStorage();
+
+// Store reference to the AsyncLocalStorage in the VM
+// This will be accessed from Zig code
+const setDevServerAsyncLocalStorage = $newZigFunction("bun.js/VirtualMachine.zig", "setDevServerAsyncLocalStorage", 2);
+const getDevServerAsyncLocalStorage = $newZigFunction("bun.js/VirtualMachine.zig", "getDevServerAsyncLocalStorage", 1);
+
+// Set the AsyncLocalStorage instance in the VM
+setDevServerAsyncLocalStorage(responseOptionsALS);
+
 interface Exports {
   handleRequest: (
     req: Request,
@@ -48,13 +63,18 @@ server_exports = {
     }
 
     const [pageModule, ...layouts] = await Promise.all(routeModules.map(loadExports));
-    const response = await serverRenderer(req, {
-      styles: styles,
-      modules: [clientEntryUrl],
-      layouts,
-      pageModule,
-      modulepreload: [],
-      params,
+    
+    // Run the renderer inside the AsyncLocalStorage context
+    // This allows Response constructors to access the stored options
+    const response = await responseOptionsALS.run({}, async () => {
+      return await serverRenderer(req, {
+        styles: styles,
+        modules: [clientEntryUrl],
+        layouts,
+        pageModule,
+        modulepreload: [],
+        params,
+      }, responseOptionsALS);
     });
 
     if (!(response instanceof Response)) {

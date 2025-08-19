@@ -1818,6 +1818,7 @@ pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 pub const toJS = js.toJS;
 
+const DataCell = @import("./DataCell.zig");
 const PostgresCachedStructure = @import("../shared/CachedStructure.zig");
 const PostgresRequest = @import("./PostgresRequest.zig");
 const PostgresSQLQuery = @import("./PostgresSQLQuery.zig");
@@ -1828,7 +1829,6 @@ const std = @import("std");
 const AuthenticationState = @import("./AuthenticationState.zig").AuthenticationState;
 const ConnectionFlags = @import("../shared/ConnectionFlags.zig").ConnectionFlags;
 const Data = @import("../shared/Data.zig").Data;
-const DataCell = @import("./DataCell.zig");
 const SSLMode = @import("./SSLMode.zig").SSLMode;
 const Status = @import("./Status.zig").Status;
 const TLSStatus = @import("./TLSStatus.zig").TLSStatus;

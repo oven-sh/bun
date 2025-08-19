@@ -160,12 +160,12 @@ pub fn decodeBinaryValue(field_type: types.FieldType, raw: bool, bigint: bool, u
     };
 }
 
-const std = @import("std");
 const bun = @import("bun");
-const NewReader = @import("./NewReader.zig").NewReader;
-const decodeLengthInt = @import("./EncodeInt.zig").decodeLengthInt;
+const std = @import("std");
 const types = @import("../MySQLTypes.zig");
+const NewReader = @import("./NewReader.zig").NewReader;
 const SQLDataCell = @import("../../shared/SQLDataCell.zig").SQLDataCell;
+
 const Value = @import("../MySQLTypes.zig").Value;
-const Time = Value.Time;
 const DateTime = Value.DateTime;
+const Time = Value.Time;

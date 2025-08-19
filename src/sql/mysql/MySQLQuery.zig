@@ -533,22 +533,23 @@ pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 pub const toJS = js.toJS;
 
-const std = @import("std");
-const bun = @import("bun");
-const MySQLStatement = @import("./MySQLStatement.zig");
-const MySQLConnection = @import("./MySQLConnection.zig");
-const Signature = @import("./protocol/Signature.zig");
-const Data = @import("../shared/Data.zig").Data;
-const Value = @import("./MySQLTypes.zig").Value;
 const debug = bun.Output.scoped(.MySQLQuery, false);
-const PreparedStatement = @import("./protocol/PreparedStatement.zig");
-const QueryBindingIterator = @import("../shared/QueryBindingIterator.zig").QueryBindingIterator;
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const ErrorPacket = @import("./protocol/ErrorPacket.zig");
-const SQLQueryResultMode = @import("../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
-const JSRef = jsc.JSRef;
 // TODO: move to shared IF POSSIBLE
-const CommandTag = @import("../postgres/CommandTag.zig").CommandTag;
+
+const ErrorPacket = @import("./protocol/ErrorPacket.zig");
+const MySQLConnection = @import("./MySQLConnection.zig");
 const MySQLRequest = @import("./MySQLRequest.zig");
-const ColumnDefinition41 = @import("./protocol/ColumnDefinition41.zig");
+const MySQLStatement = @import("./MySQLStatement.zig");
+const PreparedStatement = @import("./protocol/PreparedStatement.zig");
+const Signature = @import("./protocol/Signature.zig");
+const bun = @import("bun");
+const std = @import("std");
+const CommandTag = @import("../postgres/CommandTag.zig").CommandTag;
+const Data = @import("../shared/Data.zig").Data;
+const QueryBindingIterator = @import("../shared/QueryBindingIterator.zig").QueryBindingIterator;
+const SQLQueryResultMode = @import("../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
+const Value = @import("./MySQLTypes.zig").Value;
+
+const jsc = bun.jsc;
+const JSRef = jsc.JSRef;
+const JSValue = jsc.JSValue;

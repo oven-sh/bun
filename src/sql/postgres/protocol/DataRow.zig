@@ -24,8 +24,8 @@ pub fn decode(context: anytype, comptime ContextType: type, reader: NewReader(Co
 
 pub const null_int4 = 4294967295;
 
-const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
-
 const Data = @import("../../shared/Data.zig").Data;
+
+const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 
 const NewReader = @import("./NewReader.zig").NewReader;

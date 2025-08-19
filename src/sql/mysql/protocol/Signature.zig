@@ -68,11 +68,13 @@ pub fn generate(globalObject: *jsc.JSGlobalObject, query: []const u8, array_valu
     };
 }
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");
+const Param = @import("../MySQLStatement.zig").Param;
+const QueryBindingIterator = @import("../../shared/QueryBindingIterator.zig").QueryBindingIterator;
+
 const types = @import("../MySQLTypes.zig");
 const FieldType = types.FieldType;
+
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
-const QueryBindingIterator = @import("../../shared/QueryBindingIterator.zig").QueryBindingIterator;
-const Param = @import("../MySQLStatement.zig").Param;

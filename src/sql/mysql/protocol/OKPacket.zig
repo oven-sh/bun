@@ -39,9 +39,9 @@ pub fn decodeInternal(this: *OKPacket, comptime Context: type, reader: NewReader
 
 pub const decode = decoderWrap(OKPacket, decodeInternal).decode;
 
-const std = @import("std");
-const bun = @import("bun");
 const Data = @import("../../shared/Data.zig").Data;
+
+const StatusFlags = @import("../StatusFlags.zig").StatusFlags;
+
 const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
-const StatusFlags = @import("../StatusFlags.zig").StatusFlags;

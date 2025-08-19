@@ -1,5 +1,3 @@
-const protocol = @This();
-
 pub const CharacterSet = enum(u8) {
     big5_chinese_ci = 1,
     latin2_czech_cs = 2,
@@ -369,7 +367,6 @@ pub const FieldType = enum(u8) {
 };
 
 // Add this near the top of the file
-const BoundedArray = std.BoundedArray;
 pub const Value = union(enum) {
     null,
     bool: bool,
@@ -933,10 +930,13 @@ pub const int2 = u16;
 pub const int3 = u24;
 pub const int4 = u32;
 pub const int8 = u64;
-const Data = @import("../shared/Data.zig").Data;
-const bun = @import("bun");
+
 const std = @import("std");
+const Data = @import("../shared/Data.zig").Data;
+
+const bun = @import("bun");
 const String = bun.String;
+
 const JSC = bun.jsc;
 const JSValue = JSC.JSValue;
 const ZigString = JSC.ZigString;

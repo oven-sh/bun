@@ -142,14 +142,16 @@ pub const Reset = struct {
     pub const write = writeWrap(Reset, writeInternal).write;
 };
 
-const std = @import("std");
+const debug = bun.Output.scoped(.PreparedStatement, false);
+
 const bun = @import("bun");
+const std = @import("std");
 const CommandType = @import("./CommandType.zig").CommandType;
 const Data = @import("../../shared/Data.zig").Data;
-const NewWriter = @import("./NewWriter.zig").NewWriter;
-const NewReader = @import("./NewReader.zig").NewReader;
-const writeWrap = @import("./NewWriter.zig").writeWrap;
-const decoderWrap = @import("./NewReader.zig").decoderWrap;
-const FieldType = @import("../MySQLTypes.zig").FieldType;
 const Param = @import("../MySQLStatement.zig").Param;
-const debug = bun.Output.scoped(.PreparedStatement, false);
+
+const NewReader = @import("./NewReader.zig").NewReader;
+const decoderWrap = @import("./NewReader.zig").decoderWrap;
+
+const NewWriter = @import("./NewWriter.zig").NewWriter;
+const writeWrap = @import("./NewWriter.zig").writeWrap;

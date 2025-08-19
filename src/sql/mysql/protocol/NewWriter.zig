@@ -119,11 +119,13 @@ pub fn writeWrap(comptime Container: type, comptime writeFn: anytype) type {
     };
 }
 
-const std = @import("std");
+const debug = bun.Output.scoped(.NewWriter, false);
+
+const PacketHeader = @import("./PacketHeader.zig");
 const bun = @import("bun");
+const std = @import("std");
+const encodeLengthInt = @import("./EncodeInt.zig").encodeLengthInt;
+
 const types = @import("../MySQLTypes.zig");
 const MySQLInt32 = types.MySQLInt32;
 const MySQLInt64 = types.MySQLInt64;
-const PacketHeader = @import("./PacketHeader.zig");
-const debug = bun.Output.scoped(.NewWriter, false);
-const encodeLengthInt = @import("./EncodeInt.zig").encodeLengthInt;

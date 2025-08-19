@@ -24,8 +24,8 @@ pub fn prepareRequest(
     try packet.end();
 }
 
-const NewWriter = @import("./protocol/NewWriter.zig").NewWriter;
-const CommandType = @import("./protocol/CommandType.zig").CommandType;
-const ExecutePrepareStatement = @import("./protocol/PreparedStatement.zig").Execute;
-const bun = @import("bun");
 const debug = bun.Output.scoped(.MySQLRequest, false);
+
+const bun = @import("bun");
+const CommandType = @import("./protocol/CommandType.zig").CommandType;
+const NewWriter = @import("./protocol/NewWriter.zig").NewWriter;

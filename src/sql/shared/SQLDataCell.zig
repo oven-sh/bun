@@ -154,8 +154,8 @@ pub const SQLDataCell = extern struct {
     ) JSValue;
 };
 
-const std = @import("std");
 const bun = @import("bun");
+const Data = @import("./Data.zig").Data;
+
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
-const Data = @import("./Data.zig").Data;

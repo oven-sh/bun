@@ -18,8 +18,9 @@ pub fn read(data: []const u8) void {
     }
 }
 
+const debug = bun.Output.scoped(.SocketMonitor, false);
+
 const DebugSocketMonitorReader = @import("./DebugSocketMonitorReader.zig");
 const DebugSocketMonitorWriter = @import("./DebugSocketMonitorWriter.zig");
-const std = @import("std");
 const bun = @import("bun");
-const debug = bun.Output.scoped(.SocketMonitor, false);
+const std = @import("std");

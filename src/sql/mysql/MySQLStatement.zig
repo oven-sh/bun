@@ -161,15 +161,18 @@ pub const Param = struct {
     type: types.FieldType,
     flags: ColumnDefinition41.ColumnFlags,
 };
-const std = @import("std");
-const bun = @import("bun");
-const jsc = bun.jsc;
-const types = @import("./MySQLTypes.zig");
-const Signature = @import("./protocol/Signature.zig");
+const debug = bun.Output.scoped(.MySQLStatement, false);
+
+const CachedStructure = @import("../shared/CachedStructure.zig");
 const ColumnDefinition41 = @import("./protocol/ColumnDefinition41.zig");
 const ErrorPacket = @import("./protocol/ErrorPacket.zig");
-const JSValue = jsc.JSValue;
-const String = bun.String;
-const debug = bun.Output.scoped(.MySQLStatement, false);
-const CachedStructure = @import("../shared/CachedStructure.zig");
+const Signature = @import("./protocol/Signature.zig");
+const std = @import("std");
+const types = @import("./MySQLTypes.zig");
 const SQLDataCell = @import("../shared/SQLDataCell.zig").SQLDataCell;
+
+const bun = @import("bun");
+const String = bun.String;
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

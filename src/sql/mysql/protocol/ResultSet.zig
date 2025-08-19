@@ -1,4 +1,3 @@
-const ResultSet = @This();
 pub const Header = @import("./ResultSetHeader.zig");
 
 pub const Row = struct {
@@ -225,17 +224,18 @@ pub const Row = struct {
     pub const decode = decoderWrap(Row, decodeInternal).decodeAllocator;
 };
 
-const std = @import("std");
-const bun = @import("bun");
-const NewReader = @import("./NewReader.zig").NewReader;
-const decoderWrap = @import("./NewReader.zig").decoderWrap;
-const decodeLengthInt = @import("./EncodeInt.zig").decodeLengthInt;
+const CachedStructure = @import("../../shared/CachedStructure.zig");
 const ColumnDefinition41 = @import("./ColumnDefinition41.zig");
-const decodeBinaryValue = @import("./DecodeBinaryValue.zig").decodeBinaryValue;
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const Value = @import("../MySQLTypes.zig").Value;
+const bun = @import("bun");
+const std = @import("std");
+const Data = @import("../../shared/Data.zig").Data;
 const SQLDataCell = @import("../../shared/SQLDataCell.zig").SQLDataCell;
 const SQLQueryResultMode = @import("../../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
-const CachedStructure = @import("../../shared/CachedStructure.zig");
-const Data = @import("../../shared/Data.zig").Data;
+const decodeBinaryValue = @import("./DecodeBinaryValue.zig").decodeBinaryValue;
+const decodeLengthInt = @import("./EncodeInt.zig").decodeLengthInt;
+
+const NewReader = @import("./NewReader.zig").NewReader;
+const decoderWrap = @import("./NewReader.zig").decoderWrap;
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

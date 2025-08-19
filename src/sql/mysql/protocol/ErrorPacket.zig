@@ -54,10 +54,11 @@ pub fn toJS(this: ErrorPacket, globalObject: *JSC.JSGlobalObject) JSValue {
     return err;
 }
 
-const std = @import("std");
 const bun = @import("bun");
 const Data = @import("../../shared/Data.zig").Data;
+
 const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
+
 const JSC = bun.jsc;
 const JSValue = JSC.JSValue;

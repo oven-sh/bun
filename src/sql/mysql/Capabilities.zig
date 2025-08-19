@@ -34,38 +34,6 @@ CLIENT_SSL_VERIFY_SERVER_CERT: bool = false,
 CLIENT_REMEMBER_OPTIONS: bool = false,
 
 // Constants with correct shift values from MySQL protocol
-const _CLIENT_LONG_PASSWORD = 1; // 1 << 0
-const _CLIENT_FOUND_ROWS = 2; // 1 << 1
-const _CLIENT_LONG_FLAG = 4; // 1 << 2
-const _CLIENT_CONNECT_WITH_DB = 8; // 1 << 3
-const _CLIENT_NO_SCHEMA = 16; // 1 << 4
-const _CLIENT_COMPRESS = 32; // 1 << 5
-const _CLIENT_ODBC = 64; // 1 << 6
-const _CLIENT_LOCAL_FILES = 128; // 1 << 7
-const _CLIENT_IGNORE_SPACE = 256; // 1 << 8
-const _CLIENT_PROTOCOL_41 = 512; // 1 << 9
-const _CLIENT_INTERACTIVE = 1024; // 1 << 10
-const _CLIENT_SSL = 2048; // 1 << 11
-const _CLIENT_IGNORE_SIGPIPE = 4096; // 1 << 12
-const _CLIENT_TRANSACTIONS = 8192; // 1 << 13
-const _CLIENT_RESERVED = 16384; // 1 << 14
-const _CLIENT_SECURE_CONNECTION = 32768; // 1 << 15
-const _CLIENT_MULTI_STATEMENTS = 65536; // 1 << 16
-const _CLIENT_MULTI_RESULTS = 131072; // 1 << 17
-const _CLIENT_PS_MULTI_RESULTS = 262144; // 1 << 18
-const _CLIENT_PLUGIN_AUTH = 524288; // 1 << 19
-const _CLIENT_CONNECT_ATTRS = 1048576; // 1 << 20
-const _CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = 2097152; // 1 << 21
-const _CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS = 4194304; // 1 << 22
-const _CLIENT_SESSION_TRACK = 8388608; // 1 << 23
-const _CLIENT_DEPRECATE_EOF = 16777216; // 1 << 24
-const _CLIENT_OPTIONAL_RESULTSET_METADATA = 33554432; // 1 << 25
-const _CLIENT_ZSTD_COMPRESSION_ALGORITHM = 67108864; // 1 << 26
-const _CLIENT_QUERY_ATTRIBUTES = 134217728; // 1 << 27
-const _MULTI_FACTOR_AUTHENTICATION = 268435456; // 1 << 28
-const _CLIENT_CAPABILITY_EXTENSION = 536870912; // 1 << 29
-const _CLIENT_SSL_VERIFY_SERVER_CERT = 1073741824; // 1 << 30
-const _CLIENT_REMEMBER_OPTIONS = 2147483648; // 1 << 31
 
 pub fn reject(this: *Capabilities) void {
     this.CLIENT_ZSTD_COMPRESSION_ALGORITHM = false;
@@ -164,4 +132,5 @@ pub fn getDefaultCapabilities(ssl: bool, has_db_name: bool) Capabilities {
         .CLIENT_MULTI_RESULTS = true,
     };
 }
+
 const std = @import("std");

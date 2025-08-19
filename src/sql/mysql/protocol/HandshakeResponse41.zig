@@ -96,12 +96,14 @@ pub fn writeInternal(this: *HandshakeResponse41, comptime Context: type, writer:
 
 pub const write = writeWrap(HandshakeResponse41, writeInternal).write;
 
-const std = @import("std");
+const debug = bun.Output.scoped(.MySQLConnection, false);
+
+const Capabilities = @import("../Capabilities.zig");
 const bun = @import("bun");
+const std = @import("std");
+const CharacterSet = @import("./CharacterSet.zig").CharacterSet;
 const Data = @import("../../shared/Data.zig").Data;
+const encodeLengthInt = @import("./EncodeInt.zig").encodeLengthInt;
+
 const NewWriter = @import("./NewWriter.zig").NewWriter;
 const writeWrap = @import("./NewWriter.zig").writeWrap;
-const debug = bun.Output.scoped(.MySQLConnection, false);
-const Capabilities = @import("../Capabilities.zig");
-const CharacterSet = @import("./CharacterSet.zig").CharacterSet;
-const encodeLengthInt = @import("./EncodeInt.zig").encodeLengthInt;

@@ -1,5 +1,4 @@
 // Authentication methods
-const std = @import("std");
 const Auth = @This();
 
 pub const mysql_native_password = struct {
@@ -194,12 +193,16 @@ pub const caching_sha2_password = struct {
         pub const write = writeWrap(PublicKeyRequest, writeInternal).write;
     };
 };
-const bun = @import("bun");
-const jsc = bun.jsc;
+const debug = bun.Output.scoped(.Auth, false);
+
 const Data = @import("../../shared/Data.zig").Data;
+
 const NewReader = @import("./NewReader.zig").NewReader;
+const decoderWrap = @import("./NewReader.zig").decoderWrap;
+
 const NewWriter = @import("./NewWriter.zig").NewWriter;
 const writeWrap = @import("./NewWriter.zig").writeWrap;
-const decoderWrap = @import("./NewReader.zig").decoderWrap;
-const debug = bun.Output.scoped(.Auth, false);
+
+const bun = @import("bun");
 const BoringSSL = bun.BoringSSL;
+const jsc = bun.jsc;

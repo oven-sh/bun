@@ -15,8 +15,7 @@ pub fn decodeInternal(this: *EOFPacket, comptime Context: type, reader: NewReade
 
 pub const decode = decoderWrap(EOFPacket, decodeInternal).decode;
 
-const std = @import("std");
-const bun = @import("bun");
+const StatusFlags = @import("../StatusFlags.zig").StatusFlags;
+
 const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
-const StatusFlags = @import("../StatusFlags.zig").StatusFlags;

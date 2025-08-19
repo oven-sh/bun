@@ -72,11 +72,11 @@ pub fn decodeInternal(this: *HandshakeV10, comptime Context: type, reader: NewRe
 
 pub const decode = decoderWrap(HandshakeV10, decodeInternal).decode;
 
+const Capabilities = @import("../Capabilities.zig");
+const bun = @import("bun");
+const CharacterSet = @import("./CharacterSet.zig").CharacterSet;
 const Data = @import("../../shared/Data.zig").Data;
+const StatusFlags = @import("../StatusFlags.zig").StatusFlags;
+
 const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
-const Capabilities = @import("../Capabilities.zig");
-const CharacterSet = @import("./CharacterSet.zig").CharacterSet;
-const StatusFlags = @import("../StatusFlags.zig").StatusFlags;
-const bun = @import("bun");
-const debug = bun.Output.scoped(.MySQLConnection, false);

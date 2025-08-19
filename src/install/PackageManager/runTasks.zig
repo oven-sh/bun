@@ -615,7 +615,46 @@ pub fn runTasks(
                 manager.extracted_count += 1;
                 bun.analytics.Features.extracted_packages += 1;
 
-                if (comptime @TypeOf(callbacks.onExtract) != void) {
+                // Prioritize runtime callback if available
+                if (manager.onExtractCallback) |callback| {
+                    switch (callback) {
+                        .package_installer => |cb| {
+                            cb.ctx.fixCachedLockfilePackageSlices();
+                            cb.fn_ptr(
+                                cb.ctx,
+                                task.id,
+                                dependency_id,
+                                &task.data.extract,
+                                log_level,
+                            );
+                        },
+                        .store_installer => |cb| {
+                            cb.fn_ptr(
+                                cb.ctx,
+                                task.id,
+                            );
+                        },
+                        .default => |cb| {
+                            // For default callback, process the package first
+                            if (manager.processExtractedTarballPackage(&package_id, dependency_id, resolution, &task.data.extract, log_level)) |pkg| {
+                                _ = pkg;
+                                // Assign the resolution for the primary dependency
+                                if (dependency_id != invalid_package_id and package_id != invalid_package_id) {
+                                    manager.assignResolution(dependency_id, package_id);
+                                }
+                            }
+
+                            cb.fn_ptr(
+                                cb.ctx,
+                                task.id,
+                                dependency_id,
+                                &task.data.extract,
+                                log_level,
+                            );
+                        },
+                    }
+                } else if (comptime @TypeOf(callbacks.onExtract) != void) {
+                    // Fall back to compile-time callback
                     switch (Ctx) {
                         *PackageInstaller => {
                             extract_ctx.fixCachedLockfilePackageSlices();
@@ -635,62 +674,21 @@ pub fn runTasks(
                         },
                         else => @compileError("unexpected context type"),
                     }
-                } else if (manager.processExtractedTarballPackage(&package_id, dependency_id, resolution, &task.data.extract, log_level)) |pkg| handle_pkg: {
-                    // In the middle of an install, you could end up needing to downlaod the github tarball for a dependency
-                    // We need to make sure we resolve the dependencies first before calling the onExtract callback
-                    // TODO: move this into a separate function
-                    var any_root = false;
-                    var dependency_list_entry = manager.task_queue.getEntry(task.id) orelse break :handle_pkg;
-                    var dependency_list = dependency_list_entry.value_ptr.*;
-                    dependency_list_entry.value_ptr.* = .{};
-
-                    defer {
-                        dependency_list.deinit(manager.allocator);
-                        if (comptime @TypeOf(callbacks) != void and @TypeOf(callbacks.onResolve) != void) {
-                            if (any_root) {
-                                callbacks.onResolve(extract_ctx);
-                            }
+                } else {
+                    // No callback - do the default package processing
+                    if (manager.processExtractedTarballPackage(&package_id, dependency_id, resolution, &task.data.extract, log_level)) |pkg| {
+                        _ = pkg;
+                        // Assign the resolution for the primary dependency
+                        if (dependency_id != invalid_package_id and package_id != invalid_package_id) {
+                            manager.assignResolution(dependency_id, package_id);
                         }
                     }
-
-                    for (dependency_list.items) |dep| {
-                        switch (dep) {
-                            .dependency, .root_dependency => |id| {
-                                var version = &manager.lockfile.buffers.dependencies.items[id].version;
-                                switch (version.tag) {
-                                    .git => {
-                                        version.value.git.package_name = pkg.name;
-                                    },
-                                    .github => {
-                                        version.value.github.package_name = pkg.name;
-                                    },
-                                    .tarball => {
-                                        version.value.tarball.package_name = pkg.name;
-                                    },
-
-                                    // `else` is reachable if this package is from `overrides`. Version in `lockfile.buffer.dependencies`
-                                    // will still have the original.
-                                    else => {},
-                                }
-                                try manager.processDependencyListItem(dep, &any_root, install_peer);
-                            },
-                            else => {
-                                // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
-                                dependency_list_entry.value_ptr.append(manager.allocator, dep) catch unreachable;
-                            },
-                        }
-                    }
-                } else if (manager.task_queue.getEntry(Task.Id.forManifest(
-                    manager.lockfile.str(&manager.lockfile.packages.items(.name)[package_id]),
-                ))) |dependency_list_entry| {
-                    // Peer dependencies do not initiate any downloads of their own, thus need to be resolved here instead
-                    const dependency_list = dependency_list_entry.value_ptr.*;
-                    dependency_list_entry.value_ptr.* = .{};
-
-                    try manager.processDependencyList(dependency_list, void, {}, {}, install_peer);
                 }
 
-                manager.setPreinstallState(package_id, manager.lockfile, .done);
+                // Only set preinstall state if we have a valid package_id
+                if (package_id != invalid_package_id) {
+                    manager.setPreinstallState(package_id, manager.lockfile, .done);
+                }
 
                 if (log_level.showProgress()) {
                     if (!has_updated_this_run) {
@@ -758,15 +756,73 @@ pub fn runTasks(
 
                     if (manager.hasCreatedNetworkTask(checkout_id, dep.behavior.isRequired())) continue;
 
-                    manager.task_batch.push(ThreadPool.Batch.from(manager.enqueueGitCheckout(
+                    // Calculate patch hash if needed
+                    const patch_name_and_version_hash: ?u64 = if (manager.lockfile.patched_dependencies.entries.len > 0) brk: {
+                        // We need to format the version string with the resolved commit
+                        // The repo URL needs to be transformed to match what's in patchedDependencies
+                        // e.g., "git@github.com:user/repo.git" -> "git+ssh://git@github.com:user/repo.git"
+                        var resolution_buf: [8192]u8 = undefined;
+                        var stream = std.io.fixedBufferStream(&resolution_buf);
+                        var writer = stream.writer();
+
+                        // Write the git resolution format
+                        if (strings.hasPrefixComptime(repo, "git@")) {
+                            // Transform SCP-like URL to SSH URL format
+                            writer.writeAll("git+ssh://") catch unreachable;
+                            writer.writeAll(repo) catch unreachable;
+                        } else if (strings.hasPrefixComptime(repo, "ssh://")) {
+                            writer.writeAll("git+") catch unreachable;
+                            writer.writeAll(repo) catch unreachable;
+                        } else {
+                            writer.writeAll("git+") catch unreachable;
+                            writer.writeAll(repo) catch unreachable;
+                        }
+                        writer.writeByte('#') catch unreachable;
+                        writer.writeAll(resolved) catch unreachable;
+
+                        const package_version = stream.getWritten();
+
+                        // Calculate the hash for "name@version"
+                        var name_and_version_buf: [8192]u8 = undefined;
+                        const name_and_version = std.fmt.bufPrint(&name_and_version_buf, "{s}@{s}", .{
+                            dep_name,
+                            package_version,
+                        }) catch unreachable;
+
+                        const hash = String.Builder.stringHash(name_and_version);
+
+                        if (comptime Environment.isDebug) {
+                            Output.prettyErrorln("[git-patch] Looking for patch: {s} (hash={d})", .{ name_and_version, hash });
+                        }
+
+                        // Check if this dependency has a patch
+                        if (manager.lockfile.patched_dependencies.get(hash)) |_| {
+                            if (comptime Environment.isDebug) {
+                                Output.prettyErrorln("[git-patch] Found patch for git dependency!", .{});
+                            }
+                            break :brk hash;
+                        }
+
+                        // Also try checking all patched dependencies to see what we have
+                        if (comptime Environment.isDebug) {
+                            var iter = manager.lockfile.patched_dependencies.iterator();
+                            while (iter.next()) |entry| {
+                                Output.prettyErrorln("[git-patch] Available patch: hash={d}", .{entry.key_ptr.*});
+                            }
+                        }
+
+                        break :brk null;
+                    } else null;
+
+                    manager.enqueueGitCheckout(
                         checkout_id,
                         repo_fd,
                         dep_id,
                         dep_name,
                         clone.res,
                         resolved,
-                        null,
-                    )));
+                        patch_name_and_version_hash,
+                    );
                 } else {
                     // Resolving!
                     const dependency_list_entry = manager.task_queue.getEntry(task.id).?;
@@ -806,12 +862,59 @@ pub fn runTasks(
                     continue;
                 }
 
-                if (comptime @TypeOf(callbacks.onExtract) != void) {
+                // Prioritize runtime callback if available
+                if (manager.onExtractCallback) |callback| {
                     // We've populated the cache, package already exists in memory. Call the package installer callback
                     // and don't enqueue dependencies
+                    switch (callback) {
+                        .package_installer => |cb| {
+                            // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
+                            // keeping just in case for now
+                            cb.ctx.fixCachedLockfilePackageSlices();
+
+                            cb.fn_ptr(
+                                cb.ctx,
+                                task.id,
+                                git_checkout.dependency_id,
+                                &task.data.git_checkout,
+                                log_level,
+                            );
+                        },
+                        .store_installer => |cb| {
+                            cb.fn_ptr(
+                                cb.ctx,
+                                task.id,
+                            );
+                        },
+                        .default => |cb| {
+                            // For default callback, process the package first
+                            if (manager.processExtractedTarballPackage(
+                                &package_id,
+                                git_checkout.dependency_id,
+                                resolution,
+                                &task.data.git_checkout,
+                                log_level,
+                            )) |pkg| {
+                                _ = pkg;
+                                // Assign the resolution for the primary dependency
+                                if (git_checkout.dependency_id != invalid_package_id and package_id != invalid_package_id) {
+                                    manager.assignResolution(git_checkout.dependency_id, package_id);
+                                }
+                            }
+
+                            cb.fn_ptr(
+                                cb.ctx,
+                                task.id,
+                                git_checkout.dependency_id,
+                                &task.data.git_checkout,
+                                log_level,
+                            );
+                        },
+                    }
+                } else if (comptime @TypeOf(callbacks.onExtract) != void) {
+                    // Fall back to compile-time callback
                     switch (Ctx) {
                         *PackageInstaller => {
-
                             // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
                             // keeping just in case for now
                             extract_ctx.fixCachedLockfilePackageSlices();
@@ -1090,6 +1193,7 @@ const ThreadPool = bun.ThreadPool;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const strings = bun.strings;
+const String = bun.Semver.String;
 
 const Fs = bun.fs;
 const FileSystem = Fs.FileSystem;

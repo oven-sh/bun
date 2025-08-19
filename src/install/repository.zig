@@ -406,6 +406,16 @@ pub const Repository = extern struct {
             return null;
         }
 
+        // Handle shorthand formats like bitbucket:user/repo or gitlab:user/repo
+        if (strings.indexOfChar(url, ':')) |colon_index| {
+            const prefix = url[0..colon_index];
+            if (Hosts.get(prefix)) |domain_suffix| {
+                const path = url[colon_index + 1 ..];
+                const result = std.fmt.bufPrint(&ssh_path_buf, "git@{s}{s}:{s}", .{ prefix, domain_suffix, path }) catch return null;
+                return result;
+            }
+        }
+
         if (strings.hasPrefixComptime(url, "git@") or strings.hasPrefixComptime(url, "ssh://")) {
             return url;
         }
@@ -414,23 +424,21 @@ pub const Repository = extern struct {
             ssh_path_buf[0.."ssh://git@".len].* = "ssh://git@".*;
             var rest = ssh_path_buf["ssh://git@".len..];
 
-            const colon_index = strings.indexOfChar(url, ':');
+            const colon_index = strings.indexOfChar(url, ':') orelse return null;
 
-            if (colon_index) |colon| {
-                // make sure known hosts have `.com` or `.org`
-                if (Hosts.get(url[0..colon])) |tld| {
-                    bun.copy(u8, rest, url[0..colon]);
-                    bun.copy(u8, rest[colon..], tld);
-                    rest[colon + tld.len] = '/';
-                    bun.copy(u8, rest[colon + tld.len + 1 ..], url[colon + 1 ..]);
-                    const out = ssh_path_buf[0 .. url.len + "ssh://git@".len + tld.len];
-                    return out;
-                }
+            // make sure known hosts have `.com` or `.org`
+            if (Hosts.get(url[0..colon_index])) |tld| {
+                bun.copy(u8, rest, url[0..colon_index]);
+                bun.copy(u8, rest[colon_index..], tld);
+                rest[colon_index + tld.len] = '/';
+                bun.copy(u8, rest[colon_index + tld.len + 1 ..], url[colon_index + 1 ..]);
+                const out = ssh_path_buf[0 .. url.len + "ssh://git@".len + tld.len];
+                return out;
             }
 
             bun.copy(u8, rest, url);
-            if (colon_index) |colon| rest[colon] = '/';
-            const final = ssh_path_buf[0 .. url.len + "ssh://".len];
+            rest[colon_index] = '/';
+            const final = ssh_path_buf[0 .. url.len + "ssh://git@".len];
             return final;
         }
 
@@ -440,6 +448,16 @@ pub const Repository = extern struct {
     pub fn tryHTTPS(url: string) ?string {
         if (strings.hasPrefixComptime(url, "http")) {
             return url;
+        }
+
+        // Handle shorthand formats like bitbucket:user/repo or gitlab:user/repo
+        if (strings.indexOfChar(url, ':')) |colon_index| {
+            const prefix = url[0..colon_index];
+            if (Hosts.get(prefix)) |domain_suffix| {
+                const path = url[colon_index + 1 ..];
+                const result = std.fmt.bufPrint(&final_path_buf, "https://{s}{s}/{s}", .{ prefix, domain_suffix, path }) catch return null;
+                return result;
+            }
         }
 
         if (strings.hasPrefixComptime(url, "ssh://")) {
@@ -486,6 +504,7 @@ pub const Repository = extern struct {
         attempt: u8,
     ) !std.fs.Dir {
         bun.analytics.Features.git_dependencies += 1;
+        // Repository.download called
         const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{any}.git", .{
             bun.fmt.hexIntLower(task_id.get()),
         });

@@ -630,6 +630,10 @@ pub const Version = struct {
                                         if (isGitHubRepoPath(url["hub:".len..])) return .github;
                                     }
                                 },
+                                'l' => {
+                                    // gitlab:user/repo - when url = "lab:user/repo" after "git" prefix
+                                    if (strings.hasPrefixComptime(url, "lab:")) return .git;
+                                },
                                 else => {},
                             }
                         }
@@ -744,6 +748,10 @@ pub const Version = struct {
                     // TODO(dylan-conway): apply .patch files on packages. In the future this could
                     // return `Tag.git` or `Tag.npm`.
                     if (strings.hasPrefixComptime(dependency, "patch:")) return .npm;
+                },
+                'b' => {
+                    // bitbucket:user/repo
+                    if (strings.hasPrefixComptime(dependency, "bitbucket:")) return .git;
                 },
                 else => {},
             }
@@ -1012,6 +1020,7 @@ pub fn parseWithTag(
             if (strings.hasPrefixComptime(input, "git+")) {
                 input = input["git+".len..];
             }
+            // Processing git URL
             const hash_index = strings.lastIndexOfChar(input, '#');
 
             return .{

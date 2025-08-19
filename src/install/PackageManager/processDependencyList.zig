@@ -197,8 +197,7 @@ pub fn processExtractedTarballPackage(
 
             return package;
         },
-        else => if (data.json.?.buf.len > 0) {
-            const json = data.json.?;
+        else => if (data.json) |json| if (json.buf.len > 0) {
             const package_json_source = &logger.Source.initPathString(
                 json.path,
                 json.buf,

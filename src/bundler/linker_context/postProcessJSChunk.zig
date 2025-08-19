@@ -95,6 +95,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
                 worker.allocator,
                 arena.allocator(),
                 chunk.renamer,
+                chunk,
             );
         }
 
@@ -428,6 +429,7 @@ pub fn generateEntryPointTailJS(
     allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     r: renamer.Renamer,
+    chunk: *const Chunk,
 ) CompileResult {
     const flags: JSMeta.Flags = c.graph.meta.items(.flags)[source_index];
     var stmts = std.ArrayList(Stmt).init(temp_allocator);
@@ -656,20 +658,49 @@ pub fn generateEntryPointTailJS(
                                     },
                                     .alias = alias,
                                     .alias_loc = resolved_export.data.name_loc,
-                                }) catch unreachable;
+                                }) catch bun.outOfMemory();
                             }
                         }
 
-                        stmts.append(
-                            Stmt.alloc(
-                                S.ExportClause,
-                                .{
-                                    .items = items.items,
-                                    .is_single_line = false,
-                                },
-                                Logger.Loc.Empty,
-                            ),
-                        ) catch unreachable;
+                        // Filter out exports that are already handled by cross-chunk exports
+                        // and deduplicate to prevent duplicate exports in code splitting
+                        var seen_aliases = bun.StringHashMap(void).init(temp_allocator);
+                        defer seen_aliases.deinit();
+
+                        // First, mark aliases that are already exported in cross-chunk exports
+                        const cross_chunk_exports = &chunk.content.javascript.exports_to_other_chunks;
+                        var iterator = cross_chunk_exports.iterator();
+                        while (iterator.next()) |entry| {
+                            seen_aliases.put(entry.value_ptr.*, {}) catch bun.outOfMemory();
+                        }
+
+                        var unique_items = std.ArrayList(js_ast.ClauseItem).init(temp_allocator);
+                        defer unique_items.deinit();
+
+                        for (items.items) |item| {
+                            if (!seen_aliases.contains(item.alias)) {
+                                seen_aliases.put(item.alias, {}) catch unreachable;
+                                unique_items.append(item) catch unreachable;
+                            }
+                        }
+
+                        // Replace items with filtered and deduplicated ones
+                        items.clearAndFree();
+                        items.appendSlice(unique_items.items) catch unreachable;
+
+                        // Only generate export statement if we have items to export
+                        if (items.items.len > 0) {
+                            stmts.append(
+                                Stmt.alloc(
+                                    S.ExportClause,
+                                    .{
+                                        .items = items.items,
+                                        .is_single_line = false,
+                                    },
+                                    Logger.Loc.Empty,
+                                ),
+                            ) catch unreachable;
+                        }
 
                         if (flags.needs_synthetic_default_export and !had_default_export) {
                             var properties = G.Property.List.initCapacity(allocator, items.items.len) catch unreachable;

@@ -43,15 +43,13 @@ function commandToString(command: SQLCommand): string {
   }
 }
 
-// Case-insensitive string comparison without allocation
-function matchesIgnoreCase(str: string, start: number, end: number, target: string): boolean {
+function matchAsciiIgnoreCase(str: string, start: number, end: number, target: string): boolean {
   if (end - start !== target.length) return false;
   for (let i = 0; i < target.length; i++) {
     const c = str.charCodeAt(start + i);
     const t = target.charCodeAt(i);
-    // Check if they match (considering case)
+
     if (c !== t) {
-      // If not equal, check if they differ by case (A-Z is 65-90, a-z is 97-122)
       if (c >= 65 && c <= 90) {
         if (c + 32 !== t) return false;
       } else if (c >= 97 && c <= 122) {
@@ -61,6 +59,7 @@ function matchesIgnoreCase(str: string, start: number, end: number, target: stri
       }
     }
   }
+
   return true;
 }
 
@@ -88,53 +87,40 @@ function detectCommand(query: string): SQLCommand {
   }
 
   let command = SQLCommand.none;
-  let quoted = false;
+  let quotedDouble = false;
   let tokenStart = i;
 
   while (i < text_len) {
     const char = query[i];
-
-    if (char === '"') {
-      quoted = !quoted;
-      i++;
-      continue;
-    }
-
-    if (quoted) {
-      i++;
-      continue;
-    }
-
     const charCode = query.charCodeAt(i);
-    if (isTokenDelimiter(charCode)) {
+
+    // Handle quotes BEFORE checking delimiters, since quotes are also delimiters
+    // Handle single quotes - skip entire string literal
+    if (!quotedDouble && char === "'") {
+      // Process any pending token before the quote
       if (i > tokenStart) {
-        if (matchesIgnoreCase(query, tokenStart, i, "insert")) {
+        // We have a token to process before the quote
+        // Check what token it is
+        if (matchAsciiIgnoreCase(query, tokenStart, i, "insert")) {
           if (command === SQLCommand.none) {
             return SQLCommand.insert;
           }
           return command;
-        } else if (matchesIgnoreCase(query, tokenStart, i, "update")) {
+        } else if (matchAsciiIgnoreCase(query, tokenStart, i, "update")) {
           if (command === SQLCommand.none) {
             command = SQLCommand.update;
-            while (++i < text_len && isTokenDelimiter(query.charCodeAt(i))) {}
-            tokenStart = i;
-            continue;
+          } else {
+            return command;
           }
-          return command;
-        } else if (matchesIgnoreCase(query, tokenStart, i, "where")) {
+        } else if (matchAsciiIgnoreCase(query, tokenStart, i, "where")) {
           command = SQLCommand.where;
-          while (++i < text_len && isTokenDelimiter(query.charCodeAt(i))) {}
-          tokenStart = i;
-          continue;
-        } else if (matchesIgnoreCase(query, tokenStart, i, "set")) {
+        } else if (matchAsciiIgnoreCase(query, tokenStart, i, "set")) {
           if (command === SQLCommand.update) {
             command = SQLCommand.updateSet;
-            while (++i < text_len && isTokenDelimiter(query.charCodeAt(i))) {}
-            tokenStart = i;
-            continue;
+          } else {
+            return command;
           }
-          return command;
-        } else if (matchesIgnoreCase(query, tokenStart, i, "in")) {
+        } else if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
           if (command === SQLCommand.where) {
             return SQLCommand.whereIn;
           }
@@ -142,7 +128,85 @@ function detectCommand(query: string): SQLCommand {
         }
       }
 
-      while (++i < text_len && isTokenDelimiter(query.charCodeAt(i))) {}
+      // Now skip the entire string literal
+      i++;
+      while (i < text_len) {
+        if (query[i] === "'") {
+          // Check for escaped quote
+          if (i + 1 < text_len && query[i + 1] === "'") {
+            i += 2; // Skip escaped quote
+            continue;
+          }
+          i++;
+          break;
+        }
+        i++;
+      }
+      // After string, skip any whitespace and reset token start
+      while (i < text_len && isTokenDelimiter(query.charCodeAt(i))) {
+        i++;
+      }
+      tokenStart = i;
+      continue;
+    }
+
+    if (char === '"') {
+      quotedDouble = !quotedDouble;
+      i++;
+      continue;
+    }
+
+    if (quotedDouble) {
+      i++;
+      continue;
+    }
+
+    if (isTokenDelimiter(charCode)) {
+      if (i > tokenStart) {
+        if (matchAsciiIgnoreCase(query, tokenStart, i, "insert")) {
+          if (command === SQLCommand.none) {
+            return SQLCommand.insert;
+          }
+          return command;
+        } else if (matchAsciiIgnoreCase(query, tokenStart, i, "update")) {
+          if (command === SQLCommand.none) {
+            command = SQLCommand.update;
+            while (++i < text_len && isTokenDelimiter(query.charCodeAt(i))) {}
+            tokenStart = i;
+            continue;
+          }
+          return command;
+        } else if (matchAsciiIgnoreCase(query, tokenStart, i, "where")) {
+          command = SQLCommand.where;
+          while (++i < text_len && isTokenDelimiter(query.charCodeAt(i))) {}
+          tokenStart = i;
+          continue;
+        } else if (matchAsciiIgnoreCase(query, tokenStart, i, "set")) {
+          if (command === SQLCommand.update) {
+            command = SQLCommand.updateSet;
+            while (++i < text_len && isTokenDelimiter(query.charCodeAt(i))) {}
+            tokenStart = i;
+            continue;
+          }
+          return command;
+        } else if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
+          if (command === SQLCommand.where) {
+            return SQLCommand.whereIn;
+          }
+          return command;
+        }
+      }
+
+      // Skip delimiters but stop at quotes (they need special handling)
+      while (++i < text_len) {
+        const nextChar = query[i];
+        if (nextChar === "'" || nextChar === '"') {
+          break; // Stop at quotes, they'll be handled in next iteration
+        }
+        if (!isTokenDelimiter(query.charCodeAt(i))) {
+          break; // Stop at non-delimiter
+        }
+      }
       tokenStart = i;
       continue;
     }
@@ -150,26 +214,26 @@ function detectCommand(query: string): SQLCommand {
   }
 
   // Handle last token if we reached end of string
-  if (i >= text_len && i > tokenStart && !quoted) {
+  if (i >= text_len && i > tokenStart && !quotedDouble) {
     switch (command) {
       case SQLCommand.none: {
-        if (matchesIgnoreCase(query, tokenStart, i, "insert")) {
+        if (matchAsciiIgnoreCase(query, tokenStart, i, "insert")) {
           return SQLCommand.insert;
-        } else if (matchesIgnoreCase(query, tokenStart, i, "update")) {
+        } else if (matchAsciiIgnoreCase(query, tokenStart, i, "update")) {
           return SQLCommand.update;
-        } else if (matchesIgnoreCase(query, tokenStart, i, "where")) {
+        } else if (matchAsciiIgnoreCase(query, tokenStart, i, "where")) {
           return SQLCommand.where;
         }
         return SQLCommand.none;
       }
       case SQLCommand.update: {
-        if (matchesIgnoreCase(query, tokenStart, i, "set")) {
+        if (matchAsciiIgnoreCase(query, tokenStart, i, "set")) {
           return SQLCommand.updateSet;
         }
         return SQLCommand.update;
       }
       case SQLCommand.where: {
-        if (matchesIgnoreCase(query, tokenStart, i, "in")) {
+        if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
           return SQLCommand.whereIn;
         }
         return SQLCommand.where;
@@ -209,14 +273,70 @@ export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Databa
       const commandMatch = sql.trim().match(/^(\w+)/i);
       const command = commandMatch ? commandMatch[1].toUpperCase() : "";
 
+      // Helper function to check if RETURNING keyword exists outside of string literals
+      function hasReturningKeyword(query: string): boolean {
+        const len = query.length;
+        let i = 0;
+        let inSingle = false;
+        let inDouble = false;
+
+        while (i < len) {
+          const char = query[i];
+
+          // Handle single quotes
+          if (!inDouble && char === "'") {
+            inSingle = !inSingle;
+            i++;
+            // Skip escaped quotes
+            while (inSingle && i < len) {
+              if (query[i] === "'") {
+                if (i + 1 < len && query[i + 1] === "'") {
+                  i += 2; // Skip escaped quote
+                  continue;
+                }
+                inSingle = false;
+                i++;
+                break;
+              }
+              i++;
+            }
+            continue;
+          }
+
+          // Handle double quotes (for identifiers)
+          if (!inSingle && char === '"') {
+            inDouble = !inDouble;
+            i++;
+            continue;
+          }
+
+          // If not in quotes, check for RETURNING keyword
+          if (!inSingle && !inDouble) {
+            // Check if we have enough characters left for "RETURNING"
+            if (i + 9 <= len) {
+              // Check for RETURNING with word boundaries
+              if (
+                matchAsciiIgnoreCase(query, i, i + 9, "returning") &&
+                (i === 0 || isTokenDelimiter(query.charCodeAt(i - 1))) &&
+                (i + 9 === len || isTokenDelimiter(query.charCodeAt(i + 9)))
+              ) {
+                return true;
+              }
+            }
+          }
+          i++;
+        }
+        return false;
+      }
+
       // For SELECT queries, we need to use a prepared statement
       // For other queries, we can check if there are multiple statements and use db.run() if so
       if (
         command === "SELECT" ||
-        sql.trim().toUpperCase().includes("RETURNING") ||
         command === "PRAGMA" ||
         command === "WITH" ||
-        command === "EXPLAIN"
+        command === "EXPLAIN" ||
+        hasReturningKeyword(sql)
       ) {
         // SELECT queries must use prepared statements for results
         const stmt = db.prepare(sql);

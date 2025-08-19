@@ -28,6 +28,12 @@ const enum SQLCommand {
   none = -1,
 }
 
+interface SQLParsedInfo {
+  command: SQLCommand;
+  firstKeyword: string; // SELECT, INSERT, UPDATE, etc.
+  hasReturning: boolean;
+}
+
 function commandToString(command: SQLCommand): string {
   switch (command) {
     case SQLCommand.insert:
@@ -77,7 +83,7 @@ function isTokenDelimiter(code: number): boolean {
   return true;
 }
 
-function detectCommand(query: string): SQLCommand {
+function parseSQLQuery(query: string): SQLParsedInfo {
   const text_len = query.length;
 
   // Skip leading whitespace/delimiters
@@ -87,6 +93,8 @@ function detectCommand(query: string): SQLCommand {
   }
 
   let command = SQLCommand.none;
+  let firstKeyword = "";
+  let hasReturning = false;
   let quotedDouble = false;
   let tokenStart = i;
 
@@ -101,30 +109,46 @@ function detectCommand(query: string): SQLCommand {
       if (i > tokenStart) {
         // We have a token to process before the quote
         // Check what token it is
-        if (matchAsciiIgnoreCase(query, tokenStart, i, "insert")) {
-          if (command === SQLCommand.none) {
-            return SQLCommand.insert;
-          }
-          return command;
-        } else if (matchAsciiIgnoreCase(query, tokenStart, i, "update")) {
-          if (command === SQLCommand.none) {
+        // Track the first keyword for the command string
+        if (!firstKeyword) {
+          if (matchAsciiIgnoreCase(query, tokenStart, i, "select")) {
+            firstKeyword = "SELECT";
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "insert")) {
+            firstKeyword = "INSERT";
+            command = SQLCommand.insert;
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "update")) {
+            firstKeyword = "UPDATE";
             command = SQLCommand.update;
-          } else {
-            return command;
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "delete")) {
+            firstKeyword = "DELETE";
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "create")) {
+            firstKeyword = "CREATE";
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "drop")) {
+            firstKeyword = "DROP";
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "alter")) {
+            firstKeyword = "ALTER";
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "pragma")) {
+            firstKeyword = "PRAGMA";
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "explain")) {
+            firstKeyword = "EXPLAIN";
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "with")) {
+            firstKeyword = "WITH";
           }
-        } else if (matchAsciiIgnoreCase(query, tokenStart, i, "where")) {
-          command = SQLCommand.where;
-        } else if (matchAsciiIgnoreCase(query, tokenStart, i, "set")) {
-          if (command === SQLCommand.update) {
-            command = SQLCommand.updateSet;
-          } else {
-            return command;
+        } else {
+          // After we have the first keyword, look for other keywords
+          if (matchAsciiIgnoreCase(query, tokenStart, i, "where")) {
+            command = SQLCommand.where;
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "set")) {
+            if (command === SQLCommand.update) {
+              command = SQLCommand.updateSet;
+            }
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
+            if (command === SQLCommand.where) {
+              command = SQLCommand.whereIn;
+            }
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "returning")) {
+            hasReturning = true;
           }
-        } else if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
-          if (command === SQLCommand.where) {
-            return SQLCommand.whereIn;
-          }
-          return command;
         }
       }
 
@@ -163,37 +187,46 @@ function detectCommand(query: string): SQLCommand {
 
     if (isTokenDelimiter(charCode)) {
       if (i > tokenStart) {
-        if (matchAsciiIgnoreCase(query, tokenStart, i, "insert")) {
-          if (command === SQLCommand.none) {
-            return SQLCommand.insert;
-          }
-          return command;
-        } else if (matchAsciiIgnoreCase(query, tokenStart, i, "update")) {
-          if (command === SQLCommand.none) {
+        // Track the first keyword for the command string
+        if (!firstKeyword) {
+          if (matchAsciiIgnoreCase(query, tokenStart, i, "select")) {
+            firstKeyword = "SELECT";
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "insert")) {
+            firstKeyword = "INSERT";
+            command = SQLCommand.insert;
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "update")) {
+            firstKeyword = "UPDATE";
             command = SQLCommand.update;
-            while (++i < text_len && isTokenDelimiter(query.charCodeAt(i))) {}
-            tokenStart = i;
-            continue;
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "delete")) {
+            firstKeyword = "DELETE";
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "create")) {
+            firstKeyword = "CREATE";
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "drop")) {
+            firstKeyword = "DROP";
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "alter")) {
+            firstKeyword = "ALTER";
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "pragma")) {
+            firstKeyword = "PRAGMA";
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "explain")) {
+            firstKeyword = "EXPLAIN";
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "with")) {
+            firstKeyword = "WITH";
           }
-          return command;
-        } else if (matchAsciiIgnoreCase(query, tokenStart, i, "where")) {
-          command = SQLCommand.where;
-          while (++i < text_len && isTokenDelimiter(query.charCodeAt(i))) {}
-          tokenStart = i;
-          continue;
-        } else if (matchAsciiIgnoreCase(query, tokenStart, i, "set")) {
-          if (command === SQLCommand.update) {
-            command = SQLCommand.updateSet;
-            while (++i < text_len && isTokenDelimiter(query.charCodeAt(i))) {}
-            tokenStart = i;
-            continue;
+        } else {
+          // After we have the first keyword, look for other keywords
+          if (matchAsciiIgnoreCase(query, tokenStart, i, "where")) {
+            command = SQLCommand.where;
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "set")) {
+            if (command === SQLCommand.update) {
+              command = SQLCommand.updateSet;
+            }
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
+            if (command === SQLCommand.where) {
+              command = SQLCommand.whereIn;
+            }
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "returning")) {
+            hasReturning = true;
           }
-          return command;
-        } else if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
-          if (command === SQLCommand.where) {
-            return SQLCommand.whereIn;
-          }
-          return command;
         }
       }
 
@@ -215,33 +248,50 @@ function detectCommand(query: string): SQLCommand {
 
   // Handle last token if we reached end of string
   if (i >= text_len && i > tokenStart && !quotedDouble) {
-    switch (command) {
-      case SQLCommand.none: {
-        if (matchAsciiIgnoreCase(query, tokenStart, i, "insert")) {
-          return SQLCommand.insert;
-        } else if (matchAsciiIgnoreCase(query, tokenStart, i, "update")) {
-          return SQLCommand.update;
-        } else if (matchAsciiIgnoreCase(query, tokenStart, i, "where")) {
-          return SQLCommand.where;
-        }
-        return SQLCommand.none;
+    // Track the first keyword for the command string
+    if (!firstKeyword) {
+      if (matchAsciiIgnoreCase(query, tokenStart, i, "select")) {
+        firstKeyword = "SELECT";
+      } else if (matchAsciiIgnoreCase(query, tokenStart, i, "insert")) {
+        firstKeyword = "INSERT";
+        command = SQLCommand.insert;
+      } else if (matchAsciiIgnoreCase(query, tokenStart, i, "update")) {
+        firstKeyword = "UPDATE";
+        command = SQLCommand.update;
+      } else if (matchAsciiIgnoreCase(query, tokenStart, i, "delete")) {
+        firstKeyword = "DELETE";
+      } else if (matchAsciiIgnoreCase(query, tokenStart, i, "create")) {
+        firstKeyword = "CREATE";
+      } else if (matchAsciiIgnoreCase(query, tokenStart, i, "drop")) {
+        firstKeyword = "DROP";
+      } else if (matchAsciiIgnoreCase(query, tokenStart, i, "alter")) {
+        firstKeyword = "ALTER";
+      } else if (matchAsciiIgnoreCase(query, tokenStart, i, "pragma")) {
+        firstKeyword = "PRAGMA";
+      } else if (matchAsciiIgnoreCase(query, tokenStart, i, "explain")) {
+        firstKeyword = "EXPLAIN";
+      } else if (matchAsciiIgnoreCase(query, tokenStart, i, "with")) {
+        firstKeyword = "WITH";
       }
-      case SQLCommand.update: {
-        if (matchAsciiIgnoreCase(query, tokenStart, i, "set")) {
-          return SQLCommand.updateSet;
+    } else {
+      // After we have the first keyword, look for other keywords
+      if (matchAsciiIgnoreCase(query, tokenStart, i, "where")) {
+        command = SQLCommand.where;
+      } else if (matchAsciiIgnoreCase(query, tokenStart, i, "set")) {
+        if (command === SQLCommand.update) {
+          command = SQLCommand.updateSet;
         }
-        return SQLCommand.update;
-      }
-      case SQLCommand.where: {
-        if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
-          return SQLCommand.whereIn;
+      } else if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
+        if (command === SQLCommand.where) {
+          command = SQLCommand.whereIn;
         }
-        return SQLCommand.where;
+      } else if (matchAsciiIgnoreCase(query, tokenStart, i, "returning")) {
+        hasReturning = true;
       }
     }
   }
 
-  return command;
+  return { command, firstKeyword, hasReturning };
 }
 
 export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
@@ -249,10 +299,13 @@ export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Databa
 
   private readonly sql: string;
   private readonly values: unknown[];
+  private readonly parsedInfo: SQLParsedInfo;
 
   public constructor(sql: string, values: unknown[]) {
     this.sql = sql;
     this.values = values;
+    // Parse the SQL query once when creating the handle
+    this.parsedInfo = parseSQLQuery(sql);
   }
 
   setMode(mode: SQLQueryResultMode) {
@@ -267,67 +320,10 @@ export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Databa
       });
     }
 
-    const { sql, values, mode } = this;
+    const { sql, values, mode, parsedInfo } = this;
 
     try {
-      const commandMatch = sql.trim().match(/^(\w+)/i);
-      const command = commandMatch ? commandMatch[1].toUpperCase() : "";
-
-      // Helper function to check if RETURNING keyword exists outside of string literals
-      function hasReturningKeyword(query: string): boolean {
-        const len = query.length;
-        let i = 0;
-        let inSingle = false;
-        let inDouble = false;
-
-        while (i < len) {
-          const char = query[i];
-
-          // Handle single quotes
-          if (!inDouble && char === "'") {
-            inSingle = !inSingle;
-            i++;
-            // Skip escaped quotes
-            while (inSingle && i < len) {
-              if (query[i] === "'") {
-                if (i + 1 < len && query[i + 1] === "'") {
-                  i += 2; // Skip escaped quote
-                  continue;
-                }
-                inSingle = false;
-                i++;
-                break;
-              }
-              i++;
-            }
-            continue;
-          }
-
-          // Handle double quotes (for identifiers)
-          if (!inSingle && char === '"') {
-            inDouble = !inDouble;
-            i++;
-            continue;
-          }
-
-          // If not in quotes, check for RETURNING keyword
-          if (!inSingle && !inDouble) {
-            // Check if we have enough characters left for "RETURNING"
-            if (i + 9 <= len) {
-              // Check for RETURNING with word boundaries
-              if (
-                matchAsciiIgnoreCase(query, i, i + 9, "returning") &&
-                (i === 0 || isTokenDelimiter(query.charCodeAt(i - 1))) &&
-                (i + 9 === len || isTokenDelimiter(query.charCodeAt(i + 9)))
-              ) {
-                return true;
-              }
-            }
-          }
-          i++;
-        }
-        return false;
-      }
+      const command = parsedInfo.firstKeyword;
 
       // For SELECT queries, we need to use a prepared statement
       // For other queries, we can check if there are multiple statements and use db.run() if so
@@ -336,7 +332,7 @@ export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Databa
         command === "PRAGMA" ||
         command === "WITH" ||
         command === "EXPLAIN" ||
-        hasReturningKeyword(sql)
+        parsedInfo.hasReturning
       ) {
         // SELECT queries must use prepared statements for results
         const stmt = db.prepare(sql);
@@ -460,6 +456,7 @@ export class SQLiteAdapter
 
     let binding_values: any[] = [];
     let query = "";
+    let cachedCommand: SQLCommand | null = null;
 
     for (let i = 0; i < str_len; i++) {
       const string = strings[i];
@@ -480,7 +477,12 @@ export class SQLiteAdapter
             }
             binding_idx += sub_values.length;
           } else if (value instanceof SQLHelper) {
-            const command = detectCommand(query);
+            if (cachedCommand === null) {
+              const { command } = parseSQLQuery(query);
+              cachedCommand = command;
+            }
+            const command = cachedCommand;
+
             // only selectIn, insert, update, updateSet are allowed
             if (command === SQLCommand.none || command === SQLCommand.where) {
               throw new SyntaxError("Helpers are only allowed for INSERT, UPDATE and WHERE IN commands");
@@ -764,5 +766,5 @@ export default {
   SQLiteAdapter,
   SQLCommand,
   commandToString,
-  detectCommand,
+  parseSQLQuery,
 };

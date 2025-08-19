@@ -9,7 +9,6 @@
 #include <wtf/Vector.h>
 #include <wtf/NeverDestroyed.h>
 
-
 namespace Bun {
 namespace Secrets {
 

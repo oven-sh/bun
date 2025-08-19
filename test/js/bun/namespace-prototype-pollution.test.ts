@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { tempDirWithFiles, bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 test("namespace imports should not inherit from Object.prototype", async () => {
   const dir = tempDirWithFiles("namespace-pollution", {
@@ -34,10 +34,7 @@ test("namespace imports should not inherit from Object.prototype", async () => {
     stdout: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.exited,
-  ]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stdout).toContain("PASS: prototype pollution prevented");

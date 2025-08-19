@@ -750,6 +750,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
     // Slow path:
 
     JSC::ObjectInitializationScope initializationScope(vm);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     // 64 is the maximum we can preallocate here
     // see https://github.com/oven-sh/bun/issues/987
@@ -769,6 +770,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         auto wtfString = WTF::String::fromUTF8({ name, len });
         auto str = JSValue(jsString(vm, wtfString));
         auto key = str.toPropertyKey(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, void());
         JSC::JSValue primitive = JSC::jsUndefined();
         auto decl = sqlite3_column_decltype(stmt, i);
         if (decl != nullptr) {
@@ -2069,6 +2071,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionIterate, (JSC::JS
 
     if (!castedThis->hasExecuted || castedThis->need_update()) {
         initializeColumnNames(lexicalGlobalObject, castedThis);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     JSValue result = jsNull();
@@ -2120,6 +2123,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
 
     if (!castedThis->hasExecuted || castedThis->need_update()) {
         initializeColumnNames(lexicalGlobalObject, castedThis);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     size_t columnCount = castedThis->columnNames->size();
@@ -2202,6 +2206,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
 
     if (!castedThis->hasExecuted || castedThis->need_update()) {
         initializeColumnNames(lexicalGlobalObject, castedThis);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     JSValue result = jsNull();
@@ -2257,6 +2262,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
 
     if (!castedThis->hasExecuted || castedThis->need_update()) {
         initializeColumnNames(lexicalGlobalObject, castedThis);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     size_t columnCount = castedThis->columnNames->size();

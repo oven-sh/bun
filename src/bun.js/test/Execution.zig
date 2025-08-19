@@ -126,7 +126,7 @@ fn onSequenceStarted(this: *Execution, sequence_index: usize) void {
 fn onSequenceCompleted(this: *Execution, sequence_index: usize) void {
     const sequence = &this._sequences.items[sequence_index];
     const elapsed_ns = sequence.started_at.sinceNow();
-    _ = elapsed_ns;
+    CommandLineReporter.CommandLineReporter.handleTestPass(sequence, elapsed_ns, sequence.result);
 }
 pub fn resetGroup(this: *Execution, group_index: usize) void {
     groupLog.begin(@src());
@@ -326,6 +326,8 @@ const Execution = describe2.Execution;
 const ExecutionEntry = describe2.ExecutionEntry;
 const TestScheduleEntry = describe2.TestScheduleEntry;
 const groupLog = describe2.group;
+
+const CommandLineReporter = @import("../../cli/test_command.zig");
 
 const bun = @import("bun");
 const jsc = bun.jsc;

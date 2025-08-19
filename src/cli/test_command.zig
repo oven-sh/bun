@@ -41,7 +41,6 @@ fn escapeXml(str: string, writer: anytype) !void {
 }
 fn fmtStatusTextLine(comptime status: @Type(.enum_literal), comptime emoji_or_color: bool) []const u8 {
     comptime {
-        if (true) @compileError("remove callsites");
         // emoji and color might be split into two different options in the future
         // some terminals support color, but not emoji.
         // For now, they are the same.

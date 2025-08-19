@@ -4100,31 +4100,40 @@ describe("Query Normalization Fuzzing Tests", () => {
   });
 
   test("handles compound SELECT statements", async () => {
-    await sql`
+    expect(
+      await sql`
       SELECT id, name FROM test_table
       UNION
       SELECT id + 100, 'union' FROM test_table
-    `;
+    `.execute(),
+    ).toMatchInlineSnapshot();
 
-    await sql`
+    expect(
+      await sql`
       SELECT * FROM test_table
       UNION ALL
       SELECT * FROM test_table
-    `;
+    `.execute(),
+    ).toMatchInlineSnapshot();
 
-    await sql`
+    expect(
+      await sql`
       SELECT name FROM test_table WHERE value > 10
       INTERSECT
       SELECT name FROM test_table WHERE id < 5
-    `;
+    `.execute(),
+    ).toMatchInlineSnapshot();
 
-    await sql`
+    expect(
+      await sql`
       SELECT * FROM test_table
       EXCEPT
       SELECT * FROM test_table WHERE name = 'excluded'
-    `;
+    `.execute(),
+    ).toMatchInlineSnapshot();
 
-    await sql`
+    expect(
+      await sql`
       SELECT id FROM test_table WHERE value > 20
       UNION
       SELECT id FROM test_table WHERE name = 'a'
@@ -4132,15 +4141,18 @@ describe("Query Normalization Fuzzing Tests", () => {
       SELECT id FROM test_table WHERE id > 100
       INTERSECT
       SELECT id FROM test_table WHERE value < 50
-    `;
+    `.execute(),
+    ).toMatchInlineSnapshot();
 
-    await sql`
+    expect(
+      await sql`
       SELECT * FROM test_table WHERE value > 10
       UNION ALL
       SELECT * FROM test_table WHERE value <= 10
       ORDER BY value DESC
       LIMIT 5
-    `;
+    `.execute(),
+    ).toMatchInlineSnapshot();
   });
 
   test("handles CREATE TABLE with all constraint types", async () => {

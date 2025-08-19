@@ -41,43 +41,43 @@ declare module "bun" {
 
     class PostgresError extends SQLError {
       public readonly code: string;
-      public readonly errno?: string;
-      public readonly detail?: string;
-      public readonly hint?: string;
-      public readonly severity?: string;
-      public readonly position?: string;
-      public readonly internalPosition?: string;
-      public readonly internalQuery?: string;
-      public readonly where?: string;
-      public readonly schema?: string;
-      public readonly table?: string;
-      public readonly column?: string;
-      public readonly dataType?: string;
-      public readonly constraint?: string;
-      public readonly file?: string;
-      public readonly line?: string;
-      public readonly routine?: string;
+      public readonly errno: string | undefined;
+      public readonly detail: string | undefined;
+      public readonly hint: string | undefined;
+      public readonly severity: string | undefined;
+      public readonly position: string | undefined;
+      public readonly internalPosition: string | undefined;
+      public readonly internalQuery: string | undefined;
+      public readonly where: string | undefined;
+      public readonly schema: string | undefined;
+      public readonly table: string | undefined;
+      public readonly column: string | undefined;
+      public readonly dataType: string | undefined;
+      public readonly constraint: string | undefined;
+      public readonly file: string | undefined;
+      public readonly line: string | undefined;
+      public readonly routine: string | undefined;
 
       constructor(
         message: string,
         options: {
           code: string;
-          errno?: string;
+          errno?: string | undefined;
           detail?: string;
-          hint?: string;
-          severity?: string;
-          position?: string;
+          hint?: string | undefined;
+          severity?: string | undefined;
+          position?: string | undefined;
           internalPosition?: string;
           internalQuery?: string;
-          where?: string;
+          where?: string | undefined;
           schema?: string;
-          table?: string;
-          column?: string;
-          dataType?: string;
+          table?: string | undefined;
+          column?: string | undefined;
+          dataType?: string | undefined;
           constraint?: string;
-          file?: string;
-          line?: string;
-          routine?: string;
+          file?: string | undefined;
+          line?: string | undefined;
+          routine?: string | undefined;
         },
       );
     }

@@ -524,7 +524,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle null/undefined with adapter specified", () => {
-      const sql1 = new SQL(undefined, { adapter: "sqlite" });
+      const sql1 = new SQL(undefined as never, { adapter: "sqlite" });
       expect(sql1.options.adapter).toBe("sqlite");
       expect((sql1.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
       sql1.close();
@@ -605,7 +605,7 @@ describe("Connection & Initialization", () => {
       const sql = new SQL(`sqlite://${urlPath}`, {
         adapter: "sqlite",
         filename: optionsPath,
-      });
+      } as { adapter: "sqlite" });
 
       expect(sql.options.adapter).toBe("sqlite");
       expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(optionsPath);

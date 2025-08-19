@@ -14,20 +14,6 @@
  * This module aliases `globalThis.Bun`.
  */
 declare module "bun" {
-  /**
-   * Like Omit, but correctly distributes over unions. Most useful for removing
-   * properties from union options objects, like {@link Bun.SQL.Options}
-   *
-   * @example
-   * ```ts
-   * type X = Bun.DistributedOmit<{type?: 'a', url?: string} | {type?: 'b', flag?: boolean}, "url">
-   * // `{type?: 'a'} | {type?: 'b', flag?: boolean}` (Omit applied to each union item instead of entire type)
-   *
-   * type X = Omit<{type?: 'a', url?: string} | {type?: 'b', flag?: boolean}, "url">;
-   * // `{type?: "a" | "b" | undefined}` (Missing `flag` property and no longer a union)
-   * ```
-   */
-  type DistributedOmit<T, K extends PropertyKey> = T extends T ? Omit<T, K> : never;
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
   type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =
     | NodeJS.TypedArray<TArrayBuffer>
@@ -81,6 +67,29 @@ declare module "bun" {
           ? T
           : Otherwise // Not defined in lib dom (or anywhere else), so no conflict. We can safely use our own definition
         : Otherwise; // Lib dom not loaded anyway, so no conflict. We can safely use our own definition
+
+    /**
+     * Like Omit, but correctly distributes over unions. Most useful for removing
+     * properties from union options objects, like {@link Bun.SQL.Options}
+     *
+     * @example
+     * ```ts
+     * type X = Bun.DistributedOmit<{type?: 'a', url?: string} | {type?: 'b', flag?: boolean}, "url">
+     * // `{type?: 'a'} | {type?: 'b', flag?: boolean}` (Omit applied to each union item instead of entire type)
+     *
+     * type X = Omit<{type?: 'a', url?: string} | {type?: 'b', flag?: boolean}, "url">;
+     * // `{type?: "a" | "b" | undefined}` (Missing `flag` property and no longer a union)
+     * ```
+     */
+    type DistributedOmit<T, K extends PropertyKey> = T extends T ? Omit<T, K> : never;
+
+    type KeysInBoth<A, B> = Extract<keyof A, keyof B>;
+    type MergeInner<A, B> = Omit<A, KeysInBoth<A, B>> &
+      Omit<B, KeysInBoth<A, B>> & {
+        [Key in KeysInBoth<A, B>]: A[Key] | B[Key];
+      };
+    type Merge<A, B> = MergeInner<A, B> & MergeInner<B, A>;
+    type DistributedMerge<T, Else = T> = T extends T ? Merge<T, Exclude<Else, T>> : never;
   }
 
   interface ErrorEventInit extends EventInit {
@@ -3683,11 +3692,11 @@ declare module "bun" {
    * The type of options that can be passed to {@link serve}, with support for `routes` and a safer requirement for `fetch`
    */
   type ServeFunctionOptions<T, R extends { [K in keyof R]: RouterTypes.RouteValue<Extract<K, string>> }> =
-    | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "fetch"> & {
+    | (__internal.DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "fetch"> & {
         routes: R;
         fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
       })
-    | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "routes"> & {
+    | (__internal.DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "routes"> & {
         routes?: never;
         fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
       })

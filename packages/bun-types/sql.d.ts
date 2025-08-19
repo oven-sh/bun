@@ -486,7 +486,10 @@ declare module "bun" {
      * const sql = new SQL("postgres://localhost:5432/mydb", { idleTimeout: 1000 });
      * ```
      */
-    constructor(connectionString: string | URL, options: Bun.DistributedOmit<SQL.Options, "url" | "filename">);
+    constructor(
+      connectionString: string | URL,
+      options: Bun.__internal.DistributedOmit<SQL.Options, "url" | "filename">,
+    );
 
     /**
      * Creates a new SQL client instance with options
@@ -503,7 +506,7 @@ declare module "bun" {
     /**
      * Current client options
      */
-    options: SQL.Options;
+    options: Bun.__internal.DistributedMerge<SQL.Options>;
 
     /**
      * Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL

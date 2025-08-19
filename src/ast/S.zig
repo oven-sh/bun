@@ -163,6 +163,8 @@ pub const Import = struct {
     star_name_loc: ?logger.Loc = null,
     import_record_index: u32,
     is_single_line: bool = false,
+    /// For conditional imports like: import {foo} from "bar" with { condition: "bun" }
+    condition: ?[]const u8 = null,
 };
 
 pub const Return = struct { value: ?ExprNodeIndex = null };

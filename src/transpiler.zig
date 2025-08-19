@@ -1115,6 +1115,7 @@ pub const Transpiler = struct {
                 opts.features.top_level_await = true;
 
                 opts.macro_context = &transpiler.macro_context.?;
+                opts.conditions = &transpiler.options.conditions;
                 if (target != .bun_macro) {
                     opts.macro_context.javascript_object = this_parse.macro_js_ctx;
                 }

@@ -2547,6 +2547,14 @@ pub fn NewParser_(
 
             stmt.import_record_index = p.addImportRecord(.stmt, path.loc, path.text);
             p.import_records.items[stmt.import_record_index].was_originally_bare_import = was_originally_bare_import;
+            
+            // Handle conditional imports - disable if condition doesn't match
+            if (stmt.condition) |condition| {
+                // Check if the condition is supported by the current ESM conditions
+                if (!p.options.conditions.import.contains(condition)) {
+                    p.import_records.items[stmt.import_record_index].path.is_disabled = true;
+                }
+            }
 
             if (stmt.star_name_loc) |star| {
                 const name = p.loadNameFromRef(stmt.namespace_ref);

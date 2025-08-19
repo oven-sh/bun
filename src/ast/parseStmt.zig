@@ -1078,6 +1078,29 @@ pub fn ParseStmt(
             }
 
             const path = try p.parsePath();
+            
+            // Parse optional "with" clause for conditional imports
+            if (p.lexer.isContextualKeyword("with")) {
+                try p.lexer.next();
+                try p.lexer.expect(.t_open_brace);
+                
+                if (p.lexer.isContextualKeyword("condition")) {
+                    try p.lexer.next();
+                    try p.lexer.expect(.t_colon);
+                    
+                    if (p.lexer.token == .t_string_literal) {
+                        stmt.condition = p.lexer.string_literal_raw_content;
+                        try p.lexer.next();
+                    } else {
+                        try p.lexer.expected(.t_string_literal);
+                    }
+                } else {
+                    try p.lexer.expectedString("\"condition\"");
+                }
+                
+                try p.lexer.expect(.t_close_brace);
+            }
+            
             try p.lexer.expectOrInsertSemicolon();
 
             return try p.processImportStatement(stmt, path, loc, was_originally_bare_import);

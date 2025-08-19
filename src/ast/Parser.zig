@@ -37,6 +37,9 @@ pub const Parser = struct {
         /// When using react fast refresh or server components, the framework is
         /// able to customize what import sources are used.
         framework: ?*bun.bake.Framework = null,
+        
+        /// ESM conditions for conditional imports
+        conditions: *options.ESMConditions = undefined,
 
         pub fn hashForRuntimeTranspiler(this: *const Options, hasher: *std.hash.Wyhash, did_use_jsx: bool) void {
             bun.assert(!this.bundle);

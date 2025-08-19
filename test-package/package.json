@@ -1,0 +1,10 @@
+{
+  "name": "test-package", 
+  "exports": {
+    ".": {
+      "bun": "./bun.js",
+      "node": "./node.js",
+      "default": "./default.js"
+    }
+  }
+}

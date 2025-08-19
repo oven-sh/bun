@@ -27,7 +27,7 @@ struct SecretsJobOptions {
     enum Operation {
         GET = 0,
         SET = 1,
-        DELETE = 2
+        DELETE_OP = 2  // Named DELETE_OP to avoid conflict with Windows DELETE macro
     };
 
     Operation op;
@@ -124,7 +124,7 @@ struct SecretsJobOptions {
         };
 
         switch (operation) {
-        case DELETE:
+        case DELETE_OP:
         case SET: {
             if (args.size() > 2 && args.at(0).isString() && args.at(1).isString() && args.at(2).isString()) {
                 service = args.at(0).toWTFString(globalObject);
@@ -199,7 +199,7 @@ void Bun__SecretsJobOptions__runTask(SecretsJobOptions* opts, JSGlobalObject* gl
         opts->error = Secrets::setPassword(opts->service, opts->name, WTFMove(opts->password));
         break;
 
-    case SecretsJobOptions::DELETE:
+    case SecretsJobOptions::DELETE_OP:
         opts->deleted = Secrets::deletePassword(opts->service, opts->name, opts->error);
         break;
     }
@@ -218,8 +218,8 @@ void Bun__SecretsJobOptions__runFromJS(SecretsJobOptions* opts, JSGlobalObject* 
             if (opts->op == SecretsJobOptions::GET) {
                 // For GET operations, NotFound resolves with null
                 promise->resolve(global, jsNull());
-            } else if (opts->op == SecretsJobOptions::DELETE) {
-                // For DELETE operations, NotFound means we return false
+            } else if (opts->op == SecretsJobOptions::DELETE_OP) {
+                // For DELETE_OP operations, NotFound means we return false
                 promise->resolve(global, jsBoolean(false));
             } else {
                 promise->reject(global, createError(global, opts->error.message));
@@ -245,7 +245,7 @@ void Bun__SecretsJobOptions__runFromJS(SecretsJobOptions* opts, JSGlobalObject* 
             promise->resolve(global, jsUndefined());
             break;
 
-        case SecretsJobOptions::DELETE:
+        case SecretsJobOptions::DELETE_OP:
             promise->resolve(global, jsBoolean(opts->deleted));
             break;
         }
@@ -307,7 +307,7 @@ JSC_DEFINE_HOST_FUNCTION(secretsDelete, (JSGlobalObject * globalObject, CallFram
         return JSValue::encode(jsUndefined());
     }
 
-    auto* options = SecretsJobOptions::fromJS(globalObject, ArgList(callFrame), SecretsJobOptions::DELETE);
+    auto* options = SecretsJobOptions::fromJS(globalObject, ArgList(callFrame), SecretsJobOptions::DELETE_OP);
     RETURN_IF_EXCEPTION(scope, {});
     ASSERT(options);
 

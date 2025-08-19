@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { tempDirWithFiles, bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 test("namespace import should not inherit from Object.prototype", async () => {
   const dir = tempDirWithFiles("namespace-pollution", {
@@ -36,20 +36,16 @@ test("namespace import should not inherit from Object.prototype", async () => {
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
-  
+
   // The namespace object should be isolated from Object.prototype
   // It may have a minimal prototype with just __esModule, but not Object.prototype
   expect(stdout).not.toContain("Prototype of namespace: {}"); // Not Object.prototype
   expect(stdout).toContain("mod.foo type: string");
   expect(stdout).toContain("SUCCESS: namespace object properly isolated from Object.prototype");
-  
+
   // Ensure we're not getting the polluted function from Object.prototype
   expect(stdout).not.toContain("FAILED: namespace object was polluted by Object.prototype");
 });

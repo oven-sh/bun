@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { tempDirWithFiles, bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 test("namespace object should have correct prototype chain", async () => {
   const dir = tempDirWithFiles("namespace-properties", {
@@ -40,22 +40,18 @@ test("namespace object should have correct prototype chain", async () => {
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
-  
+
   // Namespace should not inherit from Object.prototype
   expect(stdout).toContain("Namespace has polluted property: false");
   expect(stdout).toContain("Namespace polluted value: undefined");
-  
+
   // But original exports should work
   expect(stdout).toContain("Named export: test");
   expect(stdout).toContain("Default export: defaultExport");
-  
+
   // __esModule should be settable
   expect(stdout).toContain("__esModule initial: undefined");
   expect(stdout).toContain("__esModule after set: true");

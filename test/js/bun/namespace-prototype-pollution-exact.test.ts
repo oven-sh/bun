@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { tempDirWithFiles, bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 test("exact case: mod.foo() should throw when Object.prototype.foo is added", async () => {
   const dir = tempDirWithFiles("exact-pollution-case", {
@@ -38,11 +38,7 @@ test("exact case: mod.foo() should throw when Object.prototype.foo is added", as
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stdout).toContain("SECURITY: mod.foo() correctly threw an error");

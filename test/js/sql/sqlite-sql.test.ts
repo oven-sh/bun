@@ -1002,9 +1002,9 @@ describe("Template Literal Security", () => {
 
   test("sql([...]) helper not allowed when 'where in' appears only in string literal", async () => {
     const sql = new SQL("sqlite://:memory:");
-    expect(sql`SELECT 'this has where in inside a string' ${sql([1, 2])}`.execute()).rejects.toThrow(
-      /Helpers are only allowed for INSERT, UPDATE and WHERE IN commands/,
-    );
+    expect(
+      sql`SELECT 'this has where in inside a string' ${sql([1, 2])}`.execute(),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(`"Helpers are only allowed for INSERT, UPDATE and WHERE IN commands"`);
     await sql.close();
   });
 });
@@ -1311,64 +1311,88 @@ describe("Helper argument validation", () => {
 
   test("functions are invalid values in helper", async () => {
     const fn = () => 123;
-    expect(sql`INSERT INTO helper_invalid ${sql({ id: 1, text_val: fn })}`.execute()).rejects.toThrow(
-      /Binding expected string, TypedArray, boolean, number, bigint or null/,
+    expect(
+      sql`INSERT INTO helper_invalid ${sql({ id: 1, text_val: fn })}`.execute(),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
     );
   });
 
   test("plain objects (JSON) are invalid values in helper", async () => {
     const obj = { a: 1, b: "two" };
-    expect(sql`INSERT INTO helper_invalid ${sql({ id: 2, text_val: obj as any })}`.execute()).rejects.toThrow(
-      /Binding expected string, TypedArray, boolean, number, bigint or null/,
+    expect(
+      sql`INSERT INTO helper_invalid ${sql({ id: 2, text_val: obj as any })}`.execute(),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
     );
   });
 
   test("Map and Set are invalid values in helper", async () => {
     expect(
       sql`INSERT INTO helper_invalid ${sql({ id: 3, text_val: new Map([["k", "v"]]) as any })}`.execute(),
-    ).rejects.toThrow(/Binding expected string, TypedArray, boolean, number, bigint or null/);
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
+    );
 
     expect(
       sql`INSERT INTO helper_invalid ${sql({ id: 4, text_val: new Set([1, 2, 3]) as any })}`.execute(),
-    ).rejects.toThrow(/Binding expected string, TypedArray, boolean, number, bigint or null/);
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
+    );
   });
 
   test("Response, Request, Blob, File are invalid values in helper", async () => {
     expect(
       sql`INSERT INTO helper_invalid ${sql({ id: 5, text_val: new Response("ok") as any })}`.execute(),
-    ).rejects.toThrow(/Binding expected string, TypedArray, boolean, number, bigint or null/);
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
+    );
 
     expect(
       sql`INSERT INTO helper_invalid ${sql({ id: 6, text_val: new Request("https://example.com") as any })}`.execute(),
-    ).rejects.toThrow(/Binding expected string, TypedArray, boolean, number, bigint or null/);
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
+    );
 
     expect(
       sql`INSERT INTO helper_invalid ${sql({ id: 7, blob_val: new Blob(["hello"]) as any })}`.execute(),
-    ).rejects.toThrow(/Binding expected string, TypedArray, boolean, number, bigint or null/);
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
+    );
 
     expect(
       sql`INSERT INTO helper_invalid ${sql({ id: 8, blob_val: new File(["body"], "a.txt") as any })}`.execute(),
-    ).rejects.toThrow(/Binding expected string, TypedArray, boolean, number, bigint or null/);
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
+    );
   });
 
   test("ArrayBuffer (not a view) is invalid in helper", async () => {
     const ab = new ArrayBuffer(8);
-    expect(sql`INSERT INTO helper_invalid ${sql({ id: 9, blob_val: ab as any })}`.execute()).rejects.toThrow(
-      /Binding expected string, TypedArray, boolean, number, bigint or null/,
+    expect(
+      sql`INSERT INTO helper_invalid ${sql({ id: 9, blob_val: ab as any })}`.execute(),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
     );
   });
 
   test("Promise, Date, RegExp are invalid in helper", async () => {
     expect(
       sql`INSERT INTO helper_invalid ${sql({ id: 10, text_val: Promise.resolve("x") as any })}`.execute(),
-    ).rejects.toThrow(/Binding expected string, TypedArray, boolean, number, bigint or null/);
-
-    expect(sql`INSERT INTO helper_invalid ${sql({ id: 11, text_val: new Date() as any })}`.execute()).rejects.toThrow(
-      /Binding expected string, TypedArray, boolean, number, bigint or null/,
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
     );
 
-    expect(sql`INSERT INTO helper_invalid ${sql({ id: 12, text_val: /abc/ as any })}`.execute()).rejects.toThrow(
-      /Binding expected string, TypedArray, boolean, number, bigint or null/,
+    expect(
+      sql`INSERT INTO helper_invalid ${sql({ id: 11, text_val: new Date() as any })}`.execute(),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
+    );
+
+    expect(
+      sql`INSERT INTO helper_invalid ${sql({ id: 12, text_val: /abc/ as any })}`.execute(),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
     );
   });
 
@@ -1384,7 +1408,9 @@ describe("Helper argument validation", () => {
     await sqlSafe`CREATE TABLE t (id INTEGER PRIMARY KEY, n INTEGER)`;
 
     const big = BigInt("9223372036854775808"); // 2^63, just out of int64 range
-    expect(sqlSafe`INSERT INTO t ${sql({ id: 1, n: big })}`.execute()).rejects.toThrow(/out of range/);
+    expect(sqlSafe`INSERT INTO t ${sql({ id: 1, n: big })}`.execute()).rejects.toThrowErrorMatchingInlineSnapshot(
+      `"BigInt value '9223372036854775808' is out of range"`,
+    );
     await sqlSafe.close();
   });
 

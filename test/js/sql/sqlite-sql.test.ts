@@ -3440,8 +3440,16 @@ describe("Query Explain and Optimization", () => {
       SELECT * FROM large_table WHERE category = 'category5'
     `;
 
-    expect(planWithoutIndex.length).toBeGreaterThan(0);
-    expect(planWithoutIndex[0].detail).toContain("SCAN");
+    expect(planWithoutIndex).toMatchInlineSnapshot(`
+      [
+        {
+          "detail": "SCAN large_table",
+          "id": 2,
+          "notused": 216,
+          "parent": 0,
+        },
+      ]
+    `);
 
     await sql`CREATE INDEX idx_category ON large_table(category)`;
 
@@ -3450,9 +3458,16 @@ describe("Query Explain and Optimization", () => {
       SELECT * FROM large_table WHERE category = 'category5'
     `;
 
-    expect(planWithIndex.length).toBeGreaterThan(0);
-
-    expect(planWithIndex[0].detail.toLowerCase()).toContain("index");
+    expect(planWithIndex).toMatchInlineSnapshot(`
+      [
+        {
+          "detail": "SEARCH large_table USING INDEX idx_category (category=?)",
+          "id": 3,
+          "notused": 62,
+          "parent": 0,
+        },
+      ]
+    `);
   });
 });
 

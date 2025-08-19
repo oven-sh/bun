@@ -1190,9 +1190,7 @@ ServerResponse.prototype[kRejectNonStandardBodyWrites] = undefined;
 
 Object.defineProperty(ServerResponse.prototype, "headersSent", {
   get() {
-    return (
-      this[headerStateSymbol] === NodeHTTPHeaderState.sent || this[headerStateSymbol] === NodeHTTPHeaderState.assigned
-    );
+    return this[headerStateSymbol] === NodeHTTPHeaderState.sent;
   },
   set(value) {
     this[headerStateSymbol] = value ? NodeHTTPHeaderState.sent : NodeHTTPHeaderState.none;
@@ -1459,8 +1457,6 @@ ServerResponse.prototype.detachSocket = function (socket) {
 };
 
 ServerResponse.prototype._implicitHeader = function () {
-  if (this.headersSent) return;
-  // @ts-ignore
   this.writeHead(this.statusCode);
 };
 
@@ -1513,7 +1509,7 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
 
 ServerResponse.prototype.writeHead = function (statusCode, statusMessage, headers) {
   if (this.headersSent) {
-    throw $ERR_HTTP_HEADERS_SENT("writeHead");
+    throw $ERR_HTTP_HEADERS_SENT("write");
   }
   _writeHead(statusCode, statusMessage, headers, this);
 

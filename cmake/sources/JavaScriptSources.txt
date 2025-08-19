@@ -93,6 +93,7 @@ src/js/internal/tls.ts
 src/js/internal/tty.ts
 src/js/internal/url.ts
 src/js/internal/util/colors.ts
+src/js/internal/util/deprecate.ts
 src/js/internal/util/inspect.d.ts
 src/js/internal/util/inspect.js
 src/js/internal/util/mime.ts

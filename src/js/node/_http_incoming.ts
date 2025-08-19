@@ -1,3 +1,4 @@
+// Hardcoded module "node:_http_incoming"
 const { Readable, finished } = require("node:stream");
 
 const ObjectDefineProperty = Object.defineProperty;

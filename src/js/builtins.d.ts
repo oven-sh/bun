@@ -804,6 +804,8 @@ declare function $ERR_VM_MODULE_NOT_MODULE(): Error;
 declare function $ERR_VM_MODULE_DIFFERENT_CONTEXT(): Error;
 declare function $ERR_VM_MODULE_LINK_FAILURE(message: string, cause: Error): Error;
 declare function $ERR_HTTP_TRAILER_INVALID(): Error;
+declare function $ERR_HTTP_SOCKET_ENCODING(): Error;
+declare function $ERR_HTTP_REQUEST_TIMEOUT(): Error;
 
 /**
  * Convert a function to a class-like object.

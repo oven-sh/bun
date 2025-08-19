@@ -1,7 +1,7 @@
+// Hardcoded module "node:_http_outgoing"
 const EE = require("node:events");
 const Stream = require("node:stream");
 const { kOutHeaders, utcDate, kNeedDrain, kEmptyObject } = require("internal/http");
-const { Buffer } = require("node:buffer");
 const {
   _checkIsHttpToken: checkIsHttpToken,
   _checkInvalidHeaderChar: checkInvalidHeaderChar,

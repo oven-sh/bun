@@ -441,7 +441,7 @@ private:
             ((AsyncSocket<SSL> *) s)->uncork();
 
             /* Check if we should gracefully close the socket after parsing HTTP */
-            if (httpContextData->flags.shouldCloseAfterParsingHttp && !httpErrorStatusCode) {
+            if (httpContextData->flags.shouldCloseAfterParsingHttp) {
                 /* Gracefully close the socket by shutting down and then closing */
                 if (!us_socket_is_closed(SSL, s) && !us_socket_is_shut_down(SSL, s)) {
                     us_socket_shutdown(SSL, s);

@@ -1,9 +1,7 @@
 const { checkIsHttpToken } = require("internal/validators");
 const FreeList = require("internal/freelist");
 const { methods, allMethods, HTTPParser } = process.binding("http_parser");
-const incoming = require("node:_http_incoming");
-
-const { IncomingMessage, readStart, readStop } = incoming;
+const { IncomingMessage, readStart, readStop } = require("node:_http_incoming");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
 

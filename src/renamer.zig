@@ -350,15 +350,16 @@ pub fn assignNestedScopeSlots(allocator: std.mem.Allocator, module_scope: *js_as
         slot_counts.unionMax(assignNestedScopeSlotsHelper(&sorted_members, child, symbols, js_ast.SlotCounts{}));
     }
 
-    // Then set the nested scope slots of top-level symbols back to zero. Top-
+    // Then set the nested scope slots of top-level symbols back to invalid. Top-
     // level symbols are not supposed to have nested scope slots.
-    members = module_scope.members.valueIterator();
-
-    while (members.next()) |member| {
-        symbols[member.ref.innerIndex()].nested_scope_slot = js_ast.Symbol.invalid_nested_scope_slot;
-    }
-    for (module_scope.generated.slice()) |ref| {
-        symbols[ref.innerIndex()].nested_scope_slot = js_ast.Symbol.invalid_nested_scope_slot;
+    // 
+    // CRITICAL FIX: Reset ALL symbols that have the temporary valid_slot (0), not just 
+    // those still in module_scope.members. During complex scope processing (like IIFEs),
+    // some symbols might not be found in the same collections, but they still need to be reset.
+    for (symbols, 0..) |*symbol, i| {
+        if (symbol.nested_scope_slot == valid_slot) {
+            symbol.nested_scope_slot = js_ast.Symbol.invalid_nested_scope_slot;
+        }
     }
 
     return slot_counts;

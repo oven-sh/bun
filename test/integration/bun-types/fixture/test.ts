@@ -66,6 +66,31 @@ describe("bun:test", () => {
     expect(undefined).toBeUndefined();
     expect(undefined).not.toBeDefined();
   });
+
+  // Test the new syntax - options as second parameter
+  test("new syntax - options as second parameter", { timeout: 1000 }, () => {
+    expect(true).toBe(true);
+  });
+
+  // Test with number options as second parameter  
+  test("new syntax - number as second parameter", 500, () => {
+    expect(true).toBe(true);
+  });
+
+  // Test with only() using new syntax
+  test.only("only with new syntax", { timeout: 1000 }, () => {
+    expect(true).toBe(true);
+  });
+
+  // Test with skip() using new syntax
+  test.skip("skip with new syntax", { timeout: 1000 }, () => {
+    expect(true).toBe(true);
+  });
+
+  // Test with todo() using new syntax
+  test.todo("todo with new syntax", { timeout: 1000 }, () => {
+    expect(true).toBe(true);
+  });
 });
 
 // inference should work when data is passed directly in

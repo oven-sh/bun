@@ -234,6 +234,9 @@ declare module "bun:test" {
     each<T extends Readonly<[any, ...any[]]>>(
       table: readonly T[],
     ): (label: DescribeLabel, fn: (...args: [...T]) => void | Promise<unknown>, options?: number | TestOptions) => void;
+    each<T extends Readonly<[any, ...any[]]>>(
+      table: readonly T[],
+    ): (label: DescribeLabel, options: number | TestOptions, fn: (...args: [...T]) => void | Promise<unknown>) => void;
     each<T extends any[]>(
       table: readonly T[],
     ): (
@@ -241,9 +244,19 @@ declare module "bun:test" {
       fn: (...args: Readonly<T>) => void | Promise<unknown>,
       options?: number | TestOptions,
     ) => void;
+    each<T extends any[]>(
+      table: readonly T[],
+    ): (
+      label: DescribeLabel,
+      options: number | TestOptions,
+      fn: (...args: Readonly<T>) => void | Promise<unknown>,
+    ) => void;
     each<T>(
       table: T[],
     ): (label: DescribeLabel, fn: (...args: T[]) => void | Promise<unknown>, options?: number | TestOptions) => void;
+    each<T>(
+      table: T[],
+    ): (label: DescribeLabel, options: number | TestOptions, fn: (...args: T[]) => void | Promise<unknown>) => void;
   }
   /**
    * Describes a group of related tests.
@@ -384,6 +397,18 @@ declare module "bun:test" {
        */
       options?: number | TestOptions,
     ): void;
+    (
+      label: string,
+      /**
+       * - If a `number`, sets the timeout for the test in milliseconds.
+       * - If an `object`, sets the options for the test.
+       *   - `timeout` sets the timeout for the test in milliseconds.
+       *   - `retry` sets the number of times to retry the test if it fails.
+       *   - `repeats` sets the number of times to repeat the test, regardless of whether it passed or failed.
+       */
+      options: number | TestOptions,
+      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    ): void;
     /**
      * Skips all other tests, except this test when run with the `--only` option.
      *
@@ -396,6 +421,11 @@ declare module "bun:test" {
       fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
       options?: number | TestOptions,
     ): void;
+    only(
+      label: string,
+      options: number | TestOptions,
+      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    ): void;
     /**
      * Skips this test.
      *
@@ -407,6 +437,11 @@ declare module "bun:test" {
       label: string,
       fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
       options?: number | TestOptions,
+    ): void;
+    skip(
+      label: string,
+      options: number | TestOptions,
+      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
     ): void;
     /**
      * Marks this test as to be written or to be fixed.
@@ -424,6 +459,11 @@ declare module "bun:test" {
       label: string,
       fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
       options?: number | TestOptions,
+    ): void;
+    todo(
+      label: string,
+      options: number | TestOptions,
+      fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
     ): void;
     /**
      * Marks this test as failing.
@@ -445,6 +485,11 @@ declare module "bun:test" {
       fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
       options?: number | TestOptions,
     ): void;
+    failing(
+      label: string,
+      options: number | TestOptions,
+      fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    ): void;
     /**
      * Runs this test, if `condition` is true.
      *
@@ -459,6 +504,13 @@ declare module "bun:test" {
       fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
       options?: number | TestOptions,
     ) => void;
+    if(
+      condition: boolean,
+    ): (
+      label: string,
+      options: number | TestOptions,
+      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    ) => void;
     /**
      * Skips this test, if `condition` is true.
      *
@@ -470,6 +522,13 @@ declare module "bun:test" {
       label: string,
       fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
       options?: number | TestOptions,
+    ) => void;
+    skipIf(
+      condition: boolean,
+    ): (
+      label: string,
+      options: number | TestOptions,
+      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
     ) => void;
     /**
      * Marks this test as to be written or to be fixed, if `condition` is true.
@@ -483,6 +542,13 @@ declare module "bun:test" {
       fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
       options?: number | TestOptions,
     ) => void;
+    todoIf(
+      condition: boolean,
+    ): (
+      label: string,
+      options: number | TestOptions,
+      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    ) => void;
     /**
      * Returns a function that runs for each item in `table`.
      *
@@ -491,12 +557,21 @@ declare module "bun:test" {
     each<T extends Readonly<[any, ...any[]]>>(
       table: readonly T[],
     ): (label: string, fn: (...args: [...T]) => void | Promise<unknown>, options?: number | TestOptions) => void;
+    each<T extends Readonly<[any, ...any[]]>>(
+      table: readonly T[],
+    ): (label: string, options: number | TestOptions, fn: (...args: [...T]) => void | Promise<unknown>) => void;
     each<T extends any[]>(
       table: readonly T[],
     ): (label: string, fn: (...args: Readonly<T>) => void | Promise<unknown>, options?: number | TestOptions) => void;
+    each<T extends any[]>(
+      table: readonly T[],
+    ): (label: string, options: number | TestOptions, fn: (...args: Readonly<T>) => void | Promise<unknown>) => void;
     each<T>(
       table: T[],
     ): (label: string, fn: (...args: T[]) => void | Promise<unknown>, options?: number | TestOptions) => void;
+    each<T>(
+      table: T[],
+    ): (label: string, options: number | TestOptions, fn: (...args: T[]) => void | Promise<unknown>) => void;
   }
   /**
    * Runs a test.

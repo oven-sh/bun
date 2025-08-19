@@ -244,6 +244,16 @@ pub fn toOwnedSlice(self: *MutableString) []u8 {
     return bun.handleOom(self.list.toOwnedSlice(self.allocator));
 }
 
+pub fn toDynamicOwned(self: *MutableString) DynamicOwned([]u8) {
+    return .fromRawOwned(self.toOwnedSlice(), self.allocator);
+}
+
+/// `self.allocator` must be `bun.default_allocator`.
+pub fn toDefaultOwned(self: *MutableString) Owned([]u8) {
+    bun.safety.alloc.assertEq(self.allocator, bun.default_allocator);
+    return .fromRawOwned(self.toOwnedSlice());
+}
+
 pub fn slice(self: *MutableString) []u8 {
     return self.list.items;
 }
@@ -459,3 +469,5 @@ const Allocator = std.mem.Allocator;
 const bun = @import("bun");
 const js_lexer = bun.js_lexer;
 const strings = bun.strings;
+const Owned = bun.ptr.Owned;
+const DynamicOwned = bun.ptr.DynamicOwned;

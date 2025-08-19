@@ -15,7 +15,7 @@ pub fn deinit(this: *OKPacket) void {
 
 pub fn decodeInternal(this: *OKPacket, comptime Context: type, reader: NewReader(Context)) !void {
     this.header = try reader.int(u8);
-    if (this.header != 0x00) {
+    if (this.header != 0x00 and this.header != 0xfe) {
         return error.InvalidOKPacket;
     }
 

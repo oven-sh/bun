@@ -102,14 +102,14 @@ pub fn canPipeline(this: *@This()) bool {
         @branchHint(.unlikely);
         return false;
     }
-    _ = this;
-    // return this.status == .connected and
-    //     this.nonpipelinable_requests == 0 and // need to wait for non pipelinable requests to finish
-    //     !this.flags.use_unnamed_prepared_statements and // unnamed statements are not pipelinable
-    //     !this.flags.waiting_to_prepare and // cannot pipeline when waiting prepare
-    //     !this.flags.has_backpressure and // dont make sense to buffer more if we have backpressure
-    //     this.write_buffer.len() < MAX_PIPELINE_SIZE; // buffer is too big need to flush before pipeline more
-    return false;
+    // _ = this;
+    return this.status == .connected and
+        this.nonpipelinable_requests == 0 and // need to wait for non pipelinable requests to finish
+        !this.flags.use_unnamed_prepared_statements and // unnamed statements are not pipelinable
+        !this.flags.waiting_to_prepare and // cannot pipeline when waiting prepare
+        !this.flags.has_backpressure and // dont make sense to buffer more if we have backpressure
+        this.write_buffer.len() < MAX_PIPELINE_SIZE; // buffer is too big need to flush before pipeline more
+    // return false;
 }
 pub const AuthState = union(enum) {
     pending: void,
@@ -1344,7 +1344,10 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
 }
 
 pub fn handleCommand(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context), header_length: u24) !void {
-
+    defer {
+        // just skip unread bytes that can be padding or just ignored
+        reader.setOffsetFromStart(header_length + PacketHeader.size);
+    }
     // Get the current request if any
     const request = this.current() orelse {
         debug("Received unexpected command response", .{});
@@ -1548,6 +1551,7 @@ pub fn bufferedReader(this: *MySQLConnection) NewReader(Reader) {
 }
 
 fn checkIfPreparedStatementIsDone(this: *MySQLConnection, statement: *MySQLStatement) void {
+    debug("checkIfPreparedStatementIsDone: {d} {d} {d} {d}", .{ statement.columns_received, statement.params_received, statement.columns.len, statement.params.len });
     if (statement.columns_received == statement.columns.len and statement.params_received == statement.params.len) {
         statement.status = .prepared;
         this.flags.waiting_to_prepare = false;
@@ -1590,7 +1594,7 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
         return;
     }
 
-    switch (PacketType.fromInt(first_byte, header_length)) {
+    switch (@as(PacketType, @enumFromInt(first_byte))) {
         .OK => {
             var ok = StmtPrepareOKPacket{
                 .packet_length = header_length,
@@ -1635,7 +1639,8 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
 
 fn handleResultSetOK(this: *MySQLConnection, request: *MySQLQuery, statement: *MySQLStatement, status_flags: StatusFlags) void {
     this.status_flags = status_flags;
-    this.flags.is_ready_for_query = !status_flags.SERVER_MORE_RESULTS_EXISTS;
+    this.flags.is_ready_for_query = !status_flags.has(.SERVER_MORE_RESULTS_EXISTS);
+    debug("handleResultSetOK: {d} {}", .{ status_flags.toInt(), status_flags.has(.SERVER_MORE_RESULTS_EXISTS) });
     defer {
         this.advance();
         this.registerAutoFlusher();
@@ -1645,7 +1650,7 @@ fn handleResultSetOK(this: *MySQLConnection, request: *MySQLQuery, statement: *M
     statement.reset();
 }
 
-pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context), header_length: u24) !void {
+pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context), _: u24) !void {
     const first_byte = try reader.int(u8);
     debug("handleResultSet: {x:0>2}", .{first_byte});
 
@@ -1656,19 +1661,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
         return error.UnexpectedPacket;
     };
     var ok = OKPacket{};
-    switch (PacketType.fromInt(first_byte, header_length)) {
-        .EOF => {
-            const statement = request.statement orelse {
-                debug("Unexpected result set packet", .{});
-                return error.UnexpectedPacket;
-            };
-
-            var eof = EOFPacket{};
-            try eof.decode(reader);
-
-            this.handleResultSetOK(request, statement, ok.status_flags);
-        },
-
+    switch (@as(PacketType, @enumFromInt(first_byte))) {
         .ERROR => {
             var err = ErrorPacket{};
             try err.decode(reader);
@@ -1713,7 +1706,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 try statement.columns[statement.columns_received].decode(reader);
                 statement.columns_received += 1;
             } else {
-                if (packet_type == .OK) {
+                if (packet_type == .OK or packet_type == .EOF) {
                     if (request.flags.simple) {
                         // if we are using the text protocol for sure this is a OK packet otherwise will be OK packet with 0xFE code
                         try ok.decode(reader);
@@ -1721,13 +1714,13 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
 
                         this.handleResultSetOK(request, statement, ok.status_flags);
                         return;
+                    } else if (packet_type == .EOF) {
+                        // this is actually a OK packet but with the flag EOF
+                        try ok.decode(reader);
+                        defer ok.deinit();
+                        this.handleResultSetOK(request, statement, ok.status_flags);
+                        return;
                     }
-                } else if (first_byte == @intFromEnum(PacketType.OK)) {
-                    // this is actually a OK packet but with the flag EOF
-                    try ok.decode(reader);
-                    defer ok.deinit();
-                    this.handleResultSetOK(request, statement, ok.status_flags);
-                    return;
                 }
 
                 var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
@@ -1880,7 +1873,6 @@ const ErrorPacket = @import("./protocol/ErrorPacket.zig");
 const StmtPrepareOKPacket = @import("./protocol/StmtPrepareOKPacket.zig");
 const ResultSetHeader = @import("./protocol/ResultSetHeader.zig");
 const ColumnDefinition41 = @import("./protocol/ColumnDefinition41.zig");
-const EOFPacket = @import("./protocol/EOFPacket.zig");
 const ResultSet = @import("./protocol/ResultSet.zig");
 const Auth = @import("./protocol/Auth.zig");
 const LocalInfileRequest = @import("./protocol/LocalInfileRequest.zig");

@@ -656,7 +656,8 @@ function onResolveSQLQuery(query, result, commandTag, count, queries, is_last) {
   /// simple queries
   if (query[_flags] & SQLQueryFlags.simple) {
     // simple can have multiple results or a single result
-    if (is_last && !result) {
+    if (is_last && query[_adapter] == "postgres") {
+      // postgres call one extra time with empty result always
       handleLast(query, queries);
       return;
     }

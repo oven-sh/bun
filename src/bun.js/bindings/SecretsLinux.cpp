@@ -285,7 +285,7 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
 
     gboolean result = framework->secret_password_store_sync(
         get_bun_schema(),
-        framework->SECRET_COLLECTION_DEFAULT,
+        nullptr, // Let libsecret handle collection creation automatically
         labelUtf8.data(),
         password.data(),
         nullptr, // cancellable

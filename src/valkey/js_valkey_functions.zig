@@ -484,23 +484,59 @@ pub fn hincrbyfloat(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, ca
     return promise.toJS();
 }
 
+// Context for collecting object properties during iteration
+const ObjectIteratorContext = struct {
+    args: *std.ArrayList(jsc.ZigString.Slice),
+    globalObject: *jsc.JSGlobalObject,
+    has_error: bool = false,
+};
+
+// Callback function for iterating over object properties
+fn collectObjectProperty(
+    globalThis: *jsc.JSGlobalObject,
+    ctx_ptr: ?*anyopaque,
+    key: *jsc.ZigString,
+    value: jsc.JSValue,
+    is_symbol: bool,
+    is_private_symbol: bool,
+) callconv(.C) void {
+    _ = is_symbol;
+    _ = is_private_symbol;
+    
+    var ctx: *ObjectIteratorContext = bun.cast(*ObjectIteratorContext, ctx_ptr orelse return);
+    if (ctx.has_error) return;
+    
+    // Add field name
+    const field_slice = key.toSliceFast(bun.default_allocator);
+    ctx.args.append(field_slice) catch {
+        ctx.has_error = true;
+        return;
+    };
+    
+    // Add field value
+    const value_str = value.toBunString(globalThis) catch {
+        ctx.has_error = true;
+        return;
+    };
+    defer value_str.deref();
+    const value_slice = value_str.toUTF8WithoutRef(bun.default_allocator);
+    ctx.args.append(value_slice) catch {
+        ctx.has_error = true;
+        return;
+    };
+}
+
 // Implement hmset (set multiple values in hash)
 pub fn hmset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const key = try callframe.argument(0).toBunString(globalObject);
     defer key.deref();
 
-    // For simplicity, let's accept a list of alternating keys and values
-    const array_arg = callframe.argument(1);
-    if (!array_arg.isObject() or !array_arg.isArray()) {
-        return globalObject.throw("Arguments must be an array of alternating field names and values", .{});
+    const field_values_arg = callframe.argument(1);
+    if (!field_values_arg.isObject()) {
+        return globalObject.throw("Arguments must be an array of alternating field names and values or an object", .{});
     }
 
-    var iter = try array_arg.arrayIterator(globalObject);
-    if (iter.len % 2 != 0) {
-        return globalObject.throw("Arguments must be an array of alternating field names and values", .{});
-    }
-
-    var args = try std.ArrayList(jsc.ZigString.Slice).initCapacity(bun.default_allocator, iter.len + 1);
+    var args = std.ArrayList(jsc.ZigString.Slice).init(bun.default_allocator);
     defer {
         for (args.items) |item| {
             item.deinit();
@@ -511,24 +547,49 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe
     // Add key as first argument
     const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
     defer key_slice.deinit();
-    args.appendAssumeCapacity(key_slice);
+    try args.append(key_slice);
 
-    // Add field-value pairs
-    while (try iter.next()) |field_js| {
-        // Add field name
-        const field_str = try field_js.toBunString(globalObject);
-        defer field_str.deref();
-        const field_slice = field_str.toUTF8WithoutRef(bun.default_allocator);
-        args.appendAssumeCapacity(field_slice);
-
-        // Add value
-        if (try iter.next()) |value_js| {
-            const value_str = try value_js.toBunString(globalObject);
-            defer value_str.deref();
-            const value_slice = value_str.toUTF8WithoutRef(bun.default_allocator);
-            args.appendAssumeCapacity(value_slice);
-        } else {
+    if (field_values_arg.isArray()) {
+        // Handle array case (existing behavior)
+        var iter = try field_values_arg.arrayIterator(globalObject);
+        if (iter.len % 2 != 0) {
             return globalObject.throw("Arguments must be an array of alternating field names and values", .{});
+        }
+
+        // Add field-value pairs from array
+        while (try iter.next()) |field_js| {
+            // Add field name
+            const field_str = try field_js.toBunString(globalObject);
+            defer field_str.deref();
+            const field_slice = field_str.toUTF8WithoutRef(bun.default_allocator);
+            try args.append(field_slice);
+
+            // Add value
+            if (try iter.next()) |value_js| {
+                const value_str = try value_js.toBunString(globalObject);
+                defer value_str.deref();
+                const value_slice = value_str.toUTF8WithoutRef(bun.default_allocator);
+                try args.append(value_slice);
+            } else {
+                return globalObject.throw("Arguments must be an array of alternating field names and values", .{});
+            }
+        }
+    } else {
+        // Handle object case (new behavior)
+        var ctx = ObjectIteratorContext{
+            .args = &args,
+            .globalObject = globalObject,
+        };
+        
+        try field_values_arg.forEachProperty(globalObject, &ctx, collectObjectProperty);
+        
+        if (ctx.has_error) {
+            return globalObject.throw("Failed to process object properties", .{});
+        }
+        
+        // Check if the object was empty (Redis requires at least one field-value pair)
+        if (args.items.len == 1) { // Only the key was added
+            return globalObject.throw("Object must have at least one property", .{});
         }
     }
 

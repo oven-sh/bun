@@ -661,6 +661,26 @@ describe("Connection & Initialization", () => {
       await sql.close();
       await rm(dir, { recursive: true });
     });
+
+    // is this ideal api?
+    test.skip("SQLite read-write mode should not create missing database (mode=rw)", async () => {
+      const dir = tempDirWithFiles("rw-nonexist-test", {});
+      const dbPath = path.join(dir, "nonexistent-rw.db");
+
+      const db = new SQL(`sqlite://${dbPath}?mode=rw`);
+      expect(db.options.adapter).toBe("sqlite");
+      expect((db.options as Bun.SQL.SQLiteOptions).readonly).toBe(false);
+      expect((db.options as Bun.SQL.SQLiteOptions).create).toBeUndefined();
+      expect((db.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+
+      expect(existsSync(dbPath)).toBe(false);
+
+      expect(db`SELECT 1`).rejects.toThrowErrorMatchingInlineSnapshot();
+      expect(existsSync(dbPath)).toBe(false);
+
+      await db.close();
+      await rm(dir, { recursive: true });
+    });
   });
 });
 
@@ -691,8 +711,18 @@ describe("Data Types & Values", () => {
       await sql`INSERT INTO integers VALUES (${val})`;
     }
 
-    const results = await sql`SELECT * FROM integers`;
+    const results = await sql<{ value: number }[]>`SELECT * FROM integers`;
     expect(results.map(r => r.value)).toEqual(values);
+  });
+
+  test("INSERT containing literal 'RETURNING' should not be treated as RETURNING", async () => {
+    await sql`CREATE TABLE insert_literal_returning (name TEXT)`;
+    const res = await sql`INSERT INTO insert_literal_returning (name) VALUES ('RETURNING')`;
+    expect(res.command).toBe("INSERT");
+    expect(res.count).toBe(1);
+
+    const rows = await sql`SELECT COUNT(*) AS c FROM insert_literal_returning`;
+    expect(rows[0].c).toBe(1);
   });
 
   test("handles REAL values", async () => {
@@ -982,6 +1012,14 @@ describe("Template Literal Security", () => {
     expect(sql`SELECT * FROM ${table}`.execute()).rejects.toThrowErrorMatchingInlineSnapshot(
       `"near "?": syntax error"`,
     );
+  });
+
+  test("sql([...]) helper not allowed when 'where in' appears only in string literal", async () => {
+    const sql = new SQL("sqlite://:memory:");
+    expect(sql`SELECT 'this has where in inside a string' ${sql([1, 2])}`.execute()).rejects.toThrow(
+      /Helpers are only allowed for INSERT, UPDATE and WHERE IN commands/,
+    );
+    await sql.close();
   });
 });
 

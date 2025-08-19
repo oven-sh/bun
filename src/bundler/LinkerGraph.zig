@@ -408,6 +408,9 @@ pub fn load(
 pub const File = struct {
     entry_bits: AutoBitSet = undefined,
 
+    /// Number of entry points that can reach this module (Rolldown optimization)
+    share_count: u32 = 0,
+
     input_file: Index = Index.source(0),
 
     /// The minimum number of links in the module graph to get from an entry point

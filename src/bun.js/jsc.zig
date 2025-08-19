@@ -68,6 +68,7 @@ pub const JSRef = @import("./bindings/JSRef.zig").JSRef;
 pub const JSString = @import("./bindings/JSString.zig").JSString;
 pub const JSUint8Array = @import("./bindings/JSUint8Array.zig").JSUint8Array;
 pub const JSBigInt = @import("./bindings/JSBigInt.zig").JSBigInt;
+pub const JSClipboard = @import("./bindings/JSClipboard.zig");
 pub const RefString = @import("./jsc/RefString.zig");
 pub const ScriptExecutionStatus = @import("./bindings/ScriptExecutionStatus.zig").ScriptExecutionStatus;
 pub const SourceType = @import("./bindings/SourceType.zig").SourceType;

@@ -1,0 +1,521 @@
+#include "root.h"
+
+#if OS(LINUX)
+
+#include "Clipboard.h"
+#include <dlfcn.h>
+#include <unistd.h>
+#include <wtf/text/WTFString.h>
+#include <wtf/Vector.h>
+#include <wtf/NeverDestroyed.h>
+
+// X11 and related types
+typedef struct _XDisplay Display;
+typedef unsigned long Window;
+typedef unsigned long Atom;
+typedef int Bool;
+typedef unsigned char* XPointer;
+
+struct XEvent;
+
+// Minimal definitions to avoid including X11 headers
+typedef struct {
+    int type;
+    unsigned long serial;
+    Bool send_event;
+    Display* display;
+    Window owner;
+    Window requestor;
+    Atom selection;
+    Atom target;
+    Atom property;
+    unsigned long time;
+} XSelectionRequestEvent;
+
+typedef struct {
+    int type;
+    unsigned long serial;
+    Bool send_event;
+    Display* display;
+    Window requestor;
+    Atom selection;
+    Atom target;
+    Atom property;
+    unsigned long time;
+} XSelectionEvent;
+
+namespace Bun {
+namespace Clipboard {
+
+using namespace WTF;
+
+class X11Framework {
+public:
+    void* x11_handle;
+    
+    // X11 function pointers
+    Display* (*XOpenDisplay)(const char* display_name);
+    int (*XCloseDisplay)(Display* display);
+    Window (*XDefaultRootWindow)(Display* display);
+    Atom (*XInternAtom)(Display* display, const char* atom_name, Bool only_if_exists);
+    char* (*XGetAtomName)(Display* display, Atom atom);
+    int (*XSetSelectionOwner)(Display* display, Atom selection, Window owner, unsigned long time);
+    Window (*XGetSelectionOwner)(Display* display, Atom selection);
+    int (*XConvertSelection)(Display* display, Atom selection, Atom target, Atom property, Window requestor, unsigned long time);
+    int (*XGetWindowProperty)(Display* display, Window w, Atom property, long long_offset, long long_length, Bool delete_prop, Atom req_type, Atom* actual_type_return, int* actual_format_return, unsigned long* nitems_return, unsigned long* bytes_after_return, unsigned char** prop_return);
+    int (*XChangeProperty)(Display* display, Window w, Atom property, Atom type, int format, int mode, const unsigned char* data, int nelements);
+    int (*XSendEvent)(Display* display, Window w, Bool propagate, long event_mask, XEvent* event_send);
+    int (*XFlush)(Display* display);
+    int (*XFree)(void* data);
+    int (*XNextEvent)(Display* display, XEvent* event_return);
+    int (*XPending)(Display* display);
+    int (*XSelectInput)(Display* display, Window w, long event_mask);
+    Window (*XCreateSimpleWindow)(Display* display, Window parent, int x, int y, unsigned int width, unsigned int height, unsigned int border_width, unsigned long border, unsigned long background);
+    int (*XMapWindow)(Display* display, Window w);
+    int (*XDestroyWindow)(Display* display, Window w);
+    unsigned long (*XCurrentTime);
+
+    // Atoms we'll need
+    Atom CLIPBOARD;
+    Atom PRIMARY;
+    Atom UTF8_STRING;
+    Atom STRING;
+    Atom TEXT;
+    Atom TARGETS;
+    Atom MULTIPLE;
+    Atom TIMESTAMP;
+    Atom text_html;
+    Atom text_rtf;
+    Atom image_png;
+    
+    Display* display;
+    Window window;
+
+    X11Framework()
+        : x11_handle(nullptr)
+        , display(nullptr)
+        , window(0)
+    {
+    }
+
+    bool load()
+    {
+        if (x11_handle && display) return true;
+
+        x11_handle = dlopen("libX11.so.6", RTLD_LAZY | RTLD_LOCAL);
+        if (!x11_handle) {
+            x11_handle = dlopen("libX11.so", RTLD_LAZY | RTLD_LOCAL);
+            if (!x11_handle) return false;
+        }
+
+        if (!load_functions()) {
+            dlclose(x11_handle);
+            x11_handle = nullptr;
+            return false;
+        }
+
+        // Open display
+        display = XOpenDisplay(nullptr);
+        if (!display) {
+            dlclose(x11_handle);
+            x11_handle = nullptr;
+            return false;
+        }
+
+        // Create a simple window for clipboard operations
+        Window root = XDefaultRootWindow(display);
+        window = XCreateSimpleWindow(display, root, 0, 0, 1, 1, 0, 0, 0);
+        if (!window) {
+            XCloseDisplay(display);
+            display = nullptr;
+            dlclose(x11_handle);
+            x11_handle = nullptr;
+            return false;
+        }
+
+        // Initialize atoms
+        if (!init_atoms()) {
+            XDestroyWindow(display, window);
+            XCloseDisplay(display);
+            display = nullptr;
+            dlclose(x11_handle);
+            x11_handle = nullptr;
+            window = 0;
+            return false;
+        }
+
+        return true;
+    }
+
+    ~X11Framework()
+    {
+        if (display) {
+            if (window) {
+                XDestroyWindow(display, window);
+            }
+            XCloseDisplay(display);
+        }
+        if (x11_handle) {
+            dlclose(x11_handle);
+        }
+    }
+
+private:
+    bool load_functions()
+    {
+        XOpenDisplay = (Display* (*)(const char*))dlsym(x11_handle, "XOpenDisplay");
+        XCloseDisplay = (int (*)(Display*))dlsym(x11_handle, "XCloseDisplay");
+        XDefaultRootWindow = (Window (*)(Display*))dlsym(x11_handle, "XDefaultRootWindow");
+        XInternAtom = (Atom (*)(Display*, const char*, Bool))dlsym(x11_handle, "XInternAtom");
+        XGetAtomName = (char* (*)(Display*, Atom))dlsym(x11_handle, "XGetAtomName");
+        XSetSelectionOwner = (int (*)(Display*, Atom, Window, unsigned long))dlsym(x11_handle, "XSetSelectionOwner");
+        XGetSelectionOwner = (Window (*)(Display*, Atom))dlsym(x11_handle, "XGetSelectionOwner");
+        XConvertSelection = (int (*)(Display*, Atom, Atom, Atom, Window, unsigned long))dlsym(x11_handle, "XConvertSelection");
+        XGetWindowProperty = (int (*)(Display*, Window, Atom, long, long, Bool, Atom, Atom*, int*, unsigned long*, unsigned long*, unsigned char**))dlsym(x11_handle, "XGetWindowProperty");
+        XChangeProperty = (int (*)(Display*, Window, Atom, Atom, int, int, const unsigned char*, int))dlsym(x11_handle, "XChangeProperty");
+        XSendEvent = (int (*)(Display*, Window, Bool, long, XEvent*))dlsym(x11_handle, "XSendEvent");
+        XFlush = (int (*)(Display*))dlsym(x11_handle, "XFlush");
+        XFree = (int (*)(void*))dlsym(x11_handle, "XFree");
+        XNextEvent = (int (*)(Display*, XEvent*))dlsym(x11_handle, "XNextEvent");
+        XPending = (int (*)(Display*))dlsym(x11_handle, "XPending");
+        XSelectInput = (int (*)(Display*, Window, long))dlsym(x11_handle, "XSelectInput");
+        XCreateSimpleWindow = (Window (*)(Display*, Window, int, int, unsigned int, unsigned int, unsigned int, unsigned long, unsigned long))dlsym(x11_handle, "XCreateSimpleWindow");
+        XMapWindow = (int (*)(Display*, Window))dlsym(x11_handle, "XMapWindow");
+        XDestroyWindow = (int (*)(Display*, Window))dlsym(x11_handle, "XDestroyWindow");
+
+        return XOpenDisplay && XCloseDisplay && XDefaultRootWindow && XInternAtom && XGetAtomName && 
+               XSetSelectionOwner && XGetSelectionOwner && XConvertSelection && XGetWindowProperty && 
+               XChangeProperty && XSendEvent && XFlush && XFree && XNextEvent && XPending && 
+               XSelectInput && XCreateSimpleWindow && XMapWindow && XDestroyWindow;
+    }
+
+    bool init_atoms()
+    {
+        CLIPBOARD = XInternAtom(display, "CLIPBOARD", False);
+        PRIMARY = XInternAtom(display, "PRIMARY", False);
+        UTF8_STRING = XInternAtom(display, "UTF8_STRING", False);
+        STRING = XInternAtom(display, "STRING", False);
+        TEXT = XInternAtom(display, "TEXT", False);
+        TARGETS = XInternAtom(display, "TARGETS", False);
+        MULTIPLE = XInternAtom(display, "MULTIPLE", False);
+        TIMESTAMP = XInternAtom(display, "TIMESTAMP", False);
+        text_html = XInternAtom(display, "text/html", False);
+        text_rtf = XInternAtom(display, "text/rtf", False);
+        image_png = XInternAtom(display, "image/png", False);
+
+        return CLIPBOARD && PRIMARY && UTF8_STRING && STRING && TEXT && 
+               TARGETS && MULTIPLE && TIMESTAMP && text_html && text_rtf && image_png;
+    }
+};
+
+static X11Framework* x11Framework()
+{
+    static LazyNeverDestroyed<X11Framework> framework;
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [&] {
+        framework.construct();
+        if (!framework->load()) {
+            // Framework failed to load, but object is still constructed
+        }
+    });
+    return framework->display ? &framework.get() : nullptr;
+}
+
+static void updateError(Error& err, const String& message)
+{
+    err.type = ErrorType::PlatformError;
+    err.message = message;
+    err.code = -1;
+}
+
+static bool setClipboardData(const Vector<uint8_t>& data, Atom target)
+{
+    auto* framework = x11Framework();
+    if (!framework) return false;
+
+    // Set the data as a property on our window
+    Atom property = framework->XInternAtom(framework->display, "BUN_CLIPBOARD_DATA", False);
+    framework->XChangeProperty(framework->display, framework->window, property, target, 8, 
+                              0 /* PropModeReplace */, data.data(), data.size());
+
+    // Take ownership of the clipboard
+    framework->XSetSelectionOwner(framework->display, framework->CLIPBOARD, framework->window, 0 /* CurrentTime */);
+    
+    // Verify we own it
+    Window owner = framework->XGetSelectionOwner(framework->display, framework->CLIPBOARD);
+    framework->XFlush(framework->display);
+    
+    return owner == framework->window;
+}
+
+static std::optional<Vector<uint8_t>> getClipboardData(Atom target)
+{
+    auto* framework = x11Framework();
+    if (!framework) return std::nullopt;
+
+    // Check if anyone owns the clipboard
+    Window owner = framework->XGetSelectionOwner(framework->display, framework->CLIPBOARD);
+    if (owner == 0) return std::nullopt; // No owner
+
+    // Request the selection
+    Atom property = framework->XInternAtom(framework->display, "BUN_CLIPBOARD_PROPERTY", False);
+    framework->XConvertSelection(framework->display, framework->CLIPBOARD, target, property, 
+                                framework->window, 0 /* CurrentTime */);
+    framework->XFlush(framework->display);
+
+    // Wait for the SelectionNotify event (simplified approach)
+    // In a real implementation, you'd need proper event handling
+    // For now, just try to read the property immediately
+    usleep(10000); // Small delay to allow the selection to be converted
+
+    Atom actual_type;
+    int actual_format;
+    unsigned long nitems;
+    unsigned long bytes_after;
+    unsigned char* prop = nullptr;
+
+    int result = framework->XGetWindowProperty(framework->display, framework->window, property, 
+                                              0, 65536, True, 0 /* AnyPropertyType */, 
+                                              &actual_type, &actual_format, &nitems, 
+                                              &bytes_after, &prop);
+
+    if (result != 0 /* Success */ || !prop || nitems == 0) {
+        if (prop) framework->XFree(prop);
+        return std::nullopt;
+    }
+
+    Vector<uint8_t> data;
+    data.append(std::span<const uint8_t>(prop, nitems));
+    framework->XFree(prop);
+
+    return data;
+}
+
+Error writeText(const String& text)
+{
+    Error err;
+    
+    auto* framework = x11Framework();
+    if (!framework) {
+        updateError(err, "X11 not available"_s);
+        return err;
+    }
+
+    auto textUtf8 = text.utf8();
+    Vector<uint8_t> data;
+    data.append(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(textUtf8.data()), textUtf8.length()));
+
+    if (!setClipboardData(data, framework->UTF8_STRING)) {
+        updateError(err, "Failed to set clipboard text"_s);
+    }
+
+    return err;
+}
+
+Error writeHTML(const String& html)
+{
+    Error err;
+    
+    auto* framework = x11Framework();
+    if (!framework) {
+        updateError(err, "X11 not available"_s);
+        return err;
+    }
+
+    auto htmlUtf8 = html.utf8();
+    Vector<uint8_t> data;
+    data.append(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(htmlUtf8.data()), htmlUtf8.length()));
+
+    if (!setClipboardData(data, framework->text_html)) {
+        updateError(err, "Failed to set clipboard HTML"_s);
+    }
+
+    return err;
+}
+
+Error writeRTF(const String& rtf)
+{
+    Error err;
+    
+    auto* framework = x11Framework();
+    if (!framework) {
+        updateError(err, "X11 not available"_s);
+        return err;
+    }
+
+    auto rtfUtf8 = rtf.utf8();
+    Vector<uint8_t> data;
+    data.append(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(rtfUtf8.data()), rtfUtf8.length()));
+
+    if (!setClipboardData(data, framework->text_rtf)) {
+        updateError(err, "Failed to set clipboard RTF"_s);
+    }
+
+    return err;
+}
+
+Error writeImage(const Vector<uint8_t>& imageData, const String& mimeType)
+{
+    Error err;
+    
+    auto* framework = x11Framework();
+    if (!framework) {
+        updateError(err, "X11 not available"_s);
+        return err;
+    }
+
+    Atom target = framework->image_png; // Default to PNG
+    if (mimeType == "image/png"_s) {
+        target = framework->image_png;
+    }
+
+    if (!setClipboardData(imageData, target)) {
+        updateError(err, "Failed to set clipboard image"_s);
+    }
+
+    return err;
+}
+
+std::optional<String> readText(Error& error)
+{
+    error = Error {};
+    
+    auto* framework = x11Framework();
+    if (!framework) {
+        updateError(error, "X11 not available"_s);
+        return std::nullopt;
+    }
+
+    auto data = getClipboardData(framework->UTF8_STRING);
+    if (!data) {
+        // Try STRING format as fallback
+        data = getClipboardData(framework->STRING);
+        if (!data) {
+            updateError(error, "No text found in clipboard"_s);
+            return std::nullopt;
+        }
+    }
+
+    return String::fromUTF8(std::span<const char>(reinterpret_cast<const char*>(data->data()), data->size()));
+}
+
+std::optional<String> readHTML(Error& error)
+{
+    error = Error {};
+    
+    auto* framework = x11Framework();
+    if (!framework) {
+        updateError(error, "X11 not available"_s);
+        return std::nullopt;
+    }
+
+    auto data = getClipboardData(framework->text_html);
+    if (!data) {
+        updateError(error, "No HTML found in clipboard"_s);
+        return std::nullopt;
+    }
+
+    return String::fromUTF8(std::span<const char>(reinterpret_cast<const char*>(data->data()), data->size()));
+}
+
+std::optional<String> readRTF(Error& error)
+{
+    error = Error {};
+    
+    auto* framework = x11Framework();
+    if (!framework) {
+        updateError(error, "X11 not available"_s);
+        return std::nullopt;
+    }
+
+    auto data = getClipboardData(framework->text_rtf);
+    if (!data) {
+        updateError(error, "No RTF found in clipboard"_s);
+        return std::nullopt;
+    }
+
+    return String::fromUTF8(std::span<const char>(reinterpret_cast<const char*>(data->data()), data->size()));
+}
+
+std::optional<Vector<uint8_t>> readImage(Error& error, String& mimeType)
+{
+    error = Error {};
+    
+    auto* framework = x11Framework();
+    if (!framework) {
+        updateError(error, "X11 not available"_s);
+        return std::nullopt;
+    }
+
+    auto data = getClipboardData(framework->image_png);
+    if (data) {
+        mimeType = "image/png"_s;
+        return data;
+    }
+
+    updateError(error, "No image found in clipboard"_s);
+    return std::nullopt;
+}
+
+bool isSupported()
+{
+    return x11Framework() != nullptr;
+}
+
+Vector<DataType> getSupportedTypes()
+{
+    Vector<DataType> types;
+    if (isSupported()) {
+        types.append(DataType::Text);
+        types.append(DataType::HTML);
+        types.append(DataType::RTF);
+        types.append(DataType::Image);
+    }
+    return types;
+}
+
+// Async implementations - forward to common async implementation
+void writeTextAsync(const String& text, WriteCallback callback)
+{
+    executeWriteTextAsync(text, std::move(callback));
+}
+
+void writeHTMLAsync(const String& html, WriteCallback callback)
+{
+    executeWriteHTMLAsync(html, std::move(callback));
+}
+
+void writeRTFAsync(const String& rtf, WriteCallback callback)
+{
+    executeWriteRTFAsync(rtf, std::move(callback));
+}
+
+void writeImageAsync(const Vector<uint8_t>& imageData, const String& mimeType, WriteCallback callback)
+{
+    executeWriteImageAsync(imageData, mimeType, std::move(callback));
+}
+
+void readTextAsync(ReadCallback callback)
+{
+    executeReadTextAsync(std::move(callback));
+}
+
+void readHTMLAsync(ReadCallback callback)
+{
+    executeReadHTMLAsync(std::move(callback));
+}
+
+void readRTFAsync(ReadCallback callback)
+{
+    executeReadRTFAsync(std::move(callback));
+}
+
+void readImageAsync(ReadCallback callback)
+{
+    executeReadImageAsync(std::move(callback));
+}
+
+} // namespace Clipboard
+} // namespace Bun
+
+#endif // OS(LINUX)

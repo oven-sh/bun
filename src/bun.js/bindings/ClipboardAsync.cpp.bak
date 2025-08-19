@@ -1,0 +1,206 @@
+#include "root.h"
+#include "Clipboard.h"
+#include <wtf/text/WTFString.h>
+#include <wtf/Vector.h>
+#include <thread>
+#include <memory>
+
+namespace Bun {
+namespace Clipboard {
+
+using namespace WTF;
+
+// Async task structures
+struct WriteTextTask {
+    String text;
+    WriteCallback callback;
+};
+
+struct WriteHTMLTask {
+    String html;
+    WriteCallback callback;
+};
+
+struct WriteRTFTask {
+    String rtf;
+    WriteCallback callback;
+};
+
+struct WriteImageTask {
+    Vector<uint8_t> imageData;
+    String mimeType;
+    WriteCallback callback;
+};
+
+struct ReadTextTask {
+    ReadCallback callback;
+};
+
+struct ReadHTMLTask {
+    ReadCallback callback;
+};
+
+struct ReadRTFTask {
+    ReadCallback callback;
+};
+
+struct ReadImageTask {
+    ReadCallback callback;
+};
+
+// Thread pool execution functions
+void executeWriteTextAsync(const String& text, WriteCallback callback)
+{
+    std::thread([text = String(text), callback = std::move(callback)]() {
+        Error error = writeText(text);
+        callback(error);
+    }).detach();
+}
+
+void executeWriteHTMLAsync(const String& html, WriteCallback callback)
+{
+    std::thread([html = String(html), callback = std::move(callback)]() {
+        Error error = writeHTML(html);
+        callback(error);
+    }).detach();
+}
+
+void executeWriteRTFAsync(const String& rtf, WriteCallback callback)
+{
+    std::thread([rtf = String(rtf), callback = std::move(callback)]() {
+        Error error = writeRTF(rtf);
+        callback(error);
+    }).detach();
+}
+
+void executeWriteImageAsync(const Vector<uint8_t>& imageData, const String& mimeType, WriteCallback callback)
+{
+    std::thread([imageData, mimeType = String(mimeType), callback = std::move(callback)]() {
+        Error error = writeImage(imageData, mimeType);
+        callback(error);
+    }).detach();
+}
+
+void executeReadTextAsync(ReadCallback callback)
+{
+    std::thread([callback = std::move(callback)]() {
+        Error error;
+        auto text = readText(error);
+        Vector<ClipboardData> data;
+        
+        if (text.has_value()) {
+            ClipboardData clipData;
+            clipData.type = DataType::Text;
+            clipData.mimeType = "text/plain"_s;
+            auto textUtf8 = text->utf8();
+            clipData.data.append(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(textUtf8.data()), textUtf8.length()));
+            data.append(WTFMove(clipData));
+        }
+        
+        callback(error, WTFMove(data));
+    }).detach();
+}
+
+void executeReadHTMLAsync(ReadCallback callback)
+{
+    std::thread([callback = std::move(callback)]() {
+        Error error;
+        auto html = readHTML(error);
+        Vector<ClipboardData> data;
+        
+        if (html.has_value()) {
+            ClipboardData clipData;
+            clipData.type = DataType::HTML;
+            clipData.mimeType = "text/html"_s;
+            auto htmlUtf8 = html->utf8();
+            clipData.data.append(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(htmlUtf8.data()), htmlUtf8.length()));
+            data.append(WTFMove(clipData));
+        }
+        
+        callback(error, WTFMove(data));
+    }).detach();
+}
+
+void executeReadRTFAsync(ReadCallback callback)
+{
+    std::thread([callback = std::move(callback)]() {
+        Error error;
+        auto rtf = readRTF(error);
+        Vector<ClipboardData> data;
+        
+        if (rtf.has_value()) {
+            ClipboardData clipData;
+            clipData.type = DataType::RTF;
+            clipData.mimeType = "text/rtf"_s;
+            auto rtfUtf8 = rtf->utf8();
+            clipData.data.append(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(rtfUtf8.data()), rtfUtf8.length()));
+            data.append(WTFMove(clipData));
+        }
+        
+        callback(error, WTFMove(data));
+    }).detach();
+}
+
+void executeReadImageAsync(ReadCallback callback)
+{
+    std::thread([callback = std::move(callback)]() {
+        Error error;
+        String mimeType;
+        auto imageData = readImage(error, mimeType);
+        Vector<ClipboardData> data;
+        
+        if (imageData.has_value()) {
+            ClipboardData clipData;
+            clipData.type = DataType::Image;
+            clipData.mimeType = mimeType;
+            clipData.data = WTFMove(*imageData);
+            data.append(WTFMove(clipData));
+        }
+        
+        callback(error, WTFMove(data));
+    }).detach();
+}
+
+// Public async interface functions
+void writeTextAsync(const String& text, WriteCallback callback)
+{
+    executeWriteTextAsync(text, std::move(callback));
+}
+
+void writeHTMLAsync(const String& html, WriteCallback callback)
+{
+    executeWriteHTMLAsync(html, std::move(callback));
+}
+
+void writeRTFAsync(const String& rtf, WriteCallback callback)
+{
+    executeWriteRTFAsync(rtf, std::move(callback));
+}
+
+void writeImageAsync(const Vector<uint8_t>& imageData, const String& mimeType, WriteCallback callback)
+{
+    executeWriteImageAsync(imageData, mimeType, std::move(callback));
+}
+
+void readTextAsync(ReadCallback callback)
+{
+    executeReadTextAsync(std::move(callback));
+}
+
+void readHTMLAsync(ReadCallback callback)
+{
+    executeReadHTMLAsync(std::move(callback));
+}
+
+void readRTFAsync(ReadCallback callback)
+{
+    executeReadRTFAsync(std::move(callback));
+}
+
+void readImageAsync(ReadCallback callback)
+{
+    executeReadImageAsync(std::move(callback));
+}
+
+} // namespace Clipboard
+} // namespace Bun

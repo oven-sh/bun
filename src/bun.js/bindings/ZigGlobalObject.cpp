@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "ZigGlobalObject.h"
+#include "JSClipboard.h"
 #include "helpers.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/JSImmutableButterfly.h"
@@ -3123,6 +3124,11 @@ void GlobalObject::finishCreation(VM& vm)
 #endif
 
             obj->putDirect(init.vm, hardwareConcurrencyIdentifier, JSC::jsNumber(cpuCount));
+            
+            // Add clipboard API
+            JSC::JSObject* clipboardObj = Bun::createClipboardObject(init.owner);
+            obj->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "clipboard"_s), clipboardObj);
+            
             init.set(obj);
         });
 

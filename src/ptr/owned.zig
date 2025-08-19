@@ -200,12 +200,12 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
                 return self.unsafe_raw_pointer;
             }
         } else if (info.isOptional()) struct {
-            pub fn intoRawOwned(self: Self) struct { Pointer, Allocator } {
-                return .{ self.unsafe_raw_pointer, self.unsafe_allocator };
-            }
-        } else struct {
             pub fn intoRawOwned(self: Self) ?struct { NonOptionalPointer, Allocator } {
                 return .{ self.unsafe_raw_pointer orelse return null, self.unsafe_allocator };
+            }
+        } else struct {
+            pub fn intoRawOwned(self: Self) struct { Pointer, Allocator } {
+                return .{ self.unsafe_raw_pointer, self.unsafe_allocator };
             }
         }).intoRawOwned;
 

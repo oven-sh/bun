@@ -1284,19 +1284,6 @@ pub var buffered_stdin = std.io.BufferedReader(4096, File.Reader){
 
 const string = []const u8;
 
-const Environment = @import("./env.zig");
-const root = @import("root");
-const std = @import("std");
-const SystemTimer = @import("./system_timer.zig").Timer;
-
-const bun = @import("bun");
-const ComptimeStringMap = bun.ComptimeStringMap;
-const Global = bun.Global;
-const c = bun.c;
-const strings = bun.strings;
-const use_mimalloc = bun.use_mimalloc;
-const File = bun.sys.File;
-
 /// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036
 pub const synchronized_start = "\x1b[?2026h";
 
@@ -1321,3 +1308,16 @@ pub const Synchronized = struct {
         }
     }
 };
+
+const Environment = @import("./env.zig");
+const root = @import("root");
+const std = @import("std");
+const SystemTimer = @import("./system_timer.zig").Timer;
+
+const bun = @import("bun");
+const ComptimeStringMap = bun.ComptimeStringMap;
+const Global = bun.Global;
+const c = bun.c;
+const strings = bun.strings;
+const use_mimalloc = bun.use_mimalloc;
+const File = bun.sys.File;

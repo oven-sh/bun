@@ -269,7 +269,27 @@ class Pool extends Dispatcher {
 }
 class BalancedPool extends Dispatcher {}
 class Client extends Dispatcher {
-  request() {}
+  #url
+  
+  constructor(url, options = {}) {
+    super();
+    this.#url = url;
+  }
+  
+  async request(options = {}) {
+    // If path is provided, resolve it against the base URL
+    let requestUrl = this.#url;
+    if (options.path) {
+      if (typeof this.#url === 'string') {
+        requestUrl = new URL(options.path, this.#url).toString();
+      } else {
+        requestUrl = new URL(options.path, this.#url);
+      }
+    }
+    
+    // Call the global request function with the resolved URL
+    return await request(requestUrl, options);
+  }
 }
 
 class DispatcherBase extends EventEmitter {}

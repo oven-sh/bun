@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { request } from "undici";
+import { request, Client } from "undici";
 
 import { createServer } from "../../../http-test-server";
 
@@ -154,5 +154,50 @@ describe("undici", () => {
     //   const json = (await body.json()) as { form: { foo: string } };
     //   expect(json.form.foo).toBe("bar");
     // });
+  });
+
+  describe("Client", () => {
+    it("should create a client with a base URL and make requests", async () => {
+      const client = new Client(hostUrl);
+      const { body, statusCode } = await client.request({
+        path: "/get",
+        method: "GET",
+      });
+      
+      expect(statusCode).toBe(200);
+      expect(body).toBeDefined();
+      const json = (await body.json()) as { url: string };
+      expect(json.url).toBe(`${hostUrl}/get`);
+    });
+
+    it("should handle relative paths correctly", async () => {
+      const client = new Client(hostUrl);
+      const { body, statusCode } = await client.request({
+        path: "/headers",
+        method: "GET",
+        headers: {
+          "x-test": "client-test"
+        }
+      });
+      
+      expect(statusCode).toBe(200);
+      expect(body).toBeDefined();
+      const json = (await body.json()) as { headers: { "x-test": string } };
+      expect(json.headers["x-test"]).toBe("client-test");
+    });
+
+    it("should work with POST requests", async () => {
+      const client = new Client(hostUrl);
+      const { body, statusCode } = await client.request({
+        path: "/post",
+        method: "POST",
+        body: "test body",
+      });
+      
+      expect(statusCode).toBe(201);
+      expect(body).toBeDefined();
+      const json = (await body.json()) as { data: string };
+      expect(json.data).toBe("test body");
+    });
   });
 });

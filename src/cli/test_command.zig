@@ -623,7 +623,7 @@ pub const CommandLineReporter = struct {
             parent_ = scope.parent;
         }
 
-        const scopes: []*jest.DescribeScope = scopes_stack.slice();
+        const scopes: []*describe2.DescribeScope = scopes_stack.slice();
         const display_label = if (test_entry.getName()) |name| name else "test";
 
         // Quieter output when claude code is in use.

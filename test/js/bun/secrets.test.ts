@@ -1,18 +1,18 @@
-import { expect, test, beforeAll } from "bun:test";
 import { spawnSync } from "bun";
+import { beforeAll, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "fs";
-import { isLinux, isCI } from "harness";
+import { isCI, isLinux } from "harness";
 
 // Helper to detect Ubuntu/Debian systems
 function isUbuntuOrDebian(): boolean {
   if (!isLinux) return false;
-  
+
   try {
     if (existsSync("/etc/os-release")) {
       const osRelease = readFileSync("/etc/os-release", "utf8");
       return osRelease.includes("ID=ubuntu") || osRelease.includes("ID=debian") || osRelease.includes("ID_LIKE=debian");
     }
-    
+
     // Fallback: check for apt
     const result = spawnSync(["which", "apt"], { stderr: "ignore" });
     return result.exitCode === 0;
@@ -35,31 +35,28 @@ function checkSecretsPackages(): boolean {
 function installSecretsPackages(): boolean {
   try {
     console.log("📦 Installing required packages for secrets API...");
-    
+
     // Determine if we need sudo
     const needsSudo = !isCI && process.getuid && process.getuid() !== 0;
     const aptCmd = needsSudo ? ["sudo", "apt-get"] : ["apt-get"];
-    
+
     // Update package list
-    const updateResult = spawnSync([...aptCmd, "update", "-qq"], { 
+    const updateResult = spawnSync([...aptCmd, "update", "-qq"], {
       stderr: "ignore",
-      env: { ...process.env, DEBIAN_FRONTEND: "noninteractive" }
+      env: { ...process.env, DEBIAN_FRONTEND: "noninteractive" },
     });
-    
+
     if (updateResult.exitCode !== 0) {
       console.warn("⚠ Failed to update package list");
       return false;
     }
-    
+
     // Install packages
-    const installResult = spawnSync([
-      ...aptCmd, "install", "-y", 
-      "libsecret-1-dev", "gnome-keyring", "dbus-x11"
-    ], { 
+    const installResult = spawnSync([...aptCmd, "install", "-y", "libsecret-1-dev", "gnome-keyring", "dbus-x11"], {
       stderr: "ignore",
-      env: { ...process.env, DEBIAN_FRONTEND: "noninteractive" }
+      env: { ...process.env, DEBIAN_FRONTEND: "noninteractive" },
     });
-    
+
     if (installResult.exitCode === 0) {
       console.log("✅ Packages installed successfully");
       return true;
@@ -79,10 +76,10 @@ async function setupKeyringEnvironment(): Promise<boolean> {
     // Set up keyring directory
     const homeDir = process.env.HOME || process.env.USERPROFILE || "/root";
     const keyringsDir = `${homeDir}/.local/share/keyrings`;
-    
+
     // Create directory
     spawnSync(["mkdir", "-p", keyringsDir], { stderr: "ignore" });
-    
+
     // Create login keyring file
     const loginKeyring = `${keyringsDir}/login.keyring`;
     const keyringContent = `[keyring]
@@ -92,21 +89,18 @@ mtime=1609459200
 lock-on-idle=false
 lock-after=false
 `;
-    
+
     await Bun.write(loginKeyring, keyringContent);
-    
+
     // Set environment variables
     process.env.DISPLAY = process.env.DISPLAY || ":99";
-    
+
     // Initialize keyring daemon
-    const keyringResult = spawnSync([
-      "sh", "-c", 
-      'echo -n "" | gnome-keyring-daemon --daemonize --login'
-    ], { 
+    const keyringResult = spawnSync(["sh", "-c", 'echo -n "" | gnome-keyring-daemon --daemonize --login'], {
       env: process.env,
-      stderr: "ignore"
+      stderr: "ignore",
     });
-    
+
     return keyringResult.exitCode === 0;
   } catch (error) {
     console.warn("⚠ Error during keyring setup:", error);
@@ -117,32 +111,30 @@ lock-after=false
 // Helper to spawn test in D-Bus session
 function spawnTestInDbusSession(): never {
   console.log("🚌 Starting D-Bus session for secrets tests...");
-  
+
   // Get the current Bun executable
   const bunExe = process.execPath;
   const testFile = import.meta.url.replace("file://", "");
-  
+
   // Spawn in D-Bus session
-  const result = spawnSync([
-    "dbus-run-session", "--", bunExe, "test", testFile
-  ], {
+  const result = spawnSync(["dbus-run-session", "--", bunExe, "test", testFile], {
     stdout: "inherit",
-    stderr: "inherit", 
+    stderr: "inherit",
     stdin: "inherit",
-    env: { ...process.env, BUN_SECRETS_DBUS_SESSION: "1" }
+    env: { ...process.env, BUN_SECRETS_DBUS_SESSION: "1" },
   });
-  
+
   process.exit(result.exitCode || 0);
 }
 
 // Setup keyring environment for Linux CI
 beforeAll(async () => {
   if (!isLinux) return;
-  
+
   const needsSetup = isUbuntuOrDebian() && (isCI || process.env.FORCE_KEYRING_SETUP === "1");
-  
+
   if (!needsSetup) return;
-  
+
   // Check if we need to spawn in D-Bus session
   if (!process.env.DBUS_SESSION_BUS_ADDRESS && !process.env.BUN_SECRETS_DBUS_SESSION) {
     // Install packages first if needed
@@ -154,18 +146,18 @@ beforeAll(async () => {
         return;
       }
     }
-    
+
     // Setup keyring environment
     await setupKeyringEnvironment();
-    
+
     // Restart in D-Bus session
     spawnTestInDbusSession();
   }
-  
+
   // We're now in a D-Bus session, do final setup
   console.log("🔐 Finalizing keyring setup...");
-  
-  if (!await setupKeyringEnvironment()) {
+
+  if (!(await setupKeyringEnvironment())) {
     console.warn("⚠ Keyring setup failed, tests may not work properly");
   } else {
     console.log("✅ Keyring environment ready");

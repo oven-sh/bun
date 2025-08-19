@@ -1238,415 +1238,421 @@ pub const UpdateInteractiveCommand = struct {
                 initial_draw = true;
             }
 
-            if (!initial_draw) {
-                Output.up(total_lines);
-                Output.print("\x1B[1G", .{});
-                Output.clearToEnd();
-            }
-            initial_draw = false;
+            // The render body
+            {
+                const synchronized = Output.synchronized();
+                defer synchronized.end();
 
-            const help_text = "Space to toggle, Enter to confirm, a to select all, n to select none, i to invert, l to toggle latest";
-            const elipsised_help_text = try truncateWithEllipsis(bun.default_allocator, help_text, current_size.width - "? Select packages to update - ".len, true);
-            defer bun.default_allocator.free(elipsised_help_text);
-            Output.prettyln("<r><cyan>?<r> Select packages to update<d> - {s}<r>", .{elipsised_help_text});
+                if (!initial_draw) {
+                    Output.up(total_lines);
+                    Output.print("\x1B[1G", .{});
+                    Output.clearToEnd();
+                }
+                initial_draw = false;
 
-            // Calculate how many lines the prompt will actually take due to terminal wrapping
-            total_lines = 1;
+                const help_text = "Space to toggle, Enter to confirm, a to select all, n to select none, i to invert, l to toggle latest";
+                const elipsised_help_text = try truncateWithEllipsis(bun.default_allocator, help_text, current_size.width - "? Select packages to update - ".len, true);
+                defer bun.default_allocator.free(elipsised_help_text);
+                Output.prettyln("<r><cyan>?<r> Select packages to update<d> - {s}<r>", .{elipsised_help_text});
 
-            // Calculate available space for packages (reserve space for scroll indicators if needed)
-            const needs_scrolling = state.packages.len > state.viewport_height;
-            const show_top_indicator = needs_scrolling and state.viewport_start > 0;
+                // Calculate how many lines the prompt will actually take due to terminal wrapping
+                total_lines = 1;
 
-            // First calculate preliminary viewport end to determine if we need bottom indicator
-            const preliminary_viewport_end = @min(state.viewport_start + state.viewport_height, state.packages.len);
-            const show_bottom_indicator = needs_scrolling and preliminary_viewport_end < state.packages.len;
+                // Calculate available space for packages (reserve space for scroll indicators if needed)
+                const needs_scrolling = state.packages.len > state.viewport_height;
+                const show_top_indicator = needs_scrolling and state.viewport_start > 0;
 
-            // const is_bottom_scroll = needs_scrolling and state.viewport_start + state.viewport_height <= state.packages.len;
+                // First calculate preliminary viewport end to determine if we need bottom indicator
+                const preliminary_viewport_end = @min(state.viewport_start + state.viewport_height, state.packages.len);
+                const show_bottom_indicator = needs_scrolling and preliminary_viewport_end < state.packages.len;
 
-            // Show top scroll indicator if needed
-            if (show_top_indicator) {
-                Output.pretty("  <d>↑ {d} more package{s} above<r>", .{ state.viewport_start, if (state.viewport_start == 1) "" else "s" });
-            }
+                // const is_bottom_scroll = needs_scrolling and state.viewport_start + state.viewport_height <= state.packages.len;
 
-            // Calculate how many packages we can actually display
-            // The simple approach: just try to show viewport_height packages
-            // The display loop will stop when it runs out of room
-            const viewport_end = @min(state.viewport_start + state.viewport_height, state.packages.len);
+                // Show top scroll indicator if needed
+                if (show_top_indicator) {
+                    Output.pretty("  <d>↑ {d} more package{s} above<r>", .{ state.viewport_start, if (state.viewport_start == 1) "" else "s" });
+                }
 
-            // Group by dependency type
-            var current_dep_type: ?[]const u8 = null;
+                // Calculate how many packages we can actually display
+                // The simple approach: just try to show viewport_height packages
+                // The display loop will stop when it runs out of room
+                const viewport_end = @min(state.viewport_start + state.viewport_height, state.packages.len);
 
-            // Track how many lines we've actually displayed (headers take 2 lines)
-            var lines_displayed: usize = 0;
-            var packages_displayed: usize = 0;
+                // Group by dependency type
+                var current_dep_type: ?[]const u8 = null;
 
-            // Only display packages within viewport
-            for (state.viewport_start..viewport_end) |i| {
-                const pkg = &state.packages[i];
-                const selected = state.selected[i];
+                // Track how many lines we've actually displayed (headers take 2 lines)
+                var lines_displayed: usize = 0;
+                var packages_displayed: usize = 0;
 
-                // Check if we need a header and if we have room for it
-                const needs_header = current_dep_type == null or !strings.eql(current_dep_type.?, pkg.dependency_type);
+                // Only display packages within viewport
+                for (state.viewport_start..viewport_end) |i| {
+                    const pkg = &state.packages[i];
+                    const selected = state.selected[i];
 
-                // Print dependency type header with column headers if changed
-                if (needs_header) {
-                    // Count selected packages in this dependency type
-                    var selected_count: usize = 0;
-                    for (state.packages, state.selected) |p, sel| {
-                        if (strings.eql(p.dependency_type, pkg.dependency_type) and sel) {
-                            selected_count += 1;
+                    // Check if we need a header and if we have room for it
+                    const needs_header = current_dep_type == null or !strings.eql(current_dep_type.?, pkg.dependency_type);
+
+                    // Print dependency type header with column headers if changed
+                    if (needs_header) {
+                        // Count selected packages in this dependency type
+                        var selected_count: usize = 0;
+                        for (state.packages, state.selected) |p, sel| {
+                            if (strings.eql(p.dependency_type, pkg.dependency_type) and sel) {
+                                selected_count += 1;
+                            }
                         }
-                    }
 
-                    // Print dependency type - bold if any selected
-                    Output.print("\n  ", .{});
-                    if (selected_count > 0) {
-                        Output.pretty("<r><b>{s} {d}<r>", .{ pkg.dependency_type, selected_count });
-                    } else {
-                        Output.pretty("<r>{s}<r>", .{pkg.dependency_type});
-                    }
+                        // Print dependency type - bold if any selected
+                        Output.print("\n  ", .{});
+                        if (selected_count > 0) {
+                            Output.pretty("<r><b>{s} {d}<r>", .{ pkg.dependency_type, selected_count });
+                        } else {
+                            Output.pretty("<r>{s}<r>", .{pkg.dependency_type});
+                        }
 
-                    // Calculate padding to align column headers with values
-                    var j: usize = 0;
-                    // Calculate actual displayed text length including count if present
-                    const dep_type_text_len: usize = if (selected_count > 0)
-                        pkg.dependency_type.len + 1 + std.fmt.count("{d}", .{selected_count}) // +1 for space
-                    else
-                        pkg.dependency_type.len;
+                        // Calculate padding to align column headers with values
+                        var j: usize = 0;
+                        // Calculate actual displayed text length including count if present
+                        const dep_type_text_len: usize = if (selected_count > 0)
+                            pkg.dependency_type.len + 1 + std.fmt.count("{d}", .{selected_count}) // +1 for space
+                        else
+                            pkg.dependency_type.len;
 
-                    // The padding should align with the first character of package names
-                    // Package names start at: "    " (4 spaces) + "□ " (2 chars) = 6 chars from left
-                    // Headers start at: "  " (2 spaces) + dep_type_text
-                    // We need the headers to align where the current version column starts
-                    // That's at: 6 (start of names) + max_name_len + 2 (spacing after names) - 2 (header indent) - dep_type_text_len
-                    const total_offset = 6 + state.max_name_len + 2;
-                    const header_start = 2 + dep_type_text_len;
-                    const padding_to_current = if (header_start >= total_offset) 1 else total_offset - header_start;
-                    while (j < padding_to_current) : (j += 1) {
-                        Output.print(" ", .{});
-                    }
-
-                    // Column headers aligned with their columns
-                    Output.print("Current", .{});
-                    j = 0;
-                    while (j < state.max_current_len - "Current".len + 2) : (j += 1) {
-                        Output.print(" ", .{});
-                    }
-                    Output.print("Target", .{});
-                    j = 0;
-                    while (j < state.max_update_len - "Target".len + 2) : (j += 1) {
-                        Output.print(" ", .{});
-                    }
-                    Output.print("Latest", .{});
-                    if (state.show_workspace) {
-                        j = 0;
-                        while (j < state.max_latest_len - "Latest".len + 2) : (j += 1) {
+                        // The padding should align with the first character of package names
+                        // Package names start at: "    " (4 spaces) + "□ " (2 chars) = 6 chars from left
+                        // Headers start at: "  " (2 spaces) + dep_type_text
+                        // We need the headers to align where the current version column starts
+                        // That's at: 6 (start of names) + max_name_len + 2 (spacing after names) - 2 (header indent) - dep_type_text_len
+                        const total_offset = 6 + state.max_name_len + 2;
+                        const header_start = 2 + dep_type_text_len;
+                        const padding_to_current = if (header_start >= total_offset) 1 else total_offset - header_start;
+                        while (j < padding_to_current) : (j += 1) {
                             Output.print(" ", .{});
                         }
-                        Output.print("Workspace", .{});
-                    }
-                    Output.print("\x1B[0K\n", .{});
 
-                    lines_displayed += 2;
-                    current_dep_type = pkg.dependency_type;
-                }
-
-                const is_cursor = i == state.cursor;
-                const checkbox = if (selected) "■" else "□";
-
-                // Calculate padding - account for dev/peer/optional tags
-                var dev_tag_len: usize = 0;
-                if (pkg.behavior.dev) {
-                    dev_tag_len = 4; // " dev"
-                } else if (pkg.behavior.peer) {
-                    dev_tag_len = 5; // " peer"
-                } else if (pkg.behavior.optional) {
-                    dev_tag_len = 9; // " optional"
-                }
-                const total_name_len = pkg.name.len + dev_tag_len;
-                const name_padding = if (total_name_len >= state.max_name_len) 0 else state.max_name_len - total_name_len;
-
-                // Determine version change severity for checkbox color
-                const current_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.current_version, pkg.current_version));
-                const update_ver_parsed = if (pkg.use_latest)
-                    Semver.Version.parse(SlicedString.init(pkg.latest_version, pkg.latest_version))
-                else
-                    Semver.Version.parse(SlicedString.init(pkg.update_version, pkg.update_version));
-
-                var checkbox_color: []const u8 = "green"; // default
-                if (current_ver_parsed.valid and update_ver_parsed.valid) {
-                    const current_full = Semver.Version{
-                        .major = current_ver_parsed.version.major orelse 0,
-                        .minor = current_ver_parsed.version.minor orelse 0,
-                        .patch = current_ver_parsed.version.patch orelse 0,
-                        .tag = current_ver_parsed.version.tag,
-                    };
-                    const update_full = Semver.Version{
-                        .major = update_ver_parsed.version.major orelse 0,
-                        .minor = update_ver_parsed.version.minor orelse 0,
-                        .patch = update_ver_parsed.version.patch orelse 0,
-                        .tag = update_ver_parsed.version.tag,
-                    };
-
-                    const target_ver_str = if (pkg.use_latest) pkg.latest_version else pkg.update_version;
-                    const diff = update_full.whichVersionIsDifferent(current_full, target_ver_str, pkg.current_version);
-                    if (diff) |d| {
-                        switch (d) {
-                            .major => checkbox_color = "red",
-                            .minor => {
-                                if (current_full.major == 0) {
-                                    checkbox_color = "red"; // 0.x.y minor changes are breaking
-                                } else {
-                                    checkbox_color = "yellow";
-                                }
-                            },
-                            .patch => {
-                                if (current_full.major == 0 and current_full.minor == 0) {
-                                    checkbox_color = "red"; // 0.0.x patch changes are breaking
-                                } else {
-                                    checkbox_color = "green";
-                                }
-                            },
-                            else => checkbox_color = "green",
+                        // Column headers aligned with their columns
+                        Output.print("Current", .{});
+                        j = 0;
+                        while (j < state.max_current_len - "Current".len + 2) : (j += 1) {
+                            Output.print(" ", .{});
                         }
-                    }
-                }
-
-                // Cursor and checkbox
-                if (is_cursor) {
-                    Output.pretty("  <r><cyan>❯<r> ", .{});
-                } else {
-                    Output.print("    ", .{});
-                }
-
-                // Checkbox with appropriate color
-                if (selected) {
-                    if (strings.eqlComptime(checkbox_color, "red")) {
-                        Output.pretty("<r><red>{s}<r> ", .{checkbox});
-                    } else if (strings.eqlComptime(checkbox_color, "yellow")) {
-                        Output.pretty("<r><yellow>{s}<r> ", .{checkbox});
-                    } else {
-                        Output.pretty("<r><green>{s}<r> ", .{checkbox});
-                    }
-                } else {
-                    Output.print("{s} ", .{checkbox});
-                }
-
-                // Package name - truncate if needed and make it a hyperlink if colors are enabled and using default registry
-                // Calculate available space for name (accounting for dev/peer/optional tags)
-                const available_name_width = if (state.max_name_len > dev_tag_len) state.max_name_len - dev_tag_len else state.max_name_len;
-                const display_name = try truncateWithEllipsis(bun.default_allocator, pkg.name, available_name_width, false);
-                defer bun.default_allocator.free(display_name);
-
-                const uses_default_registry = pkg.manager.options.scope.url_hash == Install.Npm.Registry.default_url_hash and
-                    pkg.manager.scopeForPackageName(pkg.name).url_hash == Install.Npm.Registry.default_url_hash;
-                const package_url = if (Output.enable_ansi_colors and uses_default_registry)
-                    try std.fmt.allocPrint(bun.default_allocator, "https://npmjs.org/package/{s}/v/{s}", .{ pkg.name, brk: {
-                        if (selected) {
-                            if (pkg.use_latest) {
-                                break :brk pkg.latest_version;
-                            } else {
-                                break :brk pkg.update_version;
+                        Output.print("Target", .{});
+                        j = 0;
+                        while (j < state.max_update_len - "Target".len + 2) : (j += 1) {
+                            Output.print(" ", .{});
+                        }
+                        Output.print("Latest", .{});
+                        if (state.show_workspace) {
+                            j = 0;
+                            while (j < state.max_latest_len - "Latest".len + 2) : (j += 1) {
+                                Output.print(" ", .{});
                             }
-                        } else {
-                            break :brk pkg.current_version;
+                            Output.print("Workspace", .{});
                         }
-                    } })
-                else
-                    "";
-                defer if (package_url.len > 0) bun.default_allocator.free(package_url);
+                        Output.print("\x1B[0K\n", .{});
 
-                const hyperlink = TerminalHyperlink.new(package_url, display_name, package_url.len > 0);
+                        lines_displayed += 2;
+                        current_dep_type = pkg.dependency_type;
+                    }
 
-                if (selected) {
-                    if (strings.eqlComptime(checkbox_color, "red")) {
-                        Output.pretty("<r><red>{}<r>", .{hyperlink});
-                    } else if (strings.eqlComptime(checkbox_color, "yellow")) {
-                        Output.pretty("<r><yellow>{}<r>", .{hyperlink});
+                    const is_cursor = i == state.cursor;
+                    const checkbox = if (selected) "■" else "□";
+
+                    // Calculate padding - account for dev/peer/optional tags
+                    var dev_tag_len: usize = 0;
+                    if (pkg.behavior.dev) {
+                        dev_tag_len = 4; // " dev"
+                    } else if (pkg.behavior.peer) {
+                        dev_tag_len = 5; // " peer"
+                    } else if (pkg.behavior.optional) {
+                        dev_tag_len = 9; // " optional"
+                    }
+                    const total_name_len = pkg.name.len + dev_tag_len;
+                    const name_padding = if (total_name_len >= state.max_name_len) 0 else state.max_name_len - total_name_len;
+
+                    // Determine version change severity for checkbox color
+                    const current_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.current_version, pkg.current_version));
+                    const update_ver_parsed = if (pkg.use_latest)
+                        Semver.Version.parse(SlicedString.init(pkg.latest_version, pkg.latest_version))
+                    else
+                        Semver.Version.parse(SlicedString.init(pkg.update_version, pkg.update_version));
+
+                    var checkbox_color: []const u8 = "green"; // default
+                    if (current_ver_parsed.valid and update_ver_parsed.valid) {
+                        const current_full = Semver.Version{
+                            .major = current_ver_parsed.version.major orelse 0,
+                            .minor = current_ver_parsed.version.minor orelse 0,
+                            .patch = current_ver_parsed.version.patch orelse 0,
+                            .tag = current_ver_parsed.version.tag,
+                        };
+                        const update_full = Semver.Version{
+                            .major = update_ver_parsed.version.major orelse 0,
+                            .minor = update_ver_parsed.version.minor orelse 0,
+                            .patch = update_ver_parsed.version.patch orelse 0,
+                            .tag = update_ver_parsed.version.tag,
+                        };
+
+                        const target_ver_str = if (pkg.use_latest) pkg.latest_version else pkg.update_version;
+                        const diff = update_full.whichVersionIsDifferent(current_full, target_ver_str, pkg.current_version);
+                        if (diff) |d| {
+                            switch (d) {
+                                .major => checkbox_color = "red",
+                                .minor => {
+                                    if (current_full.major == 0) {
+                                        checkbox_color = "red"; // 0.x.y minor changes are breaking
+                                    } else {
+                                        checkbox_color = "yellow";
+                                    }
+                                },
+                                .patch => {
+                                    if (current_full.major == 0 and current_full.minor == 0) {
+                                        checkbox_color = "red"; // 0.0.x patch changes are breaking
+                                    } else {
+                                        checkbox_color = "green";
+                                    }
+                                },
+                                else => checkbox_color = "green",
+                            }
+                        }
+                    }
+
+                    // Cursor and checkbox
+                    if (is_cursor) {
+                        Output.pretty("  <r><cyan>❯<r> ", .{});
                     } else {
-                        Output.pretty("<r><green>{}<r>", .{hyperlink});
+                        Output.print("    ", .{});
                     }
-                } else {
-                    Output.pretty("<r>{}<r>", .{hyperlink});
-                }
 
-                // Print dev/peer/optional tag if applicable
-                if (pkg.behavior.dev) {
-                    Output.pretty("<r><d> dev<r>", .{});
-                } else if (pkg.behavior.peer) {
-                    Output.pretty("<r><d> peer<r>", .{});
-                } else if (pkg.behavior.optional) {
-                    Output.pretty("<r><d> optional<r>", .{});
-                }
-
-                // Print padding after name (2 spaces)
-                var j: usize = 0;
-                while (j < name_padding + 2) : (j += 1) {
-                    Output.print(" ", .{});
-                }
-
-                // Current version - truncate if needed
-                const truncated_current = try truncateWithEllipsis(bun.default_allocator, pkg.current_version, state.max_current_len, false);
-                defer bun.default_allocator.free(truncated_current);
-                Output.pretty("<r>{s}<r>", .{truncated_current});
-
-                // Print padding after current version (2 spaces)
-                const current_padding = if (truncated_current.len >= state.max_current_len) 0 else state.max_current_len - truncated_current.len;
-                j = 0;
-                while (j < current_padding + 2) : (j += 1) {
-                    Output.print(" ", .{});
-                }
-
-                // Target version with diffFmt coloring - bold if not using latest
-                const target_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.update_version, pkg.update_version));
-
-                // Truncate target version if needed
-                const truncated_target = try truncateWithEllipsis(bun.default_allocator, pkg.update_version, state.max_update_len, false);
-                defer bun.default_allocator.free(truncated_target);
-
-                // For width calculation, use the truncated version string length
-                const target_width: usize = truncated_target.len;
-
-                if (current_ver_parsed.valid and target_ver_parsed.valid) {
-                    const current_full = Semver.Version{
-                        .major = current_ver_parsed.version.major orelse 0,
-                        .minor = current_ver_parsed.version.minor orelse 0,
-                        .patch = current_ver_parsed.version.patch orelse 0,
-                        .tag = current_ver_parsed.version.tag,
-                    };
-                    const target_full = Semver.Version{
-                        .major = target_ver_parsed.version.major orelse 0,
-                        .minor = target_ver_parsed.version.minor orelse 0,
-                        .patch = target_ver_parsed.version.patch orelse 0,
-                        .tag = target_ver_parsed.version.tag,
-                    };
-
-                    // Print target version (use truncated version for narrow terminals)
-                    if (selected and !pkg.use_latest) {
-                        Output.print("\x1B[4m", .{}); // Start underline
-                    }
-                    if (truncated_target.len < pkg.update_version.len) {
-                        // If truncated, use plain display instead of diffFmt to avoid confusion
-                        Output.pretty("<r>{s}<r>", .{truncated_target});
+                    // Checkbox with appropriate color
+                    if (selected) {
+                        if (strings.eqlComptime(checkbox_color, "red")) {
+                            Output.pretty("<r><red>{s}<r> ", .{checkbox});
+                        } else if (strings.eqlComptime(checkbox_color, "yellow")) {
+                            Output.pretty("<r><yellow>{s}<r> ", .{checkbox});
+                        } else {
+                            Output.pretty("<r><green>{s}<r> ", .{checkbox});
+                        }
                     } else {
-                        // Use diffFmt for full versions
-                        Output.pretty("{}", .{target_full.diffFmt(
-                            current_full,
-                            pkg.update_version,
-                            pkg.current_version,
-                        )});
+                        Output.print("{s} ", .{checkbox});
                     }
-                    if (selected and !pkg.use_latest) {
-                        Output.print("\x1B[24m", .{}); // End underline
-                    }
-                } else {
-                    // Fallback if version parsing fails
-                    if (selected and !pkg.use_latest) {
-                        Output.print("\x1B[4m", .{}); // Start underline
-                    }
-                    Output.pretty("<r>{s}<r>", .{truncated_target});
-                    if (selected and !pkg.use_latest) {
-                        Output.print("\x1B[24m", .{}); // End underline
-                    }
-                }
 
-                const target_padding = if (target_width >= state.max_update_len) 0 else state.max_update_len - target_width;
-                j = 0;
-                while (j < target_padding + 2) : (j += 1) {
-                    Output.print(" ", .{});
-                }
+                    // Package name - truncate if needed and make it a hyperlink if colors are enabled and using default registry
+                    // Calculate available space for name (accounting for dev/peer/optional tags)
+                    const available_name_width = if (state.max_name_len > dev_tag_len) state.max_name_len - dev_tag_len else state.max_name_len;
+                    const display_name = try truncateWithEllipsis(bun.default_allocator, pkg.name, available_name_width, false);
+                    defer bun.default_allocator.free(display_name);
 
-                // Latest version with diffFmt coloring - bold if using latest
-                const latest_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.latest_version, pkg.latest_version));
+                    const uses_default_registry = pkg.manager.options.scope.url_hash == Install.Npm.Registry.default_url_hash and
+                        pkg.manager.scopeForPackageName(pkg.name).url_hash == Install.Npm.Registry.default_url_hash;
+                    const package_url = if (Output.enable_ansi_colors and uses_default_registry)
+                        try std.fmt.allocPrint(bun.default_allocator, "https://npmjs.org/package/{s}/v/{s}", .{ pkg.name, brk: {
+                            if (selected) {
+                                if (pkg.use_latest) {
+                                    break :brk pkg.latest_version;
+                                } else {
+                                    break :brk pkg.update_version;
+                                }
+                            } else {
+                                break :brk pkg.current_version;
+                            }
+                        } })
+                    else
+                        "";
+                    defer if (package_url.len > 0) bun.default_allocator.free(package_url);
 
-                // Truncate latest version if needed
-                const truncated_latest = try truncateWithEllipsis(bun.default_allocator, pkg.latest_version, state.max_latest_len, false);
-                defer bun.default_allocator.free(truncated_latest);
-                if (current_ver_parsed.valid and latest_ver_parsed.valid) {
-                    const current_full = Semver.Version{
-                        .major = current_ver_parsed.version.major orelse 0,
-                        .minor = current_ver_parsed.version.minor orelse 0,
-                        .patch = current_ver_parsed.version.patch orelse 0,
-                        .tag = current_ver_parsed.version.tag,
-                    };
-                    const latest_full = Semver.Version{
-                        .major = latest_ver_parsed.version.major orelse 0,
-                        .minor = latest_ver_parsed.version.minor orelse 0,
-                        .patch = latest_ver_parsed.version.patch orelse 0,
-                        .tag = latest_ver_parsed.version.tag,
-                    };
+                    const hyperlink = TerminalHyperlink.new(package_url, display_name, package_url.len > 0);
 
-                    // Dim if latest matches target version
-                    const is_same_as_target = strings.eql(pkg.latest_version, pkg.update_version);
-                    if (is_same_as_target) {
-                        Output.print("\x1B[2m", .{}); // Dim
-                    }
-                    // Print latest version
-                    if (selected and pkg.use_latest) {
-                        Output.print("\x1B[4m", .{}); // Start underline
-                    }
-                    if (truncated_latest.len < pkg.latest_version.len) {
-                        // If truncated, use plain display instead of diffFmt to avoid confusion
-                        Output.pretty("<r>{s}<r>", .{truncated_latest});
+                    if (selected) {
+                        if (strings.eqlComptime(checkbox_color, "red")) {
+                            Output.pretty("<r><red>{}<r>", .{hyperlink});
+                        } else if (strings.eqlComptime(checkbox_color, "yellow")) {
+                            Output.pretty("<r><yellow>{}<r>", .{hyperlink});
+                        } else {
+                            Output.pretty("<r><green>{}<r>", .{hyperlink});
+                        }
                     } else {
-                        // Use diffFmt for full versions
-                        Output.pretty("{}", .{latest_full.diffFmt(
-                            current_full,
-                            pkg.latest_version,
-                            pkg.current_version,
-                        )});
+                        Output.pretty("<r>{}<r>", .{hyperlink});
                     }
-                    if (selected and pkg.use_latest) {
-                        Output.print("\x1B[24m", .{}); // End underline
-                    }
-                    if (is_same_as_target) {
-                        Output.print("\x1B[22m", .{}); // Reset dim
-                    }
-                } else {
-                    // Fallback if version parsing fails
-                    const is_same_as_target = strings.eql(pkg.latest_version, pkg.update_version);
-                    if (is_same_as_target) {
-                        Output.print("\x1B[2m", .{}); // Dim
-                    }
-                    if (selected and pkg.use_latest) {
-                        Output.print("\x1B[4m", .{}); // Start underline
-                    }
-                    Output.pretty("<r>{s}<r>", .{truncated_latest});
-                    if (selected and pkg.use_latest) {
-                        Output.print("\x1B[24m", .{}); // End underline
-                    }
-                    if (is_same_as_target) {
-                        Output.print("\x1B[22m", .{}); // Reset dim
-                    }
-                }
 
-                // Workspace column
-                if (state.show_workspace) {
-                    const latest_width: usize = truncated_latest.len;
-                    const latest_padding = if (latest_width >= state.max_latest_len) 0 else state.max_latest_len - latest_width;
-                    j = 0;
-                    while (j < latest_padding + 2) : (j += 1) {
+                    // Print dev/peer/optional tag if applicable
+                    if (pkg.behavior.dev) {
+                        Output.pretty("<r><d> dev<r>", .{});
+                    } else if (pkg.behavior.peer) {
+                        Output.pretty("<r><d> peer<r>", .{});
+                    } else if (pkg.behavior.optional) {
+                        Output.pretty("<r><d> optional<r>", .{});
+                    }
+
+                    // Print padding after name (2 spaces)
+                    var j: usize = 0;
+                    while (j < name_padding + 2) : (j += 1) {
                         Output.print(" ", .{});
                     }
-                    // Truncate workspace name if needed
-                    const truncated_workspace = try truncateWithEllipsis(bun.default_allocator, pkg.workspace_name, state.max_workspace_len, true);
-                    defer bun.default_allocator.free(truncated_workspace);
-                    Output.pretty("<r><d>{s}<r>", .{truncated_workspace});
+
+                    // Current version - truncate if needed
+                    const truncated_current = try truncateWithEllipsis(bun.default_allocator, pkg.current_version, state.max_current_len, false);
+                    defer bun.default_allocator.free(truncated_current);
+                    Output.pretty("<r>{s}<r>", .{truncated_current});
+
+                    // Print padding after current version (2 spaces)
+                    const current_padding = if (truncated_current.len >= state.max_current_len) 0 else state.max_current_len - truncated_current.len;
+                    j = 0;
+                    while (j < current_padding + 2) : (j += 1) {
+                        Output.print(" ", .{});
+                    }
+
+                    // Target version with diffFmt coloring - bold if not using latest
+                    const target_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.update_version, pkg.update_version));
+
+                    // Truncate target version if needed
+                    const truncated_target = try truncateWithEllipsis(bun.default_allocator, pkg.update_version, state.max_update_len, false);
+                    defer bun.default_allocator.free(truncated_target);
+
+                    // For width calculation, use the truncated version string length
+                    const target_width: usize = truncated_target.len;
+
+                    if (current_ver_parsed.valid and target_ver_parsed.valid) {
+                        const current_full = Semver.Version{
+                            .major = current_ver_parsed.version.major orelse 0,
+                            .minor = current_ver_parsed.version.minor orelse 0,
+                            .patch = current_ver_parsed.version.patch orelse 0,
+                            .tag = current_ver_parsed.version.tag,
+                        };
+                        const target_full = Semver.Version{
+                            .major = target_ver_parsed.version.major orelse 0,
+                            .minor = target_ver_parsed.version.minor orelse 0,
+                            .patch = target_ver_parsed.version.patch orelse 0,
+                            .tag = target_ver_parsed.version.tag,
+                        };
+
+                        // Print target version (use truncated version for narrow terminals)
+                        if (selected and !pkg.use_latest) {
+                            Output.print("\x1B[4m", .{}); // Start underline
+                        }
+                        if (truncated_target.len < pkg.update_version.len) {
+                            // If truncated, use plain display instead of diffFmt to avoid confusion
+                            Output.pretty("<r>{s}<r>", .{truncated_target});
+                        } else {
+                            // Use diffFmt for full versions
+                            Output.pretty("{}", .{target_full.diffFmt(
+                                current_full,
+                                pkg.update_version,
+                                pkg.current_version,
+                            )});
+                        }
+                        if (selected and !pkg.use_latest) {
+                            Output.print("\x1B[24m", .{}); // End underline
+                        }
+                    } else {
+                        // Fallback if version parsing fails
+                        if (selected and !pkg.use_latest) {
+                            Output.print("\x1B[4m", .{}); // Start underline
+                        }
+                        Output.pretty("<r>{s}<r>", .{truncated_target});
+                        if (selected and !pkg.use_latest) {
+                            Output.print("\x1B[24m", .{}); // End underline
+                        }
+                    }
+
+                    const target_padding = if (target_width >= state.max_update_len) 0 else state.max_update_len - target_width;
+                    j = 0;
+                    while (j < target_padding + 2) : (j += 1) {
+                        Output.print(" ", .{});
+                    }
+
+                    // Latest version with diffFmt coloring - bold if using latest
+                    const latest_ver_parsed = Semver.Version.parse(SlicedString.init(pkg.latest_version, pkg.latest_version));
+
+                    // Truncate latest version if needed
+                    const truncated_latest = try truncateWithEllipsis(bun.default_allocator, pkg.latest_version, state.max_latest_len, false);
+                    defer bun.default_allocator.free(truncated_latest);
+                    if (current_ver_parsed.valid and latest_ver_parsed.valid) {
+                        const current_full = Semver.Version{
+                            .major = current_ver_parsed.version.major orelse 0,
+                            .minor = current_ver_parsed.version.minor orelse 0,
+                            .patch = current_ver_parsed.version.patch orelse 0,
+                            .tag = current_ver_parsed.version.tag,
+                        };
+                        const latest_full = Semver.Version{
+                            .major = latest_ver_parsed.version.major orelse 0,
+                            .minor = latest_ver_parsed.version.minor orelse 0,
+                            .patch = latest_ver_parsed.version.patch orelse 0,
+                            .tag = latest_ver_parsed.version.tag,
+                        };
+
+                        // Dim if latest matches target version
+                        const is_same_as_target = strings.eql(pkg.latest_version, pkg.update_version);
+                        if (is_same_as_target) {
+                            Output.print("\x1B[2m", .{}); // Dim
+                        }
+                        // Print latest version
+                        if (selected and pkg.use_latest) {
+                            Output.print("\x1B[4m", .{}); // Start underline
+                        }
+                        if (truncated_latest.len < pkg.latest_version.len) {
+                            // If truncated, use plain display instead of diffFmt to avoid confusion
+                            Output.pretty("<r>{s}<r>", .{truncated_latest});
+                        } else {
+                            // Use diffFmt for full versions
+                            Output.pretty("{}", .{latest_full.diffFmt(
+                                current_full,
+                                pkg.latest_version,
+                                pkg.current_version,
+                            )});
+                        }
+                        if (selected and pkg.use_latest) {
+                            Output.print("\x1B[24m", .{}); // End underline
+                        }
+                        if (is_same_as_target) {
+                            Output.print("\x1B[22m", .{}); // Reset dim
+                        }
+                    } else {
+                        // Fallback if version parsing fails
+                        const is_same_as_target = strings.eql(pkg.latest_version, pkg.update_version);
+                        if (is_same_as_target) {
+                            Output.print("\x1B[2m", .{}); // Dim
+                        }
+                        if (selected and pkg.use_latest) {
+                            Output.print("\x1B[4m", .{}); // Start underline
+                        }
+                        Output.pretty("<r>{s}<r>", .{truncated_latest});
+                        if (selected and pkg.use_latest) {
+                            Output.print("\x1B[24m", .{}); // End underline
+                        }
+                        if (is_same_as_target) {
+                            Output.print("\x1B[22m", .{}); // Reset dim
+                        }
+                    }
+
+                    // Workspace column
+                    if (state.show_workspace) {
+                        const latest_width: usize = truncated_latest.len;
+                        const latest_padding = if (latest_width >= state.max_latest_len) 0 else state.max_latest_len - latest_width;
+                        j = 0;
+                        while (j < latest_padding + 2) : (j += 1) {
+                            Output.print(" ", .{});
+                        }
+                        // Truncate workspace name if needed
+                        const truncated_workspace = try truncateWithEllipsis(bun.default_allocator, pkg.workspace_name, state.max_workspace_len, true);
+                        defer bun.default_allocator.free(truncated_workspace);
+                        Output.pretty("<r><d>{s}<r>", .{truncated_workspace});
+                    }
+
+                    Output.print("\x1B[0K\n", .{});
+                    lines_displayed += 1;
+                    packages_displayed += 1;
                 }
 
-                Output.print("\x1B[0K\n", .{});
-                lines_displayed += 1;
-                packages_displayed += 1;
-            }
+                // Show bottom scroll indicator if needed
+                if (show_bottom_indicator) {
+                    Output.pretty("  <d>↓ {d} more package{s} below<r>", .{ state.packages.len - viewport_end, if (state.packages.len - viewport_end == 1) "" else "s" });
+                    lines_displayed += 1;
+                }
 
-            // Show bottom scroll indicator if needed
-            if (show_bottom_indicator) {
-                Output.pretty("  <d>↓ {d} more package{s} below<r>", .{ state.packages.len - viewport_end, if (state.packages.len - viewport_end == 1) "" else "s" });
-                lines_displayed += 1;
+                total_lines = lines_displayed + 1;
+                Output.clearToEnd();
             }
-
-            total_lines = lines_displayed + 1;
-            Output.clearToEnd();
             Output.flush();
 
             // Read input

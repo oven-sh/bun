@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 test("minifier should preserve variable scoping for IIFE patterns", async () => {
@@ -42,7 +42,7 @@ test("minifier should preserve variable scoping for IIFE patterns", async () => 
       if (typeof module !== 'undefined' && module.exports) {
         module.exports = { sys, F };
       }
-    `
+    `,
   });
 
   // Minify the file
@@ -53,11 +53,7 @@ test("minifier should preserve variable scoping for IIFE patterns", async () => 
     stderr: "pipe",
   });
 
-  const [, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
@@ -103,7 +99,7 @@ test("minifier should handle hoisted variables in function scopes correctly", as
       }
       
       console.log(outer());
-    `
+    `,
   });
 
   await using proc = Bun.spawn({
@@ -113,11 +109,7 @@ test("minifier should handle hoisted variables in function scopes correctly", as
     stderr: "pipe",
   });
 
-  const [, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);

@@ -352,8 +352,8 @@ pub fn assignNestedScopeSlots(allocator: std.mem.Allocator, module_scope: *js_as
 
     // Then set the nested scope slots of top-level symbols back to invalid. Top-
     // level symbols are not supposed to have nested scope slots.
-    // 
-    // CRITICAL FIX: Reset ALL symbols that have the temporary valid_slot (0), not just 
+    //
+    // CRITICAL FIX: Reset ALL symbols that have the temporary valid_slot (0), not just
     // those still in module_scope.members. During complex scope processing (like IIFEs),
     // some symbols might not be found in the same collections, but they still need to be reset.
     for (symbols, 0..) |*symbol, i| {

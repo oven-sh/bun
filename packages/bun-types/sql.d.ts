@@ -112,8 +112,18 @@ declare module "bun" {
        * - `:memory:`
        *
        * @default ":memory:"
-       */
+      */
       filename?: URL | ":memory:" | (string & {}) | undefined;
+
+      /**
+       * Callback function executed when a connection is established (SQLite)
+       */
+      onconnect?: ((client: SQL) => void) | undefined;
+
+      /**
+       * Callback function executed when a connection is closed (SQLite)
+       */
+      onclose?: ((client: SQL) => void) | undefined;
     }
 
     interface PostgresOptions {

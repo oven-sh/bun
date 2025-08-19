@@ -1,5 +1,5 @@
 import { SQL } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
@@ -66,6 +66,24 @@ describe("Connection & Initialization", () => {
     expect(result).toHaveLength(1);
 
     await sql.close();
+  });
+
+  test("onconnect and onclose callbacks are invoked for SQLite", async () => {
+    const onconnect = mock(() => {});
+    const onclose = mock(() => {});
+
+    const sql = new SQL({
+      adapter: "sqlite",
+      filename: ":memory:",
+      onconnect,
+      onclose,
+    });
+
+    // onconnect should run during creation
+    expect(onconnect).toHaveBeenCalled();
+    await sql`SELECT 1 as x`;
+    await sql.close();
+    expect(onclose).toHaveBeenCalled();
   });
 
   test("should create database file if it doesn't exist", async () => {

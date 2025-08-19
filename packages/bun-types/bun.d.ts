@@ -2916,6 +2916,17 @@ declare module "bun" {
      *   value: "" // Empty string deletes the credential
      * });
      * ```
+     *
+     * @example
+     * ```ts
+     * // Store credential with unrestricted access for CI environments
+     * await Bun.secrets.set({
+     *   service: "github-actions",
+     *   name: "deploy-token", 
+     *   value: process.env.DEPLOY_TOKEN,
+     *   allowUnrestrictedAccess: true // Allows access without user interaction on macOS
+     * });
+     * ```
      */
     set(options: {
       /**
@@ -2944,6 +2955,17 @@ declare module "bun" {
        * An empty string value will delete the credential if it exists.
        */
       value: string;
+
+      /**
+       * Allow unrestricted access to stored credentials on macOS.
+       * 
+       * When true, allows all applications to access this keychain item without user interaction.
+       * This is useful for CI environments but reduces security.
+       * 
+       * @default false
+       * @platform macOS - Only affects macOS keychain behavior. Ignored on other platforms.
+       */
+      allowUnrestrictedAccess?: boolean;
     }): Promise<void>;
 
     /**

@@ -34,17 +34,19 @@ struct SecretsJobOptions {
     CString service; // UTF-8 encoded, thread-safe
     CString name; // UTF-8 encoded, thread-safe
     CString password; // UTF-8 encoded, thread-safe (only for SET)
+    bool allowUnrestrictedAccess = false; // Controls security vs headless access (only for SET)
 
     // Results (filled in by threadpool)
     Secrets::Error error;
     std::optional<WTF::Vector<uint8_t>> resultPassword;
     bool deleted = false;
 
-    SecretsJobOptions(Operation op, CString&& service, CString&& name, CString&& password)
+    SecretsJobOptions(Operation op, CString&& service, CString&& name, CString&& password, bool allowUnrestrictedAccess = false)
         : op(op)
         , service(service)
         , name(name)
         , password(password)
+        , allowUnrestrictedAccess(allowUnrestrictedAccess)
     {
     }
 
@@ -75,6 +77,7 @@ struct SecretsJobOptions {
         String service;
         String name;
         String password;
+        bool allowUnrestrictedAccess = false;
 
         const auto fromOptionsObject = [&]() -> bool {
             if (args.size() < 1) {
@@ -112,6 +115,15 @@ struct SecretsJobOptions {
                 } else {
                     Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "Expected 'value' to be a string"_s);
                     return false;
+                }
+
+                // Extract allowUnrestrictedAccess parameter (optional, defaults to false)
+                JSValue allowUnrestrictedAccessValue = getIfPropertyExistsPrototypePollutionMitigation(globalObject, options, Identifier::fromString(vm, "allowUnrestrictedAccess"_s));
+                RETURN_IF_EXCEPTION(scope, false);
+
+                if (!allowUnrestrictedAccessValue.isUndefined()) {
+                    allowUnrestrictedAccess = allowUnrestrictedAccessValue.toBoolean(globalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
                 }
             }
 
@@ -174,7 +186,7 @@ struct SecretsJobOptions {
             RELEASE_AND_RETURN(scope, nullptr);
         }
 
-        RELEASE_AND_RETURN(scope, new SecretsJobOptions(operation, service.utf8(), name.utf8(), password.utf8()));
+        RELEASE_AND_RETURN(scope, new SecretsJobOptions(operation, service.utf8(), name.utf8(), password.utf8(), allowUnrestrictedAccess));
     }
 };
 
@@ -196,7 +208,7 @@ void Bun__SecretsJobOptions__runTask(SecretsJobOptions* opts, JSGlobalObject* gl
     }
 
     case SecretsJobOptions::SET:
-        opts->error = Secrets::setPassword(opts->service, opts->name, WTFMove(opts->password));
+        opts->error = Secrets::setPassword(opts->service, opts->name, WTFMove(opts->password), opts->allowUnrestrictedAccess);
         break;
 
     case SecretsJobOptions::DELETE_OP:

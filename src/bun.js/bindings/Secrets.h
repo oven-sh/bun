@@ -34,7 +34,7 @@ struct Error {
 
 // Sync platform-specific implementations (used by threadpool)
 // These use CString for thread safety - only called from threadpool
-Error setPassword(const WTF::CString& service, const WTF::CString& name, WTF::CString&& password);
+Error setPassword(const WTF::CString& service, const WTF::CString& name, WTF::CString&& password, bool allowUnrestrictedAccess = false);
 
 // Use a WTF::Vector here so we can zero out the memory.
 std::optional<WTF::Vector<uint8_t>> getPassword(const WTF::CString& service, const WTF::CString& name, Error& error);

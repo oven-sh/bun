@@ -288,7 +288,7 @@ static ScopedCFRef createQuery(const CString& service, const CString& name)
     return ScopedCFRef(query);
 }
 
-Error setPassword(const CString& service, const CString& name, CString&& password)
+Error setPassword(const CString& service, const CString& name, CString&& password, bool allowUnrestrictedAccess)
 {
     Error err;
 
@@ -325,23 +325,25 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
     framework->CFDictionaryAddValue((CFMutableDictionaryRef)query.get(),
         framework->kSecValueData, cfPassword.get());
 
-    // For headless CI environments (like MacStadium), create an access object
+    // For headless CI environments (like MacStadium), optionally create an access object
     // that allows all applications to access this keychain item without user interaction
     SecAccessRef accessRef = nullptr;
-    ScopedCFRef accessDescription(framework->CFStringCreateWithCString(
-        framework->kCFAllocatorDefault, "Bun secrets access", kCFStringEncodingUTF8));
-    
-    if (accessDescription) {
-        OSStatus accessStatus = framework->SecAccessCreate(
-            (CFStringRef)accessDescription.get(), 
-            nullptr, // trustedList - nullptr means all applications
-            &accessRef);
-            
-        if (accessStatus == errSecSuccess && accessRef) {
-            framework->CFDictionaryAddValue((CFMutableDictionaryRef)query.get(),
-                framework->kSecAttrAccess, accessRef);
+    if (allowUnrestrictedAccess) {
+        ScopedCFRef accessDescription(framework->CFStringCreateWithCString(
+            framework->kCFAllocatorDefault, "Bun secrets access", kCFStringEncodingUTF8));
+        
+        if (accessDescription) {
+            OSStatus accessStatus = framework->SecAccessCreate(
+                (CFStringRef)accessDescription.get(), 
+                nullptr, // trustedList - nullptr means all applications
+                &accessRef);
+                
+            if (accessStatus == errSecSuccess && accessRef) {
+                framework->CFDictionaryAddValue((CFMutableDictionaryRef)query.get(),
+                    framework->kSecAttrAccess, accessRef);
+            }
+            // Note: We don't use ScopedCFRef for accessRef because CFDictionaryAddValue retains it
         }
-        // Note: We don't use ScopedCFRef for accessRef because CFDictionaryAddValue retains it
     }
 
     OSStatus status = framework->SecItemAdd((CFDictionaryRef)query.get(), NULL);

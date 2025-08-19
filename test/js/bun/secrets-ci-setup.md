@@ -96,6 +96,33 @@ await Bun.secrets.set({ service: "myapp", name: "token", value: "" });
 - No error if the credential doesn't exist (consistent with `delete()`)
 - Returns normally (no special return value)
 
+### Unrestricted Access for CI Environments
+
+The `allowUnrestrictedAccess` parameter allows credentials to be stored without user interaction on macOS:
+
+```ts
+// For CI environments where user interaction is not possible
+await Bun.secrets.set({
+  service: "ci-deployment", 
+  name: "api-key",
+  value: process.env.API_KEY,
+  allowUnrestrictedAccess: true // Bypass macOS keychain user prompts
+});
+```
+
+**Security Considerations:**
+- ⚠️ **Use with caution** - When `allowUnrestrictedAccess: true`, any application can read the credential
+- ✅ **Recommended for CI** - Useful in headless CI environments like MacStadium or GitHub Actions
+- 🔒 **Default is secure** - When `false` (default), only your application can access the credential
+- 🖥️ **macOS only** - This parameter is ignored on Linux and Windows platforms
+
+**When to Use:**
+- ✅ CI/CD pipelines that need to store credentials without user interaction
+- ✅ Automated testing environments 
+- ✅ Headless server deployments on macOS
+- ❌ Production applications with sensitive user data
+- ❌ Desktop applications with normal user interaction
+
 ## Troubleshooting
 
 ### "libsecret not available"

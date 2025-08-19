@@ -134,7 +134,7 @@ static void updateError(Error& err, DWORD errorCode)
     }
 }
 
-Error setPassword(const CString& service, const CString& name, CString&& password)
+Error setPassword(const CString& service, const CString& name, CString&& password, bool allowUnrestrictedAccess)
 {
     Error err;
 

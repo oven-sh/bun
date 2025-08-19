@@ -661,26 +661,6 @@ describe("Connection & Initialization", () => {
       await sql.close();
       await rm(dir, { recursive: true });
     });
-
-    // is this ideal api?
-    test.skip("SQLite read-write mode should not create missing database (mode=rw)", async () => {
-      const dir = tempDirWithFiles("rw-nonexist-test", {});
-      const dbPath = path.join(dir, "nonexistent-rw.db");
-
-      const db = new SQL(`sqlite://${dbPath}?mode=rw`);
-      expect(db.options.adapter).toBe("sqlite");
-      expect((db.options as Bun.SQL.SQLiteOptions).readonly).toBe(false);
-      expect((db.options as Bun.SQL.SQLiteOptions).create).toBeUndefined();
-      expect((db.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
-
-      expect(existsSync(dbPath)).toBe(false);
-
-      expect(db`SELECT 1`).rejects.toThrowErrorMatchingInlineSnapshot();
-      expect(existsSync(dbPath)).toBe(false);
-
-      await db.close();
-      await rm(dir, { recursive: true });
-    });
   });
 });
 

@@ -174,8 +174,7 @@ pub const Row = struct {
 
     fn decodeBinary(this: *Row, allocator: std.mem.Allocator, comptime Context: type, reader: NewReader(Context)) !void {
         // Header
-        const header = try reader.int(u8);
-        if (header != 0) return error.InvalidBinaryRow;
+        _ = try reader.int(u8);
 
         // Null bitmap
         const bitmap_bytes = (this.columns.len + 7 + 2) / 8;

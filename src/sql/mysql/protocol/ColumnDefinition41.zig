@@ -70,11 +70,10 @@ pub fn decodeInternal(this: *ColumnDefinition41, comptime Context: type, reader:
     this.org_name = try reader.encodeLenString();
     debug("org_name: {s}", .{this.org_name.slice()});
 
-    this.fixed_length_fields_length = try reader.encodeLenInt();
+    this.fixed_length_fields_length = try reader.encodedLenInt();
     this.character_set = try reader.int(u16);
     this.column_length = try reader.int(u32);
     this.column_type = @enumFromInt(try reader.int(u8));
-    debug("column_type: {s}", .{@tagName(this.column_type)});
     this.flags = ColumnFlags.fromInt(try reader.int(u16));
     this.decimals = try reader.int(u8);
 

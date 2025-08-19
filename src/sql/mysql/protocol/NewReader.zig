@@ -81,9 +81,18 @@ pub fn NewReaderWrap(
             return error.InvalidEncodedLength;
         }
 
-        pub fn encodeLenInt(this: @This()) !u64 {
+        pub fn encodedLenInt(this: @This()) !u64 {
             if (decodeLengthInt(this.peek())) |result| {
                 this.skip(result.bytes_read);
+                return result.value;
+            }
+            return error.InvalidEncodedInteger;
+        }
+
+        pub fn encodedLenIntWithSize(this: @This(), size: *usize) !u64 {
+            if (decodeLengthInt(this.peek())) |result| {
+                this.skip(result.bytes_read);
+                size.* += result.bytes_read;
                 return result.value;
             }
             return error.InvalidEncodedInteger;

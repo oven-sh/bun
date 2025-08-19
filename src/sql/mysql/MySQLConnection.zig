@@ -623,16 +623,16 @@ fn advance(this: *@This()) void {
                             },
                             .parsing => {
                                 // we are still parsing, lets wait for it to be prepared or failed
-                                return;
+                                offset += 1;
+                                continue;
                             },
                         }
                     }
                 }
             },
             .binding, .running, .partial_response => {
-                // if we are binding it will switch to running immediately
-                // if we are running, we need to wait for it to be success or fail
-                return;
+                offset += 1;
+                continue;
             },
             .success => {
                 this.cleanupSuccessQuery(req);
@@ -1017,6 +1017,7 @@ pub fn onData(this: *MySQLConnection, data: []const u8) void {
         var offset: usize = 0;
         const reader = StackReader.init(data, &consumed, &offset);
         this.processPackets(StackReader, reader) catch |err| {
+            debug("processPackets without buffer: {s}", .{@errorName(err)});
             if (err == error.ShortRead) {
                 if (comptime bun.Environment.allow_assert) {
                     debug("Received short read: last_message_start: {d}, head: {d}, len: {d}", .{
@@ -1045,6 +1046,7 @@ pub fn onData(this: *MySQLConnection, data: []const u8) void {
 
         this.read_buffer.write(bun.default_allocator, data) catch @panic("failed to write to read buffer");
         this.processPackets(Reader, this.bufferedReader()) catch |err| {
+            debug("processPackets with buffer: {s}", .{@errorName(err)});
             if (err != error.ShortRead) {
                 if (comptime bun.Environment.allow_assert) {
                     if (@errorReturnTrace()) |trace| {
@@ -1076,11 +1078,13 @@ pub fn processPackets(this: *MySQLConnection, comptime Context: type, reader: Ne
         reader.markMessageStart();
 
         // Read packet header
-        const header = PacketHeader.decode(reader.peek()) orelse break;
+        const header = PacketHeader.decode(reader.peek()) orelse return error.ShortRead;
         const header_length = header.length;
         debug("sequence_id: {d} header: {d}", .{ this.sequence_id, header_length });
         // Ensure we have the full packet
         try reader.ensureCapacity(header_length + PacketHeader.size);
+        // always skip the full packet, we dont care about padding or unreaded bytes
+        defer reader.setOffsetFromStart(header_length + PacketHeader.size);
         reader.skip(PacketHeader.size);
 
         // Update sequence id
@@ -1089,7 +1093,7 @@ pub fn processPackets(this: *MySQLConnection, comptime Context: type, reader: Ne
         // Process packet based on connection state
         switch (this.status) {
             .handshaking => try this.handleHandshake(Context, reader),
-            .authenticating, .authentication_awaiting_pk => try this.handleAuth(Context, reader),
+            .authenticating, .authentication_awaiting_pk => try this.handleAuth(Context, reader, header_length),
             .connected => try this.handleCommand(Context, reader, header_length),
             else => {
                 debug("Unexpected packet in state {s}", .{@tagName(this.status)});
@@ -1220,7 +1224,7 @@ pub fn updateRef(this: *@This()) void {
         this.poll_ref.unref(this.vm);
     }
 }
-pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context)) !void {
+pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context), header_length: u24) !void {
     const first_byte = try reader.int(u8);
     reader.skip(-1);
 
@@ -1228,7 +1232,9 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
 
     switch (first_byte) {
         @intFromEnum(PacketType.OK) => {
-            var ok = OKPacket{};
+            var ok = OKPacket{
+                .packet_size = header_length,
+            };
             try ok.decode(reader);
             defer ok.deinit();
 
@@ -1306,7 +1312,9 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
                 }
             } else if (first_byte == @intFromEnum(PacketType.LOCAL_INFILE)) {
                 // Handle LOCAL INFILE request
-                var infile = LocalInfileRequest{};
+                var infile = LocalInfileRequest{
+                    .packet_size = header_length,
+                };
                 try infile.decode(reader);
                 defer infile.deinit();
 
@@ -1320,7 +1328,9 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
         },
 
         PacketType.AUTH_SWITCH => {
-            var auth_switch = AuthSwitchRequest{};
+            var auth_switch = AuthSwitchRequest{
+                .packet_size = header_length,
+            };
             try auth_switch.decode(reader);
             defer auth_switch.deinit();
 
@@ -1342,10 +1352,6 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
 }
 
 pub fn handleCommand(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context), header_length: u24) !void {
-    defer {
-        // just skip unread bytes that can be padding or just ignored
-        reader.setOffsetFromStart(header_length + PacketHeader.size);
-    }
     // Get the current request if any
     const request = this.current() orelse {
         debug("Received unexpected command response", .{});
@@ -1578,7 +1584,6 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
             var column = ColumnDefinition41{};
             defer column.deinit();
             try column.decode(reader);
-            debug("stmt param {d}: {s} unsigned? {}", .{ statement.params_received, @tagName(column.column_type), column.flags.UNSIGNED });
             statement.params[statement.params_received] = .{
                 .type = column.column_type,
                 .flags = column.flags,
@@ -1648,7 +1653,7 @@ fn handleResultSetOK(this: *MySQLConnection, request: *MySQLQuery, statement: *M
     statement.reset();
 }
 
-pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context), _: u24) !void {
+pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context), header_length: u24) !void {
     const first_byte = try reader.int(u8);
     debug("handleResultSet: {x:0>2}", .{first_byte});
 
@@ -1658,7 +1663,9 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
         debug("Unexpected result set packet", .{});
         return error.UnexpectedPacket;
     };
-    var ok = OKPacket{};
+    var ok = OKPacket{
+        .packet_size = header_length,
+    };
     switch (@as(PacketType, @enumFromInt(first_byte))) {
         .ERROR => {
             var err = ErrorPacket{};
@@ -1694,10 +1701,17 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                     // Can't be 0
                     return error.UnexpectedPacket;
                 }
-
-                if (statement.columns.len == 0) {
+                if (statement.columns.len != header.field_count) {
+                    debug("header field count mismatch: {d} != {d}", .{ statement.columns.len, header.field_count });
+                    if (statement.columns.len > 0) {
+                        for (statement.columns) |*column| {
+                            column.deinit();
+                        }
+                        bun.default_allocator.free(statement.columns);
+                    }
                     statement.columns = try bun.default_allocator.alloc(ColumnDefinition41, header.field_count);
                 }
+
                 statement.execution_flags.header_received = true;
                 return;
             } else if (statement.columns_received < statement.columns.len) {

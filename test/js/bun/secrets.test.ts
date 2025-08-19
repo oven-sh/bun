@@ -66,7 +66,7 @@ test("Bun.secrets API", async () => {
     // Set, get, delete, verify cycle
     await Bun.secrets.set({ service: testService, name: testUser, value: testPassword });
     expect(await Bun.secrets.get({ service: testService, name: testUser })).toBe(testPassword);
-    
+
     expect(await Bun.secrets.delete({ service: testService, name: testUser })).toBe(true);
     expect(await Bun.secrets.get({ service: testService, name: testUser })).toBeNull();
   }
@@ -183,7 +183,7 @@ test("Bun.secrets handles unicode", async () => {
 });
 
 test("Bun.secrets handles concurrent operations", async () => {
-  const promises = [];
+  const promises: Promise<void>[] = [];
   const count = 10;
 
   // Create multiple credentials concurrently

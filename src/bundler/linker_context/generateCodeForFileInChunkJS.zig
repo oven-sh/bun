@@ -604,7 +604,6 @@ pub fn generateCodeForFileInChunkJS(
         return .{
             .result = .{
                 .code = "",
-                .code_allocator = bun.default_allocator,
                 .source_map = null,
             },
         };

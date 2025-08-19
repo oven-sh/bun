@@ -2098,7 +2098,6 @@ pub fn finalizeBundle(
                 .{
                     .js = .{
                         .code = compile_result.javascript.code(),
-                        .code_allocator = compile_result.javascript.allocator(),
                         .source_map = .{
                             .chunk = source_map,
                             .escaped_source = quoted_contents,
@@ -2190,7 +2189,6 @@ pub fn finalizeBundle(
             index,
             .{ .js = .{
                 .code = generated_js,
-                .code_allocator = dev.allocator(),
                 .source_map = null,
             } },
             false,

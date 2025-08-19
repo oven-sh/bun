@@ -488,7 +488,6 @@ pub const PrintResult = union(enum) {
 
     pub const Success = struct {
         code: []u8,
-        code_allocator: std.mem.Allocator,
         source_map: ?SourceMap.Chunk = null,
     };
 };
@@ -6009,7 +6008,6 @@ pub fn printWithWriterAndPlatform(
     return .{
         .result = .{
             .code = buffer.toOwnedSlice(),
-            .code_allocator = buffer.allocator,
             .source_map = source_map,
         },
     };

@@ -3989,14 +3989,6 @@ pub const CompileResult = union(enum) {
                 else => "",
             };
         }
-
-        pub fn allocator(this: @This()) std.mem.Allocator {
-            return switch (this.result) {
-                .result => |result| result.code_allocator,
-                // empty slice can be freed by any allocator
-                else => bun.default_allocator,
-            };
-        }
     },
     css: struct {
         result: bun.Maybe([]const u8, anyerror),
@@ -4016,7 +4008,6 @@ pub const CompileResult = union(enum) {
             .result = js_printer.PrintResult{
                 .result = .{
                     .code = "",
-                    .code_allocator = bun.default_allocator,
                 },
             },
         },
@@ -4030,13 +4021,6 @@ pub const CompileResult = union(enum) {
                 .err => "",
             },
             .html => |*c| c.code,
-        };
-    }
-
-    pub fn allocator(this: *const CompileResult) ?std.mem.Allocator {
-        return switch (this.*) {
-            .javascript => |js| js.allocator(),
-            else => null,
         };
     }
 

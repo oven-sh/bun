@@ -131,10 +131,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     /// When stale, the code is "", otherwise it contains at
                     /// least one non-whitespace character, as empty chunks
                     /// contain at least a function wrapper.
-                    js_code: struct {
-                        ptr: [*]const u8,
-                        allocator: std.mem.Allocator,
-                    },
+                    js_code: [*]const u8,
                     /// Access with `.cssAssetId()`
                     css_asset_id: u64,
 
@@ -183,20 +180,17 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
                 comptime {
                     if (!Environment.ci_assert) {
-                        bun.assert_eql(@sizeOf(@This()), @sizeOf(u64) * 5);
+                        bun.assert_eql(@sizeOf(@This()), @sizeOf(u64) * 3);
                         bun.assert_eql(@alignOf(@This()), @alignOf([*]u8));
                     }
                 }
 
-                fn initJavaScript(code_slice: []const u8, code_allocator: std.mem.Allocator, flags: Flags, source_map: PackedMap.RefOrEmpty) @This() {
+                fn initJavaScript(code: []const u8, flags: Flags, source_map: PackedMap.RefOrEmpty) @This() {
                     assert(flags.kind == .js or flags.kind == .asset);
                     assert(flags.source_map_state == std.meta.activeTag(source_map));
                     return .{
-                        .content = .{ .js_code = .{
-                            .ptr = code_slice.ptr,
-                            .allocator = code_allocator,
-                        } },
-                        .code_len = @intCast(code_slice.len),
+                        .content = .{ .js_code = code.ptr },
+                        .code_len = @intCast(code.len),
                         .flags = flags,
                         .source_map = source_map.untag(),
                     };
@@ -225,12 +219,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
                 fn jsCode(file: @This()) []const u8 {
                     assert(file.flags.kind.hasInlinejscodeChunk());
-                    return file.content.js_code.ptr[0..file.code_len];
-                }
-
-                fn freeJsCode(file: *@This()) void {
-                    assert(file.flags.kind.hasInlinejscodeChunk());
-                    file.content.js_code.allocator.free(file.jsCode());
+                    return file.content.js_code[0..file.code_len];
                 }
 
                 fn cssAssetId(file: @This()) u64 {
@@ -260,7 +249,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         fn freeFileContent(g: *IncrementalGraph(.client), key: []const u8, file: *File, css: enum { unref_css, ignore_css }) void {
             switch (file.flags.kind) {
                 .js, .asset => {
-                    file.freeJsCode();
+                    g.owner().allocator().free(file.jsCode());
                     switch (file.sourceMap()) {
                         .ref => |ptr| {
                             ptr.derefWithContext(g.owner());
@@ -396,7 +385,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
             content: union(enum) {
                 js: struct {
                     code: []const u8,
-                    code_allocator: std.mem.Allocator,
                     source_map: ?struct {
                         chunk: SourceMap.Chunk,
                         escaped_source: Owned(?[]u8),
@@ -516,7 +504,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                 } };
                             };
 
-                            gop.value_ptr.* = .initJavaScript(js.code, js.code_allocator, flags, source_map);
+                            gop.value_ptr.* = .initJavaScript(js.code, flags, source_map);
 
                             // Track JavaScript chunks for concatenation
                             try g.current_chunk_parts.append(dev.allocator(), file_index);

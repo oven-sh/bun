@@ -28,7 +28,6 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
     // See https://github.com/ziglang/zig/issues/21879
     _ = VoidFieldTypes(DevServer){
         // does not contain pointers
-        .allocator = {},
         .assume_perfect_incremental_bundling = {},
         .bun_watcher = {},
         .bundles_since_last_error = {},

@@ -429,7 +429,7 @@ pub const File = struct {
     entry_point_chunk_index: u32 = std.math.maxInt(u32),
 
     line_offset_table: bun.sourcemap.LineOffsetTable.List = .empty,
-    quoted_source_contents: ?[]u8 = null,
+    quoted_source_contents: Owned(?[]u8) = .initNull(),
 
     pub fn isEntryPoint(this: *const File) bool {
         return this.entry_point_kind.isEntryPoint();
@@ -469,3 +469,4 @@ const Ref = bun.bundle_v2.Ref;
 const ResolvedExports = bun.bundle_v2.ResolvedExports;
 const ServerComponentBoundary = bun.bundle_v2.ServerComponentBoundary;
 const TopLevelSymbolToParts = bun.bundle_v2.TopLevelSymbolToParts;
+const Owned = bun.ptr.Owned;

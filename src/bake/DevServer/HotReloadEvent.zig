@@ -110,8 +110,8 @@ pub fn processFileList(
                     // this resolution result is not preserved as passing it
                     // into BundleV2 is too complicated. the resolution is
                     // cached, anyways.
-                    event.appendFile(dev.allocator, dep.source_file_path);
-                    dev.directory_watchers.freeDependencyIndex(dev.allocator, index) catch bun.outOfMemory();
+                    event.appendFile(dev.allocator(), dep.source_file_path);
+                    dev.directory_watchers.freeDependencyIndex(dev.allocator(), index) catch bun.outOfMemory();
                 } else {
                     // rebuild a new linked list for unaffected files
                     dep.next = new_chain;
@@ -123,18 +123,18 @@ pub fn processFileList(
                 entry.first_dep = new_first_dep;
             } else {
                 // without any files to depend on this watcher is freed
-                dev.directory_watchers.freeEntry(dev.allocator, watcher_index);
+                dev.directory_watchers.freeEntry(dev.allocator(), watcher_index);
             }
         }
     };
 
     var rest_extra = event.extra_files.items;
     while (bun.strings.indexOfChar(rest_extra, 0)) |str| {
-        event.files.put(dev.allocator, rest_extra[0..str], {}) catch bun.outOfMemory();
+        event.files.put(dev.allocator(), rest_extra[0..str], {}) catch bun.outOfMemory();
         rest_extra = rest_extra[str + 1 ..];
     }
     if (rest_extra.len > 0) {
-        event.files.put(dev.allocator, rest_extra, {}) catch bun.outOfMemory();
+        event.files.put(dev.allocator(), rest_extra, {}) catch bun.outOfMemory();
     }
 
     const changed_file_paths = event.files.keys();
@@ -188,7 +188,7 @@ pub fn run(first: *HotReloadEvent) void {
         return;
     }
 
-    var sfb = std.heap.stackFallback(4096, dev.allocator);
+    var sfb = std.heap.stackFallback(4096, dev.allocator());
     const temp_alloc = sfb.get();
     var entry_points: EntryPointList = .empty;
     defer entry_points.deinit(temp_alloc);

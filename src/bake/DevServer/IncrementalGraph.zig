@@ -31,7 +31,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// Keys are absolute paths for the "file" namespace, or the
         /// pretty-formatted path value that appear in imports. Absolute paths
         /// are stored so the watcher can quickly query and invalidate them.
-        /// Key slices are owned by `dev.allocator`
+        /// Key slices are owned by `dev.allocator()`
         bundled_files: bun.StringArrayHashMapUnmanaged(File),
         /// Track bools for files which are "stale", meaning they should be
         /// re-bundled before being used. Resizing this is usually deferred
@@ -399,7 +399,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     code_allocator: std.mem.Allocator,
                     source_map: ?struct {
                         chunk: SourceMap.Chunk,
-                        escaped_source: ?[]u8,
+                        escaped_source: Owned(?[]u8),
                     },
                 },
                 css: u64,
@@ -433,13 +433,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 DevServer.dumpBundleForChunk(dev, dump_dir, side, key, content.js.code, true, is_ssr_graph);
             };
 
-            const gop = try g.bundled_files.getOrPut(dev.allocator, key);
+            const gop = try g.bundled_files.getOrPut(dev.allocator(), key);
             const file_index = FileIndex.init(@intCast(gop.index));
 
             if (!gop.found_existing) {
-                gop.key_ptr.* = try dev.allocator.dupe(u8, key);
-                try g.first_dep.append(dev.allocator, .none);
-                try g.first_import.append(dev.allocator, .none);
+                gop.key_ptr.* = try dev.allocator().dupe(u8, key);
+                try g.first_dep.append(dev.allocator(), .none);
+                try g.first_import.append(dev.allocator(), .none);
             }
 
             if (g.stale_files.bit_length > gop.index) {
@@ -474,7 +474,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             ) orelse
                                 Output.panic("Missing SerializedFailure in IncrementalGraph", .{});
                             try dev.incremental_result.failures_removed.append(
-                                dev.allocator,
+                                dev.allocator(),
                                 kv.key,
                             );
                         }
@@ -490,18 +490,17 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             const source_map: PackedMap.RefOrEmpty = brk: {
                                 if (js.source_map) |source_map| {
                                     bun.debugAssert(!flags.is_html_route); // suspect behind #17956
-                                    if (source_map.chunk.buffer.len() > 0) {
+                                    var chunk = source_map.chunk;
+                                    var escaped_source = source_map.escaped_source;
+                                    if (chunk.buffer.len() > 0) {
                                         flags.source_map_state = .ref;
                                         break :brk .{ .ref = PackedMap.newNonEmpty(
-                                            source_map.chunk,
-                                            source_map.escaped_source.?,
+                                            chunk,
+                                            escaped_source.take().?,
                                         ) };
                                     }
-                                    var take = source_map.chunk.buffer;
-                                    take.deinit();
-                                    if (source_map.escaped_source) |escaped_source| {
-                                        bun.default_allocator.free(escaped_source);
-                                    }
+                                    chunk.buffer.deinit();
+                                    escaped_source.deinit();
                                 }
 
                                 // Must precompute this. Otherwise, source maps won't have
@@ -520,7 +519,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             gop.value_ptr.* = .initJavaScript(js.code, js.code_allocator, flags, source_map);
 
                             // Track JavaScript chunks for concatenation
-                            try g.current_chunk_parts.append(dev.allocator, file_index);
+                            try g.current_chunk_parts.append(dev.allocator(), file_index);
                             g.current_chunk_len += js.code.len;
                         },
                     }
@@ -542,7 +541,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         };
 
                         if (client_component_boundary) {
-                            try dev.incremental_result.client_components_added.append(dev.allocator, file_index);
+                            try dev.incremental_result.client_components_added.append(dev.allocator(), file_index);
                         }
                     } else {
                         gop.value_ptr.kind = switch (content) {
@@ -558,7 +557,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
                         if (ctx.server_to_client_bitset.isSet(index.get())) {
                             gop.value_ptr.is_client_component_boundary = true;
-                            try dev.incremental_result.client_components_added.append(dev.allocator, file_index);
+                            try dev.incremental_result.client_components_added.append(dev.allocator(), file_index);
                         } else if (gop.value_ptr.is_client_component_boundary) {
                             const client_graph = &g.owner().client_graph;
                             const client_index = client_graph.getFileIndex(gop.key_ptr.*) orelse
@@ -566,7 +565,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             client_graph.disconnectAndDeleteFile(client_index);
                             gop.value_ptr.is_client_component_boundary = false;
 
-                            try dev.incremental_result.client_components_removed.append(dev.allocator, file_index);
+                            try dev.incremental_result.client_components_removed.append(dev.allocator(), file_index);
                         }
 
                         if (gop.value_ptr.failed) {
@@ -577,20 +576,18 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             ) orelse
                                 Output.panic("Missing failure in IncrementalGraph", .{});
                             try dev.incremental_result.failures_removed.append(
-                                dev.allocator,
+                                dev.allocator(),
                                 kv.key,
                             );
                         }
                     }
                     if (content == .js) {
-                        try g.current_chunk_parts.append(dev.allocator, content.js.code);
+                        try g.current_chunk_parts.append(dev.allocator(), content.js.code);
                         g.current_chunk_len += content.js.code.len;
                         if (content.js.source_map) |source_map| {
-                            var take = source_map.chunk.buffer;
-                            take.deinit();
-                            if (source_map.escaped_source) |escaped_source| {
-                                bun.default_allocator.free(escaped_source);
-                            }
+                            var buffer = source_map.chunk.buffer;
+                            buffer.deinit();
+                            source_map.escaped_source.deinit();
                         }
                     }
                 },
@@ -1032,10 +1029,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             Output.panic("Route not in lookup index: {d} {}", .{ file_index.get(), bun.fmt.quote(g.bundled_files.keys()[file_index.get()]) });
                         igLog("\\<- Route", .{});
 
-                        try dev.incremental_result.framework_routes_affected.append(dev.allocator, route_index);
+                        try dev.incremental_result.framework_routes_affected.append(dev.allocator(), route_index);
                     }
                     if (file.is_client_component_boundary) {
-                        try dev.incremental_result.client_components_affected.append(dev.allocator, file_index);
+                        try dev.incremental_result.client_components_affected.append(dev.allocator(), file_index);
                     }
                 },
                 .client => {
@@ -1057,7 +1054,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         else
                             &dev.incremental_result.html_routes_soft_affected;
 
-                        try list.append(dev.allocator, route_bundle_index);
+                        try list.append(dev.allocator(), route_bundle_index);
 
                         if (goal == .stop_at_boundary)
                             return;
@@ -1128,7 +1125,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             SerializedFailure.ArrayHashAdapter{},
                         ) orelse
                             @panic("Failed to get bundling failure");
-                        try g.owner().incremental_result.failures_added.append(g.owner().allocator, fail);
+                        try g.owner().incremental_result.failures_added.append(g.owner().allocator(), fail);
                     }
                 },
                 .client => {
@@ -1137,7 +1134,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         bun.debugAssert(file.flags.is_css_root);
 
                         if (goal == .find_css) {
-                            try g.current_css_files.append(g.owner().allocator, file.cssAssetId());
+                            try g.current_css_files.append(g.owner().allocator(), file.cssAssetId());
                         }
 
                         // See the comment on `is_css_root` on how CSS roots
@@ -1147,7 +1144,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     }
 
                     if (goal == .find_client_modules) {
-                        try g.current_chunk_parts.append(g.owner().allocator, file_index);
+                        try g.current_chunk_parts.append(g.owner().allocator(), file_index);
                         g.current_chunk_len += file.code_len;
                     }
 
@@ -1157,7 +1154,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             SerializedFailure.ArrayHashAdapter{},
                         ) orelse
                             @panic("Failed to get bundling failure");
-                        try g.owner().incremental_result.failures_added.append(g.owner().allocator, fail);
+                        try g.owner().incremental_result.failures_added.append(g.owner().allocator(), fail);
                         return;
                     }
                 },
@@ -1180,7 +1177,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
         pub fn insertStaleExtra(g: *@This(), abs_path: []const u8, is_ssr_graph: bool, is_route: bool) bun.OOM!FileIndex {
             g.owner().graph_safety_lock.assertLocked();
-            const dev_allocator = g.owner().allocator;
+            const dev_allocator = g.owner().allocator();
 
             debug.log("Insert stale: {s}", .{abs_path});
             const gop = try g.bundled_files.getOrPut(dev_allocator, abs_path);
@@ -1251,7 +1248,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             key: []const u8,
         } {
             g.owner().graph_safety_lock.assertLocked();
-            const dev_allocator = g.owner().allocator;
+            const dev_allocator = g.owner().allocator();
             const gop = try g.bundled_files.getOrPut(dev_allocator, abs_path);
             if (!gop.found_existing) {
                 gop.key_ptr.* = try dev_allocator.dupe(u8, abs_path);
@@ -1285,7 +1282,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// Its content lives only on the client.
         pub fn insertCssFileOnServer(g: *@This(), ctx: *HotUpdateContext, index: bun.ast.Index, abs_path: []const u8) bun.OOM!void {
             g.owner().graph_safety_lock.assertLocked();
-            const dev_allocator = g.owner().allocator;
+            const dev_allocator = g.owner().allocator();
 
             debug.log("Insert stale: {s}", .{abs_path});
             const gop = try g.bundled_files.getOrPut(dev_allocator, abs_path);
@@ -1324,7 +1321,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         ) bun.OOM!void {
             g.owner().graph_safety_lock.assertLocked();
 
-            const dev_allocator = g.owner().allocator;
+            const dev_allocator = g.owner().allocator();
 
             const Gop = std.StringArrayHashMapUnmanaged(File).GetOrPutResult;
             // found_existing is destructured separately so that it is
@@ -1424,10 +1421,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     log.msgs.items,
                 );
             };
-            const fail_gop = try dev.bundling_failures.getOrPut(dev.allocator, failure);
-            try dev.incremental_result.failures_added.append(dev.allocator, failure);
+            const fail_gop = try dev.bundling_failures.getOrPut(dev.allocator(), failure);
+            try dev.incremental_result.failures_added.append(dev.allocator(), failure);
             if (fail_gop.found_existing) {
-                try dev.incremental_result.failures_removed.append(dev.allocator, fail_gop.key_ptr.*);
+                try dev.incremental_result.failures_removed.append(dev.allocator(), fail_gop.key_ptr.*);
                 fail_gop.key_ptr.* = failure;
             }
         }
@@ -1480,7 +1477,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
         pub fn ensureStaleBitCapacity(g: *@This(), are_new_files_stale: bool) !void {
             try g.stale_files.resize(
-                g.owner().allocator,
+                g.owner().allocator(),
                 std.mem.alignForward(
                     usize,
                     @max(g.bundled_files.count(), g.stale_files.bit_length),
@@ -1597,7 +1594,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             g: *@This(),
             options: *const TakeJSBundleOptions,
         ) ![]u8 {
-            var chunk = std.ArrayList(u8).init(g.owner().allocator);
+            var chunk = std.ArrayList(u8).init(g.owner().allocator());
             try g.takeJSBundleToList(&chunk, options);
             bun.assert(chunk.items.len == chunk.capacity);
             return chunk.items;
@@ -1626,7 +1623,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // to inform the HMR runtime some crucial entry-point info. The
             // exact upper bound of this can be calculated, but is not to
             // avoid worrying about windows paths.
-            var end_sfa = std.heap.stackFallback(65536, g.owner().allocator);
+            var end_sfa = std.heap.stackFallback(65536, g.owner().allocator());
             var end_list = std.ArrayList(u8).initCapacity(end_sfa.get(), 65536) catch unreachable;
             defer end_list.deinit();
             const end = end: {
@@ -1795,7 +1792,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             const keys = g.bundled_files.keys();
 
-            g.owner().allocator.free(keys[file_index.get()]);
+            g.owner().allocator().free(keys[file_index.get()]);
             keys[file_index.get()] = ""; // cannot be `undefined` as it may be read by hashmap logic
 
             assert_eql(g.first_dep.items[file_index.get()], .none);
@@ -1814,7 +1811,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             }
 
             const index = EdgeIndex.init(@intCast(g.edges.items.len));
-            try g.edges.append(g.owner().allocator, edge);
+            try g.edges.append(g.owner().allocator(), edge);
             return index;
         }
 
@@ -1830,7 +1827,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             if (edge_index.get() == (g.edges.items.len - 1)) {
                 g.edges.items.len -= 1;
             } else {
-                g.edges_free_list.append(g.owner().allocator, edge_index) catch {
+                g.edges_free_list.append(g.owner().allocator(), edge_index) catch {
                     // Leak an edge object; Ok since it may get cleaned up by
                     // the next incremental graph garbage-collection cycle.
                 };
@@ -1922,3 +1919,4 @@ const std = @import("std");
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
 const Allocator = std.mem.Allocator;
+const Owned = bun.ptr.Owned;

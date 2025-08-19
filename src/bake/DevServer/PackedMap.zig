@@ -7,7 +7,7 @@ const RefCount = bun.ptr.RefCount(@This(), "ref_count", destroy, .{
 });
 
 ref_count: RefCount,
-/// Allocated by `dev.allocator`. Access with `.vlq()`
+/// Allocated by `dev.allocator()`. Access with `.vlq()`
 /// This is stored to allow lazy construction of source map files.
 vlq_ptr: [*]u8,
 vlq_len: u32,
@@ -15,9 +15,7 @@ vlq_allocator: std.mem.Allocator,
 /// The bundler runs quoting on multiple threads, so it only makes
 /// sense to preserve that effort for concatenation and
 /// re-concatenation.
-// TODO: rename to `escaped_source_*`
-quoted_contents_ptr: [*]u8,
-quoted_contents_len: u32,
+escaped_source: Owned([]u8),
 /// Used to track the last state of the source map chunk. This
 /// is used when concatenating chunks. The generated column is
 /// not tracked because it is always zero (all chunks end in a
@@ -32,7 +30,7 @@ end_state: struct {
 /// already counted for.
 bits_used_for_memory_cost_dedupe: u32 = 0,
 
-pub fn newNonEmpty(chunk: SourceMap.Chunk, quoted_contents: []u8) bun.ptr.RefPtr(PackedMap) {
+pub fn newNonEmpty(chunk: SourceMap.Chunk, escaped_source: Owned([]u8)) bun.ptr.RefPtr(PackedMap) {
     assert(chunk.buffer.list.items.len > 0);
     var buffer = chunk.buffer;
     const slice = buffer.toOwnedSlice();
@@ -41,8 +39,7 @@ pub fn newNonEmpty(chunk: SourceMap.Chunk, quoted_contents: []u8) bun.ptr.RefPtr
         .vlq_ptr = slice.ptr,
         .vlq_len = @intCast(slice.len),
         .vlq_allocator = buffer.allocator,
-        .quoted_contents_ptr = quoted_contents.ptr,
-        .quoted_contents_len = @intCast(quoted_contents.len),
+        .escaped_source = escaped_source,
         .end_state = .{
             .original_line = chunk.end_state.original_line,
             .original_column = chunk.end_state.original_column,
@@ -56,7 +53,7 @@ fn destroy(self: *@This(), _: *DevServer) void {
 }
 
 pub fn memoryCost(self: *const @This()) usize {
-    return self.vlq_len + self.quoted_contents_len + @sizeOf(@This());
+    return self.vlq_len + self.quotedContents().len + @sizeOf(@This());
 }
 
 /// When DevServer iterates everything to calculate memory usage, it passes
@@ -75,13 +72,13 @@ pub fn vlq(self: *const @This()) []u8 {
 }
 
 // TODO: rename to `escapedSource`
-pub fn quotedContents(self: *const @This()) []u8 {
-    return self.quoted_contents_ptr[0..self.quoted_contents_len];
+pub fn quotedContents(self: *const @This()) []const u8 {
+    return self.escaped_source.getConst();
 }
 
 comptime {
     if (!Environment.ci_assert) {
-        assert_eql(@sizeOf(@This()), @sizeOf(usize) * 7);
+        assert_eql(@sizeOf(@This()), @sizeOf(usize) * 8);
         assert_eql(@alignOf(@This()), @alignOf(usize));
     }
 }
@@ -172,3 +169,4 @@ const RefPtr = bun.ptr.RefPtr;
 
 const DevServer = bake.DevServer;
 const RouteBundle = DevServer.RouteBundle;
+const Owned = bun.ptr.Owned;

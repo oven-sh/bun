@@ -116,7 +116,7 @@ pub const LinkerContext = struct {
                 // stack traces can show the source code, even after incremental
                 // rebuilds occur.
                 const alloc = if (worker.ctx.transpiler.options.dev_server) |dev|
-                    dev.allocator
+                    dev.allocator()
                 else
                     worker.allocator;
 
@@ -150,23 +150,20 @@ pub const LinkerContext = struct {
 
         pub fn computeQuotedSourceContents(this: *LinkerContext, _: std.mem.Allocator, source_index: Index.Int) void {
             debug("Computing Quoted Source Contents: {d}", .{source_index});
+            const quoted_source_contents = &this.graph.files.items(.quoted_source_contents)[source_index];
+            if (quoted_source_contents.take()) |old| {
+                old.deinit();
+            }
+
             const loader: options.Loader = this.parse_graph.input_files.items(.loader)[source_index];
-            const quoted_source_contents: *?[]u8 = &this.graph.files.items(.quoted_source_contents)[source_index];
             if (!loader.canHaveSourceMap()) {
-                if (quoted_source_contents.*) |slice| {
-                    bun.default_allocator.free(slice);
-                    quoted_source_contents.* = null;
-                }
                 return;
             }
 
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
             var mutable = MutableString.initEmpty(bun.default_allocator);
             js_printer.quoteForJSON(source.contents, &mutable, false) catch bun.outOfMemory();
-            if (quoted_source_contents.*) |slice| {
-                bun.default_allocator.free(slice);
-            }
-            quoted_source_contents.* = mutable.slice();
+            quoted_source_contents.* = mutable.toDefaultOwned().toOptional();
         }
     };
 
@@ -750,11 +747,13 @@ pub const LinkerContext = struct {
         const source_indices_for_contents = source_id_map.keys();
         if (source_indices_for_contents.len > 0) {
             j.pushStatic("\n    ");
-            j.pushStatic(quoted_source_map_contents[source_indices_for_contents[0]] orelse "");
+            j.pushStatic(
+                quoted_source_map_contents[source_indices_for_contents[0]].getConst() orelse "",
+            );
 
             for (source_indices_for_contents[1..]) |index| {
                 j.pushStatic(",\n    ");
-                j.pushStatic(quoted_source_map_contents[index] orelse "");
+                j.pushStatic(quoted_source_map_contents[index].getConst() orelse "");
             }
         }
         j.pushStatic(

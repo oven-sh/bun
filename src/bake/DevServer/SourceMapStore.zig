@@ -263,9 +263,9 @@ pub const Entry = struct {
                         .empty => {},
                     }
                 }
-                entry.files.deinit(dev.allocator);
+                entry.files.deinit(dev.allocator());
             },
-            .paths = dev.allocator.free(entry.paths),
+            .paths = dev.allocator().free(entry.paths),
         };
     }
 };
@@ -309,7 +309,7 @@ const PutOrIncrementRefCount = union(enum) {
     shared: *Entry,
 };
 pub fn putOrIncrementRefCount(store: *SourceMapStore, script_id: Key, ref_count: u32) !PutOrIncrementRefCount {
-    const gop = try store.entries.getOrPut(store.owner().allocator, script_id);
+    const gop = try store.entries.getOrPut(store.owner().allocator(), script_id);
     if (!gop.found_existing) {
         bun.debugAssert(ref_count > 0); // invalid state
         gop.value_ptr.* = .{

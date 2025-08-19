@@ -22,7 +22,7 @@ body: uws.BodyReaderMixin(@This(), "body", runWithBody, finalize),
 pub fn run(dev: *DevServer, _: *Request, resp: anytype) void {
     const ctx = bun.new(ErrorReportRequest, .{
         .dev = dev,
-        .body = .init(dev.allocator),
+        .body = .init(dev.allocator()),
     });
     ctx.dev.server.?.onPendingRequest();
     ctx.body.readBody(resp);
@@ -41,8 +41,8 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
     var s = std.io.fixedBufferStream(body);
     const reader = s.reader();
 
-    var sfa_general = std.heap.stackFallback(65536, ctx.dev.allocator);
-    var sfa_sourcemap = std.heap.stackFallback(65536, ctx.dev.allocator);
+    var sfa_general = std.heap.stackFallback(65536, ctx.dev.allocator());
+    var sfa_sourcemap = std.heap.stackFallback(65536, ctx.dev.allocator());
     const temp_alloc = sfa_general.get();
     var arena = std.heap.ArenaAllocator.init(temp_alloc);
     defer arena.deinit();
@@ -238,7 +238,7 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
         ) catch {},
     }
 
-    var out: std.ArrayList(u8) = .init(ctx.dev.allocator);
+    var out: std.ArrayList(u8) = .init(ctx.dev.allocator());
     errdefer out.deinit();
     const w = out.writer();
 

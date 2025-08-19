@@ -1562,7 +1562,7 @@ export class VerdaccioRegistry {
     this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
       silent,
       // Prefer using a release build of Bun since it's faster
-      execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
+      execPath: bunExe(),
       env: {
         ...(bunEnv as any),
         NODE_NO_WARNINGS: "1",

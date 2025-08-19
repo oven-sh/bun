@@ -8,504 +8,371 @@
 #include <wtf/Vector.h>
 #include <wtf/NeverDestroyed.h>
 #include <thread>
-
-// Forward declarations for AppKit types
-typedef struct objc_object NSObject;
-typedef struct objc_object NSPasteboard;
-typedef struct objc_object NSString;
-typedef struct objc_object NSData;
-typedef struct objc_object NSArray;
-typedef NSObject* id;
-typedef const struct objc_selector* SEL;
-typedef id (*IMP)(id, SEL, ...);
-
-// Objective-C runtime functions
-extern "C" {
-    id objc_getClass(const char* name);
-    SEL sel_registerName(const char* str);
-    id objc_msgSend(id theReceiver, SEL theSelector, ...);
-    void* objc_getAssociatedObject(id object, const void* key);
-    void objc_setAssociatedObject(id object, const void* key, id value, unsigned int policy);
-}
-
-#define False 0
-#define True 1
-typedef signed char BOOL;
+#include <CoreFoundation/CoreFoundation.h>
 
 namespace Bun {
 namespace Clipboard {
 
 using namespace WTF;
 
-class AppKitFramework {
-public:
-    void* handle;
+// AppKit C API function pointers loaded dynamically
+struct AppKitAPI {
+    void* appkit_handle;
     void* foundation_handle;
     
-    // Foundation classes and selectors
-    id NSString_class;
-    id NSData_class;
-    id NSArray_class;
-    id NSPasteboard_class;
+    // Function pointers
+    void* (*NSPasteboardGeneralPasteboard)(void);
+    int (*NSPasteboardClearContents)(void* pasteboard);
+    int (*NSPasteboardSetStringForType)(void* pasteboard, CFStringRef string, CFStringRef type);
+    int (*NSPasteboardSetDataForType)(void* pasteboard, CFDataRef data, CFStringRef type);
+    CFStringRef (*NSPasteboardStringForType)(void* pasteboard, CFStringRef type);
+    CFDataRef (*NSPasteboardDataForType)(void* pasteboard, CFStringRef type);
     
-    // Selectors
-    SEL stringWithUTF8String_sel;
-    SEL UTF8String_sel;
-    SEL length_sel;
-    SEL dataWithBytes_length_sel;
-    SEL bytes_sel;
-    SEL generalPasteboard_sel;
-    SEL clearContents_sel;
-    SEL setString_forType_sel;
-    SEL setData_forType_sel;
-    SEL stringForType_sel;
-    SEL dataForType_sel;
-    SEL types_sel;
-    SEL writeObjects_sel;
-    SEL readObjectsForClasses_options_sel;
-    SEL arrayWithObject_sel;
+    // Type constants
+    CFStringRef NSPasteboardTypeString;
+    CFStringRef NSPasteboardTypeHTML;
+    CFStringRef NSPasteboardTypeRTF;
+    CFStringRef NSPasteboardTypePNG;
+    CFStringRef NSPasteboardTypeTIFF;
     
-    // Pasteboard type constants
-    NSString* NSPasteboardTypeString;
-    NSString* NSPasteboardTypeHTML;
-    NSString* NSPasteboardTypeRTF;
-    NSString* NSPasteboardTypePNG;
-    NSString* NSPasteboardTypeTIFF;
-
-    AppKitFramework()
-        : handle(nullptr)
-        , foundation_handle(nullptr)
-    {
-    }
-
-    bool load()
-    {
-        if (handle && foundation_handle) return true;
-
-        // Load Foundation framework first
-        foundation_handle = dlopen("/System/Library/Frameworks/Foundation.framework/Foundation", RTLD_LAZY | RTLD_LOCAL);
+    bool loaded;
+    
+    AppKitAPI() : appkit_handle(nullptr), foundation_handle(nullptr), loaded(false) {}
+    
+    bool load() {
+        if (loaded) return true;
+        
+        // Load Foundation framework
+        foundation_handle = dlopen("/System/Library/Frameworks/Foundation.framework/Foundation", RTLD_LAZY);
         if (!foundation_handle) {
             return false;
         }
-
+        
         // Load AppKit framework
-        handle = dlopen("/System/Library/Frameworks/AppKit.framework/AppKit", RTLD_LAZY | RTLD_LOCAL);
-        if (!handle) {
+        appkit_handle = dlopen("/System/Library/Frameworks/AppKit.framework/AppKit", RTLD_LAZY);
+        if (!appkit_handle) {
             dlclose(foundation_handle);
             foundation_handle = nullptr;
             return false;
         }
-
-        if (!load_classes_and_selectors() || !load_constants()) {
-            dlclose(handle);
-            dlclose(foundation_handle);
-            handle = nullptr;
-            foundation_handle = nullptr;
-            return false;
-        }
-
-        return true;
-    }
-
-private:
-    bool load_classes_and_selectors()
-    {
-        NSString_class = objc_getClass("NSString");
-        NSData_class = objc_getClass("NSData");
-        NSArray_class = objc_getClass("NSArray");
-        NSPasteboard_class = objc_getClass("NSPasteboard");
         
-        if (!NSString_class || !NSData_class || !NSArray_class || !NSPasteboard_class) {
-            return false;
-        }
-
-        stringWithUTF8String_sel = sel_registerName("stringWithUTF8String:");
-        UTF8String_sel = sel_registerName("UTF8String");
-        length_sel = sel_registerName("length");
-        dataWithBytes_length_sel = sel_registerName("dataWithBytes:length:");
-        bytes_sel = sel_registerName("bytes");
-        generalPasteboard_sel = sel_registerName("generalPasteboard");
-        clearContents_sel = sel_registerName("clearContents");
-        setString_forType_sel = sel_registerName("setString:forType:");
-        setData_forType_sel = sel_registerName("setData:forType:");
-        stringForType_sel = sel_registerName("stringForType:");
-        dataForType_sel = sel_registerName("dataForType:");
-        types_sel = sel_registerName("types");
-        writeObjects_sel = sel_registerName("writeObjects:");
-        readObjectsForClasses_options_sel = sel_registerName("readObjectsForClasses:options:");
-        arrayWithObject_sel = sel_registerName("arrayWithObject:");
-
-        return true;
-    }
-
-    bool load_constants()
-    {
+        // Try to load AppKit C functions (these may not exist in all macOS versions)
+        NSPasteboardGeneralPasteboard = (void*(*)(void))dlsym(appkit_handle, "NSPasteboardGeneralPasteboard");
+        NSPasteboardClearContents = (int(*)(void*))dlsym(appkit_handle, "NSPasteboardClearContents");
+        NSPasteboardSetStringForType = (int(*)(void*, CFStringRef, CFStringRef))dlsym(appkit_handle, "NSPasteboardSetStringForType");
+        NSPasteboardSetDataForType = (int(*)(void*, CFDataRef, CFStringRef))dlsym(appkit_handle, "NSPasteboardSetDataForType");
+        NSPasteboardStringForType = (CFStringRef(*)(void*, CFStringRef))dlsym(appkit_handle, "NSPasteboardStringForType");
+        NSPasteboardDataForType = (CFDataRef(*)(void*, CFStringRef))dlsym(appkit_handle, "NSPasteboardDataForType");
+        
+        // Load type constants
         void* ptr;
+        ptr = dlsym(appkit_handle, "NSPasteboardTypeString");
+        if (ptr) NSPasteboardTypeString = *(CFStringRef*)ptr;
         
-        ptr = dlsym(handle, "NSPasteboardTypeString");
-        if (!ptr) return false;
-        NSPasteboardTypeString = *(NSString**)ptr;
-
-        ptr = dlsym(handle, "NSPasteboardTypeHTML");
-        if (!ptr) return false;
-        NSPasteboardTypeHTML = *(NSString**)ptr;
-
-        ptr = dlsym(handle, "NSPasteboardTypeRTF");
-        if (!ptr) return false;
-        NSPasteboardTypeRTF = *(NSString**)ptr;
-
-        ptr = dlsym(handle, "NSPasteboardTypePNG");
-        if (!ptr) return false;
-        NSPasteboardTypePNG = *(NSString**)ptr;
-
-        ptr = dlsym(handle, "NSPasteboardTypeTIFF");
-        if (!ptr) return false;
-        NSPasteboardTypeTIFF = *(NSString**)ptr;
-
+        ptr = dlsym(appkit_handle, "NSPasteboardTypeHTML");
+        if (ptr) NSPasteboardTypeHTML = *(CFStringRef*)ptr;
+        
+        ptr = dlsym(appkit_handle, "NSPasteboardTypeRTF");
+        if (ptr) NSPasteboardTypeRTF = *(CFStringRef*)ptr;
+        
+        ptr = dlsym(appkit_handle, "NSPasteboardTypePNG");
+        if (ptr) NSPasteboardTypePNG = *(CFStringRef*)ptr;
+        
+        ptr = dlsym(appkit_handle, "NSPasteboardTypeTIFF");
+        if (ptr) NSPasteboardTypeTIFF = *(CFStringRef*)ptr;
+        
+        // If we can't load the C API, we'll fall back to pbcopy/pbpaste
+        loaded = true;
         return true;
+    }
+    
+    ~AppKitAPI() {
+        if (appkit_handle) dlclose(appkit_handle);
+        if (foundation_handle) dlclose(foundation_handle);
     }
 };
 
-static AppKitFramework* appKitFramework()
-{
-    static LazyNeverDestroyed<AppKitFramework> framework;
+static AppKitAPI* getAppKitAPI() {
+    static LazyNeverDestroyed<AppKitAPI> api;
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [&] {
-        framework.construct();
-        if (!framework->load()) {
-            // Framework failed to load, but object is still constructed
-        }
+        api.construct();
+        api->load();
     });
-    return framework->handle ? &framework.get() : nullptr;
+    return &api.get();
 }
 
-static void updateError(Error& err, const String& message)
-{
+// Fallback implementation using pbcopy/pbpaste command line tools
+static bool executeCommand(const std::vector<const char*>& args, const std::string& input = "", std::string* output = nullptr) {
+    int input_pipe[2] = {-1, -1};
+    int output_pipe[2] = {-1, -1};
+    
+    // Create pipes if needed
+    if (!input.empty() && pipe(input_pipe) == -1) {
+        return false;
+    }
+    if (output && pipe(output_pipe) == -1) {
+        if (input_pipe[0] != -1) {
+            close(input_pipe[0]);
+            close(input_pipe[1]);
+        }
+        return false;
+    }
+    
+    // Build argv
+    std::vector<char*> argv;
+    for (const char* arg : args) {
+        argv.push_back(const_cast<char*>(arg));
+    }
+    argv.push_back(nullptr);
+    
+    pid_t pid = fork();
+    if (pid == -1) {
+        // Fork failed
+        if (input_pipe[0] != -1) {
+            close(input_pipe[0]);
+            close(input_pipe[1]);
+        }
+        if (output_pipe[0] != -1) {
+            close(output_pipe[0]);
+            close(output_pipe[1]);
+        }
+        return false;
+    }
+    
+    if (pid == 0) {
+        // Child process
+        if (!input.empty()) {
+            dup2(input_pipe[0], STDIN_FILENO);
+            close(input_pipe[0]);
+            close(input_pipe[1]);
+        }
+        if (output) {
+            dup2(output_pipe[1], STDOUT_FILENO);
+            close(output_pipe[0]);
+            close(output_pipe[1]);
+        }
+        
+        execvp(argv[0], argv.data());
+        _exit(127);  // execvp failed
+    }
+    
+    // Parent process - handle pipes
+    if (!input.empty()) {
+        close(input_pipe[0]);
+        if (write(input_pipe[1], input.c_str(), input.length()) == -1) {
+            // Handle write error - but continue
+        }
+        close(input_pipe[1]);
+    }
+    
+    if (output) {
+        close(output_pipe[1]);
+        char buffer[4096];
+        ssize_t bytes_read;
+        output->clear();
+        while ((bytes_read = read(output_pipe[0], buffer, sizeof(buffer))) > 0) {
+            output->append(buffer, bytes_read);
+        }
+        close(output_pipe[0]);
+    }
+    
+    // Wait for child process
+    int status;
+    waitpid(pid, &status, 0);
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+static void updateError(Error& err, const String& message) {
     err.type = ErrorType::PlatformError;
     err.message = message;
     err.code = -1;
 }
 
-static NSString* createNSString(const String& str)
-{
-    auto* framework = appKitFramework();
-    if (!framework) return nullptr;
-    
+static CFStringRef createCFString(const String& str) {
     auto utf8 = str.utf8();
-    return (NSString*)objc_msgSend(framework->NSString_class, framework->stringWithUTF8String_sel, utf8.data());
+    return CFStringCreateWithBytes(kCFAllocatorDefault, 
+                                  reinterpret_cast<const UInt8*>(utf8.data()), 
+                                  utf8.length(), 
+                                  kCFStringEncodingUTF8, 
+                                  false);
 }
 
-static String nsStringToWTFString(NSString* nsStr)
-{
-    auto* framework = appKitFramework();
-    if (!framework || !nsStr) return String();
+static String cfStringToWTFString(CFStringRef cfStr) {
+    if (!cfStr) return String();
     
-    const char* utf8Str = (const char*)objc_msgSend(nsStr, framework->UTF8String_sel);
-    return String::fromUTF8(utf8Str);
-}
-
-static NSPasteboard* getGeneralPasteboard()
-{
-    auto* framework = appKitFramework();
-    if (!framework) return nullptr;
+    CFIndex length = CFStringGetLength(cfStr);
+    CFIndex maxSize = CFStringGetMaximumSizeForEncoding(length, kCFStringEncodingUTF8) + 1;
     
-    return (NSPasteboard*)objc_msgSend(framework->NSPasteboard_class, framework->generalPasteboard_sel);
+    Vector<char> buffer(maxSize);
+    if (CFStringGetCString(cfStr, buffer.data(), maxSize, kCFStringEncodingUTF8)) {
+        return String::fromUTF8(buffer.data());
+    }
+    return String();
 }
 
-Error writeText(const String& text)
-{
+// Native AppKit implementation (when available)
+static Error writeTextNative(const String& text) {
     Error err;
+    auto* api = getAppKitAPI();
     
-    auto* framework = appKitFramework();
-    if (!framework) {
-        updateError(err, "AppKit framework not available"_s);
+    if (!api->NSPasteboardGeneralPasteboard || !api->NSPasteboardSetStringForType || !api->NSPasteboardTypeString) {
+        updateError(err, "AppKit C API not available"_s);
         return err;
     }
-
-    NSPasteboard* pasteboard = getGeneralPasteboard();
+    
+    void* pasteboard = api->NSPasteboardGeneralPasteboard();
     if (!pasteboard) {
         updateError(err, "Could not access pasteboard"_s);
         return err;
     }
-
-    NSString* nsText = createNSString(text);
-    if (!nsText) {
-        updateError(err, "Failed to create NSString"_s);
+    
+    CFStringRef cfText = createCFString(text);
+    if (!cfText) {
+        updateError(err, "Failed to create CFString"_s);
         return err;
     }
-
-    // Clear existing contents
-    objc_msgSend(pasteboard, framework->clearContents_sel);
     
-    // Set string
-    BOOL success = (BOOL)objc_msgSend(pasteboard, framework->setString_forType_sel, nsText, framework->NSPasteboardTypeString);
+    api->NSPasteboardClearContents(pasteboard);
+    int success = api->NSPasteboardSetStringForType(pasteboard, cfText, api->NSPasteboardTypeString);
+    
+    CFRelease(cfText);
     
     if (!success) {
         updateError(err, "Failed to write text to pasteboard"_s);
     }
-
+    
     return err;
 }
 
-Error writeHTML(const String& html)
-{
-    Error err;
+static std::optional<String> readTextNative(Error& error) {
+    error = Error{};
+    auto* api = getAppKitAPI();
     
-    auto* framework = appKitFramework();
-    if (!framework) {
-        updateError(err, "AppKit framework not available"_s);
-        return err;
-    }
-
-    NSPasteboard* pasteboard = getGeneralPasteboard();
-    if (!pasteboard) {
-        updateError(err, "Could not access pasteboard"_s);
-        return err;
-    }
-
-    NSString* nsHtml = createNSString(html);
-    if (!nsHtml) {
-        updateError(err, "Failed to create NSString"_s);
-        return err;
-    }
-
-    // Clear existing contents
-    objc_msgSend(pasteboard, framework->clearContents_sel);
-    
-    // Set HTML
-    BOOL success = (BOOL)objc_msgSend(pasteboard, framework->setString_forType_sel, nsHtml, framework->NSPasteboardTypeHTML);
-    
-    if (!success) {
-        updateError(err, "Failed to write HTML to pasteboard"_s);
-    }
-
-    return err;
-}
-
-Error writeRTF(const String& rtf)
-{
-    Error err;
-    
-    auto* framework = appKitFramework();
-    if (!framework) {
-        updateError(err, "AppKit framework not available"_s);
-        return err;
-    }
-
-    NSPasteboard* pasteboard = getGeneralPasteboard();
-    if (!pasteboard) {
-        updateError(err, "Could not access pasteboard"_s);
-        return err;
-    }
-
-    auto rtfData = rtf.utf8();
-    NSData* nsData = (NSData*)objc_msgSend(framework->NSData_class, framework->dataWithBytes_length_sel, rtfData.data(), rtfData.length());
-    if (!nsData) {
-        updateError(err, "Failed to create NSData"_s);
-        return err;
-    }
-
-    // Clear existing contents
-    objc_msgSend(pasteboard, framework->clearContents_sel);
-    
-    // Set RTF data
-    BOOL success = (BOOL)objc_msgSend(pasteboard, framework->setData_forType_sel, nsData, framework->NSPasteboardTypeRTF);
-    
-    if (!success) {
-        updateError(err, "Failed to write RTF to pasteboard"_s);
-    }
-
-    return err;
-}
-
-Error writeImage(const Vector<uint8_t>& imageData, const String& mimeType)
-{
-    Error err;
-    
-    auto* framework = appKitFramework();
-    if (!framework) {
-        updateError(err, "AppKit framework not available"_s);
-        return err;
-    }
-
-    NSPasteboard* pasteboard = getGeneralPasteboard();
-    if (!pasteboard) {
-        updateError(err, "Could not access pasteboard"_s);
-        return err;
-    }
-
-    NSData* nsData = (NSData*)objc_msgSend(framework->NSData_class, framework->dataWithBytes_length_sel, imageData.data(), imageData.size());
-    if (!nsData) {
-        updateError(err, "Failed to create NSData"_s);
-        return err;
-    }
-
-    // Clear existing contents
-    objc_msgSend(pasteboard, framework->clearContents_sel);
-    
-    // Choose appropriate pasteboard type based on MIME type
-    NSString* pasteboardType = framework->NSPasteboardTypePNG; // default
-    if (mimeType == "image/tiff"_s) {
-        pasteboardType = framework->NSPasteboardTypeTIFF;
-    }
-    
-    // Set image data
-    BOOL success = (BOOL)objc_msgSend(pasteboard, framework->setData_forType_sel, nsData, pasteboardType);
-    
-    if (!success) {
-        updateError(err, "Failed to write image to pasteboard"_s);
-    }
-
-    return err;
-}
-
-std::optional<String> readText(Error& error)
-{
-    error = Error {};
-    
-    auto* framework = appKitFramework();
-    if (!framework) {
-        updateError(error, "AppKit framework not available"_s);
+    if (!api->NSPasteboardGeneralPasteboard || !api->NSPasteboardStringForType || !api->NSPasteboardTypeString) {
+        updateError(error, "AppKit C API not available"_s);
         return std::nullopt;
     }
-
-    NSPasteboard* pasteboard = getGeneralPasteboard();
+    
+    void* pasteboard = api->NSPasteboardGeneralPasteboard();
     if (!pasteboard) {
         updateError(error, "Could not access pasteboard"_s);
         return std::nullopt;
     }
-
-    NSString* text = (NSString*)objc_msgSend(pasteboard, framework->stringForType_sel, framework->NSPasteboardTypeString);
-    if (!text) {
+    
+    CFStringRef cfText = api->NSPasteboardStringForType(pasteboard, api->NSPasteboardTypeString);
+    if (!cfText) {
         updateError(error, "No text found in pasteboard"_s);
         return std::nullopt;
     }
-
-    return nsStringToWTFString(text);
-}
-
-std::optional<String> readHTML(Error& error)
-{
-    error = Error {};
     
-    auto* framework = appKitFramework();
-    if (!framework) {
-        updateError(error, "AppKit framework not available"_s);
-        return std::nullopt;
-    }
-
-    NSPasteboard* pasteboard = getGeneralPasteboard();
-    if (!pasteboard) {
-        updateError(error, "Could not access pasteboard"_s);
-        return std::nullopt;
-    }
-
-    NSString* html = (NSString*)objc_msgSend(pasteboard, framework->stringForType_sel, framework->NSPasteboardTypeHTML);
-    if (!html) {
-        updateError(error, "No HTML found in pasteboard"_s);
-        return std::nullopt;
-    }
-
-    return nsStringToWTFString(html);
-}
-
-std::optional<String> readRTF(Error& error)
-{
-    error = Error {};
-    
-    auto* framework = appKitFramework();
-    if (!framework) {
-        updateError(error, "AppKit framework not available"_s);
-        return std::nullopt;
-    }
-
-    NSPasteboard* pasteboard = getGeneralPasteboard();
-    if (!pasteboard) {
-        updateError(error, "Could not access pasteboard"_s);
-        return std::nullopt;
-    }
-
-    NSData* rtfData = (NSData*)objc_msgSend(pasteboard, framework->dataForType_sel, framework->NSPasteboardTypeRTF);
-    if (!rtfData) {
-        updateError(error, "No RTF found in pasteboard"_s);
-        return std::nullopt;
-    }
-
-    const void* bytes = objc_msgSend(rtfData, framework->bytes_sel);
-    NSUInteger length = (NSUInteger)objc_msgSend(rtfData, framework->length_sel);
-    
-    if (!bytes || !length) {
-        updateError(error, "Invalid RTF data"_s);
-        return std::nullopt;
-    }
-
-    return String::fromUTF8(std::span<const char>(reinterpret_cast<const char*>(bytes), length));
-}
-
-std::optional<Vector<uint8_t>> readImage(Error& error, String& mimeType)
-{
-    error = Error {};
-    
-    auto* framework = appKitFramework();
-    if (!framework) {
-        updateError(error, "AppKit framework not available"_s);
-        return std::nullopt;
-    }
-
-    NSPasteboard* pasteboard = getGeneralPasteboard();
-    if (!pasteboard) {
-        updateError(error, "Could not access pasteboard"_s);
-        return std::nullopt;
-    }
-
-    // Try PNG first
-    NSData* imageData = (NSData*)objc_msgSend(pasteboard, framework->dataForType_sel, framework->NSPasteboardTypePNG);
-    if (imageData) {
-        mimeType = "image/png"_s;
-    } else {
-        // Try TIFF
-        imageData = (NSData*)objc_msgSend(pasteboard, framework->dataForType_sel, framework->NSPasteboardTypeTIFF);
-        if (imageData) {
-            mimeType = "image/tiff"_s;
-        }
-    }
-
-    if (!imageData) {
-        updateError(error, "No image found in pasteboard"_s);
-        return std::nullopt;
-    }
-
-    const void* bytes = objc_msgSend(imageData, framework->bytes_sel);
-    NSUInteger length = (NSUInteger)objc_msgSend(imageData, framework->length_sel);
-    
-    if (!bytes || !length) {
-        updateError(error, "Invalid image data"_s);
-        return std::nullopt;
-    }
-
-    Vector<uint8_t> result;
-    result.append(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(bytes), length));
+    String result = cfStringToWTFString(cfText);
     return result;
 }
 
-bool isSupported()
-{
-    return appKitFramework() != nullptr;
+// Fallback implementation using pbcopy/pbpaste
+static Error writeTextFallback(const String& text) {
+    Error err;
+    auto utf8Data = text.utf8();
+    std::string textData(utf8Data.data(), utf8Data.length());
+    
+    bool success = executeCommand({"pbcopy"}, textData);
+    if (!success) {
+        updateError(err, "Failed to write text to clipboard using pbcopy"_s);
+    }
+    return err;
 }
 
-Vector<DataType> getSupportedTypes()
-{
+static std::optional<String> readTextFallback(Error& error) {
+    error = Error{};
+    std::string output;
+    
+    bool success = executeCommand({"pbpaste"}, "", &output);
+    if (!success) {
+        updateError(error, "Failed to read text from clipboard using pbpaste"_s);
+        return std::nullopt;
+    }
+    
+    return String::fromUTF8(output.c_str());
+}
+
+// Public API implementations
+Error writeText(const String& text) {
+    // Try native implementation first, fall back to pbcopy
+    Error err = writeTextNative(text);
+    if (err.type == ErrorType::None) {
+        return err;
+    }
+    
+    return writeTextFallback(text);
+}
+
+Error writeHTML(const String& html) {
+    // For now, just write as plain text - HTML clipboard support requires more complex setup
+    return writeText(html);
+}
+
+Error writeRTF(const String& rtf) {
+    // For now, just write as plain text - RTF clipboard support requires more complex setup
+    return writeText(rtf);
+}
+
+Error writeImage(const Vector<uint8_t>& imageData, const String& mimeType) {
+    Error err;
+    err.type = ErrorType::NotSupported;
+    err.message = "Image clipboard operations not yet implemented on macOS"_s;
+    return err;
+}
+
+std::optional<String> readText(Error& error) {
+    // Try native implementation first, fall back to pbpaste
+    auto result = readTextNative(error);
+    if (error.type == ErrorType::None && result.has_value()) {
+        return result;
+    }
+    
+    return readTextFallback(error);
+}
+
+std::optional<String> readHTML(Error& error) {
+    // For now, just read as plain text
+    return readText(error);
+}
+
+std::optional<String> readRTF(Error& error) {
+    // For now, just read as plain text
+    return readText(error);
+}
+
+std::optional<Vector<uint8_t>> readImage(Error& error, String& mimeType) {
+    error.type = ErrorType::NotSupported;
+    error.message = "Image clipboard operations not yet implemented on macOS"_s;
+    return std::nullopt;
+}
+
+bool isSupported() {
+    // Check if either native API or pbcopy/pbpaste is available
+    auto* api = getAppKitAPI();
+    if (api->NSPasteboardGeneralPasteboard) {
+        return true;
+    }
+    
+    // Check if pbcopy is available
+    return system("which pbcopy > /dev/null 2>&1") == 0;
+}
+
+Vector<DataType> getSupportedTypes() {
     Vector<DataType> types;
     if (isSupported()) {
         types.append(DataType::Text);
         types.append(DataType::HTML);
         types.append(DataType::RTF);
-        types.append(DataType::Image);
+        // Image support can be added later
     }
     return types;
 }
 
-// Async implementations using std::thread - consistent with Linux implementation
+// Async implementations using std::thread
 void writeTextAsync(const String& text, WriteCallback callback) {
     std::thread([text = text.isolatedCopy(), callback = std::move(callback)]() {
         Error error = writeText(text);

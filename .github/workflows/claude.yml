@@ -35,6 +35,12 @@ jobs:
       id-token: write
     steps:
       - run: cd /workspace/bun
+      - name: Checkout repository
+        if: github.event_name == 'pull_request_review' || github.event_name == 'pull_request' || github.event_name == 'pull_request_review_comment'
+        run: |
+          git fetch origin ${{ github.event.pull_request.head.sha }}
+          git checkout ${{ github.event.pull_request.head.ref }}
+          git reset --hard origin/${{ github.event.pull_request.head.ref }}
       - name: Run Claude Code
         id: claude
         # TODO: switch this out once they merge their v1

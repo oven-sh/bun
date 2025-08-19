@@ -20,7 +20,7 @@ struct AppKitAPI {
     void* appkit_handle;
     void* foundation_handle;
     
-    // Function pointers
+    // Function pointers for NSPasteboard C API
     void* (*NSPasteboardGeneralPasteboard)(void);
     int (*NSPasteboardClearContents)(void* pasteboard);
     int (*NSPasteboardSetStringForType)(void* pasteboard, CFStringRef string, CFStringRef type);
@@ -56,13 +56,23 @@ struct AppKitAPI {
             return false;
         }
         
-        // Try to load AppKit C functions (these may not exist in all macOS versions)
+        // Load NSPasteboard C functions
         NSPasteboardGeneralPasteboard = (void*(*)(void))dlsym(appkit_handle, "NSPasteboardGeneralPasteboard");
         NSPasteboardClearContents = (int(*)(void*))dlsym(appkit_handle, "NSPasteboardClearContents");
         NSPasteboardSetStringForType = (int(*)(void*, CFStringRef, CFStringRef))dlsym(appkit_handle, "NSPasteboardSetStringForType");
         NSPasteboardSetDataForType = (int(*)(void*, CFDataRef, CFStringRef))dlsym(appkit_handle, "NSPasteboardSetDataForType");
         NSPasteboardStringForType = (CFStringRef(*)(void*, CFStringRef))dlsym(appkit_handle, "NSPasteboardStringForType");
         NSPasteboardDataForType = (CFDataRef(*)(void*, CFStringRef))dlsym(appkit_handle, "NSPasteboardDataForType");
+        
+        // Verify we got the essential functions
+        if (!NSPasteboardGeneralPasteboard || !NSPasteboardClearContents || 
+            !NSPasteboardSetStringForType || !NSPasteboardStringForType) {
+            dlclose(appkit_handle);
+            dlclose(foundation_handle);
+            appkit_handle = nullptr;
+            foundation_handle = nullptr;
+            return false;
+        }
         
         // Load type constants
         void* ptr;
@@ -81,7 +91,15 @@ struct AppKitAPI {
         ptr = dlsym(appkit_handle, "NSPasteboardTypeTIFF");
         if (ptr) NSPasteboardTypeTIFF = *(CFStringRef*)ptr;
         
-        // If we can't load the C API, we'll fall back to pbcopy/pbpaste
+        // Verify we have at least the string type
+        if (!NSPasteboardTypeString) {
+            dlclose(appkit_handle);
+            dlclose(foundation_handle);
+            appkit_handle = nullptr;
+            foundation_handle = nullptr;
+            return false;
+        }
+        
         loaded = true;
         return true;
     }
@@ -99,88 +117,7 @@ static AppKitAPI* getAppKitAPI() {
         api.construct();
         api->load();
     });
-    return &api.get();
-}
-
-// Fallback implementation using pbcopy/pbpaste command line tools
-static bool executeCommand(const std::vector<const char*>& args, const std::string& input = "", std::string* output = nullptr) {
-    int input_pipe[2] = {-1, -1};
-    int output_pipe[2] = {-1, -1};
-    
-    // Create pipes if needed
-    if (!input.empty() && pipe(input_pipe) == -1) {
-        return false;
-    }
-    if (output && pipe(output_pipe) == -1) {
-        if (input_pipe[0] != -1) {
-            close(input_pipe[0]);
-            close(input_pipe[1]);
-        }
-        return false;
-    }
-    
-    // Build argv
-    std::vector<char*> argv;
-    for (const char* arg : args) {
-        argv.push_back(const_cast<char*>(arg));
-    }
-    argv.push_back(nullptr);
-    
-    pid_t pid = fork();
-    if (pid == -1) {
-        // Fork failed
-        if (input_pipe[0] != -1) {
-            close(input_pipe[0]);
-            close(input_pipe[1]);
-        }
-        if (output_pipe[0] != -1) {
-            close(output_pipe[0]);
-            close(output_pipe[1]);
-        }
-        return false;
-    }
-    
-    if (pid == 0) {
-        // Child process
-        if (!input.empty()) {
-            dup2(input_pipe[0], STDIN_FILENO);
-            close(input_pipe[0]);
-            close(input_pipe[1]);
-        }
-        if (output) {
-            dup2(output_pipe[1], STDOUT_FILENO);
-            close(output_pipe[0]);
-            close(output_pipe[1]);
-        }
-        
-        execvp(argv[0], argv.data());
-        _exit(127);  // execvp failed
-    }
-    
-    // Parent process - handle pipes
-    if (!input.empty()) {
-        close(input_pipe[0]);
-        if (write(input_pipe[1], input.c_str(), input.length()) == -1) {
-            // Handle write error - but continue
-        }
-        close(input_pipe[1]);
-    }
-    
-    if (output) {
-        close(output_pipe[1]);
-        char buffer[4096];
-        ssize_t bytes_read;
-        output->clear();
-        while ((bytes_read = read(output_pipe[0], buffer, sizeof(buffer))) > 0) {
-            output->append(buffer, bytes_read);
-        }
-        close(output_pipe[0]);
-    }
-    
-    // Wait for child process
-    int status;
-    waitpid(pid, &status, 0);
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    return api->loaded ? &api.get() : nullptr;
 }
 
 static void updateError(Error& err, const String& message) {
@@ -211,13 +148,13 @@ static String cfStringToWTFString(CFStringRef cfStr) {
     return String();
 }
 
-// Native AppKit implementation (when available)
-static Error writeTextNative(const String& text) {
+// Public API implementations
+Error writeText(const String& text) {
     Error err;
     auto* api = getAppKitAPI();
     
-    if (!api->NSPasteboardGeneralPasteboard || !api->NSPasteboardSetStringForType || !api->NSPasteboardTypeString) {
-        updateError(err, "AppKit C API not available"_s);
+    if (!api) {
+        updateError(err, "AppKit framework not available"_s);
         return err;
     }
     
@@ -245,12 +182,127 @@ static Error writeTextNative(const String& text) {
     return err;
 }
 
-static std::optional<String> readTextNative(Error& error) {
+Error writeHTML(const String& html) {
+    Error err;
+    auto* api = getAppKitAPI();
+    
+    if (!api || !api->NSPasteboardTypeHTML || !api->NSPasteboardSetStringForType) {
+        // Fall back to writing as plain text
+        return writeText(html);
+    }
+    
+    void* pasteboard = api->NSPasteboardGeneralPasteboard();
+    if (!pasteboard) {
+        updateError(err, "Could not access pasteboard"_s);
+        return err;
+    }
+    
+    CFStringRef cfHtml = createCFString(html);
+    if (!cfHtml) {
+        updateError(err, "Failed to create CFString"_s);
+        return err;
+    }
+    
+    api->NSPasteboardClearContents(pasteboard);
+    int success = api->NSPasteboardSetStringForType(pasteboard, cfHtml, api->NSPasteboardTypeHTML);
+    
+    CFRelease(cfHtml);
+    
+    if (!success) {
+        updateError(err, "Failed to write HTML to pasteboard"_s);
+    }
+    
+    return err;
+}
+
+Error writeRTF(const String& rtf) {
+    Error err;
+    auto* api = getAppKitAPI();
+    
+    if (!api || !api->NSPasteboardTypeRTF || !api->NSPasteboardSetDataForType) {
+        // Fall back to writing as plain text
+        return writeText(rtf);
+    }
+    
+    void* pasteboard = api->NSPasteboardGeneralPasteboard();
+    if (!pasteboard) {
+        updateError(err, "Could not access pasteboard"_s);
+        return err;
+    }
+    
+    auto rtfData = rtf.utf8();
+    CFDataRef cfData = CFDataCreate(kCFAllocatorDefault, 
+                                   reinterpret_cast<const UInt8*>(rtfData.data()), 
+                                   rtfData.length());
+    if (!cfData) {
+        updateError(err, "Failed to create CFData"_s);
+        return err;
+    }
+    
+    api->NSPasteboardClearContents(pasteboard);
+    int success = api->NSPasteboardSetDataForType(pasteboard, cfData, api->NSPasteboardTypeRTF);
+    
+    CFRelease(cfData);
+    
+    if (!success) {
+        updateError(err, "Failed to write RTF to pasteboard"_s);
+    }
+    
+    return err;
+}
+
+Error writeImage(const Vector<uint8_t>& imageData, const String& mimeType) {
+    Error err;
+    auto* api = getAppKitAPI();
+    
+    if (!api || !api->NSPasteboardSetDataForType) {
+        updateError(err, "Image clipboard operations not supported"_s);
+        return err;
+    }
+    
+    // Choose appropriate pasteboard type
+    CFStringRef pasteboardType = nullptr;
+    if (mimeType == "image/png"_s && api->NSPasteboardTypePNG) {
+        pasteboardType = api->NSPasteboardTypePNG;
+    } else if (mimeType == "image/tiff"_s && api->NSPasteboardTypeTIFF) {
+        pasteboardType = api->NSPasteboardTypeTIFF;
+    }
+    
+    if (!pasteboardType) {
+        updateError(err, "Unsupported image format for clipboard"_s);
+        return err;
+    }
+    
+    void* pasteboard = api->NSPasteboardGeneralPasteboard();
+    if (!pasteboard) {
+        updateError(err, "Could not access pasteboard"_s);
+        return err;
+    }
+    
+    CFDataRef cfData = CFDataCreate(kCFAllocatorDefault, imageData.data(), imageData.size());
+    if (!cfData) {
+        updateError(err, "Failed to create CFData"_s);
+        return err;
+    }
+    
+    api->NSPasteboardClearContents(pasteboard);
+    int success = api->NSPasteboardSetDataForType(pasteboard, cfData, pasteboardType);
+    
+    CFRelease(cfData);
+    
+    if (!success) {
+        updateError(err, "Failed to write image to pasteboard"_s);
+    }
+    
+    return err;
+}
+
+std::optional<String> readText(Error& error) {
     error = Error{};
     auto* api = getAppKitAPI();
     
-    if (!api->NSPasteboardGeneralPasteboard || !api->NSPasteboardStringForType || !api->NSPasteboardTypeString) {
-        updateError(error, "AppKit C API not available"_s);
+    if (!api) {
+        updateError(error, "AppKit framework not available"_s);
         return std::nullopt;
     }
     
@@ -270,104 +322,126 @@ static std::optional<String> readTextNative(Error& error) {
     return result;
 }
 
-// Fallback implementation using pbcopy/pbpaste
-static Error writeTextFallback(const String& text) {
-    Error err;
-    auto utf8Data = text.utf8();
-    std::string textData(utf8Data.data(), utf8Data.length());
-    
-    bool success = executeCommand({"pbcopy"}, textData);
-    if (!success) {
-        updateError(err, "Failed to write text to clipboard using pbcopy"_s);
-    }
-    return err;
-}
-
-static std::optional<String> readTextFallback(Error& error) {
+std::optional<String> readHTML(Error& error) {
     error = Error{};
-    std::string output;
+    auto* api = getAppKitAPI();
     
-    bool success = executeCommand({"pbpaste"}, "", &output);
-    if (!success) {
-        updateError(error, "Failed to read text from clipboard using pbpaste"_s);
+    if (!api || !api->NSPasteboardTypeHTML) {
+        // Fall back to reading as plain text
+        return readText(error);
+    }
+    
+    void* pasteboard = api->NSPasteboardGeneralPasteboard();
+    if (!pasteboard) {
+        updateError(error, "Could not access pasteboard"_s);
         return std::nullopt;
     }
     
-    return String::fromUTF8(output.c_str());
-}
-
-// Public API implementations
-Error writeText(const String& text) {
-    // Try native implementation first, fall back to pbcopy
-    Error err = writeTextNative(text);
-    if (err.type == ErrorType::None) {
-        return err;
+    CFStringRef cfHtml = api->NSPasteboardStringForType(pasteboard, api->NSPasteboardTypeHTML);
+    if (!cfHtml) {
+        // Fall back to reading as plain text
+        return readText(error);
     }
     
-    return writeTextFallback(text);
-}
-
-Error writeHTML(const String& html) {
-    // For now, just write as plain text - HTML clipboard support requires more complex setup
-    return writeText(html);
-}
-
-Error writeRTF(const String& rtf) {
-    // For now, just write as plain text - RTF clipboard support requires more complex setup
-    return writeText(rtf);
-}
-
-Error writeImage(const Vector<uint8_t>& imageData, const String& mimeType) {
-    Error err;
-    err.type = ErrorType::NotSupported;
-    err.message = "Image clipboard operations not yet implemented on macOS"_s;
-    return err;
-}
-
-std::optional<String> readText(Error& error) {
-    // Try native implementation first, fall back to pbpaste
-    auto result = readTextNative(error);
-    if (error.type == ErrorType::None && result.has_value()) {
-        return result;
-    }
-    
-    return readTextFallback(error);
-}
-
-std::optional<String> readHTML(Error& error) {
-    // For now, just read as plain text
-    return readText(error);
+    String result = cfStringToWTFString(cfHtml);
+    return result;
 }
 
 std::optional<String> readRTF(Error& error) {
-    // For now, just read as plain text
-    return readText(error);
+    error = Error{};
+    auto* api = getAppKitAPI();
+    
+    if (!api || !api->NSPasteboardTypeRTF || !api->NSPasteboardDataForType) {
+        // Fall back to reading as plain text
+        return readText(error);
+    }
+    
+    void* pasteboard = api->NSPasteboardGeneralPasteboard();
+    if (!pasteboard) {
+        updateError(error, "Could not access pasteboard"_s);
+        return std::nullopt;
+    }
+    
+    CFDataRef cfData = api->NSPasteboardDataForType(pasteboard, api->NSPasteboardTypeRTF);
+    if (!cfData) {
+        // Fall back to reading as plain text
+        return readText(error);
+    }
+    
+    const UInt8* bytes = CFDataGetBytePtr(cfData);
+    CFIndex length = CFDataGetLength(cfData);
+    
+    if (!bytes || !length) {
+        updateError(error, "Invalid RTF data"_s);
+        return std::nullopt;
+    }
+    
+    return String::fromUTF8(std::span<const char>(reinterpret_cast<const char*>(bytes), length));
 }
 
 std::optional<Vector<uint8_t>> readImage(Error& error, String& mimeType) {
-    error.type = ErrorType::NotSupported;
-    error.message = "Image clipboard operations not yet implemented on macOS"_s;
-    return std::nullopt;
+    error = Error{};
+    auto* api = getAppKitAPI();
+    
+    if (!api || !api->NSPasteboardDataForType) {
+        updateError(error, "Image clipboard operations not supported"_s);
+        return std::nullopt;
+    }
+    
+    void* pasteboard = api->NSPasteboardGeneralPasteboard();
+    if (!pasteboard) {
+        updateError(error, "Could not access pasteboard"_s);
+        return std::nullopt;
+    }
+    
+    CFDataRef imageData = nullptr;
+    
+    // Try PNG first
+    if (api->NSPasteboardTypePNG) {
+        imageData = api->NSPasteboardDataForType(pasteboard, api->NSPasteboardTypePNG);
+        if (imageData) {
+            mimeType = "image/png"_s;
+        }
+    }
+    
+    // Try TIFF if PNG not available
+    if (!imageData && api->NSPasteboardTypeTIFF) {
+        imageData = api->NSPasteboardDataForType(pasteboard, api->NSPasteboardTypeTIFF);
+        if (imageData) {
+            mimeType = "image/tiff"_s;
+        }
+    }
+    
+    if (!imageData) {
+        updateError(error, "No image found in pasteboard"_s);
+        return std::nullopt;
+    }
+    
+    const UInt8* bytes = CFDataGetBytePtr(imageData);
+    CFIndex length = CFDataGetLength(imageData);
+    
+    if (!bytes || !length) {
+        updateError(error, "Invalid image data"_s);
+        return std::nullopt;
+    }
+    
+    Vector<uint8_t> result;
+    result.append(std::span<const uint8_t>(bytes, length));
+    return result;
 }
 
 bool isSupported() {
-    // Check if either native API or pbcopy/pbpaste is available
-    auto* api = getAppKitAPI();
-    if (api->NSPasteboardGeneralPasteboard) {
-        return true;
-    }
-    
-    // Check if pbcopy is available
-    return system("which pbcopy > /dev/null 2>&1") == 0;
+    return getAppKitAPI() != nullptr;
 }
 
 Vector<DataType> getSupportedTypes() {
     Vector<DataType> types;
-    if (isSupported()) {
+    auto* api = getAppKitAPI();
+    if (api) {
         types.append(DataType::Text);
-        types.append(DataType::HTML);
-        types.append(DataType::RTF);
-        // Image support can be added later
+        if (api->NSPasteboardTypeHTML) types.append(DataType::HTML);
+        if (api->NSPasteboardTypeRTF) types.append(DataType::RTF);
+        if (api->NSPasteboardTypePNG || api->NSPasteboardTypeTIFF) types.append(DataType::Image);
     }
     return types;
 }

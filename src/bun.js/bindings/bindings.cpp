@@ -5884,12 +5884,152 @@ restart:
     JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter);
 }
 
+extern "C" bool JSC__JSValue__isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)
+{
+
+    auto& vm = JSC::getVM(globalObject);
+
+    // React does this:
+    // export const REACT_LEGACY_ELEMENT_TYPE: symbol = Symbol.for('react.element');
+    // export const REACT_ELEMENT_TYPE: symbol = renameElementSymbol
+    //   ? Symbol.for('react.transitional.element')
+    //   : REACT_LEGACY_ELEMENT_TYPE;
+
+    // TODO: cache these, i cri everytim
+    auto react_legacy_element_symbol = JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.element"_s));
+    auto react_element_symbol = JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.transitional.element"_s));
+
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    
+    // If it's a function (React component), call it to get the element
+    if (value.isCallable()) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        
+        JSC::JSObject* function = value.getObject();
+        JSC::CallData callData = JSC::getCallData(function);
+        JSC::MarkedArgumentBuffer args;
+        
+        // Call the component function with no arguments
+        JSC::JSValue result = JSC::call(globalObject, function, callData, JSC::jsUndefined(), args);
+        RETURN_IF_EXCEPTION(scope, false);
+        
+        // Now check if the result is a JSX element
+        if (!result.isObject()) {
+            return false;
+        }
+        
+        JSC::JSObject* resultObject = result.getObject();
+        auto typeofProperty = JSC::Identifier::fromString(vm, "$$typeof"_s);
+        JSC::JSValue typeofValue = resultObject->get(globalObject, typeofProperty);
+        RETURN_IF_EXCEPTION(scope, false);
+        
+        if (typeofValue.isSymbol() && (typeofValue == react_legacy_element_symbol || typeofValue == react_element_symbol)) {
+            return true;
+        }
+    }
+    // If it's already an object, check directly for $$typeof
+    else if (value.isObject()) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        
+        JSC::JSObject* object = value.getObject();
+        auto typeofProperty = JSC::Identifier::fromString(vm, "$$typeof"_s);
+        JSC::JSValue typeofValue = object->get(globalObject, typeofProperty);
+        RETURN_IF_EXCEPTION(scope, false);
+        
+        if (typeofValue.isSymbol() && (typeofValue == react_legacy_element_symbol || typeofValue == react_element_symbol)) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+extern "C" void JSC__JSValue__transformToReactElement(JSC::EncodedJSValue responseValue, JSC::EncodedJSValue componentValue, JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    
+    JSC::JSValue response = JSC::JSValue::decode(responseValue);
+    JSC::JSValue component = JSC::JSValue::decode(componentValue);
+    
+    if (!response.isObject()) {
+        return;
+    }
+    
+    JSC::JSObject* responseObject = response.getObject();
+    
+    // Get the React element symbol - same as in isJSXElement
+    // For now, use the transitional element symbol (React 19+)
+    // TODO: check for legacy symbol as fallback
+    auto react_element_symbol = JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.transitional.element"_s));
+    JSC::JSValue symbolToUse = react_element_symbol;
+    
+    // Set $$typeof property
+    auto typeofIdentifier = JSC::Identifier::fromString(vm, "$$typeof"_s);
+    responseObject->putDirect(vm, typeofIdentifier, symbolToUse, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+    
+    // Set type property to the component if it's a function, otherwise keep the JSX element as-is
+    auto typeIdentifier = JSC::Identifier::fromString(vm, "type"_s);
+    if (component.isCallable()) {
+        responseObject->putDirect(vm, typeIdentifier, component, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+    } else if (component.isObject()) {
+        // If it's already a JSX element, extract its type
+        JSC::JSObject* componentObject = component.getObject();
+        JSC::JSValue typeValue = componentObject->get(globalObject, typeIdentifier);
+        if (!scope.exception() && !typeValue.isUndefined()) {
+            responseObject->putDirect(vm, typeIdentifier, typeValue, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+        }
+    }
+    
+    // Set key property to null
+    auto keyIdentifier = JSC::Identifier::fromString(vm, "key"_s);
+    responseObject->putDirect(vm, keyIdentifier, JSC::jsNull(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+    
+    // Set props property to empty object (or extract from component if it's an element)
+    auto propsIdentifier = JSC::Identifier::fromString(vm, "props"_s);
+    if (component.isObject()) {
+        JSC::JSObject* componentObject = component.getObject();
+        JSC::JSValue propsValue = componentObject->get(globalObject, propsIdentifier);
+        if (!scope.exception() && !propsValue.isUndefined()) {
+            responseObject->putDirect(vm, propsIdentifier, propsValue, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+        } else {
+            responseObject->putDirect(vm, propsIdentifier, JSC::constructEmptyObject(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+        }
+    } else {
+        responseObject->putDirect(vm, propsIdentifier, JSC::constructEmptyObject(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+    }
+    
+    // Add _store object for dev mode
+    auto storeIdentifier = JSC::Identifier::fromString(vm, "_store"_s);
+    JSC::JSObject* storeObject = JSC::constructEmptyObject(globalObject);
+    
+    // Add validated property to _store
+    auto validatedIdentifier = JSC::Identifier::fromString(vm, "validated"_s);
+    storeObject->putDirect(vm, validatedIdentifier, JSC::jsNumber(0), 0);
+    
+    responseObject->putDirect(vm, storeIdentifier, storeObject, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+    
+    // Add debug properties (all set to null)
+    auto ownerIdentifier = JSC::Identifier::fromString(vm, "_owner"_s);
+    responseObject->putDirect(vm, ownerIdentifier, JSC::jsNull(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+    
+    auto debugInfoIdentifier = JSC::Identifier::fromString(vm, "_debugInfo"_s);
+    responseObject->putDirect(vm, debugInfoIdentifier, JSC::jsNull(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+    
+    auto debugStackIdentifier = JSC::Identifier::fromString(vm, "_debugStack"_s);
+    responseObject->putDirect(vm, debugStackIdentifier, JSC::jsNull(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+    
+    auto debugTaskIdentifier = JSC::Identifier::fromString(vm, "_debugTask"_s);
+    responseObject->putDirect(vm, debugTaskIdentifier, JSC::jsNull(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+}
+
 extern "C" void JSC__JSValue__forEachPropertyNonIndexed(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
     JSC__JSValue__forEachPropertyImpl<true>(JSValue0, globalObject, arg2, iter);
 }
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();

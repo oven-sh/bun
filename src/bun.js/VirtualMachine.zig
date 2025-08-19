@@ -196,6 +196,16 @@ has_mutated_built_in_extensions: u32 = 0,
 
 initial_script_execution_context_identifier: i32,
 
+allow_jsx_in_response_constructor: bool = false,
+
+pub fn setAllowJSXInResponseConstructor(this: *VirtualMachine, value: bool) void {
+    this.allow_jsx_in_response_constructor = value;
+}
+
+pub fn allowJSXInResponseConstructor(this: *VirtualMachine) bool {
+    return this.allow_jsx_in_response_constructor;
+}
+
 pub const ProcessAutoKiller = @import("./ProcessAutoKiller.zig");
 pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 

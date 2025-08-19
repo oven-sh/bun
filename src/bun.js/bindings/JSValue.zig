@@ -45,6 +45,21 @@ pub const JSValue = enum(i64) {
         return jsc.JSObject.getIndex(this, globalThis, i);
     }
 
+    extern fn JSC__JSValue__isJSXElement(JSValue, *JSGlobalObject) bool;
+    pub fn isJSXElement(this: JSValue, globalThis: *jsc.JSGlobalObject) JSError!bool {
+        return bun.jsc.fromJSHostCallGeneric(
+            globalThis,
+            @src(),
+            JSC__JSValue__isJSXElement,
+            .{ this, globalThis },
+        );
+    }
+
+    extern fn JSC__JSValue__transformToReactElement(responseValue: JSValue, componentValue: JSValue, globalObject: *JSGlobalObject) void;
+    pub fn transformToReactElement(responseValue: JSValue, componentValue: JSValue, globalThis: *jsc.JSGlobalObject) void {
+        JSC__JSValue__transformToReactElement(responseValue, componentValue, globalThis);
+    }
+
     extern fn JSC__JSValue__getDirectIndex(JSValue, *JSGlobalObject, u32) JSValue;
     pub fn getDirectIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue {
         return JSC__JSValue__getDirectIndex(this, globalThis, i);

@@ -199,8 +199,12 @@ pub fn getURL(
 
 pub fn getResponseType(
     this: *Response,
+    this_value: jsc.JSValue,
     globalThis: *jsc.JSGlobalObject,
 ) jsc.JSValue {
+    if (js.gc.jsxElement.get(this_value)) |jsx_element| {
+        return jsx_element;
+    }
     if (this.init.status_code < 200) {
         return bun.String.static("error").toJS(globalThis);
     }
@@ -303,6 +307,7 @@ pub fn cloneValue(
 }
 
 pub fn clone(this: *Response, globalThis: *JSGlobalObject) bun.JSError!*Response {
+    // TODO: handle clone for jsxElement for bake?
     return bun.new(Response, try this.cloneValue(globalThis));
 }
 
@@ -519,7 +524,7 @@ pub fn constructError(
     return response.toJS(globalThis);
 }
 
-pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Response {
+pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_value: jsc.JSValue) bun.JSError!*Response {
     const arguments = callframe.argumentsAsArray(2);
 
     if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
@@ -553,6 +558,15 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
                 try headers_ref.put(.Location, result.url, globalThis);
                 return bun.new(Response, response);
             }
+        }
+
+        // Special case for bake: allow `return new Response(<jsx> ... </jsx>, { ... }`
+        // inside of a react component
+        if (globalThis.allowJSXInResponseConstructor() and try arguments[0].isJSXElement(globalThis)) {
+            // Store the JSX element for later retrieval
+            js.gc.jsxElement.set(this_value, globalThis, arguments[0]);
+            // Transform the Response object to look like a React element
+            JSValue.transformToReactElement(this_value, arguments[0], globalThis);
         }
     }
     var init: Init = (brk: {

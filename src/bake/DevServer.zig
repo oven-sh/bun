@@ -2307,6 +2307,11 @@ pub fn finalizeBundle(
         });
         defer dev.allocator.free(server_bundle);
 
+        // TODO: is this the best place to set this? Would it be better to
+        // transpile the server modules to replace `new Response(...)` with `new
+        // ResponseBake(...)`??
+        dev.vm.setAllowJSXInResponseConstructor(true);
+
         const server_modules = if (bun.take(&source_map_json)) |json| blk: {
             // This memory will be owned by the `DevServerSourceProvider` in C++
             // from here on out

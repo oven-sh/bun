@@ -12,6 +12,10 @@ pub const JSGlobalObject = opaque {
         return error.JSError;
     }
 
+    pub fn allowJSXInResponseConstructor(this: *JSGlobalObject) bool {
+        return this.bunVM().allowJSXInResponseConstructor();
+    }
+
     extern fn JSGlobalObject__createOutOfMemoryError(this: *JSGlobalObject) JSValue;
     pub fn createOutOfMemoryError(this: *JSGlobalObject) JSValue {
         return JSGlobalObject__createOutOfMemoryError(this);

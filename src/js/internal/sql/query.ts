@@ -44,7 +44,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     if ((status & SQLQueryStatus.executed) != 0) query += "executed ";
     if ((status & SQLQueryStatus.error) != 0) query += "error ";
 
-    return `Query { ${query} }`;
+    return `Query { ${query.trimEnd()} }`;
   }
 
   private getQueryHandle() {

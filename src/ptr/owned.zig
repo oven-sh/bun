@@ -67,19 +67,19 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         /// the owned pointer is already the size of a raw pointer.
         pub const Unmanaged = if (options.allocator == null) owned.Unmanaged(Pointer, options);
 
-        /// Allocate a new owned pointer. The signature of this function depends on whether the
+        /// Allocates a new owned pointer. The signature of this function depends on whether the
         /// pointer is a single-item pointer or a slice, and whether a fixed allocator was provided
         /// in `options`.
         pub const alloc = (if (options.allocator) |allocator| switch (info.kind()) {
             .single => struct {
-                /// Allocate memory for a single value using `options.allocator`, and initialize it
-                /// with `value`.
+                /// Allocates memory for a single value using `options.allocator`, and initializes
+                /// it with `value`.
                 pub fn alloc(value: Child) Allocator.Error!Self {
                     return .allocSingle(allocator, value);
                 }
             },
             .slice => struct {
-                /// Allocate memory for `count` elements using `options.allocator`, and initialize
+                /// Allocates memory for `count` elements using `options.allocator`, and initializes
                 /// every element with `elem`.
                 pub fn alloc(count: usize, elem: Child) Allocator.Error!Self {
                     return .allocSlice(allocator, count, elem);
@@ -87,13 +87,13 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
             },
         } else switch (info.kind()) {
             .single => struct {
-                /// Allocate memory for a single value and initialize it with `value`.
+                /// Allocates memory for a single value and initialize it with `value`.
                 pub fn alloc(allocator: Allocator, value: Child) Allocator.Error!Self {
                     return .allocSingle(allocator, value);
                 }
             },
             .slice => struct {
-                /// Allocate memory for `count` elements, and initialize every element with `elem`.
+                /// Allocates memory for `count` elements, and initialize every element with `elem`.
                 pub fn alloc(allocator: Allocator, count: usize, elem: Child) Allocator.Error!Self {
                     return .allocSlice(allocator, count, elem);
                 }
@@ -105,7 +105,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         else
             true;
 
-        /// Allocate an owned pointer using the default allocator. This function calls
+        /// Allocates an owned pointer using the default allocator. This function calls
         /// `bun.outOfMemory` if memory allocation fails.
         pub const new = if (info.kind() == .single and supports_default_allocator) struct {
             pub fn new(value: Child) Self {
@@ -113,7 +113,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
             }
         }.new;
 
-        /// Create an owned pointer by allocating memory and performing a shallow copy of
+        /// Creates an owned pointer by allocating memory and performing a shallow copy of
         /// `data`.
         pub const allocDupe = (if (options.allocator) |allocator| struct {
             pub fn allocDupe(data: NonOptionalPointer) Allocator.Error!Self {
@@ -126,7 +126,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         }).allocDupe;
 
         pub const fromRawOwned = (if (options.allocator == null) struct {
-            /// Create an owned pointer from a raw pointer and allocator.
+            /// Creates an owned pointer from a raw pointer and allocator.
             ///
             /// Requirements:
             ///
@@ -139,7 +139,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
                 };
             }
         } else struct {
-            /// Create an owned pointer from a raw pointer.
+            /// Creates an owned pointer from a raw pointer.
             ///
             /// Requirements:
             ///
@@ -153,7 +153,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
             }
         }).fromRawOwned;
 
-        /// Deinitialize the pointer or slice, freeing its memory.
+        /// Deinitializes the pointer or slice, freeing its memory.
         ///
         /// By default, this will first call `deinit` on the data itself, if such a method exists.
         /// (For slices, this will call `deinit` on every element in this slice.) This behavior can
@@ -209,7 +209,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
             }
         }).intoRawOwned;
 
-        /// Return a null owned pointer. This function is provided only if `Pointer` is an
+        /// Returns a null owned pointer. This function is provided only if `Pointer` is an
         /// optional type.
         ///
         /// It is permitted, but not required, to call `deinit` on the returned value.
@@ -224,7 +224,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
 
         const OwnedNonOptional = WithOptions(NonOptionalPointer, options);
 
-        /// Convert an `Owned(?T)` into an `?Owned(T)`.
+        /// Converts an `Owned(?T)` into an `?Owned(T)`.
         ///
         /// This method sets `self` to null. It is therefore permitted, but not required, to call
         /// `deinit` on `self`.
@@ -242,19 +242,19 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
 
         const OwnedOptional = WithOptions(?Pointer, options);
 
-        /// Convert an `Owned(T)` into a non-null `Owned(?T)`.
+        /// Converts an `Owned(T)` into a non-null `Owned(?T)`.
         ///
         /// This method invalidates `self`.
-        pub const intoOptional = if (!info.isOptional()) struct {
-            pub fn intoOptional(self: Self) OwnedOptional {
+        pub const toOptional = if (!info.isOptional()) struct {
+            pub fn toOptional(self: Self) OwnedOptional {
                 return .{
                     .unsafe_raw_pointer = self.unsafe_raw_pointer,
                     .unsafe_allocator = self.unsafe_allocator,
                 };
             }
-        }.intoOptional;
+        }.toOptional;
 
-        /// Convert this owned pointer into an unmanaged variant that doesn't store the allocator.
+        /// Converts this owned pointer into an unmanaged variant that doesn't store the allocator.
         ///
         /// This method invalidates `self`.
         ///
@@ -270,7 +270,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
 
         const DynamicOwned = WithOptions(Pointer, options.asDynamic());
 
-        /// Convert an owned pointer that uses a fixed allocator into a dynamic one.
+        /// Converts an owned pointer that uses a fixed allocator into a dynamic one.
         ///
         /// This method invalidates `self`.
         ///
@@ -332,7 +332,7 @@ fn Unmanaged(comptime Pointer: type, comptime options: Options) type {
 
         const Managed = WithOptions(Pointer, options);
 
-        /// Convert this unmanaged owned pointer back into a managed version.
+        /// Converts this unmanaged owned pointer back into a managed version.
         ///
         /// `allocator` must be the allocator that was used to allocate the pointer.
         pub fn toManaged(self: Self, allocator: Allocator) Managed {
@@ -343,7 +343,7 @@ fn Unmanaged(comptime Pointer: type, comptime options: Options) type {
             return .fromRawOwned(data, allocator);
         }
 
-        /// Deinitialize the pointer or slice. See `Owned.deinit` for more information.
+        /// Deinitializes the pointer or slice. See `Owned.deinit` for more information.
         ///
         /// `allocator` must be the allocator that was used to allocate the pointer.
         pub fn deinit(self: Self, allocator: Allocator) void {
@@ -369,6 +369,7 @@ fn Unmanaged(comptime Pointer: type, comptime options: Options) type {
 }
 
 pub const maybe = @import("./owned/maybe.zig");
+pub const scoped = @import("./owned/scoped.zig");
 
 const bun = @import("bun");
 const std = @import("std");

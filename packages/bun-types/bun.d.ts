@@ -2906,6 +2906,16 @@ declare module "bun" {
      *   delete process.env.DATABASE_PASSWORD; // Remove from memory
      * }
      * ```
+     *
+     * @example
+     * ```ts
+     * // Delete a credential using empty string (equivalent to delete())
+     * await Bun.secrets.set({
+     *   service: "my-service",
+     *   name: "api-key",
+     *   value: "" // Empty string deletes the credential
+     * });
+     * ```
      */
     set(options: {
       /**
@@ -2930,7 +2940,8 @@ declare module "bun" {
        * This should be a sensitive credential like a password, API key, or token.
        * The value is encrypted by the operating system before storage.
        *
-       * Note: To delete a credential, use the delete() method instead of passing null/undefined.
+       * Note: To delete a credential, use the delete() method or pass an empty string.
+       * An empty string value will delete the credential if it exists.
        */
       value: string;
     }): Promise<void>;

@@ -74,6 +74,28 @@ FORCE_KEYRING_SETUP=1 bun test test/js/bun/secrets.test.ts
 - ⚠️  **macOS**: Uses macOS Keychain (different implementation)
 - ⚠️  **Windows**: Uses Windows Credential Manager (different implementation)
 
+## API Behavior
+
+### Empty String as Delete
+
+The `Bun.secrets.set()` method now supports deleting credentials by passing an empty string:
+
+```ts
+// These are equivalent:
+await Bun.secrets.delete({ service: "myapp", name: "token" });
+await Bun.secrets.set({ service: "myapp", name: "token", value: "" });
+```
+
+**Benefits:**
+- **Windows compatibility** - Required by Windows Credential Manager API
+- **Simplified workflows** - Single method for set/delete operations
+- **Batch operations** - Easy to clear multiple credentials in loops
+
+**Behavior:**
+- Setting an empty string deletes the credential if it exists
+- No error if the credential doesn't exist (consistent with `delete()`)
+- Returns normally (no special return value)
+
 ## Troubleshooting
 
 ### "libsecret not available"

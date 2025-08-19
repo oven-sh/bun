@@ -237,6 +237,21 @@ test("Bun.secrets API", async () => {
     expect(await Bun.secrets.get({ service: testService, name: testUser })).toBeNull();
   }
 
+  // Test 10: Empty string deletes credential
+  {
+    // Set a credential first
+    await Bun.secrets.set({ service: testService, name: testUser, value: testPassword });
+    expect(await Bun.secrets.get({ service: testService, name: testUser })).toBe(testPassword);
+    
+    // Empty string should delete it
+    await Bun.secrets.set({ service: testService, name: testUser, value: "" });
+    expect(await Bun.secrets.get({ service: testService, name: testUser })).toBeNull();
+    
+    // Empty string on non-existent credential should not error
+    await Bun.secrets.set({ service: testService + "-empty", name: testUser, value: "" });
+    expect(await Bun.secrets.get({ service: testService + "-empty", name: testUser })).toBeNull();
+  }
+
   // Clean up
   await Bun.secrets.delete({ service: testService, name: testUser });
 });
@@ -309,17 +324,24 @@ test("Bun.secrets error handling", async () => {
   }
 });
 
-test("Bun.secrets handles empty strings", async () => {
+test("Bun.secrets handles empty strings as delete", async () => {
   const testService = "bun-test-empty-" + Date.now();
   const testUser = "test-name-empty";
 
-  // Test storing and retrieving empty string
-  await Bun.secrets.set({ service: testService, name: testUser, value: "" });
-  const result = await Bun.secrets.get({ service: testService, name: testUser });
-  expect(result).toBe("");
+  // First, set a real credential
+  await Bun.secrets.set({ service: testService, name: testUser, value: "test-password" });
+  let result = await Bun.secrets.get({ service: testService, name: testUser });
+  expect(result).toBe("test-password");
 
-  // Clean up
-  await Bun.secrets.delete({ service: testService, name: testUser });
+  // Test that empty string deletes the credential
+  await Bun.secrets.set({ service: testService, name: testUser, value: "" });
+  result = await Bun.secrets.get({ service: testService, name: testUser });
+  expect(result).toBeNull(); // Should be null since credential was deleted
+
+  // Test that setting empty string on non-existent credential doesn't error
+  await Bun.secrets.set({ service: testService + "-nonexistent", name: testUser, value: "" });
+  result = await Bun.secrets.get({ service: testService + "-nonexistent", name: testUser });
+  expect(result).toBeNull();
 });
 
 test("Bun.secrets handles special characters", async () => {

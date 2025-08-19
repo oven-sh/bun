@@ -145,6 +145,17 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
         return err;
     }
 
+    // Empty string means delete - call deletePassword instead
+    if (password.length() == 0) {
+        deletePassword(service, name, err);
+        // Convert delete result to setPassword semantics
+        // Delete errors (like NotFound) should not be propagated for empty string sets
+        if (err.type == ErrorType::NotFound) {
+            err = Error{}; // Clear the error - deleting non-existent is not an error for set("")
+        }
+        return err;
+    }
+
     // Create target name as "service/name"
     String targetName = makeString(String::fromUTF8(service.data()), "/"_s, String::fromUTF8(name.data()));
     auto targetNameUtf8 = targetName.utf8();

@@ -9,6 +9,9 @@
 #include <wtf/Vector.h>
 #include <wtf/NeverDestroyed.h>
 
+// Forward declarations for types we need
+typedef struct OpaqueSecAccessRef* SecAccessRef;
+
 namespace Bun {
 namespace Secrets {
 
@@ -26,6 +29,7 @@ public:
     CFStringRef kSecAttrAccount;
     CFStringRef kSecValueData;
     CFStringRef kSecReturnData;
+    CFStringRef kSecAttrAccess;
     CFBooleanRef kCFBooleanTrue;
     CFAllocatorRef kCFAllocatorDefault;
 
@@ -48,6 +52,7 @@ public:
     OSStatus (*SecItemUpdate)(CFDictionaryRef query, CFDictionaryRef attributesToUpdate);
     OSStatus (*SecItemDelete)(CFDictionaryRef query);
     CFStringRef (*SecCopyErrorMessageString)(OSStatus status, void* reserved);
+    OSStatus (*SecAccessCreate)(CFStringRef descriptor, CFArrayRef trustedList, SecAccessRef* accessRef);
     Boolean (*CFStringGetCString)(CFStringRef theString, char* buffer, CFIndex bufferSize, CFStringEncoding encoding);
     const char* (*CFStringGetCStringPtr)(CFStringRef theString, CFStringEncoding encoding);
     CFIndex (*CFStringGetLength)(CFStringRef theString);
@@ -107,6 +112,10 @@ private:
         if (!ptr) return false;
         kSecReturnData = *(CFStringRef*)ptr;
 
+        ptr = dlsym(handle, "kSecAttrAccess");
+        if (!ptr) return false;
+        kSecAttrAccess = *(CFStringRef*)ptr;
+
         ptr = dlsym(cf_handle, "kCFBooleanTrue");
         if (!ptr) return false;
         kCFBooleanTrue = *(CFBooleanRef*)ptr;
@@ -145,8 +154,9 @@ private:
         SecItemUpdate = (OSStatus(*)(CFDictionaryRef, CFDictionaryRef))dlsym(handle, "SecItemUpdate");
         SecItemDelete = (OSStatus(*)(CFDictionaryRef))dlsym(handle, "SecItemDelete");
         SecCopyErrorMessageString = (CFStringRef(*)(OSStatus, void*))dlsym(handle, "SecCopyErrorMessageString");
+        SecAccessCreate = (OSStatus(*)(CFStringRef, CFArrayRef, SecAccessRef*))dlsym(handle, "SecAccessCreate");
 
-        return CFRelease && CFStringCreateWithCString && CFDataCreate && CFDataGetBytePtr && CFDataGetLength && CFDictionaryCreateMutable && CFDictionaryAddValue && SecItemAdd && SecItemCopyMatching && SecItemUpdate && SecItemDelete && SecCopyErrorMessageString && CFStringGetCString && CFStringGetCStringPtr && CFStringGetLength && CFStringGetMaximumSizeForEncoding;
+        return CFRelease && CFStringCreateWithCString && CFDataCreate && CFDataGetBytePtr && CFDataGetLength && CFDictionaryCreateMutable && CFDictionaryAddValue && SecItemAdd && SecItemCopyMatching && SecItemUpdate && SecItemDelete && SecCopyErrorMessageString && SecAccessCreate && CFStringGetCString && CFStringGetCStringPtr && CFStringGetLength && CFStringGetMaximumSizeForEncoding;
     }
 };
 
@@ -289,6 +299,17 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
         return err;
     }
 
+    // Empty string means delete - call deletePassword instead
+    if (password.length() == 0) {
+        deletePassword(service, name, err);
+        // Convert delete result to setPassword semantics
+        // Delete errors (like NotFound) should not be propagated for empty string sets
+        if (err.type == ErrorType::NotFound) {
+            err = Error{}; // Clear the error - deleting non-existent is not an error for set("")
+        }
+        return err;
+    }
+
     ScopedCFRef cfPassword(framework->CFDataCreate(
         framework->kCFAllocatorDefault,
         reinterpret_cast<const UInt8*>(password.data()),
@@ -304,7 +325,31 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
     framework->CFDictionaryAddValue((CFMutableDictionaryRef)query.get(),
         framework->kSecValueData, cfPassword.get());
 
+    // For headless CI environments (like MacStadium), create an access object
+    // that allows all applications to access this keychain item without user interaction
+    SecAccessRef accessRef = nullptr;
+    ScopedCFRef accessDescription(framework->CFStringCreateWithCString(
+        framework->kCFAllocatorDefault, "Bun secrets access", kCFStringEncodingUTF8));
+    
+    if (accessDescription) {
+        OSStatus accessStatus = framework->SecAccessCreate(
+            (CFStringRef)accessDescription.get(), 
+            nullptr, // trustedList - nullptr means all applications
+            &accessRef);
+            
+        if (accessStatus == errSecSuccess && accessRef) {
+            framework->CFDictionaryAddValue((CFMutableDictionaryRef)query.get(),
+                framework->kSecAttrAccess, accessRef);
+        }
+        // Note: We don't use ScopedCFRef for accessRef because CFDictionaryAddValue retains it
+    }
+
     OSStatus status = framework->SecItemAdd((CFDictionaryRef)query.get(), NULL);
+    
+    // Clean up accessRef if it was created
+    if (accessRef) {
+        framework->CFRelease(accessRef);
+    }
 
     if (status == errSecDuplicateItem) {
         // Password exists -- update it

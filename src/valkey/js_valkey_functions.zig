@@ -502,17 +502,17 @@ fn collectObjectProperty(
 ) callconv(.C) void {
     _ = is_symbol;
     _ = is_private_symbol;
-    
+
     var ctx: *ObjectIteratorContext = bun.cast(*ObjectIteratorContext, ctx_ptr orelse return);
     if (ctx.has_error) return;
-    
+
     // Add field name
     const field_slice = key.toSliceFast(bun.default_allocator);
     ctx.args.append(field_slice) catch {
         ctx.has_error = true;
         return;
     };
-    
+
     // Add field value
     const value_str = value.toBunString(globalThis) catch {
         ctx.has_error = true;
@@ -580,13 +580,13 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe
             .args = &args,
             .globalObject = globalObject,
         };
-        
+
         try field_values_arg.forEachProperty(globalObject, &ctx, collectObjectProperty);
-        
+
         if (ctx.has_error) {
             return globalObject.throw("Failed to process object properties", .{});
         }
-        
+
         // Check if the object was empty (Redis requires at least one field-value pair)
         if (args.items.len == 1) { // Only the key was added
             return globalObject.throw("Object must have at least one property", .{});

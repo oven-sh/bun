@@ -131,10 +131,10 @@ pub fn toBunStringFromOwnedSlice(input: []u8, encoding: Encoding) bun.String {
                 bun.default_allocator.free(input);
                 return bun.String.empty;
             }
-            
+
             // If input length is odd, truncate to the nearest even length
             const usable_len = if (input.len % 2 != 0) input.len - 1 else input.len;
-            
+
             if (usable_len == 0) {
                 bun.default_allocator.free(input);
                 return bun.String.empty;

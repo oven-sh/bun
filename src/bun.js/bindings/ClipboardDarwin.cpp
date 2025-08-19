@@ -1,0 +1,616 @@
+#include "root.h"
+
+#if OS(DARWIN)
+
+#include "Clipboard.h"
+#include <dlfcn.h>
+#include <wtf/text/WTFString.h>
+#include <wtf/Vector.h>
+#include <wtf/NeverDestroyed.h>
+#include <thread>
+
+// Forward declarations for AppKit types
+typedef struct objc_object NSObject;
+typedef struct objc_object NSPasteboard;
+typedef struct objc_object NSString;
+typedef struct objc_object NSData;
+typedef struct objc_object NSArray;
+typedef NSObject* id;
+typedef const struct objc_selector* SEL;
+typedef id (*IMP)(id, SEL, ...);
+
+// Objective-C runtime functions
+extern "C" {
+    id objc_getClass(const char* name);
+    SEL sel_registerName(const char* str);
+    id objc_msgSend(id theReceiver, SEL theSelector, ...);
+    void* objc_getAssociatedObject(id object, const void* key);
+    void objc_setAssociatedObject(id object, const void* key, id value, unsigned int policy);
+}
+
+#define False 0
+#define True 1
+typedef signed char BOOL;
+
+namespace Bun {
+namespace Clipboard {
+
+using namespace WTF;
+
+class AppKitFramework {
+public:
+    void* handle;
+    void* foundation_handle;
+    
+    // Foundation classes and selectors
+    id NSString_class;
+    id NSData_class;
+    id NSArray_class;
+    id NSPasteboard_class;
+    
+    // Selectors
+    SEL stringWithUTF8String_sel;
+    SEL UTF8String_sel;
+    SEL length_sel;
+    SEL dataWithBytes_length_sel;
+    SEL bytes_sel;
+    SEL generalPasteboard_sel;
+    SEL clearContents_sel;
+    SEL setString_forType_sel;
+    SEL setData_forType_sel;
+    SEL stringForType_sel;
+    SEL dataForType_sel;
+    SEL types_sel;
+    SEL writeObjects_sel;
+    SEL readObjectsForClasses_options_sel;
+    SEL arrayWithObject_sel;
+    
+    // Pasteboard type constants
+    NSString* NSPasteboardTypeString;
+    NSString* NSPasteboardTypeHTML;
+    NSString* NSPasteboardTypeRTF;
+    NSString* NSPasteboardTypePNG;
+    NSString* NSPasteboardTypeTIFF;
+
+    AppKitFramework()
+        : handle(nullptr)
+        , foundation_handle(nullptr)
+    {
+    }
+
+    bool load()
+    {
+        if (handle && foundation_handle) return true;
+
+        // Load Foundation framework first
+        foundation_handle = dlopen("/System/Library/Frameworks/Foundation.framework/Foundation", RTLD_LAZY | RTLD_LOCAL);
+        if (!foundation_handle) {
+            return false;
+        }
+
+        // Load AppKit framework
+        handle = dlopen("/System/Library/Frameworks/AppKit.framework/AppKit", RTLD_LAZY | RTLD_LOCAL);
+        if (!handle) {
+            dlclose(foundation_handle);
+            foundation_handle = nullptr;
+            return false;
+        }
+
+        if (!load_classes_and_selectors() || !load_constants()) {
+            dlclose(handle);
+            dlclose(foundation_handle);
+            handle = nullptr;
+            foundation_handle = nullptr;
+            return false;
+        }
+
+        return true;
+    }
+
+private:
+    bool load_classes_and_selectors()
+    {
+        NSString_class = objc_getClass("NSString");
+        NSData_class = objc_getClass("NSData");
+        NSArray_class = objc_getClass("NSArray");
+        NSPasteboard_class = objc_getClass("NSPasteboard");
+        
+        if (!NSString_class || !NSData_class || !NSArray_class || !NSPasteboard_class) {
+            return false;
+        }
+
+        stringWithUTF8String_sel = sel_registerName("stringWithUTF8String:");
+        UTF8String_sel = sel_registerName("UTF8String");
+        length_sel = sel_registerName("length");
+        dataWithBytes_length_sel = sel_registerName("dataWithBytes:length:");
+        bytes_sel = sel_registerName("bytes");
+        generalPasteboard_sel = sel_registerName("generalPasteboard");
+        clearContents_sel = sel_registerName("clearContents");
+        setString_forType_sel = sel_registerName("setString:forType:");
+        setData_forType_sel = sel_registerName("setData:forType:");
+        stringForType_sel = sel_registerName("stringForType:");
+        dataForType_sel = sel_registerName("dataForType:");
+        types_sel = sel_registerName("types");
+        writeObjects_sel = sel_registerName("writeObjects:");
+        readObjectsForClasses_options_sel = sel_registerName("readObjectsForClasses:options:");
+        arrayWithObject_sel = sel_registerName("arrayWithObject:");
+
+        return true;
+    }
+
+    bool load_constants()
+    {
+        void* ptr;
+        
+        ptr = dlsym(handle, "NSPasteboardTypeString");
+        if (!ptr) return false;
+        NSPasteboardTypeString = *(NSString**)ptr;
+
+        ptr = dlsym(handle, "NSPasteboardTypeHTML");
+        if (!ptr) return false;
+        NSPasteboardTypeHTML = *(NSString**)ptr;
+
+        ptr = dlsym(handle, "NSPasteboardTypeRTF");
+        if (!ptr) return false;
+        NSPasteboardTypeRTF = *(NSString**)ptr;
+
+        ptr = dlsym(handle, "NSPasteboardTypePNG");
+        if (!ptr) return false;
+        NSPasteboardTypePNG = *(NSString**)ptr;
+
+        ptr = dlsym(handle, "NSPasteboardTypeTIFF");
+        if (!ptr) return false;
+        NSPasteboardTypeTIFF = *(NSString**)ptr;
+
+        return true;
+    }
+};
+
+static AppKitFramework* appKitFramework()
+{
+    static LazyNeverDestroyed<AppKitFramework> framework;
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [&] {
+        framework.construct();
+        if (!framework->load()) {
+            // Framework failed to load, but object is still constructed
+        }
+    });
+    return framework->handle ? &framework.get() : nullptr;
+}
+
+static void updateError(Error& err, const String& message)
+{
+    err.type = ErrorType::PlatformError;
+    err.message = message;
+    err.code = -1;
+}
+
+static NSString* createNSString(const String& str)
+{
+    auto* framework = appKitFramework();
+    if (!framework) return nullptr;
+    
+    auto utf8 = str.utf8();
+    return (NSString*)objc_msgSend(framework->NSString_class, framework->stringWithUTF8String_sel, utf8.data());
+}
+
+static String nsStringToWTFString(NSString* nsStr)
+{
+    auto* framework = appKitFramework();
+    if (!framework || !nsStr) return String();
+    
+    const char* utf8Str = (const char*)objc_msgSend(nsStr, framework->UTF8String_sel);
+    return String::fromUTF8(utf8Str);
+}
+
+static NSPasteboard* getGeneralPasteboard()
+{
+    auto* framework = appKitFramework();
+    if (!framework) return nullptr;
+    
+    return (NSPasteboard*)objc_msgSend(framework->NSPasteboard_class, framework->generalPasteboard_sel);
+}
+
+Error writeText(const String& text)
+{
+    Error err;
+    
+    auto* framework = appKitFramework();
+    if (!framework) {
+        updateError(err, "AppKit framework not available"_s);
+        return err;
+    }
+
+    NSPasteboard* pasteboard = getGeneralPasteboard();
+    if (!pasteboard) {
+        updateError(err, "Could not access pasteboard"_s);
+        return err;
+    }
+
+    NSString* nsText = createNSString(text);
+    if (!nsText) {
+        updateError(err, "Failed to create NSString"_s);
+        return err;
+    }
+
+    // Clear existing contents
+    objc_msgSend(pasteboard, framework->clearContents_sel);
+    
+    // Set string
+    BOOL success = (BOOL)objc_msgSend(pasteboard, framework->setString_forType_sel, nsText, framework->NSPasteboardTypeString);
+    
+    if (!success) {
+        updateError(err, "Failed to write text to pasteboard"_s);
+    }
+
+    return err;
+}
+
+Error writeHTML(const String& html)
+{
+    Error err;
+    
+    auto* framework = appKitFramework();
+    if (!framework) {
+        updateError(err, "AppKit framework not available"_s);
+        return err;
+    }
+
+    NSPasteboard* pasteboard = getGeneralPasteboard();
+    if (!pasteboard) {
+        updateError(err, "Could not access pasteboard"_s);
+        return err;
+    }
+
+    NSString* nsHtml = createNSString(html);
+    if (!nsHtml) {
+        updateError(err, "Failed to create NSString"_s);
+        return err;
+    }
+
+    // Clear existing contents
+    objc_msgSend(pasteboard, framework->clearContents_sel);
+    
+    // Set HTML
+    BOOL success = (BOOL)objc_msgSend(pasteboard, framework->setString_forType_sel, nsHtml, framework->NSPasteboardTypeHTML);
+    
+    if (!success) {
+        updateError(err, "Failed to write HTML to pasteboard"_s);
+    }
+
+    return err;
+}
+
+Error writeRTF(const String& rtf)
+{
+    Error err;
+    
+    auto* framework = appKitFramework();
+    if (!framework) {
+        updateError(err, "AppKit framework not available"_s);
+        return err;
+    }
+
+    NSPasteboard* pasteboard = getGeneralPasteboard();
+    if (!pasteboard) {
+        updateError(err, "Could not access pasteboard"_s);
+        return err;
+    }
+
+    auto rtfData = rtf.utf8();
+    NSData* nsData = (NSData*)objc_msgSend(framework->NSData_class, framework->dataWithBytes_length_sel, rtfData.data(), rtfData.length());
+    if (!nsData) {
+        updateError(err, "Failed to create NSData"_s);
+        return err;
+    }
+
+    // Clear existing contents
+    objc_msgSend(pasteboard, framework->clearContents_sel);
+    
+    // Set RTF data
+    BOOL success = (BOOL)objc_msgSend(pasteboard, framework->setData_forType_sel, nsData, framework->NSPasteboardTypeRTF);
+    
+    if (!success) {
+        updateError(err, "Failed to write RTF to pasteboard"_s);
+    }
+
+    return err;
+}
+
+Error writeImage(const Vector<uint8_t>& imageData, const String& mimeType)
+{
+    Error err;
+    
+    auto* framework = appKitFramework();
+    if (!framework) {
+        updateError(err, "AppKit framework not available"_s);
+        return err;
+    }
+
+    NSPasteboard* pasteboard = getGeneralPasteboard();
+    if (!pasteboard) {
+        updateError(err, "Could not access pasteboard"_s);
+        return err;
+    }
+
+    NSData* nsData = (NSData*)objc_msgSend(framework->NSData_class, framework->dataWithBytes_length_sel, imageData.data(), imageData.size());
+    if (!nsData) {
+        updateError(err, "Failed to create NSData"_s);
+        return err;
+    }
+
+    // Clear existing contents
+    objc_msgSend(pasteboard, framework->clearContents_sel);
+    
+    // Choose appropriate pasteboard type based on MIME type
+    NSString* pasteboardType = framework->NSPasteboardTypePNG; // default
+    if (mimeType == "image/tiff"_s) {
+        pasteboardType = framework->NSPasteboardTypeTIFF;
+    }
+    
+    // Set image data
+    BOOL success = (BOOL)objc_msgSend(pasteboard, framework->setData_forType_sel, nsData, pasteboardType);
+    
+    if (!success) {
+        updateError(err, "Failed to write image to pasteboard"_s);
+    }
+
+    return err;
+}
+
+std::optional<String> readText(Error& error)
+{
+    error = Error {};
+    
+    auto* framework = appKitFramework();
+    if (!framework) {
+        updateError(error, "AppKit framework not available"_s);
+        return std::nullopt;
+    }
+
+    NSPasteboard* pasteboard = getGeneralPasteboard();
+    if (!pasteboard) {
+        updateError(error, "Could not access pasteboard"_s);
+        return std::nullopt;
+    }
+
+    NSString* text = (NSString*)objc_msgSend(pasteboard, framework->stringForType_sel, framework->NSPasteboardTypeString);
+    if (!text) {
+        updateError(error, "No text found in pasteboard"_s);
+        return std::nullopt;
+    }
+
+    return nsStringToWTFString(text);
+}
+
+std::optional<String> readHTML(Error& error)
+{
+    error = Error {};
+    
+    auto* framework = appKitFramework();
+    if (!framework) {
+        updateError(error, "AppKit framework not available"_s);
+        return std::nullopt;
+    }
+
+    NSPasteboard* pasteboard = getGeneralPasteboard();
+    if (!pasteboard) {
+        updateError(error, "Could not access pasteboard"_s);
+        return std::nullopt;
+    }
+
+    NSString* html = (NSString*)objc_msgSend(pasteboard, framework->stringForType_sel, framework->NSPasteboardTypeHTML);
+    if (!html) {
+        updateError(error, "No HTML found in pasteboard"_s);
+        return std::nullopt;
+    }
+
+    return nsStringToWTFString(html);
+}
+
+std::optional<String> readRTF(Error& error)
+{
+    error = Error {};
+    
+    auto* framework = appKitFramework();
+    if (!framework) {
+        updateError(error, "AppKit framework not available"_s);
+        return std::nullopt;
+    }
+
+    NSPasteboard* pasteboard = getGeneralPasteboard();
+    if (!pasteboard) {
+        updateError(error, "Could not access pasteboard"_s);
+        return std::nullopt;
+    }
+
+    NSData* rtfData = (NSData*)objc_msgSend(pasteboard, framework->dataForType_sel, framework->NSPasteboardTypeRTF);
+    if (!rtfData) {
+        updateError(error, "No RTF found in pasteboard"_s);
+        return std::nullopt;
+    }
+
+    const void* bytes = objc_msgSend(rtfData, framework->bytes_sel);
+    NSUInteger length = (NSUInteger)objc_msgSend(rtfData, framework->length_sel);
+    
+    if (!bytes || !length) {
+        updateError(error, "Invalid RTF data"_s);
+        return std::nullopt;
+    }
+
+    return String::fromUTF8(std::span<const char>(reinterpret_cast<const char*>(bytes), length));
+}
+
+std::optional<Vector<uint8_t>> readImage(Error& error, String& mimeType)
+{
+    error = Error {};
+    
+    auto* framework = appKitFramework();
+    if (!framework) {
+        updateError(error, "AppKit framework not available"_s);
+        return std::nullopt;
+    }
+
+    NSPasteboard* pasteboard = getGeneralPasteboard();
+    if (!pasteboard) {
+        updateError(error, "Could not access pasteboard"_s);
+        return std::nullopt;
+    }
+
+    // Try PNG first
+    NSData* imageData = (NSData*)objc_msgSend(pasteboard, framework->dataForType_sel, framework->NSPasteboardTypePNG);
+    if (imageData) {
+        mimeType = "image/png"_s;
+    } else {
+        // Try TIFF
+        imageData = (NSData*)objc_msgSend(pasteboard, framework->dataForType_sel, framework->NSPasteboardTypeTIFF);
+        if (imageData) {
+            mimeType = "image/tiff"_s;
+        }
+    }
+
+    if (!imageData) {
+        updateError(error, "No image found in pasteboard"_s);
+        return std::nullopt;
+    }
+
+    const void* bytes = objc_msgSend(imageData, framework->bytes_sel);
+    NSUInteger length = (NSUInteger)objc_msgSend(imageData, framework->length_sel);
+    
+    if (!bytes || !length) {
+        updateError(error, "Invalid image data"_s);
+        return std::nullopt;
+    }
+
+    Vector<uint8_t> result;
+    result.append(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(bytes), length));
+    return result;
+}
+
+bool isSupported()
+{
+    return appKitFramework() != nullptr;
+}
+
+Vector<DataType> getSupportedTypes()
+{
+    Vector<DataType> types;
+    if (isSupported()) {
+        types.append(DataType::Text);
+        types.append(DataType::HTML);
+        types.append(DataType::RTF);
+        types.append(DataType::Image);
+    }
+    return types;
+}
+
+// Async implementations using std::thread - consistent with Linux implementation
+void writeTextAsync(const String& text, WriteCallback callback) {
+    std::thread([text = text.isolatedCopy(), callback = std::move(callback)]() {
+        Error error = writeText(text);
+        callback(error);
+    }).detach();
+}
+
+void writeHTMLAsync(const String& html, WriteCallback callback) {
+    std::thread([html = html.isolatedCopy(), callback = std::move(callback)]() {
+        Error error = writeHTML(html);
+        callback(error);
+    }).detach();
+}
+
+void writeRTFAsync(const String& rtf, WriteCallback callback) {
+    std::thread([rtf = rtf.isolatedCopy(), callback = std::move(callback)]() {
+        Error error = writeRTF(rtf);
+        callback(error);
+    }).detach();
+}
+
+void writeImageAsync(const Vector<uint8_t>& imageData, const String& mimeType, WriteCallback callback) {
+    std::thread([imageData, mimeType = mimeType.isolatedCopy(), callback = std::move(callback)]() {
+        Error error = writeImage(imageData, mimeType);
+        callback(error);
+    }).detach();
+}
+
+void readTextAsync(ReadCallback callback) {
+    std::thread([callback = std::move(callback)]() {
+        Error error;
+        auto text = readText(error);
+        Vector<ClipboardData> data;
+        
+        if (text.has_value() && !text->isEmpty()) {
+            ClipboardData clipData;
+            clipData.type = DataType::Text;
+            clipData.mimeType = "text/plain"_s;
+            auto textUtf8 = text->utf8();
+            clipData.data.append(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(textUtf8.data()), textUtf8.length()));
+            data.append(WTFMove(clipData));
+        }
+        
+        callback(error, WTFMove(data));
+    }).detach();
+}
+
+void readHTMLAsync(ReadCallback callback) {
+    std::thread([callback = std::move(callback)]() {
+        Error error;
+        auto html = readHTML(error);
+        Vector<ClipboardData> data;
+        
+        if (html.has_value() && !html->isEmpty()) {
+            ClipboardData clipData;
+            clipData.type = DataType::HTML;
+            clipData.mimeType = "text/html"_s;
+            auto htmlUtf8 = html->utf8();
+            clipData.data.append(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(htmlUtf8.data()), htmlUtf8.length()));
+            data.append(WTFMove(clipData));
+        }
+        
+        callback(error, WTFMove(data));
+    }).detach();
+}
+
+void readRTFAsync(ReadCallback callback) {
+    std::thread([callback = std::move(callback)]() {
+        Error error;
+        auto rtf = readRTF(error);
+        Vector<ClipboardData> data;
+        
+        if (rtf.has_value() && !rtf->isEmpty()) {
+            ClipboardData clipData;
+            clipData.type = DataType::RTF;
+            clipData.mimeType = "text/rtf"_s;
+            auto rtfUtf8 = rtf->utf8();
+            clipData.data.append(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(rtfUtf8.data()), rtfUtf8.length()));
+            data.append(WTFMove(clipData));
+        }
+        
+        callback(error, WTFMove(data));
+    }).detach();
+}
+
+void readImageAsync(ReadCallback callback) {
+    std::thread([callback = std::move(callback)]() {
+        Error error;
+        String mimeType;
+        auto imageData = readImage(error, mimeType);
+        Vector<ClipboardData> data;
+        
+        if (imageData.has_value()) {
+            ClipboardData clipData;
+            clipData.type = DataType::Image;
+            clipData.mimeType = mimeType;
+            clipData.data = WTFMove(*imageData);
+            data.append(WTFMove(clipData));
+        }
+        
+        callback(error, WTFMove(data));
+    }).detach();
+}
+
+} // namespace Clipboard
+} // namespace Bun
+
+#endif // OS(DARWIN)

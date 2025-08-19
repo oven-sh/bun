@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { request, Client } from "undici";
+import { Client, request } from "undici";
 
 import { createServer } from "../../../http-test-server";
 
@@ -163,7 +163,7 @@ describe("undici", () => {
         path: "/get",
         method: "GET",
       });
-      
+
       expect(statusCode).toBe(200);
       expect(body).toBeDefined();
       const json = (await body.json()) as { url: string };
@@ -176,10 +176,10 @@ describe("undici", () => {
         path: "/headers",
         method: "GET",
         headers: {
-          "x-test": "client-test"
-        }
+          "x-test": "client-test",
+        },
       });
-      
+
       expect(statusCode).toBe(200);
       expect(body).toBeDefined();
       const json = (await body.json()) as { headers: { "x-test": string } };
@@ -193,7 +193,7 @@ describe("undici", () => {
         method: "POST",
         body: "test body",
       });
-      
+
       expect(statusCode).toBe(201);
       expect(body).toBeDefined();
       const json = (await body.json()) as { data: string };

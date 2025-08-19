@@ -547,6 +547,7 @@ static JSValue toJSAsBuffer(JSC::VM& vm, JSC::JSGlobalObject* globalObject, sqli
 template<bool useBigInt64>
 static JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, sqlite3_stmt* stmt, int i)
 {
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
     switch (sqlite3_column_type(stmt, i)) {
     case SQLITE_INTEGER: {
         if constexpr (!useBigInt64) {
@@ -571,15 +572,20 @@ static JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, sqlite3_stmt
             return jsEmptyString(vm);
         }
 
-        return len < 64 ? jsString(vm, WTF::String::fromUTF8({ text, len })) : JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, globalObject));
+        if (len < 64) {
+            return jsString(vm, WTF::String::fromUTF8({ text, len }));
+        }
+
+        auto encoded = Bun__encoding__toStringUTF8(text, len, globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        return JSC::JSValue::decode(encoded);
     }
     case SQLITE_BLOB: {
         size_t len = sqlite3_column_bytes(stmt, i);
         const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
         if (len > 0 && blob != nullptr) [[likely]] {
-            auto scope = DECLARE_THROW_SCOPE(vm);
             JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->m_typedArrayUint8.get(globalObject), len);
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(throwScope, {});
             memcpy(array->vector(), blob, len);
             return array;
         }
@@ -1480,15 +1486,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
         int64_t last_insert_rowid = sqlite3_last_insert_rowid(db);
         diff->putInternalField(vm, 0, JSC::jsNumber(total_changes_after - total_changes_before));
         if (safeIntegers) {
-            JSValue lastRowIdBigInt = JSBigInt::createFrom(lexicalGlobalObject, last_insert_rowid);
-            RETURN_IF_EXCEPTION(scope, {});
-            diff->putInternalField(vm, 1, lastRowIdBigInt);
+            diff->putInternalField(vm, 1, JSBigInt::createFrom(lexicalGlobalObject, last_insert_rowid));
         } else {
             diff->putInternalField(vm, 1, JSC::jsNumber(last_insert_rowid));
         }
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementIsInTransactionFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -1882,6 +1886,7 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
     auto& columnNames = castedThis->columnNames->data()->propertyNameVector();
     int count = columnNames.size();
     auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     // 64 is the maximum we can preallocate here
     // see https://github.com/oven-sh/bun/issues/987
@@ -1900,7 +1905,9 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
                 j -= 1;
                 continue;
             }
-            result->putDirectOffset(vm, j, toJS<useBigInt64>(vm, lexicalGlobalObject, stmt, i));
+            JSValue v = toJS<useBigInt64>(vm, lexicalGlobalObject, stmt, i);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            result->putDirectOffset(vm, j, v);
         }
 
     } else {
@@ -1917,7 +1924,9 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
                 continue;
             }
             const auto& name = columnNames[j];
-            result->putDirect(vm, name, toJS<useBigInt64>(vm, lexicalGlobalObject, stmt, i), 0);
+            JSValue v = toJS<useBigInt64>(vm, lexicalGlobalObject, stmt, i);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            result->putDirect(vm, name, v, 0);
         }
     }
 
@@ -2449,9 +2458,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
         int64_t last_insert_rowid = sqlite3_last_insert_rowid(db);
         diff->putInternalField(vm, 0, JSC::jsNumber(total_changes_after - total_changes_before));
         if (castedThis->useBigInt64) {
-            JSValue lastRowIdBigInt = JSBigInt::createFrom(lexicalGlobalObject, last_insert_rowid);
-            RETURN_IF_EXCEPTION(scope, {});
-            diff->putInternalField(vm, 1, lastRowIdBigInt);
+            diff->putInternalField(vm, 1, JSBigInt::createFrom(lexicalGlobalObject, last_insert_rowid));
         } else {
             diff->putInternalField(vm, 1, JSC::jsNumber(last_insert_rowid));
         }

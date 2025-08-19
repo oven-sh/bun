@@ -44,7 +44,7 @@ describe("Connection & Initialization", () => {
     const sql = new SQL(`sqlite://${dbPath}`);
     expect(sql).toBeDefined();
     expect(sql.options.adapter).toBe("sqlite");
-    expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+    expect(sql.options.filename).toBe(dbPath);
 
     await sql.close();
     await rm(dir, { recursive: true });
@@ -57,7 +57,7 @@ describe("Connection & Initialization", () => {
     });
 
     expect(sql.options.adapter).toBe("sqlite");
-    expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+    expect(sql.options.filename).toBe(":memory:");
 
     await sql`CREATE TABLE test (id INTEGER)`;
     await sql`INSERT INTO test VALUES (1)`;
@@ -124,7 +124,7 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL();
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+      expect(sql.options.filename).toBe(dbPath);
 
       await sql`CREATE TABLE test (id INTEGER)`;
       const stats = await stat(dbPath);
@@ -139,7 +139,7 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL();
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      expect(sql.options.filename).toBe(":memory:");
 
       await sql`CREATE TABLE test (id INTEGER)`;
       await sql`INSERT INTO test VALUES (1)`;
@@ -159,7 +159,7 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL("sqlite://:memory:");
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      expect(sql.options.filename).toBe(":memory:");
 
       await sql.close();
       await rm(dir, { recursive: true });
@@ -171,7 +171,7 @@ describe("Connection & Initialization", () => {
       // When explicitly using sqlite adapter, POSTGRES_URL should be ignored
       const sql = new SQL({ adapter: "sqlite", filename: ":memory:" });
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      expect(sql.options.filename).toBe(":memory:");
 
       await sql.close();
     });
@@ -181,7 +181,7 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL({ adapter: "sqlite", filename: ":memory:" });
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      expect(sql.options.filename).toBe(":memory:");
 
       await sql.close();
     });
@@ -191,7 +191,7 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL({ adapter: "sqlite", filename: ":memory:" });
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      expect(sql.options.filename).toBe(":memory:");
 
       await sql.close();
     });
@@ -223,7 +223,7 @@ describe("Connection & Initialization", () => {
       const sql2 = new SQL();
       // DATABASE_URL takes next precedence and it's SQLite (detected via :memory:)
       expect(sql2.options.adapter).toBe("sqlite");
-      expect((sql2.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      expect(sql2.options.filename).toBe(":memory:");
       await sql2.close();
     });
   });
@@ -235,7 +235,7 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL(`file://${dbPath}`);
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+      expect(sql.options.filename).toBe(dbPath);
 
       await sql`CREATE TABLE test (id INTEGER)`;
       const stats = await stat(dbPath);
@@ -251,7 +251,7 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL(`file:${dbPath}`);
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+      expect(sql.options.filename).toBe(dbPath);
 
       await sql`CREATE TABLE test (id INTEGER)`;
       const stats = await stat(dbPath);
@@ -264,7 +264,7 @@ describe("Connection & Initialization", () => {
     test("should handle file:// with :memory:", () => {
       const sql = new SQL("file://:memory:");
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      expect(sql.options.filename).toBe(":memory:");
       sql.close();
     });
   });
@@ -283,7 +283,7 @@ describe("Connection & Initialization", () => {
       // Now open in readonly mode
       const sql = new SQL(`sqlite://${dbPath}?mode=ro`);
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).readonly).toBe(true);
+      expect(sql.options.readonly).toBe(true);
 
       // Should be able to read
       const result = await sql`SELECT * FROM test`;
@@ -308,7 +308,7 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL(`sqlite://${dbPath}?mode=rw`);
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).readonly).toBe(false);
+      expect(sql.options.readonly).toBe(false);
 
       await sql`INSERT INTO test VALUES (1)`;
       const result = await sql`SELECT * FROM test`;
@@ -324,8 +324,8 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL(`sqlite://${dbPath}?mode=rwc`);
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).readonly).toBe(false);
-      expect((sql.options as Bun.SQL.SQLiteOptions).create).toBe(true);
+      expect(sql.options.readonly).toBe(false);
+      expect(sql.options.create).toBe(true);
 
       await sql`CREATE TABLE test (id INTEGER)`;
       await sql`INSERT INTO test VALUES (1)`;
@@ -343,7 +343,7 @@ describe("Connection & Initialization", () => {
       // Note: Only mode is supported for SQLite, other params should be ignored
       const sql = new SQL(`sqlite://${dbPath}?mode=rwc&cache=shared&timeout=5000`);
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).create).toBe(true);
+      expect(sql.options.create).toBe(true);
 
       await sql`CREATE TABLE test (id INTEGER)`;
       await sql.close();
@@ -357,7 +357,7 @@ describe("Connection & Initialization", () => {
       // # is a valid filename character in SQLite
       const sql = new SQL(`sqlite://${dbPath}`);
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+      expect(sql.options.filename).toBe(dbPath);
 
       await sql`CREATE TABLE test (id INTEGER)`;
       const stats = await stat(dbPath);
@@ -375,7 +375,7 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL(`sqlite://${dbPath}`);
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+      expect(sql.options.filename).toBe(dbPath);
 
       await sql`CREATE TABLE test (id INTEGER)`;
       const stats = await stat(dbPath);
@@ -391,7 +391,7 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL(`sqlite://${dbPath}`);
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+      expect(sql.options.filename).toBe(dbPath);
 
       await sql`CREATE TABLE test (id INTEGER)`;
       const stats = await stat(dbPath);
@@ -407,7 +407,7 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL(`sqlite://${dbPath}`);
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+      expect(sql.options.filename).toBe(dbPath);
 
       await sql`CREATE TABLE test (id INTEGER)`;
       const stats = await stat(dbPath);
@@ -423,7 +423,7 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL(`sqlite://${dbPath}`);
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+      expect(sql.options.filename).toBe(dbPath);
 
       await sql`CREATE TABLE test (id INTEGER)`;
       const stats = await stat(dbPath);
@@ -441,7 +441,7 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL(`sqlite://${dbPath}`);
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+      expect(sql.options.filename).toBe(dbPath);
 
       await sql`CREATE TABLE test (id INTEGER)`;
       const stats = await stat(dbPath);
@@ -460,7 +460,7 @@ describe("Connection & Initialization", () => {
 
         const sql = new SQL("sqlite://./test.db");
         expect(sql.options.adapter).toBe("sqlite");
-        expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe("./test.db");
+        expect(sql.options.filename).toBe("./test.db");
 
         await sql`CREATE TABLE test (id INTEGER)`;
         const stats = await stat(path.join(dir, "test.db"));
@@ -484,7 +484,7 @@ describe("Connection & Initialization", () => {
 
         const sql = new SQL("sqlite://../parent.db");
         expect(sql.options.adapter).toBe("sqlite");
-        expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe("../parent.db");
+        expect(sql.options.filename).toBe("../parent.db");
 
         await sql`CREATE TABLE test (id INTEGER)`;
         const stats = await stat(path.join(parentDir, "parent.db"));
@@ -504,7 +504,7 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL(`sqlite://${nestedPath}`);
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(nestedPath);
+      expect(sql.options.filename).toBe(nestedPath);
 
       await sql`CREATE TABLE test (id INTEGER)`;
       const stats = await stat(nestedPath);
@@ -519,47 +519,47 @@ describe("Connection & Initialization", () => {
     test("should handle empty string with adapter specified", () => {
       const sql = new SQL("", { adapter: "sqlite" });
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      expect(sql.options.filename).toBe(":memory:");
       sql.close();
     });
 
     test("should handle null/undefined with adapter specified", () => {
       const sql1 = new SQL(undefined as never, { adapter: "sqlite" });
       expect(sql1.options.adapter).toBe("sqlite");
-      expect((sql1.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      expect(sql1.options.filename).toBe(":memory:");
       sql1.close();
 
       const sql2 = new SQL({ adapter: "sqlite" });
       expect(sql2.options.adapter).toBe("sqlite");
-      expect((sql2.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      expect(sql2.options.filename).toBe(":memory:");
       sql2.close();
     });
 
     test("should handle sqlite: without path", () => {
       const sql = new SQL("sqlite:");
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe("");
+      expect(sql.options.filename).toBe("");
       sql.close();
     });
 
     test("should handle sqlite:// without path", () => {
       const sql = new SQL("sqlite://");
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe("");
+      expect(sql.options.filename).toBe("");
       sql.close();
     });
 
     test("should handle just :memory: without prefix", () => {
       const sql = new SQL(":memory:");
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      expect(sql.options.filename).toBe(":memory:");
       sql.close();
     });
 
     test("should handle sqlite:memory without :", () => {
       const sql = new SQL("sqlite:memory");
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      expect(sql.options.filename).toBe(":memory:");
       sql.close();
     });
 
@@ -586,7 +586,7 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL(`sqlite://${explicitPath}`);
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(explicitPath);
+      expect(sql.options.filename).toBe(explicitPath);
 
       await sql`CREATE TABLE test (id INTEGER)`;
       expect(existsSync(explicitPath)).toBe(true);
@@ -608,7 +608,7 @@ describe("Connection & Initialization", () => {
       } as { adapter: "sqlite" });
 
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(optionsPath);
+      expect(sql.options.filename).toBe(optionsPath);
 
       await sql`CREATE TABLE test (id INTEGER)`;
       expect(existsSync(optionsPath)).toBe(true);
@@ -628,7 +628,7 @@ describe("Connection & Initialization", () => {
       });
 
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+      expect(sql.options.filename).toBe(dbPath);
 
       await sql`CREATE TABLE test (id INTEGER)`;
       const stats = await stat(dbPath);
@@ -659,8 +659,8 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL(`sqlite://${dbPath}?mode=ro`);
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).readonly).toBe(true);
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(dbPath);
+      expect(sql.options.readonly).toBe(true);
+      expect(sql.options.filename).toBe(dbPath);
 
       expect(sql`SELECT 1`.execute()).rejects.toThrowErrorMatchingInlineSnapshot(`"unable to open database file"`);
 

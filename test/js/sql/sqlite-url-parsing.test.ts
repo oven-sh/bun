@@ -50,7 +50,7 @@ describe("SQLite URL Parsing Matrix", () => {
         // Test with explicit adapter for no-protocol cases
         const sql = new SQL(testCase.url, { adapter: "sqlite" });
         expect(sql.options.adapter).toBe("sqlite");
-        expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(testCase.expected || ":memory:");
+        expect(sql.options.filename).toBe(testCase.expected || ":memory:");
         sql.close();
       } else {
         // Test without adapter (should auto-detect SQLite)
@@ -58,7 +58,7 @@ describe("SQLite URL Parsing Matrix", () => {
         expect(sql.options.adapter).toBe("sqlite");
 
         if (testCase.protocolName === "file://") {
-          const filename = (sql.options as Bun.SQL.SQLiteOptions).filename;
+          const filename = sql.options.filename;
           // The implementation uses Bun.fileURLToPath if valid, else strips "file://"
           let expected: string;
           try {
@@ -69,7 +69,7 @@ describe("SQLite URL Parsing Matrix", () => {
           }
           expect(filename).toBe(expected);
         } else {
-          expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(testCase.expected);
+          expect(sql.options.filename).toBe(testCase.expected);
         }
         sql.close();
       }
@@ -99,15 +99,13 @@ describe("SQLite URL Parsing Matrix", () => {
 
     test.each(queryMatrix)("$base with $name", testCase => {
       const sql = new SQL(testCase.url);
-      const options = sql.options as Bun.SQL.SQLiteOptions;
 
-      expect(options.adapter).toBe("sqlite");
-      expect(options.readonly).toBe(testCase.readonly);
-      expect(options.create).toBe(testCase.create);
+      expect(sql.options.adapter).toBe("sqlite");
+      expect(sql.options.readonly).toBe(testCase.readonly!);
+      expect(sql.options.create).toBe(testCase.create!);
 
-      // Check that path doesn't include query params
       if (!testCase.base.startsWith("file://")) {
-        expect(options.filename).toBe("test.db");
+        expect(sql.options.filename).toBe("test.db");
       }
 
       sql.close();
@@ -146,7 +144,7 @@ describe("SQLite URL Parsing Matrix", () => {
       expect(sql.options.adapter).toBe("sqlite");
 
       if (testCase.protocol.startsWith("file://")) {
-        const filename = (sql.options as Bun.SQL.SQLiteOptions).filename;
+        const filename = sql.options.filename;
         let expected: string;
         try {
           expected = Bun.fileURLToPath(testCase.url);
@@ -155,7 +153,7 @@ describe("SQLite URL Parsing Matrix", () => {
         }
         expect(filename).toBe(expected);
       } else {
-        expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(testCase.expected);
+        expect(sql.options.filename).toBe(testCase.expected);
       }
 
       sql.close();
@@ -188,7 +186,7 @@ describe("SQLite URL Parsing Matrix", () => {
       expect(sql.options.adapter).toBe("sqlite");
 
       if (testCase.protocol === "file://") {
-        const filename = (sql.options as Bun.SQL.SQLiteOptions).filename;
+        const filename = sql.options.filename;
         // Same logic as above - try Bun.fileURLToPath, fallback to stripping prefix
         let expected: string;
         try {
@@ -198,7 +196,7 @@ describe("SQLite URL Parsing Matrix", () => {
         }
         expect(filename).toBe(expected);
       } else {
-        expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(testCase.expected);
+        expect(sql.options.filename).toBe(testCase.expected);
       }
 
       sql.close();
@@ -239,7 +237,7 @@ describe("SQLite URL Parsing Matrix", () => {
     test.each(charMatrix)("$description", testCase => {
       const sql = new SQL(testCase.url);
       expect(sql.options.adapter).toBe("sqlite");
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(testCase.expected);
+      expect(sql.options.filename).toBe(testCase.expected);
       sql.close();
     });
   });
@@ -252,7 +250,7 @@ describe("SQLite URL Parsing Matrix", () => {
       const sql = new SQL(resolvedUrl);
       expect(sql.options.adapter).toBe("sqlite");
 
-      const filename = (sql.options as Bun.SQL.SQLiteOptions).filename;
+      const filename = sql.options.filename;
       const expected = Bun.fileURLToPath(resolvedUrl);
       expect(filename).toBe(expected);
 
@@ -265,7 +263,7 @@ describe("SQLite URL Parsing Matrix", () => {
       const longFilename = "a".repeat(255) + ".db";
       const longPath = `/tmp/${longFilename}`;
       const sql = new SQL(`sqlite://${longPath}`);
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(longPath);
+      expect(sql.options.filename).toBe(longPath);
       sql.close();
     });
 
@@ -273,7 +271,7 @@ describe("SQLite URL Parsing Matrix", () => {
       // Use a path that won't create a file in the project root
       const path = "/tmp/test.db.backup";
       const sql = new SQL(`sqlite://${path}`);
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(path);
+      expect(sql.options.filename).toBe(path);
       sql.close();
     });
 
@@ -281,25 +279,25 @@ describe("SQLite URL Parsing Matrix", () => {
       // Use a path that won't create a file in the project root
       const path = "/tmp/test...db";
       const sql = new SQL(`sqlite://${path}`);
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(path);
+      expect(sql.options.filename).toBe(path);
       sql.close();
     });
 
     test("empty string with adapter defaults to :memory:", () => {
       const sql = new SQL("", { adapter: "sqlite" });
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      expect(sql.options.filename).toBe(":memory:");
       sql.close();
     });
 
     test("null with adapter defaults to :memory:", () => {
       const sql = new SQL(null as never, { adapter: "sqlite" });
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      expect(sql.options.filename).toBe(":memory:");
       sql.close();
     });
 
     test("undefined with adapter defaults to :memory:", () => {
       const sql = new SQL(undefined as never, { adapter: "sqlite" });
-      expect((sql.options as Bun.SQL.SQLiteOptions).filename).toBe(":memory:");
+      expect(sql.options.filename).toBe(":memory:");
       sql.close();
     });
   });

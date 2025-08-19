@@ -69,8 +69,8 @@ describe("Connection & Initialization", () => {
   });
 
   test("onconnect and onclose callbacks are invoked for SQLite", async () => {
-    const onconnect = mock(() => {});
-    const onclose = mock(() => {});
+    const onconnect = mock((err?: any) => {});
+    const onclose = mock((err?: any) => {});
 
     const sql = new SQL({
       adapter: "sqlite",
@@ -79,11 +79,42 @@ describe("Connection & Initialization", () => {
       onclose,
     });
 
-    // onconnect should run during creation
+    // onconnect should run during creation with null error
     expect(onconnect).toHaveBeenCalled();
+    const onconnectArg = onconnect.mock.calls[0]?.[0];
+    expect(onconnectArg === null).toBe(true);
     await sql`SELECT 1 as x`;
     await sql.close();
     expect(onclose).toHaveBeenCalled();
+    const oncloseArg = onclose.mock.calls[0]?.[0];
+    expect(oncloseArg instanceof Error).toBe(true);
+  });
+
+  test("onconnect receives Error when open fails (readonly non-existent)", async () => {
+    const dir = tempDirWithFiles("sqlite-onconnect-error", {});
+    const dbPath = join(dir, "missing.db");
+
+    const onconnect = mock((err?: any) => {});
+    const onclose = mock((err?: any) => {});
+
+    const sql = new SQL({
+      adapter: "sqlite",
+      filename: dbPath,
+      // open in readonly so creation is not allowed
+      readonly: true,
+      onconnect,
+      onclose,
+    });
+
+    // Should have been called with an Error
+    expect(onconnect).toHaveBeenCalled();
+    const arg = onconnect.mock.calls[0]?.[0];
+    expect(arg instanceof Error).toBe(true);
+
+    await sql.close();
+    expect(onclose).toHaveBeenCalled();
+
+    await rm(dir, { recursive: true });
   });
 
   test("should create database file if it doesn't exist", async () => {

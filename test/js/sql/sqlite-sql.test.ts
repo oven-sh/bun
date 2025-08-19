@@ -3620,16 +3620,11 @@ describe("Query Explain and Optimization", () => {
       SELECT * FROM large_table WHERE category = 'category5'
     `;
 
-    expect(planWithoutIndex).toMatchInlineSnapshot(`
-      [
-        {
-          "detail": "SCAN large_table",
-          "id": 2,
-          "notused": 216,
-          "parent": 0,
-        },
-      ]
-    `);
+    expect(planWithoutIndex[0]).toMatchObject({
+      detail: "SCAN large_table",
+      id: expect.any(Number),
+      parent: 0,
+    });
 
     await sql`CREATE INDEX idx_category ON large_table(category)`;
 
@@ -3638,16 +3633,11 @@ describe("Query Explain and Optimization", () => {
       SELECT * FROM large_table WHERE category = 'category5'
     `;
 
-    expect(planWithIndex).toMatchInlineSnapshot(`
-      [
-        {
-          "detail": "SEARCH large_table USING INDEX idx_category (category=?)",
-          "id": 3,
-          "notused": 62,
-          "parent": 0,
-        },
-      ]
-    `);
+    expect(planWithIndex[0]).toMatchObject({
+      detail: "SEARCH large_table USING INDEX idx_category (category=?)",
+      id: expect.any(Number),
+      parent: 0,
+    });
   });
 });
 

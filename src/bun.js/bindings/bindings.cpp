@@ -48,6 +48,7 @@
 #include "JavaScriptCore/JSONObject.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSSet.h"
+#include "JavaScriptCore/Strong.h"
 #include "JavaScriptCore/JSSetIterator.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/ProxyObject.h"
@@ -5946,9 +5947,43 @@ extern "C" void JSC__JSValue__transformToReactElement(JSC::EncodedJSValue respon
     auto typeofIdentifier = JSC::Identifier::fromString(vm, "$$typeof"_s);
     responseObject->putDirect(vm, typeofIdentifier, react_element_symbol, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
     
-    // Set type property - this is the component/element that was passed
+    // Set type property
     auto typeIdentifier = JSC::Identifier::fromString(vm, "type"_s);
-    responseObject->putDirect(vm, typeIdentifier, component, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+    
+    // TODO: this is stupid
+    // Check if the component is a JSX element (has $$typeof property)
+    // If it is, we need to wrap it in a function for React to work properly
+    // because `<Component />` is already the result of calling Component()
+    if (component.isObject()) {
+        JSC::JSObject* componentObject = component.getObject();
+        auto typeofProperty = JSC::Identifier::fromString(vm, "$$typeof"_s);
+        JSC::JSValue typeofValue = componentObject->get(globalObject, typeofProperty);
+        
+        if (!scope.exception() && typeofValue.isSymbol()) {
+            // It's a JSX element - wrap it in a function that returns it
+            // This creates: () => component
+            // We need to protect the component value from GC
+            JSC::Strong<JSC::Unknown> strongComponent(vm, component);
+            
+            auto* wrapperFunction = JSC::JSNativeStdFunction::create(
+                vm,
+                globalObject,
+                0, // arity
+                String(), // name
+                [strongComponent](JSC::JSGlobalObject*, JSC::CallFrame*) -> JSC::EncodedJSValue {
+                    return JSC::JSValue::encode(strongComponent.get());
+                }
+            );
+            
+            responseObject->putDirect(vm, typeIdentifier, wrapperFunction, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+        } else {
+            // It's not a JSX element, use it directly
+            responseObject->putDirect(vm, typeIdentifier, component, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+        }
+    } else {
+        // It's not an object (could be a function or primitive), use it directly
+        responseObject->putDirect(vm, typeIdentifier, component, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+    }
     
     // Set key property to null
     auto keyIdentifier = JSC::Identifier::fromString(vm, "key"_s);

@@ -10,39 +10,32 @@ The `Bun.secrets` API uses the system keyring to store credentials securely. On 
 - D-Bus session for communication
 - Proper keyring initialization
 
-## Quick Setup for CI
+## Automatic CI Setup (Recommended)
 
-### Option 1: Use the provided script (Recommended)
+The secrets test automatically detects CI environments and sets up everything needed:
 
 ```bash
-# Install required packages first (in CI setup)
-apt-get update && apt-get install -y libsecret-1-dev gnome-keyring dbus-x11
-
-# Run the secrets tests
-./scripts/test-secrets-linux.sh
+# Just run the test normally - setup happens automatically!
+bun test test/js/bun/secrets.test.ts
 ```
 
-### Option 2: Manual setup
+The test will:
+1. **Detect CI environment** - Checks if running on Linux + Ubuntu/Debian in CI
+2. **Install packages** - Automatically installs required packages if missing
+3. **Setup keyring** - Creates keyring directory and configuration
+4. **Initialize services** - Starts D-Bus and gnome-keyring-daemon
+5. **Run tests** - Executes all secrets API tests
+
+## Manual CI Setup
+
+If automatic setup doesn't work, you can pre-install packages:
 
 ```bash
-# 1. Install packages
+# Install packages in CI setup step
 apt-get update && apt-get install -y libsecret-1-dev gnome-keyring dbus-x11
 
-# 2. Run tests in D-Bus session with keyring setup
-dbus-run-session -- sh -c '
-  export DISPLAY=:99
-  mkdir -p ~/.local/share/keyrings
-  cat > ~/.local/share/keyrings/login.keyring << EOF
-[keyring]
-display-name=login
-ctime=1609459200
-mtime=1609459200
-lock-on-idle=false
-lock-after=false
-EOF
-  echo -n "" | gnome-keyring-daemon --daemonize --login
-  bun test test/js/bun/secrets.test.ts
-'
+# Run tests normally
+bun test test/js/bun/secrets.test.ts
 ```
 
 ## Required Packages
@@ -103,31 +96,36 @@ FORCE_KEYRING_SETUP=1 bun test test/js/bun/secrets.test.ts
 
 ### GitHub Actions
 ```yaml
-- name: Install keyring packages
+- name: Run secrets tests (auto-setup)
+  run: bun test test/js/bun/secrets.test.ts
+```
+
+Or with explicit package installation:
+```yaml
+- name: Install keyring packages  
   run: |
     sudo apt-get update
     sudo apt-get install -y libsecret-1-dev gnome-keyring dbus-x11
 
-- name: Run secrets tests  
-  run: ./scripts/test-secrets-linux.sh
+- name: Run secrets tests
+  run: bun test test/js/bun/secrets.test.ts
 ```
 
 ### BuildKite
 ```yaml
 steps:
-  - command: |
-      apt-get update && apt-get install -y libsecret-1-dev gnome-keyring dbus-x11
-      ./scripts/test-secrets-linux.sh
+  - command: bun test test/js/bun/secrets.test.ts
     label: "🔐 Secrets API Tests"
 ```
 
 ### Docker
 ```dockerfile
+# Optional: pre-install packages for faster test startup
 RUN apt-get update && apt-get install -y \
     libsecret-1-dev \
     gnome-keyring \
     dbus-x11
 
-# In your test script:
-# ./scripts/test-secrets-linux.sh
+# Run test normally - setup is automatic
+RUN bun test test/js/bun/secrets.test.ts
 ```

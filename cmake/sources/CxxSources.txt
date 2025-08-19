@@ -29,6 +29,7 @@ src/bun.js/bindings/c-bindings.cpp
 src/bun.js/bindings/CallSite.cpp
 src/bun.js/bindings/CallSitePrototype.cpp
 src/bun.js/bindings/CatchScopeBinding.cpp
+src/bun.js/bindings/ClipboardLinux.cpp
 src/bun.js/bindings/CodeCoverage.cpp
 src/bun.js/bindings/ConsoleObject.cpp
 src/bun.js/bindings/Cookie.cpp
@@ -69,6 +70,7 @@ src/bun.js/bindings/JSBufferEncodingType.cpp
 src/bun.js/bindings/JSBufferList.cpp
 src/bun.js/bindings/JSBundlerPlugin.cpp
 src/bun.js/bindings/JSBunRequest.cpp
+src/bun.js/bindings/JSClipboard.cpp
 src/bun.js/bindings/JSCommonJSExtensions.cpp
 src/bun.js/bindings/JSCommonJSModule.cpp
 src/bun.js/bindings/JSCTaskScheduler.cpp

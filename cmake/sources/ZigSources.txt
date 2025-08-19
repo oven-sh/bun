@@ -172,6 +172,7 @@ src/bun.js/bindings/JSArray.zig
 src/bun.js/bindings/JSArrayIterator.zig
 src/bun.js/bindings/JSBigInt.zig
 src/bun.js/bindings/JSCell.zig
+src/bun.js/bindings/JSClipboard.zig
 src/bun.js/bindings/JSErrorCode.zig
 src/bun.js/bindings/JSFunction.zig
 src/bun.js/bindings/JSGlobalObject.zig

@@ -10,42 +10,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#if OS(LINUX)
-extern "C" ssize_t posix_spawn_bun(
-    int* pid,
-    const char* path,
-    const struct bun_spawn_request_t* request,
-    char* const argv[],
-    char* const envp[]
-);
-
-// From bun-spawn.cpp
-enum FileActionType : uint8_t {
-    None,
-    Close,
-    Dup2,
-    Open,
-};
-
-typedef struct bun_spawn_request_file_action_t {
-    FileActionType type;
-    const char* path;
-    int fds[2];
-    int flags;
-    int mode;
-} bun_spawn_request_file_action_t;
-
-typedef struct bun_spawn_file_action_list_t {
-    const bun_spawn_request_file_action_t* ptr;
-    size_t len;
-} bun_spawn_file_action_list_t;
-
-typedef struct bun_spawn_request_t {
-    const char* chdir;
-    bool detached;
-    bun_spawn_file_action_list_t actions;
-} bun_spawn_request_t;
-#endif
 
 namespace Bun {
 namespace Clipboard {
@@ -69,7 +33,7 @@ static ClipboardBackend detectClipboardBackend() {
     const char* wayland_display = getenv("WAYLAND_DISPLAY");
     if (wayland_display && strlen(wayland_display) > 0) {
         // Check if wl-copy is available
-        if (system("command -v wl-copy > /dev/null 2>&1") == 0) {
+        if (system("which wl-copy > /dev/null 2>&1") == 0) {
             detected_backend = ClipboardBackend::WlClip;
             return detected_backend;
         }
@@ -79,7 +43,7 @@ static ClipboardBackend detectClipboardBackend() {
     const char* x11_display = getenv("DISPLAY");
     if (x11_display && strlen(x11_display) > 0) {
         // Check if xclip is available
-        if (system("command -v xclip > /dev/null 2>&1") == 0) {
+        if (system("which xclip > /dev/null 2>&1") == 0) {
             detected_backend = ClipboardBackend::XClip;
             return detected_backend;
         }
@@ -90,7 +54,7 @@ static ClipboardBackend detectClipboardBackend() {
 }
 
 #if OS(LINUX)
-// Execute command using Bun's spawn infrastructure
+// Execute command using standard fork/exec - simpler and more reliable for clipboard operations
 static bool executeCommand(const std::vector<const char*>& args, const std::string& input = "", std::string* output = nullptr) {
     int input_pipe[2] = {-1, -1};
     int output_pipe[2] = {-1, -1};
@@ -107,48 +71,6 @@ static bool executeCommand(const std::vector<const char*>& args, const std::stri
         return false;
     }
     
-    // Set up file actions for bun_spawn
-    std::vector<bun_spawn_request_file_action_t> file_actions;
-    
-    if (!input.empty()) {
-        bun_spawn_request_file_action_t action = {};
-        action.type = FileActionType::Dup2;
-        action.fds[0] = input_pipe[0];  // source fd
-        action.fds[1] = STDIN_FILENO;   // target fd
-        file_actions.push_back(action);
-        
-        // Close write end in child
-        bun_spawn_request_file_action_t close_action = {};
-        close_action.type = FileActionType::Close;
-        close_action.fds[0] = input_pipe[1];
-        file_actions.push_back(close_action);
-    }
-    
-    if (output) {
-        bun_spawn_request_file_action_t action = {};
-        action.type = FileActionType::Dup2;
-        action.fds[0] = output_pipe[1];  // source fd
-        action.fds[1] = STDOUT_FILENO;   // target fd
-        file_actions.push_back(action);
-        
-        // Close read end in child
-        bun_spawn_request_file_action_t close_action = {};
-        close_action.type = FileActionType::Close;
-        close_action.fds[0] = output_pipe[0];
-        file_actions.push_back(close_action);
-    }
-    
-    bun_spawn_file_action_list_t action_list = {
-        .ptr = file_actions.empty() ? nullptr : file_actions.data(),
-        .len = file_actions.size()
-    };
-    
-    bun_spawn_request_t request = {
-        .chdir = nullptr,
-        .detached = false,
-        .actions = action_list
-    };
-    
     // Build argv
     std::vector<char*> argv;
     for (const char* arg : args) {
@@ -156,10 +78,9 @@ static bool executeCommand(const std::vector<const char*>& args, const std::stri
     }
     argv.push_back(nullptr);
     
-    int pid;
-    ssize_t spawn_result = posix_spawn_bun(&pid, args[0], &request, argv.data(), nullptr);
-    
-    if (spawn_result != 0) {
+    pid_t pid = fork();
+    if (pid == -1) {
+        // Fork failed
         if (input_pipe[0] != -1) {
             close(input_pipe[0]);
             close(input_pipe[1]);
@@ -171,11 +92,28 @@ static bool executeCommand(const std::vector<const char*>& args, const std::stri
         return false;
     }
     
+    if (pid == 0) {
+        // Child process
+        if (!input.empty()) {
+            dup2(input_pipe[0], STDIN_FILENO);
+            close(input_pipe[0]);
+            close(input_pipe[1]);
+        }
+        if (output) {
+            dup2(output_pipe[1], STDOUT_FILENO);
+            close(output_pipe[0]);
+            close(output_pipe[1]);
+        }
+        
+        execvp(argv[0], argv.data());
+        _exit(127);  // execvp failed
+    }
+    
     // Parent process - handle pipes
     if (!input.empty()) {
         close(input_pipe[0]);
         if (write(input_pipe[1], input.c_str(), input.length()) == -1) {
-            // Handle write error
+            // Handle write error - but continue
         }
         close(input_pipe[1]);
     }

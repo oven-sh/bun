@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
 
+// NOTE: For CI environments on Linux, use the setup script:
+//   ./scripts/test-secrets-linux.sh
+//
+// This ensures proper D-Bus session and keyring initialization.
+// See test/js/bun/secrets-ci-setup.md for details.
+
 test("Bun.secrets API", async () => {
   const testService = "bun-test-service-" + Date.now();
   const testUser = "test-name-" + Math.random();

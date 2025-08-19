@@ -394,15 +394,18 @@ pub const Hunk = struct {
 
     pub const Header = struct {
         original: struct {
-            start: u32,
+            start: u32 = 1,
             len: u32,
         },
         patched: struct {
-            start: u32,
+            start: u32 = 1,
             len: u32,
         },
 
-        pub const zeroes = std.mem.zeroes(Header);
+        pub const empty = Header{
+            .original = .{ .start = 1, .len = 0 },
+            .patched = .{ .start = 1, .len = 0 },
+        };
     };
 
     pub fn deinit(this: *Hunk, allocator: Allocator) void {
@@ -587,7 +590,7 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
                         .hunk = if (file.hunks.items.len > 0) brk: {
                             const value = file.hunks.items[0];
                             file.hunks.items[0] = .{
-                                .header = Hunk.Header.zeroes,
+                                .header = Hunk.Header.empty,
                             };
                             break :brk bun.new(Hunk, value);
                         } else null,
@@ -608,7 +611,7 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
                         .hunk = if (file.hunks.items.len > 0) brk: {
                             const value = file.hunks.items[0];
                             file.hunks.items[0] = .{
-                                .header = Hunk.Header.zeroes,
+                                .header = Hunk.Header.empty,
                             };
                             break :brk bun.new(Hunk, value);
                         } else null,

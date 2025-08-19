@@ -418,6 +418,11 @@ export class SQLiteAdapter
       }
 
       this.db = new SQLiteModule.Database(filename, options);
+
+      try {
+        const onconnect = this.connectionInfo.onconnect;
+        if (onconnect) onconnect(null);
+      } catch {}
     } catch (err) {
       // Convert bun:sqlite initialization errors to SQLiteError
       if (err && typeof err === "object" && "name" in err && err.name === "SQLiteError") {
@@ -430,7 +435,12 @@ export class SQLiteAdapter
       } else {
         this.storedError = err as Error;
       }
+
       this.db = null;
+      try {
+        const onconnect = this.connectionInfo.onconnect;
+        if (onconnect) onconnect(this.storedError ?? (err as Error));
+      } catch {}
     }
   }
 
@@ -674,6 +684,11 @@ export class SQLiteAdapter
       } catch {}
       this.db = null;
     }
+
+    try {
+      const onclose = this.connectionInfo.onclose;
+      if (onclose) onclose(this.storedError);
+    } catch {}
   }
 
   flush() {

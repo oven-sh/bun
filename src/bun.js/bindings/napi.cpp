@@ -2763,6 +2763,10 @@ extern "C" napi_status napi_call_function(napi_env env, napi_value recv,
 
     JSValue res = AsyncContextFrame::call(globalObject, funcValue, thisValue, args);
 
+    if (env->isVMTerminating()) {
+        return napi_set_last_error(env, napi_pending_exception);
+    }
+
     if (result) {
         if (res.isEmpty()) {
             *result = toNapi(JSC::jsUndefined(), globalObject);

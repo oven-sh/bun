@@ -9,8 +9,6 @@
 #include <wtf/Vector.h>
 #include <wtf/NeverDestroyed.h>
 
-// Forward declarations for types we need
-typedef struct OpaqueSecAccessRef* SecAccessRef;
 
 namespace Bun {
 namespace Secrets {

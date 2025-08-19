@@ -1,6 +1,6 @@
 /// Packed source mapping data for a single file.
 /// Owned by one IncrementalGraph file and/or multiple SourceMapStore entries.
-pub const PackedMap = @This();
+const Self = @This();
 
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", destroy, .{
     .destructor_ctx = *DevServer,
@@ -9,9 +9,7 @@ const RefCount = bun.ptr.RefCount(@This(), "ref_count", destroy, .{
 ref_count: RefCount,
 /// Allocated by `dev.allocator()`. Access with `.vlq()`
 /// This is stored to allow lazy construction of source map files.
-vlq_ptr: [*]u8,
-vlq_len: u32,
-vlq_allocator: std.mem.Allocator,
+_vlq: ScopedOwned([]u8),
 /// The bundler runs quoting on multiple threads, so it only makes
 /// sense to preserve that effort for concatenation and
 /// re-concatenation.
@@ -30,15 +28,12 @@ end_state: struct {
 /// already counted for.
 bits_used_for_memory_cost_dedupe: u32 = 0,
 
-pub fn newNonEmpty(chunk: SourceMap.Chunk, escaped_source: Owned([]u8)) bun.ptr.RefPtr(PackedMap) {
-    assert(chunk.buffer.list.items.len > 0);
+pub fn newNonEmpty(chunk: SourceMap.Chunk, escaped_source: Owned([]u8)) bun.ptr.RefPtr(Self) {
     var buffer = chunk.buffer;
-    const slice = buffer.toOwnedSlice();
+    assert(!buffer.isEmpty());
     return .new(.{
         .ref_count = .init(),
-        .vlq_ptr = slice.ptr,
-        .vlq_len = @intCast(slice.len),
-        .vlq_allocator = buffer.allocator,
+        ._vlq = .fromDynamic(buffer.toDynamicOwned()),
         .escaped_source = escaped_source,
         .end_state = .{
             .original_line = chunk.end_state.original_line,
@@ -48,12 +43,13 @@ pub fn newNonEmpty(chunk: SourceMap.Chunk, escaped_source: Owned([]u8)) bun.ptr.
 }
 
 fn destroy(self: *@This(), _: *DevServer) void {
-    self.vlq_allocator.free(self.vlq());
+    self._vlq.deinit();
+    self.escaped_source.deinit();
     bun.destroy(self);
 }
 
 pub fn memoryCost(self: *const @This()) usize {
-    return self.vlq_len + self.quotedContents().len + @sizeOf(@This());
+    return self.vlq().len + self.quotedContents().len + @sizeOf(@This());
 }
 
 /// When DevServer iterates everything to calculate memory usage, it passes
@@ -67,8 +63,8 @@ pub fn memoryCostWithDedupe(self: *@This(), new_dedupe_bits: u32) usize {
     return self.memoryCost();
 }
 
-pub fn vlq(self: *const @This()) []u8 {
-    return self.vlq_ptr[0..self.vlq_len];
+pub fn vlq(self: *const @This()) []const u8 {
+    return self._vlq.getConst();
 }
 
 // TODO: rename to `escapedSource`
@@ -78,7 +74,7 @@ pub fn quotedContents(self: *const @This()) []const u8 {
 
 comptime {
     if (!Environment.ci_assert) {
-        assert_eql(@sizeOf(@This()), @sizeOf(usize) * 8);
+        assert_eql(@sizeOf(@This()), @sizeOf(usize) * 6);
         assert_eql(@alignOf(@This()), @alignOf(usize));
     }
 }
@@ -92,7 +88,7 @@ comptime {
 /// - `IncrementalGraph(.client).File` offloads this bit into `File.Flags`
 /// - `SourceMapStore.Entry` uses `MultiArrayList`
 pub const RefOrEmpty = union(enum(u1)) {
-    ref: bun.ptr.RefPtr(PackedMap),
+    ref: bun.ptr.RefPtr(Self),
     empty: Empty,
 
     pub const Empty = struct {
@@ -134,7 +130,7 @@ pub const RefOrEmpty = union(enum(u1)) {
     pub const Untagged = brk: {
         @setRuntimeSafety(Environment.isDebug); // do not store a union tag in windows release
         break :brk union {
-            ref: bun.ptr.RefPtr(PackedMap),
+            ref: bun.ptr.RefPtr(Self),
             empty: Empty,
 
             pub const blank_empty = RefOrEmpty.blank_empty.untag();
@@ -156,8 +152,6 @@ pub const RefOrEmpty = union(enum(u1)) {
     };
 };
 
-const std = @import("std");
-
 const bun = @import("bun");
 const Environment = bun.Environment;
 const SourceMap = bun.sourcemap;
@@ -165,8 +159,10 @@ const assert = bun.assert;
 const assert_eql = bun.assert_eql;
 const bake = bun.bake;
 const Chunk = bun.bundle_v2.Chunk;
-const RefPtr = bun.ptr.RefPtr;
 
 const DevServer = bake.DevServer;
 const RouteBundle = DevServer.RouteBundle;
+
 const Owned = bun.ptr.Owned;
+const RefPtr = bun.ptr.RefPtr;
+const ScopedOwned = bun.ptr.ScopedOwned;

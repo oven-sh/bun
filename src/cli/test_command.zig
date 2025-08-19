@@ -63,7 +63,7 @@ fn fmtStatusTextLine(comptime status: @Type(.enum_literal), comptime emoji_or_co
     }
 }
 
-fn writeTestStatusLine(comptime status: @Type(.enum_literal), writer: anytype) void {
+pub fn writeTestStatusLine(comptime status: @Type(.enum_literal), writer: anytype) void {
     // When using AI agents, only print failures
     if (Output.isAIAgent() and status != .fail) {
         return;

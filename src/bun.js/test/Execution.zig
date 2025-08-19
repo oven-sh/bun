@@ -13,9 +13,36 @@ const ExecutionSequence = struct {
     entry_start: usize,
     entry_end: usize,
     entry_index: usize,
+    test_entry: ?*ExecutionEntry,
     remaining_repeat_count: f64 = 1,
-    result: jsc.Jest.Result = .pending,
+    result: Result = .pending,
     executing: bool = false,
+    started_at: bun.timespec = bun.timespec.epoch,
+};
+pub const Result = enum {
+    pending,
+    pass,
+    fail,
+    skip,
+    todo,
+    timeout,
+    skipped_because_label,
+    fail_because_failing_test_passed,
+    fail_because_todo_passed,
+    fail_because_expected_has_assertions,
+    fail_because_expected_assertion_count,
+
+    fn isPass(this: Result) bool {
+        return switch (this) {
+            .pass, .skip, .todo, .skipped_because_label => true,
+            .fail, .timeout, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => false,
+            .pending => false,
+        };
+    }
+};
+const EntryID = enum(usize) {
+    none = std.math.maxInt(usize),
+    _,
 };
 
 pub fn init(gpa: std.mem.Allocator) Execution {
@@ -81,17 +108,25 @@ pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, result_is_error
     }
     const sequence = &this._sequences.items[sequence_index];
     bun.assert(sequence.entry_index < sequence.entry_end);
+
     sequence.executing = false;
     sequence.entry_index += 1;
     if (result_is_error) {
-        sequence.result = .{ .fail = 0 };
+        sequence.result = .fail;
         // TODO: if this is a beforeAll, maybe we skip running the test?
         groupLog.log("TODO: log error", .{});
     } else if (sequence.result == .pending) {
-        sequence.result = .{ .pass = 0 };
+        sequence.result = .pass;
     }
-
-    groupLog.log("TODO: announce test result", .{});
+}
+fn onSequenceStarted(this: *Execution, sequence_index: usize) void {
+    const sequence = &this._sequences.items[sequence_index];
+    sequence.started_at = bun.timespec.now();
+}
+fn onSequenceCompleted(this: *Execution, sequence_index: usize) void {
+    const sequence = &this._sequences.items[sequence_index];
+    const elapsed_ns = sequence.started_at.sinceNow();
+    _ = elapsed_ns;
 }
 pub fn resetGroup(this: *Execution, group_index: usize) void {
     groupLog.begin(@src());
@@ -106,7 +141,7 @@ pub fn resetGroup(this: *Execution, group_index: usize) void {
 pub fn resetSequence(this: *Execution, sequence_index: usize) void {
     const sequence = &this._sequences.items[sequence_index];
     bun.assert(!sequence.executing);
-    if (sequence.result == .pass or sequence.result == .pending) {
+    if (sequence.result.isPass()) {
         // passed or pending; run again
         sequence.entry_index = sequence.entry_start;
         sequence.result = .pending;
@@ -122,6 +157,7 @@ pub fn runSequence(this: *Execution, sequence_index: usize, callback_queue: *des
     const sequence = &this._sequences.items[sequence_index];
     if (sequence.executing) return .execute; // can't advance; already executing
     if (sequence.entry_index >= sequence.entry_end) {
+        this.onSequenceCompleted(sequence_index);
         sequence.remaining_repeat_count -= 1;
         if (sequence.remaining_repeat_count <= 0) return .done; // done
         this.resetSequence(sequence_index);
@@ -129,6 +165,8 @@ pub fn runSequence(this: *Execution, sequence_index: usize, callback_queue: *des
 
     const next_item = this._entries.items[sequence.entry_index];
     sequence.executing = true;
+    this.onSequenceStarted(sequence_index);
+
     groupLog.log("runSequence queued callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.entry_index });
     try callback_queue.append(.{ .callback = .init(this.bunTest().gpa, next_item.callback.get()), .done_parameter = true, .data = sequence_index });
     return .execute; // execute
@@ -151,7 +189,7 @@ pub fn generateOrderDescribe(this: *Execution, current: *DescribeScope) bun.JSEr
         try this._entries.append(entry); // add entry to sequence
         const entries_end = this._entries.items.len;
         const sequences_start = this._sequences.items.len;
-        try this._sequences.append(.{ .entry_start = entries_start, .entry_end = entries_end, .entry_index = entries_start }); // add sequence to concurrentgroup
+        try this._sequences.append(.{ .entry_start = entries_start, .entry_end = entries_end, .entry_index = entries_start, .test_entry = null }); // add sequence to concurrentgroup
         const sequences_end = this._sequences.items.len;
         try this.appendOrExtendConcurrentGroup(current.concurrent, sequences_start, sequences_end); // add or extend the concurrent group
     }
@@ -166,7 +204,7 @@ pub fn generateOrderDescribe(this: *Execution, current: *DescribeScope) bun.JSEr
         try this._entries.append(entry); // add entry to sequence
         const entries_end = this._entries.items.len;
         const sequences_start = this._sequences.items.len;
-        try this._sequences.append(.{ .entry_start = entries_start, .entry_end = entries_end, .entry_index = entries_start }); // add sequence to concurrentgroup
+        try this._sequences.append(.{ .entry_start = entries_start, .entry_end = entries_end, .entry_index = entries_start, .test_entry = null }); // add sequence to concurrentgroup
         const sequences_end = this._sequences.items.len;
         try this.appendOrExtendConcurrentGroup(current.concurrent, sequences_start, sequences_end); // add or extend the concurrent group
     }
@@ -212,7 +250,7 @@ pub fn generateOrderTest(this: *Execution, current: *ExecutionEntry) bun.JSError
     // add these as a single sequence
     const entries_end = this._entries.items.len;
     const sequences_start = this._sequences.items.len;
-    try this._sequences.append(.{ .entry_start = entries_start, .entry_end = entries_end, .entry_index = entries_start }); // add sequence to concurrentgroup
+    try this._sequences.append(.{ .entry_start = entries_start, .entry_end = entries_end, .entry_index = entries_start, .test_entry = current }); // add sequence to concurrentgroup
     const sequences_end = this._sequences.items.len;
     try this.appendOrExtendConcurrentGroup(current.concurrent, sequences_start, sequences_end); // add or extend the concurrent group
 }

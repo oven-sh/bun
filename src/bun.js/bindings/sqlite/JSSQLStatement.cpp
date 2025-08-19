@@ -1478,7 +1478,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
         int64_t last_insert_rowid = sqlite3_last_insert_rowid(db);
         diff->putInternalField(vm, 0, JSC::jsNumber(total_changes_after - total_changes_before));
         if (safeIntegers) {
-            // JSBigInt::createFrom can throw; ensure we check for exceptions
             JSValue lastRowIdBigInt = JSBigInt::createFrom(lexicalGlobalObject, last_insert_rowid);
             RETURN_IF_EXCEPTION(scope, {});
             diff->putInternalField(vm, 1, lastRowIdBigInt);
@@ -2444,7 +2443,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
         int64_t last_insert_rowid = sqlite3_last_insert_rowid(db);
         diff->putInternalField(vm, 0, JSC::jsNumber(total_changes_after - total_changes_before));
         if (castedThis->useBigInt64) {
-            // JSBigInt::createFrom can throw; ensure we check for exceptions
             JSValue lastRowIdBigInt = JSBigInt::createFrom(lexicalGlobalObject, last_insert_rowid);
             RETURN_IF_EXCEPTION(scope, {});
             diff->putInternalField(vm, 1, lastRowIdBigInt);

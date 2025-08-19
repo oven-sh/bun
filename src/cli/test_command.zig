@@ -796,20 +796,15 @@ pub const CommandLineReporter = struct {
         return &this.jest.summary;
     }
 
-    pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
+    const describe2 = @import("../bun.js/test/describe2.zig");
+    pub fn handleTestPass(buntest: *describe2.BunTest, sequence: *describe2.Execution.ExecutionSequence, elapsed_ns: u64) void {
         const writer = Output.errorWriterBuffered();
         defer Output.flush();
 
-        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
-
         writeTestStatusLine(.pass, &writer);
 
-        const line_number = this.jest.tests.items(.line_number)[id];
-        printTestLine(.pass, label, elapsed_ns, parent, expectations, false, writer, file, this.file_reporter, line_number);
-
-        this.jest.tests.items(.status)[id] = TestRunner.Test.Status.pass;
-        this.summary().pass += 1;
-        this.summary().expectations += expectations;
+        // const line_number = this.jest.tests.items(.line_number)[id];
+        printTestLine(.pass, buntest, sequence, elapsed_ns);
     }
 
     pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {

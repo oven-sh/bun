@@ -9,7 +9,7 @@ const ConcurrentGroup = struct {
     executing: bool = false,
     concurrent: bool,
 };
-const ExecutionSequence = struct {
+pub const ExecutionSequence = struct {
     entry_start: usize,
     entry_end: usize,
     entry_index: usize,
@@ -126,7 +126,7 @@ fn onSequenceStarted(this: *Execution, sequence_index: usize) void {
 fn onSequenceCompleted(this: *Execution, sequence_index: usize) void {
     const sequence = &this._sequences.items[sequence_index];
     const elapsed_ns = sequence.started_at.sinceNow();
-    CommandLineReporter.CommandLineReporter.handleTestPass(sequence, elapsed_ns, sequence.result);
+    CommandLineReporter.CommandLineReporter.handleTestPass(this.buntest(), sequence, elapsed_ns, sequence.result);
 }
 pub fn resetGroup(this: *Execution, group_index: usize) void {
     groupLog.begin(@src());

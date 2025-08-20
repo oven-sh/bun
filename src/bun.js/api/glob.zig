@@ -297,8 +297,8 @@ fn globWalkResultToJS(globWalk: *GlobWalker, globalThis: *JSGlobalObject) bun.JS
     else 
         (BunString.toJSArray(globalThis, globWalk.matchedPaths.keys()) catch .js_undefined);
         
-    // If pagination options were used (limit is set), return structured result
-    if (globWalk.limit != null or globWalk.offset > 0 or globWalk.sort_field != null) {
+    // If advanced options were used, return structured result
+    if (globWalk.use_advanced_result) {
         const result_obj = jsc.JSValue.createEmptyObject(globalThis, 2);
         result_obj.put(globalThis, ZigString.static("files"), files_array);
         const has_more = jsc.JSValue.jsBoolean(globWalk.has_more);

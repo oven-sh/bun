@@ -333,6 +333,7 @@ pub fn GlobWalker_(
         offset: u32 = 0,
         sort_field: ?SortField = null,
         ignore_patterns: ?[][]const u8 = null,
+        use_advanced_result: bool = false,
         
         // Abort signal support
         did_abort: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
@@ -1064,6 +1065,8 @@ pub fn GlobWalker_(
             abort_signal: ?*AbortSignal,
         ) !Maybe(void) {
             log("initWithCwd(cwd={s})", .{cwd});
+            const use_advanced = limit != null or offset > 0 or sort_field != null;
+            
             this.* = .{
                 .cwd = cwd,
                 .pattern = pattern,
@@ -1078,6 +1081,7 @@ pub fn GlobWalker_(
                 .sort_field = sort_field,
                 .ignore_patterns = ignore_patterns,
                 .abort_signal = abort_signal,
+                .use_advanced_result = use_advanced,
                 .basename_excluding_special_syntax_component_idx = 0,
                 .end_byte_of_basename_excluding_special_syntax = 0,
             };

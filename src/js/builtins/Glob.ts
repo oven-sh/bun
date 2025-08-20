@@ -5,6 +5,22 @@ interface Glob {
 
 export function scan(this: Glob, opts) {
   const valuesPromise = this.$pull(opts);
+  
+  // Check if this is a call with advanced options that should return a structured result
+  const hasAdvancedOptions = opts && (
+    typeof opts === 'object' && (
+      opts.limit !== undefined || 
+      opts.offset !== undefined || 
+      opts.sort !== undefined
+    )
+  );
+  
+  if (hasAdvancedOptions) {
+    // Return the promise directly for structured results
+    return valuesPromise;
+  }
+  
+  // Return async iterator for backward compatibility
   async function* iter() {
     const values = (await valuesPromise) || [];
     yield* values;

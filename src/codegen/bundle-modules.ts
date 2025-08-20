@@ -75,11 +75,14 @@ async function retry(n, fn) {
   throw err;
 }
 
+const bunRepoRoot = path.join(CMAKE_BUILD_ROOT, "..", "..");
+
 // Preprocess builtins
 const bundledEntryPoints: string[] = [];
 for (let i = 0; i < nativeStartIndex; i++) {
   try {
-    let input = fs.readFileSync(path.join(BASE, moduleList[i]), "utf8");
+    const file = path.join(BASE, moduleList[i]);
+    let input = fs.readFileSync(file, "utf8");
 
     if (!/\bexport\s+(?:function|class|const|default|{)/.test(input)) {
       if (input.includes("module.exports")) {
@@ -87,7 +90,9 @@ for (let i = 0; i < nativeStartIndex; i++) {
           "Do not use CommonJS module.exports in ESM modules. Use `export default { ... }` instead. See src/js/README.md",
         );
       } else {
-        throw new Error("Internal modules must have at least one ESM export statement. See src/js/README.md");
+        throw new Error(
+          `Internal modules must have at least one ESM export statement in '${path.relative(bunRepoRoot, file)}' — see src/js/README.md`,
+        );
       }
     }
 

@@ -30,6 +30,8 @@ struct Error {
     int code = 0;
 
     bool isError() const { return type != ErrorType::None; }
+
+    JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject) const;
 };
 
 // Sync platform-specific implementations (used by threadpool)

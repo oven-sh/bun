@@ -5902,23 +5902,21 @@ extern "C" bool JSC__JSValue__isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JS
     auto react_element_symbol = JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.transitional.element"_s));
 
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    
+
     // TODO: primitive values (strings, numbers, booleans, null, undefined) are also valid
     if (value.isObject()) {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        
+
         JSC::JSObject* object = value.getObject();
         auto typeofProperty = JSC::Identifier::fromString(vm, "$$typeof"_s);
         JSC::JSValue typeofValue = object->get(globalObject, typeofProperty);
         RETURN_IF_EXCEPTION(scope, false);
 
-        printf("IS SYMBOL: %s\n", typeofValue.isSymbol() ? "true" : "false");
-        
         if (typeofValue.isSymbol() && (typeofValue == react_legacy_element_symbol || typeofValue == react_element_symbol)) {
             return true;
         }
     }
-    
+
     return false;
 }
 
@@ -5931,26 +5929,50 @@ extern "C" void JSC__JSValue__transformToReactElement(JSC::EncodedJSValue respon
     JSC__JSValue__transformToReactElementWithOptions(responseValue, componentValue, JSC::JSValue::encode(JSC::jsUndefined()), globalObject);
 }
 
+/// What this function does is make a Response object pretend to be a React
+/// component. To do this we have to put a couple properties on it:
+///
+/// ```ts
+/// response["$$typeof"] = REACT_ELEMENT_TYPE;
+/// response.type = Component;
+/// response.key = null;
+/// response.props = {};
+
+/// // Add the _store object that React expects in dev mode
+/// response._store = {};
+/// Object.defineProperty(response._store, 'validated', {
+///     configurable: false,
+///     enumerable: false,
+///     writable: true,
+///     value: 0  // or 1 to mark it as already validated
+/// });
+
+/// // Add debug properties expected in dev mode
+/// response._owner = null;
+/// response._debugInfo = null;
+/// response._debugStack = null;  // or new Error() if you want a stack trace
+/// response._debugTask = null;
+/// ```
 extern "C" void JSC__JSValue__transformToReactElementWithOptions(JSC::EncodedJSValue responseValue, JSC::EncodedJSValue componentValue, JSC::EncodedJSValue responseOptionsValue, JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    
+
     JSC::JSValue response = JSC::JSValue::decode(responseValue);
     JSC::JSValue component = JSC::JSValue::decode(componentValue);
     JSC::JSValue responseOptions = JSC::JSValue::decode(responseOptionsValue);
-    
+
     if (!response.isObject()) {
         return;
     }
-    
+
     JSC::JSObject* responseObject = response.getObject();
-    
+
     // Get the React element symbol - same as in isJSXElement
     // For now, use the transitional element symbol (React 19+)
     // TODO: check for legacy symbol as fallback
     auto react_element_symbol = JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.transitional.element"_s));
-    
+
     // If we have response options, we need to wrap the component
     // For now, we'll store the response options directly on the response object
     // The actual wrapping with AsyncLocalStorage update will happen when rendered
@@ -5960,17 +5982,17 @@ extern "C" void JSC__JSValue__transformToReactElementWithOptions(JSC::EncodedJSV
         auto responseOptionsIdentifier = JSC::Identifier::fromString(vm, "__responseOptions"_s);
         responseObject->putDirect(vm, responseOptionsIdentifier, responseOptions, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
     }
-    
+
     // Transform the Response object itself into a React element
     // The component parameter is what will be stored in the 'type' field
-    
+
     // Set $$typeof property to mark this as a React element
     auto typeofIdentifier = JSC::Identifier::fromString(vm, "$$typeof"_s);
     responseObject->putDirect(vm, typeofIdentifier, react_element_symbol, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
-    
+
     // Set type property
     auto typeIdentifier = JSC::Identifier::fromString(vm, "type"_s);
-    
+
     // TODO: this is stupid
     // Check if the component is a JSX element (has $$typeof property)
     // If it is, we need to wrap it in a function for React to work properly
@@ -5979,30 +6001,30 @@ extern "C" void JSC__JSValue__transformToReactElementWithOptions(JSC::EncodedJSV
         JSC::JSObject* componentObject = component.getObject();
         auto typeofProperty = JSC::Identifier::fromString(vm, "$$typeof"_s);
         JSC::JSValue typeofValue = componentObject->get(globalObject, typeofProperty);
-        
+
         if (!scope.exception() && typeofValue.isSymbol()) {
             // It's a JSX element - wrap it in a function that returns it
             // If we have response options, use the BakeSSRResponse builtin to wrap the component
             // so it can update AsyncLocalStorage when rendered
-            
+
             if (!responseOptions.isUndefinedOrNull() && responseOptions.isObject()) {
                 // Use the BakeSSRResponse builtin's wrapComponent function
                 // This will create a wrapper that updates AsyncLocalStorage before returning the component
-                
+
                 // Create the wrapComponent function from the BakeSSRResponse builtin
                 // The pattern is: <filename><functionName>CodeGenerator
                 // So for BakeSSRResponse.ts with export function wrapComponent:
                 JSC::JSFunction* wrapComponentFn = JSC::JSFunction::create(vm, globalObject, bakeSSRResponseWrapComponentCodeGenerator(vm), globalObject);
-                
+
                 // Call wrapComponent(component, responseOptions)
                 JSC::MarkedArgumentBuffer args;
                 args.append(component);
                 args.append(responseOptions);
-                
+
                 // Call the wrapComponent function
                 auto callData = JSC::getCallData(wrapComponentFn);
                 JSC::JSValue wrappedComponent = JSC::call(globalObject, wrapComponentFn, callData, JSC::jsUndefined(), args);
-                
+
                 if (!scope.exception() && !wrappedComponent.isUndefinedOrNull()) {
                     responseObject->putDirect(vm, typeIdentifier, wrappedComponent, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
                 } else {
@@ -6016,15 +6038,14 @@ extern "C" void JSC__JSValue__transformToReactElementWithOptions(JSC::EncodedJSV
                         String(), // name
                         [strongComponent](JSC::JSGlobalObject* execGlobalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
                             return JSC::JSValue::encode(strongComponent.get());
-                        }
-                    );
-                    
+                        });
+
                     responseObject->putDirect(vm, typeIdentifier, wrapperFunction, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
                 }
             } else {
                 // No response options - create a simple wrapper
                 JSC::Strong<JSC::Unknown> strongComponent(vm, component);
-                
+
                 auto* wrapperFunction = JSC::JSNativeStdFunction::create(
                     vm,
                     globalObject,
@@ -6032,9 +6053,8 @@ extern "C" void JSC__JSValue__transformToReactElementWithOptions(JSC::EncodedJSV
                     String(), // name
                     [strongComponent](JSC::JSGlobalObject* execGlobalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
                         return JSC::JSValue::encode(strongComponent.get());
-                    }
-                );
-                
+                    });
+
                 responseObject->putDirect(vm, typeIdentifier, wrapperFunction, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
             }
         } else {
@@ -6045,35 +6065,36 @@ extern "C" void JSC__JSValue__transformToReactElementWithOptions(JSC::EncodedJSV
         // It's not an object (could be a function or primitive), use it directly
         responseObject->putDirect(vm, typeIdentifier, component, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
     }
-    
+
     // Set key property to null
     auto keyIdentifier = JSC::Identifier::fromString(vm, "key"_s);
     responseObject->putDirect(vm, keyIdentifier, JSC::jsNull(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
-    
+
     // Set props property to empty object
     auto propsIdentifier = JSC::Identifier::fromString(vm, "props"_s);
     responseObject->putDirect(vm, propsIdentifier, JSC::constructEmptyObject(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
-    
+
     // Add _store object for dev mode
     auto storeIdentifier = JSC::Identifier::fromString(vm, "_store"_s);
     JSC::JSObject* storeObject = JSC::constructEmptyObject(globalObject);
-    
+
     // Add validated property to _store
     auto validatedIdentifier = JSC::Identifier::fromString(vm, "validated"_s);
     storeObject->putDirect(vm, validatedIdentifier, JSC::jsNumber(0), 0);
-    
+
     responseObject->putDirect(vm, storeIdentifier, storeObject, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
-    
+
     // Add debug properties (all set to null)
     auto ownerIdentifier = JSC::Identifier::fromString(vm, "_owner"_s);
     responseObject->putDirect(vm, ownerIdentifier, JSC::jsNull(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
-    
+
     auto debugInfoIdentifier = JSC::Identifier::fromString(vm, "_debugInfo"_s);
     responseObject->putDirect(vm, debugInfoIdentifier, JSC::jsNull(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
-    
+
     auto debugStackIdentifier = JSC::Identifier::fromString(vm, "_debugStack"_s);
+    // TODO: we should put an error here if we want a stack trace apparently
     responseObject->putDirect(vm, debugStackIdentifier, JSC::jsNull(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
-    
+
     auto debugTaskIdentifier = JSC::Identifier::fromString(vm, "_debugTask"_s);
     responseObject->putDirect(vm, debugTaskIdentifier, JSC::jsNull(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
 }

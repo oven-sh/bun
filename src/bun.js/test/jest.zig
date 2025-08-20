@@ -1952,7 +1952,7 @@ inline fn createScope(
     if (tag_to_use == .only or parent.tag == .only) {
         // Prevent test.only in CI environments
         if (ci_info.detectCI()) |_| {
-            return globalThis.throwPretty("test.only is not allowed in CI environments", .{});
+            return globalThis.throwPretty("describe.only is not allowed in CI environments\nIf this is not a CI environment, set the environment variable CI=0 to force allow.", .{});
         }
         Jest.runner.?.setOnly();
         tag_to_use = .only;
@@ -2336,7 +2336,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
             if (tag == .only) {
                 // Prevent test.only in CI environments
                 if (ci_info.detectCI()) |_| {
-                    return globalThis.throwPretty("test.only is not allowed in CI environments", .{});
+                    return globalThis.throwPretty("test.only is not allowed in CI environments\nIf this is not a CI environment, set the environment variable CI=0 to force allow.", .{});
                 }
                 Jest.runner.?.setOnly();
             }

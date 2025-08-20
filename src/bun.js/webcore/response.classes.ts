@@ -138,7 +138,7 @@ export default [
       tag: 254,
 
       // TODO: fix this.
-      // We should support it unless i'ts a file descriptor.
+      // We should support it unless it's a file descriptor.
       storable: true,
     },
     estimatedSize: true,

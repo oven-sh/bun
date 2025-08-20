@@ -498,30 +498,19 @@ print = "yarn"
 
 ### `install.security.provider`
 
-Configure a security provider to scan packages before installation. When set, packages will be analyzed for security vulnerabilities and other issues before being installed.
+Configure a security provider to scan packages for vulnerabilities before installation.
+
+First, install a security provider from npm:
+
+```bash
+$ bun add -d @acme/bun-security-provider
+```
+
+Then configure it in your `bunfig.toml`:
 
 ```toml
 [install.security]
-provider = "./security-scanner.ts"
-```
-
-The provider file should export a provider object with a `scan` function:
-
-```typescript
-export const provider: Bun.Security.Provider = {
-  version: "1",
-  scan: async ({ packages }) => {
-    // Analyze packages and return security issues
-    return [
-      {
-        package: "vulnerable-package",
-        description: "Known security vulnerability",
-        level: "fatal", // "fatal" | "error" | "warning" | "info"
-        url: "https://example.com/advisory",
-      },
-    ];
-  },
-};
+provider = "@acme/bun-security-provider"
 ```
 
 When a security provider is configured:
@@ -531,7 +520,7 @@ When a security provider is configured:
 - Installation is cancelled if fatal issues are found
 - Security warnings are displayed during installation
 
-Learn more about [writing and using security scanners](/docs/install/security).
+Learn more about [using and writing security scanners](/docs/install/security).
 
 ### `install.linker`
 

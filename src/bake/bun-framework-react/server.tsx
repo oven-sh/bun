@@ -137,18 +137,22 @@ export async function render(
       ...responseOptions,
     });
   } else {
-    // TODO: this seems shitty
+    // TODO: this is bad and could be done way better
+
     // Buffer the entire response and return it all at once
     const htmlStream = renderToHtml(rscPayload, meta.modules, signal);
     const chunks: Uint8Array[] = [];
     const reader = htmlStream.getReader();
 
     try {
-      while (true) {
+      let keepGoing = true;
+      do {
         const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-      }
+        keepGoing = !done;
+        if (!done) {
+          chunks.push(value);
+        }
+      } while (keepGoing);
     } finally {
       reader.releaseLock();
     }

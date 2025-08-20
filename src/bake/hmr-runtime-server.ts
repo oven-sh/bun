@@ -13,7 +13,7 @@ if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
 export type RequestContext = {
   responseOptions: ResponseInit;
   streamingStarted?: boolean;
-  abortNonStreaming: (path: string, params: Record<string, string> | null) => {};
+  abortNonStreaming?: (path: string, params: Record<string, string> | null) => {};
 };
 
 // Create the AsyncLocalStorage instance for propagating response options
@@ -81,9 +81,13 @@ server_exports = {
       requestWithCookies.cookies = req.cookies || new Bun.CookieMap(req.headers.get("Cookie") || "");
     }
 
+    let storeValue: RequestContext = {
+      responseOptions: {},
+    };
+
     // Run the renderer inside the AsyncLocalStorage context
     // This allows Response constructors to access the stored options
-    const response = await responseOptionsALS.run({}, async () => {
+    const response = await responseOptionsALS.run(storeValue, async () => {
       return await serverRenderer(
         requestWithCookies,
         {

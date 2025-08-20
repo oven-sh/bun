@@ -54,7 +54,9 @@ test.only("should fail in CI", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(exitCode).toBe(1);
-      expect(stderr).toContain("test.only is not allowed in CI environments");
+      expect(stderr).toContain(
+        "error: test.only is not allowed in CI environments\nIf this is not a CI environment, set the environment variable CI=0 to force allow.",
+      );
     });
 
     test("describe.only should fail when GITHUB_ACTIONS=1", async () => {
@@ -81,7 +83,9 @@ describe.only("CI test", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(exitCode).toBe(1);
-      expect(stderr).toContain("test.only is not allowed in CI environments");
+      expect(stderr).toContain(
+        "error: describe.only is not allowed in CI environments\nIf this is not a CI environment, set the environment variable CI=0 to force allow.",
+      );
     });
   });
 

@@ -11,7 +11,9 @@ export function scan(this: Glob, opts) {
     typeof opts === 'object' && (
       opts.limit !== undefined || 
       opts.offset !== undefined || 
-      opts.sort !== undefined
+      opts.sort !== undefined ||
+      opts.ignore !== undefined ||
+      opts.nocase !== undefined
     )
   );
   

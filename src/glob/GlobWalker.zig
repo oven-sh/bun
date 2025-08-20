@@ -1065,7 +1065,8 @@ pub fn GlobWalker_(
             abort_signal: ?*AbortSignal,
         ) !Maybe(void) {
             log("initWithCwd(cwd={s})", .{cwd});
-            const use_advanced = limit != null or offset > 0 or sort_field != null;
+            const use_advanced = limit != null or offset > 0 or sort_field != null or 
+                ignore_patterns != null or nocase;
             
             this.* = .{
                 .cwd = cwd,
@@ -1136,6 +1137,81 @@ pub fn GlobWalker_(
             }
         }
         
+        fn matchesIgnorePattern(this: *GlobWalker, path: []const u8, pattern: []const u8) bool {
+            // Simple glob pattern matching for ignore patterns
+            // For now, implement basic support for ** and * patterns
+            
+            if (std.mem.eql(u8, pattern, path)) {
+                return true;
+            }
+            
+            // Handle ** pattern (matches any number of directories)
+            if (std.mem.indexOf(u8, pattern, "**")) |_| {
+                return this.matchesGlobPattern(path, pattern);
+            }
+            
+            // Handle * pattern  
+            if (std.mem.indexOf(u8, pattern, "*")) |_| {
+                return this.matchesGlobPattern(path, pattern);
+            }
+            
+            // Check if path starts with pattern (for directory prefixes)
+            return std.mem.startsWith(u8, path, pattern);
+        }
+        
+        fn matchesGlobPattern(this: *GlobWalker, text: []const u8, pattern: []const u8) bool {
+            
+            // Simple glob matching implementation
+            var text_idx: usize = 0;
+            var pattern_idx: usize = 0;
+            
+            while (pattern_idx < pattern.len and text_idx < text.len) {
+                if (pattern_idx + 1 < pattern.len and 
+                    pattern[pattern_idx] == '*' and pattern[pattern_idx + 1] == '*') {
+                    // Handle ** pattern
+                    pattern_idx += 2;
+                    if (pattern_idx >= pattern.len) return true; // ** at end matches everything
+                    
+                    // Skip to next non-** part of pattern
+                    if (pattern_idx < pattern.len and pattern[pattern_idx] == '/') {
+                        pattern_idx += 1;
+                    }
+                    
+                    // Find the next part of the pattern in the text
+                    while (text_idx < text.len) {
+                        if (this.matchesGlobPattern(text[text_idx..], pattern[pattern_idx..])) {
+                            return true;
+                        }
+                        text_idx += 1;
+                    }
+                    return false;
+                } else if (pattern[pattern_idx] == '*') {
+                    // Handle single * pattern
+                    pattern_idx += 1;
+                    if (pattern_idx >= pattern.len) return true; // * at end matches everything remaining
+                    
+                    // Find next non-* character in pattern
+                    const next_char = pattern[pattern_idx];
+                    
+                    // Find next occurrence of that character in text
+                    while (text_idx < text.len and text[text_idx] != next_char) {
+                        text_idx += 1;
+                    }
+                    
+                    if (text_idx >= text.len) return false;
+                } else if (pattern[pattern_idx] == text[text_idx]) {
+                    pattern_idx += 1;
+                    text_idx += 1;
+                } else {
+                    return false;
+                }
+            }
+            
+            // Check if we've consumed both strings or pattern ends with *
+            return pattern_idx >= pattern.len or 
+                   (pattern_idx == pattern.len - 1 and pattern[pattern_idx] == '*');
+        }
+        
         fn finalizeSortedResults(this: *GlobWalker) !void {
             if (this.sortable_results == null) return;
             
@@ -1198,6 +1274,11 @@ pub fn GlobWalker_(
             
             // Finalize sorted results if sorting was enabled
             try this.finalizeSortedResults();
+            
+            // Check if operation was aborted
+            if (this.did_abort.load(.monotonic)) {
+                return .{ .err = Syscall.Error.fromCode(bun.sys.E.CANCELED, .open) };
+            }
 
             return .success;
         }
@@ -1477,6 +1558,17 @@ pub fn GlobWalker_(
                 entry_name,
             };
             const name_matched_path = try this.join(subdir_parts);
+            
+            // Check ignore patterns
+            if (this.ignore_patterns) |patterns| {
+                for (patterns) |pattern| {
+                    if (this.matchesIgnorePattern(name_matched_path, pattern)) {
+                        // Free the allocated path since we're not using it
+                        this.arena.allocator().free(name_matched_path);
+                        return null;
+                    }
+                }
+            }
             
             // If sorting is enabled, collect results for later sorting
             if (this.sort_field != null) {

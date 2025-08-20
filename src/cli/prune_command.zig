@@ -61,7 +61,7 @@ pub const PruneCommand = struct {
         const node_modules_path = try std.fmt.bufPrint(&node_modules_buf, "{s}/node_modules", .{cwd});
 
         // Get the list of packages that should exist according to the lockfile
-        var expected_packages = std.StringHashMap(void).init(allocator);
+        var expected_packages = bun.StringHashMap(void).init(allocator);
         defer expected_packages.deinit();
 
         // Add all packages that are actually used/installed

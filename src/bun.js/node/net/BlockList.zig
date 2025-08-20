@@ -23,7 +23,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) b
     return ptr;
 }
 
-// **Cross-thread**
+/// May be called from any thread.
 pub fn estimatedSize(this: *@This()) usize {
     return (@sizeOf(@This()) + this.estimated_size.load(.seq_cst)) / this.ref_count.get();
 }

@@ -1312,7 +1312,11 @@ pub const SecurityScanSubprocess = struct {
             .stdout = .inherit,
             .stderr = .inherit,
             .stdin = .ignore,
+            .cwd = FileSystem.instance.top_level_dir,
             .extra_fds = &.{.{ .pipe = pipe_fds[1] }},
+            .windows = if (Environment.isWindows) .{
+                .loop = jsc.EventLoopHandle.init(&this.manager.event_loop),
+            },
         };
 
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), @ptrCast(std.os.environ.ptr))).unwrap();

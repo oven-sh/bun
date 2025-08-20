@@ -284,6 +284,7 @@ src/bun.js/SafeStrong.zig
 src/bun.js/SavedSourceMap.zig
 src/bun.js/Strong.zig
 src/bun.js/test/Collection.zig
+src/bun.js/test/debug.zig
 src/bun.js/test/describe2.zig
 src/bun.js/test/diff_format.zig
 src/bun.js/test/diff/diff_match_patch.zig
@@ -366,6 +367,7 @@ src/bun.js/test/expect/toThrow.zig
 src/bun.js/test/expect/toThrowErrorMatchingInlineSnapshot.zig
 src/bun.js/test/expect/toThrowErrorMatchingSnapshot.zig
 src/bun.js/test/jest.zig
+src/bun.js/test/order.zig
 src/bun.js/test/pretty_format.zig
 src/bun.js/test/snapshot.zig
 src/bun.js/test/test.zig

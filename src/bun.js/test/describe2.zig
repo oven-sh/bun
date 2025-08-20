@@ -381,9 +381,9 @@ pub const BunTest = struct {
                 // - reorder (`--randomize`)
                 // now, generate the execution order
                 this.phase = .execution;
-                try Execution.dumpDescribe(this.collection.root_scope);
-                try this.execution.generateOrderDescribe(this.collection.root_scope);
-                try this.execution.dumpOrder();
+                try debug.dumpDescribe(this.collection.root_scope);
+                try order.generateOrderDescribe(&this.execution, this.collection.root_scope);
+                try debug.dumpOrder(&this.execution);
                 // now, allowing js execution again:
                 // - start the test execution loop
 
@@ -585,6 +585,8 @@ pub const RunOneResult = enum {
 };
 
 pub const Execution = @import("./Execution.zig");
+pub const debug = @import("./debug.zig");
+pub const order = @import("./order.zig");
 
 pub const group = struct {
     fn printIndent() void {

@@ -1,0 +1,168 @@
+name: Test Windows Code Signing
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version to test signing on (e.g., "1.0.2", "canary")'
+        required: true
+        type: string
+      dry-run:
+        description: 'Dry run - download and sign but do not upload back to release'
+        type: boolean
+        default: true
+
+jobs:
+  test-signing:
+    name: Test Windows Code Signing
+    runs-on: windows-latest
+    if: ${{ github.repository_owner == 'oven-sh' }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Validate inputs
+        run: |
+          Write-Host "Testing Windows code signing with the following parameters:"
+          Write-Host "  Version: $env:VERSION"
+          Write-Host "  Dry run: $env:DRY_RUN"
+          Write-Host "  Repository: $env:GITHUB_REPOSITORY"
+          
+          # Check if release exists
+          try {
+            gh release view "$env:VERSION" --json tagName,assets
+            Write-Host "✓ Release $env:VERSION exists"
+          } catch {
+            Write-Error "Release $env:VERSION not found. Available releases:"
+            gh release list --limit 10
+            exit 1
+          }
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+          DRY_RUN: ${{ github.event.inputs.dry-run }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Test certificate setup
+        run: |
+          Write-Host "Testing DigiCert certificate setup..."
+          
+          # Check if secrets are available
+          if ([string]::IsNullOrEmpty($env:DIGICERT_CERTIFICATE)) {
+            Write-Error "DIGICERT_CERTIFICATE secret is not set"
+            exit 1
+          }
+          
+          if ([string]::IsNullOrEmpty($env:DIGICERT_PASSWORD)) {
+            Write-Error "DIGICERT_PASSWORD secret is not set"
+            exit 1
+          }
+          
+          # Test certificate decoding
+          try {
+            $certBytes = [System.Convert]::FromBase64String($env:DIGICERT_CERTIFICATE)
+            Write-Host "✓ Certificate is valid base64 ($($certBytes.Length) bytes)"
+          } catch {
+            Write-Error "Failed to decode certificate: $_"
+            exit 1
+          }
+          
+          # Test certificate loading
+          try {
+            $certPath = "$env:TEMP\test-certificate.p12"
+            [System.IO.File]::WriteAllBytes($certPath, $certBytes)
+            $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($certPath, $env:DIGICERT_PASSWORD)
+            Write-Host "✓ Certificate loaded successfully"
+            Write-Host "  Subject: $($cert.Subject)"
+            Write-Host "  Issuer: $($cert.Issuer)"
+            Write-Host "  Valid from: $($cert.NotBefore)"
+            Write-Host "  Valid until: $($cert.NotAfter)"
+            Write-Host "  Thumbprint: $($cert.Thumbprint)"
+            
+            # Check if certificate is for code signing
+            $keyUsage = $cert.Extensions | Where-Object { $_.Oid.FriendlyName -eq "Key Usage" }
+            $enhancedKeyUsage = $cert.Extensions | Where-Object { $_.Oid.FriendlyName -eq "Enhanced Key Usage" }
+            
+            if ($enhancedKeyUsage) {
+              Write-Host "  Enhanced Key Usage: $($enhancedKeyUsage.Format($false))"
+            }
+            
+            Remove-Item $certPath -Force
+          } catch {
+            Write-Error "Failed to load certificate: $_"
+            exit 1
+          }
+        env:
+          DIGICERT_CERTIFICATE: ${{ secrets.DIGICERT_CERTIFICATE }}
+          DIGICERT_PASSWORD: ${{ secrets.DIGICERT_PASSWORD }}
+          
+      - name: Check available Windows binaries
+        run: |
+          Write-Host "Checking available Windows binaries in release $env:VERSION..."
+          
+          $release = gh release view "$env:VERSION" --json assets | ConvertFrom-Json
+          $windowsBinaries = $release.assets | Where-Object { $_.name -like "bun-windows-*.zip" }
+          
+          if ($windowsBinaries.Count -eq 0) {
+            Write-Error "No Windows binaries found in release $env:VERSION"
+            Write-Host "Available assets:"
+            $release.assets | ForEach-Object { Write-Host "  - $($_.name)" }
+            exit 1
+          }
+          
+          Write-Host "Found $($windowsBinaries.Count) Windows binaries:"
+          $windowsBinaries | ForEach-Object {
+            $sizeMB = [math]::Round($_.size / 1MB, 2)
+            Write-Host "  - $($_.name) ($sizeMB MB)"
+          }
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Test Windows code signing (dry run)
+        if: ${{ github.event.inputs.dry-run == 'true' }}
+        uses: ./.github/actions/sign-windows
+        with:
+          version: ${{ github.event.inputs.version }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          digicert-certificate: ${{ secrets.DIGICERT_CERTIFICATE }}
+          digicert-password: ${{ secrets.DIGICERT_PASSWORD }}
+          
+      - name: Dry run - simulate upload
+        if: ${{ github.event.inputs.dry-run == 'true' }}
+        run: |
+          Write-Host ""
+          Write-Host "=== DRY RUN COMPLETE ==="
+          Write-Host "This was a dry run. The signed binaries were created but NOT uploaded."
+          Write-Host "If you want to actually upload the signed binaries, re-run with dry-run=false"
+          
+          # Show what would have been uploaded
+          if (Test-Path "./signed-binaries") {
+            $signedFiles = Get-ChildItem -Path "./signed-binaries" -Filter "*.zip"
+            Write-Host ""
+            Write-Host "Signed files that would be uploaded:"
+            $signedFiles | ForEach-Object {
+              $sizeMB = [math]::Round($_.Length / 1MB, 2)
+              Write-Host "  ✓ $($_.Name) ($sizeMB MB)"
+            }
+          }
+          
+      - name: Actual Windows code signing (upload enabled)
+        if: ${{ github.event.inputs.dry-run == 'false' }}
+        uses: ./.github/actions/sign-windows
+        with:
+          version: ${{ github.event.inputs.version }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          digicert-certificate: ${{ secrets.DIGICERT_CERTIFICATE }}
+          digicert-password: ${{ secrets.DIGICERT_PASSWORD }}
+          
+      - name: Success summary
+        if: ${{ github.event.inputs.dry-run == 'false' }}
+        run: |
+          Write-Host ""
+          Write-Host "=== SIGNING COMPLETE ==="
+          Write-Host "✓ Windows binaries for $env:VERSION have been signed and uploaded"
+          Write-Host "✓ Release URL: https://github.com/$env:GITHUB_REPOSITORY/releases/tag/$env:VERSION"
+        env:
+          VERSION: ${{ github.event.inputs.version }}

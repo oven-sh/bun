@@ -1,0 +1,188 @@
+name: 'Sign Windows Binaries'
+description: 'Downloads, signs, and re-uploads Windows binaries for a GitHub release'
+inputs:
+  version:
+    description: 'Release version tag (e.g., "1.0.2", "canary")'
+    required: true
+  github-token:
+    description: 'GitHub token for downloading/uploading release assets'
+    required: true
+  digicert-certificate:
+    description: 'Base64-encoded DigiCert .p12 certificate file'
+    required: true
+  digicert-password:
+    description: 'Password for the DigiCert certificate'
+    required: true
+  binary-pattern:
+    description: 'Pattern to match Windows binaries (default: "bun-windows-*.zip")'
+    required: false
+    default: "bun-windows-*.zip"
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup DigiCert certificate
+      shell: pwsh
+      run: |
+        Write-Host "Setting up DigiCert certificate..."
+        $certBytes = [System.Convert]::FromBase64String("$env:DIGICERT_CERTIFICATE")
+        $certPath = "$env:TEMP\certificate.p12"
+        [System.IO.File]::WriteAllBytes($certPath, $certBytes)
+        Write-Host "Certificate saved to: $certPath"
+        
+        # Verify certificate can be read
+        try {
+          $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($certPath, $env:DIGICERT_PASSWORD)
+          Write-Host "Certificate subject: $($cert.Subject)"
+          Write-Host "Certificate expires: $($cert.NotAfter)"
+          Write-Host "Certificate is valid: $($cert.Verify())"
+        } catch {
+          Write-Error "Failed to load certificate: $_"
+          exit 1
+        }
+      env:
+        DIGICERT_CERTIFICATE: ${{ inputs.digicert-certificate }}
+        DIGICERT_PASSWORD: ${{ inputs.digicert-password }}
+
+    - name: Download Windows binaries
+      shell: pwsh
+      run: |
+        Write-Host "Downloading Windows binaries for version: $env:VERSION"
+        New-Item -ItemType Directory -Path "./temp-downloads" -Force
+        
+        # Use gh CLI to download Windows binaries
+        gh release download "$env:VERSION" --pattern "$env:BINARY_PATTERN" --dir ./temp-downloads
+        
+        # List downloaded files
+        $downloaded = Get-ChildItem -Path "./temp-downloads" -Filter "*.zip"
+        Write-Host "Downloaded $($downloaded.Count) files:"
+        foreach ($file in $downloaded) {
+          Write-Host "  - $($file.Name) ($([math]::Round($file.Length / 1MB, 2)) MB)"
+        }
+        
+        if ($downloaded.Count -eq 0) {
+          Write-Error "No Windows binaries found for version $env:VERSION with pattern $env:BINARY_PATTERN"
+          exit 1
+        }
+      env:
+        VERSION: ${{ inputs.version }}
+        BINARY_PATTERN: ${{ inputs.binary-pattern }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+
+    - name: Extract and sign binaries
+      shell: pwsh
+      run: |
+        Write-Host "Extracting and signing Windows binaries..."
+        
+        # Create directories
+        New-Item -ItemType Directory -Path "./extracted" -Force
+        New-Item -ItemType Directory -Path "./signed-binaries" -Force
+        
+        $certPath = "$env:TEMP\certificate.p12"
+        $binaries = Get-ChildItem -Path "./temp-downloads" -Filter "*.zip"
+        
+        foreach ($binary in $binaries) {
+          Write-Host ""
+          Write-Host "=== Processing $($binary.Name) ==="
+          
+          # Extract the zip file
+          $extractPath = "./extracted/$($binary.BaseName)"
+          Write-Host "Extracting to: $extractPath"
+          Expand-Archive -Path $binary.FullName -DestinationPath $extractPath -Force
+          
+          # Find all .exe files (should be bun.exe)
+          $exeFiles = Get-ChildItem -Path $extractPath -Recurse -Filter "*.exe"
+          Write-Host "Found $($exeFiles.Count) executable files:"
+          
+          foreach ($exe in $exeFiles) {
+            Write-Host "  - $($exe.FullName)"
+            
+            # Sign the binary
+            Write-Host "Signing $($exe.Name)..."
+            $signArgs = @(
+              "sign"
+              "/fd", "SHA256"
+              "/tr", "http://timestamp.digicert.com"
+              "/td", "SHA256"
+              "/f", $certPath
+              "/p", $env:DIGICERT_PASSWORD
+              "/v"
+              $exe.FullName
+            )
+            
+            $result = Start-Process -FilePath "signtool" -ArgumentList $signArgs -Wait -PassThru -NoNewWindow
+            if ($result.ExitCode -ne 0) {
+              Write-Error "Failed to sign $($exe.Name) (exit code: $($result.ExitCode))"
+              exit 1
+            }
+            
+            # Verify the signature
+            Write-Host "Verifying signature for $($exe.Name)..."
+            $verifyResult = Start-Process -FilePath "signtool" -ArgumentList @("verify", "/pa", "/v", $exe.FullName) -Wait -PassThru -NoNewWindow
+            if ($verifyResult.ExitCode -ne 0) {
+              Write-Error "Signature verification failed for $($exe.Name)"
+              exit 1
+            }
+            
+            Write-Host "✓ Successfully signed and verified $($exe.Name)"
+          }
+          
+          # Repackage the signed binary
+          $signedZipPath = "./signed-binaries/$($binary.Name)"
+          Write-Host "Repackaging to: $signedZipPath"
+          Compress-Archive -Path "$extractPath/*" -DestinationPath $signedZipPath -Force
+          
+          Write-Host "✓ Created signed package: $($binary.Name)"
+        }
+        
+        Write-Host ""
+        Write-Host "=== Signing Summary ==="
+        $signedFiles = Get-ChildItem -Path "./signed-binaries" -Filter "*.zip"
+        Write-Host "Successfully signed $($signedFiles.Count) packages:"
+        foreach ($file in $signedFiles) {
+          Write-Host "  ✓ $($file.Name)"
+        }
+      env:
+        DIGICERT_PASSWORD: ${{ inputs.digicert-password }}
+
+    - name: Upload signed Windows binaries
+      shell: pwsh
+      run: |
+        Write-Host "Uploading signed Windows binaries..."
+        
+        $signedBinaries = Get-ChildItem -Path "./signed-binaries" -Filter "*.zip"
+        
+        foreach ($binary in $signedBinaries) {
+          Write-Host "Uploading: $($binary.Name)"
+          gh release upload "$env:VERSION" "$($binary.FullName)" --clobber
+          Write-Host "✓ Uploaded $($binary.Name)"
+        }
+        
+        Write-Host ""
+        Write-Host "=== Upload Complete ==="
+        Write-Host "Successfully uploaded $($signedBinaries.Count) signed Windows binaries"
+      env:
+        VERSION: ${{ inputs.version }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+
+    - name: Cleanup
+      shell: pwsh
+      run: |
+        Write-Host "Cleaning up temporary files..."
+        
+        # Remove certificate file
+        $certPath = "$env:TEMP\certificate.p12"
+        if (Test-Path $certPath) {
+          Remove-Item $certPath -Force
+          Write-Host "✓ Removed certificate file"
+        }
+        
+        # Remove working directories
+        @("./temp-downloads", "./extracted", "./signed-binaries") | ForEach-Object {
+          if (Test-Path $_) {
+            Remove-Item $_ -Recurse -Force
+            Write-Host "✓ Removed $_"
+          }
+        }
+        
+        Write-Host "Cleanup complete"

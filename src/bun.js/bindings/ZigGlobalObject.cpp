@@ -3866,7 +3866,12 @@ uint8_t GlobalObject::drainMicrotasks()
 
 #if ASSERT_ENABLED
         scope.clearException();
+        // We should not have an exception here.
+        // But it's an easy mistake to make.
+        // Let's log it so that we can debug this.
         Bun__reportError(this, JSValue::encode(exception));
+
+        // And re-throw it to preserve the production behavior.
         auto throwScope = DECLARE_THROW_SCOPE(vm);
         throwScope.throwException(this, exception);
         throwScope.release();

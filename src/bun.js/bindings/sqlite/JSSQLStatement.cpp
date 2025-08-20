@@ -2351,6 +2351,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
 
     if (!castedThis->hasExecuted || castedThis->need_update()) {
         initializeColumnNames(lexicalGlobalObject, castedThis);
+        if (scope.exception()) [[unlikely]] {
+            sqlite3_reset(stmt);
+            RELEASE_AND_RETURN(scope, {});
+        }
     }
 
     size_t columnCount = castedThis->columnNames->size();

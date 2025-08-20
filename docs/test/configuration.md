@@ -44,6 +44,7 @@ By default, `bun test` searches for files matching these patterns:
 When you specify custom patterns, these default patterns are completely replaced with your custom ones.
 
 **Path resolution:**
+
 - Patterns starting with `./` or `../` are resolved relative to the directory containing your `bunfig.toml` file
 - Other glob patterns like `**/*.test.ts` are matched against relative paths from the current working directory
 - Absolute paths are used as-is

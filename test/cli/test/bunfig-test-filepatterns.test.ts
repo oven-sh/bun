@@ -36,7 +36,7 @@ test("spec test", () => {
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  
+
   expect(exitCode).toBe(0);
   // Test output goes to stderr by default
   expect(stderr).toContain("1 pass");
@@ -341,7 +341,7 @@ test("default test", () => {
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  
+
   expect(exitCode).toBe(0);
   // Should only run the test in ./tests relative to bunfig.toml location
   expect(stderr).toContain("1 pass");
@@ -395,7 +395,7 @@ test("default test", () => {
 
 test("bunfig test.filePatterns with absolute paths", async () => {
   const dir = tempDirWithFiles("test-filepatterns-absolute", {
-    "bunfig.toml": "",  // Will be written after we know the absolute path
+    "bunfig.toml": "", // Will be written after we know the absolute path
     "tests/example.mytest.js": `
 import { test, expect } from "bun:test";
 test("absolute path test", () => {
@@ -412,10 +412,13 @@ test("default test", () => {
 
   // Write bunfig.toml with absolute path
   const absolutePath = `${dir}/tests/*.mytest.js`;
-  await Bun.write(`${dir}/bunfig.toml`, `
+  await Bun.write(
+    `${dir}/bunfig.toml`,
+    `
 [test]
 filePatterns = "${absolutePath}"
-`);
+`,
+  );
 
   const proc = Bun.spawn({
     cmd: [bunExe(), "test"],

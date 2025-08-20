@@ -164,6 +164,7 @@ By default, Bun uses these patterns:
 When custom patterns are specified, they completely replace the default patterns.
 
 **Path resolution:**
+
 - Patterns starting with `./` or `../` are resolved relative to the directory containing your `bunfig.toml` file
 - Other glob patterns like `**/*.test.ts` are matched against relative paths from the current working directory
 - Absolute paths are used as-is

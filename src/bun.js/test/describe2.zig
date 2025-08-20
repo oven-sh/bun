@@ -86,7 +86,7 @@ pub const js_fns = struct {
     const TestConfig = struct {
         concurrent: bool,
         only: bool,
-        mode: enum { normal },
+        mode: ExecutionEntryTag,
         signature: []const u8,
     };
     pub fn genericTest(comptime cfg: TestConfig) type {
@@ -112,8 +112,12 @@ pub const js_fns = struct {
 
         if (cfg.only) try errorInCI(globalThis, cfg.signature);
 
-        const description, var callback = callFrame.argumentsAsArray(2);
-        callback = callback.withAsyncContextIfNeeded(globalThis);
+        const description, var callback: ?jsc.JSValue = callFrame.argumentsAsArray(2);
+        if (cfg.mode.needsCallback()) {
+            callback = callback.?.withAsyncContextIfNeeded(globalThis);
+        } else {
+            callback = null;
+        }
         const description_str = try getDescription(bunTest.gpa, globalThis, description, cfg.signature);
         defer bunTest.gpa.free(description_str);
 
@@ -123,9 +127,7 @@ pub const js_fns = struct {
                     .name = description_str,
                     .self_concurrent = cfg.concurrent,
                     .self_only = cfg.only,
-                    .mode = switch (cfg.mode) {
-                        .normal => .normal,
-                    },
+                    .mode = cfg.mode,
                 });
                 return .js_undefined;
             },
@@ -528,16 +530,27 @@ pub const DescribeScope = struct {
     }
 };
 pub const ExecutionEntryTag = enum {
-    test_callback,
+    normal,
+    skip,
+    todo,
+
     beforeAll,
     beforeEach,
     afterEach,
     afterAll,
+
+    pub fn needsCallback(this: ExecutionEntryTag) bool {
+        return switch (this) {
+            .normal, .beforeAll, .beforeEach, .afterEach, .afterAll => true,
+            .skip => false,
+            .todo => @panic("TODO: --todo flag should make .todo act like .failing"),
+        };
+    }
 };
 pub const ExecutionEntry = struct {
     parent: *DescribeScope,
     tag: ExecutionEntryTag,
-    callback: Strong,
+    callback: Strong.Optional,
     name: ?[]const u8,
     concurrent: bool,
     only: bool,

@@ -39,7 +39,7 @@ fn bunTest(this: *Collection) *BunTest {
     return @fieldParentPtr("collection", this);
 }
 
-pub fn enqueueDescribeCallback(this: *Collection, callback: jsc.JSValue, cfg: struct { name: ?[]const u8, self_concurrent: bool, self_only: bool }) bun.JSError!void {
+pub fn enqueueDescribeCallback(this: *Collection, callback: ?jsc.JSValue, cfg: struct { name: ?[]const u8, self_concurrent: bool, self_only: bool }) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
@@ -53,25 +53,27 @@ pub fn enqueueDescribeCallback(this: *Collection, callback: jsc.JSValue, cfg: st
     }));
     try this.active_scope.append(.{ .describe = new_scope });
 
-    group.log("enqueueDescribeCallback / {s} / in scope: {s}", .{ cfg.name orelse "undefined", this.active_scope.name orelse "undefined" });
-    try this.describe_callback_queue.append(.{
-        .active_scope = this.active_scope,
-        .callback = .init(this.bunTest().gpa, callback),
-        .new_scope = new_scope,
-    });
+    if (callback) |cb| {
+        group.log("enqueueDescribeCallback / {s} / in scope: {s}", .{ cfg.name orelse "undefined", this.active_scope.name orelse "undefined" });
+        try this.describe_callback_queue.append(.{
+            .active_scope = this.active_scope,
+            .callback = .init(this.bunTest().gpa, cb),
+            .new_scope = new_scope,
+        });
+    }
 }
 
-pub fn enqueueTestCallback(this: *Collection, callback: jsc.JSValue, cfg: struct { name: ?[]const u8, self_concurrent: bool, self_only: bool, mode: enum { normal } }) bun.JSError!void {
+pub fn enqueueTestCallback(this: *Collection, callback: ?jsc.JSValue, cfg: struct { name: ?[]const u8, self_concurrent: bool, self_only: bool, mode: describe2.ExecutionEntryTag }) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
     bun.assert(!this.locked);
     group.log("enqueueTestCallback / {s} / in scope: {s}", .{ cfg.name orelse "undefined", this.active_scope.name orelse "undefined" });
 
-    const test_callback = bun.create(this.bunTest().gpa, describe2.ExecutionEntry, .{
+    const test_callback = bun.create(this.bunTest().gpa, describe2.ExecutionEntry, describe2.ExecutionEntry{
         .parent = this.active_scope,
-        .tag = .test_callback,
-        .callback = .init(this.bunTest().gpa, callback),
+        .tag = cfg.mode,
+        .callback = if (callback) |cb| .init(this.bunTest().gpa, cb) else .empty,
         .name = if (cfg.name) |test_name| this.bunTest().gpa.dupe(u8, test_name) catch bun.outOfMemory() else null,
         .concurrent = this.active_scope.concurrent or cfg.self_concurrent,
         .only = cfg.self_only,

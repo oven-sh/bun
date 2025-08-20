@@ -168,9 +168,25 @@ pub fn runSequence(this: *Execution, sequence_index: usize, callback_queue: *des
     sequence.executing = true;
     this.onSequenceStarted(sequence_index);
 
-    groupLog.log("runSequence queued callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.entry_index });
-    try callback_queue.append(.{ .callback = .init(this.bunTest().gpa, next_item.callback.get()), .done_parameter = true, .data = sequence_index });
-    return .execute; // execute
+    if (next_item.callback.get()) |cb| {
+        groupLog.log("runSequence queued callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.entry_index });
+        try callback_queue.append(.{ .callback = .init(this.bunTest().gpa, cb), .done_parameter = true, .data = sequence_index });
+        return .execute; // execute
+    } else switch (next_item.tag) {
+        .skip => {
+            // basically in this case we need to call runOneCompleted
+            // so ideally we would return '.advance' or something
+            @panic("TODO: advance and run next");
+        },
+        .todo => {
+            @panic("TODO: advance and run next");
+        },
+        else => {
+            groupLog.log("runSequence: no callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.entry_index });
+            bun.debugAssert(false);
+            @panic("TODO: advance and run next");
+        },
+    }
 }
 
 pub fn generateOrderSub(this: *Execution, current: TestScheduleEntry) bun.JSError!void {

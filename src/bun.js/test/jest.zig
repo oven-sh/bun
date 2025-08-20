@@ -379,8 +379,9 @@ pub const Jest = struct {
 
         test_fn.put(globalObject, ZigString.static("concurrent"), jsc.host_fn.NewFunction(globalObject, ZigString.static("concurrent"), 2, Describe2.js_fns.genericTest(.{ .concurrent = true, .only = false, .mode = .normal, .signature = "test.concurrent()" }).testFn, false));
         test_fn.put(globalObject, ZigString.static("only"), jsc.host_fn.NewFunction(globalObject, ZigString.static("only"), 2, Describe2.js_fns.genericTest(.{ .concurrent = false, .only = true, .mode = .normal, .signature = "test.only()" }).testFn, false));
+        test_fn.put(globalObject, ZigString.static("skip"), jsc.host_fn.NewFunction(globalObject, ZigString.static("skip"), 2, Describe2.js_fns.genericTest(.{ .concurrent = false, .only = false, .mode = .skip, .signature = "test.skip()" }).testFn, false));
 
-        inline for (.{ "skip", "todo", "failing", "skipIf", "todoIf", "each" }) |method_name| {
+        inline for (.{ "todo", "failing", "skipIf", "todoIf", "each" }) |method_name| {
             const name = ZigString.static(method_name);
             test_fn.put(
                 globalObject,

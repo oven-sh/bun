@@ -3,25 +3,19 @@
 import type { Bake } from "bun";
 import "./debug";
 import { loadExports, replaceModules, serverManifest, ssrManifest } from "./hmr-module";
+// import { AsyncLocalStorage } from "node:async_hooks";
+const { AsyncLocalStorage } = require("node:async_hooks");
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
 }
 
-// Dynamic import of AsyncLocalStorage to work with bundling
-// The require is wrapped in eval to prevent bundler from trying to resolve it at bundle time
-const AsyncLocalStorage = eval('require("node:async_hooks").AsyncLocalStorage');
-
 // Create the AsyncLocalStorage instance for propagating response options
 const responseOptionsALS = new AsyncLocalStorage();
 
-// Store reference to the AsyncLocalStorage in the VM
-// This will be accessed from Zig code
-const setDevServerAsyncLocalStorage = $newZigFunction("bun.js/VirtualMachine.zig", "setDevServerAsyncLocalStorage", 2);
-const getDevServerAsyncLocalStorage = $newZigFunction("bun.js/VirtualMachine.zig", "getDevServerAsyncLocalStorage", 1);
-
-// Set the AsyncLocalStorage instance in the VM
-setDevServerAsyncLocalStorage(responseOptionsALS);
+// These will be set by the handleRequest function
+let setDevServerAsyncLocalStorage: Function | null = null;
+let getDevServerAsyncLocalStorage: Function | null = null;
 
 interface Exports {
   handleRequest: (
@@ -31,6 +25,8 @@ interface Exports {
     clientEntryUrl: string,
     styles: string[],
     params: Record<string, string> | null,
+    setAsyncLocalStorage: Function,
+    getAsyncLocalStorage: Function,
   ) => any;
   registerUpdate: (
     modules: any,
@@ -41,7 +37,14 @@ interface Exports {
 
 declare let server_exports: Exports;
 server_exports = {
-  async handleRequest(req, routerTypeMain, routeModules, clientEntryUrl, styles, params) {
+  async handleRequest(req, routerTypeMain, routeModules, clientEntryUrl, styles, params, setAsyncLocalStorage, getAsyncLocalStorage) {
+    // Store the functions for later use
+    setDevServerAsyncLocalStorage = setAsyncLocalStorage;
+    getDevServerAsyncLocalStorage = getAsyncLocalStorage;
+    
+    // Set the AsyncLocalStorage instance in the VM
+    setAsyncLocalStorage(responseOptionsALS);
+    
     if (IS_BUN_DEVELOPMENT && process.env.BUN_DEBUG_BAKE_JS) {
       console.log("handleRequest", {
         routeModules,
@@ -63,18 +66,22 @@ server_exports = {
     }
 
     const [pageModule, ...layouts] = await Promise.all(routeModules.map(loadExports));
-    
+
     // Run the renderer inside the AsyncLocalStorage context
     // This allows Response constructors to access the stored options
     const response = await responseOptionsALS.run({}, async () => {
-      return await serverRenderer(req, {
-        styles: styles,
-        modules: [clientEntryUrl],
-        layouts,
-        pageModule,
-        modulepreload: [],
-        params,
-      }, responseOptionsALS);
+      return await serverRenderer(
+        req,
+        {
+          styles: styles,
+          modules: [clientEntryUrl],
+          layouts,
+          pageModule,
+          modulepreload: [],
+          params,
+        },
+        responseOptionsALS,
+      );
     });
 
     if (!(response instanceof Response)) {

@@ -20,6 +20,7 @@
 
 #include "BunClientData.h"
 #include "GCDefferalContext.h"
+#include "WebCoreJSBuiltins.h"
 
 #include "JavaScriptCore/AggregateError.h"
 #include "JavaScriptCore/BytecodeIndex.h"
@@ -5921,13 +5922,23 @@ extern "C" bool JSC__JSValue__isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JS
     return false;
 }
 
+// Forward declaration
+extern "C" void JSC__JSValue__transformToReactElementWithOptions(JSC::EncodedJSValue responseValue, JSC::EncodedJSValue componentValue, JSC::EncodedJSValue responseOptionsValue, JSC::JSGlobalObject* globalObject);
+
 extern "C" void JSC__JSValue__transformToReactElement(JSC::EncodedJSValue responseValue, JSC::EncodedJSValue componentValue, JSC::JSGlobalObject* globalObject)
+{
+    // Call the version with options, passing undefined for options
+    JSC__JSValue__transformToReactElementWithOptions(responseValue, componentValue, JSC::JSValue::encode(JSC::jsUndefined()), globalObject);
+}
+
+extern "C" void JSC__JSValue__transformToReactElementWithOptions(JSC::EncodedJSValue responseValue, JSC::EncodedJSValue componentValue, JSC::EncodedJSValue responseOptionsValue, JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_CATCH_SCOPE(vm);
     
     JSC::JSValue response = JSC::JSValue::decode(responseValue);
     JSC::JSValue component = JSC::JSValue::decode(componentValue);
+    JSC::JSValue responseOptions = JSC::JSValue::decode(responseOptionsValue);
     
     if (!response.isObject()) {
         return;
@@ -5939,6 +5950,16 @@ extern "C" void JSC__JSValue__transformToReactElement(JSC::EncodedJSValue respon
     // For now, use the transitional element symbol (React 19+)
     // TODO: check for legacy symbol as fallback
     auto react_element_symbol = JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.transitional.element"_s));
+    
+    // If we have response options, we need to wrap the component
+    // For now, we'll store the response options directly on the response object
+    // The actual wrapping with AsyncLocalStorage update will happen when rendered
+    if (!responseOptions.isUndefinedOrNull() && responseOptions.isObject()) {
+        // Store the response options on the response object for later use
+        // This will be accessed when the component is rendered
+        auto responseOptionsIdentifier = JSC::Identifier::fromString(vm, "__responseOptions"_s);
+        responseObject->putDirect(vm, responseOptionsIdentifier, responseOptions, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+    }
     
     // Transform the Response object itself into a React element
     // The component parameter is what will be stored in the 'type' field
@@ -5961,21 +5982,61 @@ extern "C" void JSC__JSValue__transformToReactElement(JSC::EncodedJSValue respon
         
         if (!scope.exception() && typeofValue.isSymbol()) {
             // It's a JSX element - wrap it in a function that returns it
-            // This creates: () => component
-            // We need to protect the component value from GC
-            JSC::Strong<JSC::Unknown> strongComponent(vm, component);
+            // If we have response options, use the BakeSSRResponse builtin to wrap the component
+            // so it can update AsyncLocalStorage when rendered
             
-            auto* wrapperFunction = JSC::JSNativeStdFunction::create(
-                vm,
-                globalObject,
-                0, // arity
-                String(), // name
-                [strongComponent](JSC::JSGlobalObject*, JSC::CallFrame*) -> JSC::EncodedJSValue {
-                    return JSC::JSValue::encode(strongComponent.get());
+            if (!responseOptions.isUndefinedOrNull() && responseOptions.isObject()) {
+                // Use the BakeSSRResponse builtin's wrapComponent function
+                // This will create a wrapper that updates AsyncLocalStorage before returning the component
+                
+                // Create the wrapComponent function from the BakeSSRResponse builtin
+                // The pattern is: <filename><functionName>CodeGenerator
+                // So for BakeSSRResponse.ts with export function wrapComponent:
+                JSC::JSFunction* wrapComponentFn = JSC::JSFunction::create(vm, globalObject, bakeSSRResponseWrapComponentCodeGenerator(vm), globalObject);
+                
+                // Call wrapComponent(component, responseOptions)
+                JSC::MarkedArgumentBuffer args;
+                args.append(component);
+                args.append(responseOptions);
+                
+                // Call the wrapComponent function
+                auto callData = JSC::getCallData(wrapComponentFn);
+                JSC::JSValue wrappedComponent = JSC::call(globalObject, wrapComponentFn, callData, JSC::jsUndefined(), args);
+                
+                if (!scope.exception() && !wrappedComponent.isUndefinedOrNull()) {
+                    responseObject->putDirect(vm, typeIdentifier, wrappedComponent, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+                } else {
+                    // Fall back to simple wrapper if there was an exception or undefined result
+                    scope.clearException();
+                    JSC::Strong<JSC::Unknown> strongComponent(vm, component);
+                    auto* wrapperFunction = JSC::JSNativeStdFunction::create(
+                        vm,
+                        globalObject,
+                        0, // arity
+                        String(), // name
+                        [strongComponent](JSC::JSGlobalObject* execGlobalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+                            return JSC::JSValue::encode(strongComponent.get());
+                        }
+                    );
+                    
+                    responseObject->putDirect(vm, typeIdentifier, wrapperFunction, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
                 }
-            );
-            
-            responseObject->putDirect(vm, typeIdentifier, wrapperFunction, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+            } else {
+                // No response options - create a simple wrapper
+                JSC::Strong<JSC::Unknown> strongComponent(vm, component);
+                
+                auto* wrapperFunction = JSC::JSNativeStdFunction::create(
+                    vm,
+                    globalObject,
+                    0, // arity
+                    String(), // name
+                    [strongComponent](JSC::JSGlobalObject* execGlobalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+                        return JSC::JSValue::encode(strongComponent.get());
+                    }
+                );
+                
+                responseObject->putDirect(vm, typeIdentifier, wrapperFunction, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+            }
         } else {
             // It's not a JSX element, use it directly
             responseObject->putDirect(vm, typeIdentifier, component, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);

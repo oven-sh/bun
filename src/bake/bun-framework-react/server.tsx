@@ -55,7 +55,11 @@ function component(mod: any, params: Record<string, string> | null) {
 
 // `server.tsx` exports a function to be used for handling user routes. It takes
 // in the Request object, the route's module, extra route metadata, and the AsyncLocalStorage instance.
-export async function render(request: Request, meta: Bake.RouteMetadata, als?: AsyncLocalStorage<any>): Promise<Response> {
+export async function render(
+  request: Request,
+  meta: Bake.RouteMetadata,
+  als?: AsyncLocalStorage<any>,
+): Promise<Response> {
   // The framework generally has two rendering modes.
   // - Standard browser navigation
   // - Client-side navigation
@@ -146,11 +150,14 @@ export async function render(request: Request, meta: Bake.RouteMetadata, als?: A
       offset += chunk.length;
     }
 
+    const { headers, ...response_options } = als?.getStore() ?? { headers: {} };
+
     return new Response(result, {
       headers: {
         "Content-Type": "text/html; charset=utf8",
+        ...response_options.headers,
       },
-      ...(als?.getStore() || {}),
+      ...response_options,
     });
   }
 }

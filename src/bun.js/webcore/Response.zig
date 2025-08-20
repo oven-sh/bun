@@ -4,6 +4,41 @@ const Response = @This();
 extern fn Response__getAsyncLocalStorageStore(global: *JSGlobalObject, als: JSValue) JSValue;
 extern fn Response__mergeAsyncLocalStorageOptions(global: *JSGlobalObject, alsStore: JSValue, initOptions: JSValue) void;
 
+// Zig function to update AsyncLocalStorage with response options
+pub fn bunUpdateAsyncLocalStorage(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const arguments = callframe.arguments_old(1).slice();
+    const vm = global.bunVM();
+
+    if (arguments.len < 1) {
+        return .js_undefined;
+    }
+
+    const responseOptions = arguments[0];
+    if (!responseOptions.isObject()) {
+        return .js_undefined;
+    }
+
+    // Get the AsyncLocalStorage instance from the VM
+    if (vm.getDevServerAsyncLocalStorage()) |als| {
+        // Get the current store
+        const store = bun.jsc.fromJSHostCall(global, @src(), Response__getAsyncLocalStorageStore, .{ global, als }) catch .zero;
+        if (store != .zero and store.isObject()) {
+            // Merge the response options into the store
+            bun.jsc.fromJSHostCallGeneric(global, @src(), Response__mergeAsyncLocalStorageOptions, .{ global, responseOptions, store }) catch {};
+        } else {
+            // If no store exists, we need to call enterWith on the AsyncLocalStorage
+            // to set the new store
+            if (try als.get(global, "enterWith")) |enter_with_value| {
+                if (enter_with_value.isCallable()) {
+                    _ = enter_with_value.call(global, als, &.{responseOptions}) catch .zero;
+                }
+            }
+        }
+    }
+
+    return .js_undefined;
+}
+
 const ResponseMixin = BodyMixin(@This());
 pub const js = jsc.Codegen.JSResponse;
 // NOTE: toJS is overridden
@@ -203,12 +238,8 @@ pub fn getURL(
 
 pub fn getResponseType(
     this: *Response,
-    this_value: jsc.JSValue,
     globalThis: *jsc.JSGlobalObject,
 ) jsc.JSValue {
-    if (js.gc.jsxElement.get(this_value)) |jsx_element| {
-        return jsx_element;
-    }
     if (this.init.status_code < 200) {
         return bun.String.static("error").toJS(globalThis);
     }
@@ -570,22 +601,10 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, t
             const arg = arguments[0];
             // Check if it's a JSX element (object with $$typeof)
             if (try arg.isJSXElement(globalThis)) {
-                js.gc.jsxElement.set(this_value, globalThis, arg);
-                JSValue.transformToReactElement(this_value, arg, globalThis);
-            }
-
-            // Get the AsyncLocalStorage instance from the VM
-            const vm = globalThis.bunVM();
-            if (arguments[1].isObject()) {
-                if (vm.getDevServerAsyncLocalStorage()) |als| {
-                    // Get the store from the AsyncLocalStorage instance
-                    const store = try bun.jsc.fromJSHostCall(globalThis, @src(), Response__getAsyncLocalStorageStore, .{ globalThis, als });
-                    if (store != .zero and store.isObject()) {
-                        // Merge properties from alsStore into initOptions (initOptions takes precedence)
-                        // This modifies arguments[1] in place
-                        try bun.jsc.fromJSHostCallGeneric(globalThis, @src(), Response__mergeAsyncLocalStorageOptions, .{ globalThis, store, arguments[1] });
-                    }
-                }
+                // Pass the response options (arguments[1]) to transformToReactElement
+                // so it can store them for later use when the component is rendered
+                const responseOptions = if (arguments[1].isObject()) arguments[1] else .js_undefined;
+                JSValue.transformToReactElementWithOptions(this_value, arg, responseOptions, globalThis);
             }
         }
     }

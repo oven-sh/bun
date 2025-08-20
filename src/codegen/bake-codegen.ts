@@ -93,6 +93,7 @@ async function run() {
         entrypoints: [generated_entrypoint],
         minify: !debug,
         drop: debug ? [] : ["DEBUG"],
+        target: side === "server" ? "bun" : "browser",
       });
       if (!result.success) throw new AggregateError(result.logs);
       assert(result.outputs.length === 1, "must bundle to a single file");

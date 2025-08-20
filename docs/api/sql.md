@@ -298,7 +298,7 @@ You can configure your database connection manually by passing options to the SQ
 ```ts
 import { SQL } from "bun";
 
-const db = new SQL({
+const sql = new SQL({
   // Required
   url: "postgres://user:pass@localhost:5432/dbname",
 
@@ -472,7 +472,7 @@ const sql = new SQL(
 Bun's SQL client automatically manages a connection pool, which is a pool of database connections that are reused for multiple queries. This helps to reduce the overhead of establishing and closing connections for each query, and it also helps to manage the number of concurrent connections to the database.
 
 ```ts
-const db = new SQL({
+const sql = new SQL({
   // Pool configuration
   max: 20, // Maximum 20 concurrent connections
   idleTimeout: 30, // Close idle connections after 30s

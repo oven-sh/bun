@@ -11,10 +11,13 @@ comptime {
 
 extern fn bun_warn_avx_missing(url: [*:0]const u8) void;
 
+extern fn bun_configure_mimalloc() void;
+
 pub extern "c" var _environ: ?*anyopaque;
 pub extern "c" var environ: ?*anyopaque;
 
 pub fn main() void {
+    bun_configure_mimalloc();
     bun.crash_handler.init();
 
     if (Environment.isPosix) {

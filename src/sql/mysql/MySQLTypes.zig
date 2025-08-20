@@ -783,8 +783,7 @@ pub const Value = union(enum) {
             return time;
         }
 
-        pub fn toJS(this: Time, globalObject: *JSC.JSGlobalObject) JSValue {
-            _ = globalObject; // autofix
+        pub fn toJS(this: Time, _: *JSC.JSGlobalObject) JSValue {
             var total_ms: i64 = 0;
             total_ms +|= @as(i64, this.days) * 86400000;
             total_ms +|= @as(i64, this.hours) * 3600000;
@@ -851,9 +850,7 @@ pub const Value = union(enum) {
             return bun.String.createUTF8ForJS(globalObject, str.items) catch .zero;
         }
 
-        pub fn toBinary(this: Decimal, field_type: FieldType) !Data {
-            _ = this; // autofix
-            _ = field_type; // autofix
+        pub fn toBinary(_: Decimal, _: FieldType) !Data {
             bun.todoPanic(@src(), "Decimal.toBinary not implemented", .{});
         }
 

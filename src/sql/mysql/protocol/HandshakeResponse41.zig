@@ -7,7 +7,7 @@ username: Data,
 auth_response: Data,
 database: Data,
 auth_plugin_name: Data,
-connect_attrs: std.StringHashMapUnmanaged([]const u8) = .{},
+connect_attrs: bun.StringHashMapUnmanaged([]const u8) = .{},
 
 pub fn deinit(this: *HandshakeResponse41) void {
     this.username.deinit();

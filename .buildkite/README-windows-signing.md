@@ -8,8 +8,8 @@ The Windows signing process automatically runs after each successful release bui
 
 ## Files
 
-- **`scripts/sign-windows.sh`** - Main Windows signing script
-- **`scripts/test-windows-signing.sh`** - Test script for validating setup
+- **`scripts/sign-windows.ps1`** - Main Windows signing PowerShell script
+- **`scripts/test-windows-signing.ps1`** - Test PowerShell script for validating setup
 - **`ci.mjs`** - Updated to include Windows signing step
 - **`README-windows-signing.md`** - This documentation
 
@@ -96,19 +96,19 @@ Ensure you have Windows agents in a queue named `windows`:
 
 #### 3.1 Test Environment
 Run the test script to validate configuration:
-```bash
+```powershell
 # On a Windows Buildkite agent
-.buildkite/scripts/test-windows-signing.sh
+pwsh -File .buildkite/scripts/test-windows-signing.ps1
 ```
 
 #### 3.2 Manual Test
 Test signing manually with a specific version:
-```bash
+```powershell
 # Sign a specific release
-.buildkite/scripts/sign-windows.sh canary
+pwsh -File .buildkite/scripts/sign-windows.ps1 -Version canary
 
 # Sign a tagged release  
-.buildkite/scripts/sign-windows.sh 1.2.3
+pwsh -File .buildkite/scripts/sign-windows.ps1 -Version 1.2.3
 ```
 
 ## How It Works
@@ -173,7 +173,7 @@ All `.exe` files within these packages are signed.
 ### Debug Steps
 
 1. **Check Buildkite logs**: Look for detailed error messages in the signing step
-2. **Test manually**: Run test script on Windows agent to isolate issues
+2. **Test manually**: Run PowerShell test script on Windows agent to isolate issues
 3. **Verify secrets**: Ensure all required secrets are set and accessible
 4. **Check DigiCert**: Verify KeyLocker status and certificate validity
 
@@ -181,7 +181,7 @@ All `.exe` files within these packages are signed.
 
 - **DigiCert Support**: For KeyLocker and certificate issues
 - **Buildkite Support**: For agent and pipeline issues
-- **Run test script**: Use `test-windows-signing.sh` for diagnostic information
+- **Run test script**: Use `test-windows-signing.ps1` for diagnostic information
 
 ## Monitoring
 

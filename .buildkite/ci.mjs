@@ -682,7 +682,7 @@ function getWindowsSigningStep(version) {
     env: {
       VERSION: version,
     },
-    command: `.buildkite/scripts/sign-windows.sh ${version}`,
+    command: `pwsh -File .buildkite/scripts/sign-windows.ps1 -Version ${version}`,
   };
 }
 

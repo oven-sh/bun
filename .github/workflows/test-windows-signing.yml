@@ -1,4 +1,4 @@
-name: Test Windows Code Signing
+name: Test Windows Code Signing with DigiCert KeyLocker
 
 on:
   workflow_dispatch:
@@ -13,8 +13,8 @@ on:
         default: true
 
 jobs:
-  test-signing:
-    name: Test Windows Code Signing
+  test-keylocker-signing:
+    name: Test DigiCert KeyLocker Code Signing
     runs-on: windows-latest
     if: ${{ github.repository_owner == 'oven-sh' }}
     permissions:
@@ -25,7 +25,7 @@ jobs:
         
       - name: Validate inputs
         run: |
-          Write-Host "Testing Windows code signing with the following parameters:"
+          Write-Host "Testing DigiCert KeyLocker code signing with the following parameters:"
           Write-Host "  Version: $env:VERSION"
           Write-Host "  Dry run: $env:DRY_RUN"
           Write-Host "  Repository: $env:GITHUB_REPOSITORY"
@@ -44,58 +44,96 @@ jobs:
           DRY_RUN: ${{ github.event.inputs.dry-run }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
-      - name: Test certificate setup
+      - name: Test DigiCert KeyLocker secrets
         run: |
-          Write-Host "Testing DigiCert certificate setup..."
+          Write-Host "Testing DigiCert KeyLocker secrets configuration..."
           
-          # Check if secrets are available
-          if ([string]::IsNullOrEmpty($env:DIGICERT_CERTIFICATE)) {
-            Write-Error "DIGICERT_CERTIFICATE secret is not set"
-            exit 1
-          }
+          # Check if all required secrets are available
+          $requiredSecrets = @(
+            'SM_API_KEY',
+            'SM_HOST', 
+            'SM_CLIENT_CERT_FILE_B64',
+            'SM_CLIENT_CERT_PASSWORD',
+            'SM_CODE_SIGNING_CERT_SHA1_HASH'
+          )
           
-          if ([string]::IsNullOrEmpty($env:DIGICERT_PASSWORD)) {
-            Write-Error "DIGICERT_PASSWORD secret is not set"
-            exit 1
-          }
+          $missingSecrets = @()
           
-          # Test certificate decoding
-          try {
-            $certBytes = [System.Convert]::FromBase64String($env:DIGICERT_CERTIFICATE)
-            Write-Host "✓ Certificate is valid base64 ($($certBytes.Length) bytes)"
-          } catch {
-            Write-Error "Failed to decode certificate: $_"
-            exit 1
-          }
-          
-          # Test certificate loading
-          try {
-            $certPath = "$env:TEMP\test-certificate.p12"
-            [System.IO.File]::WriteAllBytes($certPath, $certBytes)
-            $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($certPath, $env:DIGICERT_PASSWORD)
-            Write-Host "✓ Certificate loaded successfully"
-            Write-Host "  Subject: $($cert.Subject)"
-            Write-Host "  Issuer: $($cert.Issuer)"
-            Write-Host "  Valid from: $($cert.NotBefore)"
-            Write-Host "  Valid until: $($cert.NotAfter)"
-            Write-Host "  Thumbprint: $($cert.Thumbprint)"
-            
-            # Check if certificate is for code signing
-            $keyUsage = $cert.Extensions | Where-Object { $_.Oid.FriendlyName -eq "Key Usage" }
-            $enhancedKeyUsage = $cert.Extensions | Where-Object { $_.Oid.FriendlyName -eq "Enhanced Key Usage" }
-            
-            if ($enhancedKeyUsage) {
-              Write-Host "  Enhanced Key Usage: $($enhancedKeyUsage.Format($false))"
+          foreach ($secret in $requiredSecrets) {
+            $value = [Environment]::GetEnvironmentVariable($secret)
+            if ([string]::IsNullOrEmpty($value)) {
+              $missingSecrets += $secret
+              Write-Host "❌ $secret is not set"
+            } else {
+              Write-Host "✓ $secret is configured"
             }
-            
-            Remove-Item $certPath -Force
+          }
+          
+          if ($missingSecrets.Count -gt 0) {
+            Write-Error "Missing required secrets: $($missingSecrets -join ', ')"
+            Write-Host ""
+            Write-Host "Required GitHub Secrets for DigiCert KeyLocker:"
+            Write-Host "  SM_API_KEY: DigiCert Software Trust Manager API key"
+            Write-Host "  SM_HOST: DigiCert Software Trust Manager host URL"
+            Write-Host "  SM_CLIENT_CERT_FILE_B64: Base64-encoded client certificate"
+            Write-Host "  SM_CLIENT_CERT_PASSWORD: Client certificate password"
+            Write-Host "  SM_CODE_SIGNING_CERT_SHA1_HASH: Code signing certificate fingerprint"
+            exit 1
+          }
+          
+          # Test base64 decoding of client certificate
+          try {
+            $certBytes = [System.Convert]::FromBase64String($env:SM_CLIENT_CERT_FILE_B64)
+            Write-Host "✓ Client certificate is valid base64 ($($certBytes.Length) bytes)"
           } catch {
-            Write-Error "Failed to load certificate: $_"
+            Write-Error "Failed to decode client certificate: $_"
             exit 1
           }
         env:
-          DIGICERT_CERTIFICATE: ${{ secrets.DIGICERT_CERTIFICATE }}
-          DIGICERT_PASSWORD: ${{ secrets.DIGICERT_PASSWORD }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_HOST: ${{ secrets.SM_HOST }}
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
+          
+      - name: Test DigiCert KeyLocker connection
+        uses: digicert/ssm-code-signing@v1.0.0
+        
+      - name: Setup and test KeyLocker
+        shell: bash
+        run: |
+          echo "Setting up DigiCert client certificate..."
+          echo "${{ secrets.SM_CLIENT_CERT_FILE_B64 }}" | base64 --decode > /d/Certificate_pkcs12.p12
+          
+          echo "Configuring environment variables..."
+          echo "SM_HOST=${{ secrets.SM_HOST }}" >> "$GITHUB_ENV"
+          echo "SM_API_KEY=${{ secrets.SM_API_KEY }}" >> "$GITHUB_ENV" 
+          echo "SM_CLIENT_CERT_FILE=D:\\Certificate_pkcs12.p12" >> "$GITHUB_ENV"
+          echo "SM_CLIENT_CERT_PASSWORD=${{ secrets.SM_CLIENT_CERT_PASSWORD }}" >> "$GITHUB_ENV"
+          
+      - name: Test KeyLocker connectivity
+        shell: cmd
+        run: |
+          echo Testing DigiCert KeyLocker connection...
+          smctl healthcheck
+          if %ERRORLEVEL% neq 0 (
+            echo Failed to connect to DigiCert KeyLocker
+            exit /b 1
+          )
+          echo ✓ KeyLocker connection successful
+          
+          echo Listing available certificates...
+          smctl keypair ls
+          
+          echo Testing certificate fingerprint...
+          smctl keypair ls | findstr /i "${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}"
+          if %ERRORLEVEL% neq 0 (
+            echo Certificate with fingerprint ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }} not found
+            echo Available certificates:
+            smctl keypair ls
+            exit /b 1
+          )
+          echo ✓ Certificate fingerprint found in KeyLocker
           
       - name: Check available Windows binaries
         run: |
@@ -120,49 +158,98 @@ jobs:
           VERSION: ${{ github.event.inputs.version }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
-      - name: Test Windows code signing (dry run)
+      - name: Test KeyLocker signing (dry run)
         if: ${{ github.event.inputs.dry-run == 'true' }}
-        uses: ./.github/actions/sign-windows
-        with:
-          version: ${{ github.event.inputs.version }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          digicert-certificate: ${{ secrets.DIGICERT_CERTIFICATE }}
-          digicert-password: ${{ secrets.DIGICERT_PASSWORD }}
-          
-      - name: Dry run - simulate upload
-        if: ${{ github.event.inputs.dry-run == 'true' }}
+        shell: pwsh
         run: |
-          Write-Host ""
-          Write-Host "=== DRY RUN COMPLETE ==="
-          Write-Host "This was a dry run. The signed binaries were created but NOT uploaded."
-          Write-Host "If you want to actually upload the signed binaries, re-run with dry-run=false"
+          Write-Host "=== DRY RUN: Testing KeyLocker Signing ==="
+          Write-Host "This will download binaries and test signing but NOT upload back to release"
           
-          # Show what would have been uploaded
-          if (Test-Path "./signed-binaries") {
-            $signedFiles = Get-ChildItem -Path "./signed-binaries" -Filter "*.zip"
-            Write-Host ""
-            Write-Host "Signed files that would be uploaded:"
-            $signedFiles | ForEach-Object {
-              $sizeMB = [math]::Round($_.Length / 1MB, 2)
-              Write-Host "  ✓ $($_.Name) ($sizeMB MB)"
-            }
+          # Download one binary for testing
+          Write-Host "Downloading Windows binaries for testing..."
+          New-Item -ItemType Directory -Path "./test-downloads" -Force
+          gh release download "$env:VERSION" --pattern "bun-windows-x64.zip" --dir ./test-downloads
+          
+          $testBinary = Get-ChildItem -Path "./test-downloads" -Filter "*.zip" | Select-Object -First 1
+          if (-not $testBinary) {
+            Write-Error "No test binary downloaded"
+            exit 1
           }
           
-      - name: Actual Windows code signing (upload enabled)
+          Write-Host "Extracting test binary: $($testBinary.Name)"
+          $extractPath = "./test-extracted"
+          Expand-Archive -Path $testBinary.FullName -DestinationPath $extractPath -Force
+          
+          # Find the executable
+          $testExe = Get-ChildItem -Path $extractPath -Recurse -Filter "*.exe" | Select-Object -First 1
+          if (-not $testExe) {
+            Write-Error "No executable found in test binary"
+            exit 1
+          }
+          
+          Write-Host "Found test executable: $($testExe.FullName)"
+          
+          # Test signing
+          Write-Host "Testing signature with KeyLocker..."
+          $certFingerprint = "$env:SM_CODE_SIGNING_CERT_SHA1_HASH"
+          
+          $signResult = cmd /c "smctl sign --fingerprint $certFingerprint --input `"$($testExe.FullName)`" 2>&1"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to sign test binary: $signResult"
+            exit 1
+          }
+          
+          Write-Host "✓ Test signing successful: $signResult"
+          
+          # Verify signature
+          Write-Host "Verifying test signature..."
+          $verifyResult = Start-Process -FilePath "signtool" -ArgumentList @("verify", "/pa", "/v", $testExe.FullName) -Wait -PassThru -NoNewWindow
+          if ($verifyResult.ExitCode -ne 0) {
+            Write-Error "Signature verification failed"
+            exit 1
+          }
+          
+          Write-Host "✓ Test signature verification successful"
+          Write-Host ""
+          Write-Host "=== DRY RUN COMPLETE ==="
+          Write-Host "✓ DigiCert KeyLocker signing test passed"
+          Write-Host "✓ Ready for production signing"
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
+          
+      - name: Full KeyLocker signing (upload enabled)
         if: ${{ github.event.inputs.dry-run == 'false' }}
         uses: ./.github/actions/sign-windows
         with:
           version: ${{ github.event.inputs.version }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          digicert-certificate: ${{ secrets.DIGICERT_CERTIFICATE }}
-          digicert-password: ${{ secrets.DIGICERT_PASSWORD }}
+          sm-api-key: ${{ secrets.SM_API_KEY }}
+          sm-host: ${{ secrets.SM_HOST }}
+          sm-client-cert-file-b64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+          sm-client-cert-password: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          sm-code-signing-cert-sha1-hash: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
           
       - name: Success summary
         if: ${{ github.event.inputs.dry-run == 'false' }}
         run: |
           Write-Host ""
-          Write-Host "=== SIGNING COMPLETE ==="
-          Write-Host "✓ Windows binaries for $env:VERSION have been signed and uploaded"
+          Write-Host "=== KEYLOCKER SIGNING COMPLETE ==="
+          Write-Host "✓ Windows binaries for $env:VERSION have been signed with DigiCert KeyLocker"
+          Write-Host "✓ Signed binaries uploaded to release"
           Write-Host "✓ Release URL: https://github.com/$env:GITHUB_REPOSITORY/releases/tag/$env:VERSION"
         env:
           VERSION: ${{ github.event.inputs.version }}
+          
+      - name: Cleanup
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host "Cleaning up test files..."
+          @("./test-downloads", "./test-extracted", "D:\Certificate_pkcs12.p12") | ForEach-Object {
+            if (Test-Path $_) {
+              Remove-Item $_ -Recurse -Force -ErrorAction SilentlyContinue
+              Write-Host "✓ Removed $_"
+            }
+          }

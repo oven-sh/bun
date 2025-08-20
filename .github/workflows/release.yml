@@ -1,9 +1,12 @@
 # TODO: Move this to bash scripts intead of Github Actions
 # so it can be run from Buildkite, see: .buildkite/scripts/release.sh
 #
-# Required GitHub Secrets for Windows Code Signing:
-# - DIGICERT_CERTIFICATE: Base64-encoded DigiCert .p12 certificate file
-# - DIGICERT_PASSWORD: Password for the DigiCert certificate
+# Required GitHub Secrets for DigiCert KeyLocker Windows Code Signing:
+# - SM_API_KEY: DigiCert Software Trust Manager API key
+# - SM_HOST: DigiCert Software Trust Manager host URL  
+# - SM_CLIENT_CERT_FILE_B64: Base64-encoded DigiCert client certificate
+# - SM_CLIENT_CERT_PASSWORD: Password for the DigiCert client certificate
+# - SM_CODE_SIGNING_CERT_SHA1_HASH: SHA1 fingerprint of code signing certificate in KeyLocker
 
 name: Release
 concurrency: release
@@ -94,13 +97,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Sign Windows binaries
+      - name: Sign Windows binaries with DigiCert KeyLocker
         uses: ./.github/actions/sign-windows
         with:
           version: ${{ env.BUN_VERSION }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          digicert-certificate: ${{ secrets.DIGICERT_CERTIFICATE }}
-          digicert-password: ${{ secrets.DIGICERT_PASSWORD }}
+          sm-api-key: ${{ secrets.SM_API_KEY }}
+          sm-host: ${{ secrets.SM_HOST }}
+          sm-client-cert-file-b64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+          sm-client-cert-password: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          sm-code-signing-cert-sha1-hash: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
   npm:
     name: Release to NPM
     runs-on: ubuntu-latest

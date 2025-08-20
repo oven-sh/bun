@@ -1,5 +1,5 @@
-name: 'Sign Windows Binaries'
-description: 'Downloads, signs, and re-uploads Windows binaries for a GitHub release'
+name: 'Sign Windows Binaries with DigiCert KeyLocker'
+description: 'Downloads, signs, and re-uploads Windows binaries using DigiCert KeyLocker (Software Trust Manager)'
 inputs:
   version:
     description: 'Release version tag (e.g., "1.0.2", "canary")'
@@ -7,11 +7,20 @@ inputs:
   github-token:
     description: 'GitHub token for downloading/uploading release assets'
     required: true
-  digicert-certificate:
-    description: 'Base64-encoded DigiCert .p12 certificate file'
+  sm-api-key:
+    description: 'DigiCert Software Trust Manager API key'
     required: true
-  digicert-password:
-    description: 'Password for the DigiCert certificate'
+  sm-host:
+    description: 'DigiCert Software Trust Manager host URL'
+    required: true
+  sm-client-cert-file-b64:
+    description: 'Base64-encoded DigiCert client certificate file'
+    required: true
+  sm-client-cert-password:
+    description: 'Password for the DigiCert client certificate'
+    required: true
+  sm-code-signing-cert-sha1-hash:
+    description: 'SHA1 hash/fingerprint of the code signing certificate in KeyLocker'
     required: true
   binary-pattern:
     description: 'Pattern to match Windows binaries (default: "bun-windows-*.zip")'
@@ -21,29 +30,36 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    - name: Setup DigiCert certificate
-      shell: pwsh
+    - name: Install DigiCert KeyLocker tools
+      uses: digicert/ssm-code-signing@v1.0.0
+      
+    - name: Setup DigiCert client certificate
+      shell: bash
       run: |
-        Write-Host "Setting up DigiCert certificate..."
-        $certBytes = [System.Convert]::FromBase64String("$env:DIGICERT_CERTIFICATE")
-        $certPath = "$env:TEMP\certificate.p12"
-        [System.IO.File]::WriteAllBytes($certPath, $certBytes)
-        Write-Host "Certificate saved to: $certPath"
-        
-        # Verify certificate can be read
-        try {
-          $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($certPath, $env:DIGICERT_PASSWORD)
-          Write-Host "Certificate subject: $($cert.Subject)"
-          Write-Host "Certificate expires: $($cert.NotAfter)"
-          Write-Host "Certificate is valid: $($cert.Verify())"
-        } catch {
-          Write-Error "Failed to load certificate: $_"
-          exit 1
-        }
-      env:
-        DIGICERT_CERTIFICATE: ${{ inputs.digicert-certificate }}
-        DIGICERT_PASSWORD: ${{ inputs.digicert-password }}
+        echo "Setting up DigiCert client certificate..."
+        echo "${{ inputs.sm-client-cert-file-b64 }}" | base64 --decode > /d/Certificate_pkcs12.p12
+        echo "✓ Client certificate saved"
+      
+    - name: Configure DigiCert KeyLocker environment
+      shell: bash
+      run: |
+        echo "Configuring DigiCert KeyLocker environment variables..."
+        echo "SM_HOST=${{ inputs.sm-host }}" >> "$GITHUB_ENV"
+        echo "SM_API_KEY=${{ inputs.sm-api-key }}" >> "$GITHUB_ENV"
+        echo "SM_CLIENT_CERT_FILE=D:\\Certificate_pkcs12.p12" >> "$GITHUB_ENV"
+        echo "SM_CLIENT_CERT_PASSWORD=${{ inputs.sm-client-cert-password }}" >> "$GITHUB_ENV"
+        echo "✓ Environment configured"
 
+    - name: Test DigiCert KeyLocker connection
+      shell: cmd
+      run: |
+        echo Testing DigiCert KeyLocker connection...
+        smctl healthcheck
+        echo ✓ KeyLocker connection successful
+        
+        echo Listing available certificates...
+        smctl keypair ls
+        
     - name: Download Windows binaries
       shell: pwsh
       run: |
@@ -69,17 +85,17 @@ runs:
         BINARY_PATTERN: ${{ inputs.binary-pattern }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
 
-    - name: Extract and sign binaries
+    - name: Extract and sign binaries with KeyLocker
       shell: pwsh
       run: |
-        Write-Host "Extracting and signing Windows binaries..."
+        Write-Host "Extracting and signing Windows binaries with DigiCert KeyLocker..."
         
         # Create directories
         New-Item -ItemType Directory -Path "./extracted" -Force
         New-Item -ItemType Directory -Path "./signed-binaries" -Force
         
-        $certPath = "$env:TEMP\certificate.p12"
         $binaries = Get-ChildItem -Path "./temp-downloads" -Filter "*.zip"
+        $certFingerprint = "$env:SM_CODE_SIGNING_CERT_SHA1_HASH"
         
         foreach ($binary in $binaries) {
           Write-Host ""
@@ -97,30 +113,25 @@ runs:
           foreach ($exe in $exeFiles) {
             Write-Host "  - $($exe.FullName)"
             
-            # Sign the binary
-            Write-Host "Signing $($exe.Name)..."
-            $signArgs = @(
-              "sign"
-              "/fd", "SHA256"
-              "/tr", "http://timestamp.digicert.com"
-              "/td", "SHA256"
-              "/f", $certPath
-              "/p", $env:DIGICERT_PASSWORD
-              "/v"
-              $exe.FullName
-            )
+            # Sign the binary using DigiCert KeyLocker
+            Write-Host "Signing $($exe.Name) with KeyLocker..."
+            $signResult = cmd /c "smctl sign --fingerprint $certFingerprint --input `"$($exe.FullName)`" 2>&1"
             
-            $result = Start-Process -FilePath "signtool" -ArgumentList $signArgs -Wait -PassThru -NoNewWindow
-            if ($result.ExitCode -ne 0) {
-              Write-Error "Failed to sign $($exe.Name) (exit code: $($result.ExitCode))"
+            if ($LASTEXITCODE -ne 0) {
+              Write-Error "Failed to sign $($exe.Name): $signResult"
               exit 1
             }
             
-            # Verify the signature
+            Write-Host "Sign output: $signResult"
+            
+            # Verify the signature using signtool
             Write-Host "Verifying signature for $($exe.Name)..."
-            $verifyResult = Start-Process -FilePath "signtool" -ArgumentList @("verify", "/pa", "/v", $exe.FullName) -Wait -PassThru -NoNewWindow
+            $verifyResult = Start-Process -FilePath "signtool" -ArgumentList @("verify", "/pa", "/v", $exe.FullName) -Wait -PassThru -NoNewWindow -RedirectStandardOutput "./verify_output.txt" -RedirectStandardError "./verify_error.txt"
+            
             if ($verifyResult.ExitCode -ne 0) {
-              Write-Error "Signature verification failed for $($exe.Name)"
+              $verifyOutput = Get-Content "./verify_output.txt" -ErrorAction SilentlyContinue
+              $verifyError = Get-Content "./verify_error.txt" -ErrorAction SilentlyContinue
+              Write-Error "Signature verification failed for $($exe.Name): $verifyOutput $verifyError"
               exit 1
             }
             
@@ -143,7 +154,7 @@ runs:
           Write-Host "  ✓ $($file.Name)"
         }
       env:
-        DIGICERT_PASSWORD: ${{ inputs.digicert-password }}
+        SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ inputs.sm-code-signing-cert-sha1-hash }}
 
     - name: Upload signed Windows binaries
       shell: pwsh
@@ -170,17 +181,17 @@ runs:
       run: |
         Write-Host "Cleaning up temporary files..."
         
-        # Remove certificate file
-        $certPath = "$env:TEMP\certificate.p12"
+        # Remove client certificate file
+        $certPath = "D:\Certificate_pkcs12.p12"
         if (Test-Path $certPath) {
           Remove-Item $certPath -Force
-          Write-Host "✓ Removed certificate file"
+          Write-Host "✓ Removed client certificate file"
         }
         
         # Remove working directories
-        @("./temp-downloads", "./extracted", "./signed-binaries") | ForEach-Object {
+        @("./temp-downloads", "./extracted", "./signed-binaries", "./verify_output.txt", "./verify_error.txt") | ForEach-Object {
           if (Test-Path $_) {
-            Remove-Item $_ -Recurse -Force
+            Remove-Item $_ -Recurse -Force -ErrorAction SilentlyContinue
             Write-Host "✓ Removed $_"
           }
         }

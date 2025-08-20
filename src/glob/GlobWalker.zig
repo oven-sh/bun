@@ -326,7 +326,25 @@ pub fn GlobWalker_(
         follow_symlinks: bool = false,
         error_on_broken_symlinks: bool = false,
         only_files: bool = true,
-
+        nocase: bool = false,
+        
+        // Pagination and filtering
+        limit: ?u32 = null,
+        offset: u32 = 0,
+        sort_field: ?SortField = null,
+        ignore_patterns: ?[][]const u8 = null,
+        
+        // Abort signal support
+        did_abort: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+        abort_signal: ?*AbortSignal = null,
+        
+        // Result metadata
+        has_more: bool = false,
+        matched_count: u32 = 0,
+        
+        // For sorting support
+        sortable_results: ?ArrayList(SortableResult) = null,
+        
         pathBuf: bun.PathBuffer = undefined,
         // iteration state
         workbuf: ArrayList(WorkItem) = ArrayList(WorkItem){},
@@ -679,6 +697,11 @@ pub fn GlobWalker_(
 
             pub fn next(this: *Iterator) !Maybe(?MatchedPath) {
                 while (true) {
+                    // Check for abort signal
+                    if (this.walker.did_abort.load(.monotonic)) {
+                        return .{ .result = null };
+                    }
+                    
                     switch (this.iter_state) {
                         .matched => |path| {
                             this.iter_state = .get_next;
@@ -996,6 +1019,12 @@ pub fn GlobWalker_(
                 follow_symlinks,
                 error_on_broken_symlinks,
                 only_files,
+                false, // nocase
+                null, // limit
+                0, // offset
+                null, // sort_field
+                null, // ignore_patterns
+                null, // abort_signal
             );
         }
 
@@ -1027,6 +1056,12 @@ pub fn GlobWalker_(
             follow_symlinks: bool,
             error_on_broken_symlinks: bool,
             only_files: bool,
+            nocase: bool,
+            limit: ?u32,
+            offset: u32,
+            sort_field: ?SortField,
+            ignore_patterns: ?[][]const u8,
+            abort_signal: ?*AbortSignal,
         ) !Maybe(void) {
             log("initWithCwd(cwd={s})", .{cwd});
             this.* = .{
@@ -1037,6 +1072,12 @@ pub fn GlobWalker_(
                 .follow_symlinks = follow_symlinks,
                 .error_on_broken_symlinks = error_on_broken_symlinks,
                 .only_files = only_files,
+                .nocase = nocase,
+                .limit = limit,
+                .offset = offset,
+                .sort_field = sort_field,
+                .ignore_patterns = ignore_patterns,
+                .abort_signal = abort_signal,
                 .basename_excluding_special_syntax_component_idx = 0,
                 .end_byte_of_basename_excluding_special_syntax = 0,
             };
@@ -1076,6 +1117,52 @@ pub fn GlobWalker_(
             bun.copy(u8, this.pathBuf[0..path_buf.len], path_buf[0..path_buf.len]);
             return err.withPath(this.pathBuf[0..path_buf.len]);
         }
+        
+        pub fn onAbortSignal(ctx: ?*anyopaque, _: jsc.JSValue) callconv(.C) void {
+            const this: *GlobWalker = @ptrCast(@alignCast(ctx.?));
+            this.did_abort.store(true, .monotonic);
+        }
+        
+        pub fn clearAbortSignal(this: *GlobWalker) void {
+            if (this.abort_signal) |signal| {
+                this.abort_signal = null;
+                signal.pendingActivityUnref();
+                signal.cleanNativeBindings(this);
+                signal.unref();
+            }
+        }
+        
+        fn finalizeSortedResults(this: *GlobWalker) !void {
+            if (this.sortable_results == null) return;
+            
+            var results = this.sortable_results.?;
+            defer this.sortable_results = null;
+            
+            // Sort results based on the specified field
+            if (this.sort_field) |sort_field| {
+                std.sort.insertion(SortableResult, results.items, sort_field, sortResultsLessThan);
+            }
+            
+            // Apply pagination after sorting
+            const start_idx = this.offset;
+            const end_idx = if (this.limit) |limit| 
+                @min(start_idx + limit, results.items.len) 
+            else 
+                results.items.len;
+                
+            // Check if there are more results beyond what we're returning
+            this.has_more = end_idx < results.items.len;
+            
+            // Add the paginated, sorted results to the matchedPaths HashMap
+            for (results.items[start_idx..end_idx]) |result| {
+                const name = matchedPathToBunString(result.path);
+                try this.matchedPaths.putNoClobber(this.arena.allocator(), name, {});
+            }
+        }
+        
+        fn sortResultsLessThan(sort_field: SortField, a: SortableResult, b: SortableResult) bool {
+            return sort_field.lessThan(a.stat, b.stat, a.name, b.name);
+        }
 
         pub fn walk(this: *GlobWalker) !Maybe(void) {
             if (this.patternComponents.items.len == 0) return .success;
@@ -1094,7 +1181,19 @@ pub fn GlobWalker_(
                 log("walker: matched path: {s}", .{path});
                 // The paths are already put into this.matchedPaths, which we use for the output,
                 // so we don't need to do anything here
+                
+                // Early exit if we have enough results and not sorting (sorting requires collecting all results)
+                if (this.sort_field == null) {
+                    if (this.limit) |limit| {
+                        if (this.matchedPaths.keys().len >= limit and this.matched_count >= this.offset + limit) {
+                            break;
+                        }
+                    }
+                }
             }
+            
+            // Finalize sorted results if sorting was enabled
+            try this.finalizeSortedResults();
 
             return .success;
         }
@@ -1293,11 +1392,12 @@ pub fn GlobWalker_(
             log("matchPatternImpl: {s}", .{filepath});
             if (!this.dot and GlobWalker.startsWithDot(filepath)) return false;
             if (is_ignored(filepath)) return false;
+            if (this.isIgnored(filepath)) return false;
 
             return switch (pattern_component.syntax_hint) {
                 .Double, .Single => true,
-                .WildcardFilepath => matchWildcardFilepath(pattern_component.patternSlice(this.pattern), filepath),
-                .Literal => matchWildcardLiteral(pattern_component.patternSlice(this.pattern), filepath),
+                .WildcardFilepath => this.matchWildcardFilepath(pattern_component.patternSlice(this.pattern), filepath),
+                .Literal => this.matchWildcardLiteral(pattern_component.patternSlice(this.pattern), filepath),
                 else => this.matchPatternSlow(pattern_component, filepath),
             };
         }
@@ -1309,6 +1409,24 @@ pub fn GlobWalker_(
                 filepath,
             ).matches();
         }
+        
+        fn matchWildcardFilepath(this: *GlobWalker, glob: []const u8, path: []const u8) bool {
+            const needle = glob[1..];
+            const needle_len: u32 = @intCast(needle.len);
+            if (path.len < needle_len) return false;
+            const path_suffix = path[path.len - needle_len ..];
+            if (this.nocase) {
+                return std.ascii.eqlIgnoreCase(needle, path_suffix);
+            }
+            return std.mem.eql(u8, needle, path_suffix);
+        }
+        
+        fn matchWildcardLiteral(this: *GlobWalker, literal: []const u8, path: []const u8) bool {
+            if (this.nocase) {
+                return std.ascii.eqlIgnoreCase(literal, path);
+            }
+            return std.mem.eql(u8, literal, path);
+        }
 
         inline fn matchedPathToBunString(matched_path: MatchedPath) BunString {
             if (comptime sentinel) {
@@ -1318,6 +1436,20 @@ pub fn GlobWalker_(
         }
 
         fn prepareMatchedPathSymlink(this: *GlobWalker, symlink_full_path: []const u8) !?MatchedPath {
+            // Handle pagination: skip results until we reach the offset
+            if (this.matched_count < this.offset) {
+                this.matched_count += 1;
+                return null;
+            }
+            
+            // Handle limit: if we've reached the limit, mark that we have more results
+            if (this.limit) |limit| {
+                if (this.matchedPaths.keys().len >= limit) {
+                    this.has_more = true;
+                    return null;
+                }
+            }
+            
             const result = try this.matchedPaths.getOrPut(this.arena.allocator(), BunString.fromBytes(symlink_full_path));
             if (result.found_existing) {
                 log("(dupe) prepared match: {s}", .{symlink_full_path});
@@ -1326,10 +1458,12 @@ pub fn GlobWalker_(
             if (comptime !sentinel) {
                 const slice = try this.arena.allocator().dupe(u8, symlink_full_path);
                 result.key_ptr.* = matchedPathToBunString(slice);
+                this.matched_count += 1;
                 return slice;
             }
             const slicez = try this.arena.allocator().dupeZ(u8, symlink_full_path);
             result.key_ptr.* = matchedPathToBunString(slicez);
+            this.matched_count += 1;
             return slicez;
         }
 
@@ -1339,6 +1473,52 @@ pub fn GlobWalker_(
                 entry_name,
             };
             const name_matched_path = try this.join(subdir_parts);
+            
+            // If sorting is enabled, collect results for later sorting
+            if (this.sort_field != null) {
+                if (this.sortable_results == null) {
+                    this.sortable_results = ArrayList(SortableResult).initCapacity(this.arena.allocator(), 256) catch ArrayList(SortableResult){};
+                }
+                
+                // Get file stat for sorting (except for name-only sorting)
+                var stat: ?bun.Stat = null;
+                if (this.sort_field != .name) {
+                    // Convert to null-terminated string for statat
+                    var path_buf: bun.PathBuffer = undefined;
+                    @memcpy(path_buf[0..name_matched_path.len], name_matched_path);
+                    path_buf[name_matched_path.len] = 0;
+                    const path_z = path_buf[0..name_matched_path.len :0];
+                    
+                    const stat_result = Accessor.statat(.empty, path_z);
+                    if (stat_result == .result) {
+                        stat = stat_result.result;
+                    }
+                }
+                
+                try this.sortable_results.?.append(this.arena.allocator(), .{
+                    .path = name_matched_path,
+                    .name = try this.arena.allocator().dupe(u8, entry_name),
+                    .stat = stat,
+                });
+                
+                log("collected for sorting: {s}", .{name_matched_path});
+                return name_matched_path;
+            }
+            
+            // Handle pagination when not sorting: skip results until we reach the offset
+            if (this.matched_count < this.offset) {
+                this.matched_count += 1;
+                return null;
+            }
+            
+            // Handle limit: if we've reached the limit, mark that we have more results
+            if (this.limit) |limit| {
+                if (this.matchedPaths.keys().len >= limit) {
+                    this.has_more = true;
+                    return null;
+                }
+            }
+            
             const name = matchedPathToBunString(name_matched_path);
             const result = try this.matchedPaths.getOrPutValue(this.arena.allocator(), name, {});
             if (result.found_existing) {
@@ -1347,7 +1527,7 @@ pub fn GlobWalker_(
                 return null;
             }
             result.key_ptr.* = name;
-            // if (comptime sentinel) return name[0 .. name.len - 1 :0];
+            this.matched_count += 1;
             log("prepared match: {s}", .{name_matched_path});
             return name_matched_path;
         }
@@ -1392,6 +1572,21 @@ pub fn GlobWalker_(
 
         inline fn startsWithDot(filepath: []const u8) bool {
             return filepath.len > 0 and filepath[0] == '.';
+        }
+        
+        fn isIgnored(this: *GlobWalker, filepath: []const u8) bool {
+            const ignore_patterns = this.ignore_patterns orelse return false;
+            
+            // Check each ignore pattern
+            for (ignore_patterns) |pattern| {
+                if (pattern.len == 0) continue;
+                // Use the existing match function to check if the file matches the ignore pattern
+                const match_result = match(this.arena.allocator(), pattern, filepath);
+                if (match_result.matches()) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         const syntax_tokens = "*[{?!";
@@ -1678,6 +1873,48 @@ const isAllAscii = bun.strings.isAllASCII;
 
 const jsc = bun.jsc;
 const ZigString = bun.jsc.ZigString;
+const AbortSignal = jsc.WebCore.AbortSignal;
+
+// TODO: Move this to a shared location
+pub const SortField = enum {
+    name,
+    mtime,
+    atime,
+    ctime,
+    size,
+    
+    pub fn lessThan(field: SortField, a_stat: ?bun.Stat, b_stat: ?bun.Stat, a_name: []const u8, b_name: []const u8) bool {
+        return switch (field) {
+            .name => std.mem.order(u8, a_name, b_name) == .lt,
+            .mtime => {
+                const a_time = if (a_stat) |stat| @as(i64, stat.mtime().sec) else 0;
+                const b_time = if (b_stat) |stat| @as(i64, stat.mtime().sec) else 0;
+                return a_time < b_time;
+            },
+            .atime => {
+                const a_time = if (a_stat) |stat| @as(i64, stat.atime().sec) else 0;
+                const b_time = if (b_stat) |stat| @as(i64, stat.atime().sec) else 0;
+                return a_time < b_time;
+            },
+            .ctime => {
+                const a_time = if (a_stat) |stat| @as(i64, stat.ctime().sec) else 0;
+                const b_time = if (b_stat) |stat| @as(i64, stat.ctime().sec) else 0;
+                return a_time < b_time;
+            },
+            .size => {
+                const a_size = if (a_stat) |stat| stat.size else 0;
+                const b_size = if (b_stat) |stat| stat.size else 0;
+                return a_size < b_size;
+            },
+        };
+    }
+};
+
+const SortableResult = struct {
+    path: []const u8, // Use []const u8 for now instead of MatchedPath
+    name: []const u8,
+    stat: ?bun.Stat,
+};
 
 const Cursor = CodepointIterator.Cursor;
 const Codepoint = CodepointIterator.Cursor.CodePointType;

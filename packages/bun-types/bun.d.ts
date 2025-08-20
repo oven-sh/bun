@@ -7793,6 +7793,53 @@ declare module "bun" {
      * @default true
      */
     onlyFiles?: boolean;
+
+    /**
+     * Maximum number of results to return. Enables pagination.
+     */
+    limit?: number;
+
+    /**
+     * Number of results to skip. Used with limit for pagination.
+     * 
+     * @default 0
+     */
+    offset?: number;
+
+    /**
+     * Sort results by the specified field.
+     */
+    sort?: "name" | "mtime" | "atime" | "ctime" | "size";
+
+    /**
+     * Glob patterns to ignore/exclude from results.
+     */
+    ignore?: string[];
+
+    /**
+     * Perform case-insensitive matching.
+     * 
+     * @default false
+     */
+    nocase?: boolean;
+
+    /**
+     * AbortSignal to cancel the glob operation.
+     */
+    signal?: AbortSignal;
+  }
+
+  interface GlobScanResult {
+    /**
+     * Array of matched file paths
+     */
+    files: string[];
+
+    /**
+     * Indicates if there are more results available beyond the current limit.
+     * Only meaningful when using limit/offset pagination.
+     */
+    hasMore: boolean;
   }
 
   /**
@@ -7852,6 +7899,22 @@ declare module "bun" {
      * ```
      */
     scan(optionsOrCwd?: string | GlobScanOptions): AsyncIterableIterator<string>;
+    
+    /**
+     * Scan with pagination support. Returns a structured result with files and hasMore flag.
+     *
+     * @throws {ENOTDIR} Given root cwd path must be a directory
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * const result = await glob.scan({ cwd: './src', limit: 10, offset: 0 });
+     * console.log(result.files, result.hasMore);
+     * ```
+     */
+    scan(options: GlobScanOptions & { limit: number }): Promise<GlobScanResult>;
+    scan(options: GlobScanOptions & { offset: number }): Promise<GlobScanResult>;
+    scan(options: GlobScanOptions & { sort: "name" | "mtime" | "atime" | "ctime" | "size" }): Promise<GlobScanResult>;
 
     /**
      * Synchronously scan a root directory recursively for files that match this glob pattern. Returns an iterator.
@@ -7861,18 +7924,34 @@ declare module "bun" {
      * @example
      * ```js
      * const glob = new Glob("*.{ts,tsx}");
-     * const scannedFiles = Array.from(glob.scan({ cwd: './src' }))
+     * const scannedFiles = Array.from(glob.scanSync({ cwd: './src' }))
      * ```
      *
      * @example
      * ```js
      * const glob = new Glob("*.{ts,tsx}");
-     * for (const path of glob.scan()) {
+     * for (const path of glob.scanSync()) {
      *   // do something
      * }
      * ```
      */
     scanSync(optionsOrCwd?: string | GlobScanOptions): IterableIterator<string>;
+    
+    /**
+     * Synchronously scan with pagination support. Returns a structured result with files and hasMore flag.
+     *
+     * @throws {ENOTDIR} Given root cwd path must be a directory
+     *
+     * @example
+     * ```js
+     * const glob = new Glob("*.{ts,tsx}");
+     * const result = glob.scanSync({ cwd: './src', limit: 10, offset: 0 });
+     * console.log(result.files, result.hasMore);
+     * ```
+     */
+    scanSync(options: GlobScanOptions & { limit: number }): GlobScanResult;
+    scanSync(options: GlobScanOptions & { offset: number }): GlobScanResult;
+    scanSync(options: GlobScanOptions & { sort: "name" | "mtime" | "atime" | "ctime" | "size" }): GlobScanResult;
 
     /**
      * Match the glob against a string

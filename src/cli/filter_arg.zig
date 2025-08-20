@@ -242,7 +242,7 @@ pub const PackageFilterIterator = struct {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         errdefer arena.deinit();
         const cwd = try arena.allocator().dupe(u8, self.root_dir);
-        try (try self.walker.initWithCwd(&arena, pattern, cwd, true, true, false, true, true)).unwrap();
+        try (try self.walker.initWithCwd(&arena, pattern, cwd, true, true, false, true, true, false, null, 0, null, null, null)).unwrap();
         self.iter = GlobWalker.Iterator{ .walker = &self.walker };
         try (try self.iter.init()).unwrap();
     }

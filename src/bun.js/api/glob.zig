@@ -9,6 +9,9 @@ pattern: []const u8,
 pattern_codepoints: ?std.ArrayList(u32) = null,
 has_pending_activity: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
 
+// Use SortField from the GlobWalker implementation
+const SortField = @import("../../glob/GlobWalker.zig").SortField;
+
 const ScanOpts = struct {
     cwd: ?[]const u8,
     dot: bool,
@@ -16,6 +19,12 @@ const ScanOpts = struct {
     only_files: bool,
     follow_symlinks: bool,
     error_on_broken_symlinks: bool,
+    limit: ?u32,
+    offset: u32,
+    sort: ?SortField,
+    ignore: ?[][]const u8,
+    nocase: bool,
+    signal: ?*webcore.AbortSignal,
 
     fn parseCWD(globalThis: *JSGlobalObject, allocator: std.mem.Allocator, cwdVal: jsc.JSValue, absolute: bool, comptime fnName: string) bun.JSError![]const u8 {
         const cwd_str_raw = try cwdVal.toSlice(globalThis, allocator);
@@ -69,6 +78,12 @@ const ScanOpts = struct {
             .follow_symlinks = false,
             .error_on_broken_symlinks = false,
             .only_files = true,
+            .limit = null,
+            .offset = 0,
+            .sort = null,
+            .ignore = null,
+            .nocase = false,
+            .signal = null,
         };
         if (optsObj.isUndefinedOrNull()) return out;
         if (!optsObj.isObject()) {
@@ -117,6 +132,80 @@ const ScanOpts = struct {
             out.dot = if (dot.isBoolean()) dot.asBoolean() else false;
         }
 
+        if (try optsObj.getTruthy(globalThis, "limit")) |limit| {
+            if (limit.isNumber()) {
+                const limit_num = limit.coerce(i32, globalThis) catch 0;
+                if (limit_num >= 0) {
+                    out.limit = @intCast(limit_num);
+                }
+            }
+        }
+
+        if (try optsObj.getTruthy(globalThis, "offset")) |offset| {
+            if (offset.isNumber()) {
+                const offset_num = offset.coerce(i32, globalThis) catch 0;
+                if (offset_num >= 0) {
+                    out.offset = @intCast(offset_num);
+                }
+            }
+        }
+
+        if (try optsObj.getTruthy(globalThis, "sort")) |sort| {
+            if (sort.isString()) {
+                const sort_str = try sort.toSlice(globalThis, arena.allocator());
+                defer sort_str.deinit();
+                if (std.mem.eql(u8, sort_str.slice(), "name")) {
+                    out.sort = .name;
+                } else if (std.mem.eql(u8, sort_str.slice(), "mtime")) {
+                    out.sort = .mtime;
+                } else if (std.mem.eql(u8, sort_str.slice(), "atime")) {
+                    out.sort = .atime;
+                } else if (std.mem.eql(u8, sort_str.slice(), "ctime")) {
+                    out.sort = .ctime;
+                } else if (std.mem.eql(u8, sort_str.slice(), "size")) {
+                    out.sort = .size;
+                }
+            }
+        }
+
+        if (try optsObj.getTruthy(globalThis, "nocase")) |nocase| {
+            out.nocase = if (nocase.isBoolean()) nocase.asBoolean() else false;
+        }
+
+        if (try optsObj.getTruthy(globalThis, "ignore")) |ignore| {
+            if (ignore.jsType() == .Array) {
+                // Collect patterns by iterating until we get undefined
+                var patterns = std.ArrayList([]const u8).init(arena.allocator());
+                defer patterns.deinit();
+                
+                var i: u32 = 0;
+                const max_patterns = 1000; // Reasonable safety limit
+                while (i < max_patterns) : (i += 1) {
+                    const item = ignore.getDirectIndex(globalThis, i);
+                    if (item.isUndefinedOrNull()) break;
+                    
+                    if (item.isString()) {
+                        const pattern_str = try item.toSlice(globalThis, arena.allocator());
+                        try patterns.append(try arena.allocator().dupe(u8, pattern_str.slice()));
+                    }
+                }
+                
+                if (patterns.items.len > 0) {
+                    out.ignore = try arena.allocator().dupe([]const u8, patterns.items);
+                }
+            }
+        }
+
+        if (try optsObj.getTruthy(globalThis, "signal")) |signal_val| {
+            if (webcore.AbortSignal.fromJS(signal_val)) |signal| {
+                // Keep it alive
+                signal_val.ensureStillAlive();
+                out.signal = signal;
+            } else {
+                return globalThis.throwInvalidArguments("signal is not of type AbortSignal", .{});
+            }
+        }
+
         return out;
     }
 };
@@ -160,6 +249,17 @@ pub const WalkTask = struct {
 
     pub fn run(this: *WalkTask) void {
         defer decrPendingActivityFlag(this.has_pending_activity);
+        defer {
+            // Clean up abort signal if it exists
+            this.walker.clearAbortSignal();
+        }
+        
+        // Set up abort signal listener if provided
+        if (this.walker.abort_signal) |signal| {
+            signal.pendingActivityRef();
+            _ = signal.addListener(this.walker, GlobWalker.onAbortSignal);
+        }
+        
         const result = this.walker.walk() catch |err| {
             this.err = .{ .unknown = err };
             return;
@@ -192,11 +292,22 @@ pub const WalkTask = struct {
 };
 
 fn globWalkResultToJS(globWalk: *GlobWalker, globalThis: *JSGlobalObject) bun.JSError!JSValue {
-    if (globWalk.matchedPaths.keys().len == 0) {
-        return jsc.JSValue.createEmptyArray(globalThis, 0);
+    const files_array: JSValue = if (globWalk.matchedPaths.keys().len == 0) 
+        (jsc.JSValue.createEmptyArray(globalThis, 0) catch .js_undefined) 
+    else 
+        (BunString.toJSArray(globalThis, globWalk.matchedPaths.keys()) catch .js_undefined);
+        
+    // If pagination options were used (limit is set), return structured result
+    if (globWalk.limit != null or globWalk.offset > 0 or globWalk.sort_field != null) {
+        const result_obj = jsc.JSValue.createEmptyObject(globalThis, 2);
+        result_obj.put(globalThis, ZigString.static("files"), files_array);
+        const has_more = jsc.JSValue.jsBoolean(globWalk.has_more);
+        result_obj.put(globalThis, ZigString.static("hasMore"), has_more);
+        return result_obj;
     }
-
-    return BunString.toJSArray(globalThis, globWalk.matchedPaths.keys());
+    
+    // Otherwise return just the array for backward compatibility
+    return files_array;
 }
 
 /// The reference to the arena is not used after the scope because it is copied
@@ -217,6 +328,12 @@ fn makeGlobWalker(
     const follow_symlinks = matchOpts.follow_symlinks;
     const error_on_broken_symlinks = matchOpts.error_on_broken_symlinks;
     const only_files = matchOpts.only_files;
+    const nocase = matchOpts.nocase;
+    const limit = matchOpts.limit;
+    const offset = matchOpts.offset;
+    const sort_field = matchOpts.sort;
+    const ignore_patterns = matchOpts.ignore;
+    const abort_signal = matchOpts.signal;
 
     var globWalker = try alloc.create(GlobWalker);
     errdefer alloc.destroy(globWalker);
@@ -232,6 +349,12 @@ fn makeGlobWalker(
             follow_symlinks,
             error_on_broken_symlinks,
             only_files,
+            nocase,
+            limit,
+            offset,
+            sort_field,
+            ignore_patterns,
+            abort_signal,
         )) {
             .err => |err| {
                 return globalThis.throwValue(err.toJS(globalThis));
@@ -402,3 +525,5 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const ZigString = jsc.ZigString;
 const ArgumentsSlice = jsc.CallFrame.ArgumentsSlice;
+
+const webcore = jsc.WebCore;

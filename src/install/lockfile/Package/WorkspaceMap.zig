@@ -226,7 +226,7 @@ pub fn processNamesArray(
             var walker: GlobWalker = .{};
             var cwd = bun.path.dirname(source.path.text, .auto);
             cwd = if (bun.strings.eql(cwd, "")) bun.fs.FileSystem.instance.top_level_dir else cwd;
-            if ((try walker.initWithCwd(&arena, glob_pattern, cwd, false, false, false, false, true)).asErr()) |e| {
+            if ((try walker.initWithCwd(&arena, glob_pattern, cwd, false, false, false, false, true, false, null, 0, null, null, null)).asErr()) |e| {
                 log.addErrorFmt(
                     source,
                     loc,

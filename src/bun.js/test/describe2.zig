@@ -44,7 +44,7 @@ pub const js_fns = struct {
     fn errorInCI(globalObject: *jsc.JSGlobalObject, label: []const u8) bun.JSError!void {
         if (!bun.FeatureFlags.breaking_changes_1_3) return; // this is a breaking change for version 1.3
         if (ci_info.detectCI()) |_| {
-            return globalObject.throwPretty("{s}() is not allowed in CI environments.\nTo force allow, run with environment variable CI=0", .{label});
+            return globalObject.throwPretty("{s}() is not allowed in CI environments.\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{label});
         }
     }
 

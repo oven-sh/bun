@@ -11,6 +11,9 @@ globalThis: *jsc.JSGlobalObject,
 da_rules: std.ArrayList(Rule),
 mutex: bun.Mutex = .{},
 
+/// We cannot lock/unlock a mutex
+estimated_size: std.atomic.Value(u32) = .init(0),
+
 pub fn constructor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!*@This() {
     _ = callFrame;
     const ptr = @This().new(.{
@@ -20,10 +23,9 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) b
     return ptr;
 }
 
+/// May be called from any thread.
 pub fn estimatedSize(this: *@This()) usize {
-    this.mutex.lock();
-    defer this.mutex.unlock();
-    return @sizeOf(@This()) + (@sizeOf(Rule) * this.da_rules.items.len);
+    return (@sizeOf(@This()) + this.estimated_size.load(.seq_cst)) / this.ref_count.get();
 }
 
 pub fn finalize(this: *@This()) void {
@@ -42,8 +44,6 @@ pub fn isBlockList(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 }
 
 pub fn addAddress(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    this.mutex.lock();
-    defer this.mutex.unlock();
     const arguments = callframe.argumentsAsArray(2);
     const address_js, var family_js = arguments;
     if (family_js.isUndefined()) family_js = bun.String.static("ipv4").toJS(globalThis);
@@ -52,13 +52,15 @@ pub fn addAddress(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *j
         try validators.validateString(globalThis, family_js, "family", .{});
         break :blk (try SocketAddress.initFromAddrFamily(globalThis, address_js, family_js))._addr;
     };
+
+    this.mutex.lock();
+    defer this.mutex.unlock();
     try this.da_rules.insert(0, .{ .addr = address });
+    _ = this.estimated_size.fetchAdd(@sizeOf(Rule), .monotonic);
     return .js_undefined;
 }
 
 pub fn addRange(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    this.mutex.lock();
-    defer this.mutex.unlock();
     const arguments = callframe.argumentsAsArray(3);
     const start_js, const end_js, var family_js = arguments;
     if (family_js.isUndefined()) family_js = bun.String.static("ipv4").toJS(globalThis);
@@ -72,18 +74,19 @@ pub fn addRange(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc
         try validators.validateString(globalThis, family_js, "family", .{});
         break :blk (try SocketAddress.initFromAddrFamily(globalThis, end_js, family_js))._addr;
     };
-    if (_compare(start, end)) |ord| {
+    if (_compare(&start, &end)) |ord| {
         if (ord.compare(.gt)) {
             return globalThis.throwInvalidArgumentValueCustom("start", start_js, "must come before end");
         }
     }
+    this.mutex.lock();
+    defer this.mutex.unlock();
     try this.da_rules.insert(0, .{ .range = .{ .start = start, .end = end } });
+    _ = this.estimated_size.fetchAdd(@sizeOf(Rule), .monotonic);
     return .js_undefined;
 }
 
 pub fn addSubnet(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    this.mutex.lock();
-    defer this.mutex.unlock();
     const arguments = callframe.argumentsAsArray(3);
     const network_js, const prefix_js, var family_js = arguments;
     if (family_js.isUndefined()) family_js = bun.String.static("ipv4").toJS(globalThis);
@@ -98,17 +101,18 @@ pub fn addSubnet(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *js
         std.posix.AF.INET6 => prefix = @intCast(try validators.validateInt32(globalThis, prefix_js, "prefix", .{}, 0, 128)),
         else => {},
     }
+    this.mutex.lock();
+    defer this.mutex.unlock();
     try this.da_rules.insert(0, .{ .subnet = .{ .network = network, .prefix = prefix } });
+    _ = this.estimated_size.fetchAdd(@sizeOf(Rule), .monotonic);
     return .js_undefined;
 }
 
 pub fn check(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    this.mutex.lock();
-    defer this.mutex.unlock();
     const arguments = callframe.argumentsAsArray(2);
     const address_js, var family_js = arguments;
     if (family_js.isUndefined()) family_js = bun.String.static("ipv4").toJS(globalThis);
-    const address = if (address_js.as(SocketAddress)) |sa| sa._addr else blk: {
+    const address = &(if (address_js.as(SocketAddress)) |sa| sa._addr else blk: {
         try validators.validateString(globalThis, address_js, "address", .{});
         try validators.validateString(globalThis, family_js, "family", .{});
         break :blk (SocketAddress.initFromAddrFamily(globalThis, address_js, family_js) catch |err| {
@@ -116,19 +120,21 @@ pub fn check(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
             globalThis.clearException();
             return .jsBoolean(false);
         })._addr;
-    };
-    for (this.da_rules.items) |item| {
-        switch (item) {
-            .addr => |a| {
+    });
+    this.mutex.lock();
+    defer this.mutex.unlock();
+    for (this.da_rules.items) |*item| {
+        switch (item.*) {
+            .addr => |*a| {
                 const order = _compare(address, a) orelse continue;
                 if (order.compare(.eq)) return .jsBoolean(true);
             },
-            .range => |r| {
-                const os = _compare(address, r.start) orelse continue;
-                const oe = _compare(address, r.end) orelse continue;
+            .range => |*r| {
+                const os = _compare(address, &r.start) orelse continue;
+                const oe = _compare(address, &r.end) orelse continue;
                 if (os.compare(.gte) and oe.compare(.lte)) return .jsBoolean(true);
             },
-            .subnet => |s| {
+            .subnet => |*s| {
                 if (address.as_v4()) |ip_addr| if (s.network.as_v4()) |subnet_addr| {
                     if (s.prefix == 32) if (ip_addr == subnet_addr) (return .jsBoolean(true)) else continue;
                     const one: u32 = 1;
@@ -154,28 +160,30 @@ pub fn check(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
 }
 
 pub fn rules(this: *@This(), globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+
+    // GC must be able to visit
+    var array = try jsc.JSArray.createEmpty(globalThis, 0);
+
     this.mutex.lock();
     defer this.mutex.unlock();
-    var list = std.ArrayList(jsc.JSValue).initCapacity(bun.default_allocator, this.da_rules.items.len) catch bun.outOfMemory();
-    defer list.deinit();
-    for (this.da_rules.items) |rule| {
-        switch (rule) {
-            .addr => |a| {
+    for (this.da_rules.items) |*rule| {
+        switch (rule.*) {
+            .addr => |*a| {
                 var buf: [SocketAddress.inet.INET6_ADDRSTRLEN]u8 = @splat(0);
-                list.appendAssumeCapacity(try bun.String.createFormatForJS(globalThis, "Address: {s} {s}", .{ a.family().upper(), a.fmt(&buf) }));
+                try array.push(globalThis, try bun.String.createFormatForJS(globalThis, "Address: {s} {s}", .{ a.family().upper(), a.fmt(&buf) }));
             },
-            .range => |r| {
+            .range => |*r| {
                 var buf_s: [SocketAddress.inet.INET6_ADDRSTRLEN]u8 = @splat(0);
                 var buf_e: [SocketAddress.inet.INET6_ADDRSTRLEN]u8 = @splat(0);
-                list.appendAssumeCapacity(try bun.String.createFormatForJS(globalThis, "Range: {s} {s}-{s}", .{ r.start.family().upper(), r.start.fmt(&buf_s), r.end.fmt(&buf_e) }));
+                try array.push(globalThis, try bun.String.createFormatForJS(globalThis, "Range: {s} {s}-{s}", .{ r.start.family().upper(), r.start.fmt(&buf_s), r.end.fmt(&buf_e) }));
             },
-            .subnet => |s| {
+            .subnet => |*s| {
                 var buf: [SocketAddress.inet.INET6_ADDRSTRLEN]u8 = @splat(0);
-                list.appendAssumeCapacity(try bun.String.createFormatForJS(globalThis, "Subnet: {s} {s}/{d}", .{ s.network.family().upper(), s.network.fmt(&buf), s.prefix }));
+                try array.push(globalThis, try bun.String.createFormatForJS(globalThis, "Subnet: {s} {s}/{d}", .{ s.network.family().upper(), s.network.fmt(&buf), s.prefix }));
             },
         }
     }
-    return jsc.JSArray.create(globalThis, list.items);
+    return array;
 }
 
 pub fn onStructuredCloneSerialize(this: *@This(), globalThis: *jsc.JSGlobalObject, ctx: *anyopaque, writeBytes: *const fn (*anyopaque, ptr: [*]const u8, len: u32) callconv(jsc.conv) void) void {
@@ -216,13 +224,13 @@ pub const Rule = union(enum) {
     subnet: struct { network: sockaddr, prefix: u8 },
 };
 
-fn _compare(l: sockaddr, r: sockaddr) ?std.math.Order {
+fn _compare(l: *const sockaddr, r: *const sockaddr) ?std.math.Order {
     if (l.as_v4()) |l_4| if (r.as_v4()) |r_4| return std.math.order(@byteSwap((l_4)), @byteSwap((r_4)));
-    if (l.sin.family == std.posix.AF.INET6 and r.sin.family == std.posix.AF.INET6) return _compare_ipv6(l.sin6, r.sin6);
+    if (l.sin.family == std.posix.AF.INET6 and r.sin.family == std.posix.AF.INET6) return _compare_ipv6(&l.sin6, &r.sin6);
     return null;
 }
 
-fn _compare_ipv6(l: sockaddr.in6, r: sockaddr.in6) std.math.Order {
+fn _compare_ipv6(l: *const sockaddr.in6, r: *const sockaddr.in6) std.math.Order {
     return std.math.order(@byteSwap((@as(u128, @bitCast(l.addr)))), @byteSwap((@as(u128, @bitCast(r.addr)))));
 }
 

@@ -77,8 +77,8 @@ pub fn StatType(comptime big: bool) type {
             const atime_ns: u64 = if (big) toNanoseconds(aTime) else 0;
             const mtime_ns: u64 = if (big) toNanoseconds(mTime) else 0;
             const ctime_ns: u64 = if (big) toNanoseconds(cTime) else 0;
-            const birthtime_ms: Float = if (Environment.isLinux) 0 else toTimeMS(stat_.birthtime());
-            const birthtime_ns: u64 = if (big and !Environment.isLinux) toNanoseconds(stat_.birthtime()) else 0;
+            const birthtime_ms: Float = if (Environment.isLinux) toTimeMS(aTime) else toTimeMS(stat_.birthtime());
+            const birthtime_ns: u64 = if (big) (if (Environment.isLinux) toNanoseconds(aTime) else toNanoseconds(stat_.birthtime())) else 0;
 
             if (big) {
                 return bun.jsc.fromJSHostCall(globalObject, @src(), Bun__createJSBigIntStatsObject, .{

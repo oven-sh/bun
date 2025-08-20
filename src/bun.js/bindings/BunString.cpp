@@ -280,12 +280,17 @@ BunString toStringView(StringView view)
     };
 }
 
+// We don't want to ban atomiziation for tiny strings that are potentially going
+// to appear as properties/identifiers in JS. So we should only do this for long
+// strings that are unlikely to ever be atomized.
+static constexpr unsigned int kMinCrossThreadShareableLength = 256;
+
 bool isCrossThreadShareable(const WTF::String& string)
 {
-    if (!string.impl())
+    if (string.length() < kMinCrossThreadShareableLength)
         return false;
 
-    auto* impl = string.impl();
+    const auto* impl = string.impl();
 
     // 1) Never share AtomStringImpl/symbols - they have special thread-unsafe behavior
     if (impl->isAtom() || impl->isSymbol())
@@ -306,6 +311,9 @@ Ref<WTF::StringImpl> toCrossThreadShareable(Ref<WTF::StringImpl> impl)
     if (impl->bufferOwnership() == StringImpl::BufferSubstring)
         return impl->isolatedCopy();
 
+    if (impl->length() < kMinCrossThreadShareableLength)
+        return impl->isolatedCopy();
+
     // 3) Ensure we won't lazily touch hash/flags on the consumer thread
     // Force hash computation on this thread before sharing
     impl->hash();
@@ -316,7 +324,7 @@ Ref<WTF::StringImpl> toCrossThreadShareable(Ref<WTF::StringImpl> impl)
 
 WTF::String toCrossThreadShareable(const WTF::String& string)
 {
-    if (!string.impl())
+    if (string.length() < kMinCrossThreadShareableLength)
         return string;
 
     auto* impl = string.impl();

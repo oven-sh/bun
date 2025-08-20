@@ -175,12 +175,8 @@ pub fn runSequence(this: *Execution, sequence_index: usize, callback_queue: *des
 
 pub fn generateOrderSub(this: *Execution, current: TestScheduleEntry) bun.JSError!void {
     switch (current) {
-        .describe => |describe| {
-            try this.generateOrderDescribe(describe);
-        },
-        .test_callback => |test_callback| {
-            try this.generateOrderTest(test_callback);
-        },
+        .describe => |describe| try this.generateOrderDescribe(describe),
+        .test_callback => |test_callback| try this.generateOrderTest(test_callback),
     }
 }
 pub fn generateOrderDescribe(this: *Execution, current: *DescribeScope) bun.JSError!void {

@@ -29,6 +29,10 @@ pub const InternalLoopData = extern struct {
         return this.recv_buf[0..LIBUS_RECV_BUFFER_LENGTH];
     }
 
+    pub fn shouldEnableDateHeaderTimer(this: *const InternalLoopData) bool {
+        return this.sweep_timer_count > 0;
+    }
+
     pub fn setParentEventLoop(this: *InternalLoopData, parent: jsc.EventLoopHandle) void {
         switch (parent) {
             .js => |ptr| {

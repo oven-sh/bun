@@ -59,8 +59,25 @@ fn createExecArgv(globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         }
     }
 
-    // For compiled/standalone executables, execArgv should be empty
-    if (vm.standalone_module_graph != null) {
+    // For compiled/standalone executables, execArgv should contain compile_exec_argv
+    if (vm.standalone_module_graph) |graph| {
+        if (graph.compile_exec_argv.len > 0) {
+            // Use tokenize to split the compile_exec_argv string by whitespace
+            var args = std.ArrayList(bun.String).init(temp_alloc);
+            defer args.deinit();
+            defer for (args.items) |*arg| arg.deref();
+
+            var tokenizer = std.mem.tokenizeAny(u8, graph.compile_exec_argv, " \t\n\r");
+            while (tokenizer.next()) |token| {
+                try args.append(bun.String.cloneUTF8(token));
+            }
+
+            const array = try jsc.JSValue.createEmptyArray(globalObject, args.items.len);
+            for (0..args.items.len) |idx| {
+                try array.putIndex(globalObject, @intCast(idx), args.items[idx].toJS(globalObject));
+            }
+            return array;
+        }
         return try jsc.JSValue.createEmptyArray(globalObject, 0);
     }
 

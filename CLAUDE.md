@@ -43,7 +43,12 @@ Tests use Bun's Jest-compatible test runner with proper test fixtures:
 
 ```typescript
 import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  normalizeBunSnapshot,
+  tempDirWithFiles,
+} from "harness";
 
 test("my feature", async () => {
   // Create temp directory with test files
@@ -56,6 +61,7 @@ test("my feature", async () => {
     cmd: [bunExe(), "index.js"],
     env: bunEnv,
     cwd: dir,
+    stderr: "pipe",
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([
@@ -65,11 +71,14 @@ test("my feature", async () => {
   ]);
 
   expect(exitCode).toBe(0);
-  expect(stdout).toBe("hello\n");
+  // Prefer snapshot tests over expect(stdout).toBe("hello\n");
+  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`"hello"`);
 });
 ```
 
 - Always use `port: 0`. Do not hardcode ports. Do not use your own random port number function.
+- Use `normalizeBunSnapshot` to normalize snapshot output of the test.
+- NEVER write tests that check for no "panic" or "uncaught exception" or similar in the test output. That is NOT a valid test.
 
 ## Code Architecture
 

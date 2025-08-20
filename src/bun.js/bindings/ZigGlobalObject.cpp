@@ -2987,7 +2987,7 @@ void GlobalObject::finishCreation(VM& vm)
     // Change prototype from null to object for synthetic modules.
     m_moduleNamespaceObjectStructure.initLater(
         [](const Initializer<Structure>& init) {
-            JSObject* moduleNamespacePrototype = JSC::constructEmptyObject(init.owner);
+            JSObject* moduleNamespacePrototype = JSC::constructEmptyObject(init.vm, init.owner->nullPrototypeObjectStructure());
             moduleNamespacePrototype->putDirectCustomAccessor(init.vm, init.vm.propertyNames->__esModule, CustomGetterSetter::create(init.vm, moduleNamespacePrototypeGetESModuleMarker, moduleNamespacePrototypeSetESModuleMarker), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::CustomAccessor | 0);
             init.set(JSModuleNamespaceObject::createStructure(init.vm, init.owner, moduleNamespacePrototype));
         });

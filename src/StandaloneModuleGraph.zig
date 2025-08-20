@@ -938,12 +938,13 @@ pub const StandaloneModuleGraph = struct {
             allocator.free(self_exe);
         };
 
-        const fd = inject(
+        var fd = inject(
             bytes,
             self_exe,
             .{ .windows_hide_console = windows_hide_console },
             target,
         );
+        defer if (fd != bun.invalid_fd) fd.close();
         bun.debugAssert(fd.kind == .system);
 
         if (Environment.isPosix) {
@@ -969,7 +970,9 @@ pub const StandaloneModuleGraph = struct {
                     return CompileResult.fail(std.fmt.allocPrint(allocator, "failed to move executable to result path: {s}", .{@errorName(err)}) catch "failed to move executable");
                 }
             };
+
             fd.close();
+            fd = bun.invalid_fd;
 
             if (windows_icon) |icon_utf8| {
                 var icon_buf: bun.OSPathBuffer = undefined;
@@ -1001,6 +1004,8 @@ pub const StandaloneModuleGraph = struct {
             bun.sliceTo(&outfile_posix, 0),
         ) catch |err| {
             fd.close();
+            fd = bun.invalid_fd;
+
             _ = Syscall.unlink(&temp_posix);
 
             if (err == error.IsDir or err == error.EISDIR) {
@@ -1009,9 +1014,6 @@ pub const StandaloneModuleGraph = struct {
                 return CompileResult.fail(std.fmt.allocPrint(allocator, "failed to rename {s} to {s}: {s}", .{ temp_location, outfile, @errorName(err) }) catch "failed to rename file");
             }
         };
-
-        // Close the file descriptor after successful move to prevent ETXTBSY
-        fd.close();
 
         return .success;
     }

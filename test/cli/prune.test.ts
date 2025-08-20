@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
-import { mkdirSync, writeFileSync, rmSync, readdirSync } from "fs";
 
 test("bun prune removes extraneous packages", async () => {
   const tempDir = tempDirWithFiles("prune-test", {
@@ -23,11 +23,7 @@ test("bun prune removes extraneous packages", async () => {
     stdout: "pipe",
   });
 
-  const [, , exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(), 
-    proc.exited,
-  ]);
+  const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
 
@@ -35,20 +31,26 @@ test("bun prune removes extraneous packages", async () => {
   const nodeModulesPath = join(tempDir, "node_modules");
   const extraneousPackagePath = join(nodeModulesPath, "extraneous-package");
   mkdirSync(extraneousPackagePath, { recursive: true });
-  writeFileSync(join(extraneousPackagePath, "package.json"), JSON.stringify({
-    name: "extraneous-package",
-    version: "1.0.0",
-  }));
+  writeFileSync(
+    join(extraneousPackagePath, "package.json"),
+    JSON.stringify({
+      name: "extraneous-package",
+      version: "1.0.0",
+    }),
+  );
 
   // Create a scoped extraneous package
   const scopedPath = join(nodeModulesPath, "@scope");
   mkdirSync(scopedPath, { recursive: true });
   const scopedPackagePath = join(scopedPath, "extraneous");
   mkdirSync(scopedPackagePath, { recursive: true });
-  writeFileSync(join(scopedPackagePath, "package.json"), JSON.stringify({
-    name: "@scope/extraneous",
-    version: "1.0.0",
-  }));
+  writeFileSync(
+    join(scopedPackagePath, "package.json"),
+    JSON.stringify({
+      name: "@scope/extraneous",
+      version: "1.0.0",
+    }),
+  );
 
   // Run bun prune
   await using pruneProc = Bun.spawn({
@@ -71,11 +73,11 @@ test("bun prune removes extraneous packages", async () => {
   // Verify the extraneous packages were removed
   const extraneousExists = await Bun.file(join(extraneousPackagePath, "package.json")).exists();
   const scopedExists = await Bun.file(join(scopedPackagePath, "package.json")).exists();
-  
+
   expect(extraneousExists).toBe(false);
   expect(scopedExists).toBe(false);
 
-  // Verify legitimate packages remain  
+  // Verify legitimate packages remain
   const reactExists = await Bun.file(join(nodeModulesPath, "react", "package.json")).exists();
   expect(reactExists).toBe(true);
 });
@@ -181,11 +183,7 @@ test("bun prune --help shows help text", async () => {
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stdout).toMatch(/Usage.*bun prune/);

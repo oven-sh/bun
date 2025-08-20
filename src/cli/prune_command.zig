@@ -1,21 +1,7 @@
-const std = @import("std");
-const bun = @import("bun");
-const strings = bun.strings;
-const Output = bun.Output;
-const Global = bun.Global;
-const Command = @import("../cli.zig").Command;
-const Install = @import("../install/install.zig");
-const PackageManager = Install.PackageManager;
-const Lockfile = @import("../install/lockfile.zig");
-const DependencyID = Install.DependencyID;
-const PackageID = Install.PackageID;
-const fs = @import("../fs.zig");
-const Fs = fs.FileSystem;
-
 pub const PruneCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .install);
-        
+
         var manager, const original_cwd = PackageManager.init(ctx, cli, .install) catch |err| {
             if (err == error.MissingPackageJSON) {
                 var cwd_buf: bun.PathBuffer = undefined;
@@ -53,7 +39,7 @@ pub const PruneCommand = struct {
         }
 
         const lockfile = load_lockfile.ok.lockfile;
-        
+
         try pruneNodeModules(ctx.allocator, manager, lockfile);
 
         if (manager.options.log_level != .silent) {
@@ -69,7 +55,7 @@ pub const PruneCommand = struct {
             Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
             Global.exit(1);
         };
-        
+
         // Construct node_modules path
         var node_modules_buf: bun.PathBuffer = undefined;
         const node_modules_path = try std.fmt.bufPrint(&node_modules_buf, "{s}/node_modules", .{cwd});
@@ -84,7 +70,7 @@ pub const PruneCommand = struct {
         const string_bytes = lockfile.buffers.string_bytes.items;
         const packages_slice = lockfile.packages.slice();
         const package_names = packages_slice.items(.name);
-        
+
         // Add all packages that are in the lockfile
         for (package_names) |package_name_string| {
             const package_name = package_name_string.slice(string_bytes);
@@ -112,12 +98,12 @@ pub const PruneCommand = struct {
 
         var iterator = node_modules_dir.iterate();
         var pruned_count: u32 = 0;
-        
+
         while (try iterator.next()) |entry| {
             if (entry.kind != .directory) continue;
 
             const dirname = entry.name;
-            
+
             // Skip .bin directory and other dot directories
             if (strings.hasPrefix(dirname, ".")) continue;
 
@@ -126,20 +112,20 @@ pub const PruneCommand = struct {
                 // This is a scope directory, iterate through it
                 var scope_dir = node_modules_dir.openDir(dirname, .{ .iterate = true }) catch continue;
                 defer scope_dir.close();
-                
+
                 var scope_iterator = scope_dir.iterate();
                 while (try scope_iterator.next()) |scope_entry| {
                     if (scope_entry.kind != .directory) continue;
-                    
+
                     const scoped_package_name = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ dirname, scope_entry.name });
                     defer allocator.free(scoped_package_name);
-                    
+
                     if (!expected_packages.contains(scoped_package_name)) {
                         // This package should be removed
                         if (manager.options.log_level.showProgress()) {
                             Output.prettyln("<r><d>Removing<r> {s}", .{scoped_package_name});
                         }
-                        
+
                         scope_dir.deleteTree(scope_entry.name) catch |err| {
                             if (manager.options.log_level != .silent) {
                                 Output.err(err, "Failed to remove {s}", .{scoped_package_name});
@@ -156,7 +142,7 @@ pub const PruneCommand = struct {
                     if (manager.options.log_level.showProgress()) {
                         Output.prettyln("<r><d>Removing<r> {s}", .{dirname});
                     }
-                    
+
                     node_modules_dir.deleteTree(dirname) catch |err| {
                         if (manager.options.log_level != .silent) {
                             Output.err(err, "Failed to remove {s}", .{dirname});
@@ -173,3 +159,16 @@ pub const PruneCommand = struct {
         }
     }
 };
+
+const Lockfile = @import("../install/lockfile.zig");
+const fs = @import("../fs.zig");
+const std = @import("std");
+const Command = @import("../cli.zig").Command;
+
+const Install = @import("../install/install.zig");
+const PackageManager = Install.PackageManager;
+
+const bun = @import("bun");
+const Global = bun.Global;
+const Output = bun.Output;
+const strings = bun.strings;

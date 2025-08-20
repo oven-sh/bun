@@ -471,6 +471,11 @@ pub const DescribeScope = struct {
         this.name.deinit();
         buntest.gpa.destroy(this);
     }
+
+    pub fn getName(this: *DescribeScope) ?[]const u8 {
+        if (this.name.has()) return "TODO(name)";
+        return null; // TODO: store the name
+    }
 };
 pub const ExecutionEntryTag = enum {
     test_callback,
@@ -490,7 +495,8 @@ pub const ExecutionEntry = struct {
         this.name.deinit();
         buntest.gpa.destroy(this);
     }
-    pub fn getName(_: *ExecutionEntry) ?[]const u8 {
+    pub fn getName(this: *ExecutionEntry) ?[]const u8 {
+        if (this.name.has()) return "TODO(name)";
         return null; // TODO: store the name as a string rather than a Strong.Optional
     }
 };

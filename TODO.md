@@ -1,5 +1,6 @@
 Complete before merge:
 
+- [ ] status printing support failures and other modes
 - [ ] make BunTest into a gc object so you can't deinit it while a .then() is still active
 - [ ] add back gc cleaning up an unused callback. need to identify when the callback will never be used again and swap it with null.
 - [ ] add tests & pass existing tests

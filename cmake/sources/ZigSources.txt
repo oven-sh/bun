@@ -471,6 +471,7 @@ src/cli/pm_trusted_command.zig
 src/cli/pm_version_command.zig
 src/cli/pm_view_command.zig
 src/cli/pm_why_command.zig
+src/cli/prune_command.zig
 src/cli/publish_command.zig
 src/cli/remove_command.zig
 src/cli/run_command.zig

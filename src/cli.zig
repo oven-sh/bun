@@ -91,6 +91,7 @@ pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
 pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
+pub const PruneCommand = @import("./cli/prune_command.zig").PruneCommand;
 
 pub const Arguments = @import("./cli/Arguments.zig");
 
@@ -177,6 +178,7 @@ pub const HelpCommand = struct {
         \\  <b><blue>outdated<r>                       Display latest versions of outdated dependencies
         \\  <b><blue>link<r>      <d>[\<package\>]<r>          Register or link a local npm package
         \\  <b><blue>unlink<r>                         Unregister a local npm package
+        \\  <b><blue>prune<r>                          Remove extraneous packages from node_modules
         \\  <b><blue>publish<r>                        Publish a package to the npm registry
         \\  <b><blue>patch <d>\<pkg\><r>                    Prepare a package for patching
         \\  <b><blue>pm <d>\<subcommand\><r>                Additional package management utilities
@@ -585,7 +587,7 @@ pub const Command = struct {
             RootCommandMatcher.case("login") => .ReservedCommand,
             RootCommandMatcher.case("logout") => .ReservedCommand,
             RootCommandMatcher.case("whoami") => .ReservedCommand,
-            RootCommandMatcher.case("prune") => .ReservedCommand,
+            RootCommandMatcher.case("prune") => .PruneCommand,
             RootCommandMatcher.case("list") => .ReservedCommand,
             RootCommandMatcher.case("why") => .WhyCommand,
 
@@ -750,6 +752,11 @@ pub const Command = struct {
             .WhyCommand => {
                 const ctx = try Command.init(allocator, log, .WhyCommand);
                 try WhyCommand.exec(ctx);
+                return;
+            },
+            .PruneCommand => {
+                const ctx = try Command.init(allocator, log, .PruneCommand);
+                try PruneCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
@@ -925,6 +932,7 @@ pub const Command = struct {
         PublishCommand,
         AuditCommand,
         WhyCommand,
+        PruneCommand,
 
         /// Used by crash reports.
         ///
@@ -962,6 +970,7 @@ pub const Command = struct {
                 .PublishCommand => 'k',
                 .AuditCommand => 'A',
                 .WhyCommand => 'W',
+                .PruneCommand => 'X',
             };
         }
 
@@ -1268,6 +1277,21 @@ pub const Command = struct {
                         \\  <d>$<r> <b><green>bun why<r> <blue>"*-lodash"<r> <cyan>--top<r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/cli/why<r>
+                        \\
+                    ;
+
+                    Output.pretty(intro_text, .{});
+                    Output.flush();
+                },
+                .PruneCommand => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun prune<r> <cyan>[flags]<r>
+                        \\Remove extraneous packages from node_modules that are not declared as dependencies
+                        \\
+                        \\<b>Examples:<r>
+                        \\  <d>$<r> <b><green>bun prune<r>
+                        \\
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/prune<r>
                         \\
                     ;
 

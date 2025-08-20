@@ -6,6 +6,7 @@ Complete before merge:
 - [ ] add tests & pass existing tests
 - [ ] add gc test (test that items referenced by a test callback are freed after the test is executed)
 - [ ] add back associating uncaught exceptions with the active test
+- [ ] `test.concurrent.only()`
 - [ ] remove describe2.ts
 - [ ] remove describe2BeforeAll.ts
 - [ ] search for TODOs in the diff and fix them all

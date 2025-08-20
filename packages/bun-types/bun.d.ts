@@ -1628,12 +1628,24 @@ declare module "bun" {
     kind: ImportKind;
   }
 
+  namespace _BunBuildInterface {
+    type Architecture = "x64" | "arm64";
+    type Libc = "glibc" | "musl";
+    type SIMD = "baseline" | "modern";
+    type Target =
+      | `bun-darwin-${Architecture}`
+      | `bun-darwin-x64-${SIMD}`
+      | `bun-linux-${Architecture}`
+      | `bun-linux-${Architecture}-${Libc}`
+      | "bun-windows-x64"
+      | `bun-windows-x64-${SIMD}`
+      | `bun-linux-x64-${SIMD}-${Libc}`;
+  }
   /**
    * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
    */
-  interface BuildConfig {
+  interface BuildConfigBase {
     entrypoints: string[]; // list of file path
-    outdir?: string; // output directory
     /**
      * @default "browser"
      */
@@ -1671,7 +1683,6 @@ declare module "bun" {
           asset?: string;
         }; // | string;
     root?: string; // project root
-    splitting?: boolean; // default true, enable code splitting
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
     external?: string[];
@@ -1820,7 +1831,56 @@ declare module "bun" {
      * ```
      */
     tsconfig?: string;
+
+    outdir?: string;
   }
+
+  interface CompileBuildOptions {
+    target?: _BunBuildInterface.Target;
+    execArgv?: string[];
+    executablePath?: string;
+    outfile?: string;
+    windows?: {
+      hideConsole?: boolean;
+      icon?: string;
+      title?: string;
+    };
+  }
+
+  // Compile build config - uses outfile for executable output
+  interface CompileBuildConfig extends BuildConfigBase {
+    /**
+     * Create a standalone executable
+     *
+     * When `true`, creates an executable for the current platform.
+     * When a target string, creates an executable for that platform.
+     *
+     * @example
+     * ```ts
+     * // Create executable for current platform
+     * await Bun.build({
+     *   entrypoints: ['./app.js'],
+     *   compile: {
+     *     target: 'linux-x64',
+     *   },
+     *   outfile: './my-app'
+     * });
+     *
+     * // Cross-compile for Linux x64
+     * await Bun.build({
+     *   entrypoints: ['./app.js'],
+     *   compile: 'linux-x64',
+     *   outfile: './my-app'
+     * });
+     * ```
+     */
+    compile: boolean | _BunBuildInterface.Target | CompileBuildOptions;
+  }
+
+  /**
+   * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
+   */
+  type BuildConfig = BuildConfigBase | CompileBuildConfig;
 
   /**
    * Hash and verify passwords using argon2 or bcrypt

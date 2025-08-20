@@ -4,7 +4,7 @@
   "!= alloc.ptr": 0,
   "!= allocator.ptr": 0,
   ".arguments_old(": 279,
-  ".stdDir()": 40,
+  ".stdDir()": 41,
   ".stdFile()": 18,
   "// autofix": 168,
   ": [^=]+= undefined,$": 260,

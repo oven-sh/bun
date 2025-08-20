@@ -370,6 +370,11 @@ pub fn tryFrom(input_: []const u8) ParseError!CompileTarget {
         }
     }
 
+    if (!found_libc and this.libc == .musl and this.os != .linux) {
+        // "bun-windows-x64" should not implicitly be "bun-windows-x64-musl"
+        this.libc = .default;
+    }
+
     if (found_os and !found_arch) {
         // default to x64 if no arch is specified but OS is specified
         // On macOS arm64, it's kind of surprising to choose Linux arm64 or Windows arm64

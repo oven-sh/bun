@@ -13,10 +13,6 @@ if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
 // Create the AsyncLocalStorage instance for propagating response options
 const responseOptionsALS = new AsyncLocalStorage();
 
-// These will be set by the handleRequest function
-let setDevServerAsyncLocalStorage: Function | null = null;
-let getDevServerAsyncLocalStorage: Function | null = null;
-
 interface Exports {
   handleRequest: (
     req: Request,
@@ -47,10 +43,7 @@ server_exports = {
     setAsyncLocalStorage,
     getAsyncLocalStorage,
   ) {
-    // Store the functions for later use
-    setDevServerAsyncLocalStorage = setAsyncLocalStorage;
-    getDevServerAsyncLocalStorage = getAsyncLocalStorage;
-
+    // FIXME: We should only have to do this once
     // Set the AsyncLocalStorage instance in the VM
     setAsyncLocalStorage(responseOptionsALS);
 
@@ -81,8 +74,6 @@ server_exports = {
     if (pageModule.mode === "ssr") {
       requestWithCookies.cookies = req.cookies || new Bun.CookieMap(req.headers.get("Cookie") || "");
     }
-
-    console.log("PAGE MODULE MODE", pageModule.mode);
 
     // Run the renderer inside the AsyncLocalStorage context
     // This allows Response constructors to access the stored options

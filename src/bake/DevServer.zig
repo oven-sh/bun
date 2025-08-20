@@ -1241,13 +1241,14 @@ fn onFrameworkRequestWithBundle(
 
     const router_type = dev.router.typePtr(dev.router.routePtr(framework_bundle.route_index).type);
 
+    // FIXME: We should not create these on every single request
     // Wrapper functions for AsyncLocalStorage that match JSHostFnZig signature
     const SetAsyncLocalStorageWrapper = struct {
         pub fn call(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             return VirtualMachine.VirtualMachine__setDevServerAsyncLocalStorage(global, callframe);
         }
     };
-    
+
     const GetAsyncLocalStorageWrapper = struct {
         pub fn call(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             return VirtualMachine.VirtualMachine__getDevServerAsyncLocalStorage(global, callframe);
@@ -1255,20 +1256,8 @@ fn onFrameworkRequestWithBundle(
     };
 
     // Create the setter and getter functions for AsyncLocalStorage
-    const setAsyncLocalStorage = jsc.JSFunction.create(
-        dev.vm.global,
-        "setDevServerAsyncLocalStorage",
-        SetAsyncLocalStorageWrapper.call,
-        1,
-        .{}
-    );
-    const getAsyncLocalStorage = jsc.JSFunction.create(
-        dev.vm.global,
-        "getDevServerAsyncLocalStorage", 
-        GetAsyncLocalStorageWrapper.call,
-        0,
-        .{}
-    );
+    const setAsyncLocalStorage = jsc.JSFunction.create(dev.vm.global, "setDevServerAsyncLocalStorage", SetAsyncLocalStorageWrapper.call, 1, .{});
+    const getAsyncLocalStorage = jsc.JSFunction.create(dev.vm.global, "getDevServerAsyncLocalStorage", GetAsyncLocalStorageWrapper.call, 0, .{});
 
     dev.server.?.onSavedRequest(
         req,

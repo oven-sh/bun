@@ -193,10 +193,5 @@ interface setSocketOptionsFn {
 }
 
 export const setSocketOptions: setSocketOptionsFn = $newZigFunction("socket.zig", "jsSetSocketOptions", 3);
-export const structuredCloneAdvanced: (
-  value: any,
-  transferList: any[],
-  forTransfer: boolean,
-  forStorage: boolean,
-  serializationContext: "worker" | "window" | "postMessage" | "default",
-) => any = $newCppFunction("StructuredClone.cpp", "jsFunctionStructuredCloneAdvanced", 5);
+type SerializationContext = "worker" | "window" | "postMessage" | "default";
+export const structuredCloneAdvanced: (value: any, transferList: any[], forTransfer: boolean, forStorage: boolean, serializationContext: SerializationContext) => any = $newCppFunction("StructuredClone.cpp", "jsFunctionStructuredCloneAdvanced", 5);

@@ -9,6 +9,7 @@ $ bun prune
 ```
 
 This command is useful for:
+
 - Cleaning up packages that were manually installed but never added to `package.json`
 - Removing leftover packages after removing dependencies
 - Ensuring your `node_modules` directory only contains necessary packages
@@ -19,6 +20,7 @@ This command is useful for:
 `bun prune` analyzes your project's lockfile (`bun.lockb` or `bun.lock`) to determine which packages should be present in `node_modules`, then removes any packages that aren't referenced.
 
 The command:
+
 1. Reads your project's lockfile to identify legitimate packages
 2. Scans the `node_modules` directory for installed packages
 3. Removes any packages not found in the lockfile
@@ -44,7 +46,7 @@ $ bun prune
 bun prune v1.2.21
 
 Removing lodash
-Removing @types/unused-package  
+Removing @types/unused-package
 Removed 2 extraneous packages
 Pruned extraneous packages
 ```
@@ -146,11 +148,11 @@ Pruned extraneous packages
 
 ## Comparison with other package managers
 
-| Command | Behavior |
-|---------|----------|
-| `npm prune` | Removes extraneous packages not in `package.json` dependencies |
+| Command      | Behavior                                                        |
+| ------------ | --------------------------------------------------------------- |
+| `npm prune`  | Removes extraneous packages not in `package.json` dependencies  |
 | `pnpm prune` | Removes orphaned packages not referenced by any dependency tree |
-| `bun prune` | Removes packages not referenced in the lockfile |
+| `bun prune`  | Removes packages not referenced in the lockfile                 |
 
 `bun prune` is most similar to `npm prune` but uses Bun's lockfile as the source of truth rather than just `package.json`.
 
@@ -162,7 +164,7 @@ Currently, `bun prune` doesn't support additional flags beyond `--help`. The com
 
 - **Lockfile dependency**: Requires a valid lockfile (`bun.lockb` or `bun.lock`)
 - **Package detection**: Scans `node_modules` directory structure
-- **Scope handling**: Properly handles scoped packages under `@scope/` directories  
+- **Scope handling**: Properly handles scoped packages under `@scope/` directories
 - **Safety**: Only removes packages not found in the lockfile
 - **Performance**: Efficiently processes large `node_modules` directories
 

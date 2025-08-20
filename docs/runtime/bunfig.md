@@ -496,6 +496,43 @@ Whether to generate a non-Bun lockfile alongside `bun.lock`. (A `bun.lock` will 
 print = "yarn"
 ```
 
+### `install.security.provider`
+
+Configure a security provider to scan packages before installation. When set, packages will be analyzed for security vulnerabilities and other issues before being installed.
+
+```toml
+[install.security]
+provider = "./security-scanner.ts"
+```
+
+The provider file should export a provider object with a `scan` function:
+
+```typescript
+export const provider: Bun.Security.Provider = {
+  version: "1",
+  scan: async ({ packages }) => {
+    // Analyze packages and return security issues
+    return [
+      {
+        package: "vulnerable-package",
+        description: "Known security vulnerability",
+        level: "fatal", // "fatal" | "error" | "warning" | "info"
+        url: "https://example.com/advisory",
+      },
+    ];
+  },
+};
+```
+
+When a security provider is configured:
+
+- Auto-install is automatically disabled for security
+- Packages are scanned before installation
+- Installation is cancelled if fatal issues are found
+- Security warnings are displayed during installation
+
+Learn more about [writing and using security scanners](/docs/install/security).
+
 ### `install.linker`
 
 Configure the default linker strategy. Default `"hoisted"`.

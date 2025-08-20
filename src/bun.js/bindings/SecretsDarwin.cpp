@@ -8,6 +8,7 @@
 #include <wtf/text/WTFString.h>
 #include <wtf/Vector.h>
 #include <wtf/NeverDestroyed.h>
+#include <cstring>
 
 namespace Bun {
 namespace Secrets {
@@ -216,7 +217,12 @@ static String CFStringToWTFString(CFStringRef cfstring)
     cstr.grow(maxUtf8Bytes + 1);
     auto result = framework->CFStringGetCString(cfstring, cstr.begin(), cstr.size(), kCFStringEncodingUTF8);
 
-    return result ? String::fromUTF8(cstr.span()) : String();
+    if (result) {
+        // Use strlen to get the actual string length, avoiding any null bytes
+        size_t actualLength = strlen(cstr.begin());
+        return String::fromUTF8(std::span<const char>(cstr.begin(), actualLength));
+    }
+    return String();
 }
 
 static String errorStatusToString(OSStatus status)
@@ -230,6 +236,11 @@ static String errorStatusToString(OSStatus status)
     if (errorMessage) {
         errorString = CFStringToWTFString(errorMessage);
         framework->CFRelease(errorMessage);
+        
+        // Clean up any null bytes at the end of the error message
+        errorString = errorString.trim([](auto character) {
+            return character == '\0' || character == '\n' || character == '\r' || character == ' ';
+        });
     }
 
     return errorString;
@@ -252,7 +263,17 @@ static void updateError(Error& err, OSStatus status)
     case errSecUserCanceled:
     case errSecAuthFailed:
     case errSecInteractionRequired:
+    case errSecInteractionNotAllowed:
         err.type = ErrorType::AccessDenied;
+        break;
+    case errSecKeychainDenied:
+    case errSecNotAvailable:
+    case errSecReadOnlyAttr:
+        err.type = ErrorType::AccessDenied;
+        // Provide more helpful message for common CI permission issues
+        if (err.message.isEmpty() || err.message.contains("Write permissions error")) {
+            err.message = "Keychain access denied. In CI environments, use {allowUnrestrictedAccess: true} option."_s;
+        }
         break;
     default:
         err.type = ErrorType::PlatformError;
@@ -332,14 +353,17 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
         if (accessDescription) {
             OSStatus accessStatus = framework->SecAccessCreate(
                 (CFStringRef)accessDescription.get(),
-                nullptr, // trustedList - nullptr means all applications
+                nullptr, // trustedList - nullptr means all applications have access
                 &accessRef);
 
             if (accessStatus == errSecSuccess && accessRef) {
                 framework->CFDictionaryAddValue((CFMutableDictionaryRef)query.get(),
                     framework->kSecAttrAccess, accessRef);
+            } else {
+                // If access creation failed, that's not necessarily a fatal error
+                // but we should continue without the access control
+                accessRef = nullptr;
             }
-            // Note: We don't use ScopedCFRef for accessRef because CFDictionaryAddValue retains it
         }
     }
 

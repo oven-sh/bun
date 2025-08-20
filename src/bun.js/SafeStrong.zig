@@ -7,6 +7,7 @@ pub fn initNonCell(non_cell: jsc.JSValue) Strong {
     return .{ ._raw = non_cell, ._safety = safety };
 }
 pub fn init(safety_gpa: std.mem.Allocator, value: jsc.JSValue) Strong {
+    // TODO: consider using withAsyncContextIfNeeded
     value.protect();
     const safety: Safety = if (enable_safety) .{ .ptr = bun.create(safety_gpa, Strong, .{ ._raw = @enumFromInt(0xAEBCFA), ._safety = null }), .gpa = safety_gpa, .ref_count = 1 };
     return .{ ._raw = value, ._safety = safety };

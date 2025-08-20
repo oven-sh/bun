@@ -276,39 +276,27 @@ pub fn appendOrExtendConcurrentGroup(this: *Execution, concurrent: bool, sequenc
     try this.order.append(.{ .sequence_start = sequences_start, .sequence_end = sequences_end, .concurrent = concurrent }); // otherwise, add a new concurrentgroup to order
 }
 
-pub fn dumpSub(globalThis: *jsc.JSGlobalObject, current: TestScheduleEntry) bun.JSError!void {
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
-
+pub fn dumpSub(current: TestScheduleEntry) bun.JSError!void {
     switch (current) {
-        .describe => |describe| try dumpDescribe(globalThis, describe),
-        .test_callback => |test_callback| try dumpTest(globalThis, test_callback),
+        .describe => |describe| try dumpDescribe(describe),
+        .test_callback => |test_callback| try dumpTest(test_callback),
     }
 }
-pub fn dumpDescribe(globalThis: *jsc.JSGlobalObject, describe: *DescribeScope) bun.JSError!void {
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
-
-    groupLog.beginMsg("describe {s} (concurrent={}, filter={s}, only={s})", .{ (describe.name.get() orelse jsc.JSValue.js_undefined).toFmt(&formatter), describe.concurrent, @tagName(describe.filter), @tagName(describe.only) });
+pub fn dumpDescribe(describe: *DescribeScope) bun.JSError!void {
+    groupLog.beginMsg("describe {s} (concurrent={}, filter={s}, only={s})", .{ describe.name orelse "undefined", describe.concurrent, @tagName(describe.filter), @tagName(describe.only) });
     defer groupLog.end();
 
     for (describe.entries.items) |entry| {
-        try dumpSub(globalThis, entry);
+        try dumpSub(entry);
     }
 }
-pub fn dumpTest(globalThis: *jsc.JSGlobalObject, current: *ExecutionEntry) bun.JSError!void {
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
-
-    groupLog.beginMsg("test {s} / {s} (concurrent={}, only={})", .{ @tagName(current.tag), (current.name.get() orelse jsc.JSValue.js_undefined).toFmt(&formatter), current.concurrent, current.only });
+pub fn dumpTest(current: *ExecutionEntry) bun.JSError!void {
+    groupLog.beginMsg("test {s} / {s} (concurrent={}, only={})", .{ @tagName(current.tag), current.name orelse "undefined", current.concurrent, current.only });
     defer groupLog.end();
 }
-pub fn dumpOrder(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
+pub fn dumpOrder(this: *Execution) bun.JSError!void {
     groupLog.beginMsg("dumpOrder", .{});
     defer groupLog.end();
-
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
 
     for (this.order.items, 0..) |group, group_index| {
         groupLog.beginMsg("{d}: ConcurrentGroup {d}-{d}", .{ group_index, group.sequence_start, group.sequence_end });
@@ -321,7 +309,7 @@ pub fn dumpOrder(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!
 
             for (sequence.entry_start..sequence.entry_end) |entry_index| {
                 const entry = this._entries.items[entry_index];
-                groupLog.log("{d}: ExecutionEntry {d}: {s} / {}", .{ entry_index, entry_index, @tagName(entry.tag), (entry.name.get() orelse jsc.JSValue.js_undefined).toFmt(&formatter) });
+                groupLog.log("{d}: ExecutionEntry {d}: {s} / {s}", .{ entry_index, entry_index, @tagName(entry.tag), entry.name orelse "undefined" });
             }
         }
     }

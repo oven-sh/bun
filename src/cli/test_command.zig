@@ -624,7 +624,7 @@ pub const CommandLineReporter = struct {
         }
 
         const scopes: []*describe2.DescribeScope = scopes_stack.slice();
-        const display_label = if (test_entry.getName()) |name| name else "test";
+        const display_label = test_entry.name orelse "test";
 
         // Quieter output when claude code is in use.
         if (!Output.isAIAgent() or status == .fail) {
@@ -634,7 +634,7 @@ pub const CommandLineReporter = struct {
                 for (scopes, 0..) |_, i| {
                     const index = (scopes.len - 1) - i;
                     const scope = scopes[index];
-                    const name: []const u8 = scope.getName() orelse "";
+                    const name: []const u8 = scope.name orelse "";
                     if (name.len == 0) continue;
                     writer.writeAll(" ") catch unreachable;
 
@@ -647,7 +647,7 @@ pub const CommandLineReporter = struct {
                 for (scopes, 0..) |_, i| {
                     const index = (scopes.len - 1) - i;
                     const scope = scopes[index];
-                    const name: []const u8 = scope.getName() orelse "";
+                    const name: []const u8 = scope.name orelse "";
                     if (name.len == 0) continue;
                     writer.writeAll(" ") catch unreachable;
                     writer.writeAll(name) catch unreachable;

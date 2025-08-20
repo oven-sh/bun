@@ -374,11 +374,11 @@ pub const Jest = struct {
 
         const module = JSValue.createEmptyObject(globalObject, 14);
 
-        const test_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("test"), 2, Describe2.js_fns.genericTest(.{ .concurrent = false, .only = false, .mode = .normal, .fn_label = "test" }).testFn, false);
+        const test_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("test"), 2, Describe2.js_fns.genericTest(.{ .concurrent = false, .only = false, .mode = .normal, .signature = "test()" }).testFn, false);
         module.put(globalObject, ZigString.static("test"), test_fn);
 
-        test_fn.put(globalObject, ZigString.static("concurrent"), jsc.host_fn.NewFunction(globalObject, ZigString.static("concurrent"), 2, Describe2.js_fns.genericTest(.{ .concurrent = true, .only = false, .mode = .normal, .fn_label = "test.concurrent" }).testFn, false));
-        test_fn.put(globalObject, ZigString.static("only"), jsc.host_fn.NewFunction(globalObject, ZigString.static("only"), 2, Describe2.js_fns.genericTest(.{ .concurrent = false, .only = true, .mode = .normal, .fn_label = "test.only" }).testFn, false));
+        test_fn.put(globalObject, ZigString.static("concurrent"), jsc.host_fn.NewFunction(globalObject, ZigString.static("concurrent"), 2, Describe2.js_fns.genericTest(.{ .concurrent = true, .only = false, .mode = .normal, .signature = "test.concurrent()" }).testFn, false));
+        test_fn.put(globalObject, ZigString.static("only"), jsc.host_fn.NewFunction(globalObject, ZigString.static("only"), 2, Describe2.js_fns.genericTest(.{ .concurrent = false, .only = true, .mode = .normal, .signature = "test.only()" }).testFn, false));
 
         inline for (.{ "skip", "todo", "failing", "skipIf", "todoIf", "each" }) |method_name| {
             const name = ZigString.static(method_name);
@@ -400,9 +400,9 @@ pub const Jest = struct {
             ZigString.static("it"),
             test_fn,
         );
-        const describe = jsc.host_fn.NewFunction(globalObject, ZigString.static("describe"), 2, Describe2.js_fns.genericDescribe(.{ .concurrent = false, .only = false, .fn_label = "describe" }).describeFn, false);
-        describe.put(globalObject, ZigString.static("concurrent"), jsc.host_fn.NewFunction(globalObject, ZigString.static("concurrent"), 2, Describe2.js_fns.genericDescribe(.{ .concurrent = true, .only = false, .fn_label = "describe.concurrent" }).describeFn, false));
-        describe.put(globalObject, ZigString.static("only"), jsc.host_fn.NewFunction(globalObject, ZigString.static("only"), 2, Describe2.js_fns.genericDescribe(.{ .concurrent = false, .only = true, .fn_label = "describe.only" }).describeFn, false));
+        const describe = jsc.host_fn.NewFunction(globalObject, ZigString.static("describe"), 2, Describe2.js_fns.genericDescribe(.{ .concurrent = false, .only = false, .signature = "describe()" }).describeFn, false);
+        describe.put(globalObject, ZigString.static("concurrent"), jsc.host_fn.NewFunction(globalObject, ZigString.static("concurrent"), 2, Describe2.js_fns.genericDescribe(.{ .concurrent = true, .only = false, .signature = "describe.concurrent()" }).describeFn, false));
+        describe.put(globalObject, ZigString.static("only"), jsc.host_fn.NewFunction(globalObject, ZigString.static("only"), 2, Describe2.js_fns.genericDescribe(.{ .concurrent = false, .only = true, .signature = "describe.only()" }).describeFn, false));
         inline for (.{
             "skip",
             "todo",

@@ -15,7 +15,7 @@ options: *BundleOptions,
 has_iterated: bool = false,
 search_count: usize = 0,
 /// Custom glob patterns for test files. If set, these override the default patterns.
-custom_glob_patterns: ?[]const string = null,
+custom_file_patterns: ?[]const string = null,
 
 const log = bun.Output.scoped(.jest, .hidden);
 const Fifo = std.fifo.LinearFifo(ScanEntry, .Dynamic);
@@ -34,7 +34,7 @@ pub fn init(
     alloc: Allocator,
     transpiler: *Transpiler,
     initial_results_capacity: usize,
-    custom_glob_patterns: ?[]const string,
+    custom_file_patterns: ?[]const string,
 ) Allocator.Error!Scanner {
     const results = try std.ArrayListUnmanaged(bun.PathString).initCapacity(
         alloc,
@@ -45,7 +45,7 @@ pub fn init(
         .options = &transpiler.options,
         .fs = transpiler.fs,
         .test_files = results,
-        .custom_glob_patterns = custom_glob_patterns,
+        .custom_file_patterns = custom_file_patterns,
     };
 }
 
@@ -134,14 +134,8 @@ pub fn couldBeTestFile(this: *Scanner, name: []const u8, comptime needs_test_suf
     if (extname.len == 0 or !this.options.loader(extname).isJavaScriptLike()) return false;
     if (comptime !needs_test_suffix) return true;
 
-    // If custom glob patterns are provided, use them instead of default patterns
-    if (this.custom_glob_patterns) |patterns| {
-        for (patterns) |pattern| {
-            if (bun.glob.match(bun.default_allocator, pattern, name).matches()) {
-                return true;
-            }
-        }
-        return false;
+    if (this.custom_file_patterns != null) {
+        return true;
     }
 
     // Fall back to default test name suffixes
@@ -206,18 +200,41 @@ pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.StoredFileDescript
             if (!entry.abs_path.isEmpty()) return;
 
             this.search_count += 1;
-            if (!this.couldBeTestFile(name, true)) return;
 
-            const parts = &[_][]const u8{ entry.dir, entry.base() };
-            const path = this.fs.absBuf(parts, &this.open_dir_buf);
+            if (this.custom_file_patterns) |patterns| {
+                if (patterns.len == 0) return;
 
-            if (!this.doesAbsolutePathMatchFilter(path)) {
+                const parts = &[_][]const u8{ entry.dir, entry.base() };
+                const path = this.fs.absBuf(parts, &this.open_dir_buf);
                 const rel_path = bun.path.relative(this.fs.top_level_dir, path);
-                if (!this.doesPathMatchFilter(rel_path)) return;
-            }
 
-            entry.abs_path = bun.PathString.init(this.fs.filename_store.append(@TypeOf(path), path) catch unreachable);
-            this.test_files.append(this.allocator(), entry.abs_path) catch unreachable;
+                var matches = false;
+                for (patterns) |pattern| {
+                    const path_to_match = if (std.fs.path.isAbsolute(pattern)) path else rel_path;
+                    if (bun.glob.match(bun.default_allocator, pattern, path_to_match).matches()) {
+                        matches = true;
+                        break;
+                    }
+                }
+
+                if (!matches) return;
+
+                entry.abs_path = bun.PathString.init(this.fs.filename_store.append(@TypeOf(path), path) catch unreachable);
+                this.test_files.append(this.allocator(), entry.abs_path) catch unreachable;
+            } else {
+                if (!this.couldBeTestFile(name, true)) return;
+
+                const parts = &[_][]const u8{ entry.dir, entry.base() };
+                const path = this.fs.absBuf(parts, &this.open_dir_buf);
+
+                if (!this.doesAbsolutePathMatchFilter(path)) {
+                    const rel_path = bun.path.relative(this.fs.top_level_dir, path);
+                    if (!this.doesPathMatchFilter(rel_path)) return;
+                }
+
+                entry.abs_path = bun.PathString.init(this.fs.filename_store.append(@TypeOf(path), path) catch unreachable);
+                this.test_files.append(this.allocator(), entry.abs_path) catch unreachable;
+            }
         },
     }
 }

@@ -1424,7 +1424,7 @@ pub const TestCommand = struct {
         //
         try vm.ensureDebugger(false);
 
-        var scanner = Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len, ctx.test_options.glob_patterns) catch bun.outOfMemory();
+        var scanner = Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len, ctx.test_options.file_patterns) catch bun.outOfMemory();
         defer scanner.deinit();
         const has_relative_path = for (ctx.positionals) |arg| {
             if (std.fs.path.isAbsolute(arg) or

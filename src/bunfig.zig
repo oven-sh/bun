@@ -353,7 +353,7 @@ pub const Bunfig = struct {
                         }
                     }
 
-                    if (test_.get("glob")) |expr| brk: {
+                    if (test_.get("filePatterns")) |expr| brk: {
                         // Get the directory containing the bunfig file for relative path resolution
                         const bunfig_dir = std.fs.path.dirname(this.source.path.text) orelse "./";
 
@@ -361,35 +361,52 @@ pub const Bunfig = struct {
                             .e_string => |str| {
                                 const pattern = try str.string(allocator);
                                 const patterns = try allocator.alloc(string, 1);
-                                // Resolve pattern relative to bunfig.toml directory if it's not absolute
+                                // Only resolve relative to bunfig.toml if it starts with ./ or ../
                                 if (std.fs.path.isAbsolute(pattern)) {
                                     patterns[0] = pattern;
+                                } else if (strings.startsWith(pattern, "./") or strings.startsWith(pattern, "../")) {
+                                    // Resolve any ../ in the path
+                                    var buffer: bun.PathBuffer = undefined;
+                                    const resolved = bun.path.joinAbsStringBuf(bunfig_dir, &buffer, &[_][]const u8{pattern}, .auto);
+                                    patterns[0] = try allocator.dupe(u8, resolved);
                                 } else {
-                                    patterns[0] = try std.fs.path.join(allocator, &[_][]const u8{ bunfig_dir, pattern });
+                                    // Use pattern as-is for glob patterns like **/*.test.ts
+                                    patterns[0] = pattern;
                                 }
-                                this.ctx.test_options.glob_patterns = patterns;
+                                this.ctx.test_options.file_patterns = patterns;
                             },
                             .e_array => |arr| {
-                                if (arr.items.len == 0) break :brk;
+                                // Set empty array to explicitly disable test discovery
+                                if (arr.items.len == 0) {
+                                    const patterns = try allocator.alloc(string, 0);
+                                    this.ctx.test_options.file_patterns = patterns;
+                                    break :brk;
+                                }
 
                                 const patterns = try allocator.alloc(string, arr.items.len);
                                 for (arr.items.slice(), 0..) |item, i| {
                                     if (item.data != .e_string) {
-                                        try this.addError(item.loc, "test.glob array must contain only strings");
+                                        try this.addError(item.loc, "test.filePatterns array must contain only strings");
                                         return;
                                     }
                                     const pattern = try item.data.e_string.string(allocator);
-                                    // Resolve pattern relative to bunfig.toml directory if it's not absolute
+                                    // Only resolve relative to bunfig.toml if it starts with ./ or ../
                                     if (std.fs.path.isAbsolute(pattern)) {
                                         patterns[i] = pattern;
+                                    } else if (strings.startsWith(pattern, "./") or strings.startsWith(pattern, "../")) {
+                                        // Resolve any ../ in the path
+                                        var buffer: bun.PathBuffer = undefined;
+                                        const resolved = bun.path.joinAbsStringBuf(bunfig_dir, &buffer, &[_][]const u8{pattern}, .auto);
+                                        patterns[i] = try allocator.dupe(u8, resolved);
                                     } else {
-                                        patterns[i] = try std.fs.path.join(allocator, &[_][]const u8{ bunfig_dir, pattern });
+                                        // Use pattern as-is for glob patterns like **/*.test.ts
+                                        patterns[i] = pattern;
                                     }
                                 }
-                                this.ctx.test_options.glob_patterns = patterns;
+                                this.ctx.test_options.file_patterns = patterns;
                             },
                             else => {
-                                try this.addError(expr.loc, "test.glob must be a string or array of strings");
+                                try this.addError(expr.loc, "test.filePatterns must be a string or array of strings");
                                 return;
                             },
                         }

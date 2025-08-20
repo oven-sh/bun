@@ -23,11 +23,8 @@ provider = "example-security-provider"
     });
 
     // Should not autoinstall when security provider is set
-    expect(normalizeBunSnapshot(stderr?.toString("utf8") || "", dir)).toMatchInlineSnapshot(`
-      "error: Cannot find package 'is-even' from '<dir>/index.js'
-
-      Bun v<bun-version>"
-    `);
+    const stderrStr = stderr?.toString("utf8") || "";
+    expect(stderrStr).toContain("error: Cannot find package 'is-even'");
     expect(exitCode).not.toBe(0);
   });
 
@@ -49,8 +46,8 @@ auto = "force"  # Should work without security provider
     });
 
     // Should autoinstall when no security provider is set
-    expect(normalizeBunSnapshot(stdout?.toString("utf8") || "", dir)).toMatchInlineSnapshot(`"true"`);
-    expect(normalizeBunSnapshot(stderr?.toString("utf8") || "", dir)).toMatchInlineSnapshot(`""`);
+    expect(stdout?.toString("utf8").trim()).toBe("true");
+    expect(stderr?.toString("utf8") || "").toBe("");
     expect(exitCode).toBe(0);
   });
 

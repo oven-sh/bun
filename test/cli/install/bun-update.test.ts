@@ -420,15 +420,15 @@ it("should support catalog versions in update", async () => {
 
 it("should show 'updated' for packages that existed and 'added' for new packages during update", async () => {
   const urls: string[] = [];
-  
+
   // Test when running update on non-existent package (simulates the scenario from the issue)
   const registry = {
     "0.0.3": {},
     latest: "0.0.3",
   };
   setHandler(dummyRegistry(urls, registry));
-  
-  // Start with empty package.json  
+
+  // Start with empty package.json
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -436,7 +436,7 @@ it("should show 'updated' for packages that existed and 'added' for new packages
       dependencies: {},
     }),
   );
-  
+
   const {
     stdout: stdout1,
     stderr: stderr1,
@@ -448,10 +448,10 @@ it("should show 'updated' for packages that existed and 'added' for new packages
     stderr: "pipe",
     env,
   });
-  
+
   expect(await exited1).toBe(0);
   const out1 = await new Response(stdout1).text();
-  
+
   // When updating a package that doesn't exist, it should show "added"
   expect(out1).toContain("added baz@0.0.3");
   // Should NOT show "installed" or "updated"

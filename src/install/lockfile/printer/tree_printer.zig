@@ -403,7 +403,7 @@ pub fn print(
                 // Determine if this package was updated or newly added
                 const was_updated = manager.updating_packages.contains(package_name);
                 const action_word = if (was_updated) "updated" else "added";
-                
+
                 const fmt = comptime Output.prettyFmt("<r><green>{s}<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
 
                 try writer.print(
@@ -429,7 +429,7 @@ pub fn print(
                     // Determine if this package was updated or newly added
                     const was_updated = manager.updating_packages.contains(package_name);
                     const action_word = if (was_updated) "updated" else "added";
-                    
+
                     const fmt = comptime Output.prettyFmt("<r><green>{s}<r> {s}<r><d>@{}<r> with binaries:\n", enable_ansi_colors);
 
                     try writer.print(

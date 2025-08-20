@@ -78,19 +78,24 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
         if (!group.executing) this.resetGroup(this.order_index);
         var status: describe2.RunOneResult = .done;
         for (group.sequence_start..group.sequence_end) |sequence_index| {
-            for (0..1) |_| {
+            for (0..group.sequence_end - group.sequence_start) |_| { // bounded for safety
                 groupLog.begin(@src());
                 defer groupLog.end();
 
                 const sequence = &this._sequences.items[sequence_index];
                 if (sequence.executing) {
+                    groupLog.log("runOne: can't advance; already executing", .{});
                     status = .execute; // can't advance; already executing
                     break;
                 }
                 if (sequence.entry_index >= sequence.entry_end) {
+                    groupLog.log("runOne: sequence completed; decrement repeat count", .{});
                     this.onSequenceCompleted(sequence_index);
                     sequence.remaining_repeat_count -= 1;
-                    if (sequence.remaining_repeat_count <= 0) return .done; // done
+                    if (sequence.remaining_repeat_count <= 0) {
+                        groupLog.log("runOne: no repeats left; wait for group completion.", .{});
+                        break; // done
+                    }
                     this.resetSequence(sequence_index);
                 }
 
@@ -104,13 +109,9 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
                     status = .execute;
                     break;
                 } else switch (next_item.tag) {
-                    .skip => {
-                        // basically in this case we need to call runOneCompleted
-                        // so ideally we would return '.advance' or something
-                        @panic("TODO: advance and run next");
-                    },
-                    .todo => {
-                        @panic("TODO: advance and run next");
+                    .skip, .todo => {
+                        sequence.executing = false;
+                        sequence.entry_index += 1;
                     },
                     else => {
                         groupLog.log("runSequence: no callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.entry_index });
@@ -237,9 +238,10 @@ pub fn generateOrderDescribe(this: *Execution, current: *DescribeScope) bun.JSEr
 }
 pub fn generateOrderTest(this: *Execution, current: *ExecutionEntry) bun.JSError!void {
     const entries_start = this._entries.items.len;
+    const use_hooks = current.callback.get() != null;
 
     // gather beforeEach (alternatively, this could be implemented recursively to make it less complicated)
-    {
+    if (use_hooks) {
         // determine length of beforeEach
         var beforeEachLen: usize = 0;
         {
@@ -264,10 +266,13 @@ pub fn generateOrderTest(this: *Execution, current: *ExecutionEntry) bun.JSError
     try this._entries.append(current); // add entry to sequence
 
     // gather afterEach
-    {
+    if (use_hooks) {
         var parent: ?*DescribeScope = current.parent;
         while (parent) |p| : (parent = p.parent) {
-            for (p.afterEach.items) |entry| {
+            var i: usize = p.afterEach.items.len;
+            while (i > 0) {
+                i -= 1;
+                const entry = p.afterEach.items[i];
                 try this._entries.append(entry); // add entry to sequence
             }
         }
@@ -302,9 +307,11 @@ pub fn dumpDescribe(describe: *DescribeScope) bun.JSError!void {
     groupLog.beginMsg("describe {s} (concurrent={}, filter={s}, only={s})", .{ describe.name orelse "undefined", describe.concurrent, @tagName(describe.filter), @tagName(describe.only) });
     defer groupLog.end();
 
-    for (describe.entries.items) |entry| {
-        try dumpSub(entry);
-    }
+    for (describe.beforeAll.items) |entry| try dumpTest(entry);
+    for (describe.beforeEach.items) |entry| try dumpTest(entry);
+    for (describe.entries.items) |entry| try dumpSub(entry);
+    for (describe.afterEach.items) |entry| try dumpTest(entry);
+    for (describe.afterAll.items) |entry| try dumpTest(entry);
 }
 pub fn dumpTest(current: *ExecutionEntry) bun.JSError!void {
     groupLog.beginMsg("test {s} / {s} (concurrent={}, only={})", .{ @tagName(current.tag), current.name orelse "undefined", current.concurrent, current.only });

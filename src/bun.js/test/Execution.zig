@@ -78,9 +78,46 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
         if (!group.executing) this.resetGroup(this.order_index);
         var status: describe2.RunOneResult = .done;
         for (group.sequence_start..group.sequence_end) |sequence_index| {
-            switch (try this.runSequence(sequence_index, callback_queue)) {
-                .done => {},
-                .execute => status = .execute,
+            for (0..1) |_| {
+                groupLog.begin(@src());
+                defer groupLog.end();
+
+                const sequence = &this._sequences.items[sequence_index];
+                if (sequence.executing) {
+                    status = .execute; // can't advance; already executing
+                    break;
+                }
+                if (sequence.entry_index >= sequence.entry_end) {
+                    this.onSequenceCompleted(sequence_index);
+                    sequence.remaining_repeat_count -= 1;
+                    if (sequence.remaining_repeat_count <= 0) return .done; // done
+                    this.resetSequence(sequence_index);
+                }
+
+                const next_item = this._entries.items[sequence.entry_index];
+                sequence.executing = true;
+                this.onSequenceStarted(sequence_index);
+
+                if (next_item.callback.get()) |cb| {
+                    groupLog.log("runSequence queued callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.entry_index });
+                    try callback_queue.append(.{ .callback = .init(this.bunTest().gpa, cb), .done_parameter = true, .data = sequence_index });
+                    status = .execute;
+                    break;
+                } else switch (next_item.tag) {
+                    .skip => {
+                        // basically in this case we need to call runOneCompleted
+                        // so ideally we would return '.advance' or something
+                        @panic("TODO: advance and run next");
+                    },
+                    .todo => {
+                        @panic("TODO: advance and run next");
+                    },
+                    else => {
+                        groupLog.log("runSequence: no callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.entry_index });
+                        bun.debugAssert(false);
+                        @panic("TODO: advance and run next");
+                    },
+                }
             }
         }
 
@@ -149,43 +186,6 @@ pub fn resetSequence(this: *Execution, sequence_index: usize) void {
     } else {
         // already failed or skipped; don't run
         sequence.entry_index = sequence.entry_end;
-    }
-}
-pub fn runSequence(this: *Execution, sequence_index: usize, callback_queue: *describe2.CallbackQueue) bun.JSError!describe2.RunOneResult {
-    groupLog.begin(@src());
-    defer groupLog.end();
-
-    const sequence = &this._sequences.items[sequence_index];
-    if (sequence.executing) return .execute; // can't advance; already executing
-    if (sequence.entry_index >= sequence.entry_end) {
-        this.onSequenceCompleted(sequence_index);
-        sequence.remaining_repeat_count -= 1;
-        if (sequence.remaining_repeat_count <= 0) return .done; // done
-        this.resetSequence(sequence_index);
-    }
-
-    const next_item = this._entries.items[sequence.entry_index];
-    sequence.executing = true;
-    this.onSequenceStarted(sequence_index);
-
-    if (next_item.callback.get()) |cb| {
-        groupLog.log("runSequence queued callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.entry_index });
-        try callback_queue.append(.{ .callback = .init(this.bunTest().gpa, cb), .done_parameter = true, .data = sequence_index });
-        return .execute; // execute
-    } else switch (next_item.tag) {
-        .skip => {
-            // basically in this case we need to call runOneCompleted
-            // so ideally we would return '.advance' or something
-            @panic("TODO: advance and run next");
-        },
-        .todo => {
-            @panic("TODO: advance and run next");
-        },
-        else => {
-            groupLog.log("runSequence: no callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.entry_index });
-            bun.debugAssert(false);
-            @panic("TODO: advance and run next");
-        },
     }
 }
 

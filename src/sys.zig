@@ -3721,6 +3721,96 @@ export fn Bun__unlink(ptr: [*:0]const u8, len: usize) void {
     _ = unlink(ptr[0..len :0]);
 }
 
+pub const StatxField = enum(comptime_int) {
+    type = linux.STATX_TYPE,
+    mode = linux.STATX_MODE,
+    nlink = linux.STATX_NLINK,
+    uid = linux.STATX_UID,
+    gid = linux.STATX_GID,
+    atime = linux.STATX_ATIME,
+    mtime = linux.STATX_MTIME,
+    ctime = linux.STATX_CTIME,
+    ino = linux.STATX_INO,
+    size = linux.STATX_SIZE,
+    blocks = linux.STATX_BLOCKS,
+    btime = linux.STATX_BTIME, // Birth time (creation time)
+};
+
+// Linux Kernel v4.11
+var supports_statx_on_linux = std.atomic.Value(bool).init(true);
+
+pub fn fstatx(fd: bun.FileDescriptor, comptime fields: []const StatxField) Maybe(bun.Stat) {
+    if (comptime Environment.isWindows) {
+        if (comptime fields.len == 1 and fields[0] == .size) {
+            // if we only care about file size we can use a faster path
+            const hFile: windows.HANDLE = fd.cast();
+            var fileSize: windows.LARGE_INTEGER = 0;
+            if (bun.windows.GetFileSizeEx(hFile, &fileSize) == 0) {
+                return .{
+                    .err = Error{
+                        .errno = @intFromEnum(bun.windows.getLastErrno()),
+                        .syscall = .fstat,
+                        .fd = fd,
+                    },
+                };
+            }
+
+            return .{ .result = bun.Stat{ .size = @intCast(fileSize) } };
+        }
+    }
+
+    if (comptime !Environment.isLinux) {
+        return fstat(fd);
+    }
+
+    if (!supports_statx_on_linux.load(.Monotonic)) {
+        return fstat(fd);
+    }
+
+    var buf: linux.Statx = std.mem.zeroes(linux.Statx);
+
+    const mask: u32 = comptime brk: {
+        var i: u32 = 0;
+
+        for (fields) |field| {
+            i |= @intFromEnum(field);
+        }
+
+        break :brk i;
+    };
+
+    const rc = linux.statx(@intCast(fd.cast()), "", linux.AT.EMPTY_PATH | 0, mask, &buf);
+
+    if (Maybe(bun.Stat).errnoSysFd(rc, .fstat, fd)) |err| {
+        if (err.getErrno() == .NOSYS) {
+            supports_statx_on_linux.store(false, .Monotonic);
+            return fstat(fd);
+        }
+        return .{ .err = err.err };
+    }
+
+    var stat_ = std.mem.zeroes(bun.Stat);
+
+    stat_.dev = buf.dev_major | (buf.dev_minor << 8);
+
+    // These intcasts are to deal with:
+    // - architecture-specific differences
+    // - differences between stat and statx return types
+    stat_.ino = @intCast(buf.ino);
+    stat_.mode = @intCast(buf.mode);
+    stat_.nlink = @intCast(buf.nlink);
+    stat_.uid = @intCast(buf.uid);
+    stat_.gid = @intCast(buf.gid);
+    stat_.size = @intCast(buf.size);
+    stat_.blksize = @intCast(buf.blksize);
+    stat_.blocks = @intCast(buf.blocks);
+    stat_.st_atim = .{ .sec = @intCast(buf.atime.tv_sec), .nsec = @intCast(buf.atime.tv_nsec) };
+    stat_.st_mtim = .{ .sec = @intCast(buf.mtime.tv_sec), .nsec = @intCast(buf.mtime.tv_nsec) };
+    stat_.st_ctim = .{ .sec = @intCast(buf.ctime.tv_sec), .nsec = @intCast(buf.ctime.tv_nsec) };
+
+    return .{ .result = stat_ };
+}
+
 // TODO: this is wrong on Windows
 
 pub fn lstat_absolute(path: [:0]const u8) !Stat {
@@ -3739,9 +3829,9 @@ pub fn lstat_absolute(path: [:0]const u8) !Stat {
         else => |err| return posix.unexpectedErrno(err),
     }
 
-    const atime = st.atime();
-    const mtime = st.mtime();
-    const ctime = st.ctime();
+    const atime = bun.statAtime(&st);
+    const mtime = bun.statMtime(&st);
+    const ctime = bun.statCtime(&st);
     const Kind = std.fs.File.Kind;
     return Stat{
         .inode = st.ino,

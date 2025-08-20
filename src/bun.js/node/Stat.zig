@@ -58,9 +58,9 @@ pub fn StatType(comptime big: bool) type {
         }
 
         fn statToJS(stat_: *const bun.Stat, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
-            const aTime = stat_.atime();
-            const mTime = stat_.mtime();
-            const cTime = stat_.ctime();
+            const aTime = bun.statAtime(stat_);
+            const mTime = bun.statMtime(stat_);
+            const cTime = bun.statCtime(stat_);
             const dev: i64 = clampedInt64(stat_.dev);
             const ino: i64 = clampedInt64(stat_.ino);
             const mode: i64 = clampedInt64(stat_.mode);
@@ -77,8 +77,8 @@ pub fn StatType(comptime big: bool) type {
             const atime_ns: u64 = if (big) toNanoseconds(aTime) else 0;
             const mtime_ns: u64 = if (big) toNanoseconds(mTime) else 0;
             const ctime_ns: u64 = if (big) toNanoseconds(cTime) else 0;
-            const birthtime_ms: Float = if (Environment.isLinux) toTimeMS(aTime) else toTimeMS(stat_.birthtime());
-            const birthtime_ns: u64 = if (big) (if (Environment.isLinux) toNanoseconds(aTime) else toNanoseconds(stat_.birthtime())) else 0;
+            const birthtime_ms: Float = toTimeMS(bun.statBirthtime(stat_));
+            const birthtime_ns: u64 = if (big) toNanoseconds(bun.statBirthtime(stat_)) else 0;
 
             if (big) {
                 return bun.jsc.fromJSHostCall(globalObject, @src(), Bun__createJSBigIntStatsObject, .{

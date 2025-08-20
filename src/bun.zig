@@ -2023,6 +2023,67 @@ const WindowsStat = extern struct {
 };
 
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.posix.Stat;
+
+// Helper functions to add missing time methods to non-Windows Stat
+pub fn statAtime(stat: *const Stat) std.c.timespec {
+    if (Environment.isWindows) {
+        return stat.atime();
+    } else {
+        if (@hasField(@TypeOf(stat.*), "st_atim")) {
+            return std.c.timespec{ .sec = stat.st_atim.sec, .nsec = stat.st_atim.nsec };
+        } else if (@hasField(@TypeOf(stat.*), "st_atimespec")) {
+            return std.c.timespec{ .tv_sec = stat.st_atimespec.tv_sec, .tv_nsec = stat.st_atimespec.tv_nsec };
+        } else if (@hasField(@TypeOf(stat.*), "atim")) {
+            return std.c.timespec{ .sec = stat.atim.sec, .nsec = stat.atim.nsec };
+        } else {
+            @compileError("Unknown atime field format for this platform");
+        }
+    }
+}
+
+pub fn statMtime(stat: *const Stat) std.c.timespec {
+    if (Environment.isWindows) {
+        return stat.mtime();
+    } else {
+        if (@hasField(@TypeOf(stat.*), "st_mtim")) {
+            return std.c.timespec{ .sec = stat.st_mtim.sec, .nsec = stat.st_mtim.nsec };
+        } else if (@hasField(@TypeOf(stat.*), "st_mtimespec")) {
+            return std.c.timespec{ .tv_sec = stat.st_mtimespec.tv_sec, .tv_nsec = stat.st_mtimespec.tv_nsec };
+        } else if (@hasField(@TypeOf(stat.*), "mtim")) {
+            return std.c.timespec{ .sec = stat.mtim.sec, .nsec = stat.mtim.nsec };
+        } else {
+            @compileError("Unknown mtime field format for this platform");
+        }
+    }
+}
+
+pub fn statCtime(stat: *const Stat) std.c.timespec {
+    if (Environment.isWindows) {
+        return stat.ctime();
+    } else {
+        if (@hasField(@TypeOf(stat.*), "st_ctim")) {
+            return std.c.timespec{ .sec = stat.st_ctim.sec, .nsec = stat.st_ctim.nsec };
+        } else if (@hasField(@TypeOf(stat.*), "st_ctimespec")) {
+            return std.c.timespec{ .tv_sec = stat.st_ctimespec.tv_sec, .tv_nsec = stat.st_ctimespec.tv_nsec };
+        } else if (@hasField(@TypeOf(stat.*), "ctim")) {
+            return std.c.timespec{ .sec = stat.ctim.sec, .nsec = stat.ctim.nsec };
+        } else {
+            @compileError("Unknown ctime field format for this platform");
+        }
+    }
+}
+
+pub fn statBirthtime(stat: *const Stat) std.c.timespec {
+    if (Environment.isWindows) {
+        return stat.birthtime();
+    } else if (@hasField(@TypeOf(stat.*), "st_birthtimespec")) {
+        return std.c.timespec{ .tv_sec = stat.st_birthtimespec.tv_sec, .tv_nsec = stat.st_birthtimespec.tv_nsec };
+    } else {
+        // On Linux and other platforms without birthtime, fall back to atime to match Node.js
+        return statAtime(stat);
+    }
+}
+
 pub const StatFS = switch (Environment.os) {
     .mac => bun.c.struct_statfs,
     .linux => bun.c.struct_statfs,

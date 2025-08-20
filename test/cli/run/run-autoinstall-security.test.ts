@@ -26,7 +26,7 @@ provider = "example-security-provider"
     expect(normalizeBunSnapshot(stderr?.toString("utf8") || "", dir)).toMatchInlineSnapshot(`
       "error: Cannot find package 'is-even' from '<dir>/index.js'
 
-      Bun v<bun-version>+b30ae0956 (macOS arm64)"
+      Bun v<bun-version>"
     `);
     expect(exitCode).not.toBe(0);
   });

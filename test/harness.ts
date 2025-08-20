@@ -1781,6 +1781,9 @@ export function normalizeBunSnapshot(snapshot: string, optionalDir?: string) {
       // line numbers in stack traces like at FunctionName (NN:NN)
       // it must specifically look at the stacktrace format
       .replace(/^\s+at (.*?)\(.*?:\d+(?::\d+)?\)/gm, "    at $1(file:NN:NN)")
+      // Handle version strings in error messages like "Bun v1.2.21+revision (platform arch)"
+      // This needs to come before the other version replacements
+      .replace(/Bun v[\d.]+(?:-[\w.]+)?(?:\+[\w]+)?(?:\s+\([^)]+\))?/g, "Bun v<bun-version>")
       .replaceAll(Bun.version_with_sha, "<version> (<revision>)")
       .replaceAll(Bun.version, "<bun-version>")
       .replaceAll(Bun.revision, "<revision>")

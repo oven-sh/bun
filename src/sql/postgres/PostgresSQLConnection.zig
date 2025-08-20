@@ -1282,16 +1282,17 @@ fn advance(this: *PostgresSQLConnection) void {
                             return;
                         },
                         .parsing => {
-                            offset += 1;
-                            continue;
+                            // we are still parsing, lets wait for it to be prepared or failed
+                            return;
                         },
                     }
                 }
             },
 
             .running, .binding, .partial_response => {
-                offset += 1;
-                continue;
+                // if we are binding it will switch to running immediately
+                // if we are running, we need to wait for it to be success or fail
+                return;
             },
             .success => {
                 this.cleanupSuccessQuery(req);

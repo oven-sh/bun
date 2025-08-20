@@ -1642,19 +1642,19 @@ pub const AttributeIterator = struct {
         const value_label = jsc.ZigString.static("value");
 
         if (this.iterator == null) {
-            return JSValue.createObject2(globalObject, done_label, value_label, JSValue.jsBoolean(true), .js_undefined);
+            return JSValue.createObject2(globalObject, done_label, value_label, .true, .js_undefined);
         }
 
         var attribute = this.iterator.?.next() orelse {
             this.iterator.?.deinit();
             this.iterator = null;
-            return JSValue.createObject2(globalObject, done_label, value_label, JSValue.jsBoolean(true), .js_undefined);
+            return JSValue.createObject2(globalObject, done_label, value_label, .true, .js_undefined);
         };
 
         const value = attribute.value();
         const name = attribute.name();
 
-        return JSValue.createObject2(globalObject, done_label, value_label, JSValue.jsBoolean(false), try bun.String.toJSArray(
+        return JSValue.createObject2(globalObject, done_label, value_label, .false, try bun.String.toJSArray(
             globalObject,
             &[_]bun.String{
                 name.toString(),
@@ -1741,7 +1741,7 @@ pub const Element = struct {
     /// Returns a boolean indicating whether an attribute exists on the element.
     pub fn hasAttribute_(this: *Element, global: *JSGlobalObject, name: ZigString) JSValue {
         if (this.element == null)
-            return JSValue.jsBoolean(false);
+            return .false;
 
         var slice = name.toSlice(bun.default_allocator);
         defer slice.deinit();

@@ -666,7 +666,8 @@ pub fn NewSource(
                         return out;
                     },
                     .temporary_and_done, .owned_and_done, .into_array_and_done => {
-                        jsc.C.JSObjectSetPropertyAtIndex(globalThis, flags.asObjectRef(), 0, JSValue.jsBoolean(true).asObjectRef(), null);
+                        const value: JSValue = .true;
+                        jsc.C.JSObjectSetPropertyAtIndex(globalThis, flags.asObjectRef(), 0, value.asObjectRef(), null);
                         return result.toJS(globalThis);
                     },
                     else => return result.toJS(globalThis),

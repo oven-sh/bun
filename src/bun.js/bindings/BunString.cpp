@@ -325,7 +325,7 @@ Ref<WTF::StringImpl> toCrossThreadShareable(Ref<WTF::StringImpl> impl)
 WTF::String toCrossThreadShareable(const WTF::String& string)
 {
     if (string.length() < kMinCrossThreadShareableLength)
-        return string;
+        return string.isolatedCopy();
 
     auto* impl = string.impl();
 

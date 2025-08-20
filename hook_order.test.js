@@ -8,7 +8,7 @@ afterAll(() => console.log("afterall2"));
 afterEach(() => console.log("aftereach1"));
 afterEach(() => console.log("aftereach2"));
 
-test.skip("test skip", () => console.log("test skip"));
+test.skip.only("test skip", () => console.log("test skip"));
 test("test1", () => console.log("test1"));
 
 if ("forDebuggingExecuteTestsNow" in describe) {

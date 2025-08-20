@@ -109,14 +109,24 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
                     status = .execute;
                     break;
                 } else switch (next_item.tag) {
-                    .skip, .todo => {
+                    .skip => {
                         sequence.executing = false;
                         sequence.entry_index += 1;
+                        if (sequence.result == .pending) sequence.result = .skip;
+                        continue;
+                    },
+                    .todo => {
+                        sequence.executing = false;
+                        sequence.entry_index += 1;
+                        if (sequence.result == .pending) sequence.result = .todo;
+                        continue;
                     },
                     else => {
                         groupLog.log("runSequence: no callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.entry_index });
                         bun.debugAssert(false);
-                        @panic("TODO: advance and run next");
+                        sequence.executing = false;
+                        sequence.entry_index += 1;
+                        continue;
                     },
                 }
             }
@@ -165,7 +175,7 @@ fn onSequenceStarted(this: *Execution, sequence_index: usize) void {
 fn onSequenceCompleted(this: *Execution, sequence_index: usize) void {
     const sequence = &this._sequences.items[sequence_index];
     const elapsed_ns = sequence.started_at.sinceNow();
-    test_command.CommandLineReporter.handleTestPass(this.bunTest(), sequence, sequence.test_entry orelse return, elapsed_ns);
+    test_command.CommandLineReporter.handleTestCompleted(this.bunTest(), sequence, sequence.test_entry orelse return, elapsed_ns);
 }
 pub fn resetGroup(this: *Execution, group_index: usize) void {
     groupLog.begin(@src());

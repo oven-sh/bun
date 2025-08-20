@@ -668,6 +668,25 @@ function getReleaseStep(buildPlatforms, options) {
 }
 
 /**
+ * @param {string} version
+ * @returns {Step}
+ */
+function getWindowsSigningStep(version) {
+  return {
+    key: "sign-windows",
+    label: `${getBuildkiteEmoji("windows")} 🔒 Sign Windows`,
+    agents: {
+      queue: "windows",
+    },
+    depends_on: ["release"],
+    env: {
+      VERSION: version,
+    },
+    command: `.buildkite/scripts/sign-windows.sh ${version}`,
+  };
+}
+
+/**
  * @param {Platform[]} buildPlatforms
  * @returns {Step}
  */
@@ -1168,6 +1187,10 @@ async function getPipeline(options = {}) {
 
   if (isMainBranch()) {
     steps.push(getReleaseStep(buildPlatforms, options));
+    
+    // Add Windows code signing step after release
+    const version = "canary"; // This script is primarily for canary builds
+    steps.push(getWindowsSigningStep(version));
   }
   steps.push(getBenchmarkStep());
 

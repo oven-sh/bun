@@ -137,7 +137,8 @@ export async function render(
       ...responseOptions,
     });
   } else {
-    // TODO: this is bad and could be done way better
+    // FIXME: this is bad and could be done way better
+    // FIXME: why are we even doing stream stuff is `streaming=false`, is there a way to do RSC without stream
 
     // Buffer the entire response and return it all at once
     const htmlStream = renderToHtml(rscPayload, meta.modules, signal);

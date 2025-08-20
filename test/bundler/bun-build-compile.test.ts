@@ -25,7 +25,7 @@ describe("Bun.build compile", () => {
 
     expect(result.success).toBe(true);
     expect(result.outputs.length).toBe(1);
-    expect(result.outputs[0].path).toEndWith("app-cross");
+    expect(result.outputs[0].path).toEndWith(isWindows ? "app-cross.exe" : "app-cross");
 
     const exists = await Bun.file(result.outputs[0].path).exists();
 

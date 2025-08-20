@@ -1000,6 +1000,7 @@ pub const StandaloneModuleGraph = struct {
             .fromStdDir(root_dir),
             bun.sliceTo(&outfile_posix, 0),
         ) catch |err| {
+            fd.close();
             _ = Syscall.unlink(&temp_posix);
 
             if (err == error.IsDir or err == error.EISDIR) {
@@ -1008,6 +1009,9 @@ pub const StandaloneModuleGraph = struct {
                 return CompileResult.fail(std.fmt.allocPrint(allocator, "failed to rename {s} to {s}: {s}", .{ temp_location, outfile, @errorName(err) }) catch "failed to rename file");
             }
         };
+
+        // Close the file descriptor after successful move to prevent ETXTBSY
+        fd.close();
 
         return .success;
     }

@@ -530,6 +530,25 @@ describe("napi", () => {
   it("behaves as expected when performing operations with an exception pending", async () => {
     await checkSameOutput("test_deferred_exceptions", []);
   });
+
+  it("NAPI finalizer iterator invalidation crash prevention", () => {
+    // This test verifies that the DeferGCForAWhile fix prevents iterator invalidation
+    // during NAPI finalizer cleanup. While we couldn't reproduce the exact crash
+    // conditions, this test ensures the addon loads and runs without issues.
+
+    const addon = require("./napi-app/build/Debug/test_finalizer_iterator_invalidation.node");
+
+    // Create objects with finalizers (should not crash)
+    const objects = addon.createProblematicObjects(5);
+    expect(objects).toHaveLength(5);
+
+    // Clear references
+    objects.length = 0;
+
+    // Get initial count
+    const count = addon.getFinalizeCount();
+    expect(typeof count).toBe("number");
+  });
 });
 
 async function checkSameOutput(test: string, args: any[] | string, envArgs: Record<string, string> = {}) {

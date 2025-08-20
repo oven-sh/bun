@@ -195,8 +195,7 @@ BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
 extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__toThreadSafe(BunString* str)
 {
     if (str->tag == BunStringTag::WTFStringImpl) {
-        Ref<WTF::StringImpl> impl = *str->impl.wtf;
-        impl = Bun::toCrossThreadShareable(impl);
+        auto impl = str->impl.wtf->isolatedCopy();
         if (impl.ptr() != str->impl.wtf) {
             str->impl.wtf = &impl.leakRef();
         }
@@ -288,7 +287,7 @@ bool isCrossThreadShareable(const WTF::String& string)
 
     auto* impl = string.impl();
 
-    // 1) Never share atomics/symbols - they have special thread-unsafe behavior
+    // 1) Never share AtomStringImpl/symbols - they have special thread-unsafe behavior
     if (impl->isAtom() || impl->isSymbol())
         return false;
 
@@ -322,7 +321,7 @@ WTF::String toCrossThreadShareable(const WTF::String& string)
 
     auto* impl = string.impl();
 
-    // 1) Never share atomics/symbols - they have special thread-unsafe behavior
+    // 1) Never share AtomStringImpl/symbols - they have special thread-unsafe behavior
     if (impl->isAtom() || impl->isSymbol())
         return string.isolatedCopy();
 

@@ -650,7 +650,32 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         else
             Bunfig.OfflineMode.online;
 
-        if (args.flag("--no-install")) {
+        const has_security_provider = if (ctx.install) |install|
+            install.security_provider != null
+        else
+            false;
+
+        if (has_security_provider) {
+            if (args.flag("-i")) {
+                Output.prettyErrorln("<r><yellow>warning<r>: Autoinstall is disabled because a security provider is configured. The -i flag will be ignored.", .{});
+                Output.flush();
+            } else if (args.option("--install")) |enum_value| {
+                const requested_mode = options.GlobalCache.Map.get(enum_value) orelse
+                    (if (enum_value.len == 0) options.GlobalCache.force else null);
+
+                if (requested_mode) |mode| {
+                    if (mode != .disable) {
+                        Output.prettyErrorln("<r><yellow>warning<r>: Autoinstall is disabled because a security provider is configured. The --install={s} flag will be ignored.", .{enum_value});
+                        Output.flush();
+                    }
+                }
+            }
+
+            // disable autoinstall because it doesn't make sense we enable
+            // autoinstall when something designed to block installing packages
+            // exists...
+            ctx.debug.global_cache = .disable;
+        } else if (args.flag("--no-install")) {
             ctx.debug.global_cache = .disable;
         } else if (args.flag("-i")) {
             ctx.debug.global_cache = .fallback;

@@ -78,7 +78,7 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
         if (!group.executing) this.resetGroup(this.order_index);
         var status: describe2.RunOneResult = .done;
         for (group.sequence_start..group.sequence_end) |sequence_index| {
-            for (0..group.sequence_end - group.sequence_start) |_| { // bounded for safety
+            while (true) {
                 groupLog.begin(@src());
                 defer groupLog.end();
 

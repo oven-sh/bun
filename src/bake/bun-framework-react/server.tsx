@@ -4,6 +4,7 @@ import { serverManifest } from "bun:bake/server";
 import { PassThrough } from "node:stream";
 import { renderToPipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
 import type { AsyncLocalStorage } from "node:async_hooks";
+import type { RequestContext } from "../hmr-runtime-server";
 
 function assertReactComponent(Component: any) {
   if (typeof Component !== "function") {
@@ -50,7 +51,6 @@ function component(mod: any, params: Record<string, string> | null, request?: Re
     props = method();
   }
 
-  console.log("REQUEST", mod.mode, request);
   // Pass request prop if mode is 'ssr'
   if (mod.mode === "ssr" && request) {
     props.request = request;
@@ -64,7 +64,7 @@ function component(mod: any, params: Record<string, string> | null, request?: Re
 export async function render(
   request: Request,
   meta: Bake.RouteMetadata,
-  als?: AsyncLocalStorage<any>,
+  als?: AsyncLocalStorage<RequestContext>,
 ): Promise<Response> {
   // The framework generally has two rendering modes.
   // - Standard browser navigation
@@ -114,21 +114,27 @@ export async function render(
   pipe(rscPayload);
 
   if (skipSSR) {
+    const responseOptions = als?.getStore()?.responseOptions || {};
     return new Response(rscPayload as any, {
       status: 200,
       headers: { "Content-Type": "text/x-component" },
-      ...(als?.getStore() || {}),
+      ...responseOptions,
     });
   }
 
   // The RSC payload is rendered into HTML
   if (streaming) {
+    const responseOptions = als?.getStore()?.responseOptions || {};
+    if (als) {
+      const state = als.getStore();
+      if (state) state.streamingStarted = true;
+    }
     // Stream the response as before
     return new Response(renderToHtml(rscPayload, meta.modules, signal), {
       headers: {
         "Content-Type": "text/html; charset=utf8",
       },
-      ...(als?.getStore() || {}),
+      ...responseOptions,
     });
   } else {
     // TODO: this seems shitty
@@ -156,13 +162,14 @@ export async function render(
       offset += chunk.length;
     }
 
-    const { headers, ...response_options } = als?.getStore() ?? { headers: {} };
+    const opts = als?.getStore()?.responseOptions ?? { headers: {} };
+    const { headers, ...response_options } = opts;
 
     return new Response(result, {
       headers: {
         "Content-Type": "text/html; charset=utf8",
         "Set-Cookie": request.cookies.toSetCookieHeaders(),
-        ...response_options.headers,
+        ...headers,
       },
       ...response_options,
     });

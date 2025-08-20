@@ -5,35 +5,12 @@ extern fn Response__getAsyncLocalStorageStore(global: *JSGlobalObject, als: JSVa
 extern fn Response__mergeAsyncLocalStorageOptions(global: *JSGlobalObject, alsStore: JSValue, initOptions: JSValue) void;
 
 // Zig function to update AsyncLocalStorage with response options
-pub fn bunUpdateAsyncLocalStorage(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(1).slice();
+pub fn bakeGetAsyncLocalStorage(global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const vm = global.bunVM();
-
-    if (arguments.len < 1) {
-        return .js_undefined;
-    }
-
-    const responseOptions = arguments[0];
-    if (!responseOptions.isObject()) {
-        return .js_undefined;
-    }
 
     // Get the AsyncLocalStorage instance from the VM
     if (vm.getDevServerAsyncLocalStorage()) |als| {
-        // Get the current store
-        const store = bun.jsc.fromJSHostCall(global, @src(), Response__getAsyncLocalStorageStore, .{ global, als }) catch .zero;
-        if (store != .zero and store.isObject()) {
-            // Merge the response options into the store
-            bun.jsc.fromJSHostCallGeneric(global, @src(), Response__mergeAsyncLocalStorageOptions, .{ global, responseOptions, store }) catch {};
-        } else {
-            // If no store exists, we need to call enterWith on the AsyncLocalStorage
-            // to set the new store
-            if (try als.get(global, "enterWith")) |enter_with_value| {
-                if (enter_with_value.isCallable()) {
-                    _ = enter_with_value.call(global, als, &.{responseOptions}) catch .zero;
-                }
-            }
-        }
+        return als;
     }
 
     return .js_undefined;
@@ -540,6 +517,35 @@ pub fn constructRedirect(
 
     return ptr.toJS(globalThis);
 }
+
+pub fn constructRender(
+    globalThis: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!JSValue {
+    const arguments = callframe.arguments_old(2);
+    const vm = globalThis.bunVM();
+
+    // Check if dev_server_async_local_storage is set
+    if (!vm.dev_server_async_local_storage.has()) {
+        return globalThis.throwInvalidArguments("Response.render() is only available in the Bun dev server", .{});
+    }
+
+    // For now, just stub - we'll implement the actual logic later
+    // We expect two arguments: path and params
+    if (arguments.len < 1) {
+        return globalThis.throwInvalidArguments("Response.render() requires at least a path argument", .{});
+    }
+
+    const path_arg = arguments.ptr[0];
+    if (!path_arg.isString()) {
+        return globalThis.throwInvalidArguments("Response.render() path must be a string", .{});
+    }
+
+    // TODO: Implement actual render logic
+    // For now, return an error response indicating this is not yet implemented
+    return globalThis.throwTODO("Response.render() is not yet fully implemented");
+}
+
 pub fn constructError(
     globalThis: *jsc.JSGlobalObject,
     _: *jsc.CallFrame,

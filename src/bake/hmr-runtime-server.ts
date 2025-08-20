@@ -10,6 +10,12 @@ if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
 }
 
+export type RequestContext = {
+  responseOptions: ResponseInit;
+  streamingStarted?: boolean;
+  abortNonStreaming: (path: string, params: Record<string, string> | null) => {};
+};
+
 // Create the AsyncLocalStorage instance for propagating response options
 const responseOptionsALS = new AsyncLocalStorage();
 

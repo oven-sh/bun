@@ -218,7 +218,8 @@ static String CFStringToWTFString(CFStringRef cfstring)
     auto result = framework->CFStringGetCString(cfstring, cstr.begin(), cstr.size(), kCFStringEncodingUTF8);
 
     if (result) {
-        // Use strlen to get the actual string length, avoiding any null bytes
+        // CFStringGetCString null-terminates the string, so we can use strlen
+        // to get the actual length without trailing null bytes
         size_t actualLength = strlen(cstr.begin());
         return String::fromUTF8(std::span<const char>(cstr.begin(), actualLength));
     }
@@ -236,11 +237,6 @@ static String errorStatusToString(OSStatus status)
     if (errorMessage) {
         errorString = CFStringToWTFString(errorMessage);
         framework->CFRelease(errorMessage);
-
-        // Clean up any null bytes at the end of the error message
-        errorString = errorString.trim([](auto character) {
-            return character == '\0' || character == '\n' || character == '\r' || character == ' ';
-        });
     }
 
     return errorString;
@@ -266,7 +262,6 @@ static void updateError(Error& err, OSStatus status)
     case errSecInteractionNotAllowed:
         err.type = ErrorType::AccessDenied;
         break;
-    case errSecKeychainDenied:
     case errSecNotAvailable:
     case errSecReadOnlyAttr:
         err.type = ErrorType::AccessDenied;

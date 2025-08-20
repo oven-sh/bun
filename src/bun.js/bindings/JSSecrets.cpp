@@ -234,11 +234,49 @@ void Bun__SecretsJobOptions__runFromJS(SecretsJobOptions* opts, JSGlobalObject* 
                 // For DELETE_OP operations, NotFound means we return false
                 promise->resolve(global, jsBoolean(false));
             } else {
-                promise->reject(global, createError(global, opts->error.message));
+                // Map error type to error code
+                ErrorCode errorCode = ErrorCode::ERR_SECRETS_NOT_FOUND;
+                if (opts->error.code != 0) {
+                    // Include platform-specific error code in the message
+                    auto messageWithCode = makeString(opts->error.message, " (code: "_s, String::number(opts->error.code), ")"_s);
+                    promise->reject(global, createError(global, errorCode, messageWithCode));
+                } else {
+                    promise->reject(global, createError(global, errorCode, opts->error.message));
+                }
             }
         } else {
-            // All other errors reject the promise
-            promise->reject(global, createError(global, opts->error.message));
+            // Map error type to appropriate error code
+            ErrorCode errorCode;
+            switch (opts->error.type) {
+            case Secrets::ErrorType::AccessDenied:
+                // Map specific macOS error codes to more specific error codes
+                if (opts->error.code == -25308) {
+                    errorCode = ErrorCode::ERR_SECRETS_INTERACTION_NOT_ALLOWED;
+                } else if (opts->error.code == -25293) {
+                    errorCode = ErrorCode::ERR_SECRETS_AUTH_FAILED;
+                } else if (opts->error.code == -25315) {
+                    errorCode = ErrorCode::ERR_SECRETS_INTERACTION_REQUIRED;
+                } else if (opts->error.code == -128) {
+                    errorCode = ErrorCode::ERR_SECRETS_USER_CANCELED;
+                } else {
+                    errorCode = ErrorCode::ERR_SECRETS_ACCESS_DENIED;
+                }
+                break;
+            case Secrets::ErrorType::PlatformError:
+                errorCode = ErrorCode::ERR_SECRETS_PLATFORM_ERROR;
+                break;
+            default:
+                errorCode = ErrorCode::ERR_SECRETS_PLATFORM_ERROR;
+                break;
+            }
+            
+            // Include platform error code if available
+            if (opts->error.code != 0) {
+                auto messageWithCode = makeString(opts->error.message, " (code: "_s, String::number(opts->error.code), ")"_s);
+                promise->reject(global, createError(global, errorCode, messageWithCode));
+            } else {
+                promise->reject(global, createError(global, errorCode, opts->error.message));
+            }
         }
     } else {
         // Success cases

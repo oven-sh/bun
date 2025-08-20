@@ -21,7 +21,7 @@ pub fn init(gpa: std.mem.Allocator) Collection {
     group.begin(@src());
     defer group.end();
 
-    const root_scope = bun.create(gpa, DescribeScope, .init(gpa, null, false));
+    const root_scope = bun.create(gpa, DescribeScope, .init(gpa, null, .{ .self_concurrent = false, .self_only = false }));
 
     return .{
         .describe_callback_queue = std.ArrayList(QueuedDescribe).init(gpa),
@@ -41,7 +41,7 @@ fn bunTest(this: *Collection) *BunTest {
     return @fieldParentPtr("collection", this);
 }
 
-pub fn enqueueDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue, cfg: struct { self_concurrent: bool }) bun.JSError!void {
+pub fn enqueueDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue, cfg: struct { self_concurrent: bool, self_only: bool }) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
@@ -51,9 +51,9 @@ pub fn enqueueDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObjec
     bun.assert(!this.locked);
     const buntest = this.bunTest();
 
-    const new_scope = bun.create(buntest.gpa, DescribeScope, .init(buntest.gpa, this.active_scope, cfg.self_concurrent));
+    const new_scope = bun.create(buntest.gpa, DescribeScope, .init(buntest.gpa, this.active_scope, .{ .self_concurrent = cfg.self_concurrent, .self_only = cfg.self_only }));
     new_scope.name = .init(buntest.gpa, name);
-    try this.active_scope.entries.append(.{ .describe = new_scope });
+    try this.active_scope.append(.{ .describe = new_scope });
 
     group.log("enqueueDescribeCallback / {} / in scope: {}", .{ name.toFmt(&formatter), (this.active_scope.name.get() orelse jsc.JSValue.js_undefined).toFmt(&formatter) });
     try this.describe_callback_queue.append(.{
@@ -64,7 +64,7 @@ pub fn enqueueDescribeCallback(this: *Collection, globalThis: *jsc.JSGlobalObjec
     });
 }
 
-pub fn enqueueTestCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue, cfg: struct { self_concurrent: bool }) bun.JSError!void {
+pub fn enqueueTestCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, name: jsc.JSValue, callback: jsc.JSValue, cfg: struct { self_concurrent: bool, self_only: bool, mode: enum { normal } }) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
@@ -80,8 +80,9 @@ pub fn enqueueTestCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, n
         .callback = .init(this.bunTest().gpa, callback.withAsyncContextIfNeeded(globalThis)),
         .name = .init(this.bunTest().gpa, name),
         .concurrent = this.active_scope.concurrent or cfg.self_concurrent,
+        .only = cfg.self_only,
     });
-    try this.active_scope.entries.append(.{ .test_callback = test_callback });
+    try this.active_scope.append(.{ .test_callback = test_callback });
 }
 pub fn enqueueHookCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, comptime tag: @Type(.enum_literal), callback: jsc.JSValue) bun.JSError!void {
     group.begin(@src());
@@ -96,8 +97,9 @@ pub fn enqueueHookCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, c
         .callback = .init(this.bunTest().gpa, callback.withAsyncContextIfNeeded(globalThis)),
         .name = .empty,
         .concurrent = this.active_scope.concurrent,
+        .only = false,
     });
-    try @field(this.active_scope, @tagName(tag)).append(hook_callback);
+    try this.active_scope.appendHook(tag, hook_callback);
 }
 
 pub fn runOne(this: *Collection, globalThis: *jsc.JSGlobalObject, callback_queue: *describe2.CallbackQueue) bun.JSError!describe2.RunOneResult {

@@ -1,5 +1,17 @@
 pub const js_fns = struct {
-    pub fn describeFn(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const DescribeConfig = struct {
+        concurrent: bool,
+        only: bool,
+        fn_label: []const u8,
+    };
+    pub fn genericDescribe(comptime cfg: DescribeConfig) type {
+        return struct {
+            pub fn describeFn(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+                return js_fns.describeFn(globalObject, callframe, cfg);
+            }
+        };
+    }
+    fn describeFn(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, cfg: DescribeConfig) bun.JSError!jsc.JSValue {
         group.begin(@src());
         defer group.end();
         errdefer group.log("ended in error", .{});
@@ -17,34 +29,7 @@ pub const js_fns = struct {
 
         switch (bunTest.phase) {
             .collection => {
-                try bunTest.collection.enqueueDescribeCallback(globalObject, name, callback, .{ .self_concurrent = false });
-                return .js_undefined; // vitest doesn't return a promise, even for `describe(async () => {})`
-            },
-            .execution => {
-                return globalObject.throw("Cannot call describe() inside a test", .{});
-            },
-            .done => return globalObject.throw("Cannot call describe() after the test run has completed", .{}),
-        }
-    }
-    pub fn describeConcurrentFn(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        group.begin(@src());
-        defer group.end();
-        errdefer group.log("ended in error", .{});
-
-        const vm = globalObject.bunVM();
-        if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
-            @panic("TODO return Bun__Jest__testPreloadObject(globalObject)");
-        }
-        if (bun.jsc.Jest.Jest.runner.?.describe2 == null) {
-            return globalObject.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
-        }
-        const bunTest = &bun.jsc.Jest.Jest.runner.?.describe2.?;
-
-        const name, const callback = callframe.argumentsAsArray(2);
-
-        switch (bunTest.phase) {
-            .collection => {
-                try bunTest.collection.enqueueDescribeCallback(globalObject, name, callback, .{ .self_concurrent = true });
+                try bunTest.collection.enqueueDescribeCallback(globalObject, name, callback, .{ .self_concurrent = cfg.concurrent, .self_only = cfg.only });
                 return .js_undefined; // vitest doesn't return a promise, even for `describe(async () => {})`
             },
             .execution => {
@@ -54,7 +39,20 @@ pub const js_fns = struct {
         }
     }
 
-    pub fn testFn(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const TestConfig = struct {
+        concurrent: bool,
+        only: bool,
+        mode: enum { normal },
+        fn_label: []const u8,
+    };
+    pub fn genericTest(comptime cfg: TestConfig) type {
+        return struct {
+            pub fn testFn(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+                return js_fns.testFn(globalObject, callFrame, cfg);
+            }
+        };
+    }
+    fn testFn(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, cfg: TestConfig) bun.JSError!jsc.JSValue {
         group.begin(@src());
         defer group.end();
         errdefer group.log("ended in error", .{});
@@ -72,41 +70,15 @@ pub const js_fns = struct {
 
         switch (bunTest.phase) {
             .collection => {
-                try bunTest.collection.enqueueTestCallback(globalObject, name, callback, .{ .self_concurrent = false });
+                try bunTest.collection.enqueueTestCallback(globalObject, name, callback, .{ .self_concurrent = cfg.concurrent, .self_only = cfg.only, .mode = switch (cfg.mode) {
+                    .normal => .normal,
+                } });
                 return .js_undefined;
             },
             .execution => {
                 return globalObject.throw("TODO: queue this test callback to call after this test ends", .{});
             },
-            .done => return globalObject.throw("Cannot call test() after the test run has completed", .{}),
-        }
-    }
-
-    pub fn testConcurrentFn(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        group.begin(@src());
-        defer group.end();
-        errdefer group.log("ended in error", .{});
-
-        const vm = globalObject.bunVM();
-        if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
-            @panic("TODO return Bun__Jest__testPreloadObject(globalObject)");
-        }
-        if (bun.jsc.Jest.Jest.runner.?.describe2 == null) {
-            return globalObject.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
-        }
-        const bunTest = &bun.jsc.Jest.Jest.runner.?.describe2.?;
-
-        const name, const callback = callFrame.argumentsAsArray(2);
-
-        switch (bunTest.phase) {
-            .collection => {
-                try bunTest.collection.enqueueTestCallback(globalObject, name, callback, .{ .self_concurrent = true });
-                return .js_undefined;
-            },
-            .execution => {
-                return globalObject.throw("TODO: queue this test callback to call after this test ends", .{});
-            },
-            .done => return globalObject.throw("Cannot call test() after the test run has completed", .{}),
+            .done => return globalObject.throw("Cannot call {s}() after the test run has completed", .{cfg.fn_label}),
         }
     }
 
@@ -444,8 +416,10 @@ pub const DescribeScope = struct {
     afterAll: std.ArrayList(*ExecutionEntry),
     name: Strong.Optional,
     concurrent: bool,
+    only: enum { no, contains, yes },
+    filter: enum { no, contains, yes },
 
-    pub fn init(gpa: std.mem.Allocator, parent: ?*DescribeScope, self_concurrent: bool) DescribeScope {
+    pub fn init(gpa: std.mem.Allocator, parent: ?*DescribeScope, cfg: struct { self_concurrent: bool, self_only: bool }) DescribeScope {
         return .{
             .entries = .init(gpa),
             .beforeEach = .init(gpa),
@@ -454,7 +428,9 @@ pub const DescribeScope = struct {
             .afterEach = .init(gpa),
             .parent = parent,
             .name = .empty,
-            .concurrent = self_concurrent or if (parent) |p| p.concurrent else false,
+            .concurrent = cfg.self_concurrent or if (parent) |p| p.concurrent else false,
+            .only = if (cfg.self_only) .yes else .no,
+            .filter = .no, // TODO: impl filtering
         };
     }
     pub fn destroy(this: *DescribeScope, buntest: *BunTest) void {
@@ -476,6 +452,30 @@ pub const DescribeScope = struct {
         if (this.name.has()) return "TODO(name)";
         return null; // TODO: store the name
     }
+
+    fn markContainsOnly(this: *DescribeScope) void {
+        var target: ?*DescribeScope = this;
+        while (target) |scope| {
+            if (scope.only != .no) return; // already marked
+            scope.only = .contains;
+            target = scope.parent;
+        }
+    }
+    pub fn append(this: *DescribeScope, entry: TestScheduleEntry) bun.JSError!void {
+        try this.entries.append(entry);
+        switch (entry) {
+            .describe => |describe| if (describe.only != .no) this.markContainsOnly(),
+            .test_callback => |test_scope| if (test_scope.only) this.markContainsOnly(),
+        }
+    }
+    pub fn appendHook(this: *DescribeScope, tag: enum { beforeAll, beforeEach, afterEach, afterAll }, entry: *ExecutionEntry) bun.JSError!void {
+        switch (tag) {
+            .beforeAll => try this.beforeAll.append(entry),
+            .beforeEach => try this.beforeEach.append(entry),
+            .afterEach => try this.afterEach.append(entry),
+            .afterAll => try this.afterAll.append(entry),
+        }
+    }
 };
 pub const ExecutionEntryTag = enum {
     test_callback,
@@ -490,6 +490,7 @@ pub const ExecutionEntry = struct {
     callback: Strong,
     name: Strong.Optional,
     concurrent: bool,
+    only: bool,
     pub fn destroy(this: *ExecutionEntry, buntest: *BunTest) void {
         this.callback.deinit();
         this.name.deinit();

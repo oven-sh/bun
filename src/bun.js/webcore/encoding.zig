@@ -127,7 +127,7 @@ pub fn toBunStringFromOwnedSlice(input: []u8, encoding: Encoding) bun.String {
         },
         .ucs2, .utf16le => {
             // Avoid incomplete characters - if input length is 0 or odd, handle gracefully
-            const usable_len = if (input.len % 2 != 0) input.len -| 1 else input.len;
+            const usable_len = if (input.len % 2 != 0) input.len - 1 else input.len;
 
             if (usable_len == 0) {
                 bun.default_allocator.free(input);

@@ -10,23 +10,20 @@ const testCases = [
     expectedLength: 0,
     expectedString: "",
   },
+
+  // It needs to be big enough to trigger the code path that dynamically allocates the arraybuffer
+  // so at least 256 KB.
   {
-    name: "3 bytes",
-    bytes: [0x41, 0x42, 0x43],
-    expectedLength: 1,
-    expectedString: "䉁", // 0x4241 in UTF-16le (little endian)
-  },
-  {
-    name: "5 bytes",
-    bytes: [0x41, 0x00, 0x42, 0x00, 0x43],
-    expectedLength: 2,
-    expectedString: "AB", // 0x0041, 0x0042 in UTF-16le
-  },
-  {
-    name: "7 bytes",
-    bytes: [0x41, 0x00, 0x42, 0x00, 0x43, 0x00, 0x44],
-    expectedLength: 3,
-    expectedString: "ABC", // 0x0041, 0x0042, 0x0043 in UTF-16le
+    name: "large buffer - 256KB + 1",
+    bytes: (() => {
+      const buffer = Buffer.allocUnsafe(256 * 1024 + 1);
+      for (let i = 0; i < buffer.length; i++) {
+        buffer[i] = i % 2 === 0 ? 0x41 : 0x00;
+      }
+      return buffer;
+    })(),
+    expectedLength: 128 * 1024,
+    expectedString: "A".repeat(128 * 1024),
   },
 ];
 

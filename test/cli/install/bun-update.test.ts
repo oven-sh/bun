@@ -114,7 +114,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }, { input: {
     expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun update v1."),
       "",
-      `installed baz@${tilde ? "0.0.5" : "0.0.3"} with binaries:`,
+      `updated baz@${tilde ? "0.0.5" : "0.0.3"} with binaries:`,
       ` - ${tilde ? "baz-exec" : "baz-run"}`,
       "",
       "1 package installed",
@@ -416,6 +416,47 @@ it("should support catalog versions in update", async () => {
   // Verify catalog reference is preserved in package.json
   const pkg = await file(join(package_dir, "packages", "workspace-a", "package.json")).json();
   expect(pkg.dependencies["no-deps"]).toBe("catalog:");
+});
+
+it("should show 'updated' for packages that existed and 'added' for new packages during update", async () => {
+  const urls: string[] = [];
+  
+  // Test when running update on non-existent package (simulates the scenario from the issue)
+  const registry = {
+    "0.0.3": {},
+    latest: "0.0.3",
+  };
+  setHandler(dummyRegistry(urls, registry));
+  
+  // Start with empty package.json  
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {},
+    }),
+  );
+  
+  const {
+    stdout: stdout1,
+    stderr: stderr1,
+    exited: exited1,
+  } = spawn({
+    cmd: [bunExe(), "update", "baz"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  
+  expect(await exited1).toBe(0);
+  const out1 = await new Response(stdout1).text();
+  
+  // When updating a package that doesn't exist, it should show "added"
+  expect(out1).toContain("added baz@0.0.3");
+  // Should NOT show "installed" or "updated"
+  expect(out1).not.toMatch(/installed baz@/);
+  expect(out1).not.toMatch(/updated baz@/);
 });
 
 it("should support --recursive flag", async () => {

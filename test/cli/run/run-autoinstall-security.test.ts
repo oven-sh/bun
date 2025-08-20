@@ -54,30 +54,33 @@ auto = "force"  # Should work without security provider
     expect(exitCode).toBe(0);
   });
 
-  test.each(["-i", "--install=force", "--install=fallback"])("CLI flag %s should be disabled when security provider is configured and show warning", async (flag) => {
-    const dir = tempDirWithFiles("autoinstall-security-cli", {
-      "index.js": "import isEven from 'is-even'; console.log(isEven(2));",
-      "bunfig.toml": `
+  test.each(["-i", "--install=force", "--install=fallback"])(
+    "CLI flag %s should be disabled when security provider is configured and show warning",
+    async flag => {
+      const dir = tempDirWithFiles("autoinstall-security-cli", {
+        "index.js": "import isEven from 'is-even'; console.log(isEven(2));",
+        "bunfig.toml": `
 [install.security]
 provider = "example-security-provider"
 `,
-    });
+      });
 
-    const { stderr, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), flag, "index.js"],
-      cwd: dir,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+      const { stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), flag, "index.js"],
+        cwd: dir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-    const stderrStr = stderr?.toString("utf8") || "";
-    
-    // Should show warning about autoinstall being disabled
-    expect(stderrStr).toContain("warning: Autoinstall is disabled because a security provider is configured");
-    
-    // Should not autoinstall even with explicit CLI flags when security provider is set
-    expect(stderrStr).toContain("error: Cannot find package 'is-even'");
-    expect(exitCode).not.toBe(0);
-  });
+      const stderrStr = stderr?.toString("utf8") || "";
+
+      // Should show warning about autoinstall being disabled
+      expect(stderrStr).toContain("warning: Autoinstall is disabled because a security provider is configured");
+
+      // Should not autoinstall even with explicit CLI flags when security provider is set
+      expect(stderrStr).toContain("error: Cannot find package 'is-even'");
+      expect(exitCode).not.toBe(0);
+    },
+  );
 });

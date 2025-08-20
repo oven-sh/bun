@@ -179,6 +179,11 @@ pub fn generateOrderSub(this: *Execution, current: TestScheduleEntry) bun.JSErro
         .test_callback => |test_callback| try this.generateOrderTest(test_callback),
     }
 }
+pub fn discardOrderSub(this: *Execution, current: TestScheduleEntry) bun.JSError!void {
+    // TODO: here we can swap the callbacks with zero to allow them to be GC'd
+    _ = this;
+    _ = current;
+}
 pub fn generateOrderDescribe(this: *Execution, current: *DescribeScope) bun.JSError!void {
     // gather beforeAll
     for (current.beforeAll.items) |entry| {
@@ -192,11 +197,19 @@ pub fn generateOrderDescribe(this: *Execution, current: *DescribeScope) bun.JSEr
     }
 
     for (current.entries.items) |entry| {
+        if (current.only == .contains and !entry.isOrContainsOnly()) {
+            try this.discardOrderSub(entry);
+            continue;
+        }
         try this.generateOrderSub(entry);
     }
 
-    // gather afterAll
-    for (current.afterAll.items) |entry| {
+    // gather afterAll (reverse order)
+    var i: usize = current.afterAll.items.len;
+    while (i > 0) {
+        i -= 1;
+        const entry = current.afterAll.items[i];
+
         const entries_start = this._entries.items.len;
         try this._entries.append(entry); // add entry to sequence
         const entries_end = this._entries.items.len;
@@ -276,7 +289,7 @@ pub fn dumpDescribe(globalThis: *jsc.JSGlobalObject, describe: *DescribeScope) b
     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
     defer formatter.deinit();
 
-    groupLog.beginMsg("describe {s}", .{(describe.name.get() orelse jsc.JSValue.js_undefined).toFmt(&formatter)});
+    groupLog.beginMsg("describe {s} (concurrent={}, filter={s}, only={s})", .{ (describe.name.get() orelse jsc.JSValue.js_undefined).toFmt(&formatter), describe.concurrent, @tagName(describe.filter), @tagName(describe.only) });
     defer groupLog.end();
 
     for (describe.entries.items) |entry| {
@@ -287,7 +300,7 @@ pub fn dumpTest(globalThis: *jsc.JSGlobalObject, current: *ExecutionEntry) bun.J
     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
     defer formatter.deinit();
 
-    groupLog.beginMsg("test {s} / {s}", .{ @tagName(current.tag), (current.name.get() orelse jsc.JSValue.js_undefined).toFmt(&formatter) });
+    groupLog.beginMsg("test {s} / {s} (concurrent={}, only={})", .{ @tagName(current.tag), (current.name.get() orelse jsc.JSValue.js_undefined).toFmt(&formatter), current.concurrent, current.only });
     defer groupLog.end();
 }
 pub fn dumpOrder(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!void {

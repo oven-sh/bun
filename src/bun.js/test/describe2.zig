@@ -25,6 +25,8 @@ pub const js_fns = struct {
         }
         const bunTest = &bun.jsc.Jest.Jest.runner.?.describe2.?;
 
+        if (cfg.only) try errorInCI(globalObject, cfg.fn_label);
+
         const name, const callback = callframe.argumentsAsArray(2);
 
         switch (bunTest.phase) {
@@ -36,6 +38,13 @@ pub const js_fns = struct {
                 return globalObject.throw("Cannot call describe() inside a test", .{});
             },
             .done => return globalObject.throw("Cannot call describe() after the test run has completed", .{}),
+        }
+    }
+
+    fn errorInCI(globalObject: *jsc.JSGlobalObject, label: []const u8) bun.JSError!void {
+        if (!bun.FeatureFlags.breaking_changes_1_3) return; // this is a breaking change for version 1.3
+        if (ci_info.detectCI()) |_| {
+            return globalObject.throwPretty("{s}() is not allowed in CI environments.\nTo force allow, run with environment variable CI=0", .{label});
         }
     }
 
@@ -65,6 +74,8 @@ pub const js_fns = struct {
             return globalObject.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
         }
         const bunTest = &bun.jsc.Jest.Jest.runner.?.describe2.?;
+
+        if (cfg.only) try errorInCI(globalObject, cfg.fn_label);
 
         const name, const callback = callFrame.argumentsAsArray(2);
 
@@ -513,6 +524,12 @@ pub const TestScheduleEntry = union(enum) {
             .test_callback => |test_scope| test_scope.destroy(buntest),
         }
     }
+    pub fn isOrContainsOnly(this: TestScheduleEntry) bool {
+        switch (this) {
+            .describe => |describe| return describe.only != .no,
+            .test_callback => |test_callback| return test_callback.only,
+        }
+    }
 };
 pub const RunOneResult = enum {
     done,
@@ -576,3 +593,5 @@ const test_command = @import("../../cli/test_command.zig");
 const bun = @import("bun");
 const jsc = bun.jsc;
 const Strong = jsc.Strong.Safe;
+
+const ci_info = @import("../../ci_info.zig");

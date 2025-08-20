@@ -1,16 +1,16 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from "bun:test";
 
 beforeAll(() => {
-  console.log("beforeAll [should run]");
+  console.log("beforeAll outer [should run]");
 });
 afterAll(() => {
-  console.log("afterAll [should run]");
+  console.log("afterAll outer [should run]");
 });
 beforeEach(() => {
-  console.log("beforeEach [should run]");
+  console.log("beforeEach outer [should run]");
 });
 afterEach(() => {
-  console.log("afterEach [should run]");
+  console.log("afterEach outer [should run]");
 });
 describe("inside describe", () => {
   beforeAll(() => {

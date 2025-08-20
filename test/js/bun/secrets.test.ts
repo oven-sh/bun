@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { beforeAll, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "fs";
-import { isCI, isLinux, isMacOS } from "harness";
+import { bunEnv, bunExe, isCI, isLinux, isMacOS } from "harness";
 
 // Helper to determine if we should use unrestricted keychain access
 // This is needed for macOS CI environments where user interaction is not available
@@ -43,13 +43,13 @@ function installSecretsPackages(): boolean {
     console.log("📦 Installing required packages for secrets API...");
 
     // Determine if we need sudo
-    const needsSudo = !isCI && process.getuid && process.getuid() !== 0;
+    const needsSudo = process.getuid && process.getuid() !== 0;
     const aptCmd = needsSudo ? ["sudo", "apt-get"] : ["apt-get"];
 
     // Update package list
     const updateResult = spawnSync([...aptCmd, "update", "-qq"], {
       stderr: "ignore",
-      env: { ...process.env, DEBIAN_FRONTEND: "noninteractive" },
+      env: { ...bunEnv, DEBIAN_FRONTEND: "noninteractive" },
     });
 
     if (updateResult.exitCode !== 0) {
@@ -60,7 +60,7 @@ function installSecretsPackages(): boolean {
     // Install packages
     const installResult = spawnSync([...aptCmd, "install", "-y", "libsecret-1-dev", "gnome-keyring", "dbus-x11"], {
       stderr: "ignore",
-      env: { ...process.env, DEBIAN_FRONTEND: "noninteractive" },
+      env: { ...bunEnv, DEBIAN_FRONTEND: "noninteractive" },
     });
 
     if (installResult.exitCode === 0) {
@@ -103,7 +103,7 @@ lock-after=false
 
     // Initialize keyring daemon
     const keyringResult = spawnSync(["sh", "-c", 'echo -n "" | gnome-keyring-daemon --daemonize --login'], {
-      env: process.env,
+      env: bunEnv,
       stderr: "ignore",
     });
 
@@ -119,15 +119,15 @@ function spawnTestInDbusSession(): never {
   console.log("🚌 Starting D-Bus session for secrets tests...");
 
   // Get the current Bun executable
-  const bunExe = process.execPath;
-  const testFile = import.meta.url.replace("file://", "");
+
+  const testFile = import.meta.path;
 
   // Spawn in D-Bus session
-  const result = spawnSync(["dbus-run-session", "--", bunExe, "test", testFile], {
+  const result = spawnSync(["dbus-run-session", "--", bunExe(), "test", testFile], {
     stdout: "inherit",
     stderr: "inherit",
     stdin: "inherit",
-    env: { ...process.env, BUN_SECRETS_DBUS_SESSION: "1" },
+    env: { ...bunEnv, BUN_SECRETS_DBUS_SESSION: "1" },
   });
 
   process.exit(result.exitCode || 0);

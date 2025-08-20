@@ -310,6 +310,7 @@ Ref<WTF::StringImpl> toCrossThreadShareable(Ref<WTF::StringImpl> impl)
     // 3) Ensure we won't lazily touch hash/flags on the consumer thread
     // Force hash computation on this thread before sharing
     impl->hash();
+    impl->setNeverAtomize();
 
     return impl;
 }
@@ -332,6 +333,7 @@ WTF::String toCrossThreadShareable(const WTF::String& string)
     // 3) Ensure we won't lazily touch hash/flags on the consumer thread
     // Force hash computation on this thread before sharing
     const_cast<StringImpl*>(impl)->hash();
+    const_cast<StringImpl*>(impl)->setNeverAtomize();
 
     return string;
 }

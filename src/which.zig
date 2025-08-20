@@ -17,7 +17,7 @@ fn isValid(buf: *bun.PathBuffer, segment: []const u8, bin: []const u8) ?u16 {
 // Remember to resolve the symlink if necessary
 pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []const u8) ?[:0]const u8 {
     if (bin.len > bun.MAX_PATH_BYTES) return null;
-    bun.Output.scoped(.which, true)("path={s} cwd={s} bin={s}", .{ path, cwd, bin });
+    bun.Output.scoped(.which, .hidden)("path={s} cwd={s} bin={s}", .{ path, cwd, bin });
 
     if (bun.Environment.os == .windows) {
         const convert_buf = bun.w_path_buffer_pool.get();

@@ -65,7 +65,15 @@ declare function $extractHighWaterMarkFromQueuingStrategyInit(obj: any): any;
  * Overrides **
  */
 
-interface ReadableStreamDefaultController<R = any> extends _ReadableStreamDefaultController<R> {
+class ReadableStreamDefaultController<R = any> extends _ReadableStreamDefaultController<R> {
+  constructor(
+    stream: unknown,
+    underlyingSource: unknown,
+    size: unknown,
+    highWaterMark: unknown,
+    $isReadableStream: typeof $isReadableStream,
+  );
+
   $controlledReadableStream: ReadableStream<R>;
   $underlyingSource: UnderlyingSource;
   $queue: any;
@@ -164,6 +172,7 @@ declare function $idWithProfile(): TODO;
  * @see [JIT implementation](https://github.com/oven-sh/WebKit/blob/433f7598bf3537a295d0af5ffd83b9a307abec4e/Source/JavaScriptCore/jit/JITOpcodes.cpp#L311)
  */
 declare function $isObject(obj: unknown): obj is object;
+declare function $isArray<T>(obj: T): obj is Extract<T, any[]> | Extract<T, readonly any[]>;
 declare function $isArray(obj: unknown): obj is any[];
 declare function $isCallable(fn: unknown): fn is CallableFunction;
 declare function $isConstructor(fn: unknown): fn is { new (...args: any[]): any };
@@ -605,15 +614,6 @@ declare class OutOfMemoryError {
   constructor();
 }
 
-declare class ReadableStreamDefaultController {
-  constructor(
-    stream: unknown,
-    underlyingSource: unknown,
-    size: unknown,
-    highWaterMark: unknown,
-    $isReadableStream: typeof $isReadableStream,
-  );
-}
 declare class ReadableByteStreamController {
   constructor(
     stream: unknown,
@@ -843,7 +843,7 @@ interface ObjectConstructor {
 declare const $Object: ObjectConstructor;
 
 /** gets a property on an object */
-declare function $getByIdDirect<T = any>(obj: any, key: string): T;
+declare function $getByIdDirect<T, K extends keyof T>(obj: T, key: K): T[K];
 
 /**
  * Gets a private property on an object.

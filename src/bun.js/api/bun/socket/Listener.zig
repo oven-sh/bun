@@ -626,7 +626,9 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
 
             if (ssl_enabled) {
                 var tls = if (prev_maybe_tls) |prev| blk: {
-                    bun.destroy(prev.handlers);
+                    if (prev.handlers) |prev_handlers| {
+                        bun.destroy(prev_handlers);
+                    }
                     bun.assert(prev.this_value != .zero);
                     prev.handlers = handlers_ptr;
                     bun.assert(prev.socket.socket == .detached);
@@ -827,7 +829,7 @@ pub fn jsAddServerName(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     }
     return global.throw("Expected a Listener instance", .{});
 }
-pub const log = Output.scoped(.Listener, false);
+pub const log = Output.scoped(.Listener, .visible);
 
 fn isValidPipeName(pipe_name: []const u8) bool {
     if (!Environment.isWindows) {

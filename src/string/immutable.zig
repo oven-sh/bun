@@ -1613,34 +1613,34 @@ pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range
         cursor.i = current_i;
         cursor.width = 0;
         const current_line_range: LineRange = brk: {
-            if (iter.next(&cursor)) {
-                const codepoint = cursor.c;
-                switch (codepoint) {
-                    '\n' => {
-                        const start = prev_end;
-                        prev_end = cursor.i;
+            bun.assert(iter.next(&cursor)); // cursor points to current_i where we know there is some character
+            const codepoint = cursor.c;
+            switch (codepoint) {
+                '\n' => {
+                    const start = prev_end;
+                    prev_end = cursor.i;
+                    break :brk .{
+                        .start = start,
+                        .end = cursor.i + 1,
+                    };
+                },
+                '\r' => {
+                    const current_end = cursor.i;
+                    if (iter.next(&cursor) and cursor.c == '\n') {
+                        defer prev_end = cursor.i;
                         break :brk .{
-                            .start = start,
+                            .start = prev_end,
+                            .end = current_end,
+                        };
+                    } else {
+                        break :brk .{
+                            .start = prev_end,
                             .end = cursor.i + 1,
                         };
-                    },
-                    '\r' => {
-                        const current_end = cursor.i;
-                        if (iter.next(&cursor)) {
-                            const codepoint2 = cursor.c;
-                            if (codepoint2 == '\n') {
-                                defer prev_end = cursor.i;
-                                break :brk .{
-                                    .start = prev_end,
-                                    .end = current_end,
-                                };
-                            }
-                        }
-                    },
-                    else => continue,
-                }
+                    }
+                },
+                else => continue,
             }
-            @panic("unreachable");
         };
 
         if (ranges.len == line_range_count and current_line <= target_line) {
@@ -2344,7 +2344,7 @@ pub const withoutTrailingSlash = paths_.withoutTrailingSlash;
 pub const withoutTrailingSlashWindowsPath = paths_.withoutTrailingSlashWindowsPath;
 pub const basename = paths_.basename;
 
-pub const log = bun.Output.scoped(.STR, true);
+pub const log = bun.Output.scoped(.STR, .hidden);
 pub const grapheme = @import("./immutable/grapheme.zig");
 pub const CodePoint = i32;
 

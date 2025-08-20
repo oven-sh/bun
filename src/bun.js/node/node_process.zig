@@ -59,6 +59,28 @@ fn createExecArgv(globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         }
     }
 
+    // For compiled/standalone executables, execArgv should contain compile_exec_argv
+    if (vm.standalone_module_graph) |graph| {
+        if (graph.compile_exec_argv.len > 0) {
+            // Use tokenize to split the compile_exec_argv string by whitespace
+            var args = std.ArrayList(bun.String).init(temp_alloc);
+            defer args.deinit();
+            defer for (args.items) |*arg| arg.deref();
+
+            var tokenizer = std.mem.tokenizeAny(u8, graph.compile_exec_argv, " \t\n\r");
+            while (tokenizer.next()) |token| {
+                try args.append(bun.String.cloneUTF8(token));
+            }
+
+            const array = try jsc.JSValue.createEmptyArray(globalObject, args.items.len);
+            for (0..args.items.len) |idx| {
+                try array.putIndex(globalObject, @intCast(idx), args.items[idx].toJS(globalObject));
+            }
+            return array;
+        }
+        return try jsc.JSValue.createEmptyArray(globalObject, 0);
+    }
+
     var args = try std.ArrayList(bun.String).initCapacity(temp_alloc, bun.argv.len - 1);
     defer args.deinit();
     defer for (args.items) |*arg| arg.deref();
@@ -312,8 +334,14 @@ comptime {
     }
 }
 
-pub export fn Bun__NODE_NO_WARNINGS() callconv(.C) bool {
+pub export fn Bun__NODE_NO_WARNINGS() bool {
     return bun.getRuntimeFeatureFlag(.NODE_NO_WARNINGS);
+}
+
+pub export fn Bun__suppressCrashOnProcessKillSelfIfDesired() void {
+    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF)) {
+        bun.crash_handler.suppressReporting();
+    }
 }
 
 pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;

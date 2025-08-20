@@ -1868,11 +1868,50 @@ function generateZig(
     ...proto,
   };
 
-  const externs = Object.entries({
+  const gc_fields = Object.entries({
     ...proto,
     ...Object.fromEntries((values || []).map(a => [a, { internal: true }])),
-  })
-    .filter(([name, { cache, internal }]) => (cache && typeof cache !== "string") || internal)
+  }).filter(([name, { cache, internal }]) => (cache && typeof cache !== "string") || internal);
+
+  const cached_values_string =
+    gc_fields.length > 0
+      ? `
+    pub const gc = enum (u8) {
+      ${gc_fields.map(([name]) => `${name},`).join("\n")}
+
+        pub fn get(comptime field: gc, thisValue: jsc.JSValue) ?jsc.JSValue {
+          const value = switch (field) {
+            ${gc_fields
+              .map(([name]) => `    .${name} => ${protoSymbolName(typeName, name)}GetCachedValue(thisValue),`)
+              .join("\n        ")}
+          };
+
+          if (value == .zero) {
+            return null;
+          }
+
+          return value;
+        }
+
+        pub fn clear(comptime field: gc, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject) void {
+          field.set(thisValue, globalObject, .zero);
+        }
+
+        pub fn set(comptime field: gc, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) void {
+          switch (field) {
+            ${gc_fields
+              .map(
+                ([name]) =>
+                  `    .${name} => ${protoSymbolName(typeName, name)}SetCachedValue(thisValue, globalObject, value),`,
+              )
+              .join("\n")}
+          }
+        }
+    };
+  `
+      : "";
+
+  const externs = gc_fields
     .map(
       ([name]) =>
         `extern fn ${protoSymbolName(typeName, name)}SetCachedValue(jsc.JSValue, *jsc.JSGlobalObject, jsc.JSValue) callconv(jsc.conv) void;
@@ -2191,6 +2230,7 @@ pub const ${className(typeName)} = struct {
     }
 
     ${externs}
+    ${cached_values_string}
 
     ${
       !noConstructor
@@ -2455,7 +2495,7 @@ const jsc = bun.jsc;
 const Classes = jsc.GeneratedClassesList;
 const Environment = bun.Environment;
 const std = @import("std");
-const zig = bun.Output.scoped(.zig, true);
+const zig = bun.Output.scoped(.zig, .hidden);
 
 const wrapHostFunction = bun.gen_classes_lib.wrapHostFunction;
 const wrapMethod = bun.gen_classes_lib.wrapMethod;
@@ -2527,10 +2567,13 @@ class StructuredCloneableSerialize {
     CppStructuredCloneableSerializeFunction cppWriteBytes;
     ZigStructuredCloneableSerializeFunction zigFunction;
 
-    uint8_t tag;
+    uint8_t tag = 0;
 
     // the type from zig
-    void* impl;
+    void* impl = nullptr;
+
+    bool isForTransfer = false;
+    bool isForStorage = false;
 
     static std::optional<StructuredCloneableSerialize> fromJS(JSC::JSValue);
     void write(CloneSerializer* serializer, JSC::JSGlobalObject* globalObject)
@@ -2561,7 +2604,7 @@ function writeCppSerializers() {
       return StructuredCloneableSerialize { .cppWriteBytes = SerializedScriptValue::writeBytesForBun, .zigFunction = ${symbolName(
         klass.name,
         "onStructuredCloneSerialize",
-      )}, .tag = ${klass.structuredClone.tag}, .impl = result->wrapped() };
+      )}, .tag = ${klass.structuredClone.tag}, .impl = result->wrapped(), .isForTransfer = ${!!klass.structuredClone.transferable}, .isForStorage = ${!!klass.structuredClone.storable} };
     }
     `;
   }
@@ -2620,7 +2663,7 @@ fn log_zig_getter(typename: []const u8, property_name: []const u8) callconv(bun.
 
 fn log_zig_setter(typename: []const u8, property_name: []const u8, value: jsc.JSValue) callconv(bun.callconv_inline) void {
   if (comptime Environment.enable_logs) {
-    zig("<r><blue>set<r> {s}<d>.<r>{s} = {}", .{typename, property_name, value});
+    zig("<r><blue>set<r> {s}<d>.<r>{s} = {?s}", .{typename, property_name, bun.tagName(jsc.JSValue, value)});
   }
 }
 

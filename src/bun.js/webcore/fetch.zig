@@ -61,7 +61,7 @@ pub const fetch_type_error_strings: JSTypeErrorEnum = brk: {
 pub const FetchTasklet = struct {
     pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
 
-    const log = Output.scoped(.FetchTasklet, false);
+    const log = Output.scoped(.FetchTasklet, .visible);
     sink: ?*ResumableSink = null,
     http: ?*http.AsyncHTTP = null,
     result: http.HTTPClientResult = .{},
@@ -1034,7 +1034,7 @@ pub const FetchTasklet = struct {
     pub fn get(
         allocator: std.mem.Allocator,
         globalThis: *jsc.JSGlobalObject,
-        fetch_options: FetchOptions,
+        fetch_options: *const FetchOptions,
         promise: jsc.JSPromise.Strong,
     ) !*FetchTasklet {
         var jsc_vm = globalThis.bunVM();
@@ -1270,7 +1270,7 @@ pub const FetchTasklet = struct {
     pub fn queue(
         allocator: std.mem.Allocator,
         global: *JSGlobalObject,
-        fetch_options: FetchOptions,
+        fetch_options: *const FetchOptions,
         promise: jsc.JSPromise.Strong,
     ) !*FetchTasklet {
         http.HTTPThread.init(&.{});
@@ -2360,7 +2360,7 @@ pub fn Bun__fetch_(
     }
     if (body.needsToReadFile()) {
         prepare_body: {
-            const opened_fd_res: jsc.Maybe(bun.FileDescriptor) = switch (body.store().?.data.file.pathlike) {
+            const opened_fd_res: bun.sys.Maybe(bun.FileDescriptor) = switch (body.store().?.data.file.pathlike) {
                 .fd => |fd| bun.sys.dup(fd),
                 .path => |path| bun.sys.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), if (Environment.isWindows) bun.O.RDONLY else bun.O.RDONLY | bun.O.NOCTTY, 0),
             };
@@ -2625,7 +2625,7 @@ pub fn Bun__fetch_(
     _ = FetchTasklet.queue(
         allocator,
         globalThis,
-        .{
+        &.{
             .method = method,
             .url = url,
             .headers = headers orelse Headers{

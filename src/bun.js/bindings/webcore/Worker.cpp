@@ -248,7 +248,7 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 
     MessageWithMessagePorts messageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() };
 
-    this->postTaskToWorkerGlobalScope([message = messageWithMessagePorts](auto& context) mutable {
+    this->postTaskToWorkerGlobalScope([message = WTFMove(messageWithMessagePorts)](auto& context) mutable {
         Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(context.jsGlobalObject());
 
         auto ports = MessagePort::entanglePorts(context, WTFMove(message.transferredPorts));

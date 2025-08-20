@@ -45,7 +45,7 @@ pub const PackageInstaller = struct {
 
     seen_bin_links: bun.StringHashMap(void),
 
-    const debug = Output.scoped(.PackageInstaller, true);
+    const debug = Output.scoped(.PackageInstaller, .hidden);
 
     pub const NodeModulesFolder = struct {
         tree_id: Lockfile.Tree.Id = 0,
@@ -441,6 +441,8 @@ pub const PackageInstaller = struct {
     pub fn completeRemainingScripts(this: *PackageInstaller, log_level: Options.LogLevel) void {
         for (this.pending_lifecycle_scripts.items) |entry| {
             const package_name = entry.list.package_name;
+            // .monotonic is okay because this value isn't modified from any other thread.
+            // (Scripts are spawned on this thread.)
             while (LifecycleScriptSubprocess.alive_count.load(.monotonic) >= this.manager.options.max_concurrent_lifecycle_scripts) {
                 this.manager.sleep();
             }
@@ -472,6 +474,7 @@ pub const PackageInstaller = struct {
             };
         }
 
+        // .monotonic is okay because this value isn't modified from any other thread.
         while (this.manager.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
             this.manager.reportSlowLifecycleScripts();
 
@@ -489,6 +492,7 @@ pub const PackageInstaller = struct {
     /// Check if a tree is ready to start running lifecycle scripts
     pub fn canRunScripts(this: *PackageInstaller, scripts_tree_id: Lockfile.Tree.Id) bool {
         const deps = this.tree_ids_to_trees_the_id_depends_on.at(scripts_tree_id);
+        // .monotonic is okay because this value isn't modified from any other thread.
         return (deps.subsetOf(this.completed_trees) or
             deps.eql(this.completed_trees)) and
             LifecycleScriptSubprocess.alive_count.load(.monotonic) < this.manager.options.max_concurrent_lifecycle_scripts;
@@ -769,7 +773,7 @@ pub const PackageInstaller = struct {
         };
 
         var installer = PackageInstall{
-            .progress = this.progress,
+            .progress = if (this.manager.options.log_level.showProgress()) this.progress else null,
             .cache_dir = undefined,
             .destination_dir_subpath = destination_dir_subpath,
             .destination_dir_subpath_buf = &this.destination_dir_subpath_buf,

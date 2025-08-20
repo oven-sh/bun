@@ -23,7 +23,7 @@ pub const Run = struct {
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
-        var arena = try Arena.init();
+        const arena = Arena.init();
 
         if (!ctx.debug.loaded_bunfig) {
             try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
@@ -160,7 +160,7 @@ pub const Run = struct {
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
-        var arena = try Arena.init();
+        const arena = Arena.init();
 
         run = .{
             .vm = try VirtualMachine.init(

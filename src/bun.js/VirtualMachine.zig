@@ -194,6 +194,8 @@ commonjs_custom_extensions: bun.StringArrayHashMapUnmanaged(node_module_module.C
 /// The value is decremented when defaults are restored.
 has_mutated_built_in_extensions: u32 = 0,
 
+initial_script_execution_context_identifier: i32,
+
 pub const ProcessAutoKiller = @import("./ProcessAutoKiller.zig");
 pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
@@ -308,7 +310,11 @@ pub const VMHolder = struct {
 };
 
 pub inline fn get() *VirtualMachine {
-    return VMHolder.vm.?;
+    return getOrNull().?;
+}
+
+pub inline fn getOrNull() ?*VirtualMachine {
+    return VMHolder.vm;
 }
 
 pub fn getMainThreadVM() ?*VirtualMachine {
@@ -367,7 +373,7 @@ const SourceMapHandlerGetter = struct {
     pub fn onChunk(this: *SourceMapHandlerGetter, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
         var temp_json_buffer = bun.MutableString.initEmpty(bun.default_allocator);
         defer temp_json_buffer.deinit();
-        temp_json_buffer = try chunk.printSourceMapContentsAtOffset(source, temp_json_buffer, true, SavedSourceMap.vlq_offset, true);
+        try chunk.printSourceMapContentsAtOffset(source, &temp_json_buffer, true, SavedSourceMap.vlq_offset, true);
         const source_map_url_prefix_start = "//# sourceMappingURL=data:application/json;base64,";
         // TODO: do we need to %-encode the path?
         const source_url_len = source.path.text.len;
@@ -984,6 +990,7 @@ pub fn initWithModuleGraph(
         .standalone_module_graph = opts.graph.?,
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
+        .initial_script_execution_context_identifier = if (opts.is_main_thread) 1 else std.math.maxInt(i32),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1016,7 +1023,7 @@ pub fn initWithModuleGraph(
     vm.global = JSGlobalObject.create(
         vm,
         vm.console,
-        if (opts.is_main_thread) 1 else std.math.maxInt(i32),
+        vm.initial_script_execution_context_identifier,
         false,
         false,
         null,
@@ -1105,6 +1112,7 @@ pub fn init(opts: Options) !*VirtualMachine {
         .ref_strings_mutex = .{},
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
+        .initial_script_execution_context_identifier = if (opts.is_main_thread) 1 else std.math.maxInt(i32),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1134,7 +1142,7 @@ pub fn init(opts: Options) !*VirtualMachine {
     vm.global = JSGlobalObject.create(
         vm,
         vm.console,
-        if (opts.is_main_thread) 1 else std.math.maxInt(i32),
+        vm.initial_script_execution_context_identifier,
         opts.smol,
         opts.eval,
         null,
@@ -1264,6 +1272,7 @@ pub fn initWorker(
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         // This option is irrelevant for Workers
         .destruct_main_thread_on_exit = false,
+        .initial_script_execution_context_identifier = @as(i32, @intCast(worker.execution_context_id)),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1297,7 +1306,7 @@ pub fn initWorker(
     vm.global = JSGlobalObject.create(
         vm,
         vm.console,
-        @as(i32, @intCast(worker.execution_context_id)),
+        vm.initial_script_execution_context_identifier,
         worker.mini,
         opts.eval,
         worker.cpp_worker,
@@ -1355,6 +1364,7 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
         .ref_strings_mutex = .{},
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
         .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
+        .initial_script_execution_context_identifier = if (opts.is_main_thread) 1 else std.math.maxInt(i32),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -1608,7 +1618,7 @@ fn _resolve(
                 source_to_use,
                 normalized_specifier,
                 if (is_esm) .stmt else .require,
-                if (jsc_vm.standalone_module_graph == null) jsc_vm.transpiler.resolver.opts.global_cache else .disable,
+                jsc_vm.transpiler.resolver.opts.global_cache,
             )) {
                 .success => |r| r,
                 .failure => |e| e,
@@ -2599,8 +2609,8 @@ pub fn remapStackFramePositions(this: *VirtualMachine, frames: [*]jsc.ZigStackFr
                 frame.source_url = source_url;
             }
             const mapping = lookup.mapping;
-            frame.position.line = Ordinal.fromZeroBased(mapping.original.lines);
-            frame.position.column = Ordinal.fromZeroBased(mapping.original.columns);
+            frame.position.line = mapping.original.lines;
+            frame.position.column = mapping.original.columns;
             frame.remapped = true;
         } else {
             // we don't want it to be remapped again
@@ -2716,8 +2726,8 @@ pub fn remapZigException(
             .mapping = .{
                 .generated = .{},
                 .original = .{
-                    .lines = @max(top.position.line.zeroBased(), 0),
-                    .columns = @max(top.position.column.zeroBased(), 0),
+                    .lines = bun.Ordinal.fromZeroBased(@max(top.position.line.zeroBased(), 0)),
+                    .columns = bun.Ordinal.fromZeroBased(@max(top.position.column.zeroBased(), 0)),
                 },
                 .source_index = 0,
             },
@@ -2775,8 +2785,8 @@ pub fn remapZigException(
         if (code.len > 0)
             source_code_slice.* = code;
 
-        top.position.line = Ordinal.fromZeroBased(mapping.original.lines);
-        top.position.column = Ordinal.fromZeroBased(mapping.original.columns);
+        top.position.line = mapping.original.lines;
+        top.position.column = mapping.original.columns;
 
         exception.remapped = true;
         top.remapped = true;
@@ -2827,8 +2837,8 @@ pub fn remapZigException(
                 }
                 const mapping = lookup.mapping;
                 frame.remapped = true;
-                frame.position.line = Ordinal.fromZeroBased(mapping.original.lines);
-                frame.position.column = Ordinal.fromZeroBased(mapping.original.columns);
+                frame.position.line = mapping.original.lines;
+                frame.position.column = mapping.original.columns;
             }
         }
     }

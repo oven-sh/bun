@@ -19,7 +19,7 @@ pub fn clone(this: Expr, allocator: std.mem.Allocator) !Expr {
     };
 }
 
-pub fn deepClone(this: Expr, allocator: std.mem.Allocator) anyerror!Expr {
+pub fn deepClone(this: Expr, allocator: std.mem.Allocator) OOM!Expr {
     return .{
         .loc = this.loc,
         .data = try this.data.deepClone(allocator),
@@ -96,7 +96,7 @@ pub fn fromBlob(
 
     if (mime_type.category.isTextLike()) {
         var output = MutableString.initEmpty(allocator);
-        output = try JSPrinter.quoteForJSON(bytes, output, true);
+        try JSPrinter.quoteForJSON(bytes, &output, true);
         var list = output.toOwnedSlice();
         // remove the quotes
         if (list.len > 0) {
@@ -2514,15 +2514,9 @@ pub const Data = union(Tag) {
                 e.left.data.writeToHasher(hasher, symbol_table);
                 e.right.data.writeToHasher(hasher, symbol_table);
             },
-            .e_class => |e| {
-                _ = e; // autofix
-            },
-            inline .e_new, .e_call => |e| {
-                _ = e; // autofix
-            },
-            .e_function => |e| {
-                _ = e; // autofix
-            },
+            .e_class => {},
+            inline .e_new, .e_call => {},
+            .e_function => {},
             .e_dot => |e| {
                 writeAnyToHasher(hasher, .{ e.optional_chain, e.name.len });
                 e.target.data.writeToHasher(hasher, symbol_table);
@@ -2533,9 +2527,7 @@ pub const Data = union(Tag) {
                 e.target.data.writeToHasher(hasher, symbol_table);
                 e.index.data.writeToHasher(hasher, symbol_table);
             },
-            .e_arrow => |e| {
-                _ = e; // autofix
-            },
+            .e_arrow => {},
             .e_jsx_element => |e| {
                 _ = e; // autofix
             },

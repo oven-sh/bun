@@ -4,7 +4,7 @@ const SOCKET = *anyopaque;
 const LPFN_ACCEPTEX = *const anyopaque;
 const LPFN_CONNECTEX = *const anyopaque;
 
-pub const log = bun.Output.scoped(.uv, true);
+pub const log = bun.Output.scoped(.uv, .hidden);
 
 pub const CHAR = u8;
 pub const SHORT = c_short;
@@ -1278,14 +1278,14 @@ pub const struct_uv_write_s = extern struct {
                 return .{ .err = err };
             }
 
-            return .{ .result = {} };
+            return .success;
         }
 
         const rc = uv_write(req, stream, @ptrCast(input), 1, null);
         if (rc.toError(.write)) |err| {
             return .{ .err = err };
         }
-        return .{ .result = {} };
+        return .success;
     }
 };
 pub const uv_write_t = struct_uv_write_s;
@@ -1356,14 +1356,14 @@ pub const Pipe = extern struct {
     pub fn init(this: *Pipe, loop: *Loop, ipc: bool) Maybe(void) {
         if (uv_pipe_init(loop, this, if (ipc) 1 else 0).toError(.pipe)) |err| return .{ .err = err };
 
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn open(this: *Pipe, file: bun.FileDescriptor) Maybe(void) {
         const uv_fd = file.uv();
         if (uv_pipe_open(this, uv_fd).toError(.open)) |err| return .{ .err = err };
 
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn listenNamedPipe(this: *@This(), named_pipe: []const u8, backlog: i32, context: anytype, comptime onClientConnect: *const (fn (@TypeOf(context), ReturnCode) void)) Maybe(void) {
@@ -1377,7 +1377,7 @@ pub const Pipe = extern struct {
         if (uv_pipe_bind2(this, named_pipe.ptr, named_pipe.len, @intCast(flags)).toError(.bind2)) |err| {
             return .{ .err = err };
         }
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn connect(this: *@This(), req: *uv_connect_t, name: []const u8, context: anytype, comptime onConnect: *const (fn (@TypeOf(context), ReturnCode) void)) Maybe(void) {
@@ -1390,7 +1390,7 @@ pub const Pipe = extern struct {
         if (uv_pipe_connect2(req, this, @ptrCast(name.ptr), name.len, UV_PIPE_NO_TRUNCATE, &Wrapper.uvConnectCb).toError(.connect2)) |err| {
             return .{ .err = err };
         }
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn setPendingInstancesCount(this: *@This(), count: i32) void {
@@ -1464,7 +1464,7 @@ pub const struct_uv_tty_s = extern struct {
         return if (uv_tty_init(loop, this, file, 0).toError(.open)) |err|
             .{ .err = err }
         else
-            .{ .result = {} };
+            .success;
     }
 
     const Mode = enum(c_uint) {
@@ -2950,14 +2950,14 @@ fn StreamMixin(comptime Type: type) type {
             if (uv_listen(@ptrCast(this), backlog, &Wrapper.uvConnectCb).toError(.listen)) |err| {
                 return .{ .err = err };
             }
-            return .{ .result = {} };
+            return .success;
         }
 
         pub fn accept(this: *Type, client: *Type) Maybe(void) {
             if (uv_accept(@ptrCast(this), @ptrCast(client)).toError(.accept)) |err| {
                 return .{ .err = err };
             }
-            return .{ .result = {} };
+            return .success;
         }
 
         pub fn readStart(
@@ -2989,7 +2989,7 @@ fn StreamMixin(comptime Type: type) type {
             if (uv_read_start(@ptrCast(this), @ptrCast(&Wrapper.uvAllocb), @ptrCast(&Wrapper.uvReadcb)).toError(.listen)) |err| {
                 return .{ .err = err };
             }
-            return .{ .result = {} };
+            return .success;
         }
 
         pub fn readStop(this: *Type) void {
@@ -3015,7 +3015,7 @@ fn StreamMixin(comptime Type: type) type {
                 if (uv_write(uv_data, @ptrCast(this), @ptrCast(input), 1, &Wrapper.uvWriteCb).toError(.write)) |err| {
                     return .{ .err = err };
                 }
-                return .{ .result = {} };
+                return .success;
             }
 
             var req: uv_write_t = std.mem.zeroes(uv_write_t);
@@ -3023,7 +3023,7 @@ fn StreamMixin(comptime Type: type) type {
                 return .{ .err = err };
             }
 
-            return .{ .result = {} };
+            return .success;
         }
 
         pub fn tryWrite(this: *Type, input: []const u8) Maybe(usize) {
@@ -3089,7 +3089,7 @@ const sockaddr_storage = std.os.linux.sockaddr_storage;
 
 const bun = @import("bun");
 const Env = bun.Environment;
-const Maybe = bun.jsc.Maybe;
+const Maybe = bun.sys.Maybe;
 
 const windows = bun.windows;
 const BOOL = windows.BOOL;

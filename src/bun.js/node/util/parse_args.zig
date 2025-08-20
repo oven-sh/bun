@@ -1,4 +1,4 @@
-const log = bun.Output.scoped(.parseArgs, true);
+const log = bun.Output.scoped(.parseArgs, .hidden);
 
 /// Represents a slice of a JSValue array
 const ArgsSlice = struct {
@@ -339,12 +339,12 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
             }
         }
 
-        log("[OptionDef] \"{s}\" (type={s}, short={s}, multiple={d}, default={?})", .{
+        log("[OptionDef] \"{s}\" (type={s}, short={s}, multiple={d}, default={?s})", .{
             String.init(long_option),
             @tagName(option.type),
             if (!option.short_name.isEmpty()) option.short_name else String.static("none"),
             @intFromBool(option.multiple),
-            option.default_value,
+            if (option.default_value) |dv| bun.tagName(JSValue, dv) else null,
         });
 
         try option_definitions.append(option);

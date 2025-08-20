@@ -80,7 +80,7 @@ pub fn OOM(e: anyerror) noreturn {
     bun.outOfMemory();
 }
 
-pub const log = bun.Output.scoped(.SHELL, false);
+pub const log = bun.Output.scoped(.SHELL, .visible);
 
 /// This is a zero-sized type returned by `.needsIO()`, designed to ensure
 /// functions which rely on IO are not called when they do don't need it.
@@ -140,7 +140,7 @@ pub const CowFd = struct {
     refcount: u32 = 1,
     being_used: bool = false,
 
-    const debug = bun.Output.scoped(.CowFd, true);
+    const debug = bun.Output.scoped(.CowFd, .hidden);
 
     pub fn init(fd: bun.FileDescriptor) *CowFd {
         const this = bun.default_allocator.create(CowFd) catch bun.outOfMemory();
@@ -579,7 +579,7 @@ pub const Interpreter = struct {
             }
             this.export_env.insert(EnvStr.initSlice("PWD"), EnvStr.initSlice(this.cwd()));
 
-            return Maybe(void).success;
+            return .success;
         }
 
         pub fn getHomedir(self: *ShellExecEnv) EnvStr {
@@ -742,7 +742,7 @@ pub const Interpreter = struct {
         }
 
         if (comptime bun.Environment.allow_assert) {
-            const debug = bun.Output.scoped(.ShellTokens, true);
+            const debug = bun.Output.scoped(.ShellTokens, .hidden);
             var test_tokens = std.ArrayList(shell.Test.TestToken).initCapacity(arena_allocator, lex_result.tokens.len) catch @panic("OOPS");
             defer test_tokens.deinit();
             for (lex_result.tokens) |tok| {
@@ -1070,7 +1070,7 @@ pub const Interpreter = struct {
             }
         }
 
-        return Maybe(void).success;
+        return .success;
     }
 
     pub fn run(this: *ThisInterpreter) !Maybe(void) {
@@ -1083,7 +1083,7 @@ pub const Interpreter = struct {
         this.started.store(true, .seq_cst);
         root.start().run();
 
-        return Maybe(void).success;
+        return .success;
     }
 
     pub fn runFromJS(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -1966,11 +1966,11 @@ const ResolvePath = bun.path;
 const TaggedPointerUnion = bun.TaggedPointerUnion;
 const assert = bun.assert;
 const which = bun.which;
+const Maybe = bun.sys.Maybe;
 
 const jsc = bun.jsc;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const Maybe = jsc.Maybe;
 
 const shell = bun.shell;
 const Yield = shell.Yield;

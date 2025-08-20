@@ -1,6 +1,6 @@
-const bloblog = bun.Output.scoped(.WriteFile, true);
+const bloblog = bun.Output.scoped(.WriteFile, .hidden);
 
-const log = bun.Output.scoped(.ReadFile, true);
+const log = bun.Output.scoped(.ReadFile, .hidden);
 
 pub fn NewReadFileHandler(comptime Function: anytype) type {
     return struct {
@@ -187,7 +187,7 @@ pub const ReadFile = struct {
     }
 
     pub fn doRead(this: *ReadFile, buffer: []u8, read_len: *usize, retry: *bool) bool {
-        const result: jsc.Maybe(usize) = brk: {
+        const result: bun.sys.Maybe(usize) = brk: {
             if (std.posix.S.ISSOCK(this.file_store.mode)) {
                 break :brk bun.sys.recvNonBlock(this.opened_fd, buffer);
             }

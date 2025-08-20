@@ -203,7 +203,7 @@ pub const RunCommand = struct {
         }
     }
 
-    const log = Output.scoped(.RUN, false);
+    const log = Output.scoped(.RUN, .visible);
 
     pub fn runPackageScriptForeground(
         ctx: Command.Context,
@@ -786,7 +786,7 @@ pub const RunCommand = struct {
         this_transpiler.resolver.store_fd = false;
 
         if (env == null) {
-            this_transpiler.env.loadProcess();
+            try this_transpiler.env.loadProcess();
 
             if (this_transpiler.env.get("NODE_ENV")) |node_env| {
                 if (strings.eqlComptime(node_env, "production")) {
@@ -973,7 +973,7 @@ pub const RunCommand = struct {
         const root_dir_info = (this_transpiler.resolver.readDirInfo(this_transpiler.fs.top_level_dir) catch null) orelse return shell_out;
 
         {
-            this_transpiler.env.loadProcess();
+            try this_transpiler.env.loadProcess();
 
             if (this_transpiler.env.get("NODE_ENV")) |node_env| {
                 if (strings.eqlComptime(node_env, "production")) {
@@ -1639,7 +1639,7 @@ pub const RunCommand = struct {
 
 pub const BunXFastPath = struct {
     const shim_impl = @import("../install/windows-shim/bun_shim_impl.zig");
-    const debug = Output.scoped(.BunXFastPath, false);
+    const debug = Output.scoped(.BunXFastPath, .visible);
 
     var direct_launch_buffer: bun.WPathBuffer = undefined;
     var environment_buffer: bun.WPathBuffer = undefined;

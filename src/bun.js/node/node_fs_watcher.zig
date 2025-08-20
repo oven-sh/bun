@@ -1,4 +1,4 @@
-const log = Output.scoped(.@"fs.watch", true);
+const log = Output.scoped(.@"fs.watch", .hidden);
 const PathWatcher = if (Environment.isWindows) @import("./win_watcher.zig") else @import("./path_watcher.zig");
 
 // TODO: make this a top-level struct
@@ -626,7 +626,7 @@ pub const FSWatcher = struct {
         return .js_undefined;
     }
 
-    pub fn init(args: Arguments) bun.jsc.Maybe(*FSWatcher) {
+    pub fn init(args: Arguments) bun.sys.Maybe(*FSWatcher) {
         const joined_buf = bun.path_buffer_pool.get();
         defer bun.path_buffer_pool.put(joined_buf);
         const file_path: [:0]const u8 = brk: {

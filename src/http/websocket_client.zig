@@ -984,6 +984,48 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             return !this.tcp.isClosed() and !this.tcp.isShutdown();
         }
 
+        pub fn writeBlob(
+            this: *WebSocket,
+            blob_value: jsc.JSValue,
+            op: u8,
+        ) callconv(.C) void {
+            if (!this.hasTCP() or op > 0xF) {
+                this.dispatchAbruptClose(ErrorCode.ended);
+                return;
+            }
+
+            const opcode: Opcode = @enumFromInt(op);
+
+            // Cast the JSValue to a Blob
+            if (blob_value.as(jsc.WebCore.Blob)) |blob| {
+                // Get the shared view of the blob data
+                const data = blob.sharedView();
+                if (data.len == 0) {
+                    // Empty blob, send empty frame
+                    const bytes = Copy{ .bytes = &[0]u8{} };
+                    _ = this.sendData(bytes, !this.hasBackpressure(), opcode);
+                    return;
+                }
+
+                // Send the blob data similar to writeBinaryData
+                const bytes = Copy{ .bytes = data };
+
+                // Fast path for small blobs
+                const frame_size = WebsocketHeader.frameSizeIncludingMask(data.len);
+                if (!this.hasBackpressure() and frame_size < stack_frame_size) {
+                    var inline_buf: [stack_frame_size]u8 = undefined;
+                    bytes.copy(this.globalThis, inline_buf[0..frame_size], data.len, opcode);
+                    _ = this.enqueueEncodedBytes(this.tcp, inline_buf[0..frame_size]);
+                    return;
+                }
+
+                _ = this.sendData(bytes, !this.hasBackpressure(), opcode);
+            } else {
+                // Invalid blob, close connection
+                this.dispatchAbruptClose(ErrorCode.ended);
+            }
+        }
+
         pub fn writeString(
             this: *WebSocket,
             str_: *const jsc.ZigString,
@@ -1216,6 +1258,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 @export(&memoryCost, .{ .name = "Bun__" ++ name ++ "__memoryCost" });
                 @export(&register, .{ .name = "Bun__" ++ name ++ "__register" });
                 @export(&writeBinaryData, .{ .name = "Bun__" ++ name ++ "__writeBinaryData" });
+                @export(&writeBlob, .{ .name = "Bun__" ++ name ++ "__writeBlob" });
                 @export(&writeString, .{ .name = "Bun__" ++ name ++ "__writeString" });
             }
         }
@@ -1511,7 +1554,7 @@ const Copy = union(enum) {
     }
 };
 
-const log = Output.scoped(.WebSocketClient, false);
+const log = Output.scoped(.WebSocketClient, .visible);
 
 const string = []const u8;
 

@@ -305,7 +305,7 @@ pub const TokenList = struct {
             }
         }
 
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn parseInto(
@@ -591,7 +591,7 @@ pub const TokenList = struct {
             last_is_whitespace = false;
         }
 
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn getFallback(this: *const TokenList, allocator: Allocator, kind: ColorFallbackKind) @This() {
@@ -794,7 +794,7 @@ pub const UnresolvedColor = union(enum) {
     ) PrintErr!void {
         const Helper = struct {
             pub fn conv(c: f32) i32 {
-                return @intFromFloat(bun.clamp(@round(c * 255.0), 0.0, 255.0));
+                return bun.intFromFloat(i32, bun.clamp(@round(c * 255.0), 0.0, 255.0));
             }
         };
 

@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "bun",
-  "version": "1.2.20",
+  "version": "1.2.21",
   "workspaces": [
     "./packages/bun-types",
     "./packages/@types/bun"
@@ -9,6 +9,8 @@
   "devDependencies": {
     "@lezer/common": "^1.2.3",
     "@lezer/cpp": "^1.1.3",
+    "@types/bun": "workspace:*",
+    "bun-tracestrings": "github:oven-sh/bun.report#912ca63e26c51429d3e6799aa2a6ab079b188fd8",
     "esbuild": "^0.21.4",
     "mitata": "^0.1.11",
     "peechy": "0.4.34",
@@ -17,7 +19,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "source-map-js": "^1.2.0",
-    "typescript": "^5.7.2"
+    "typescript": "5.9.2"
   },
   "resolutions": {
     "bun-types": "workspace:packages/bun-types",
@@ -47,6 +49,9 @@
     "css-properties": "bun run src/css/properties/generate_properties.ts",
     "uv-posix-stubs": "bun run src/bun.js/bindings/libuv/generate_uv_posix_stubs.ts",
     "bump": "bun ./scripts/bump.ts",
+    "jsc:build": "bun ./scripts/build-jsc.ts release",
+    "jsc:build:debug": "bun ./scripts/build-jsc.ts debug",
+    "jsc:build:lto": "bun ./scripts/build-jsc.ts lto",
     "typecheck": "tsc --noEmit && cd test && bun run typecheck",
     "fmt": "bun run prettier",
     "fmt:cpp": "bun run clang-format",
@@ -67,9 +72,9 @@
     "zig:check-windows": "bun run zig build check-windows --summary new",
     "analysis": "bun ./scripts/build.mjs -DCMAKE_BUILD_TYPE=Debug -DENABLE_ANALYSIS=ON -DENABLE_CCACHE=OFF -B build/analysis",
     "analysis:no-llvm": "bun run analysis -DENABLE_LLVM=OFF",
-    "clang-format": "bun run analysis --target clang-format",
-    "clang-format:check": "bun run analysis --target clang-format-check",
-    "clang-format:diff": "bun run analysis --target clang-format-diff",
+    "clang-format": "./scripts/run-clang-format.sh format",
+    "clang-format:check": "./scripts/run-clang-format.sh check",
+    "clang-format:diff": "./scripts/run-clang-format.sh diff",
     "clang-tidy": "bun run analysis --target clang-tidy",
     "clang-tidy:check": "bun run analysis --target clang-tidy-check",
     "clang-tidy:diff": "bun run analysis --target clang-tidy-diff",

@@ -15,6 +15,8 @@ comptime {
     @export(&max_http_header_size, .{ .name = "BUN_DEFAULT_MAX_HTTP_HEADER_SIZE" });
 }
 
+pub var overridden_default_user_agent: []const u8 = "";
+
 const print_every = 0;
 var print_every_i: usize = 0;
 
@@ -27,7 +29,7 @@ var shared_response_headers_buf: [256]picohttp.Header = undefined;
 
 pub const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
 
-const log = Output.scoped(.fetch, false);
+const log = Output.scoped(.fetch, .visible);
 
 pub var temp_hostname: [8192]u8 = undefined;
 
@@ -525,7 +527,12 @@ const accept_encoding_header = if (FeatureFlags.disable_compression_in_http_clie
 else
     accept_encoding_header_compression;
 
-const user_agent_header = picohttp.Header{ .name = "User-Agent", .value = Global.user_agent };
+fn getUserAgentHeader() picohttp.Header {
+    return picohttp.Header{ .name = "User-Agent", .value = if (overridden_default_user_agent.len > 0)
+        overridden_default_user_agent
+    else
+        Global.user_agent };
+}
 
 pub fn headerStr(this: *const HTTPClient, ptr: api.StringPointer) string {
     return this.header_buf[ptr.offset..][0..ptr.length];
@@ -619,7 +626,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     }
 
     if (!override_user_agent) {
-        request_headers_buf[header_count] = user_agent_header;
+        request_headers_buf[header_count] = getUserAgentHeader();
         header_count += 1;
     }
 
@@ -2424,6 +2431,7 @@ pub const ThreadlocalAsyncHTTP = struct {
     async_http: AsyncHTTP,
 };
 
+pub const ETag = @import("./http/ETag.zig");
 pub const Method = @import("./http/Method.zig").Method;
 pub const Headers = @import("./http/Headers.zig");
 pub const MimeType = @import("./http/MimeType.zig");

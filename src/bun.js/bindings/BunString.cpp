@@ -1,5 +1,6 @@
 
 
+#include "BunString.h"
 #include "helpers.h"
 #include "root.h"
 #include "headers-handwritten.h"
@@ -277,6 +278,63 @@ BunString toStringView(StringView view)
         BunStringTag::ZigString,
         { .zig = toZigString(view) }
     };
+}
+
+bool isCrossThreadShareable(const WTF::String& string)
+{
+    if (!string.impl())
+        return false;
+
+    auto* impl = string.impl();
+
+    // 1) Never share AtomStringImpl/symbols - they have special thread-unsafe behavior
+    if (impl->isAtom() || impl->isSymbol())
+        return false;
+
+    // 2) Don't share slices
+    if (impl->bufferOwnership() == StringImpl::BufferSubstring)
+        return false;
+
+    return true;
+}
+
+Ref<WTF::StringImpl> toCrossThreadShareable(Ref<WTF::StringImpl> impl)
+{
+    if (impl->isAtom() || impl->isSymbol())
+        return impl->isolatedCopy();
+
+    if (impl->bufferOwnership() == StringImpl::BufferSubstring)
+        return impl->isolatedCopy();
+
+    // 3) Ensure we won't lazily touch hash/flags on the consumer thread
+    // Force hash computation on this thread before sharing
+    impl->hash();
+    impl->setNeverAtomize();
+
+    return impl;
+}
+
+WTF::String toCrossThreadShareable(const WTF::String& string)
+{
+    if (!string.impl())
+        return string;
+
+    auto* impl = string.impl();
+
+    // 1) Never share AtomStringImpl/symbols - they have special thread-unsafe behavior
+    if (impl->isAtom() || impl->isSymbol())
+        return string.isolatedCopy();
+
+    // 2) Don't share slices
+    if (impl->bufferOwnership() == StringImpl::BufferSubstring)
+        return string.isolatedCopy();
+
+    // 3) Ensure we won't lazily touch hash/flags on the consumer thread
+    // Force hash computation on this thread before sharing
+    const_cast<StringImpl*>(impl)->hash();
+    const_cast<StringImpl*>(impl)->setNeverAtomize();
+
+    return string;
 }
 
 }
@@ -733,10 +791,15 @@ extern "C" BunString BunString__createExternalGloballyAllocatedUTF16(
 extern "C" [[ZIG_EXPORT(nothrow)]] bool WTFStringImpl__isThreadSafe(
     const WTF::StringImpl* wtf)
 {
-    if (wtf->bufferOwnership() != StringImpl::BufferOwnership::BufferInternal)
+    if (wtf->isSymbol())
         return false;
 
-    return !(wtf->isSymbol() || wtf->isAtom());
+    if (wtf->isAtom()) {
+        // AtomString destructor would destruct on the wrong string table.
+        return false;
+    }
+
+    return true;
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__ensureHash(WTF::StringImpl* str)

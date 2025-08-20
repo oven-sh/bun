@@ -764,7 +764,10 @@ fn NewLexer_(
 
             // Reset string literal
             const base = if (comptime quote == 0) lexer.start else lexer.start + 1;
-            lexer.string_literal_raw_content = lexer.source.contents[base..@min(lexer.source.contents.len, lexer.end - @as(usize, string_literal_details.suffix_len))];
+            const suffix_len = @as(usize, string_literal_details.suffix_len);
+            const end_pos = if (lexer.end >= suffix_len) lexer.end - suffix_len else lexer.end;
+            const slice_end = @min(lexer.source.contents.len, @max(base, end_pos));
+            lexer.string_literal_raw_content = lexer.source.contents[base..slice_end];
             lexer.string_literal_raw_format = if (string_literal_details.needs_decode) .needs_decode else .ascii;
             lexer.string_literal_start = lexer.start;
             if (comptime is_json) lexer.is_ascii_only = lexer.is_ascii_only and !string_literal_details.needs_decode;
@@ -1102,7 +1105,7 @@ fn NewLexer_(
                         if (comptime is_json) {
                             return lexer.addUnsupportedSyntaxError("Private identifiers are not allowed in JSON");
                         }
-                        if (lexer.start == 0 and lexer.source.contents[1] == '!') {
+                        if (lexer.start == 0 and lexer.source.contents.len > 1 and lexer.source.contents[1] == '!') {
                             // "#!/usr/bin/env node"
                             lexer.token = .t_hashbang;
                             hashbang: while (true) {

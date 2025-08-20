@@ -66,6 +66,10 @@ pub const CachedBytecode = opaque {
             .vtable = VTable,
         };
     }
+
+    pub fn isInstance(allocator_: std.mem.Allocator) bool {
+        return allocator_.vtable == VTable;
+    }
 };
 
 const bun = @import("bun");

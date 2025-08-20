@@ -225,10 +225,10 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
     }
 
     const auto createdSortedTypeCounts =
-        [&](JSC::TypeCountSet* typeCounts) -> JSC::JSValue {
+        [&](JSC::TypeCountSet const& typeCounts) -> JSC::JSValue {
         WTF::Vector<std::pair<Identifier, unsigned>> counts;
-        counts.reserveInitialCapacity(typeCounts->size());
-        for (auto& it : *typeCounts) {
+        counts.reserveInitialCapacity(typeCounts.size());
+        for (auto& it : typeCounts) {
             if (it.value > 0)
                 counts.append(
                     std::make_pair(Identifier::fromString(vm, it.key), it.value));
@@ -264,8 +264,8 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
         return objectTypeCounts;
     };
 
-    JSValue objectTypeCounts = createdSortedTypeCounts(vm.heap.objectTypeCounts().get());
-    JSValue protectedCounts = createdSortedTypeCounts(vm.heap.protectedObjectTypeCounts().get());
+    JSValue objectTypeCounts = createdSortedTypeCounts(vm.heap.objectTypeCounts());
+    JSValue protectedCounts = createdSortedTypeCounts(vm.heap.protectedObjectTypeCounts());
 
     JSObject* object = constructEmptyObject(globalObject);
     object->putDirect(vm, Identifier::fromString(vm, "objectTypeCounts"_s),
@@ -777,7 +777,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
 
     Vector<JSC::Strong<JSC::JSObject>> transferList;
     Vector<RefPtr<MessagePort>> dummyPorts;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts);
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts, SerializationForStorage::Yes);
     EXCEPTION_ASSERT(serialized.hasException() == !!throwScope.exception());
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());

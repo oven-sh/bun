@@ -108,6 +108,7 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
     clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"") catch unreachable,
     clap.parseParam("--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)") catch unreachable,
+    clap.parseParam("--user-agent <STR>               Set the default User-Agent header for HTTP requests") catch unreachable,
 };
 
 pub const auto_or_run_params = [_]ParamType{
@@ -138,6 +139,7 @@ pub const bunx_commands = [_]ParamType{
 pub const build_only_params = [_]ParamType{
     clap.parseParam("--production                     Set NODE_ENV=production and enable minification") catch unreachable,
     clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production") catch unreachable,
+    clap.parseParam("--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv") catch unreachable,
     clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
     clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
     clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
@@ -637,6 +639,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
         }
 
+        if (args.option("--user-agent")) |user_agent| {
+            bun.http.overridden_default_user_agent = user_agent;
+        }
+
         ctx.debug.offline_mode_setting = if (args.flag("--prefer-offline"))
             Bunfig.OfflineMode.offline
         else if (args.flag("--prefer-latest"))
@@ -879,6 +885,14 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.flag("--compile")) {
             ctx.bundler_options.compile = true;
             ctx.bundler_options.inline_entrypoint_import_meta_main = true;
+        }
+
+        if (args.option("--compile-exec-argv")) |compile_exec_argv| {
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--compile-exec-argv requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.compile_exec_argv = compile_exec_argv;
         }
 
         if (args.flag("--windows-hide-console")) {

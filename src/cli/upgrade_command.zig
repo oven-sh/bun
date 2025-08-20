@@ -358,7 +358,7 @@ pub const UpgradeCommand = struct {
 
             break :brk DotEnv.Loader.init(map, ctx.allocator);
         };
-        env_loader.loadProcess();
+        try env_loader.loadProcess();
 
         const use_canary = brk: {
             const default_use_canary = Environment.is_canary;
@@ -649,7 +649,7 @@ pub const UpgradeCommand = struct {
                         } else |_| {}
                     }
 
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> Failed to verify Bun (code: {s})<r>)", .{@errorName(err)});
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> Failed to verify Bun (code: {s})<r>", .{@errorName(err)});
                     Global.exit(1);
                 };
 

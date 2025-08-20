@@ -219,7 +219,7 @@ pub const PendingValue = struct {
 
 /// This is a duplex stream!
 pub const Value = union(Tag) {
-    const log = Output.scoped(.BodyValue, false);
+    const log = Output.scoped(.BodyValue, .visible);
 
     const pool_size = if (bun.heap_breakdown.enabled) 0 else 256;
     pub const HiveRef = bun.HiveRef(jsc.WebCore.Body.Value, pool_size);
@@ -1322,7 +1322,7 @@ pub fn Mixin(comptime Type: type) type {
 }
 
 pub const ValueBufferer = struct {
-    const log = bun.Output.scoped(.BodyValueBufferer, false);
+    const log = bun.Output.scoped(.BodyValueBufferer, .visible);
 
     const ArrayBufferSink = bun.webcore.Sink.ArrayBufferSink;
     const Callback = *const fn (ctx: *anyopaque, bytes: []const u8, err: ?Body.Value.ValueError, is_async: bool) void;
@@ -1433,15 +1433,17 @@ pub const ValueBufferer = struct {
             },
         }
     }
+
     fn onStreamPipe(sink: *@This(), stream: jsc.WebCore.streams.Result, allocator: std.mem.Allocator) void {
+        var stream_ = stream;
         const stream_needs_deinit = stream == .owned or stream == .owned_and_done;
 
         defer {
             if (stream_needs_deinit) {
-                if (stream == .owned_and_done) {
-                    stream.owned_and_done.listManaged(allocator).deinit();
-                } else {
-                    stream.owned.listManaged(allocator).deinit();
+                switch (stream_) {
+                    .owned_and_done => |*owned| owned.listManaged(allocator).deinit(),
+                    .owned => |*owned| owned.listManaged(allocator).deinit(),
+                    else => unreachable,
                 }
             }
         }

@@ -4,7 +4,7 @@
   "!= alloc.ptr": 0,
   "!= allocator.ptr": 0,
   ".arguments_old(": 279,
-  ".jsBoolean(false)": 1,
+  ".jsBoolean(false)": 0,
   ".jsBoolean(true)": 0,
   ".stdDir()": 41,
   ".stdFile()": 18,

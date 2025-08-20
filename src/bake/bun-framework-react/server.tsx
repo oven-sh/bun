@@ -13,8 +13,8 @@ function assertReactComponent(Component: any) {
 }
 
 // This function converts the route information into a React component tree.
-function getPage(meta: Bake.RouteMetadata, styles: readonly string[]) {
-  let route = component(meta.pageModule, meta.params);
+function getPage(meta: Bake.RouteMetadata & { request?: Request }, styles: readonly string[]) {
+  let route = component(meta.pageModule, meta.params, meta.request);
   for (const layout of meta.layouts) {
     const Layout = layout.default;
     if (import.meta.env.DEV) assertReactComponent(Layout);
@@ -36,7 +36,7 @@ function getPage(meta: Bake.RouteMetadata, styles: readonly string[]) {
   );
 }
 
-function component(mod: any, params: Record<string, string> | null) {
+function component(mod: any, params: Record<string, string> | null, request?: Request) {
   const Page = mod.default;
   let props = {};
   if (import.meta.env.DEV) assertReactComponent(Page);
@@ -48,6 +48,12 @@ function component(mod: any, params: Record<string, string> | null) {
     }
 
     props = method();
+  }
+
+  console.log("REQUEST", mod.mode, request);
+  // Pass request prop if mode is 'ssr'
+  if (mod.mode === "ssr" && request) {
+    props.request = request;
   }
 
   return <Page params={params} {...props} />;
@@ -155,6 +161,7 @@ export async function render(
     return new Response(result, {
       headers: {
         "Content-Type": "text/html; charset=utf8",
+        "Set-Cookie": request.cookies.toSetCookieHeaders(),
         ...response_options.headers,
       },
       ...response_options,

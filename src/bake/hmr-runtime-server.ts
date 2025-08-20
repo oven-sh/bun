@@ -37,14 +37,23 @@ interface Exports {
 
 declare let server_exports: Exports;
 server_exports = {
-  async handleRequest(req, routerTypeMain, routeModules, clientEntryUrl, styles, params, setAsyncLocalStorage, getAsyncLocalStorage) {
+  async handleRequest(
+    req,
+    routerTypeMain,
+    routeModules,
+    clientEntryUrl,
+    styles,
+    params,
+    setAsyncLocalStorage,
+    getAsyncLocalStorage,
+  ) {
     // Store the functions for later use
     setDevServerAsyncLocalStorage = setAsyncLocalStorage;
     getDevServerAsyncLocalStorage = getAsyncLocalStorage;
-    
+
     // Set the AsyncLocalStorage instance in the VM
     setAsyncLocalStorage(responseOptionsALS);
-    
+
     if (IS_BUN_DEVELOPMENT && process.env.BUN_DEBUG_BAKE_JS) {
       console.log("handleRequest", {
         routeModules,
@@ -67,11 +76,19 @@ server_exports = {
 
     const [pageModule, ...layouts] = await Promise.all(routeModules.map(loadExports));
 
+    // Add cookies to request when mode is 'ssr'
+    let requestWithCookies = req;
+    if (pageModule.mode === "ssr") {
+      requestWithCookies.cookies = req.cookies || new Bun.CookieMap(req.headers.get("Cookie") || "");
+    }
+
+    console.log("PAGE MODULE MODE", pageModule.mode);
+
     // Run the renderer inside the AsyncLocalStorage context
     // This allows Response constructors to access the stored options
     const response = await responseOptionsALS.run({}, async () => {
       return await serverRenderer(
-        req,
+        requestWithCookies,
         {
           styles: styles,
           modules: [clientEntryUrl],
@@ -79,6 +96,8 @@ server_exports = {
           pageModule,
           modulepreload: [],
           params,
+          // Pass request in metadata when mode is 'ssr'
+          request: pageModule.mode === "ssr" ? requestWithCookies : undefined,
         },
         responseOptionsALS,
       );

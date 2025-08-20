@@ -269,7 +269,7 @@ void Bun__SecretsJobOptions__runFromJS(SecretsJobOptions* opts, JSGlobalObject* 
                 errorCode = ErrorCode::ERR_SECRETS_PLATFORM_ERROR;
                 break;
             }
-            
+
             // Include platform error code if available
             if (opts->error.code != 0) {
                 auto messageWithCode = makeString(opts->error.message, " (code: "_s, String::number(opts->error.code), ")"_s);

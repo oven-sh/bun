@@ -1,22 +1,22 @@
-import { test, expect, describe } from "bun:test";
-import { isMacOS, isLinux, isWindows } from "harness";
+import { describe, expect, test } from "bun:test";
+import { isMacOS } from "harness";
 
 describe("Bun.secrets error codes", () => {
   test("non-existent secret returns null without error", async () => {
     const result = await Bun.secrets.get({
       service: "non-existent-service-" + Date.now(),
-      name: "non-existent-name"
+      name: "non-existent-name",
     });
-    
+
     expect(result).toBeNull();
   });
 
   test("delete non-existent returns false without error", async () => {
     const result = await Bun.secrets.delete({
       service: "non-existent-service-" + Date.now(),
-      name: "non-existent-name"
+      name: "non-existent-name",
     });
-    
+
     expect(result).toBe(false);
   });
 
@@ -55,18 +55,18 @@ describe("Bun.secrets error codes", () => {
     const service = "bun-test-codes-" + Date.now();
     const name = "test-name";
     const value = "test-password";
-    
+
     // Set a secret
     await Bun.secrets.set({ service, name, value, allowUnrestrictedAccess: isMacOS });
-    
+
     // Get it back
     const retrieved = await Bun.secrets.get({ service, name });
     expect(retrieved).toBe(value);
-    
+
     // Delete it
     const deleted = await Bun.secrets.delete({ service, name });
     expect(deleted).toBe(true);
-    
+
     // Verify it's gone
     const afterDelete = await Bun.secrets.get({ service, name });
     expect(afterDelete).toBeNull();
@@ -87,7 +87,7 @@ describe("Bun.secrets error codes", () => {
         // Check for null bytes
         expect(error.message).toBeDefined();
         expect(error.message.includes("\0")).toBe(false);
-        
+
         // Check error has a code
         expect(error.code).toBeDefined();
         expect(typeof error.code).toBe("string");

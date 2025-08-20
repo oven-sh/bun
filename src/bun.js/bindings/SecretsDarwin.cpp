@@ -236,7 +236,7 @@ static String errorStatusToString(OSStatus status)
     if (errorMessage) {
         errorString = CFStringToWTFString(errorMessage);
         framework->CFRelease(errorMessage);
-        
+
         // Clean up any null bytes at the end of the error message
         errorString = errorString.trim([](auto character) {
             return character == '\0' || character == '\n' || character == '\r' || character == ' ';

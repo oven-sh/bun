@@ -496,6 +496,36 @@ Whether to generate a non-Bun lockfile alongside `bun.lock`. (A `bun.lock` will 
 print = "yarn"
 ```
 
+### `install.linker`
+
+Configure the default linker strategy. Default `"hoisted"`.
+
+For complete documentation refer to [Package manager > Isolated installs](https://bun.com/docs/install/isolated).
+
+```toml
+[install]
+linker = "hoisted"
+```
+
+Valid values are:
+
+{% table %}
+
+- Value
+- Description
+
+---
+
+- `"hoisted"`
+- Link dependencies in a shared `node_modules` directory.
+
+---
+
+- `"isolated"`
+- Link dependencies inside each package installation.
+
+{% /table %}
+
 <!-- ## Debugging -->
 
 <!--

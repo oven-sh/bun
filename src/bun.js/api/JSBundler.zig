@@ -1,4 +1,4 @@
-const debug = bun.Output.scoped(.Transpiler, false);
+const debug = bun.Output.scoped(.Transpiler, .visible);
 
 pub const JSBundler = struct {
     const OwnedString = bun.MutableString;
@@ -682,7 +682,7 @@ pub const JSBundler = struct {
         /// Defer may only be called once
         called_defer: bool,
 
-        const debug_deferred = bun.Output.scoped(.BUNDLER_DEFERRED, true);
+        const debug_deferred = bun.Output.scoped(.BUNDLER_DEFERRED, .hidden);
 
         pub fn init(bv2: *bun.BundleV2, parse: *bun.bundle_v2.ParseTask) Load {
             return .{

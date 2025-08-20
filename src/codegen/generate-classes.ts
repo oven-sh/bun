@@ -2495,7 +2495,7 @@ const jsc = bun.jsc;
 const Classes = jsc.GeneratedClassesList;
 const Environment = bun.Environment;
 const std = @import("std");
-const zig = bun.Output.scoped(.zig, true);
+const zig = bun.Output.scoped(.zig, .hidden);
 
 const wrapHostFunction = bun.gen_classes_lib.wrapHostFunction;
 const wrapMethod = bun.gen_classes_lib.wrapMethod;

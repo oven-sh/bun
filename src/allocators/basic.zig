@@ -1,9 +1,9 @@
-const log = bun.Output.scoped(.mimalloc, true);
+const log = bun.Output.scoped(.mimalloc, .hidden);
 
 fn mimalloc_free(
     _: *anyopaque,
     buf: []u8,
-    alignment: mem.Alignment,
+    alignment: Alignment,
     _: usize,
 ) void {
     if (comptime Environment.enable_logs)
@@ -23,8 +23,7 @@ fn mimalloc_free(
 }
 
 const MimallocAllocator = struct {
-    pub const supports_posix_memalign = true;
-    fn alignedAlloc(len: usize, alignment: mem.Alignment) ?[*]u8 {
+    fn alignedAlloc(len: usize, alignment: Alignment) ?[*]u8 {
         if (comptime Environment.enable_logs)
             log("mi_alloc({d}, {d})", .{ len, alignment.toByteUnits() });
 
@@ -49,15 +48,15 @@ const MimallocAllocator = struct {
         return mimalloc.mi_malloc_size(ptr);
     }
 
-    fn alloc_with_default_allocator(_: *anyopaque, len: usize, alignment: mem.Alignment, _: usize) ?[*]u8 {
+    fn alloc_with_default_allocator(_: *anyopaque, len: usize, alignment: Alignment, _: usize) ?[*]u8 {
         return alignedAlloc(len, alignment);
     }
 
-    fn resize_with_default_allocator(_: *anyopaque, buf: []u8, _: mem.Alignment, new_len: usize, _: usize) bool {
+    fn resize_with_default_allocator(_: *anyopaque, buf: []u8, _: Alignment, new_len: usize, _: usize) bool {
         return mimalloc.mi_expand(buf.ptr, new_len) != null;
     }
 
-    fn remap_with_default_allocator(_: *anyopaque, buf: []u8, alignment: mem.Alignment, new_len: usize, _: usize) ?[*]u8 {
+    fn remap_with_default_allocator(_: *anyopaque, buf: []u8, alignment: Alignment, new_len: usize, _: usize) ?[*]u8 {
         return @ptrCast(mimalloc.mi_realloc_aligned(buf.ptr, new_len, alignment.toByteUnits()));
     }
 
@@ -77,9 +76,7 @@ const c_allocator_vtable = &Allocator.VTable{
 };
 
 const ZAllocator = struct {
-    pub const supports_posix_memalign = true;
-
-    fn alignedAlloc(len: usize, alignment: mem.Alignment) ?[*]u8 {
+    fn alignedAlloc(len: usize, alignment: Alignment) ?[*]u8 {
         log("ZAllocator.alignedAlloc: {d}\n", .{len});
 
         const ptr = if (mimalloc.mustUseAlignedAlloc(alignment))
@@ -103,11 +100,11 @@ const ZAllocator = struct {
         return mimalloc.mi_malloc_size(ptr);
     }
 
-    fn alloc_with_z_allocator(_: *anyopaque, len: usize, alignment: mem.Alignment, _: usize) ?[*]u8 {
+    fn alloc_with_z_allocator(_: *anyopaque, len: usize, alignment: Alignment, _: usize) ?[*]u8 {
         return alignedAlloc(len, alignment);
     }
 
-    fn resize_with_z_allocator(_: *anyopaque, buf: []u8, _: mem.Alignment, new_len: usize, _: usize) bool {
+    fn resize_with_z_allocator(_: *anyopaque, buf: []u8, _: Alignment, new_len: usize, _: usize) bool {
         if (new_len <= buf.len) {
             return true;
         }
@@ -138,9 +135,14 @@ pub const z_allocator = Allocator{
 const z_allocator_vtable = Allocator.VTable{
     .alloc = &ZAllocator.alloc_with_z_allocator,
     .resize = &ZAllocator.resize_with_z_allocator,
-    .remap = &std.mem.Allocator.noRemap,
+    .remap = &Allocator.noRemap,
     .free = &ZAllocator.free_with_z_allocator,
 };
+
+/// mimalloc can free allocations without being given their size.
+pub fn freeWithoutSize(ptr: ?*anyopaque) void {
+    mimalloc.mi_free(ptr);
+}
 
 const Environment = @import("../env.zig");
 const std = @import("std");
@@ -148,5 +150,5 @@ const std = @import("std");
 const bun = @import("bun");
 const mimalloc = bun.mimalloc;
 
-const mem = @import("std").mem;
-const Allocator = mem.Allocator;
+const Alignment = std.mem.Alignment;
+const Allocator = std.mem.Allocator;

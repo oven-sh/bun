@@ -331,7 +331,7 @@ const Opts = struct {
     }
 };
 
-const debug = bun.Output.scoped(.ShellCat, true);
+const debug = bun.Output.scoped(.ShellCat, .hidden);
 
 const std = @import("std");
 

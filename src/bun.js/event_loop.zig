@@ -98,7 +98,7 @@ pub fn pipeReadBuffer(this: *const EventLoop) []u8 {
 }
 
 pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
-const log = bun.Output.scoped(.EventLoop, false);
+const log = bun.Output.scoped(.EventLoop, .visible);
 
 pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
     while (!done.*) {
@@ -326,8 +326,8 @@ pub fn usocketsLoop(this: *const EventLoop) *uws.Loop {
 }
 
 pub fn autoTick(this: *EventLoop) void {
-    var loop = this.usocketsLoop();
-    var ctx = this.virtual_machine;
+    const loop = this.usocketsLoop();
+    const ctx = this.virtual_machine;
 
     this.tickImmediateTasks(ctx);
     if (comptime Environment.isPosix) {
@@ -349,6 +349,8 @@ pub fn autoTick(this: *EventLoop) void {
             loop.unrefCount(pending_unref);
         }
     }
+
+    ctx.timer.updateDateHeaderTimerIfNecessary(loop, ctx);
 
     this.runImminentGCTimer();
 
@@ -378,8 +380,8 @@ pub fn autoTick(this: *EventLoop) void {
 }
 
 pub fn tickPossiblyForever(this: *EventLoop) void {
-    var ctx = this.virtual_machine;
-    var loop = this.usocketsLoop();
+    const ctx = this.virtual_machine;
+    const loop = this.usocketsLoop();
 
     if (comptime Environment.isPosix) {
         const pending_unref = ctx.pending_unref_counter;
@@ -428,6 +430,8 @@ pub fn autoTickActive(this: *EventLoop) void {
             loop.unrefCount(pending_unref);
         }
     }
+
+    ctx.timer.updateDateHeaderTimerIfNecessary(loop, ctx);
 
     if (loop.isActive()) {
         this.processGCTimer();

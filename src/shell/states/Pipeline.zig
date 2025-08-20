@@ -282,12 +282,10 @@ pub fn deinit(this: *Pipeline) void {
 fn initializePipes(pipes: []Pipe, set_count: *u32) Maybe(void) {
     for (pipes) |*pipe| {
         if (bun.Environment.isWindows) {
-            var fds: [2]uv.uv_file = undefined;
-            if (uv.uv_pipe(&fds, 0, 0).errEnum()) |e| {
-                return .{ .err = Syscall.Error.fromCode(e, .pipe) };
-            }
-            pipe[0] = .fromUV(fds[0]);
-            pipe[1] = .fromUV(fds[1]);
+            pipe.* = switch (bun.sys.pipe()) {
+                .result => |p| p,
+                .err => |e| return .{ .err = e },
+            };
         } else {
             switch (bun.sys.socketpairForShell(
                 // switch (bun.sys.socketpair(
@@ -353,9 +351,5 @@ const Subshell = bun.shell.Interpreter.Subshell;
 
 const Pipe = bun.shell.interpret.Pipe;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const Syscall = bun.shell.interpret.Syscall;
 const closefd = bun.shell.interpret.closefd;
 const log = bun.shell.interpret.log;
-
-const windows = bun.windows;
-const uv = windows.libuv;

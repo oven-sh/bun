@@ -8,7 +8,7 @@ pub const Store = struct {
     entries: Entry.List,
     nodes: Node.List,
 
-    const log = Output.scoped(.Store, false);
+    const log = Output.scoped(.Store, .visible);
 
     pub const modules_dir_name = ".bun";
 

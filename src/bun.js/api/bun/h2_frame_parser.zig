@@ -98,7 +98,7 @@ const UInt31WithReserved = packed struct(u32) {
     reserved: bool = false,
     uint31: u31 = 0,
 
-    const log = Output.scoped(.UInt31WithReserved, false);
+    const log = Output.scoped(.UInt31WithReserved, .visible);
 
     pub inline fn from(value: u32) UInt31WithReserved {
         return .{ .uint31 = @truncate(value & 0x7fffffff), .reserved = value & 0x80000000 != 0 };
@@ -597,7 +597,7 @@ const Handlers = struct {
 pub const H2FrameParserConstructor = H2FrameParser.js.getConstructor;
 
 pub const H2FrameParser = struct {
-    pub const log = Output.scoped(.H2FrameParser, false);
+    pub const log = Output.scoped(.H2FrameParser, .visible);
     const Self = @This();
     pub const js = jsc.Codegen.JSH2FrameParser;
     pub const toJS = js.toJS;

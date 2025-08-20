@@ -372,7 +372,7 @@ pub inline fn bltn(this: *Mkdir) *Builtin {
 }
 
 // --
-const debug = bun.Output.scoped(.ShellMkdir, true);
+const debug = bun.Output.scoped(.ShellMkdir, .hidden);
 
 const log = debug;
 

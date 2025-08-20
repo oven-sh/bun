@@ -55,7 +55,7 @@ test.only("should fail in CI", () => {
 
       expect(exitCode).toBe(1);
       expect(stderr).toContain(
-        "error: test.only is not allowed in CI environments\nIf this is not a CI environment, set the environment variable CI=0 to force allow.",
+        "error: test.only is not allowed in CI environments\nIf this is not a CI environment, set the environment variable CI=false to force allow.",
       );
     });
 
@@ -84,7 +84,7 @@ describe.only("CI test", () => {
 
       expect(exitCode).toBe(1);
       expect(stderr).toContain(
-        "error: describe.only is not allowed in CI environments\nIf this is not a CI environment, set the environment variable CI=0 to force allow.",
+        "error: describe.only is not allowed in CI environments\nIf this is not a CI environment, set the environment variable CI=false to force allow.",
       );
     });
   });

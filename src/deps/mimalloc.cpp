@@ -16,7 +16,9 @@ extern "C" void bun_configure_mimalloc()
         return false;
     };
 
-    attempt("MIMALLOC_GENERIC_COLLECT", mi_option_generic_collect);
+    if (!attempt("MIMALLOC_GENERIC_COLLECT", mi_option_generic_collect)) {
+        mi_option_set(mi_option_generic_collect, 1'000); // mimalloc v3's default is 10,000
+    }
 
     if (!attempt("MIMALLOC_GENERIC_ADMINISTRATIVE", mi_option_generic_administrative)) {
         mi_option_set(mi_option_generic_administrative, 20); // a good balance, it seems

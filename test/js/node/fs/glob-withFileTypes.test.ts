@@ -1,7 +1,6 @@
-import { test, expect } from "bun:test";
-import { tempDirWithFiles, bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
 import { globSync } from "fs";
-import path from "path";
+import { tempDirWithFiles } from "harness";
 
 test("fs.globSync with withFileTypes should return Dirent objects", async () => {
   const dir = tempDirWithFiles("glob-withFileTypes", {
@@ -12,10 +11,12 @@ test("fs.globSync with withFileTypes should return Dirent objects", async () => 
   });
 
   // Test globSync with withFileTypes: true
-  const results = Array.from(globSync("*", {
-    cwd: dir,
-    withFileTypes: true,
-  }));
+  const results = Array.from(
+    globSync("*", {
+      cwd: dir,
+      withFileTypes: true,
+    }),
+  );
 
   expect(results.length).toBeGreaterThan(0);
 
@@ -57,10 +58,12 @@ test("fs.globSync with withFileTypes: false should return strings", async () => 
     "file2.js": "console.log('hello')",
   });
 
-  const results = Array.from(globSync("*", {
-    cwd: dir,
-    withFileTypes: false,
-  }));
+  const results = Array.from(
+    globSync("*", {
+      cwd: dir,
+      withFileTypes: false,
+    }),
+  );
 
   expect(results.length).toBeGreaterThan(0);
 
@@ -77,9 +80,11 @@ test("fs.globSync default behavior should return strings", async () => {
     "file2.js": "console.log('hello')",
   });
 
-  const results = Array.from(globSync("*", {
-    cwd: dir,
-  }));
+  const results = Array.from(
+    globSync("*", {
+      cwd: dir,
+    }),
+  );
 
   expect(results.length).toBeGreaterThan(0);
 
@@ -97,10 +102,12 @@ test("fs.globSync withFileTypes with nested patterns", async () => {
     "subdir/nested/file3.txt": "content3",
   });
 
-  const results = Array.from(globSync("**/*.txt", {
-    cwd: dir,
-    withFileTypes: true,
-  }));
+  const results = Array.from(
+    globSync("**/*.txt", {
+      cwd: dir,
+      withFileTypes: true,
+    }),
+  );
 
   expect(results.length).toBe(3);
 

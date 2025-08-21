@@ -73,23 +73,23 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
 function createDirent(path: string, cwd?: string): any {
   const { basename, dirname, resolve, join } = require("node:path");
   const { lstatSync } = require("node:fs");
-  
+
   try {
     // Construct the full path if cwd is provided
     const fullPath = cwd ? join(cwd, path) : path;
-    
+
     // Use lstatSync to get file info without following symlinks
     const stats = lstatSync(fullPath);
     const name = basename(path);
     // The parent path should be the directory containing the matched file
     const parentPath = cwd ? resolve(cwd, dirname(path)) : resolve(dirname(path));
-    
+
     // Get the file type number that matches DirEntType enum from the C++ code
     let type: number;
     if (stats.isFile()) {
       type = 1; // File
     } else if (stats.isDirectory()) {
-      type = 2; // Directory  
+      type = 2; // Directory
     } else if (stats.isSymbolicLink()) {
       type = 3; // SymLink
     } else if (stats.isFIFO()) {
@@ -103,19 +103,33 @@ function createDirent(path: string, cwd?: string): any {
     } else {
       type = 0; // Unknown
     }
-    
+
     // Create a Dirent-like object compatible with Node.js Dirent
     return {
       name,
       parentPath,
       path: parentPath,
-      isFile() { return type === 1; },
-      isDirectory() { return type === 2; },
-      isSymbolicLink() { return type === 3; },
-      isBlockDevice() { return type === 7; },
-      isCharacterDevice() { return type === 6; },
-      isFIFO() { return type === 4; },
-      isSocket() { return type === 5; },
+      isFile() {
+        return type === 1;
+      },
+      isDirectory() {
+        return type === 2;
+      },
+      isSymbolicLink() {
+        return type === 3;
+      },
+      isBlockDevice() {
+        return type === 7;
+      },
+      isCharacterDevice() {
+        return type === 6;
+      },
+      isFIFO() {
+        return type === 4;
+      },
+      isSocket() {
+        return type === 5;
+      },
     };
   } catch (err) {
     // If stat fails (e.g., broken symlink), create a Dirent with unknown type
@@ -123,15 +137,29 @@ function createDirent(path: string, cwd?: string): any {
     const parentPath = cwd ? resolve(cwd, dirname(path)) : resolve(dirname(path));
     return {
       name,
-      parentPath,  
+      parentPath,
       path: parentPath,
-      isFile() { return false; },
-      isDirectory() { return false; },
-      isSymbolicLink() { return false; },
-      isBlockDevice() { return false; },
-      isCharacterDevice() { return false; },
-      isFIFO() { return false; },
-      isSocket() { return false; },
+      isFile() {
+        return false;
+      },
+      isDirectory() {
+        return false;
+      },
+      isSymbolicLink() {
+        return false;
+      },
+      isBlockDevice() {
+        return false;
+      },
+      isCharacterDevice() {
+        return false;
+      },
+      isFIFO() {
+        return false;
+      },
+      isSocket() {
+        return false;
+      },
     };
   }
 }

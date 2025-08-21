@@ -48,12 +48,7 @@ pub const js_fns = struct {
         defer group.end();
         errdefer group.log("ended in error", .{});
 
-        const vm = globalThis.bunVM();
-        if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
-            @panic("TODO return Bun__Jest__testPreloadObject(globalThis)");
-        }
-        const bunTestRoot = &bun.jsc.Jest.Jest.runner.?.describe2Root;
-        const bunTest = bunTestRoot.getActive();
+        const bunTest = try getActive(globalThis, .{ .signature = cfg.signature, .allow_in_preload = false });
 
         if (cfg.only) try errorInCI(globalThis, cfg.signature);
 
@@ -72,6 +67,29 @@ pub const js_fns = struct {
             },
             .done => return globalThis.throw("Cannot call describe() after the test run has completed", .{}),
         }
+    }
+
+    const GetActiveCfg = struct { signature: []const u8, allow_in_preload: bool };
+    fn getActiveTestRoot(globalThis: *jsc.JSGlobalObject, cfg: GetActiveCfg) bun.JSError!*BunTest {
+        if (bun.jsc.Jest.Jest.runner == null) {
+            return globalThis.throw("Cannot use {s} outside of the test runner. Run \"bun test\" to run tests.", .{cfg.signature});
+        }
+        const bunTestRoot = &bun.jsc.Jest.Jest.runner.?.describe2Root;
+        if (!cfg.allow_in_preload) {
+            const vm = globalThis.bunVM();
+            if (vm.is_in_preload) {
+                return globalThis.throw("Cannot use {s} during preload.", .{cfg.signature});
+            }
+        }
+        return bunTestRoot;
+    }
+    fn getActive(globalThis: *jsc.JSGlobalObject, cfg: GetActiveCfg) bun.JSError!*BunTestFile {
+        const bunTestRoot = try getActiveTestRoot(globalThis, cfg);
+        const bunTest = bunTestRoot.active_file orelse {
+            return globalThis.throw("Cannot use {s} outside of a test file.", .{cfg.signature});
+        };
+
+        return bunTest;
     }
 
     fn errorInCI(globalThis: *jsc.JSGlobalObject, signature: []const u8) bun.JSError!void {
@@ -99,12 +117,7 @@ pub const js_fns = struct {
         defer group.end();
         errdefer group.log("ended in error", .{});
 
-        const vm = globalThis.bunVM();
-        if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
-            @panic("TODO return Bun__Jest__testPreloadObject(globalThis)");
-        }
-        const bunTestRoot = &bun.jsc.Jest.Jest.runner.?.describe2Root;
-        const bunTest = bunTestRoot.getActive();
+        const bunTest = try getActive(globalThis, .{ .signature = cfg.signature, .allow_in_preload = false });
 
         if (cfg.only) try errorInCI(globalThis, cfg.signature);
 
@@ -144,12 +157,10 @@ pub const js_fns = struct {
                 defer group.end();
                 errdefer group.log("ended in error", .{});
 
-                const vm = globalThis.bunVM();
-                if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
-                    @panic("TODO return Bun__Jest__testPreloadObject(globalThis)");
-                }
-                const bunTestRoot = &bun.jsc.Jest.Jest.runner.?.describe2Root;
-                const bunTest = bunTestRoot.getActive();
+                const bunTestRoot = try getActiveTestRoot(globalThis, .{ .signature = @tagName(tag) ++ "()", .allow_in_preload = true });
+                const bunTest = bunTestRoot.active_file orelse {
+                    @panic("TODO implement genericHook in preload");
+                };
 
                 const callback = callFrame.argumentsAsArray(1)[0];
 
@@ -180,10 +191,6 @@ pub const BunTest = struct {
     }
     pub fn deinit(this: *BunTest) void {
         bun.assert(this.active_file == null);
-    }
-
-    pub fn getActive(this: *BunTest) *BunTestFile {
-        return this.active_file orelse @panic("TODO: handle preload environment");
     }
 
     pub fn enterFile(this: *BunTest, _: []const u8) void {

@@ -1513,23 +1513,19 @@ fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, pack
             Global.exit(1);
         }
 
-        const desc_expr = item_obj.get("description") orelse {
-            Output.errGeneric("Security advisory at index {d} missing required 'description' field", .{i});
+        const desc_str: ?[]const u8 = if (item_obj.get("description")) |desc_expr| blk: {
+            if (desc_expr.asString(manager.allocator)) |str| break :blk str;
+            if (desc_expr.data == .e_null) break :blk null;
+            Output.errGeneric("Security advisory at index {d} 'description' field must be a string or null", .{i});
             Global.exit(1);
-        };
-        const desc_str = desc_expr.asString(manager.allocator) orelse {
-            Output.errGeneric("Security advisory at index {d} 'description' field must be a string", .{i});
-            Global.exit(1);
-        };
+        } else null;
 
-        const url_expr = item_obj.get("url") orelse {
-            Output.errGeneric("Security advisory at index {d} missing required 'url' field", .{i});
+        const url_str: ?[]const u8 = if (item_obj.get("url")) |url_expr| blk: {
+            if (url_expr.asString(manager.allocator)) |str| break :blk str;
+            if (url_expr.data == .e_null) break :blk null;
+            Output.errGeneric("Security advisory at index {d} 'url' field must be a string or null", .{i});
             Global.exit(1);
-        };
-        const url_str = url_expr.asString(manager.allocator) orelse {
-            Output.errGeneric("Security advisory at index {d} 'url' field must be a string", .{i});
-            Global.exit(1);
-        };
+        } else null;
 
         const level_expr = item_obj.get("level") orelse {
             Output.errGeneric("Security advisory at index {d} missing required 'level' field", .{i});
@@ -1606,10 +1602,14 @@ fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, pack
             }
 
             if (advisory.description) |desc| {
-                Output.pretty("    {s}\n", .{desc});
+                if (desc.len > 0) {
+                    Output.pretty("    {s}\n", .{desc});
+                }
             }
             if (advisory.url) |url| {
-                Output.pretty("    <cyan>{s}<r>\n", .{url});
+                if (url.len > 0) {
+                    Output.pretty("    <cyan>{s}<r>\n", .{url});
+                }
             }
         }
 

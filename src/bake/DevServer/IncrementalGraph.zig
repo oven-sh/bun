@@ -139,14 +139,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
         };
 
         const ClientFile = struct {
-            content: union(FileKind) {
-                unknown: void,
-                /// When stale, the code is "", otherwise it contains at least one non-whitespace
-                /// character, as empty chunks contain at least a function wrapper.
-                js: JsCode,
-                asset: JsCode,
-                css: CssAssetId,
-            },
+            content: Content,
             source_map: PackedMap.Shared = .none,
             /// This should always be null if `source_map` is `.some`, since HTML files do not have
             /// source maps.
@@ -170,13 +163,24 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             /// root.
             is_css_root: bool = false,
 
+            pub const Content = union(FileKind) {
+                unknown: void,
+                /// When stale, the code is "", otherwise it contains at least one non-whitespace
+                /// character, as empty chunks contain at least a function wrapper.
+                js: JsCode,
+                asset: JsCode,
+                css: CssAssetId,
+
+                const Untagged = blk: {
+                    var info = @typeInfo(Content);
+                    info.@"union".tag_type = null;
+                    break :blk @Type(info);
+                };
+            };
+
             /// Packed version of `ClientFile`. Don't access fields directly; call `unpack`.
             pub const Packed = struct {
-                _content: union {
-                    unknown: void,
-                    js: JsCode,
-                    css: CssAssetId,
-                },
+                _content: Content.Untagged,
                 _source_map: union {
                     some: Shared(*PackedMap),
                     none: struct {
@@ -203,9 +207,11 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                 pub fn unpack(self: Packed) ClientFile {
                     return .{
                         .content = switch (self._flags.kind) {
-                            .unknown => .unknown,
-                            .js, .asset => .{ .js = self._content.js },
-                            .css => .{ .css = self._content.css },
+                            inline else => |tag| @unionInit(
+                                Content,
+                                @tagName(tag),
+                                @field(self._content, @tagName(tag)),
+                            ),
                         },
                         .source_map = switch (self._flags.source_map_tag) {
                             .some => .{ .some = self._source_map.some },
@@ -228,10 +234,12 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                 // HTML files should not have source maps
                 assert(self.html_route_bundle_index == null or self.source_map != .some);
                 return .{
-                    ._content = switch (self.content) {
-                        .unknown => .{ .unknown = {} },
-                        .js, .asset => |code| .{ .js = code },
-                        .css => |id| .{ .css = id },
+                    ._content = switch (std.meta.activeTag(self.content)) {
+                        inline else => |tag| @unionInit(
+                            Content.Untagged,
+                            @tagName(tag),
+                            @field(self.content, @tagName(tag)),
+                        ),
                     },
                     ._source_map = switch (self.source_map) {
                         .some => |map| .{ .some = map },
@@ -292,12 +300,12 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             comptime {
                 bun.assertf(side == .client, "freeFileContent requires client graph", .{});
             }
+            if (file.source_map.take()) |ptr| {
+                ptr.deinit();
+            }
             switch (file.content) {
                 .js, .asset => |code| {
                     g.allocator().free(code);
-                    if (file.source_map.take()) |ptr| {
-                        ptr.deinit();
-                    }
                 },
                 .css => if (css == .unref_css) {
                     g.owner().assets.unrefByPath(key);

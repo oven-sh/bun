@@ -1,8 +1,8 @@
 pub fn installWithManager(
     manager: *PackageManager,
     ctx: Command.Context,
-    root_package_json_contents: string,
-    original_cwd: string,
+    root_package_json_contents: []const u8,
+    original_cwd: []const u8,
 ) !void {
     const log_level = manager.options.log_level;
 
@@ -566,8 +566,8 @@ pub fn installWithManager(
 
         manager.verifyResolutions(log_level);
 
-        if (manager.subcommand == .add and manager.options.security_provider != null) {
-            try performSecurityScanAfterResolution(manager);
+        if (manager.subcommand == .add and manager.options.security_scanner != null) {
+            try security_scanner.performSecurityScanAfterResolution(manager);
         }
     }
 
@@ -992,7 +992,7 @@ fn printBlockedPackagesInfo(summary: *const PackageInstall.Summary, global: bool
     }
 }
 
-const string = []const u8;
+const security_scanner = @import("./security_scanner.zig");
 
 const PackagePath = struct {
     pkg_path: []PackageID,
@@ -1000,7 +1000,7 @@ const PackagePath = struct {
 };
 
 fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
-    const security_provider = manager.options.security_provider orelse return;
+    const security_scanner_module = manager.options.security_scanner orelse return;
 
     if (manager.options.dry_run or !manager.options.do.install_packages) return;
     if (manager.update_requests.len == 0) {
@@ -1009,7 +1009,7 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
     }
 
     if (manager.options.log_level == .verbose) {
-        Output.prettyErrorln("<d>[SecurityProvider]<r> Running at '{s}'", .{security_provider});
+        Output.prettyErrorln("<d>[SecurityProvider]<r> Running at '{s}'", .{security_scanner_module});
     }
     const start_time = std.time.milliTimestamp();
 
@@ -1223,7 +1223,14 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
         \\
         \\  const fs = require('fs');
         \\  const data = JSON.stringify({{advisories: result}});
-        \\  fs.writeSync(3, data);
+        \\  for (let remaining = data; remaining.length > 0;)  {{
+        \\      const written = fs.writeSync(3, remaining);
+        \\      if (written === 0) {{
+        \\          console.error('error: Failed to write security advisories to IPC pipe');
+        \\          process.exit(1);
+        \\      }}
+        \\      remaining = remaining.slice(written);
+        \\  }}
         \\  fs.closeSync(3);
         \\
         \\  process.exit(0);
@@ -1231,7 +1238,7 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
         \\  console.error(error);
         \\  process.exit(1);
         \\}}
-    , .{ security_provider, json_buf.items });
+    , .{ security_scanner_module, json_buf.items });
 
     var scanner = SecurityScanSubprocess.new(.{
         .manager = manager,
@@ -1278,7 +1285,7 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
     }
 
     const packages_scanned = pkg_dedupe.count();
-    try scanner.handleResults(&package_paths, start_time, packages_scanned, security_provider);
+    try scanner.handleResults(&package_paths, start_time, packages_scanned, security_scanner_module);
 }
 
 const SecurityAdvisoryLevel = enum { fatal, warn };
@@ -1422,7 +1429,7 @@ pub const SecurityScanSubprocess = struct {
         }
     }
 
-    pub fn handleResults(this: *SecurityScanSubprocess, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath), start_time: i64, packages_scanned: usize, security_provider: []const u8) !void {
+    pub fn handleResults(this: *SecurityScanSubprocess, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath), start_time: i64, packages_scanned: usize, security_scanner_module: []const u8) !void {
         defer {
             this.ipc_data.deinit();
             this.stderr_data.deinit();
@@ -1470,9 +1477,9 @@ pub const SecurityScanSubprocess = struct {
         } else if (this.manager.options.log_level != .silent and duration >= 1000) {
             const maybeHourglass = if (Output.isEmojiEnabled()) "⏳" else "";
             if (packages_scanned == 1) {
-                Output.prettyErrorln("<d>{s}[{s}] Scanning 1 package took {d}ms<r>", .{ maybeHourglass, security_provider, duration });
+                Output.prettyErrorln("<d>{s}[{s}] Scanning 1 package took {d}ms<r>", .{ maybeHourglass, security_scanner_module, duration });
             } else {
-                Output.prettyErrorln("<d>{s}[{s}] Scanning {d} packages took {d}ms<r>", .{ maybeHourglass, security_provider, packages_scanned, duration });
+                Output.prettyErrorln("<d>{s}[{s}] Scanning {d} packages took {d}ms<r>", .{ maybeHourglass, security_scanner_module, packages_scanned, duration });
             }
         }
 

@@ -612,9 +612,9 @@ pub const Bunfig = struct {
 
                     if (install_obj.get("security")) |security_obj| {
                         if (security_obj.data == .e_object) {
-                            if (security_obj.get("provider")) |provider| {
-                                try this.expectString(provider);
-                                install.security_provider = try provider.asStringCloned(allocator);
+                            if (security_obj.get("scanner")) |scanner| {
+                                try this.expectString(scanner);
+                                install.security_scanner = try scanner.asStringCloned(allocator);
                             }
                         } else {
                             try this.addError(security_obj.loc, "Invalid security config, expected an object");

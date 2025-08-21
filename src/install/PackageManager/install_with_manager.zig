@@ -1432,7 +1432,7 @@ pub const SecurityScanSubprocess = struct {
         }
 
         const duration = std.time.milliTimestamp() - start_time;
-        
+
         if (this.manager.options.log_level == .verbose) {
             switch (status) {
                 .exited => |exit| {
@@ -1451,12 +1451,7 @@ pub const SecurityScanSubprocess = struct {
             }
         } else if (this.manager.options.log_level != .silent and duration >= 1000) {
             // Show progress message for non-verbose, non-silent mode when it takes > 1 second
-            Output.prettyErrorln("[{s}] Scanned {d} package{s} [{d}ms]", .{ 
-                security_provider, 
-                packages_scanned,
-                if (packages_scanned == 1) "" else "s",
-                duration 
-            });
+            Output.prettyErrorln("[{s}] Scanned {d} package{s} [{d}ms]", .{ security_provider, packages_scanned, if (packages_scanned == 1) "" else "s", duration });
         }
 
         try handleSecurityAdvisories(this.manager, this.ipc_data.items, package_paths);

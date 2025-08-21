@@ -242,6 +242,8 @@ pub const Entry = struct {
             },
             .line_count => |count| {
                 lines_between += count.get();
+                // - Empty file has no breakpoints that could remap.
+                // - Codegen of HTML files cannot throw.
             },
             .none => {
                 // NOTE: It is too late to compute the line count since the bundled text may

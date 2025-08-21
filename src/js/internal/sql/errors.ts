@@ -6,7 +6,6 @@ class SQLError extends Error implements Bun.SQL.SQLError {
 }
 
 export interface PostgresErrorOptions {
-  message: string;
   code: string;
 
   detail?: string | undefined;
@@ -93,4 +92,24 @@ class SQLiteError extends SQLError implements Bun.SQL.SQLiteError {
   }
 }
 
-export default { PostgresError, SQLError, SQLiteError };
+export interface MySQLErrorOptions {
+  code: string;
+  errno: number | undefined;
+  sqlState: string | undefined;
+}
+
+class MySQLError extends SQLError implements Bun.SQL.MySQLError {
+  public readonly code: string;
+  public readonly errno: number | undefined;
+  public readonly sqlState: string | undefined;
+
+  constructor(message: string, options: MySQLErrorOptions) {
+    super(message);
+
+    this.name = "MySQLError";
+    this.code = options.code;
+    this.errno = options.errno;
+    this.sqlState = options.sqlState;
+  }
+}
+export default { PostgresError, SQLError, SQLiteError, MySQLError };

@@ -34,7 +34,7 @@ describeWithContainer(
     test("Throws on illegal transactions", async () => {
       await using sql = new SQL({ ...options, max: 2 });
       const error = await sql`BEGIN`.catch(e => e);
-      return expect(error.code).toBe("ERR_POSTGRES_UNSAFE_TRANSACTION");
+      return expect(error.code).toBe("ERR_MYSQL_UNSAFE_TRANSACTION");
     });
 
     test("Transaction throws", async () => {
@@ -48,7 +48,7 @@ describeWithContainer(
             await sql`insert into ${sql(random_name)} values('hej')`;
           })
           .catch(e => e.message),
-      ).toBe("Incorrect integer value: 'hej' for column 'a' at row 1 (Code: 1366)");
+      ).toBe("Incorrect integer value: 'hej' for column 'a' at row 1");
     });
 
     test("Transaction rolls back", async () => {
@@ -138,7 +138,7 @@ describeWithContainer(
     test("Uncaught transaction request errors bubbles to transaction", async () => {
       await using sql = new SQL(options);
       expect(await sql.begin(sql => [sql`select wat`, sql`select 1 as x, ${1} as a`]).catch(e => e.message)).toBe(
-        "Unknown column 'wat' in 'field list' (Code: 1054)",
+        "Unknown column 'wat' in 'field list'",
       );
     });
 

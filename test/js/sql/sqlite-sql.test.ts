@@ -690,8 +690,8 @@ describe("Connection & Initialization", () => {
 
   describe("Error Cases", () => {
     test("should throw for unsupported adapter", () => {
-      expect(() => new SQL({ adapter: "mysql" as any })).toThrowErrorMatchingInlineSnapshot(
-        `"Unsupported adapter: mysql. Supported adapters: "postgres", "sqlite""`,
+      expect(() => new SQL({ adapter: "mssql" as any })).toThrowErrorMatchingInlineSnapshot(
+        `"Unsupported adapter: mssql. Supported adapters: "postgres", "sqlite", "mysql""`,
       );
     });
 

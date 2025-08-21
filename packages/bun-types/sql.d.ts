@@ -82,6 +82,13 @@ declare module "bun" {
       );
     }
 
+    class MySQLError extends SQLError {
+      public readonly code: string;
+      public readonly errno: number | undefined;
+      public readonly sqlState: string | undefined;
+      constructor(message: string, options: { code: string; errno: number | undefined; sqlState: string | undefined });
+    }
+
     class SQLiteError extends SQLError {
       public readonly code: string;
       public readonly errno: number;
@@ -196,7 +203,7 @@ declare module "bun" {
        * Database adapter/driver to use
        * @default "postgres"
        */
-      adapter?: "postgres";
+      adapter?: "postgres" | "mysql" | "mariadb";
 
       /**
        * Maximum time in seconds to wait for connection to become available
@@ -332,7 +339,7 @@ declare module "bun" {
      * };
      * ```
      */
-    type Options = SQLiteOptions | PostgresOptions;
+    type Options = SQLiteOptions | PostgresOptions | MySQLOptions;
 
     /**
      * Represents a SQL query that can be executed, with additional control

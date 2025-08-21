@@ -175,7 +175,7 @@ pub fn onJSError(this: *@This(), err: jsc.JSValue, globalObject: *jsc.JSGlobalOb
     }
 
     var vm = jsc.VirtualMachine.get();
-    const function = vm.rareData().postgresql_context.onQueryRejectFn.get().?;
+    const function = vm.rareData().mysql_context.onQueryRejectFn.get().?;
     const event_loop = vm.eventLoop();
     event_loop.runCallback(function, globalObject, thisValue, &.{
         targetValue,
@@ -228,7 +228,7 @@ pub fn onResult(this: *@This(), result_count: u64, globalObject: *jsc.JSGlobalOb
     }
 
     const vm = jsc.VirtualMachine.get();
-    const function = vm.rareData().postgresql_context.onQueryResolveFn.get().?;
+    const function = vm.rareData().mysql_context.onQueryResolveFn.get().?;
     const event_loop = vm.eventLoop();
     const tag: CommandTag = .{ .SELECT = result_count };
 
@@ -396,8 +396,7 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
                 this.deref();
 
                 if (!globalObject.hasException())
-                    return globalObject.throwError(err, "failed to execute query");
-                // return globalObject.throwValue(postgresErrorToJS(globalObject, "failed to execute query", err));
+                    return globalObject.throwValue(AnyMySQLError.mysqlErrorToJS(globalObject, "failed to execute query", err));
                 return error.JSError;
             };
             connection.flags.is_ready_for_query = false;
@@ -429,7 +428,7 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
     var signature = Signature.generate(globalObject, query_str.slice(), binding_value, columns_value) catch |err| {
         this.deref();
         if (!globalObject.hasException())
-            return globalObject.throwError(err, "failed to generate signature");
+            return globalObject.throwValue(AnyMySQLError.mysqlErrorToJS(globalObject, "failed to generate signature", err));
         return error.JSError;
     };
     errdefer signature.deinit();
@@ -462,7 +461,7 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
                         debug("doRun: binding and executing query", .{});
                         this.bindAndExecute(writer, this.statement.?, globalObject) catch |err| {
                             if (!globalObject.hasException())
-                                return globalObject.throwError(err, "failed to bind and execute query");
+                                return globalObject.throwValue(AnyMySQLError.mysqlErrorToJS(globalObject, "failed to bind and execute query", err));
                             return error.JSError;
                         };
                         connection.sequence_id = 0;

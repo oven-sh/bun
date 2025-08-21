@@ -1,5 +1,4 @@
 import type { DatabaseAdapter } from "./shared.ts";
-const { escapeIdentifier, notTaggedCallError } = require("internal/sql/utils");
 
 const _resolve = Symbol("resolve");
 const _reject = Symbol("reject");
@@ -83,7 +82,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       if (!(flags & SQLQueryFlags.unsafe)) {
         // identifier (cannot be executed in safe mode)
         flags |= SQLQueryFlags.notTagged;
-        strings = escapeIdentifier(strings);
+        strings = adapter.escapeIdentifier(strings);
       }
     }
 
@@ -110,7 +109,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     }
 
     if (this[_flags] & SQLQueryFlags.notTagged) {
-      this.reject(notTaggedCallError());
+      this.reject(this[_adapter].notTaggedCallError());
       return;
     }
 
@@ -211,7 +210,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
   async run() {
     if (this[_flags] & SQLQueryFlags.notTagged) {
-      throw notTaggedCallError();
+      throw this[_adapter].notTaggedCallError();
     }
 
     await this[_run](true);
@@ -247,7 +246,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
   then() {
     if (this[_flags] & SQLQueryFlags.notTagged) {
-      throw notTaggedCallError();
+      throw this[_adapter].notTaggedCallError();
     }
 
     this[_run](true);
@@ -260,7 +259,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
   catch() {
     if (this[_flags] & SQLQueryFlags.notTagged) {
-      throw notTaggedCallError();
+      throw this[_adapter].notTaggedCallError();
     }
 
     this[_run](true);
@@ -273,7 +272,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
   finally(_onfinally?: (() => void) | undefined | null) {
     if (this[_flags] & SQLQueryFlags.notTagged) {
-      throw notTaggedCallError();
+      throw this[_adapter].notTaggedCallError();
     }
 
     this[_run](true);

@@ -20,9 +20,6 @@ pub fn createBinding(globalObject: *jsc.JSGlobalObject) JSValue {
 pub const MySQLConnection = @import("./mysql/MySQLConnection.zig");
 pub const MySQLContext = @import("./mysql/MySQLContext.zig");
 pub const MySQLQuery = @import("./mysql/MySQLQuery.zig");
-// pub const protocol = @import("./postgres/PostgresProtocol.zig");
-// pub const types = @import("./postgres/PostgresTypes.zig");
-
 const bun = @import("bun");
 
 const jsc = bun.jsc;

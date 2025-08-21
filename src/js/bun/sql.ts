@@ -1,13 +1,15 @@
 import type { PostgresAdapter } from "internal/sql/postgres";
+import type { MySQLAdapter } from "internal/sql/mysql";
 import type { BaseQueryHandle, Query } from "internal/sql/query";
 import type { SQLHelper } from "internal/sql/shared";
 
 const { Query, SQLQueryFlags } = require("internal/sql/query");
 const { PostgresAdapter } = require("internal/sql/postgres");
+const { MySQLAdapter } = require("internal/sql/mysql");
 const { SQLiteAdapter } = require("internal/sql/sqlite");
 const { SQLHelper, parseOptions } = require("internal/sql/shared");
-const { connectionClosedError } = require("internal/sql/utils");
-const { SQLError, PostgresError, SQLiteError } = require("internal/sql/errors");
+
+const { SQLError, PostgresError, SQLiteError, MySQLError } = require("internal/sql/errors");
 
 const defineProperties = Object.defineProperties;
 
@@ -29,6 +31,8 @@ function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
   switch (options.adapter) {
     case "postgres":
       return new PostgresAdapter(options);
+    case "mysql":
+      return new MySQLAdapter(options);
     case "sqlite":
       return new SQLiteAdapter(options);
     default:
@@ -41,7 +45,6 @@ const SQL: typeof Bun.SQL = function SQL(
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options = {},
 ): Bun.SQL {
   const connectionInfo = parseOptions(stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
-
   const pool = adapterFromOptions(connectionInfo);
 
   function onQueryDisconnected(this: Query<any, any>, err: Error) {
@@ -54,11 +57,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
     // query is cancelled when waiting for a connection from the pool
     if (query.cancelled) {
-      return query.reject(
-        new PostgresError("Query cancelled", {
-          code: "ERR_POSTGRES_QUERY_CANCELLED",
-        }),
-      );
+      return query.reject(pool.queryCancelledError());
     }
   }
 
@@ -76,11 +75,7 @@ const SQL: typeof Bun.SQL = function SQL(
     // query is cancelled when waiting for a connection from the pool
     if (query.cancelled) {
       pool.release(connectionHandle); // release the connection back to the pool
-      return query.reject(
-        new PostgresError("Query cancelled", {
-          code: "ERR_POSTGRES_QUERY_CANCELLED",
-        }),
-      );
+      return query.reject(pool.queryCancelledError());
     }
 
     if (connectionHandle.bindQuery) {
@@ -106,11 +101,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
     // query is cancelled
     if (!handle || query.cancelled) {
-      return query.reject(
-        new PostgresError("Query cancelled", {
-          code: "ERR_POSTGRES_QUERY_CANCELLED",
-        }),
-      );
+      return query.reject(pool.queryCancelledError());
     }
 
     pool.connect(onQueryConnected.bind(query, handle));
@@ -163,11 +154,7 @@ const SQL: typeof Bun.SQL = function SQL(
     // query is cancelled
     if (query.cancelled) {
       transactionQueries.delete(query);
-      return query.reject(
-        new PostgresError("Query cancelled", {
-          code: "ERR_POSTGRES_QUERY_CANCELLED",
-        }),
-      );
+      return query.reject(pool.queryCancelledError());
     }
 
     query.finally(onTransactionQueryDisconnected.bind(transactionQueries, query));
@@ -275,7 +262,7 @@ const SQL: typeof Bun.SQL = function SQL(
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
-        return Promise.reject(connectionClosedError());
+        return Promise.reject(pool.connectionClosedError());
       }
       if ($isArray(strings)) {
         // detect if is tagged template
@@ -303,7 +290,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
     reserved_sql.connect = () => {
       if (state.connectionState & ReservedConnectionState.closed) {
-        return Promise.reject(connectionClosedError());
+        return Promise.reject(this.connectionClosedError());
       }
       return Promise.resolve(reserved_sql);
     };
@@ -334,7 +321,7 @@ const SQL: typeof Bun.SQL = function SQL(
     reserved_sql.beginDistributed = (name: string, fn: TransactionCallback) => {
       // begin is allowed the difference is that we need to make sure to use the same connection and never release it
       if (state.connectionState & ReservedConnectionState.closed) {
-        return Promise.reject(connectionClosedError());
+        return Promise.reject(this.connectionClosedError());
       }
       let callback = fn;
 
@@ -358,7 +345,7 @@ const SQL: typeof Bun.SQL = function SQL(
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
-        return Promise.reject(connectionClosedError());
+        return Promise.reject(this.connectionClosedError());
       }
       let callback = fn;
       let options: string | undefined = options_or_fn as unknown as string;
@@ -381,7 +368,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
     reserved_sql.flush = () => {
       if (state.connectionState & ReservedConnectionState.closed) {
-        throw connectionClosedError();
+        throw this.connectionClosedError();
       }
       // Use pooled connection's flush if available, otherwise use adapter's flush
       if (pooledConnection.flush) {
@@ -441,7 +428,7 @@ const SQL: typeof Bun.SQL = function SQL(
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
-        return Promise.reject(connectionClosedError());
+        return Promise.reject(this.connectionClosedError());
       }
       // just release the connection back to the pool
       state.connectionState |= ReservedConnectionState.closed;
@@ -564,7 +551,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
     function run_internal_transaction_sql(string) {
       if (state.connectionState & ReservedConnectionState.closed) {
-        return Promise.reject(connectionClosedError());
+        return Promise.reject(this.connectionClosedError());
       }
       return unsafeQueryFromTransaction(string, [], pooledConnection, state.queries);
     }
@@ -576,7 +563,7 @@ const SQL: typeof Bun.SQL = function SQL(
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
-        return Promise.reject(connectionClosedError());
+        return Promise.reject(this.connectionClosedError());
       }
       if ($isArray(strings)) {
         // detect if is tagged template
@@ -605,7 +592,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
     transaction_sql.connect = () => {
       if (state.connectionState & ReservedConnectionState.closed) {
-        return Promise.reject(connectionClosedError());
+        return Promise.reject(this.connectionClosedError());
       }
 
       return Promise.resolve(transaction_sql);
@@ -629,29 +616,23 @@ const SQL: typeof Bun.SQL = function SQL(
     // begin is not allowed on a transaction we need to use savepoint() instead
     transaction_sql.begin = function () {
       if (distributed) {
-        throw new PostgresError("cannot call begin inside a distributed transaction", {
-          code: "ERR_POSTGRES_INVALID_TRANSACTION_STATE",
-        });
+        throw pool.invalidTransactionStateError("cannot call begin inside a distributed transaction");
       }
-      throw new PostgresError("cannot call begin inside a transaction use savepoint() instead", {
-        code: "POSTGRES_INVALID_TRANSACTION_STATE",
-      });
+      throw pool.invalidTransactionStateError("cannot call begin inside a transaction use savepoint() instead");
     };
 
     transaction_sql.beginDistributed = function () {
       if (distributed) {
-        throw new PostgresError("cannot call beginDistributed inside a distributed transaction", {
-          code: "ERR_POSTGRES_INVALID_TRANSACTION_STATE",
-        });
+        throw pool.invalidTransactionStateError("cannot call beginDistributed inside a distributed transaction");
       }
-      throw new PostgresError("cannot call beginDistributed inside a transaction use savepoint() instead", {
-        code: "POSTGRES_INVALID_TRANSACTION_STATE",
-      });
+      throw pool.invalidTransactionStateError(
+        "cannot call beginDistributed inside a transaction use savepoint() instead",
+      );
     };
 
     transaction_sql.flush = function () {
       if (state.connectionState & ReservedConnectionState.closed) {
-        throw connectionClosedError();
+        throw pool.connectionClosedError();
       }
       // Use pooled connection's flush if available, otherwise use adapter's flush
       if (pooledConnection.flush) {
@@ -740,9 +721,7 @@ const SQL: typeof Bun.SQL = function SQL(
     }
     if (distributed) {
       transaction_sql.savepoint = async (_fn: TransactionCallback, _name?: string): Promise<any> => {
-        throw new PostgresError("cannot call savepoint inside a distributed transaction", {
-          code: "ERR_POSTGRES_INVALID_TRANSACTION_STATE",
-        });
+        throw pool.invalidTransactionStateError("cannot call savepoint inside a distributed transaction");
       };
     } else {
       transaction_sql.savepoint = async (fn: TransactionCallback, name?: string): Promise<any> => {
@@ -752,7 +731,7 @@ const SQL: typeof Bun.SQL = function SQL(
           state.connectionState & ReservedConnectionState.closed ||
           !(state.connectionState & ReservedConnectionState.acceptQueries)
         ) {
-          throw connectionClosedError();
+          throw this.connectionClosedError();
         }
 
         if ($isCallable(name)) {
@@ -837,7 +816,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
   sql.reserve = () => {
     if (pool.closed) {
-      return Promise.reject(connectionClosedError());
+      return Promise.reject(this.connectionClosedError());
     }
 
     // Check if adapter supports reserved connections
@@ -852,7 +831,7 @@ const SQL: typeof Bun.SQL = function SQL(
   };
   sql.rollbackDistributed = async function (name: string) {
     if (pool.closed) {
-      throw connectionClosedError();
+      throw this.connectionClosedError();
     }
 
     if (!pool.getRollbackDistributedSQL) {
@@ -865,7 +844,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
   sql.commitDistributed = async function (name: string) {
     if (pool.closed) {
-      throw connectionClosedError();
+      throw this.connectionClosedError();
     }
 
     if (!pool.getCommitDistributedSQL) {
@@ -878,7 +857,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
   sql.beginDistributed = (name: string, fn: TransactionCallback) => {
     if (pool.closed) {
-      return Promise.reject(connectionClosedError());
+      return Promise.reject(this.connectionClosedError());
     }
     let callback = fn;
 
@@ -897,7 +876,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
   sql.begin = (options_or_fn: string | TransactionCallback, fn?: TransactionCallback) => {
     if (pool.closed) {
-      return Promise.reject(connectionClosedError());
+      return Promise.reject(this.connectionClosedError());
     }
     let callback = fn;
     let options: string | undefined = options_or_fn as unknown as string;
@@ -917,7 +896,7 @@ const SQL: typeof Bun.SQL = function SQL(
   };
   sql.connect = () => {
     if (pool.closed) {
-      return Promise.reject(connectionClosedError());
+      return Promise.reject(this.connectionClosedError());
     }
 
     if (pool.isConnected()) {
@@ -1045,6 +1024,7 @@ defineProperties(defaultSQLObject, {
 SQL.SQLError = SQLError;
 SQL.PostgresError = PostgresError;
 SQL.SQLiteError = SQLiteError;
+SQL.MySQLError = MySQLError;
 
 // // Helper functions for native code to create error instances
 // // These are internal functions used by Zig/C++ code
@@ -1082,5 +1062,6 @@ export default {
   postgres: SQL,
   SQLError,
   PostgresError,
+  MySQLError,
   SQLiteError,
 };

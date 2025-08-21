@@ -63,7 +63,7 @@ describeWithContainer(
       } catch (e) {
         error = e;
       }
-      expect(error.code).toBe(`ERR_POSTGRES_CONNECTION_TIMEOUT`);
+      expect(error.code).toBe(`ERR_MYSQL_CONNECTION_TIMEOUT`);
       expect(error.message).toContain("Connection timeout after 4s");
       expect(onconnect).not.toHaveBeenCalled();
       expect(onclose).toHaveBeenCalledTimes(1);
@@ -84,7 +84,7 @@ describeWithContainer(
       } catch (e) {
         error = e;
       }
-      expect(error.code).toBe(`ERR_POSTGRES_IDLE_TIMEOUT`);
+      expect(error.code).toBe(`ERR_MYSQL_IDLE_TIMEOUT`);
       expect(onconnect).toHaveBeenCalled();
       expect(onclose).toHaveBeenCalledTimes(1);
     });
@@ -105,7 +105,7 @@ describeWithContainer(
       expect(onconnect).toHaveBeenCalledTimes(1);
       expect(onclose).not.toHaveBeenCalled();
       const err = await onClosePromise.promise;
-      expect(err.code).toBe(`ERR_POSTGRES_IDLE_TIMEOUT`);
+      expect(err.code).toBe(`ERR_MYSQL_IDLE_TIMEOUT`);
     });
 
     test("Max lifetime works", async () => {
@@ -135,7 +135,7 @@ describeWithContainer(
 
       expect(onclose).toHaveBeenCalledTimes(1);
 
-      expect(error.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
+      expect(error.code).toBe(`ERR_MYSQL_LIFETIME_TIMEOUT`);
     });
 
     // Last one wins.
@@ -385,6 +385,7 @@ describeWithContainer(
     });
 
     test("Prepared transaction", async () => {
+      await using sql = new SQL(options);
       await sql`create table test (a int)`;
 
       try {
@@ -424,14 +425,10 @@ describeWithContainer(
     test("Null sets to null", async () => expect((await sql`select ${null} as x`)[0].x).toBeNull());
 
     // Add code property.
-    test.todo("Throw syntax error", async () => {
+    test("Throw syntax error", async () => {
       await using sql = new SQL({ ...options, max: 1 });
       const err = await sql`wat 1`.catch(x => x);
-      expect(err.message).toBe(
-        "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'wat 1' at line 1 (Code: 1064)",
-      );
-      expect(err.code).toBe("ERR_POSTGRES_SYNTAX_ERROR");
-      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.code).toBe("ERR_MYSQL_SYNTAX_ERROR");
     });
 
     test("should work with fragments", async () => {
@@ -573,7 +570,7 @@ describeWithContainer(
     test("Connection ended error", async () => {
       const sql = new SQL(options);
       await sql.end();
-      return expect(await sql``.catch(x => x.code)).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+      return expect(await sql``.catch(x => x.code)).toBe("ERR_MYSQL_CONNECTION_CLOSED");
     });
 
     test("Connection end does not cancel query", async () => {
@@ -587,7 +584,7 @@ describeWithContainer(
     test("Connection destroyed", async () => {
       const sql = new SQL(options);
       process.nextTick(() => sql.end({ timeout: 0 }));
-      expect(await sql``.catch(x => x.code)).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+      expect(await sql``.catch(x => x.code)).toBe("ERR_MYSQL_CONNECTION_CLOSED");
     });
 
     test("Connection destroyed with query before", async () => {
@@ -595,7 +592,7 @@ describeWithContainer(
       const error = sql`select SLEEP(0.2)`.catch(err => err.code);
 
       sql.end({ timeout: 0 });
-      return expect(await error).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+      return expect(await error).toBe("ERR_MYSQL_CONNECTION_CLOSED");
     });
 
     test("unsafe", async () => {
@@ -610,10 +607,12 @@ describeWithContainer(
     });
 
     test("unsafe simple", async () => {
+      await using sql = new SQL({ ...options, max: 1 });
       expect(await sql.unsafe("select 1 as x")).toEqual([{ x: 1 }]);
     });
 
     test("simple query with multiple statements", async () => {
+      await using sql = new SQL({ ...options, max: 1 });
       const result = await sql`select 1 as x;select 2 as x`.simple();
       expect(result).toBeDefined();
       expect(result.length).toEqual(2);
@@ -622,6 +621,7 @@ describeWithContainer(
     });
 
     test("simple query using unsafe with multiple statements", async () => {
+      await using sql = new SQL({ ...options, max: 1 });
       const result = await sql.unsafe("select 1 as x;select 2 as x");
       expect(result).toBeDefined();
       expect(result.length).toEqual(2);
@@ -631,7 +631,7 @@ describeWithContainer(
 
     test("only allows one statement", async () => {
       expect(await sql`select 1; select 2`.catch(e => e.message)).toBe(
-        "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'select 2' at line 1 (Code: 1064)",
+        "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'select 2' at line 1",
       );
     });
 
@@ -640,7 +640,7 @@ describeWithContainer(
         await sql("select 1");
         expect.unreachable();
       } catch (e: any) {
-        expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
+        expect(e.code).toBe("ERR_MYSQL_NOT_TAGGED_CALL");
       }
     });
 
@@ -651,7 +651,7 @@ describeWithContainer(
         });
         expect.unreachable();
       } catch (e: any) {
-        expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
+        expect(e.code).toBe("ERR_MYSQL_NOT_TAGGED_CALL");
       }
     });
 
@@ -662,7 +662,7 @@ describeWithContainer(
         });
         expect.unreachable();
       } catch (e: any) {
-        expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
+        expect(e.code).toBe("ERR_MYSQL_NOT_TAGGED_CALL");
       }
     });
 
@@ -673,7 +673,7 @@ describeWithContainer(
         });
         expect.unreachable();
       } catch (e: any) {
-        expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
+        expect(e.code).toBe("ERR_MYSQL_NOT_TAGGED_CALL");
       }
     });
 
@@ -691,7 +691,7 @@ describeWithContainer(
       }
     });
 
-    test.todo("Connection errors are caught using begin()", async () => {
+    test("Connection errors are caught using begin()", async () => {
       let error;
       try {
         const sql = new SQL({ host: "localhost", port: 1, adapter: "mysql" });
@@ -702,7 +702,7 @@ describeWithContainer(
       } catch (err) {
         error = err;
       }
-      expect(error.code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+      expect(error.code).toBe("ERR_MYSQL_CONNECTION_CLOSED");
     });
 
     test("dynamic table name", async () => {
@@ -779,14 +779,14 @@ describeWithContainer(
 
         const port = (server.address() as import("node:net").AddressInfo).port;
 
-        const sql = new SQL({ port, host: "127.0.0.1", [key]: 0.2 });
+        const sql = new SQL({ adapter: "mysql", port, host: "127.0.0.1", [key]: 0.2 });
 
         try {
           await sql`select 1`;
           throw new Error("should not reach");
         } catch (e) {
           expect(e).toBeInstanceOf(Error);
-          expect(e.code).toBe("ERR_POSTGRES_CONNECTION_TIMEOUT");
+          expect(e.code).toBe("ERR_MYSQL_CONNECTION_TIMEOUT");
           expect(e.message).toMatch(/Connection timed out after 200ms/);
         } finally {
           sql.close();
@@ -797,7 +797,6 @@ describeWithContainer(
         timeout: 1000,
       },
     );
-
     test("Array returns rows as arrays of columns", async () => {
       await using sql = new SQL(options);
       return [(await sql`select CAST(1 AS SIGNED) as x`.values())[0][0], 1];

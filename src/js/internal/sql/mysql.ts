@@ -1,4 +1,4 @@
-import type { PostgresErrorOptions } from "internal/sql/errors";
+import type { MySQLErrorOptions } from "internal/sql/errors";
 import type { Query } from "./query";
 import type { DatabaseAdapter, SQLHelper, SQLResultArray, SSLMode } from "./shared";
 const { SQLHelper, SSLMode, SQLResultArray } = require("internal/sql/shared");
@@ -7,51 +7,29 @@ const {
   SQLQueryFlags,
   symbols: { _strings, _values, _flags, _results, _handle },
 } = require("internal/sql/query");
-const { PostgresError } = require("internal/sql/errors");
+const { MySQLError } = require("internal/sql/errors");
 
 const {
-  createConnection: createPostgresConnection,
-  createQuery: createPostgresQuery,
-  init: initPostgres,
-} = $zig("postgres.zig", "createBinding") as PostgresDotZig;
+  createConnection: createMySQLConnection,
+  createQuery: createMySQLQuery,
+  init: initMySQL,
+} = $zig("mysql.zig", "createBinding") as MySQLDotZig;
 
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
-function wrapPostgresError(error: Error | PostgresErrorOptions) {
+function wrapError(error: Error | MySQLErrorOptions) {
   if (Error.isError(error)) {
     return error;
   }
-  return new PostgresError(error.message, error);
+  return new MySQLError(error.message, error);
 }
-
-initPostgres(
-  function onResolvePostgresQuery(query, result, commandTag, count, queries, is_last) {
+initMySQL(
+  function onResolveMySQLQuery(query, result, commandTag, count, queries, is_last) {
     /// simple queries
     if (query[_flags] & SQLQueryFlags.simple) {
-      // simple can have multiple results or a single result
-      if (is_last) {
-        if (queries) {
-          const queriesIndex = queries.indexOf(query);
-          if (queriesIndex !== -1) {
-            queries.splice(queriesIndex, 1);
-          }
-        }
-        try {
-          query.resolve(query[_results]);
-        } catch {}
-        return;
-      }
       $assert(result instanceof SQLResultArray, "Invalid result array");
       // prepare for next query
       query[_handle].setPendingValue(new SQLResultArray());
-
-      if (typeof commandTag === "string") {
-        if (commandTag.length > 0) {
-          result.command = commandTag;
-        }
-      } else {
-        result.command = cmds[commandTag];
-      }
 
       result.count = count || 0;
       const last_result = query[_results];
@@ -67,17 +45,21 @@ initPostgres(
           last_result.push(result);
         }
       }
+      if (is_last) {
+        if (queries) {
+          const queriesIndex = queries.indexOf(query);
+          if (queriesIndex !== -1) {
+            queries.splice(queriesIndex, 1);
+          }
+        }
+        try {
+          query.resolve(query[_results]);
+        } catch {}
+      }
       return;
     }
     /// prepared statements
     $assert(result instanceof SQLResultArray, "Invalid result array");
-    if (typeof commandTag === "string") {
-      if (commandTag.length > 0) {
-        result.command = commandTag;
-      }
-    } else {
-      result.command = cmds[commandTag];
-    }
 
     result.count = count || 0;
     if (queries) {
@@ -91,12 +73,8 @@ initPostgres(
     } catch {}
   },
 
-  function onRejectPostgresQuery(
-    query: Query<any, any>,
-    reject: Error | PostgresErrorOptions,
-    queries: Query<any, any>[],
-  ) {
-    reject = wrapPostgresError(reject);
+  function onRejectMySQLQuery(query: Query<any, any>, reject: Error | MySQLErrorOptions, queries: Query<any, any>[]) {
+    reject = wrapError(reject);
     if (queries) {
       const queriesIndex = queries.indexOf(query);
       if (queriesIndex !== -1) {
@@ -110,7 +88,7 @@ initPostgres(
   },
 );
 
-export interface PostgresDotZig {
+export interface MySQLDotZig {
   init: (
     onResolveQuery: (
       query: Query<any, any>,
@@ -132,13 +110,13 @@ export interface PostgresDotZig {
     tls: Bun.TLSOptions | boolean | null, // boolean true => empty TLSOptions object `{}`, boolean false or null => nothing
     query: string,
     path: string,
-    onConnected: (err: Error | null, connection: $ZigGeneratedClasses.PostgresSQLConnection) => void,
-    onDisconnected: (err: Error | null, connection: $ZigGeneratedClasses.PostgresSQLConnection) => void,
+    onConnected: (err: Error | null, connection: $ZigGeneratedClasses.MySQLConnection) => void,
+    onDisconnected: (err: Error | null, connection: $ZigGeneratedClasses.MySQLConnection) => void,
     idleTimeout: number,
     connectionTimeout: number,
     maxLifetime: number,
     useUnnamedPreparedStatements: boolean,
-  ) => $ZigGeneratedClasses.PostgresSQLConnection;
+  ) => $ZigGeneratedClasses.MySQLConnection;
   createQuery: (
     sql: string,
     values: unknown[],
@@ -146,7 +124,7 @@ export interface PostgresDotZig {
     columns: string[] | undefined,
     bigint: boolean,
     simple: boolean,
-  ) => $ZigGeneratedClasses.PostgresSQLQuery;
+  ) => $ZigGeneratedClasses.MySQLSQLQuery;
 }
 
 const enum SQLCommand {
@@ -289,17 +267,17 @@ const enum PooledConnectionFlags {
   preReserved = 1 << 2,
 }
 
-function onQueryFinish(this: PooledPostgresConnection, onClose: (err: Error) => void) {
+function onQueryFinish(this: PooledMySQLConnection, onClose: (err: Error) => void) {
   this.queries.delete(onClose);
   this.adapter.release(this);
 }
 
-class PooledPostgresConnection {
+class PooledMySQLConnection {
   private static async createConnection(
-    options: Bun.SQL.__internal.DefinedPostgresOptions,
-    onConnected: (err: Error | null, connection: $ZigGeneratedClasses.PostgresSQLConnection) => void,
+    options: Bun.SQL.__internal.DefinedMySQLOptions,
+    onConnected: (err: Error | null, connection: $ZigGeneratedClasses.MySQLSQLConnection) => void,
     onClose: (err: Error | null) => void,
-  ): Promise<$ZigGeneratedClasses.PostgresSQLConnection | null> {
+  ): Promise<$ZigGeneratedClasses.MySQLSQLConnection | null> {
     const {
       hostname,
       port,
@@ -328,7 +306,7 @@ class PooledPostgresConnection {
         }
       }
 
-      return createPostgresConnection(
+      return createMySQLConnection(
         hostname,
         Number(port),
         username || "",
@@ -355,20 +333,20 @@ class PooledPostgresConnection {
     }
   }
 
-  adapter: PostgresAdapter;
-  connection: $ZigGeneratedClasses.PostgresSQLConnection | null = null;
+  adapter: MySQLAdapter;
+  connection: $ZigGeneratedClasses.MySQLSQLConnection | null = null;
   state: PooledConnectionState = PooledConnectionState.pending;
   storedError: Error | null = null;
   queries: Set<(err: Error) => void> = new Set();
   onFinish: ((err: Error | null) => void) | null = null;
-  connectionInfo: Bun.SQL.__internal.DefinedPostgresOptions;
+  connectionInfo: Bun.SQL.__internal.DefinedMySQLOptions;
   flags: number = 0;
   /// queryCount is used to indicate the number of queries using the connection, if a connection is reserved or if its a transaction queryCount will be 1 independently of the number of queries
   queryCount: number = 0;
 
   #onConnected(err, _) {
     if (err) {
-      err = wrapPostgresError(err);
+      err = wrapError(err);
     }
     const connectionInfo = this.connectionInfo;
     if (connectionInfo?.onconnect) {
@@ -399,7 +377,7 @@ class PooledPostgresConnection {
 
   #onClose(err) {
     if (err) {
-      err = wrapPostgresError(err);
+      err = wrapError(err);
     }
     const connectionInfo = this.connectionInfo;
     if (connectionInfo?.onclose) {
@@ -428,7 +406,7 @@ class PooledPostgresConnection {
     this.adapter.release(this, true);
   }
 
-  constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOptions, adapter: PostgresAdapter) {
+  constructor(connectionInfo: Bun.SQL.__internal.DefinedMySQLOptions, adapter: MySQLAdapter) {
     this.state = PooledConnectionState.pending;
     this.adapter = adapter;
     this.connectionInfo = connectionInfo;
@@ -436,7 +414,7 @@ class PooledPostgresConnection {
   }
 
   async #startConnection() {
-    this.connection = await PooledPostgresConnection.createConnection(
+    this.connection = await PooledMySQLConnection.createConnection(
       this.connectionInfo,
       this.#onConnected.bind(this),
       this.#onClose.bind(this),
@@ -486,13 +464,13 @@ class PooledPostgresConnection {
     } else {
       // analyse type of error to see if we can retry
       switch (this.storedError?.code) {
-        case "ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD":
-        case "ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD":
-        case "ERR_POSTGRES_TLS_NOT_AVAILABLE":
-        case "ERR_POSTGRES_TLS_UPGRADE_FAILED":
-        case "ERR_POSTGRES_INVALID_SERVER_SIGNATURE":
-        case "ERR_POSTGRES_INVALID_SERVER_KEY":
-        case "ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2":
+        case "ERR_MYSQL_PASSWORD_REQUIRED":
+        case "ERR_MYSQL_MISSING_AUTH_DATA":
+        case "ERR_MYSQL_FAILED_TO_ENCRYPT_PASSWORD":
+        case "ERR_MYSQL_INVALID_PUBLIC_KEY":
+        case "ERR_MYSQL_UNSUPPORTED_PROTOCOL_VERSION":
+        case "ERR_MYSQL_UNSUPPORTED_AUTH_PLUGIN":
+        case "ERR_MYSQL_AUTHENTICATION_FAILED":
           // we can't retry these are authentication errors
           return false;
         default:
@@ -504,18 +482,14 @@ class PooledPostgresConnection {
   }
 }
 
-export class PostgresAdapter
+export class MySQLAdapter
   implements
-    DatabaseAdapter<
-      PooledPostgresConnection,
-      $ZigGeneratedClasses.PostgresSQLConnection,
-      $ZigGeneratedClasses.PostgresSQLQuery
-    >
+    DatabaseAdapter<PooledMySQLConnection, $ZigGeneratedClasses.MySQLConnection, $ZigGeneratedClasses.MySQLQuery>
 {
-  public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOptions;
+  public readonly connectionInfo: Bun.SQL.__internal.DefinedMySQLOptions;
 
-  public readonly connections: PooledPostgresConnection[];
-  public readonly readyConnections: Set<PooledPostgresConnection>;
+  public readonly connections: PooledMySQLConnection[];
+  public readonly readyConnections: Set<PooledMySQLConnection>;
 
   public waitingQueue: Array<(err: Error | null, result: any) => void> = [];
   public reservedQueue: Array<(err: Error | null, result: any) => void> = [];
@@ -525,62 +499,60 @@ export class PostgresAdapter
   public totalQueries: number = 0;
   public onAllQueriesFinished: (() => void) | null = null;
 
-  constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOptions) {
+  constructor(connectionInfo: Bun.SQL.__internal.DefinedMySQLOptions) {
     this.connectionInfo = connectionInfo;
     this.connections = new Array(connectionInfo.max);
     this.readyConnections = new Set();
   }
 
   escapeIdentifier(str: string) {
-    return '"' + str.replaceAll('"', '""').replaceAll(".", '"."') + '"';
+    return "`" + str.replaceAll("`", "``") + "`";
   }
 
   connectionClosedError() {
-    return new PostgresError("Connection closed", {
-      code: "ERR_POSTGRES_CONNECTION_CLOSED",
+    return new MySQLError("Connection closed", {
+      code: "ERR_MYSQL_CONNECTION_CLOSED",
     });
   }
   notTaggedCallError() {
-    return new PostgresError("Query not called as a tagged template literal", {
-      code: "ERR_POSTGRES_NOT_TAGGED_CALL",
+    return new MySQLError("Query not called as a tagged template literal", {
+      code: "ERR_MYSQL_NOT_TAGGED_CALL",
     });
   }
-  queryCancelledError(): Error {
-    return new PostgresError("Query cancelled", {
-      code: "ERR_POSTGRES_QUERY_CANCELLED",
+  queryCancelledError() {
+    return new MySQLError("Query cancelled", {
+      code: "ERR_MYSQL_QUERY_CANCELLED",
     });
   }
   invalidTransactionStateError(message: string) {
-    return new PostgresError(message, {
-      code: "ERR_POSTGRES_INVALID_TRANSACTION_STATE",
+    return new MySQLError(message, {
+      code: "ERR_MYSQL_INVALID_TRANSACTION_STATE",
     });
   }
   supportsReservedConnections() {
     return true;
   }
 
-  getConnectionForQuery(pooledConnection: PooledPostgresConnection) {
+  getConnectionForQuery(pooledConnection: PooledMySQLConnection) {
     return pooledConnection.connection;
   }
 
-  attachConnectionCloseHandler(connection: PooledPostgresConnection, handler: () => void): void {
-    // PostgreSQL pooled connections support onClose handlers
+  attachConnectionCloseHandler(connection: PooledMySQLConnection, handler: () => void): void {
     if (connection.onClose) {
       connection.onClose(handler);
     }
   }
 
-  detachConnectionCloseHandler(connection: PooledPostgresConnection, handler: () => void): void {
-    // PostgreSQL pooled connections track queries
+  detachConnectionCloseHandler(connection: PooledMySQLConnection, handler: () => void): void {
     if (connection.queries) {
       connection.queries.delete(handler);
     }
   }
 
   getTransactionCommands(options?: string): import("./shared").TransactionCommands {
-    let BEGIN = "BEGIN";
+    let BEGIN = "START TRANSACTION";
     if (options) {
-      BEGIN = `BEGIN ${options}`;
+      BEGIN = `START TRANSACTION ${options}`;
     }
 
     return {
@@ -599,18 +571,17 @@ export class PostgresAdapter
     }
 
     return {
-      BEGIN: "BEGIN",
-      COMMIT: `PREPARE TRANSACTION '${name}'`,
-      ROLLBACK: "ROLLBACK",
+      BEGIN: `XA START '${name}'`,
+      COMMIT: `XA PREPARE '${name}'`,
+      ROLLBACK: `XA ROLLBACK '${name}'`,
       SAVEPOINT: "SAVEPOINT",
       RELEASE_SAVEPOINT: "RELEASE SAVEPOINT",
       ROLLBACK_TO_SAVEPOINT: "ROLLBACK TO SAVEPOINT",
-      BEFORE_COMMIT_OR_ROLLBACK: null,
+      BEFORE_COMMIT_OR_ROLLBACK: `XA END '${name}'`,
     };
   }
 
   validateTransactionOptions(_options: string): { valid: boolean; error?: string } {
-    // PostgreSQL accepts any transaction options
     return { valid: true };
   }
 
@@ -629,7 +600,7 @@ export class PostgresAdapter
     if (!validation.valid) {
       throw new Error(validation.error);
     }
-    return `COMMIT PREPARED '${name}'`;
+    return `XA COMMIT '${name}'`;
   }
 
   getRollbackDistributedSQL(name: string): string {
@@ -637,7 +608,7 @@ export class PostgresAdapter
     if (!validation.valid) {
       throw new Error(validation.error);
     }
-    return `ROLLBACK PREPARED '${name}'`;
+    return `XA ROLLBACK '${name}'`;
   }
 
   createQueryHandle(sql: string, values: unknown[], flags: number) {
@@ -645,14 +616,14 @@ export class PostgresAdapter
       if (this.connectionInfo.max !== 1) {
         const upperCaseSqlString = sql.toUpperCase().trim();
         if (upperCaseSqlString.startsWith("BEGIN") || upperCaseSqlString.startsWith("START TRANSACTION")) {
-          throw new PostgresError("Only use sql.begin, sql.reserved or max: 1", {
-            code: "ERR_POSTGRES_UNSAFE_TRANSACTION",
+          throw new MySQLError("Only use sql.begin, sql.reserved or max: 1", {
+            code: "ERR_MYSQL_UNSAFE_TRANSACTION",
           });
         }
       }
     }
 
-    return createPostgresQuery(
+    return createMySQLQuery(
       sql,
       values,
       new SQLResultArray(),
@@ -694,7 +665,7 @@ export class PostgresAdapter
     }
   }
 
-  release(connection: PooledPostgresConnection, connectingEvent: boolean = false) {
+  release(connection: PooledMySQLConnection, connectingEvent: boolean = false) {
     if (!connectingEvent) {
       connection.queryCount--;
       this.totalQueries--;
@@ -974,18 +945,18 @@ export class PostgresAdapter
       this.poolStarted = true;
       const pollSize = this.connections.length;
       // pool is always at least 1 connection
-      const firstConnection = new PooledPostgresConnection(this.connectionInfo, this);
+      const firstConnection = new PooledMySQLConnection(this.connectionInfo, this);
       this.connections[0] = firstConnection;
       if (reserved) {
         firstConnection.flags |= PooledConnectionFlags.preReserved; // lets pre reserve the first connection
       }
       for (let i = 1; i < pollSize; i++) {
-        this.connections[i] = new PooledPostgresConnection(this.connectionInfo, this);
+        this.connections[i] = new PooledMySQLConnection(this.connectionInfo, this);
       }
       return;
     }
     if (reserved) {
-      let connectionWithLeastQueries: PooledPostgresConnection | null = null;
+      let connectionWithLeastQueries: PooledMySQLConnection | null = null;
       let leastQueries = Infinity;
       for (const connection of this.readyConnections) {
         if (connection.flags & PooledConnectionFlags.preReserved || connection.flags & PooledConnectionFlags.reserved)
@@ -1091,7 +1062,7 @@ export class PostgresAdapter
                   for (let k = 0; k < columnCount; k++) {
                     const column = columns[k];
                     const columnValue = item[column];
-                    query += `$${binding_idx++}${k < lastColumnIndex ? ", " : ""}`;
+                    query += `?${k < lastColumnIndex ? ", " : ""}`;
                     if (typeof columnValue === "undefined") {
                       binding_values.push(null);
                     } else {
@@ -1110,7 +1081,7 @@ export class PostgresAdapter
                 for (let j = 0; j < columnCount; j++) {
                   const column = columns[j];
                   const columnValue = item[column];
-                  query += `$${binding_idx++}${j < lastColumnIndex ? ", " : ""}`;
+                  query += `?${j < lastColumnIndex ? ", " : ""}`;
                   if (typeof columnValue === "undefined") {
                     binding_values.push(null);
                   } else {
@@ -1128,7 +1099,7 @@ export class PostgresAdapter
               const lastItemIndex = itemsCount - 1;
               query += "(";
               for (let j = 0; j < itemsCount; j++) {
-                query += `$${binding_idx++}${j < lastItemIndex ? ", " : ""}`;
+                query += `?${j < lastItemIndex ? ", " : ""}`;
                 if (columnCount > 0) {
                   // we must use a key from a object
                   if (columnCount > 1) {
@@ -1176,7 +1147,7 @@ export class PostgresAdapter
               for (let i = 0; i < columnCount; i++) {
                 const column = columns[i];
                 const columnValue = item[column];
-                query += `${this.escapeIdentifier(column)} = $${binding_idx++}${i < lastColumnIndex ? ", " : ""}`;
+                query += `${this.escapeIdentifier(column)} = ?${i < lastColumnIndex ? ", " : ""}`;
                 if (typeof columnValue === "undefined") {
                   binding_values.push(null);
                 } else {
@@ -1187,7 +1158,7 @@ export class PostgresAdapter
             }
           } else {
             //TODO: handle sql.array parameters
-            query += `$${binding_idx++} `;
+            query += `? `;
             if (typeof value === "undefined") {
               binding_values.push(null);
             } else {
@@ -1205,7 +1176,7 @@ export class PostgresAdapter
 }
 
 export default {
-  PostgresAdapter,
+  MySQLAdapter,
   SQLCommand,
   commandToString,
   detectCommand,

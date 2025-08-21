@@ -279,17 +279,54 @@ describe("Invalid Advisory Formats", () => {
     scanner: async () => [
       {
         package: "bar",
+        // description field is completely missing
         level: "fatal",
         url: "https://example.com",
       } as any,
     ],
-    expectedExitCode: 1,
-    expect: ({ err }) => {
-      expect(err).toContain("Security advisory at index 0 missing required 'description' field");
+    fails: true,
+    expect: ({ out }) => {
+      // When field is missing, it's treated as null and installation proceeds
+      expect(out).toContain("bar");
+      expect(out).toContain("https://example.com");
     },
   });
 
-  test("advisory description field not string", {
+  test("advisory with null description field", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: null,
+        level: "fatal",
+        url: "https://example.com",
+      },
+    ],
+    fails: true,
+    expect: ({ out }) => {
+      // Should not print null description
+      expect(out).not.toContain("null");
+      expect(out).toContain("https://example.com");
+    },
+  });
+
+  test("advisory with empty string description", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: "",
+        level: "fatal",
+        url: "https://example.com",
+      },
+    ],
+    fails: true,
+    expect: ({ out }) => {
+      // Should not print empty description
+      expect(out).toContain("bar");
+      expect(out).toContain("https://example.com");
+    },
+  });
+
+  test("advisory description field not string or null", {
     scanner: async () => [
       {
         package: "bar",
@@ -300,7 +337,7 @@ describe("Invalid Advisory Formats", () => {
     ],
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("Security advisory at index 0 'description' field must be a string");
+      expect(err).toContain("Security advisory at index 0 'description' field must be a string or null");
     },
   });
 
@@ -308,13 +345,51 @@ describe("Invalid Advisory Formats", () => {
     scanner: async () => [
       {
         package: "bar",
-        description: "Missing URL",
+        description: "Test advisory",
+        // url field is completely missing
         level: "fatal",
       } as any,
     ],
-    expectedExitCode: 1,
-    expect: ({ err }) => {
-      expect(err).toContain("Security advisory at index 0 missing required 'url' field");
+    fails: true,
+    expect: ({ out }) => {
+      // When field is missing, it's treated as null and installation proceeds
+      expect(out).toContain("Test advisory");
+      expect(out).toContain("bar");
+    },
+  });
+
+  test("advisory with null url field", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: "Test advisory",
+        level: "fatal",
+        url: null,
+      },
+    ],
+    fails: true,
+    expect: ({ out }) => {
+      expect(out).toContain("Test advisory");
+      // Should not print a URL line when url is null
+      expect(out).not.toContain("https://");
+      expect(out).not.toContain("http://");
+    },
+  });
+
+  test("advisory with empty string url", {
+    scanner: async () => [
+      {
+        package: "bar",
+        description: "Has empty URL",
+        level: "fatal",
+        url: "",
+      },
+    ],
+    fails: true,
+    expect: ({ out }) => {
+      expect(out).toContain("Has empty URL");
+      // Should not print empty URL line at all
+      expect(out).toContain("bar");
     },
   });
 
@@ -332,7 +407,7 @@ describe("Invalid Advisory Formats", () => {
     },
   });
 
-  test("advisory url field not string", {
+  test("advisory url field not string or null", {
     scanner: async () => [
       {
         package: "bar",
@@ -343,7 +418,7 @@ describe("Invalid Advisory Formats", () => {
     ],
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("Security advisory at index 0 'url' field must be a string");
+      expect(err).toContain("Security advisory at index 0 'url' field must be a string or null");
     },
   });
 
@@ -387,14 +462,14 @@ describe("Invalid Advisory Formats", () => {
       },
       {
         package: "baz",
-        // missing description
+        description: 123, // not a string or null
         level: "fatal",
         url: "https://example.com/2",
       } as any,
     ],
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("Security advisory at index 1 missing required 'description' field");
+      expect(err).toContain("Security advisory at index 1 'description' field must be a string or null");
     },
   });
 });
@@ -459,7 +534,7 @@ describe("Multiple Package Scanning", () => {
   test("multiple packages scanned", {
     packages: ["bar", "qux"],
     scanner: async ({ packages }) => {
-      return packages.map((pkg, i) => ({
+      return packages.map(pkg => ({
         package: pkg.name,
         description: `Security issue in ${pkg.name}`,
         level: "fatal",
@@ -475,6 +550,23 @@ describe("Multiple Package Scanning", () => {
 });
 
 describe("Edge Cases", () => {
+  test("advisory with both null description and url", {
+    scanner: async ({ packages }) => [
+      {
+        package: packages[0].name,
+        description: null,
+        level: "fatal",
+        url: null,
+      },
+    ],
+    fails: true,
+    expect: ({ out }) => {
+      // Should show the package name and level but not null values
+      expect(out).toContain("bar");
+      expect(out).not.toContain("null");
+    },
+  });
+
   test("empty advisories array", {
     scanner: async () => [],
     expectedExitCode: 0,

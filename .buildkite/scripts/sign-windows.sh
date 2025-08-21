@@ -25,7 +25,7 @@ verify_env_vars() {
     if [[ ${#missing_vars[@]} -gt 0 ]]; then
         log_error "Missing required environment variables: ${missing_vars[*]}"
         log_error "These should be set by Buildkite secrets or local environment"
-        exit 1
+        return 1
     fi
     
     log_info "All required environment variables are present"
@@ -89,7 +89,7 @@ setup_certificate() {
             log_info "Certificate decoded successfully from file"
         else
             log_error "Failed to decode Base64 certificate from file"
-            exit 1
+            return 1
         fi
     else
         # In CI environment, use variable directly
@@ -98,14 +98,14 @@ setup_certificate() {
             log_info "Certificate decoded successfully"
         else
             log_error "Failed to decode Base64 certificate"
-            exit 1
+            return 1
         fi
     fi
     
     # Verify certificate file was created
     if [[ ! -f "$TEMP_CERT" ]] || [[ ! -s "$TEMP_CERT" ]]; then
         log_error "Certificate file is empty or was not created"
-        exit 1
+        return 1
     fi
     
     # Update environment variable to point to decoded certificate
@@ -176,7 +176,14 @@ install_keylocker() {
         if [[ "$download_success" != "true" ]]; then
             log_error "Failed to download KeyLocker installer from $KEYLOCKER_URL"
             log_error "This may be due to network issues, disk space, or permissions"
-            exit 1
+            log_info "Checking if KeyLocker tools are already installed..."
+            if [[ -f "/c/Program Files/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]]; then
+                log_info "KeyLocker tools found, skipping download"
+                return 0
+            else
+                log_error "KeyLocker tools not found and download failed"
+                return 1
+            fi
         fi
     fi
     
@@ -226,7 +233,7 @@ install_keylocker() {
     if [[ ! -f "/c/Program Files/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]]; then
         log_error "KeyLocker tools installation failed"
         log_error "Please ensure you have administrator privileges"
-        exit 1
+        return 1
     fi
     
     log_success "KeyLocker tools installed successfully"
@@ -262,20 +269,20 @@ setup_environment() {
     
     if [[ "$signtool_found" == false ]]; then
         log_error "signtool.exe not found in Windows SDK"
-        exit 1
+        return 1
     fi
     
     # Save credentials to Windows credential store (no logging to prevent exposure)
     if ! smctl credentials save "$SM_API_KEY" "$SM_CLIENT_CERT_PASSWORD" >/dev/null 2>&1; then
         log_error "Failed to save credentials"
-        exit 1
+        return 1
     fi
     log_info "Credentials saved securely"
     
     # Sync certificates with Windows certificate store (no logging to prevent exposure)
     if ! smctl windows certsync --keypair-alias="$SM_KEYPAIR_ALIAS" >/dev/null 2>&1; then
         log_error "Failed to sync certificates"
-        exit 1
+        return 1
     fi
     log_info "Certificates synced successfully"
     
@@ -287,8 +294,8 @@ sign_executable() {
     local exe_path="$1"
     
     if [[ ! -f "$exe_path" ]]; then
-        log_error "File not found: $exe_path"
-        return 1
+        log_info "File not found, skipping: $exe_path"
+        return 0
     fi
     
     # Convert to Windows path
@@ -328,17 +335,40 @@ main() {
     
     log_info "Starting Windows code signing process..."
     
-    # Verify environment variables
-    verify_env_vars
+    # Check if any files actually exist to sign
+    local files_exist=false
+    for file in "$@"; do
+        if [[ -f "$file" ]]; then
+            files_exist=true
+            break
+        fi
+    done
     
-    # Setup certificate from Base64
-    setup_certificate
+    if [[ "$files_exist" != "true" ]]; then
+        log_info "No files to sign found, skipping signing process"
+        return 0
+    fi
     
-    # Install KeyLocker if needed
-    install_keylocker
+    # Try to set up signing, but don't fail build if it doesn't work
+    if ! verify_env_vars; then
+        log_error "Environment variables not available, skipping signing"
+        return 0
+    fi
     
-    # Setup environment
-    setup_environment
+    if ! setup_certificate; then
+        log_error "Certificate setup failed, skipping signing"
+        return 0
+    fi
+    
+    if ! install_keylocker; then
+        log_error "KeyLocker installation failed, skipping signing"
+        return 0
+    fi
+    
+    if ! setup_environment; then
+        log_error "Environment setup failed, skipping signing"
+        return 0
+    fi
     
     # Sign all provided executables
     local failed=0

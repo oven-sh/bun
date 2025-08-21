@@ -1,5 +1,5 @@
 pub const LinkerContext = struct {
-    pub const debug = Output.scoped(.LinkerCtx, false);
+    pub const debug = Output.scoped(.LinkerCtx, .visible);
     pub const CompileResult = bundler.CompileResult;
 
     pub const OutputFileListBuilder = @import("./linker_context/OutputFileListBuilder.zig");
@@ -771,11 +771,11 @@ pub const LinkerContext = struct {
 
             var start_state = sourcemap.SourceMapState{
                 .source_index = mapping_source_index,
-                .generated_line = offset.lines,
-                .generated_column = offset.columns,
+                .generated_line = offset.lines.zeroBased(),
+                .generated_column = offset.columns.zeroBased(),
             };
 
-            if (offset.lines == 0) {
+            if (offset.lines.zeroBased() == 0) {
                 start_state.generated_column += prev_column_offset;
             }
 
@@ -2506,7 +2506,7 @@ pub const ThreadPoolLib = bun.ThreadPool;
 pub const Fs = @import("../fs.zig");
 
 pub const Index = bun.ast.Index;
-const debugTreeShake = Output.scoped(.TreeShake, true);
+const debugTreeShake = Output.scoped(.TreeShake, .hidden);
 
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;

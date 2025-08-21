@@ -26,7 +26,7 @@
 
 #include "config.h"
 #include "SerializedScriptValue.h"
-
+#include "BunString.h"
 // #include "BlobRegistry.h"
 // #include "ByteArrayPixelBuffer.h"
 #include "CryptoKeyAES.h"
@@ -890,7 +890,7 @@ public:
         WasmMemoryHandleArray& wasmMemoryHandles,
 #endif
         Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers,
-        SerializationForStorage forStorage, SerializationForTransfer forTransfer)
+        SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer)
     {
         CloneSerializer serializer(lexicalGlobalObject, messagePorts, arrayBuffers,
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
@@ -992,7 +992,7 @@ private:
         WasmModuleArray& wasmModules,
         WasmMemoryHandleArray& wasmMemoryHandles,
 #endif
-        Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers, SerializationForStorage forStorage, SerializationForTransfer forTransfer)
+        Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers, SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer)
         : CloneBase(lexicalGlobalObject)
         , m_buffer(out)
         , m_emptyIdentifier(Identifier::fromString(lexicalGlobalObject->vm(), emptyString()))
@@ -1948,15 +1948,19 @@ private:
 #endif
 
             // write bun types
-            if (auto _cloneable = StructuredCloneableSerialize::fromJS(value)) {
-                if (m_forTransfer == SerializationForTransfer::Yes && !SerializedScriptValue::isTransferable(m_lexicalGlobalObject, value)) {
+            auto _cloneable = StructuredCloneableSerialize::fromJS(value);
+            if (_cloneable) {
+                auto cloneable = _cloneable.value();
+                const bool isTransferCompatible = m_forTransfer == SerializationForCrossProcessTransfer::Yes ? cloneable.isForTransfer : true;
+                const bool isStorageCompatible = m_forStorage == SerializationForStorage::Yes ? cloneable.isForStorage : true;
+                if (!isTransferCompatible || !isStorageCompatible) {
                     write(ObjectTag);
                     write(TerminatorTag);
                     return true;
                 }
-                StructuredCloneableSerialize cloneable = WTFMove(_cloneable.value());
-                write(cloneable.tag);
-                cloneable.write(this, m_lexicalGlobalObject);
+                StructuredCloneableSerialize to_write = WTFMove(_cloneable.value());
+                write(to_write.tag);
+                to_write.write(this, m_lexicalGlobalObject);
                 return true;
             }
 
@@ -2559,7 +2563,7 @@ private:
     Vector<RefPtr<WebCodecsVideoFrame>>& m_serializedVideoFrames;
 #endif
     SerializationForStorage m_forStorage;
-    SerializationForTransfer m_forTransfer;
+    SerializationForCrossProcessTransfer m_forTransfer;
 };
 
 SYSV_ABI void SerializedScriptValue::writeBytesForBun(CloneSerializer* ctx, const uint8_t* data, uint32_t size)
@@ -5561,6 +5565,13 @@ SerializedScriptValue::SerializedScriptValue(Vector<uint8_t>&& buffer, std::uniq
     m_memoryCost = computeMemoryCost();
 }
 
+SerializedScriptValue::SerializedScriptValue(const String& fastPathString)
+    : m_fastPathString(fastPathString)
+    , m_isStringFastPath(true)
+{
+    m_memoryCost = computeMemoryCost();
+}
+
 size_t SerializedScriptValue::computeMemoryCost() const
 {
     size_t cost = m_data.size();
@@ -5610,6 +5621,10 @@ size_t SerializedScriptValue::computeMemoryCost() const
 
     // for (auto& handle : m_blobHandles)
     //     cost += handle.url().string().sizeInBytes();
+
+    // Account for fast path string memory usage
+    if (m_isStringFastPath)
+        cost += m_fastPathString.sizeInBytes();
 
     return cost;
 }
@@ -5724,7 +5739,7 @@ static bool canDetachRTCDataChannels(const Vector<Ref<RTCDataChannel>>& channels
 }
 #endif
 
-RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSC::JSGlobalObject& globalObject, JSC::JSValue value, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext serializationContext, SerializationForTransfer forTransfer)
+RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSC::JSGlobalObject& globalObject, JSC::JSValue value, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext serializationContext, SerializationForCrossProcessTransfer forTransfer)
 {
     Vector<RefPtr<MessagePort>> dummyPorts;
     auto result = create(globalObject, value, {}, dummyPorts, forStorage, throwExceptions, serializationContext, forTransfer);
@@ -5739,15 +5754,31 @@ RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSC::JSGlobalObject&
 //     return create(globalObject, value, WTFMove(transferList), messagePorts, forStorage, SerializationErrorMode::NonThrowing, serializationContext);
 // }
 
-ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& globalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationContext serializationContext, SerializationForTransfer forTransfer)
+ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& globalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationContext serializationContext, SerializationForCrossProcessTransfer forTransfer)
 {
     return create(globalObject, value, WTFMove(transferList), messagePorts, forStorage, SerializationErrorMode::Throwing, serializationContext, forTransfer);
 }
 
 // ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& lexicalGlobalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext context)
-ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& lexicalGlobalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext context, SerializationForTransfer forTransfer)
+ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalObject& lexicalGlobalObject, JSValue value, Vector<JSC::Strong<JSC::JSObject>>&& transferList, Vector<RefPtr<MessagePort>>& messagePorts, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext context, SerializationForCrossProcessTransfer forTransfer)
 {
     VM& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Fast path optimization: for postMessage/structuredClone with pure strings and no transfers
+    if ((context == SerializationContext::WorkerPostMessage || context == SerializationContext::WindowPostMessage || context == SerializationContext::Default)
+        && forStorage == SerializationForStorage::No
+        && forTransfer == SerializationForCrossProcessTransfer::No
+        && transferList.isEmpty()
+        && messagePorts.isEmpty()
+        && value.isString()) {
+
+        JSC::JSString* jsString = asString(value);
+        String stringValue = jsString->value(&lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, Exception { TypeError });
+        return SerializedScriptValue::createStringFastPath(stringValue);
+    }
+
     Vector<RefPtr<JSC::ArrayBuffer>> arrayBuffers;
     // Vector<RefPtr<ImageBitmap>> imageBitmaps;
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
@@ -5862,7 +5893,6 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     //         wasmMemoryHandles,
     // #endif
     //         blobHandles, buffer, context, *sharedBuffers, forStorage);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     auto code = CloneSerializer::serialize(&lexicalGlobalObject, value, messagePorts, arrayBuffers,
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
         offscreenCanvases,
@@ -5963,6 +5993,11 @@ RefPtr<SerializedScriptValue> SerializedScriptValue::create(StringView string)
     if (!CloneSerializer::serialize(string, buffer))
         return nullptr;
     return adoptRef(*new SerializedScriptValue(WTFMove(buffer)));
+}
+
+Ref<SerializedScriptValue> SerializedScriptValue::createStringFastPath(const String& string)
+{
+    return adoptRef(*new SerializedScriptValue(Bun::toCrossThreadShareable(string)));
 }
 
 RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSContextRef originContext, JSValueRef apiValue, JSValueRef* exception)
@@ -6082,6 +6117,13 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
 {
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // Fast path for string-only values - avoid deserialization overhead
+    if (m_isStringFastPath) {
+        if (didFail)
+            *didFail = false;
+        return jsString(vm, m_fastPathString);
+    }
+
     DeserializationResult result = CloneDeserializer::deserialize(&lexicalGlobalObject, globalObject, messagePorts
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
         ,

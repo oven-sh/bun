@@ -101,7 +101,7 @@ pub const Result = struct {
     };
 };
 
-const debug = Output.scoped(.ParseTask, true);
+const debug = Output.scoped(.ParseTask, .hidden);
 
 pub fn init(resolve_result: *const _resolver.Result, source_index: Index, ctx: *BundleV2) ParseTask {
     return .{

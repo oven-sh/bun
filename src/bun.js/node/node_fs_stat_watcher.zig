@@ -1,4 +1,4 @@
-const log = bun.Output.scoped(.StatWatcher, false);
+const log = bun.Output.scoped(.StatWatcher, .visible);
 
 fn statToJSStats(globalThis: *jsc.JSGlobalObject, stats: *const bun.Stat, bigint: bool) bun.JSError!jsc.JSValue {
     if (bigint) {

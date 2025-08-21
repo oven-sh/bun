@@ -1070,7 +1070,7 @@ pub fn NewParser_(
             }
         }
 
-        pub fn keyNameForError(noalias p: *P, key: js_ast.Expr) string {
+        pub fn keyNameForError(noalias p: *P, key: *const js_ast.Expr) string {
             switch (key.data) {
                 .e_string => {
                     return key.data.e_string.string(p.allocator) catch unreachable;

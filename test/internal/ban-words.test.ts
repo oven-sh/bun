@@ -1,4 +1,5 @@
 import { file, Glob } from "bun";
+import { readdirSync } from "fs";
 import path from "path";
 
 // prettier-ignore
@@ -21,6 +22,10 @@ const words: Record<string, { reason: string; regex?: boolean }> = {
   "std.enums.tagName(": { reason: "Use bun.tagName instead" },
   "std.unicode": { reason: "Use bun.strings instead" },
   "std.Thread.Mutex": {reason: "Use bun.Mutex instead" },
+  ".jsBoolean(true)": { reason: "Use .true instead" },
+  "JSValue.true": { reason: "Use .true instead" },
+  ".jsBoolean(false)": { reason: "Use .false instead" },
+  "JSValue.false": { reason: "Use .false instead" },
 
   "allocator.ptr ==": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "allocator.ptr !=": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
@@ -31,7 +36,7 @@ const words: Record<string, { reason: string; regex?: boolean }> = {
   "== alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "!= alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
 
-  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", regex: true },
+  ": [^=]+= undefined,$": { reason: "Do not default a struct field to undefined", regex: true },
   "usingnamespace": { reason: "Zig 0.15 will remove `usingnamespace`" },
 
   "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs" },
@@ -69,7 +74,7 @@ for (const source of sources) {
       if (source.startsWith("src" + path.sep + "codegen")) continue;
       const content = await file(source).text();
       for (const word of words_keys) {
-        let regex = words[word].regex ? new RegExp(word, "g") : undefined;
+        let regex = words[word].regex ? new RegExp(word, "gm") : undefined;
         const did_match = regex ? regex.test(content) : content.includes(word);
         if (regex) regex.lastIndex = 0;
         if (did_match) {
@@ -129,6 +134,22 @@ describe("banned words", () => {
       } else if (count.length < limit) {
         throw new Error(
           `Instances of banned word ${JSON.stringify(word)} reduced from ${limit} to ${count.length}\nUpdate limit by running \`bun ./test/internal/ban-words.test.ts\`\n`,
+        );
+      }
+    });
+  }
+});
+
+describe("required words", () => {
+  const expectDir = "src/bun.js/test/expect";
+  const files = readdirSync(expectDir);
+  for (const file of files) {
+    if (!file.endsWith(".zig") || file.startsWith(".") || file === "toHaveReturnedTimes.zig") continue;
+    test(file, async () => {
+      const content = await Bun.file(path.join(expectDir, file)).text();
+      if (!content.includes("incrementExpectCallCounter")) {
+        throw new Error(
+          `${expectDir}/${file} is missing string "incrementExpectCallCounter"\nAll expect() functions must call incrementExpectCallCounter()`,
         );
       }
     });

@@ -1,6 +1,13 @@
 pub const WTF = struct {
     extern fn WTF__parseDouble(bytes: [*]const u8, length: usize, counted: *usize) f64;
 
+    extern fn WTF__releaseFastMallocFreeMemoryForThisThread() void;
+
+    pub fn releaseFastMallocFreeMemoryForThisThread() void {
+        jsc.markBinding(@src());
+        WTF__releaseFastMallocFreeMemoryForThisThread();
+    }
+
     pub fn parseDouble(buf: []const u8) !f64 {
         jsc.markBinding(@src());
 

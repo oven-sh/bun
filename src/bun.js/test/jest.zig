@@ -6,7 +6,7 @@ pub const Tag = enum(u3) {
     todo,
     skipped_because_label,
 };
-const debug = Output.scoped(.jest, false);
+const debug = Output.scoped(.jest, .visible);
 
 var max_test_id_for_debugger: u32 = 0;
 
@@ -976,7 +976,7 @@ pub const DescribeScope = struct {
 
                 cb.protect();
                 @field(DescribeScope.active.?, @tagName(hook) ++ "s").append(bun.default_allocator, cb) catch unreachable;
-                return JSValue.jsBoolean(true);
+                return .true;
             }
         }.run;
     }

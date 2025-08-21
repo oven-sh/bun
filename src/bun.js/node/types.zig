@@ -226,7 +226,7 @@ pub const StringOrBuffer = union(enum) {
                 if (is_async) {
                     defer str.deref();
                     var possible_clone = str;
-                    var sliced = possible_clone.toThreadSafeSlice(allocator);
+                    var sliced = try possible_clone.toThreadSafeSlice(allocator);
                     sliced.reportExtraMemory(global.vm());
 
                     if (sliced.underlying.isEmpty()) {
@@ -686,7 +686,7 @@ pub const PathLike = union(enum) {
         try Valid.pathStringLength(str.length(), global);
 
         if (will_be_async) {
-            var sliced = str.toThreadSafeSlice(allocator);
+            var sliced = try str.toThreadSafeSlice(allocator);
             errdefer sliced.deinit();
 
             try Valid.pathNullBytes(sliced.slice(), global);

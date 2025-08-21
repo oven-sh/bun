@@ -90,20 +90,7 @@ using namespace Zig;
     /* You should not use this throw scope directly -- if you need */   \
     /* to throw or clear exceptions, make your own scope */             \
     auto napi_preamble_throw_scope__ = DECLARE_THROW_SCOPE(_env->vm()); \
-    NAPI_RETURN_IF_EXCEPTION(_env)
-
-// Every NAPI function should use this at the start. It does the following:
-// - if NAPI_VERBOSE is 1, log that the function was called
-// - if env is nullptr, return napi_invalid_arg
-// - if there is a pending exception, return napi_pending_exception
-// No do..while is used as this declares a variable that other macros need to use
-#define NAPI_PREAMBLE(_env)                                             \
-    NAPI_LOG_CURRENT_FUNCTION;                                          \
-    NAPI_CHECK_ARG(_env, _env);                                         \
-    /* You should not use this throw scope directly -- if you need */   \
-    /* to throw or clear exceptions, make your own scope */             \
-    auto napi_preamble_throw_scope__ = DECLARE_THROW_SCOPE(_env->vm()); \
-    NAPI_RETURN_IF_EXCEPTION(_env)
+    NAPI_RETURN_IF_VM_EXCEPTION(_env)
 
 // Only use this for functions that need their own throw or catch scope. Functions that call into
 // JS code that might throw should use NAPI_RETURN_IF_EXCEPTION.
@@ -136,7 +123,17 @@ using namespace Zig;
     } while (0)
 
 // Return an error code if an exception was thrown after NAPI_PREAMBLE
-#define NAPI_RETURN_IF_EXCEPTION(_env) RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error(_env, napi_pending_exception))
+#define NAPI_RETURN_IF_VM_EXCEPTION(_env) RETURN_IF_EXCEPTION(napi_preamble_throw_scope__, napi_set_last_error((_env), napi_pending_exception))
+
+#define NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(_env, _scope)                                   \
+    do {                                                                                    \
+        RETURN_IF_EXCEPTION((_scope), napi_set_last_error((_env), napi_pending_exception)); \
+        if ((_env)->hasPendingException()) {                                                \
+            return napi_set_last_error((_env), napi_pending_exception);                     \
+        }                                                                                   \
+    } while (0)
+
+#define NAPI_RETURN_IF_EXCEPTION(_env) NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE((_env), napi_preamble_throw_scope__)
 
 // Return indicating that no error occurred in a NAPI function, and an exception is not expected
 #define NAPI_RETURN_SUCCESS(_env)                        \
@@ -170,6 +167,19 @@ extern "C" napi_status napi_set_last_error(napi_env env, napi_status status)
         env->m_lastNapiErrorInfo.error_code = status;
     }
     return status;
+}
+
+// Clear the last error info, similar to Node.js's implementation.
+// This is used by functions that need to clear error state safely.
+extern "C" napi_status napi_clear_last_error(napi_env env)
+{
+    if (env) {
+        env->m_lastNapiErrorInfo.error_code = napi_ok;
+        env->m_lastNapiErrorInfo.engine_error_code = 0;
+        env->m_lastNapiErrorInfo.engine_reserved = nullptr;
+        env->m_lastNapiErrorInfo.error_message = nullptr;
+    }
+    return napi_ok;
 }
 
 extern "C" napi_status
@@ -918,6 +928,7 @@ extern "C" napi_status napi_create_function(napi_env env, const char* utf8name,
     void* data, napi_value* result)
 {
     NAPI_PREAMBLE(env);
+    NAPI_RETURN_IF_EXCEPTION(env);
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, cb);
 
@@ -961,17 +972,16 @@ napi_define_properties(napi_env env, napi_value object, size_t property_count,
     const napi_property_descriptor* properties)
 {
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
-    NAPI_CHECK_ARG(env, object);
-    NAPI_RETURN_EARLY_IF_FALSE(env, properties || property_count == 0, napi_invalid_arg);
-
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(env, throwScope);
+    NAPI_CHECK_ARG(env, object);
+    NAPI_RETURN_EARLY_IF_FALSE(env, properties || property_count == 0, napi_invalid_arg);
 
     JSValue objectValue = toJS(object);
     JSC::JSObject* objectObject = objectValue.getObject();
     NAPI_RETURN_EARLY_IF_FALSE(env, objectObject, napi_object_expected);
-
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     for (size_t i = 0; i < property_count; i++) {
         Napi::defineProperty(env, objectObject, properties[i], true, throwScope);
@@ -1003,7 +1013,6 @@ static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, c
 {
     auto* globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!msg_utf8) {
         return napi_set_last_error(env, napi_invalid_arg);
@@ -1012,8 +1021,8 @@ static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, c
     WTF::String code = code_utf8 ? WTF::String::fromUTF8(code_utf8) : WTF::String();
     WTF::String message = WTF::String::fromUTF8(msg_utf8);
 
-    auto* error = createErrorWithCode(vm, globalObject, code, message, type);
-    scope.throwException(globalObject, error);
+    JSC::ErrorInstance* error = createErrorWithCode(vm, globalObject, code, message, type);
+    env->scheduleException(error);
     return napi_set_last_error(env, napi_ok);
 }
 
@@ -1145,6 +1154,11 @@ extern "C" napi_status napi_reference_unref(napi_env env, napi_ref ref,
     NAPI_CHECK_ARG(env, ref);
 
     NapiRef* napiRef = toJS(ref);
+
+    if (napiRef->refCount == 0) {
+        return napi_set_last_error(env, napi_generic_failure);
+    }
+
     napiRef->unref();
     if (result) [[likely]] {
         *result = napiRef->refCount;
@@ -1245,15 +1259,27 @@ extern "C" napi_status napi_adjust_external_memory(napi_env env,
 
 extern "C" napi_status napi_is_exception_pending(napi_env env, bool* result)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    // NAPI_PREAMBLE is not used here: this function must execute when there is a
+    // pending exception, including during cleanup.
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
 
-    auto globalObject = toJS(env);
-    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-    *result = scope.exception() != nullptr;
-    // skip macros as they assume we made a throw scope in the preamble
-    return napi_set_last_error(env, napi_ok);
+    // First check if the environment has a pending exception
+    *result = env->hasPendingException();
+
+    // If no exception is pending in the environment, check the VM's exception state
+    // but only if it's safe to access the VM (not during cleanup)
+    if (!*result && !env->isFinishingFinalizers()) {
+        auto globalObject = toJS(env);
+        if (globalObject) {
+            auto& vm = JSC::getVM(globalObject);
+            // Use a catch scope instead of throw scope for safety during cleanup
+            auto scope = DECLARE_CATCH_SCOPE(vm);
+            *result = scope.exception() != nullptr;
+        }
+    }
+
+    return napi_clear_last_error(env);
 }
 
 extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
@@ -1270,6 +1296,9 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
     auto scope = DECLARE_CATCH_SCOPE(JSC::getVM(globalObject));
     if (scope.exception()) [[unlikely]] {
         *result = toNapi(JSValue(scope.exception()->value()), globalObject);
+    } else if (std::optional<JSValue> pending = env->pendingException()) {
+        *result = toNapi(pending.value(), globalObject);
+        env->clearPendingException();
     } else {
         *result = toNapi(JSC::jsUndefined(), globalObject);
     }
@@ -1295,16 +1324,15 @@ extern "C" napi_status napi_fatal_exception(napi_env env,
 
 extern "C" napi_status napi_throw(napi_env env, napi_value error)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ENV_NOT_IN_GC(env);
+    NAPI_RETURN_IF_EXCEPTION(env);
+    if (env->isFinishingFinalizers()) {
+        return napi_set_last_error(env, env->napiModule().nm_version >= 10 ? napi_cannot_run_js : napi_pending_exception);
+    }
     NAPI_CHECK_ARG(env, error);
-    auto globalObject = toJS(env);
-    JSC::VM& vm = JSC::getVM(globalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    JSValue value = toJS(error);
-    JSC::throwException(globalObject, throwScope, value);
-
-    return napi_set_last_error(env, napi_ok);
+    env->scheduleException(toJS(error));
+    NAPI_RETURN_SUCCESS(env);
 }
 
 extern "C" napi_status node_api_symbol_for(napi_env env,
@@ -1481,7 +1509,7 @@ extern "C" JS_EXPORT napi_status node_api_create_buffer_from_arraybuffer(napi_en
     if (!impl || byte_offset + byte_length > impl->byteLength()) [[unlikely]] {
         auto* error = createErrorWithCode(JSC::getVM(globalObject), globalObject, "ERR_OUT_OF_RANGE"_s, "The byte offset + length is out of range"_s, JSC::ErrorType::RangeError);
         RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
-        scope.throwException(globalObject, error);
+        env->scheduleException(error);
         return napi_set_last_error(env, napi_pending_exception);
     }
 
@@ -2107,9 +2135,9 @@ napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValu
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSString* jsString = jsValue.toString(globalObject);
-    NAPI_RETURN_IF_EXCEPTION(env);
+    NAPI_RETURN_IF_VM_EXCEPTION(env);
     const auto view = jsString->view(globalObject);
-    NAPI_RETURN_IF_EXCEPTION(env);
+    NAPI_RETURN_IF_VM_EXCEPTION(env);
 
     if (buf == nullptr) {
         // they just want to know the length
@@ -2466,7 +2494,13 @@ extern "C" napi_status napi_get_value_bigint_words(napi_env env,
 
     std::span<uint64_t> writable_words(words, *word_count);
     *sign_bit = static_cast<int>(bigInt->sign());
-    *word_count = bigInt->toWordsArray(writable_words);
+
+    // Always set word_count to the actual number of words needed
+    size_t actual_word_count = bigInt->length();
+    // Copy as many words as fit in the provided buffer
+    bigInt->toWordsArray(writable_words);
+    *word_count = actual_word_count;
+
     ensureStillAliveHere(bigInt);
     NAPI_RETURN_SUCCESS(env);
 }
@@ -2519,7 +2553,7 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
     JSValue value = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), returnedException);
 
     if (returnedException) {
-        throwScope.throwException(globalObject, returnedException);
+        env->scheduleException(returnedException.get());
         return napi_set_last_error(env, napi_pending_exception);
     }
 
@@ -2696,6 +2730,10 @@ extern "C" napi_status napi_call_function(napi_env env, napi_value recv,
     const napi_value* argv,
     napi_value* result)
 {
+    if (env->throwPendingException()) {
+        return napi_set_last_error(env, napi_pending_exception);
+    }
+
     NAPI_PREAMBLE(env);
     NAPI_RETURN_EARLY_IF_FALSE(env, argc == 0 || argv, napi_invalid_arg);
     NAPI_CHECK_ARG(env, func);
@@ -2806,7 +2844,10 @@ extern "C" JS_EXPORT napi_status napi_remove_env_cleanup_hook(napi_env env,
 {
     NAPI_PREAMBLE(env);
 
-    if (function != nullptr && !env->isVMTerminating()) [[likely]] {
+    // Always attempt removal like Node.js (no VM terminating check)
+    // Node.js has no such check in RemoveEnvironmentCleanupHook
+    // See: node/src/api/hooks.cc:142-143
+    if (function != nullptr) [[likely]] {
         env->removeCleanupHook(function, data);
     }
 
@@ -2815,14 +2856,18 @@ extern "C" JS_EXPORT napi_status napi_remove_env_cleanup_hook(napi_env env,
 
 extern "C" JS_EXPORT napi_status napi_remove_async_cleanup_hook(napi_async_cleanup_hook_handle handle)
 {
-    ASSERT(handle != nullptr);
-    napi_env env = handle->env;
+    // Node.js returns napi_invalid_arg for NULL handle
+    // See: node/src/node_api.cc:849-855
+    if (handle == nullptr) {
+        return napi_invalid_arg;
+    }
 
+    napi_env env = handle->env;
     NAPI_PREAMBLE(env);
 
-    if (!env->isVMTerminating()) {
-        env->removeAsyncCleanupHook(handle);
-    }
+    // Always attempt removal like Node.js (no VM terminating check)
+    // Node.js has no such check in napi_remove_async_cleanup_hook
+    env->removeAsyncCleanupHook(handle);
 
     NAPI_RETURN_SUCCESS(env);
 }
@@ -2850,6 +2895,17 @@ extern "C" uint32_t napi_internal_get_version(napi_env env)
 extern "C" JSGlobalObject* NapiEnv__globalObject(napi_env env)
 {
     return env->globalObject();
+}
+
+extern "C" bool NapiEnv__getAndClearPendingException(napi_env env, JSC::EncodedJSValue* exception)
+{
+    if (std::optional<JSC::JSValue> pending = env->pendingException()) {
+        *exception = JSValue::encode(*pending);
+        env->clearPendingException();
+        return true;
+    }
+
+    return false;
 }
 
 }

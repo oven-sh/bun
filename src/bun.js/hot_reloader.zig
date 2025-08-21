@@ -86,7 +86,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
         fn debug(comptime fmt: string, args: anytype) void {
             if (Environment.enable_logs) {
-                Output.scoped(.hot_reloader, false)(fmt, args);
+                Output.scoped(.hot_reloader, .visible)(fmt, args);
             } else {
                 Output.prettyErrorln("<cyan>watcher<r><d>:<r> " ++ fmt, args);
             }

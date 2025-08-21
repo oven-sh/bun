@@ -772,6 +772,95 @@ pub const JestPrettyFormat = struct {
                     var ctx: *@This() = bun.cast(*@This(), ctx_ptr orelse return);
                     var this = ctx.formatter;
                     const writer_ = ctx.writer;
+
+                    // Filter out verbose DOM element properties to fix issue #10886
+                    // DOM elements have many prototype methods that make test output extremely verbose
+                    const is_dom_element = blk: {
+                        // Check for native DOM elements
+                        if (ctx.parent.jsType() == .DOMWrapper) break :blk true;
+                        
+                        // Check for Happy DOM elements by looking for DOM-like constructor names
+                        if (ctx.parent.isObject()) {
+                            const constructor_value = ctx.parent.get(globalThis, "constructor") catch break :blk false;
+                            if (constructor_value) |constructor| {
+                                var name_str = ZigString.init("");
+                                constructor.getNameProperty(globalThis, &name_str) catch break :blk false;
+                                
+                                // Happy DOM element constructor names
+                                if (name_str.eqlComptime("HTMLElement") or
+                                    name_str.eqlComptime("HTMLButtonElement") or
+                                    name_str.eqlComptime("HTMLInputElement") or
+                                    name_str.eqlComptime("HTMLDivElement") or
+                                    name_str.eqlComptime("HTMLSpanElement") or
+                                    name_str.eqlComptime("HTMLAnchorElement") or
+                                    name_str.eqlComptime("HTMLFormElement") or
+                                    name_str.eqlComptime("Element") or
+                                    name_str.eqlComptime("Node")) {
+                                    break :blk true;
+                                }
+                            }
+                        }
+                        break :blk false;
+                    };
+                    
+                    if (is_dom_element) {
+                        // Filter out common DOM prototype methods and properties that add noise
+                        if (key.eqlComptime("addEventListener") or
+                            key.eqlComptime("removeEventListener") or
+                            key.eqlComptime("dispatchEvent") or
+                            key.eqlComptime("getAttribute") or
+                            key.eqlComptime("setAttribute") or
+                            key.eqlComptime("removeAttribute") or
+                            key.eqlComptime("hasAttribute") or
+                            key.eqlComptime("querySelector") or
+                            key.eqlComptime("querySelectorAll") or
+                            key.eqlComptime("appendChild") or
+                            key.eqlComptime("removeChild") or
+                            key.eqlComptime("insertBefore") or
+                            key.eqlComptime("replaceChild") or
+                            key.eqlComptime("cloneNode") or
+                            key.eqlComptime("contains") or
+                            key.eqlComptime("closest") or
+                            key.eqlComptime("matches") or
+                            key.eqlComptime("click") or
+                            key.eqlComptime("focus") or
+                            key.eqlComptime("blur") or
+                            key.eqlComptime("scrollIntoView") or
+                            key.eqlComptime("getBoundingClientRect") or
+                            key.eqlComptime("getClientRects") or
+                            key.eqlComptime("offsetParent") or
+                            key.eqlComptime("offsetTop") or
+                            key.eqlComptime("offsetLeft") or
+                            key.eqlComptime("offsetWidth") or
+                            key.eqlComptime("offsetHeight") or
+                            key.eqlComptime("clientTop") or
+                            key.eqlComptime("clientLeft") or
+                            key.eqlComptime("clientWidth") or
+                            key.eqlComptime("clientHeight") or
+                            key.eqlComptime("scrollTop") or
+                            key.eqlComptime("scrollLeft") or
+                            key.eqlComptime("scrollWidth") or
+                            key.eqlComptime("scrollHeight") or
+                            key.eqlComptime("innerHTML") or
+                            key.eqlComptime("outerHTML") or
+                            key.eqlComptime("innerText") or
+                            key.eqlComptime("textContent") or
+                            key.eqlComptime("firstChild") or
+                            key.eqlComptime("lastChild") or
+                            key.eqlComptime("nextSibling") or
+                            key.eqlComptime("previousSibling") or
+                            key.eqlComptime("parentNode") or
+                            key.eqlComptime("parentElement") or
+                            key.eqlComptime("childNodes") or
+                            key.eqlComptime("children") or
+                            key.eqlComptime("nodeName") or
+                            key.eqlComptime("nodeType") or
+                            key.eqlComptime("nodeValue") or
+                            key.eqlComptime("baseURI") or
+                            key.eqlComptime("ownerDocument")) {
+                            return;
+                        }
+                    }
                     if (this.failed) return;
 
                     var writer = WrappedWriter(Writer){

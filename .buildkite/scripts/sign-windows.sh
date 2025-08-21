@@ -33,15 +33,22 @@ verify_env_vars() {
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Try multiple possible temp directories
-if [[ -w "/tmp" ]]; then
-    TOOLS_DIR="${TOOLS_DIR:-/tmp/keylocker-tools}"
+# Use Windows-compatible temp directories
+if [[ -n "${TEMP:-}" ]] && [[ -d "${TEMP}" ]] && [[ -w "${TEMP}" ]]; then
+    # Use Windows TEMP environment variable
+    TOOLS_DIR="${TOOLS_DIR:-${TEMP}/keylocker-tools}"
+elif [[ -n "${TMP:-}" ]] && [[ -d "${TMP}" ]] && [[ -w "${TMP}" ]]; then
+    # Use Windows TMP environment variable  
+    TOOLS_DIR="${TOOLS_DIR:-${TMP}/keylocker-tools}"
+elif [[ -d "/c/temp" ]] && [[ -w "/c/temp" ]]; then
+    # Use C:\temp if it exists
+    TOOLS_DIR="${TOOLS_DIR:-/c/temp/keylocker-tools}"
 elif [[ -w "$HOME" ]]; then
+    # Fallback to home directory
     TOOLS_DIR="${TOOLS_DIR:-$HOME/keylocker-tools}"
-elif [[ -w "." ]]; then
-    TOOLS_DIR="${TOOLS_DIR:-./keylocker-tools}"
 else
-    TOOLS_DIR="${TOOLS_DIR:-/tmp/keylocker-tools}"
+    # Last resort - create in current directory
+    TOOLS_DIR="${TOOLS_DIR:-./keylocker-tools}"
 fi
 KEYLOCKER_URL="https://bun-ci-assets.bun.sh/Keylockertools-windows-x64.msi"
 
@@ -120,28 +127,39 @@ install_keylocker() {
     fi
     
     log_info "Installing DigiCert KeyLocker tools..."
-    mkdir -p "$TOOLS_DIR"
+    log_info "Using tools directory: $TOOLS_DIR"
+    
+    # Create and verify tools directory
+    if [[ ! -d "$TOOLS_DIR" ]]; then
+        log_info "Creating tools directory..."
+        if ! mkdir -p "$TOOLS_DIR"; then
+            log_error "Failed to create directory: $TOOLS_DIR"
+            exit 1
+        fi
+    fi
+    
+    # Verify directory is accessible and writable
+    if [[ ! -d "$TOOLS_DIR" ]]; then
+        log_error "Tools directory does not exist after creation: $TOOLS_DIR"
+        exit 1
+    fi
+    
+    if [[ ! -w "$TOOLS_DIR" ]]; then
+        log_error "Tools directory not writable: $TOOLS_DIR"
+        exit 1
+    fi
     
     # Download MSI installer with improved error handling
     local msi_path="$TOOLS_DIR/Keylockertools-windows-x64.msi"
     if [[ ! -f "$msi_path" ]]; then
         log_info "Downloading KeyLocker installer..."
         
-        # Check disk space
-        local available_space=$(df "$TOOLS_DIR" | awk 'NR==2 {print $4}')
-        log_info "Available disk space: ${available_space}K bytes"
-        
-        # Ensure directory exists and is writable
-        if [[ ! -d "$TOOLS_DIR" ]]; then
-            mkdir -p "$TOOLS_DIR" || {
-                log_error "Failed to create directory: $TOOLS_DIR"
-                exit 1
-            }
-        fi
-        
-        if [[ ! -w "$TOOLS_DIR" ]]; then
-            log_error "Directory not writable: $TOOLS_DIR"
-            exit 1
+        # Check disk space on the tools directory
+        local available_space
+        if available_space=$(df "$TOOLS_DIR" 2>/dev/null | awk 'NR==2 {print $4}'); then
+            log_info "Available disk space: ${available_space}K bytes"
+        else
+            log_info "Could not determine disk space, continuing..."
         fi
         
         # Try downloading with multiple approaches
@@ -157,10 +175,18 @@ install_keylocker() {
         else
             log_info "Method 1 failed, trying alternative temp directory..."
             
-            # Method 2: Try different temp directory
-            local alt_temp_dir="/c/temp/keylocker-$$"
-            mkdir -p "$alt_temp_dir" 2>/dev/null || true
-            if [[ -w "$alt_temp_dir" ]]; then
+            # Method 2: Try Windows system temp directory
+            local alt_temp_dir
+            if [[ -n "${TEMP:-}" ]]; then
+                alt_temp_dir="${TEMP}/keylocker-$$"
+            elif [[ -n "${TMP:-}" ]]; then
+                alt_temp_dir="${TMP}/keylocker-$$"
+            else
+                alt_temp_dir="./keylocker-$$"
+            fi
+            
+            log_info "Trying alternative temp directory: $alt_temp_dir"
+            if mkdir -p "$alt_temp_dir" 2>/dev/null && [[ -w "$alt_temp_dir" ]]; then
                 local alt_msi_path="$alt_temp_dir/Keylockertools-windows-x64.msi"
                 log_info "Attempting download (method 2: alt temp dir)..."
                 if curl --fail --show-error --location --retry 2 --retry-delay 3 \
@@ -177,6 +203,8 @@ install_keylocker() {
                 else
                     rm -rf "$alt_temp_dir" 2>/dev/null || true
                 fi
+            else
+                log_info "Could not create alternative temp directory"
             fi
             
             # Method 3: Try wget as fallback
@@ -192,7 +220,9 @@ install_keylocker() {
             # Method 4: PowerShell as last resort
             if [[ "$download_success" != "true" ]]; then
                 log_info "Attempting download (method 4: PowerShell)..."
-                if powershell -Command "try { Invoke-WebRequest -Uri '$KEYLOCKER_URL' -OutFile '$msi_path' -UseBasicParsing -TimeoutSec 300; exit 0 } catch { exit 1 }" >/dev/null 2>&1; then
+                # Convert to Windows path for PowerShell
+                local win_msi_path="$(cygpath -w "$msi_path" 2>/dev/null || echo "$msi_path")"
+                if powershell -Command "try { Invoke-WebRequest -Uri '$KEYLOCKER_URL' -OutFile '$win_msi_path' -UseBasicParsing -TimeoutSec 300; exit 0 } catch { exit 1 }" >/dev/null 2>&1; then
                     download_success=true
                     log_info "Download successful (method 4)"
                 fi

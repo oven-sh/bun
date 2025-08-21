@@ -135,7 +135,7 @@ declare module "bun" {
       onclose?: ((err: Error | null) => void) | undefined;
     }
 
-    interface PostgresOptions {
+    interface PostgresOrMySQLOptions {
       /**
        * Connection URL (can be string or URL object)
        */
@@ -339,7 +339,7 @@ declare module "bun" {
      * };
      * ```
      */
-    type Options = SQLiteOptions | PostgresOptions | MySQLOptions;
+    type Options = SQLiteOptions | PostgresOrMySQLOptions;
 
     /**
      * Represents a SQL query that can be executed, with additional control

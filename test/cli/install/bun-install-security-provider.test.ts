@@ -25,7 +25,7 @@ function test(
     fails?: boolean;
     expect?: (std: { out: string; err: string }) => void | Promise<void>;
     expectedExitCode?: number;
-    bunfigProvider?: string | false;
+    bunfigScanner?: string | false;
     packages?: string[];
     scannerFile?: string;
   },
@@ -48,8 +48,8 @@ function test(
       }
 
       const bunfig = await read("./bunfig.toml").text();
-      if (options.bunfigProvider !== false) {
-        const scannerPath = options.bunfigProvider ?? "./scanner.ts";
+      if (options.bunfigScanner !== false) {
+        const scannerPath = options.bunfigScanner ?? "./scanner.ts";
         await write("./bunfig.toml", `${bunfig}\n[install.security]\nscanner = "${scannerPath}"`);
       }
 
@@ -133,36 +133,36 @@ test("stdout contains all input package metadata", {
   },
 });
 
-describe("Security Provider Edge Cases", () => {
-  test("provider module not found", {
+describe("Security Scanner Edge Cases", () => {
+  test("scanner module not found", {
     scanner: "dummy", // We need a scanner but will override the path
-    bunfigProvider: "./non-existent-scanner.ts",
+    bunfigScanner: "./non-existent-scanner.ts",
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("Cannot find module");
+      expect(err).toContain("Failed to import security scanner");
     },
   });
 
-  test("provider module throws during import", {
+  test("scanner module throws during import", {
     scanner: `throw new Error("Module failed to load");`,
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("Module failed to load");
+      expect(err).toContain("Failed to import security scanner");
     },
   });
 
-  test("provider missing version field", {
-    scanner: `export const provider = {
+  test("scanner missing version field", {
+    scanner: `export const scanner = {
       scan: async () => []
     };`,
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("Security scanner must be version 1");
+      expect(err).toContain("with a version property");
     },
   });
 
-  test("provider wrong version", {
-    scanner: `export const provider = {
+  test("scanner wrong version", {
+    scanner: `export const scanner = {
       version: "2",
       scan: async () => []
     };`,
@@ -172,31 +172,31 @@ describe("Security Provider Edge Cases", () => {
     },
   });
 
-  test("provider missing scan", {
-    scanner: `export const provider = {
+  test("scanner missing scan", {
+    scanner: `export const scanner = {
       version: "1"
     };`,
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("provider.scan is not a function");
+      expect(err).toContain("scanner.scan is not a function");
     },
   });
 
-  test("provider scan not a function", {
-    scanner: `export const provider = {
+  test("scanner scan not a function", {
+    scanner: `export const scanner = {
       version: "1",
       scan: "not a function"
     };`,
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("provider.scan is not a function");
+      expect(err).toContain("scanner.scan is not a function");
     },
   });
 });
 
 // Invalid return value tests
 describe("Invalid Return Values", () => {
-  test("provider returns non-array", {
+  test("scanner returns non-array", {
     scanner: async () => "not an array" as any,
     expectedExitCode: 1,
     expect: ({ err }) => {
@@ -204,7 +204,7 @@ describe("Invalid Return Values", () => {
     },
   });
 
-  test("provider returns null", {
+  test("scanner returns null", {
     scanner: async () => null as any,
     expectedExitCode: 1,
     expect: ({ err }) => {
@@ -212,7 +212,7 @@ describe("Invalid Return Values", () => {
     },
   });
 
-  test("provider returns undefined", {
+  test("scanner returns undefined", {
     scanner: async () => undefined as any,
     expectedExitCode: 1,
     expect: ({ err }) => {
@@ -220,7 +220,7 @@ describe("Invalid Return Values", () => {
     },
   });
 
-  test("provider throws exception", {
+  test("scanner throws exception", {
     scanner: async () => {
       throw new Error("Scanner failed");
     },
@@ -230,7 +230,7 @@ describe("Invalid Return Values", () => {
     },
   });
 
-  test("provider returns non-object in array", {
+  test("scanner returns non-object in array", {
     scanner: async () => ["not an object"] as any,
     expectedExitCode: 1,
     expect: ({ err }) => {
@@ -485,7 +485,7 @@ describe("Invalid Advisory Formats", () => {
 });
 
 describe("Process Behavior", () => {
-  test("provider process exits early", {
+  test("scanner process exits early", {
     scanner: `
       console.log("Starting...");
       process.exit(42);
@@ -498,7 +498,7 @@ describe("Process Behavior", () => {
 });
 
 describe("Large Data Handling", () => {
-  test("provider returns many advisories", {
+  test("scanner returns many advisories", {
     scanner: async ({ packages }) => {
       const advisories: any[] = [];
 
@@ -521,7 +521,7 @@ describe("Large Data Handling", () => {
     },
   });
 
-  test("provider with very large response", {
+  test("scanner with very large response", {
     scanner: async ({ packages }) => {
       const longString = Buffer.alloc(10000, 65).toString(); // 10k of 'A's
       return [

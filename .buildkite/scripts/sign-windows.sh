@@ -43,31 +43,25 @@ verify_env_vars() {
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Use Windows-compatible temp directories with proper path conversion
+# Get a working temp directory using Windows-native paths
 get_windows_temp_dir() {
-    # Try to get a working temp directory, converting Windows paths to Unix format
-    local temp_base=""
+    local temp_dir=""
     
-    # Method 1: Use Windows TEMP environment variable, convert to Unix path
-    if [[ -n "${TEMP:-}" ]]; then
-        # Convert Windows path like C:\Windows\TEMP to /c/Windows/TEMP
-        temp_base="${TEMP//\\//}"  # Replace backslashes with forward slashes
-        temp_base="${temp_base//C:/\/c}"  # Convert C: to /c
-        temp_base="${temp_base//c:/\/c}"  # Convert c: to /c (lowercase)
-    elif [[ -n "${TMP:-}" ]]; then
-        temp_base="${TMP//\\//}"
-        temp_base="${temp_base//C:/\/c}"
-        temp_base="${temp_base//c:/\/c}"
+    # Method 1: Use PowerShell to get proper temp path
+    if command -v powershell >/dev/null 2>&1; then
+        temp_dir=$(powershell -Command "[System.IO.Path]::GetTempPath()" 2>/dev/null | tr -d '\r\n' || echo "")
+        if [[ -n "$temp_dir" ]]; then
+            # Convert Windows path to Unix format for bash
+            temp_dir=$(cygpath -u "$temp_dir" 2>/dev/null || echo "$temp_dir")
+            if [[ -d "$temp_dir" ]] && [[ -w "$temp_dir" ]]; then
+                echo "$temp_dir/keylocker-tools"
+                return 0
+            fi
+        fi
     fi
     
-    # Validate the converted path exists and is writable
-    if [[ -n "$temp_base" ]] && [[ -d "$temp_base" ]] && [[ -w "$temp_base" ]]; then
-        echo "$temp_base/keylocker-tools"
-        return 0
-    fi
-    
-    # Method 2: Try standard Unix-style paths that might exist in CI
-    for dir in "/tmp" "/var/tmp" "/c/temp" "$HOME"; do
+    # Method 2: Standard temp directories
+    for dir in "/tmp" "/var/tmp" "/c/temp" "/c/Windows/Temp" "$HOME"; do
         if [[ -d "$dir" ]] && [[ -w "$dir" ]]; then
             echo "$dir/keylocker-tools"
             return 0
@@ -205,36 +199,42 @@ install_keylocker() {
         else
             log_info "Method 1 failed, trying alternative temp directory..."
             
-            # Method 2: Try Windows system temp directory
-            local alt_temp_dir
-            if [[ -n "${TEMP:-}" ]]; then
-                alt_temp_dir="${TEMP}/keylocker-$$"
-            elif [[ -n "${TMP:-}" ]]; then
-                alt_temp_dir="${TMP}/keylocker-$$"
-            else
-                alt_temp_dir="./keylocker-$$"
-            fi
-            
-            log_info "Trying alternative temp directory: $alt_temp_dir"
-            if mkdir -p "$alt_temp_dir" 2>/dev/null && [[ -w "$alt_temp_dir" ]]; then
-                local alt_msi_path="$alt_temp_dir/Keylockertools-windows-x64.msi"
-                log_info "Attempting download (method 2: alt temp dir)..."
-                if curl --fail --show-error --location --retry 2 --retry-delay 3 \
-                       --connect-timeout 30 --max-time 600 \
-                       --output "$alt_msi_path" "$KEYLOCKER_URL"; then
-                    if mv "$alt_msi_path" "$msi_path" 2>/dev/null; then
-                        download_success=true
-                        log_info "Download successful (method 2)"
-                        rm -rf "$alt_temp_dir" 2>/dev/null || true
+            # Method 2: Try different temp directory using PowerShell temp path
+            if [[ "$download_success" != "true" ]]; then
+                log_info "Method 1 failed, trying PowerShell temp directory..."
+                local ps_temp_dir
+                ps_temp_dir=$(powershell -Command "[System.IO.Path]::GetTempPath()" 2>/dev/null | tr -d '\r\n' || echo "")
+                
+                if [[ -n "$ps_temp_dir" ]]; then
+                    # Convert to Unix path for bash operations  
+                    local alt_temp_dir
+                    alt_temp_dir=$(cygpath -u "$ps_temp_dir" 2>/dev/null || echo "$ps_temp_dir")
+                    alt_temp_dir="$alt_temp_dir/keylocker-$$"
+                    
+                    log_info "Trying PowerShell temp directory: $alt_temp_dir"
+                    if mkdir -p "$alt_temp_dir" 2>/dev/null && [[ -w "$alt_temp_dir" ]]; then
+                        local alt_msi_path="$alt_temp_dir/Keylockertools-windows-x64.msi"
+                        log_info "Attempting download (method 2: PowerShell temp)..."
+                        if curl --fail --show-error --location --retry 2 --retry-delay 3 \
+                               --connect-timeout 30 --max-time 600 \
+                               --output "$alt_msi_path" "$KEYLOCKER_URL"; then
+                            if mv "$alt_msi_path" "$msi_path" 2>/dev/null; then
+                                download_success=true
+                                log_info "Download successful (method 2)"
+                                rm -rf "$alt_temp_dir" 2>/dev/null || true
+                            else
+                                log_info "Move failed, cleaning up..."
+                                rm -rf "$alt_temp_dir" 2>/dev/null || true
+                            fi
+                        else
+                            rm -rf "$alt_temp_dir" 2>/dev/null || true
+                        fi
                     else
-                        log_info "Move failed, cleaning up..."
-                        rm -rf "$alt_temp_dir" 2>/dev/null || true
+                        log_info "Could not create PowerShell temp directory"
                     fi
                 else
-                    rm -rf "$alt_temp_dir" 2>/dev/null || true
+                    log_info "Could not get PowerShell temp path"
                 fi
-            else
-                log_info "Could not create alternative temp directory"
             fi
             
             # Method 3: Try wget as fallback
@@ -284,36 +284,88 @@ install_keylocker() {
     # Convert path for Windows
     local win_msi_path="$(cygpath -w "$msi_path" 2>/dev/null || echo "$msi_path")"
     
-    # Install MSI with comprehensive automation
+    # Install MSI with comprehensive automation and better error detection
     log_info "Running MSI installer..."
+    log_info "MSI file path: $msi_path"
+    log_info "Windows MSI path: $win_msi_path"
     
-    # Try multiple installation approaches
+    # Verify MSI file exists and is not empty
+    if [[ ! -f "$msi_path" ]] || [[ ! -s "$msi_path" ]]; then
+        log_error "MSI file is missing or empty: $msi_path"
+        exit 1
+    fi
+    
+    local file_size=$(wc -c < "$msi_path" | tr -d ' ')
+    log_info "MSI file size: $file_size bytes"
+    
+    # Try multiple installation approaches with better error detection
     local install_success=false
+    local install_log_path="/tmp/keylocker-install-$$.log"
     
-    # Method 1: Direct msiexec with full automation
-    if cmd //c "msiexec.exe /i \"$win_msi_path\" /quiet /norestart /L*V /tmp/keylocker-install.log ACCEPT_EULA=1 ADDLOCAL=ALL ALLUSERS=1" >/dev/null 2>&1; then
-        install_success=true
-        log_info "MSI installation completed (method 1)"
-    else
-        # Method 2: PowerShell with elevated privileges and wait
-        log_info "Attempting installation with elevated privileges..."
-        if powershell -Command "try { Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i', '\"$win_msi_path\"', '/quiet', '/norestart', '/L*V', '/tmp/keylocker-install.log', 'ACCEPT_EULA=1', 'ADDLOCAL=ALL', 'ALLUSERS=1' -Verb RunAs -Wait -PassThru | Out-Null; exit 0 } catch { exit 1 }" >/dev/null 2>&1; then
+    # Method 1: Direct msiexec with full automation and proper logging
+    log_info "Attempting MSI installation (method 1: direct msiexec)..."
+    if cmd //c "msiexec.exe /i \"$win_msi_path\" /quiet /norestart /L*V \"$(cygpath -w "$install_log_path" 2>/dev/null || echo "$install_log_path")\" ACCEPT_EULA=1 ADDLOCAL=ALL ALLUSERS=1" 2>&1; then
+        log_info "MSI installer command completed (method 1)"
+        sleep 20  # Wait for installation to complete
+        
+        # Check if tools were actually installed
+        if [[ -f "/c/Program Files/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]] || 
+           [[ -f "/c/Program Files (x86)/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]]; then
             install_success=true
-            log_info "MSI installation completed (method 2)"
+            log_info "MSI installation verified successful (method 1)"
         else
-            # Method 3: Try without elevation but with longer wait
-            log_info "Trying installation without elevation..."
-            cmd //c "msiexec.exe /i \"$win_msi_path\" /passive /norestart /L*V /tmp/keylocker-install.log ACCEPT_EULA=1 ADDLOCAL=ALL" >/dev/null 2>&1 &
+            log_info "MSI command succeeded but tools not found, trying method 2..."
+        fi
+    else
+        log_info "Method 1 failed, trying method 2..."
+    fi
+    
+    # Method 2: PowerShell with error handling
+    if [[ "$install_success" != "true" ]]; then
+        log_info "Attempting MSI installation (method 2: PowerShell)..."
+        if powershell -Command "
+            try { 
+                \$process = Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i', '\"$win_msi_path\"', '/quiet', '/norestart', 'ACCEPT_EULA=1', 'ADDLOCAL=ALL', 'ALLUSERS=1' -Wait -PassThru -NoNewWindow
+                Write-Host \"MSI exit code: \$(\$process.ExitCode)\"
+                exit \$process.ExitCode
+            } catch { 
+                Write-Host \"PowerShell error: \$(\$_.Exception.Message)\"
+                exit 1 
+            }" 2>&1; then
+            log_info "PowerShell MSI installation completed"
             sleep 30
-            if [[ -f "/c/Program Files/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]]; then
+            
+            if [[ -f "/c/Program Files/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]] || 
+               [[ -f "/c/Program Files (x86)/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]]; then
                 install_success=true
-                log_info "MSI installation completed (method 3)"
+                log_info "MSI installation verified successful (method 2)"
             fi
         fi
     fi
     
-    # Wait additional time for installation to fully complete
-    sleep 15
+    # Method 3: Try with /passive mode if still failing
+    if [[ "$install_success" != "true" ]]; then
+        log_info "Attempting MSI installation (method 3: passive mode)..."
+        cmd //c "msiexec.exe /i \"$win_msi_path\" /passive /norestart ACCEPT_EULA=1 ADDLOCAL=ALL ALLUSERS=1" >/dev/null 2>&1 &
+        local msi_pid=$!
+        
+        # Wait up to 60 seconds for installation
+        for i in {1..60}; do
+            if [[ -f "/c/Program Files/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]] || 
+               [[ -f "/c/Program Files (x86)/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]]; then
+                install_success=true
+                log_info "MSI installation verified successful (method 3)"
+                break
+            fi
+            sleep 1
+        done
+        
+        # Kill MSI process if still running
+        kill $msi_pid 2>/dev/null || true
+    fi
+    
+    # Final wait for any remaining installation processes
+    sleep 10
     
     # Verify installation with multiple possible paths
     local smctl_found=false

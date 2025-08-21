@@ -2,7 +2,7 @@
 
 import { expectType } from "./utilities";
 
-const mySecurityScanner: Bun.Security.Provider = {
+const mySecurityScanner: Bun.Security.Scanner = {
   version: "1",
   scan: async ({ packages }) => {
     const response = await fetch("https://threat-feed.example.com");

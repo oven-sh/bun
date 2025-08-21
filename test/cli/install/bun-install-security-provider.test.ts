@@ -21,7 +21,7 @@ function test(
   name: string,
   options: {
     testTimeout?: number;
-    scanner: Bun.Security.Provider["scan"] | string;
+    scanner: Bun.Security.Scanner["scan"] | string;
     fails?: boolean;
     expect?: (std: { out: string; err: string }) => void | Promise<void>;
     expectedExitCode?: number;

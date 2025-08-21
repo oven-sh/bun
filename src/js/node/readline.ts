@@ -1420,6 +1420,14 @@ var _Interface = class Interface extends InterfaceConstructor {
   }
 
   /**
+   * Alias for `close()`. Provides Symbol.dispose support for `using` statements.
+   * @returns {void}
+   */
+  [Symbol.dispose]() {
+    this.close();
+  }
+
+  /**
    * Pauses the `input` stream.
    * @returns {void | Interface}
    */
@@ -2532,6 +2540,9 @@ Interface.prototype._getDisplayPos = _Interface.prototype[kGetDisplayPos];
 Interface.prototype._getCursorPos = _Interface.prototype.getCursorPos;
 Interface.prototype._moveCursor = _Interface.prototype[kMoveCursor];
 Interface.prototype._ttyWrite = _Interface.prototype[kTtyWrite];
+
+// Add Symbol.dispose method for disposable support
+Interface.prototype[Symbol.dispose] = _Interface.prototype[Symbol.dispose];
 
 function _ttyWriteDumb(s, key) {
   key = key || kEmptyObject;

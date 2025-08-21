@@ -27,14 +27,6 @@ declare module "bun" {
        * This could be a tag like `beta` or a semver range like `>=4.0.0`
        */
       requestedRange: string;
-
-      // /**
-      //  * Integrity hash provided from the registry
-      //  *
-      //  * Bun will usually verify this, but it's possible there are cases where
-      //  * it was not validated.
-      //  */
-      // integrity: string;
     }
 
     /**

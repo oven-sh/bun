@@ -1837,6 +1837,33 @@ pub const TestCommand = struct {
 
             const file_end = reporter.jest.files.len;
 
+            // Check if describe2 is available and has tests to run
+            if (jest.Jest.runner.?.describe2) |*buntest| {
+                // Automatically execute describe2 tests
+                try buntest.run(vm.global);
+                
+                // Process event loop while describe2 tests are running
+                vm.eventLoop().tick();
+                
+                var prev_unhandled_count = vm.unhandled_error_counter;
+                while (buntest.phase != .done) {
+                    vm.eventLoop().autoTick();
+                    if (buntest.phase == .done) break;
+                    vm.eventLoop().tick();
+                    
+                    while (prev_unhandled_count < vm.unhandled_error_counter) {
+                        vm.global.handleRejectedPromises();
+                        prev_unhandled_count = vm.unhandled_error_counter;
+                    }
+                }
+                
+                vm.eventLoop().tickImmediateTasks(vm);
+                
+                // Automatically cleanup describe2 after tests complete
+                buntest.deinit();
+                jest.Jest.runner.?.describe2 = null;
+            }
+
             for (file_start..file_end) |module_id| {
                 const module: *jest.DescribeScope = reporter.jest.files.items(.module_scope)[module_id];
 

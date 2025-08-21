@@ -893,6 +893,7 @@ src/sql/mysql/MySQLQuery.zig
 src/sql/mysql/MySQLRequest.zig
 src/sql/mysql/MySQLStatement.zig
 src/sql/mysql/MySQLTypes.zig
+src/sql/mysql/protocol/AnyMySQLError.zig
 src/sql/mysql/protocol/Auth.zig
 src/sql/mysql/protocol/AuthSwitchRequest.zig
 src/sql/mysql/protocol/AuthSwitchResponse.zig

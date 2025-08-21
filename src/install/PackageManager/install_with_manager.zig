@@ -994,10 +994,10 @@ fn printBlockedPackagesInfo(summary: *const PackageInstall.Summary, global: bool
 
 const string = []const u8;
 
+const security_scanner = @import("./security_scanner.zig");
 const std = @import("std");
 const installHoistedPackages = @import("../hoisted_install.zig").installHoistedPackages;
 const installIsolatedPackages = @import("../isolated_install.zig").installIsolatedPackages;
-const security_scanner = @import("security_scanner.zig");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -1006,7 +1006,6 @@ const Output = bun.Output;
 const Path = bun.path;
 const Progress = bun.Progress;
 const default_allocator = bun.default_allocator;
-const jsc = bun.jsc;
 const logger = bun.logger;
 const strings = bun.strings;
 const Command = bun.cli.Command;
@@ -1026,7 +1025,6 @@ const PackageNameHash = bun.install.PackageNameHash;
 const PatchTask = bun.install.PatchTask;
 const Resolution = bun.install.Resolution;
 const TextLockfile = bun.install.TextLockfile;
-const invalid_dependency_id = bun.install.invalid_dependency_id;
 const invalid_package_id = bun.install.invalid_package_id;
 
 const Lockfile = bun.install.Lockfile;

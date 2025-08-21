@@ -1,20 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Environment = bun.Environment;
-const Global = bun.Global;
-const Output = bun.Output;
-const Progress = bun.Progress;
-const FileSystem = bun.fs.FileSystem;
-const jsc = bun.jsc;
-const logger = bun.logger;
-
-const DependencyID = bun.install.DependencyID;
-const PackageID = bun.install.PackageID;
-const invalid_dependency_id = bun.install.invalid_dependency_id;
-const invalid_package_id = bun.install.invalid_package_id;
-
-const PackageManager = bun.install.PackageManager;
-
 const string = []const u8;
 
 const PackagePath = struct {
@@ -754,3 +737,20 @@ fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, pack
         }
     }
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const Progress = bun.Progress;
+const jsc = bun.jsc;
+const logger = bun.logger;
+const FileSystem = bun.fs.FileSystem;
+
+const DependencyID = bun.install.DependencyID;
+const PackageID = bun.install.PackageID;
+const PackageManager = bun.install.PackageManager;
+const invalid_dependency_id = bun.install.invalid_dependency_id;
+const invalid_package_id = bun.install.invalid_package_id;

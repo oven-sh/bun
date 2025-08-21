@@ -1663,12 +1663,25 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
 
     var argv = std.ArrayList([]const u8).init(alloc);
 
-    const program = switch (bun.Environment.os) {
-        .windows => "pdb-addr2line",
-        else => "llvm-symbolizer",
-    };
-    argv.append(program) catch return;
+    switch (bun.Environment.os) {
+        .windows => {
+            spawnSymbolizer("pdb-addr2line", &argv, alloc, &trace) catch return;
+        },
+        else => {
+            spawnSymbolizer("llvm-symbolizer", &argv, alloc, &trace) catch {
+                argv.clearAndFree();
+                sfa.fixed_buffer_allocator.reset();
+                sfa = std.heap.stackFallback(16384, arena.allocator());
 
+                // if this doesn't work, then also try llvm-symbolizer-19.
+                spawnSymbolizer("llvm-symbolizer-19", &argv, alloc, &trace) catch {};
+            };
+        },
+    }
+}
+
+fn spawnSymbolizer(program: [:0]const u8, argv: *std.ArrayList([]const u8), alloc: std.mem.Allocator, trace: *const std.builtin.StackTrace) !void {
+    argv.append(program) catch return;
     argv.append("--exe") catch return;
     argv.append(
         switch (bun.Environment.os) {

@@ -72,13 +72,13 @@ const ScanOpts = struct {
 
     fn fromJS(globalThis: *JSGlobalObject, arguments: *ArgumentsSlice, comptime fnName: []const u8, arena: *Arena) bun.JSError!?ScanOpts {
         const optsObj: JSValue = arguments.nextEat() orelse return null;
-        // Check if any advanced options are present by getting the property and checking if it's undefined
-        const has_nocase = !(optsObj.get(globalThis, "nocase") catch JSValue.js_undefined).isUndefinedOrNull();
-        const has_limit = !(optsObj.get(globalThis, "limit") catch JSValue.js_undefined).isUndefinedOrNull();
-        const has_offset = !(optsObj.get(globalThis, "offset") catch JSValue.js_undefined).isUndefinedOrNull();
-        const has_sort = !(optsObj.get(globalThis, "sort") catch JSValue.js_undefined).isUndefinedOrNull();
-        const has_ignore = !(optsObj.get(globalThis, "ignore") catch JSValue.js_undefined).isUndefinedOrNull();
-        const has_signal = !(optsObj.get(globalThis, "signal") catch JSValue.js_undefined).isUndefinedOrNull();
+        // Check if any advanced options are present (property exists, regardless of value)
+        const has_nocase = (optsObj.get(globalThis, "nocase") catch null) != null;
+        const has_limit = (optsObj.get(globalThis, "limit") catch null) != null;
+        const has_offset = (optsObj.get(globalThis, "offset") catch null) != null;
+        const has_sort = (optsObj.get(globalThis, "sort") catch null) != null;
+        const has_ignore = (optsObj.get(globalThis, "ignore") catch null) != null;
+        const has_signal = (optsObj.get(globalThis, "signal") catch null) != null;
         
         const use_advanced_result = has_nocase or has_limit or has_offset or has_sort or has_ignore or has_signal;
 
@@ -394,6 +394,13 @@ fn makeGlobWalker(
         follow_symlinks,
         error_on_broken_symlinks,
         only_files,
+        nocase,
+        limit,
+        offset,
+        sort_field,
+        ignore_patterns,
+        abort_signal,
+        use_structured_result,
     )) {
         .err => |err| {
             return globalThis.throwValue(err.toJS(globalThis));

@@ -153,17 +153,19 @@ describe("Advanced Glob Features", () => {
 
   describe("AbortSignal", () => {
     test("cancellation support", async () => {
-      const tempdir = tempDirWithFiles("glob-abort", {
-        "file1.js": "content",
-        "file2.js": "content", 
-        "file3.js": "content"
-      });
+      // Create many files to make scan take longer
+      const files: Record<string, string> = {};
+      for (let i = 0; i < 100; i++) {
+        files[`file${i}.js`] = "content";
+      }
+      const tempdir = tempDirWithFiles("glob-abort", files);
       
       const controller = new AbortController();
       const glob = new Glob("*.js");
       
-      // Start scan and immediately abort
+      // Start scan and abort after a brief delay to ensure scan has started
       const promise = glob.scan({ cwd: tempdir, signal: controller.signal });
+      await new Promise(resolve => setTimeout(resolve, 1)); // 1ms delay
       controller.abort();
       
       let threw = false;

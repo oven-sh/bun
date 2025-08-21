@@ -313,6 +313,7 @@ fn transitionToGlobState(this: *Expansion) Yield {
         null, // sort_field
         null, // ignore_patterns
         null, // abort_signal
+        false, // use_structured_result
     ) catch bun.outOfMemory()) {
         .result => {},
         .err => |e| {

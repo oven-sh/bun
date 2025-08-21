@@ -1010,6 +1010,13 @@ pub fn GlobWalker_(
             follow_symlinks: bool,
             error_on_broken_symlinks: bool,
             only_files: bool,
+            nocase: bool,
+            limit: ?u32,
+            offset: u32,
+            sort_field: ?SortField,
+            ignore_patterns: ?[][]const u8,
+            abort_signal: ?*AbortSignal,
+            use_structured_result: bool,
         ) !Maybe(void) {
             return try this.initWithCwd(
                 arena,
@@ -1020,13 +1027,13 @@ pub fn GlobWalker_(
                 follow_symlinks,
                 error_on_broken_symlinks,
                 only_files,
-                false, // nocase
-                null, // limit
-                0, // offset
-                null, // sort_field
-                null, // ignore_patterns
-                null, // abort_signal
-                false, // use_structured_result
+                nocase,
+                limit,
+                offset,
+                sort_field,
+                ignore_patterns,
+                abort_signal,
+                use_structured_result,
             );
         }
 

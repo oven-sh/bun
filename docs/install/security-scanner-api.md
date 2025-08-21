@@ -1,5 +1,3 @@
-# Security Scanner API
-
 Bun's package manager can scan packages for security vulnerabilities before installation, helping protect your applications from supply chain attacks and known vulnerabilities.
 
 ## Quick Start

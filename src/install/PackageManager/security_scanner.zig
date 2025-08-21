@@ -210,21 +210,21 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
 
     try code_writer.print(
         \\try {{
-        \\  const {{provider}} = await import('{s}');
+        \\  const {{scanner}} = await import('{s}');
         \\  const packages = {s};
         \\
-        \\  if (provider.version !== '1') {{
-        \\    throw new Error('Security provider must be version 1');
+        \\  if (scanner.version !== '1') {{
+        \\    throw new Error('Security scanner must be version 1');
         \\  }}
         \\
-        \\  if (typeof provider.scan !== 'function') {{
-        \\    throw new Error('provider.scan is not a function');
+        \\  if (typeof scanner.scan !== 'function') {{
+        \\    throw new Error('scanner.scan is not a function');
         \\  }}
         \\
-        \\  const result = await provider.scan({{packages:packages}});
+        \\  const result = await scanner.scan({{packages:packages}});
         \\
         \\  if (!Array.isArray(result)) {{
-        \\    throw new Error('Security provider must return an array of advisories');
+        \\    throw new Error('Security scanner must return an array of advisories');
         \\  }}
         \\
         \\  const fs = require('fs');

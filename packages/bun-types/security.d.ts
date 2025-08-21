@@ -37,7 +37,7 @@ declare module "bun" {
        * Level represents the degree of danger for a security advisory
        *
        * Bun behaves differently depending on the values returned from the
-       * {@link Provider.scan `scan()`} hook:
+       * {@link Scanner.scan `scan()`} hook:
        *
        * > In any case, Bun *always* pretty prints *all* the advisories,
        * > but...
@@ -69,14 +69,14 @@ declare module "bun" {
       description: string | null;
     }
 
-    export interface Provider {
+    export interface Scanner {
       /**
-       * This is the version of the provider implementation. It may change in
+       * This is the version of the scanner implementation. It may change in
        * future versions, so we will use this version to discriminate between
        * such versions. It's entirely possible this API changes in the future
        * so much that version 1 would no longer be supported.
        *
-       * The version is required because third-party provider package versions
+       * The version is required because third-party scanner package versions
        * are inherently unrelated to Bun versions
        */
       version: "1";

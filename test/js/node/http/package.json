@@ -1,0 +1,7 @@
+{
+  "name": "node-http-tests",
+  "private": true,
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  }
+}

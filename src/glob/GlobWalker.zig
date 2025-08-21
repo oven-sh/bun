@@ -1026,6 +1026,7 @@ pub fn GlobWalker_(
                 null, // sort_field
                 null, // ignore_patterns
                 null, // abort_signal
+                false, // use_structured_result
             );
         }
 
@@ -1063,10 +1064,10 @@ pub fn GlobWalker_(
             sort_field: ?SortField,
             ignore_patterns: ?[][]const u8,
             abort_signal: ?*AbortSignal,
+            use_structured_result: bool,
         ) !Maybe(void) {
             log("initWithCwd(cwd={s})", .{cwd});
-            const use_advanced = limit != null or offset > 0 or sort_field != null or 
-                ignore_patterns != null or nocase;
+            const use_advanced = use_structured_result;
             
             this.* = .{
                 .cwd = cwd,
@@ -1163,8 +1164,11 @@ pub fn GlobWalker_(
             else 
                 results.items.len;
                 
-            // Check if there are more results beyond what we're returning
-            this.has_more = end_idx < results.items.len;
+            // Check if there are more results beyond the limit
+            // Only update has_more if we actually applied a limit
+            if (this.limit != null) {
+                this.has_more = results.items.len > (this.offset + (this.limit orelse 0));
+            }
             
             // Add the paginated, sorted results to the matchedPaths HashMap
             for (results.items[start_idx..end_idx]) |result| {

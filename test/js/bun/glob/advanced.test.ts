@@ -291,7 +291,7 @@ describe("Advanced Glob Features", () => {
 
     test("case sensitive matching (default)", async () => {
       const glob = new Glob("*.js");
-      const result = await glob.scan({ cwd: tempdir });
+      const result = await glob.scan({ cwd: tempdir, nocase: false, limit: 100 });
       
       expect(result.files).toContain("script.js");
       expect(result.files).not.toContain("File.JS");

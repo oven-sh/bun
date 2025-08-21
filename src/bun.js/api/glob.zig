@@ -24,6 +24,7 @@ const ScanOpts = struct {
     sort: ?SortField,
     ignore: ?[][]const u8,
     nocase: bool,
+    use_advanced_result: bool,
     signal: ?*webcore.AbortSignal,
 
     fn parseCWD(globalThis: *JSGlobalObject, allocator: std.mem.Allocator, cwdVal: jsc.JSValue, absolute: bool, comptime fnName: string) bun.JSError![]const u8 {
@@ -71,6 +72,16 @@ const ScanOpts = struct {
 
     fn fromJS(globalThis: *JSGlobalObject, arguments: *ArgumentsSlice, comptime fnName: []const u8, arena: *Arena) bun.JSError!?ScanOpts {
         const optsObj: JSValue = arguments.nextEat() orelse return null;
+        // Check if any advanced options are present by getting the property and checking if it's undefined
+        const has_nocase = !(optsObj.get(globalThis, "nocase") catch JSValue.js_undefined).isUndefinedOrNull();
+        const has_limit = !(optsObj.get(globalThis, "limit") catch JSValue.js_undefined).isUndefinedOrNull();
+        const has_offset = !(optsObj.get(globalThis, "offset") catch JSValue.js_undefined).isUndefinedOrNull();
+        const has_sort = !(optsObj.get(globalThis, "sort") catch JSValue.js_undefined).isUndefinedOrNull();
+        const has_ignore = !(optsObj.get(globalThis, "ignore") catch JSValue.js_undefined).isUndefinedOrNull();
+        const has_signal = !(optsObj.get(globalThis, "signal") catch JSValue.js_undefined).isUndefinedOrNull();
+        
+        const use_advanced_result = has_nocase or has_limit or has_offset or has_sort or has_ignore or has_signal;
+
         var out: ScanOpts = .{
             .cwd = null,
             .dot = false,
@@ -83,6 +94,7 @@ const ScanOpts = struct {
             .sort = null,
             .ignore = null,
             .nocase = false,
+            .use_advanced_result = use_advanced_result,
             .signal = null,
         };
         if (optsObj.isUndefinedOrNull()) return out;
@@ -220,11 +232,13 @@ pub const WalkTask = struct {
     pub const Err = union(enum) {
         syscall: Syscall.Error,
         unknown: anyerror,
+        abort: void,
 
         pub fn toJS(this: Err, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
                 .syscall => |err| err.toJS(globalThis),
                 .unknown => |err| ZigString.fromBytes(@errorName(err)).toJS(globalThis),
+                .abort => Bun__wrapAbortError(globalThis, .js_undefined),
             };
         }
     };
@@ -266,7 +280,12 @@ pub const WalkTask = struct {
         };
         switch (result) {
             .err => |err| {
-                this.err = .{ .syscall = err };
+                // Check if this is an abort error
+                if (this.walker.did_abort.load(.monotonic)) {
+                    this.err = .{ .abort = {} };
+                } else {
+                    this.err = .{ .syscall = err };
+                }
             },
             .result => {},
         }
@@ -335,6 +354,8 @@ fn makeGlobWalker(
     const ignore_patterns = matchOpts.ignore;
     const abort_signal = matchOpts.signal;
 
+    const use_structured_result = matchOpts.use_advanced_result;
+
     var globWalker = try alloc.create(GlobWalker);
     errdefer alloc.destroy(globWalker);
     globWalker.* = .{};
@@ -355,6 +376,7 @@ fn makeGlobWalker(
             sort_field,
             ignore_patterns,
             abort_signal,
+            use_structured_result,
         )) {
             .err => |err| {
                 return globalThis.throwValue(err.toJS(globalThis));
@@ -527,3 +549,5 @@ const ZigString = jsc.ZigString;
 const ArgumentsSlice = jsc.CallFrame.ArgumentsSlice;
 
 const webcore = jsc.WebCore;
+
+extern fn Bun__wrapAbortError(globalObject: *JSGlobalObject, cause: JSValue) JSValue;

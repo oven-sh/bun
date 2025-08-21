@@ -758,9 +758,8 @@ async function main() {
     .filter(q => !q.startsWith("#"));
 
   const allFunctions: CppFn[] = [];
-  for (const file of allCppFiles) {
-    await processFile(parser, file, allFunctions);
-  }
+  await Promise.all(allCppFiles.map(file => processFile(parser, file, allFunctions)));
+  allFunctions.sort((a, b) => (a.position.file < b.position.file ? -1 : a.position.file > b.position.file ? 1 : 0));
 
   const resultRaw: string[] = [];
   const resultBindings: string[] = [];

@@ -634,7 +634,6 @@ export default [
     name: "ExpectTypeOf",
     construct: true,
     call: true,
-    finalize: true,
     JSType: "0b11101110",
     values: [],
     configurable: false,

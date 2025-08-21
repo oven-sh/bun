@@ -1239,7 +1239,7 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
     defer {
         manager.allocator.free(scanner.code);
         manager.allocator.free(scanner.json_data);
-        manager.allocator.destroy(scanner);
+        bun.destroy(scanner);
     }
 
     try scanner.spawn();
@@ -1311,7 +1311,7 @@ pub const SecurityScanSubprocess = struct {
         const spawn_options = bun.spawn.SpawnOptions{
             .stdout = .inherit,
             .stderr = .inherit,
-            .stdin = .ignore,
+            .stdin = .inherit,
             .cwd = FileSystem.instance.top_level_dir,
             .extra_fds = &.{.{ .pipe = pipe_fds[1] }},
             .windows = if (Environment.isWindows) .{

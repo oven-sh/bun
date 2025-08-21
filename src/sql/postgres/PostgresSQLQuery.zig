@@ -186,7 +186,7 @@ pub fn estimatedSize(this: *PostgresSQLQuery) usize {
 }
 
 pub fn call(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(6).slice();
+    const arguments = callframe.arguments();
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const query = args.nextEat() orelse {
@@ -276,8 +276,7 @@ pub fn setMode(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callf
 }
 
 pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    var arguments_ = callframe.arguments_old(2);
-    const arguments = arguments_.slice();
+    var arguments = callframe.arguments();
     const connection: *PostgresSQLConnection = arguments[0].as(PostgresSQLConnection) orelse {
         return globalObject.throw("connection must be a PostgresSQLConnection", .{});
     };
@@ -375,11 +374,10 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
                 switch (stmt.status) {
                     .failed => {
                         this.statement = null;
+                        const error_response = try stmt.error_response.?.toJS(globalObject);
                         stmt.deref();
                         this.deref();
-                        // If the statement failed, we need to throw the error
-                        const e = try this.statement.?.error_response.?.toJS(globalObject);
-                        return globalObject.throwValue(e);
+                        return globalObject.throwValue(error_response);
                     },
                     .prepared => {
                         if (!connection.hasQueryRunning() or connection.canPipeline()) {
@@ -524,7 +522,7 @@ const bun = @import("bun");
 const protocol = @import("./PostgresProtocol.zig");
 const std = @import("std");
 const CommandTag = @import("./CommandTag.zig").CommandTag;
-const PostgresSQLQueryResultMode = @import("./PostgresSQLQueryResultMode.zig").PostgresSQLQueryResultMode;
+const PostgresSQLQueryResultMode = @import("../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
 
 const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
 const postgresErrorToJS = @import("./AnyPostgresError.zig").postgresErrorToJS;

@@ -316,7 +316,20 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
 
                     for (stable_ref_list.items, clause_items.slice()) |stable_ref, *clause_item| {
                         const ref = stable_ref.ref;
-                        const alias = if (c.options.minify_identifiers) try r.nextMinifiedName(c.allocator) else r.nextRenamedName(c.graph.symbols.get(ref).?.original_name);
+                        const source_index = ref.sourceIndex();
+                        
+                        // Use the export alias name if available, not the original symbol name
+                        var export_name = c.graph.symbols.get(ref).?.original_name;
+                        const resolved_exports = &c.graph.meta.items(.resolved_exports)[source_index];
+                        var iter = resolved_exports.iterator();
+                        while (iter.next()) |entry| {
+                            if (entry.value_ptr.data.import_ref.eql(ref)) {
+                                export_name = entry.key_ptr.*;
+                                break;
+                            }
+                        }
+                        
+                        const alias = if (c.options.minify_identifiers) try r.nextMinifiedName(c.allocator) else r.nextRenamedName(export_name);
 
                         clause_item.* = .{
                             .name = .{
@@ -334,7 +347,10 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                         );
                     }
 
-                    if (clause_items.len > 0) {
+                    // Only generate cross-chunk export statements if this chunk doesn't export from its own entry point
+                    // Entry point chunks handle their own exports via generateEntryPointTailJS  
+                    const should_generate_exports = clause_items.len > 0 and !(chunk.entry_point.is_entry_point);
+                    if (should_generate_exports) {
                         var stmts = BabyList(js_ast.Stmt).initCapacity(c.allocator, 1) catch unreachable;
                         const export_clause = c.allocator.create(js_ast.S.ExportClause) catch unreachable;
                         export_clause.* = .{

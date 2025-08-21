@@ -92,6 +92,7 @@ pub const DebugOptions = struct {
     fallback_only: bool = false,
     silent: bool = false,
     hot_reload: HotReload = HotReload.none,
+    watch_excludes: []const []const u8 = &.{},
     global_cache: GlobalCache = .auto,
     offline_mode_setting: ?OfflineMode = null,
     run_in_bun: bool = false,

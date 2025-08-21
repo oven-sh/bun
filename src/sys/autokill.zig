@@ -13,7 +13,7 @@ pub fn killAllChildProcesses() void {
     defer killed.deinit();
 
     const current_pid = std.c.getpid();
-    const children = getChildPids(current_pid) catch return;
+    const children = getChildPids(current_pid, current_pid) catch return;
     defer if (children.len > 0) bun.default_allocator.free(children);
 
     // First pass: SIGSTOP all processes in the tree to freeze them
@@ -30,7 +30,7 @@ pub fn killAllChildProcesses() void {
     }
 }
 
-fn getChildPids(parent: c_int) ![]c_int {
+fn getChildPids(parent: c_int, current_pid: c_int) ![]c_int {
     if (Environment.isLinux) {
         // Try /proc/{pid}/task/{tid}/children first (most efficient)
         const children_path = std.fmt.allocPrint(
@@ -42,7 +42,7 @@ fn getChildPids(parent: c_int) ![]c_int {
 
         const file = std.fs.openFileAbsolute(children_path, .{}) catch {
             // Fallback to scanning /proc (older kernels)
-            return getChildPidsFallback(parent);
+            return getChildPidsFallback(parent, current_pid);
         };
         defer file.close();
 
@@ -67,7 +67,6 @@ fn getChildPids(parent: c_int) ![]c_int {
         const count = @as(usize, @intCast(bytes)) / @sizeOf(c_int);
         var list = std.ArrayList(c_int).init(bun.default_allocator);
         
-        const current_pid = std.c.getpid();
         for (pids[0..count]) |pid| {
             if (pid > 0 and pid != current_pid) {
                 list.append(pid) catch continue;
@@ -80,7 +79,7 @@ fn getChildPids(parent: c_int) ![]c_int {
     return &[_]c_int{};
 }
 
-fn getChildPidsFallback(parent: c_int) ![]c_int {
+fn getChildPidsFallback(parent: c_int, current_pid: c_int) ![]c_int {
     // Fallback for older Linux kernels: scan /proc
     var list = std.ArrayList(c_int).init(bun.default_allocator);
     
@@ -90,7 +89,7 @@ fn getChildPidsFallback(parent: c_int) ![]c_int {
     var iter = proc_dir.iterate();
     while (try iter.next()) |entry| {
         const pid = std.fmt.parseInt(c_int, entry.name, 10) catch continue;
-        if (pid <= 0 or pid == parent) continue;
+        if (pid <= 0 or pid == parent or pid == current_pid) continue;
         
         // Read /proc/{pid}/stat to get ppid
         const stat_path = std.fmt.allocPrint(
@@ -141,7 +140,7 @@ fn killProcessTreeRecursive(pid: c_int, killed: *std.AutoHashMap(c_int, void), c
     }
     
     // Get children and process them recursively
-    const children = getChildPids(pid) catch return;
+    const children = getChildPids(pid, current_pid) catch return;
     defer if (children.len > 0) bun.default_allocator.free(children);
     
     for (children) |child| {

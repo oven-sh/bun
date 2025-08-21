@@ -97,52 +97,56 @@ log_secure() {
 
 # Cleanup function
 cleanup() {
+    # Only clean up if we created the temp cert file locally (not in production)
     if [[ -n "${TEMP_CERT:-}" ]] && [[ -f "$TEMP_CERT" ]]; then
         rm -f "$TEMP_CERT"
         log_info "Cleaned up temporary certificate"
     fi
+    # Production certificate cleanup is handled by JavaScript process.on('exit')
 }
 
 # Set up cleanup trap
 trap cleanup EXIT
 
-# Decode Base64 certificate to temporary file
+# Setup certificate - now receives pre-decoded file path from JavaScript
 setup_certificate() {
     log_info "Setting up certificate..."
     
-    # Create secure temporary certificate file
-    TEMP_CERT="/tmp/digicert_cert_$$.p12"
-    
-    # Check if we need to read from file or use the variable directly
+    # Check if we have a local test file (for development)
     if [[ -f "$HOME/Downloads/cert_base64.txt" ]]; then
-        # In local environment, read from file
-        log_info "Reading certificate from local file..."
+        # Local development environment - decode from file
+        log_info "Reading certificate from local development file..."
+        TEMP_CERT="/tmp/digicert_cert_$$.p12"
         if cat "$HOME/Downloads/cert_base64.txt" | base64 -d > "$TEMP_CERT" 2>/dev/null; then
-            log_info "Certificate decoded successfully from file"
+            log_info "Certificate decoded successfully from local file"
+            export SM_CLIENT_CERT_FILE="$TEMP_CERT"
         else
-            log_error "Failed to decode Base64 certificate from file"
+            log_error "Failed to decode Base64 certificate from local file"
             exit 1
         fi
     else
-        # In CI environment, use variable directly (NEVER echo the content!)
-        log_info "Using certificate from environment variable..."
-        # Use printf instead of echo to avoid any shell interpretation or output
-        if printf '%s' "$SM_CLIENT_CERT_FILE" | base64 -d > "$TEMP_CERT" 2>/dev/null; then
-            log_info "Certificate decoded successfully"
-        else
-            log_error "Failed to decode Base64 certificate"
+        # Production environment - certificate already decoded by JavaScript
+        log_info "Using pre-decoded certificate file from JavaScript"
+        
+        # Verify the certificate file exists and is readable
+        if [[ ! -f "$SM_CLIENT_CERT_FILE" ]]; then
+            log_error "Certificate file not found: $SM_CLIENT_CERT_FILE"
             exit 1
         fi
+        
+        if [[ ! -r "$SM_CLIENT_CERT_FILE" ]]; then
+            log_error "Certificate file not readable: $SM_CLIENT_CERT_FILE"
+            exit 1
+        fi
+        
+        if [[ ! -s "$SM_CLIENT_CERT_FILE" ]]; then
+            log_error "Certificate file is empty: $SM_CLIENT_CERT_FILE"
+            exit 1
+        fi
+        
+        log_info "Certificate file verified successfully"
+        # SM_CLIENT_CERT_FILE is already set correctly by JavaScript
     fi
-    
-    # Verify certificate file was created
-    if [[ ! -f "$TEMP_CERT" ]] || [[ ! -s "$TEMP_CERT" ]]; then
-        log_error "Certificate file is empty or was not created"
-        exit 1
-    fi
-    
-    # Update environment variable to point to decoded certificate
-    export SM_CLIENT_CERT_FILE="$TEMP_CERT"
 }
 
 # Install DigiCert KeyLocker tools if not present
@@ -344,23 +348,33 @@ install_keylocker() {
         ls -la "/c/Program Files (x86)/" 2>/dev/null | grep -i digicert || true
     fi
     
-    # Method 2: PowerShell with error handling
+    # Method 2: PowerShell with explicit admin elevation request
     if [[ "$install_success" != "true" ]]; then
-        log_info "Attempting MSI installation (method 2: PowerShell)..."
+        log_info "Attempting MSI installation (method 2: PowerShell with admin request)..."
         if powershell -Command "
             try { 
-                \$process = Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i', '\"$win_msi_path\"', '/quiet', '/norestart', 'ACCEPT_EULA=1', 'ADDLOCAL=ALL', 'ALLUSERS=1' -Wait -PassThru -NoNewWindow
-                Write-Host \"MSI exit code: \$(\$process.ExitCode)\"
+                \$process = Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i', '\"$win_msi_path\"', '/quiet', '/norestart', 'ACCEPT_EULA=1', 'ADDLOCAL=ALL', 'ALLUSERS=1' -Wait -PassThru -Verb RunAs -NoNewWindow
+                Write-Host \"MSI exit code with elevation: \$(\$process.ExitCode)\"
                 exit \$process.ExitCode
             } catch { 
-                Write-Host \"PowerShell error: \$(\$_.Exception.Message)\"
-                exit 1 
+                Write-Host \"PowerShell elevation error: \$(\$_.Exception.Message)\"
+                # Try without elevation as fallback
+                try {
+                    \$process2 = Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i', '\"$win_msi_path\"', '/quiet', '/norestart', 'ACCEPT_EULA=1', 'ADDLOCAL=ALL', 'ALLUSERS=0' -Wait -PassThru -NoNewWindow
+                    Write-Host \"MSI exit code without elevation: \$(\$process2.ExitCode)\"
+                    exit \$process2.ExitCode
+                } catch {
+                    Write-Host \"PowerShell fallback error: \$(\$_.Exception.Message)\"
+                    exit 1
+                }
             }" 2>&1; then
             log_info "PowerShell MSI installation completed"
             sleep 30
             
+            # Check both system and user installation locations
             if [[ -f "/c/Program Files/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]] || 
-               [[ -f "/c/Program Files (x86)/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]]; then
+               [[ -f "/c/Program Files (x86)/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]] ||
+               [[ -f "/c/Users/$(whoami)/AppData/Local/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]]; then
                 install_success=true
                 log_info "MSI installation verified successful (method 2)"
             fi
@@ -376,7 +390,9 @@ install_keylocker() {
         # Wait up to 60 seconds for installation
         for i in {1..60}; do
             if [[ -f "/c/Program Files/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]] || 
-               [[ -f "/c/Program Files (x86)/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]]; then
+               [[ -f "/c/Program Files (x86)/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]] ||
+               [[ -f "/c/Users/$(whoami)/AppData/Local/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]] ||
+               [[ -f "/c/Users/$(whoami)/AppData/Roaming/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]]; then
                 install_success=true
                 log_info "MSI installation verified successful (method 3)"
                 break
@@ -391,12 +407,15 @@ install_keylocker() {
     # Final wait for any remaining installation processes
     sleep 10
     
-    # Verify installation with multiple possible paths
+    # Verify installation with multiple possible paths (system and user)
     local smctl_found=false
+    local current_user=$(whoami 2>/dev/null || echo "")
     local smctl_paths=(
         "/c/Program Files/DigiCert/DigiCert Keylocker Tools/smctl.exe"
-        "/c/Program Files (x86)/DigiCert/DigiCert Keylocker Tools/smctl.exe"
+        "/c/Program Files (x86)/DigiCert/DigiCert Keylocker Tools/smctl.exe" 
         "/c/ProgramFiles/DigiCert/DigiCert Keylocker Tools/smctl.exe"
+        "/c/Users/$current_user/AppData/Local/DigiCert/DigiCert Keylocker Tools/smctl.exe"
+        "/c/Users/$current_user/AppData/Roaming/DigiCert/DigiCert Keylocker Tools/smctl.exe"
     )
     
     for path in "${smctl_paths[@]}"; do
@@ -418,12 +437,16 @@ install_keylocker() {
         # Comprehensive search for KeyLocker installation
         log_info "Searching for smctl.exe in all possible locations..."
         
-        # Method 1: Search common program directories
+        # Method 1: Search common program directories (system and user)
+        local current_user_search=$(whoami 2>/dev/null || echo "buildkite-agent")
         local search_paths=(
             "/c/Program Files"
             "/c/Program Files (x86)" 
             "/c/ProgramData"
+            "/c/Users/$current_user_search/AppData/Local"
+            "/c/Users/$current_user_search/AppData/Roaming"
             "/c/Users/*/AppData/Local"
+            "/c/Users/*/AppData/Roaming"
             "/c/Windows/System32"
             "/c/Windows/SysWOW64"
         )
@@ -482,10 +505,13 @@ setup_environment() {
     
     # Add KeyLocker tools to PATH - find the actual installation directory
     local smctl_path=""
+    local current_user=$(whoami 2>/dev/null || echo "")
     local smctl_paths=(
         "/c/Program Files/DigiCert/DigiCert Keylocker Tools"
         "/c/Program Files (x86)/DigiCert/DigiCert Keylocker Tools"
         "/c/ProgramFiles/DigiCert/DigiCert Keylocker Tools"
+        "/c/Users/$current_user/AppData/Local/DigiCert/DigiCert Keylocker Tools"
+        "/c/Users/$current_user/AppData/Roaming/DigiCert/DigiCert Keylocker Tools"
     )
     
     for path in "${smctl_paths[@]}"; do

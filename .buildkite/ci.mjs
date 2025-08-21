@@ -436,12 +436,13 @@ function getBuildEnv(target, options) {
  */
 function getBuildCommand(target, options, label) {
   const { profile } = target;
+  const buildProfile = profile || "release";
 
   if (target.os === "windows" && label === "build-bun") {
-    return `bun run build:${label} -DENABLE_WINDOWS_CODESIGNING=ON`;
+    return `bun run build:${buildProfile} -DENABLE_WINDOWS_CODESIGNING=ON`;
   }
 
-  return `bun run build:${label}`;
+  return `bun run build:${buildProfile}`;
 }
 
 /**

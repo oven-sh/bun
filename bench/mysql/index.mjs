@@ -2,13 +2,16 @@ const isBun = typeof globalThis?.Bun !== "undefined";
 
 // For now, both Bun and Node.js use mysql2 until Bun gets native MySQL
 const mysql = await import("mysql2/promise");
-const connection = await mysql.createConnection({
+const pool = mysql.createPool({
   host: "localhost",
-  user: "root",
+  user: "benchmark",
   password: "",
-  database: "test"
+  database: "test",
+  connectionLimit: 100,
+  acquireTimeout: 60000,
+  timeout: 60000
 });
-const sql = connection;
+const sql = pool;
 
 // Create the table if it doesn't exist
 await sql.execute(`
@@ -42,21 +45,16 @@ if (existingUsers[0].count < 100) {
   }
 }
 
-// Benchmark: Run 100,000 SELECT queries
+// Benchmark: Run 100,000 SELECT queries (all concurrent)
 const start = performance.now();
 const totalQueries = 100_000;
-const batchSize = 100;
 
-for (let batchStart = 0; batchStart < totalQueries; batchStart += batchSize) {
-  const promises = [];
-  
-  for (let j = 0; j < batchSize; j++) {
-    promises.push(sql.execute("SELECT * FROM users_bun_bench LIMIT 100"));
-  }
-  
-  // Wait for this batch to complete
-  await Promise.all(promises);
+const promises = [];
+for (let i = 0; i < totalQueries; i++) {
+  promises.push(sql.execute("SELECT * FROM users_bun_bench LIMIT 100"));
 }
+
+await Promise.all(promises);
 
 const elapsed = performance.now() - start;
 const runtime = isBun ? "Bun" : (typeof Deno !== "undefined" ? "Deno" : "Node.js");

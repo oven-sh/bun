@@ -4,8 +4,13 @@ use std::time::Instant;
 
 #[tokio::main]
 async fn main() -> Result<(), sqlx::Error> {
-    // Connect to MySQL
-    let pool = MySqlPool::connect("mysql://root:@localhost:3306/test").await?;
+    // Connect to MySQL with connection pool
+    use sqlx::mysql::MySqlPoolOptions;
+    let pool = MySqlPoolOptions::new()
+        .max_connections(100)
+        .acquire_timeout(std::time::Duration::from_secs(60))
+        .connect("mysql://benchmark:@localhost:3306/test")
+        .await?;
     
     // Create table if it doesn't exist
     sqlx::query(
@@ -51,28 +56,24 @@ async fn main() -> Result<(), sqlx::Error> {
         }
     }
 
-    // Benchmark: Run 100,000 SELECT queries
+    // Benchmark: Run 100,000 SELECT queries (all concurrent)
     let start = Instant::now();
     const TOTAL_QUERIES: i32 = 100_000;
-    const BATCH_SIZE: i32 = 100;
     
-    for _batch_start in (0..TOTAL_QUERIES).step_by(BATCH_SIZE as usize) {
-        let mut tasks = Vec::new();
-        
-        for _ in 0..BATCH_SIZE {
-            let pool_clone = pool.clone();
-            let task = tokio::spawn(async move {
-                let _rows = sqlx::query("SELECT * FROM users_bun_bench LIMIT 100")
-                    .fetch_all(&pool_clone)
-                    .await;
-            });
-            tasks.push(task);
-        }
-        
-        // Wait for this batch to complete
-        for task in tasks {
-            let _ = task.await;
-        }
+    let mut tasks = Vec::new();
+    for _ in 0..TOTAL_QUERIES {
+        let pool_clone = pool.clone();
+        let task = tokio::spawn(async move {
+            let _rows = sqlx::query("SELECT * FROM users_bun_bench LIMIT 100")
+                .fetch_all(&pool_clone)
+                .await;
+        });
+        tasks.push(task);
+    }
+    
+    // Wait for all queries to complete
+    for task in tasks {
+        let _ = task.await;
     }
 
     let elapsed = start.elapsed();

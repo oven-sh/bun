@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"math/rand"
 	"sync"
 	"time"
 
@@ -12,12 +11,17 @@ import (
 )
 
 func main() {
-	// Connect to MySQL
-	db, err := sql.Open("mysql", "root:@tcp(localhost:3306)/test")
+	// Connect to MySQL with connection pool
+	db, err := sql.Open("mysql", "benchmark:@tcp(localhost:3306)/test")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer db.Close()
+
+	// Configure connection pool
+	db.SetMaxOpenConns(100)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxLifetime(60 * time.Second)
 
 	// Test connection
 	if err := db.Ping(); err != nil {
@@ -75,37 +79,24 @@ func main() {
 		}
 	}
 
-	// Benchmark: Run 100,000 SELECT queries
+	// Benchmark: Run 100,000 SELECT queries (all concurrent)
 	start := time.Now()
 	const totalQueries = 100_000
-	const batchSize = 100
 	var wg sync.WaitGroup
 	
-	for batchStart := 0; batchStart < totalQueries; batchStart += batchSize {
-		tasks := make([]func(), batchSize)
-		
-		for j := 0; j < batchSize; j++ {
-			tasks[j] = func() {
-				rows, err := db.Query("SELECT * FROM users_bun_bench LIMIT 100")
-				if err != nil {
-					log.Fatal(err)
-				}
-				rows.Close()
+	for i := 0; i < totalQueries; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rows, err := db.Query("SELECT * FROM users_bun_bench LIMIT 100")
+			if err != nil {
+				log.Fatal(err)
 			}
-		}
-		
-		// Execute batch
-		for _, task := range tasks {
-			wg.Add(1)
-			go func(t func()) {
-				defer wg.Done()
-				t()
-			}(task)
-		}
-		
-		// Wait for this batch to complete
-		wg.Wait()
+			rows.Close()
+		}()
 	}
+	
+	wg.Wait()
 
 	elapsed := time.Since(start)
 	fmt.Printf("Go (go-sql-driver/mysql): %.2fms\n", float64(elapsed.Nanoseconds())/1000000.0)

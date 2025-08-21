@@ -1,12 +1,16 @@
 import mysql from "mysql2/promise";
 
-// Create connection
-const connection = await mysql.createConnection({
+// Create connection pool
+const pool = mysql.createPool({
   host: "localhost",
-  user: "root",
+  user: "benchmark", 
   password: "",
-  database: "test"
+  database: "test",
+  connectionLimit: 100,
+  acquireTimeout: 60000,
+  timeout: 60000
 });
+const connection = pool;
 
 // Create the table if it doesn't exist
 await connection.execute(`
@@ -40,21 +44,16 @@ if (existingUsers[0].count < 100) {
   }
 }
 
-// Benchmark: Run 100,000 SELECT queries
+// Benchmark: Run 100,000 SELECT queries (all concurrent)
 const start = performance.now();
 const totalQueries = 100_000;
-const batchSize = 100;
 
-for (let batchStart = 0; batchStart < totalQueries; batchStart += batchSize) {
-  const promises = [];
-  
-  for (let j = 0; j < batchSize; j++) {
-    promises.push(connection.execute("SELECT * FROM users_bun_bench LIMIT 100"));
-  }
-  
-  // Wait for this batch to complete
-  await Promise.all(promises);
+const promises = [];
+for (let i = 0; i < totalQueries; i++) {
+  promises.push(connection.execute("SELECT * FROM users_bun_bench LIMIT 100"));
 }
+
+await Promise.all(promises);
 
 const elapsed = performance.now() - start;
 const runtime = typeof globalThis?.Bun !== "undefined" ? "Bun" : 

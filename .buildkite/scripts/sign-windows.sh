@@ -33,7 +33,16 @@ verify_env_vars() {
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TOOLS_DIR="${TOOLS_DIR:-/tmp/keylocker-tools}"
+# Try multiple possible temp directories
+if [[ -w "/tmp" ]]; then
+    TOOLS_DIR="${TOOLS_DIR:-/tmp/keylocker-tools}"
+elif [[ -w "$HOME" ]]; then
+    TOOLS_DIR="${TOOLS_DIR:-$HOME/keylocker-tools}"
+elif [[ -w "." ]]; then
+    TOOLS_DIR="${TOOLS_DIR:-./keylocker-tools}"
+else
+    TOOLS_DIR="${TOOLS_DIR:-/tmp/keylocker-tools}"
+fi
 KEYLOCKER_URL="https://bun-ci-assets.bun.sh/Keylockertools-windows-x64.msi"
 
 # Logging functions
@@ -113,12 +122,60 @@ install_keylocker() {
     log_info "Installing DigiCert KeyLocker tools..."
     mkdir -p "$TOOLS_DIR"
     
-    # Download MSI installer
+    # Download MSI installer with improved error handling
     local msi_path="$TOOLS_DIR/Keylockertools-windows-x64.msi"
     if [[ ! -f "$msi_path" ]]; then
         log_info "Downloading KeyLocker installer..."
-        if ! curl -fsSL -o "$msi_path" "$KEYLOCKER_URL"; then
+        
+        # Check disk space
+        local available_space=$(df "$TOOLS_DIR" | awk 'NR==2 {print $4}')
+        log_info "Available disk space: ${available_space}K bytes"
+        
+        # Ensure directory exists and is writable
+        if [[ ! -d "$TOOLS_DIR" ]]; then
+            mkdir -p "$TOOLS_DIR" || {
+                log_error "Failed to create directory: $TOOLS_DIR"
+                exit 1
+            }
+        fi
+        
+        if [[ ! -w "$TOOLS_DIR" ]]; then
+            log_error "Directory not writable: $TOOLS_DIR"
+            exit 1
+        fi
+        
+        # Try downloading with multiple approaches
+        local download_success=false
+        
+        # Method 1: Standard curl with progress and retries
+        log_info "Attempting download (method 1)..."
+        if curl --fail --show-error --location --retry 3 --retry-delay 5 \
+               --connect-timeout 30 --max-time 300 \
+               --output "$msi_path" "$KEYLOCKER_URL" 2>/dev/null; then
+            download_success=true
+            log_info "Download successful (method 1)"
+        else
+            log_info "Method 1 failed, trying alternative..."
+            
+            # Method 2: Use temporary file first, then move
+            local temp_file="$TOOLS_DIR/keylocker_temp_$$.msi"
+            if curl --fail --show-error --location --retry 2 \
+                   --connect-timeout 30 --max-time 300 \
+                   --output "$temp_file" "$KEYLOCKER_URL" 2>/dev/null; then
+                if mv "$temp_file" "$msi_path" 2>/dev/null; then
+                    download_success=true
+                    log_info "Download successful (method 2)"
+                else
+                    rm -f "$temp_file" 2>/dev/null || true
+                fi
+            else
+                rm -f "$temp_file" 2>/dev/null || true
+            fi
+        fi
+        
+        if [[ "$download_success" != "true" ]]; then
             log_error "Failed to download KeyLocker installer from $KEYLOCKER_URL"
+            log_error "This may be due to network issues, disk space, or permissions"
             exit 1
         fi
     fi

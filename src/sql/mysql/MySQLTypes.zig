@@ -408,21 +408,21 @@ pub const Value = union(enum) {
     pub fn toData(
         this: *const Value,
         field_type: FieldType,
-    ) !Data {
+    ) AnyMySQLError.Error!Data {
         var buffer: [15]u8 = undefined; // Large enough for all fixed-size types
         var stream = std.io.fixedBufferStream(&buffer);
         var writer = stream.writer();
         switch (this.*) {
             .null => return Data{ .empty = {} },
-            .bool => |b| try writer.writeByte(if (b) 1 else 0),
-            .short => |s| try writer.writeInt(i16, s, .little),
-            .ushort => |s| try writer.writeInt(u16, s, .little),
-            .int => |i| try writer.writeInt(i32, i, .little),
-            .uint => |i| try writer.writeInt(u32, i, .little),
-            .long => |l| try writer.writeInt(i64, l, .little),
-            .ulong => |l| try writer.writeInt(u64, l, .little),
-            .float => |f| try writer.writeInt(u32, @bitCast(f), .little),
-            .double => |d| try writer.writeInt(u64, @bitCast(d), .little),
+            .bool => |b| writer.writeByte(if (b) 1 else 0) catch undefined,
+            .short => |s| writer.writeInt(i16, s, .little) catch undefined,
+            .ushort => |s| writer.writeInt(u16, s, .little) catch undefined,
+            .int => |i| writer.writeInt(i32, i, .little) catch undefined,
+            .uint => |i| writer.writeInt(u32, i, .little) catch undefined,
+            .long => |l| writer.writeInt(i64, l, .little) catch undefined,
+            .ulong => |l| writer.writeInt(u64, l, .little) catch undefined,
+            .float => |f| writer.writeInt(u32, @bitCast(f), .little) catch undefined,
+            .double => |d| writer.writeInt(u64, @bitCast(d), .little) catch undefined,
             inline .date, .time => |d| {
                 stream.pos = d.toBinary(field_type, &buffer);
             },
@@ -434,7 +434,7 @@ pub const Value = union(enum) {
         return try Data.create(buffer[0..stream.pos], bun.default_allocator);
     }
 
-    pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, field_type: FieldType, unsigned: bool) !Value {
+    pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, field_type: FieldType, unsigned: bool) AnyMySQLError.Error!Value {
         if (value.isEmptyOrUndefinedOrNull()) {
             return Value{ .null = {} };
         }
@@ -874,3 +874,4 @@ const String = bun.String;
 const JSC = bun.jsc;
 const JSValue = JSC.JSValue;
 const ZigString = JSC.ZigString;
+const AnyMySQLError = @import("./protocol/AnyMySQLError.zig");

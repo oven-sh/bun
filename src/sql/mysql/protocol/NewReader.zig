@@ -4,8 +4,8 @@ pub fn NewReaderWrap(
     comptime peekFn_: (fn (ctx: Context) []const u8),
     comptime skipFn_: (fn (ctx: Context, count: isize) void),
     comptime ensureCapacityFn_: (fn (ctx: Context, count: usize) bool),
-    comptime readFunction_: (fn (ctx: Context, count: usize) anyerror!Data),
-    comptime readZ_: (fn (ctx: Context) anyerror!Data),
+    comptime readFunction_: (fn (ctx: Context, count: usize) AnyMySQLError.Error!Data),
+    comptime readZ_: (fn (ctx: Context) AnyMySQLError.Error!Data),
     comptime setOffsetFromStart_: (fn (ctx: Context, offset: usize) void),
 ) type {
     return struct {
@@ -29,7 +29,7 @@ pub fn NewReaderWrap(
             return setOffsetFromStartFn(this.wrapped, offset);
         }
 
-        pub fn read(this: @This(), count: usize) anyerror!Data {
+        pub fn read(this: @This(), count: usize) AnyMySQLError.Error!Data {
             return readFn(this.wrapped, count);
         }
 
@@ -41,22 +41,22 @@ pub fn NewReaderWrap(
             return peekFn(this.wrapped);
         }
 
-        pub fn readZ(this: @This()) anyerror!Data {
+        pub fn readZ(this: @This()) AnyMySQLError.Error!Data {
             return readZFn(this.wrapped);
         }
 
-        pub fn byte(this: @This()) !u8 {
+        pub fn byte(this: @This()) AnyMySQLError.Error!u8 {
             const data = try this.read(1);
             return data.slice()[0];
         }
 
-        pub fn ensureCapacity(this: @This(), count: usize) anyerror!void {
+        pub fn ensureCapacity(this: @This(), count: usize) AnyMySQLError.Error!void {
             if (!ensureCapacityFn(this.wrapped, count)) {
-                return error.ShortRead;
+                return AnyMySQLError.Error.ShortRead;
             }
         }
 
-        pub fn int(this: @This(), comptime Int: type) !Int {
+        pub fn int(this: @This(), comptime Int: type) AnyMySQLError.Error!Int {
             var data = try this.read(@sizeOf(Int));
             defer data.deinit();
             if (comptime Int == u8) {
@@ -66,27 +66,27 @@ pub fn NewReaderWrap(
             return @as(Int, @bitCast(data.slice()[0..size].*));
         }
 
-        pub fn encodeLenString(this: @This()) !Data {
+        pub fn encodeLenString(this: @This()) AnyMySQLError.Error!Data {
             if (decodeLengthInt(this.peek())) |result| {
                 this.skip(result.bytes_read);
                 return try this.read(@intCast(result.value));
             }
-            return error.InvalidEncodedLength;
+            return AnyMySQLError.Error.InvalidEncodedLength;
         }
 
-        pub fn rawEncodeLenData(this: @This()) !Data {
+        pub fn rawEncodeLenData(this: @This()) AnyMySQLError.Error!Data {
             if (decodeLengthInt(this.peek())) |result| {
                 return try this.read(@intCast(result.value + result.bytes_read));
             }
-            return error.InvalidEncodedLength;
+            return AnyMySQLError.Error.InvalidEncodedLength;
         }
 
-        pub fn encodedLenInt(this: @This()) !u64 {
+        pub fn encodedLenInt(this: @This()) AnyMySQLError.Error!u64 {
             if (decodeLengthInt(this.peek())) |result| {
                 this.skip(result.bytes_read);
                 return result.value;
             }
-            return error.InvalidEncodedInteger;
+            return AnyMySQLError.Error.InvalidEncodedInteger;
         }
 
         pub fn encodedLenIntWithSize(this: @This(), size: *usize) !u64 {
@@ -110,7 +110,7 @@ pub fn NewReader(comptime Context: type) type {
 
 pub fn decoderWrap(comptime Container: type, comptime decodeFn: anytype) type {
     return struct {
-        pub fn decode(this: *Container, context: anytype) anyerror!void {
+        pub fn decode(this: *Container, context: anytype) AnyMySQLError.Error!void {
             const Context = @TypeOf(context);
             if (@hasDecl(Context, "is_wrapped")) {
                 try decodeFn(this, Context, context);
@@ -119,7 +119,7 @@ pub fn decoderWrap(comptime Container: type, comptime decodeFn: anytype) type {
             }
         }
 
-        pub fn decodeAllocator(this: *Container, allocator: std.mem.Allocator, context: anytype) anyerror!void {
+        pub fn decodeAllocator(this: *Container, allocator: std.mem.Allocator, context: anytype) AnyMySQLError.Error!void {
             const Context = @TypeOf(context);
             if (@hasDecl(Context, "is_wrapped")) {
                 try decodeFn(this, allocator, Context, context);
@@ -133,3 +133,4 @@ pub fn decoderWrap(comptime Container: type, comptime decodeFn: anytype) type {
 const std = @import("std");
 const Data = @import("../../shared/Data.zig").Data;
 const decodeLengthInt = @import("./EncodeInt.zig").decodeLengthInt;
+const AnyMySQLError = @import("./AnyMySQLError.zig");

@@ -44,8 +44,8 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
                 if (bigint) {
                     return SQLDataCell{ .tag = .uint8, .value = .{ .uint8 = val } };
                 }
-                var buffer: [21]u8 = undefined;
-                const slice = try std.fmt.bufPrint(&buffer, "{}", .{val});
+                var buffer: [22]u8 = undefined;
+                const slice = std.fmt.bufPrint(&buffer, "{d}", .{val}) catch unreachable;
                 return SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
             }
             const val = try reader.int(i64);
@@ -55,8 +55,8 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
             if (bigint) {
                 return SQLDataCell{ .tag = .int8, .value = .{ .int8 = val } };
             }
-            var buffer: [21]u8 = undefined;
-            const slice = try std.fmt.bufPrint(&buffer, "{}", .{val});
+            var buffer: [22]u8 = undefined;
+            const slice = std.fmt.bufPrint(&buffer, "{d}", .{val}) catch unreachable;
             return SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
         },
         .MYSQL_TYPE_FLOAT => {

@@ -1,6 +1,6 @@
 import type { Query } from "./query";
 import type { DatabaseAdapter, SQLHelper, SQLResultArray, SSLMode } from "./shared";
-
+import type { PostgresErrorOptions, PostgresErrorOptions } from "internal/sql/errors";
 const { SQLHelper, SSLMode, SQLResultArray } = require("internal/sql/shared");
 const {
   Query,
@@ -17,6 +17,13 @@ const {
 } = $zig("postgres.zig", "createBinding") as PostgresDotZig;
 
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
+
+function wrapPostgresError(error: Error | PostgresErrorOptions) {
+  if (Error.isError(error)) {
+    return error;
+  }
+  return new PostgresError(error.message, error);
+}
 
 initPostgres(
   function onResolvePostgresQuery(query, result, commandTag, count, queries, is_last) {
@@ -85,7 +92,12 @@ initPostgres(
     } catch {}
   },
 
-  function onRejectPostgresQuery(query: Query<any, any>, reject: Error, queries: Query<any, any>[]) {
+  function onRejectPostgresQuery(
+    query: Query<any, any>,
+    reject: Error | PostgresErrorOptions,
+    queries: Query<any, any>[],
+  ) {
+    reject = wrapPostgresError(reject);
     if (queries) {
       const queriesIndex = queries.indexOf(query);
       if (queriesIndex !== -1) {
@@ -94,7 +106,7 @@ initPostgres(
     }
 
     try {
-      query.reject(reject);
+      query.reject(reject as Error);
     } catch {}
   },
 );
@@ -356,6 +368,9 @@ class PooledPostgresConnection {
   queryCount: number = 0;
 
   #onConnected(err, _) {
+    if (err) {
+      err = wrapPostgresError(err);
+    }
     const connectionInfo = this.connectionInfo;
     if (connectionInfo?.onconnect) {
       connectionInfo.onconnect(err);
@@ -384,6 +399,9 @@ class PooledPostgresConnection {
   }
 
   #onClose(err) {
+    if (err) {
+      err = wrapPostgresError(err);
+    }
     const connectionInfo = this.connectionInfo;
     if (connectionInfo?.onclose) {
       connectionInfo.onclose(err);

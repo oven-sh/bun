@@ -374,7 +374,7 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
                 switch (stmt.status) {
                     .failed => {
                         this.statement = null;
-                        const error_response = stmt.error_response.?.toJS(globalObject);
+                        const error_response = try stmt.error_response.?.toJS(globalObject);
                         stmt.deref();
                         this.deref();
                         return globalObject.throwValue(error_response);

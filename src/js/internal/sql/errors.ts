@@ -6,6 +6,7 @@ class SQLError extends Error implements Bun.SQL.SQLError {
 }
 
 export interface PostgresErrorOptions {
+  message: string;
   code: string;
 
   detail?: string | undefined;

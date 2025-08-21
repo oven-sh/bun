@@ -15,7 +15,10 @@ function notTaggedCallError() {
 }
 hideFromStack(notTaggedCallError);
 
-function escapeIdentifier(str: string) {
+function escapeIdentifier(str: string, adapter: string) {
+  if (adapter === "mysql") {
+    return "`" + str.replaceAll("`", "``") + "`";
+  }
   return '"' + str.replaceAll('"', '""').replaceAll(".", '"."') + '"';
 }
 

@@ -1,8 +1,8 @@
 pub fn NewWriterWrap(
     comptime Context: type,
     comptime offsetFn_: (fn (ctx: Context) usize),
-    comptime writeFunction_: (fn (ctx: Context, bytes: []const u8) anyerror!void),
-    comptime pwriteFunction_: (fn (ctx: Context, bytes: []const u8, offset: usize) anyerror!void),
+    comptime writeFunction_: (fn (ctx: Context, bytes: []const u8) AnyMySQLError.Error!void),
+    comptime pwriteFunction_: (fn (ctx: Context, bytes: []const u8, offset: usize) AnyMySQLError.Error!void),
 ) type {
     return struct {
         wrapped: Context,
@@ -16,16 +16,16 @@ pub fn NewWriterWrap(
 
         pub const WrappedWriter = @This();
 
-        pub inline fn writeLengthEncodedInt(this: @This(), data: u64) anyerror!void {
+        pub inline fn writeLengthEncodedInt(this: @This(), data: u64) AnyMySQLError.Error!void {
             try writeFn(this.wrapped, encodeLengthInt(data).slice());
         }
 
-        pub inline fn writeLengthEncodedString(this: @This(), data: []const u8) anyerror!void {
+        pub inline fn writeLengthEncodedString(this: @This(), data: []const u8) AnyMySQLError.Error!void {
             try this.writeLengthEncodedInt(data.len);
             try writeFn(this.wrapped, data);
         }
 
-        pub fn write(this: @This(), data: []const u8) anyerror!void {
+        pub fn write(this: @This(), data: []const u8) AnyMySQLError.Error!void {
             try writeFn(this.wrapped, data);
         }
 
@@ -34,7 +34,7 @@ pub fn NewWriterWrap(
             offset: usize,
             ctx: WrappedWriter,
 
-            pub fn end(this: *@This()) !void {
+            pub fn end(this: *@This()) AnyMySQLError.Error!void {
                 const new_offset = offsetFn(this.ctx.wrapped);
                 // fix position for packet header
                 const length = new_offset - this.offset - PacketHeader.size;
@@ -44,7 +44,7 @@ pub fn NewWriterWrap(
             }
         };
 
-        pub fn start(this: @This(), sequence_id: u8) !Packet {
+        pub fn start(this: @This(), sequence_id: u8) AnyMySQLError.Error!Packet {
             const o = offsetFn(this.wrapped);
             debug("starting packet: {d}", .{o});
             try this.write(&[_]u8{0} ** PacketHeader.size);
@@ -59,29 +59,29 @@ pub fn NewWriterWrap(
             return offsetFn(this.wrapped);
         }
 
-        pub fn pwrite(this: @This(), data: []const u8, i: usize) anyerror!void {
+        pub fn pwrite(this: @This(), data: []const u8, i: usize) AnyMySQLError.Error!void {
             try pwriteFn(this.wrapped, data, i);
         }
 
-        pub fn int4(this: @This(), value: MySQLInt32) !void {
+        pub fn int4(this: @This(), value: MySQLInt32) AnyMySQLError.Error!void {
             try this.write(&std.mem.toBytes(value));
         }
 
-        pub fn int8(this: @This(), value: MySQLInt64) !void {
+        pub fn int8(this: @This(), value: MySQLInt64) AnyMySQLError.Error!void {
             try this.write(&std.mem.toBytes(value));
         }
 
-        pub fn int1(this: @This(), value: u8) !void {
+        pub fn int1(this: @This(), value: u8) AnyMySQLError.Error!void {
             try this.write(&[_]u8{value});
         }
 
-        pub fn writeZ(this: @This(), value: []const u8) !void {
+        pub fn writeZ(this: @This(), value: []const u8) AnyMySQLError.Error!void {
             try this.write(value);
             if (value.len == 0 or value[value.len - 1] != 0)
                 try this.write(&[_]u8{0});
         }
 
-        pub fn String(this: @This(), value: bun.String) !void {
+        pub fn String(this: @This(), value: bun.String) AnyMySQLError.Error!void {
             if (value.isEmpty()) {
                 try this.write(&[_]u8{0});
                 return;
@@ -108,7 +108,7 @@ pub fn NewWriter(comptime Context: type) type {
 
 pub fn writeWrap(comptime Container: type, comptime writeFn: anytype) type {
     return struct {
-        pub fn write(this: *Container, context: anytype) anyerror!void {
+        pub fn write(this: *Container, context: anytype) AnyMySQLError.Error!void {
             const Context = @TypeOf(context);
             if (@hasDecl(Context, "is_wrapped")) {
                 try writeFn(this, Context, context);
@@ -129,3 +129,4 @@ const encodeLengthInt = @import("./EncodeInt.zig").encodeLengthInt;
 const types = @import("../MySQLTypes.zig");
 const MySQLInt32 = types.MySQLInt32;
 const MySQLInt64 = types.MySQLInt64;
+const AnyMySQLError = @import("./AnyMySQLError.zig");

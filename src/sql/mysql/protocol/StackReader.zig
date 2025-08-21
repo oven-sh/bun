@@ -48,10 +48,10 @@ pub fn skip(this: StackReader, count: isize) void {
     this.offset.* += ucount;
 }
 
-pub fn read(this: StackReader, count: usize) anyerror!Data {
+pub fn read(this: StackReader, count: usize) AnyMySQLError.Error!Data {
     const offset = this.offset.*;
     if (!this.ensureCapacity(count)) {
-        return error.ShortRead;
+        return AnyMySQLError.Error.ShortRead;
     }
 
     this.skip(@intCast(count));
@@ -60,7 +60,7 @@ pub fn read(this: StackReader, count: usize) anyerror!Data {
     };
 }
 
-pub fn readZ(this: StackReader) anyerror!Data {
+pub fn readZ(this: StackReader) AnyMySQLError.Error!Data {
     const remaining = this.peek();
     if (bun.strings.indexOfChar(remaining, 0)) |zero| {
         this.skip(@intCast(zero + 1));
@@ -75,3 +75,4 @@ pub fn readZ(this: StackReader) anyerror!Data {
 const bun = @import("bun");
 const Data = @import("../../shared/Data.zig").Data;
 const NewReader = @import("./NewReader.zig").NewReader;
+const AnyMySQLError = @import("./AnyMySQLError.zig");

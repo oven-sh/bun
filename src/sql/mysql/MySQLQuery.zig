@@ -76,7 +76,7 @@ pub fn finalize(this: *@This()) void {
 
 pub fn onWriteFail(
     this: *@This(),
-    err: anyerror,
+    err: AnyMySQLError.Error,
     globalObject: *jsc.JSGlobalObject,
     queries_array: JSValue,
 ) void {
@@ -88,7 +88,7 @@ pub fn onWriteFail(
         return;
     }
 
-    const instance = globalObject.createErrorInstance("Failed to bind query: {s}", .{@errorName(err)});
+    const instance = AnyMySQLError.mysqlErrorToJS(globalObject, "Failed to bind query", err);
 
     const vm = jsc.VirtualMachine.get();
     const function = vm.rareData().mysql_context.onQueryRejectFn.get().?;
@@ -102,7 +102,7 @@ pub fn onWriteFail(
     });
 }
 
-pub fn bindAndExecute(this: *MySQLQuery, writer: anytype, statement: *MySQLStatement, globalObject: *jsc.JSGlobalObject) !void {
+pub fn bindAndExecute(this: *MySQLQuery, writer: anytype, statement: *MySQLStatement, globalObject: *jsc.JSGlobalObject) AnyMySQLError.Error!void {
     debug("bindAndExecute", .{});
     bun.assertf(statement.params.len == statement.params_received and statement.statement_id > 0, "statement is not prepared", .{});
     if (statement.signature.fields.len != statement.params.len) {
@@ -123,7 +123,7 @@ pub fn bindAndExecute(this: *MySQLQuery, writer: anytype, statement: *MySQLState
     this.status = .running;
 }
 
-fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject: *jsc.JSGlobalObject) !void {
+fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject: *jsc.JSGlobalObject) AnyMySQLError.Error!void {
     const thisValue = this.thisValue.get();
     const binding_value = js.bindingGetCached(thisValue) orelse .zero;
     const columns_value = js.columnsGetCached(thisValue) orelse .zero;
@@ -544,3 +544,4 @@ const Value = @import("./MySQLTypes.zig").Value;
 const jsc = bun.jsc;
 const JSRef = jsc.JSRef;
 const JSValue = jsc.JSValue;
+const AnyMySQLError = @import("./protocol/AnyMySQLError.zig");

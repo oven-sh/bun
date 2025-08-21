@@ -40,7 +40,7 @@ pub const Row = struct {
         // this.columns is intentionally left out.
     }
 
-    pub fn decodeInternal(this: *Row, allocator: std.mem.Allocator, comptime Context: type, reader: NewReader(Context)) !void {
+    pub fn decodeInternal(this: *Row, allocator: std.mem.Allocator, comptime Context: type, reader: NewReader(Context)) AnyMySQLError.Error!void {
         if (this.binary) {
             try this.decodeBinary(allocator, Context, reader);
         } else {
@@ -127,7 +127,7 @@ pub const Row = struct {
         };
     }
 
-    fn decodeText(this: *Row, allocator: std.mem.Allocator, comptime Context: type, reader: NewReader(Context)) !void {
+    fn decodeText(this: *Row, allocator: std.mem.Allocator, comptime Context: type, reader: NewReader(Context)) AnyMySQLError.Error!void {
         const cells = try allocator.alloc(SQLDataCell, this.columns.len);
         @memset(cells, SQLDataCell{ .tag = .null, .value = .{ .null = 0 } });
         errdefer {
@@ -176,7 +176,7 @@ pub const Row = struct {
         this.values = cells;
     }
 
-    fn decodeBinary(this: *Row, allocator: std.mem.Allocator, comptime Context: type, reader: NewReader(Context)) !void {
+    fn decodeBinary(this: *Row, allocator: std.mem.Allocator, comptime Context: type, reader: NewReader(Context)) AnyMySQLError.Error!void {
         // Header
         _ = try reader.int(u8);
 
@@ -243,3 +243,4 @@ const decoderWrap = @import("./NewReader.zig").decoderWrap;
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
 const debug = bun.Output.scoped(.MySQLResultSet, .visible);
+const AnyMySQLError = @import("./AnyMySQLError.zig");

@@ -223,16 +223,16 @@ pub fn onConnectionTimeout(this: *@This()) bun.api.Timer.EventLoopTimer.Arm {
 
     switch (this.status) {
         .connected => {
-            this.failFmt(.POSTGRES_IDLE_TIMEOUT, "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
+            this.failFmt(error.IdleTimeout, "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
         },
         else => {
-            this.failFmt(.POSTGRES_CONNECTION_TIMEOUT, "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt(error.ConnectionTimedOut, "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
         .handshaking,
         .authenticating,
         .authentication_awaiting_pk,
         => {
-            this.failFmt(.POSTGRES_CONNECTION_TIMEOUT, "Connection timed out after {} (during authentication)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt(error.ConnectionTimedOut, "Connection timed out after {} (during authentication)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
     }
     return .disarm;
@@ -242,7 +242,7 @@ pub fn onMaxLifetimeTimeout(this: *@This()) bun.api.Timer.EventLoopTimer.Arm {
     debug("onMaxLifetimeTimeout", .{});
     this.max_lifetime_timer.state = .FIRED;
     if (this.status == .failed) return .disarm;
-    this.failFmt(.POSTGRES_LIFETIME_TIMEOUT, "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
+    this.failFmt(error.LifetimeTimeout, "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
     return .disarm;
 }
 fn drainInternal(this: *@This()) void {
@@ -351,8 +351,12 @@ pub fn stopTimers(this: *@This()) void {
 pub fn getQueriesArray(this: *const @This()) JSValue {
     return js.queriesGetCached(this.js_value) orelse .zero;
 }
-pub fn failFmt(this: *@This(), comptime error_code: jsc.Error, comptime fmt: [:0]const u8, args: anytype) void {
-    this.failWithJSValue(error_code.fmt(this.globalObject, fmt, args));
+pub fn failFmt(this: *@This(), error_code: AnyMySQLError.Error, comptime fmt: [:0]const u8, args: anytype) void {
+    const message = std.fmt.allocPrint(bun.default_allocator, fmt, args) catch bun.outOfMemory();
+    defer bun.default_allocator.free(message);
+
+    const err = AnyMySQLError.mysqlErrorToJS(this.globalObject, message, error_code);
+    this.failWithJSValue(err);
 }
 pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
     defer this.updateHasPendingActivity();
@@ -379,10 +383,9 @@ pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
     ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
 }
 
-pub fn fail(this: *MySQLConnection, message: []const u8, err: anyerror) void {
+pub fn fail(this: *MySQLConnection, message: []const u8, err: AnyMySQLError.Error) void {
     debug("failed: {s}: {s}", .{ message, @errorName(err) });
-    const instance = this.globalObject.createErrorInstance("{s}", .{message});
-    instance.put(this.globalObject, jsc.ZigString.static("code"), String.init(@errorName(err)).toJS(this.globalObject));
+    const instance = AnyMySQLError.mysqlErrorToJS(this.globalObject, message, err);
     this.failWithJSValue(instance);
 }
 
@@ -1098,16 +1101,16 @@ pub fn onData(this: *MySQLConnection, data: []const u8) void {
     }
 }
 
-pub fn processPackets(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context)) !void {
+pub fn processPackets(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context)) AnyMySQLError.Error!void {
     while (true) {
         reader.markMessageStart();
 
         // Read packet header
-        const header = PacketHeader.decode(reader.peek()) orelse return error.ShortRead;
+        const header = PacketHeader.decode(reader.peek()) orelse return AnyMySQLError.Error.ShortRead;
         const header_length = header.length;
         debug("sequence_id: {d} header: {d}", .{ this.sequence_id, header_length });
         // Ensure we have the full packet
-        try reader.ensureCapacity(header_length + PacketHeader.size);
+        reader.ensureCapacity(header_length + PacketHeader.size) catch return AnyMySQLError.Error.ShortRead;
         // always skip the full packet, we dont care about padding or unreaded bytes
         defer reader.setOffsetFromStart(header_length + PacketHeader.size);
         reader.skip(PacketHeader.size);
@@ -1128,7 +1131,7 @@ pub fn processPackets(this: *MySQLConnection, comptime Context: type, reader: Ne
     }
 }
 
-pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context)) !void {
+pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context)) AnyMySQLError.Error!void {
     var handshake = HandshakeV10{};
     try handshake.decode(reader);
     defer handshake.deinit();
@@ -1417,7 +1420,7 @@ pub fn handleCommand(this: *MySQLConnection, comptime Context: type, reader: New
     }
 }
 
-pub fn sendHandshakeResponse(this: *MySQLConnection) !void {
+pub fn sendHandshakeResponse(this: *MySQLConnection) AnyMySQLError.Error!void {
     // Only require password for caching_sha2_password when connecting for the first time
     if (this.auth_plugin) |plugin| {
         const requires_password = switch (plugin) {
@@ -1489,12 +1492,12 @@ pub fn sendAuthSwitchResponse(this: *MySQLConnection, auth_method: AuthMethod, p
 pub const Writer = struct {
     connection: *MySQLConnection,
 
-    pub fn write(this: Writer, data: []const u8) anyerror!void {
+    pub fn write(this: Writer, data: []const u8) AnyMySQLError.Error!void {
         var buffer = &this.connection.write_buffer;
         try buffer.write(bun.default_allocator, data);
     }
 
-    pub fn pwrite(this: Writer, data: []const u8, index: usize) anyerror!void {
+    pub fn pwrite(this: Writer, data: []const u8, index: usize) AnyMySQLError.Error!void {
         @memcpy(this.connection.write_buffer.byte_list.slice()[index..][0..data.len], data);
     }
 
@@ -1552,10 +1555,10 @@ pub const Reader = struct {
         return this.connection.read_buffer.remaining().len >= count;
     }
 
-    pub fn read(this: Reader, count: usize) anyerror!Data {
+    pub fn read(this: Reader, count: usize) AnyMySQLError.Error!Data {
         const remaining = this.peek();
         if (remaining.len < count) {
-            return error.ShortRead;
+            return AnyMySQLError.Error.ShortRead;
         }
 
         this.skip(@intCast(count));
@@ -1564,7 +1567,7 @@ pub const Reader = struct {
         };
     }
 
-    pub fn readZ(this: Reader) anyerror!Data {
+    pub fn readZ(this: Reader) AnyMySQLError.Error!Data {
         const remaining = this.peek();
         if (bun.strings.indexOfChar(remaining, 0)) |zero| {
             this.skip(@intCast(zero + 1));
@@ -1944,3 +1947,4 @@ const AutoFlusher = jsc.WebCore.AutoFlusher;
 
 const uws = bun.uws;
 const Socket = uws.AnySocket;
+const AnyMySQLError = @import("./protocol/AnyMySQLError.zig");

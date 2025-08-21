@@ -1,22 +1,5 @@
 const PreparedStatement = @This();
 
-// Prepared statement packets
-pub const Prepare = struct {
-    command: CommandType = .COM_STMT_PREPARE,
-    query: Data = .{ .empty = {} },
-
-    pub fn deinit(this: *Prepare) void {
-        this.query.deinit();
-    }
-
-    pub fn writeInternal(this: *const Prepare, comptime Context: type, writer: NewWriter(Context)) !void {
-        try writer.int1(@intFromEnum(this.command));
-        try writer.write(this.query.slice());
-    }
-
-    pub const write = writeWrap(Prepare, writeInternal).write;
-};
-
 pub const PrepareOK = struct {
     status: u8 = 0,
     statement_id: u32,
@@ -60,7 +43,7 @@ pub const Execute = struct {
         }
     }
 
-    fn writeNullBitmap(this: *const Execute, comptime Context: type, writer: NewWriter(Context)) !void {
+    fn writeNullBitmap(this: *const Execute, comptime Context: type, writer: NewWriter(Context)) AnyMySQLError.Error!void {
         const MYSQL_MAX_PARAMS = (std.math.maxInt(u16) / 8) + 1;
 
         var null_bitmap_buf: [MYSQL_MAX_PARAMS]u8 = undefined;
@@ -77,7 +60,7 @@ pub const Execute = struct {
         try writer.write(null_bitmap);
     }
 
-    pub fn writeInternal(this: *const Execute, comptime Context: type, writer: NewWriter(Context)) !void {
+    pub fn writeInternal(this: *const Execute, comptime Context: type, writer: NewWriter(Context)) AnyMySQLError.Error!void {
         try writer.int1(@intFromEnum(CommandType.COM_STMT_EXECUTE));
         try writer.int4(this.statement_id);
         try writer.int1(this.flags);
@@ -116,30 +99,6 @@ pub const Execute = struct {
     pub const write = writeWrap(Execute, writeInternal).write;
 };
 
-pub const Close = struct {
-    command: CommandType = .COM_STMT_CLOSE,
-    statement_id: u32 = 0,
-
-    pub fn writeInternal(this: *const Close, comptime Context: type, writer: NewWriter(Context)) !void {
-        try writer.int1(@intFromEnum(this.command));
-        try writer.int4(this.statement_id);
-    }
-
-    pub const write = writeWrap(Close, writeInternal).write;
-};
-
-pub const Reset = struct {
-    command: CommandType = .COM_STMT_RESET,
-    statement_id: u32 = 0,
-
-    pub fn writeInternal(this: *const Reset, comptime Context: type, writer: NewWriter(Context)) !void {
-        try writer.int1(@intFromEnum(this.command));
-        try writer.int4(this.statement_id);
-    }
-
-    pub const write = writeWrap(Reset, writeInternal).write;
-};
-
 const debug = bun.Output.scoped(.PreparedStatement, .hidden);
 
 const bun = @import("bun");
@@ -154,3 +113,4 @@ const decoderWrap = @import("./NewReader.zig").decoderWrap;
 
 const NewWriter = @import("./NewWriter.zig").NewWriter;
 const writeWrap = @import("./NewWriter.zig").writeWrap;
+const AnyMySQLError = @import("./AnyMySQLError.zig");

@@ -4707,6 +4707,13 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     JSC::ErrorInstance* err, const Vector<JSC::StackFrame>* stackTrace,
     JSC::JSValue val, PopulateStackTraceFlags flags)
 {
+    // Early null check for err parameter
+    if (!err) {
+        except->name = Bun::toStringRef("Error"_s);
+        except->message = Bun::toStringRef("Unknown error"_s);
+        return;
+    }
+    
     JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(val);
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_CATCH_SCOPE(vm);
@@ -4731,10 +4738,14 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     if (except->type == SYNTAX_ERROR_CODE) {
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
 
-    } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
-        except->message = Bun::toStringRef(global, message);
-        if (!scope.clearExceptionExceptTermination()) [[unlikely]]
-            return;
+    } else if (obj) {
+        if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
+            except->message = Bun::toStringRef(global, message);
+            if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                return;
+        } else {
+            except->message = Bun::toStringRef(err->sanitizedMessageString(global));
+        }
     } else {
 
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
@@ -4752,7 +4763,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     except->runtime_type = err->runtimeTypeForCause();
 
     const auto& names = builtinNames(vm);
-    if (except->type != SYNTAX_ERROR_CODE) {
+    if (except->type != SYNTAX_ERROR_CODE && obj) {
 
         JSC::JSValue syscall = getNonObservable(vm, global, obj, names.syscallPublicName());
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
@@ -4806,7 +4817,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
         }
     }
 
-    if (getFromSourceURL) {
+    if (getFromSourceURL && obj) {
 
         {
             // we don't want to serialize JSC::StackFrame longer than we need to

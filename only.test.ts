@@ -46,6 +46,3 @@ describe("inside describe 2", () => {
     console.log("test [should run]");
   });
 });
-
-await describe.forDebuggingExecuteTestsNow();
-describe.forDebuggingDeinitNow();

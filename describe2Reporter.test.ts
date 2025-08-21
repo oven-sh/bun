@@ -44,7 +44,3 @@ describe("Skip and Todo tests", () => {
 
   test.todo("todo test");
 });
-
-setInterval(() => {}, 1000);
-await describe.forDebuggingExecuteTestsNow();
-describe.forDebuggingDeinitNow();

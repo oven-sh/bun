@@ -23,8 +23,3 @@ test("test four", async () => {
   expect(Bun.sleep(50)).resolves.toBeUndefined();
   console.log("</4>");
 });
-
-console.log("before exec");
-await describe.forDebuggingExecuteTestsNow();
-console.log("after exec");
-describe.forDebuggingDeinitNow();

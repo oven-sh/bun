@@ -8,6 +8,3 @@ test(
   },
   { timeout: 50 },
 );
-
-await describe.forDebuggingExecuteTestsNow();
-describe.forDebuggingDeinitNow();

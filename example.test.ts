@@ -13,6 +13,3 @@ describe("inside describe", () => {
     expect(1).toBe(1);
   });
 });
-
-await describe.forDebuggingExecuteTestsNow();
-describe.forDebuggingDeinitNow();

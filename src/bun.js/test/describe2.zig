@@ -169,52 +169,6 @@ pub const js_fns = struct {
             }
         };
     }
-
-    pub fn forDebuggingExecuteTestsNow(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        group.begin(@src());
-        defer group.end();
-        errdefer group.log("ended in error", .{});
-
-        const vm = globalThis.bunVM();
-        if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
-            @panic("TODO return Bun__Jest__testPreloadObject(globalThis)");
-        }
-        if (bun.jsc.Jest.Jest.runner.?.describe2 == null) {
-            return globalThis.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
-        }
-        const buntest = &bun.jsc.Jest.Jest.runner.?.describe2.?;
-
-        try buntest.run(globalThis);
-
-        _ = callframe;
-
-        if (buntest.phase == .done) return .js_undefined;
-        if (buntest.done_promise.get() == null) {
-            _ = buntest.done_promise.swap(buntest.gpa, jsc.JSPromise.create(globalThis).toJS());
-        }
-        return buntest.done_promise.get().?; // TODO: return a promise that resolves when done
-    }
-
-    pub fn forDebuggingDeinitNow(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        group.begin(@src());
-        defer group.end();
-        errdefer group.log("ended in error", .{});
-
-        const vm = globalThis.bunVM();
-        if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
-            @panic("TODO return Bun__Jest__testPreloadObject(globalThis)");
-        }
-        if (bun.jsc.Jest.Jest.runner.?.describe2 == null) {
-            return globalThis.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
-        }
-        if (bun.jsc.Jest.Jest.runner.?.describe2.?.phase != .done) {
-            return globalThis.throw("Cannot call forDebuggingDeinitNow() before the test run has completed", .{});
-        }
-        bun.jsc.Jest.Jest.runner.?.describe2.?.deinit();
-        bun.jsc.Jest.Jest.runner.?.describe2 = null;
-        _ = callframe;
-        return .js_undefined;
-    }
 };
 
 /// this will be a JSValue (returned by `Bun.jest(...)`). there will be one per file. they will be gc objects and cleaned up when no longer used.

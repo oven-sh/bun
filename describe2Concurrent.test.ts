@@ -56,11 +56,6 @@ describe("describe group 8", () => {
   });
 });
 
-console.log("before exec");
-await describe.forDebuggingExecuteTestsNow();
-console.log("after exec");
-describe.forDebuggingDeinitNow();
-
 /*
 Vitest order is:
 

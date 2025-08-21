@@ -39,8 +39,3 @@ describe("sub", () => {
     console.log("afterEach 3");
   });
 });
-
-if ("forDebuggingExecuteTestsNow" in describe) {
-  await describe.forDebuggingExecuteTestsNow();
-  describe.forDebuggingDeinitNow();
-}

@@ -43,8 +43,3 @@ process.on("unhandledRejection", reason => {
 process.on("uncaughtException", error => {
   console.log("uncaughtException", error);
 });
-
-console.log("before exec");
-await describe.forDebuggingExecuteTestsNow();
-console.log("after exec");
-describe.forDebuggingDeinitNow();

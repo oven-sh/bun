@@ -10,8 +10,3 @@ afterEach(() => console.log("aftereach2"));
 
 test.skip("test skip", () => console.log("test skip"));
 test("test1", () => console.log("test1"));
-
-if ("forDebuggingExecuteTestsNow" in describe) {
-  await describe.forDebuggingExecuteTestsNow();
-  describe.forDebuggingDeinitNow();
-}

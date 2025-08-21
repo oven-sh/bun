@@ -430,9 +430,6 @@ pub const Jest = struct {
             describe,
         );
 
-        describe.put(globalObject, ZigString.static("forDebuggingExecuteTestsNow"), jsc.host_fn.NewFunction(globalObject, ZigString.static("forDebuggingExecuteTestsNow"), 2, Describe2.js_fns.forDebuggingExecuteTestsNow, false));
-        describe.put(globalObject, ZigString.static("forDebuggingDeinitNow"), jsc.host_fn.NewFunction(globalObject, ZigString.static("forDebuggingDeinitNow"), 2, Describe2.js_fns.forDebuggingDeinitNow, false));
-
         module.put(globalObject, ZigString.static("beforeEach"), jsc.host_fn.NewFunction(globalObject, ZigString.static("beforeEach"), 1, Describe2.js_fns.genericHook(.beforeEach).hookFn, false));
         module.put(globalObject, ZigString.static("beforeAll"), jsc.host_fn.NewFunction(globalObject, ZigString.static("beforeAll"), 1, Describe2.js_fns.genericHook(.beforeAll).hookFn, false));
         module.put(globalObject, ZigString.static("afterAll"), jsc.host_fn.NewFunction(globalObject, ZigString.static("afterAll"), 1, Describe2.js_fns.genericHook(.afterAll).hookFn, false));

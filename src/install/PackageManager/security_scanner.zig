@@ -207,8 +207,21 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
     var code_writer = code_buf.writer();
 
     try code_writer.print(
+        \\let scanner;
+        \\const scannerModuleName = '{s}';
+        \\
         \\try {{
-        \\  const {{scanner}} = await import('{s}');
+        \\  const {{scanner}} = await import(scannerModuleName);
+        \\}} catch (error) {{
+        \\  const lines = [
+        \\    Bun.color("red", "ansi") + "error:" + "\x1b[0m" + "Failed to import security scanner: " + scannerModuleName + ".",
+        \\    "If you use a security scanner from npm, please run 'bun install' before adding other packages.",
+        \\  ];
+        \\  console.error(lines.join('\n'));
+        \\  process.exit(1);
+        \\}}
+        \\
+        \\try {{
         \\  const packages = {s};
         \\
         \\  if (scanner.version !== '1') {{
@@ -219,7 +232,7 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
         \\    throw new Error('scanner.scan is not a function');
         \\  }}
         \\
-        \\  const result = await scanner.scan({{packages:packages}});
+        \\  const result = await scanner.scan({{ packages }});
         \\
         \\  if (!Array.isArray(result)) {{
         \\    throw new Error('Security scanner must return an array of advisories');
@@ -338,7 +351,7 @@ pub const SecurityScanSubprocess = struct {
         };
         defer {
             this.manager.allocator.free(bun.span(argv[0].?));
-            this.manager.allocator.free(bun.span(argv[2].?));
+            this.manager.allocator.free(bun.span(argv[3].?));
         }
 
         const spawn_options = bun.spawn.SpawnOptions{

@@ -72,18 +72,19 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
 
 function createDirent(path: string, cwd?: string): any {
   const { basename, dirname, resolve, join } = require("node:path");
-  const { lstatSync, Dirent } = require("node:fs");
+  const { lstatSync, Dirent, constants } = require("node:fs");
 
-  // UV_DIRENT constants that match the C++ DirEntType enum
-  // These values match the uv_dirent_type_t enum from libuv
-  const UV_DIRENT_UNKNOWN = 0 as const;
-  const UV_DIRENT_FILE = 1 as const;
-  const UV_DIRENT_DIR = 2 as const;
-  const UV_DIRENT_LINK = 3 as const;
-  const UV_DIRENT_FIFO = 4 as const;
-  const UV_DIRENT_SOCKET = 5 as const;
-  const UV_DIRENT_CHAR = 6 as const;
-  const UV_DIRENT_BLOCK = 7 as const;
+  // Use the shared UV_DIRENT constants from fs.constants
+  const {
+    UV_DIRENT_UNKNOWN,
+    UV_DIRENT_FILE,
+    UV_DIRENT_DIR,
+    UV_DIRENT_LINK,
+    UV_DIRENT_FIFO,
+    UV_DIRENT_SOCKET,
+    UV_DIRENT_CHAR,
+    UV_DIRENT_BLOCK
+  } = constants;
 
   try {
     // Construct the full path if cwd is provided

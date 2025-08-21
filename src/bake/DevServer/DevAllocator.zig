@@ -1,17 +1,16 @@
 const Self = @This();
 
-_scope: if (AllocationScope.enabled) AllocationScope else void,
-
-pub fn init(alloc_scope: AllocationScope) Self {
-    return .{ ._scope = if (comptime AllocationScope.enabled) alloc_scope };
-}
+maybe_scope: if (AllocationScope.enabled) AllocationScope else void,
 
 pub fn get(self: Self) Allocator {
-    return if (comptime AllocationScope.enabled) self._scope.allocator() else bun.default_allocator;
+    return if (comptime AllocationScope.enabled)
+        self.maybe_scope.allocator()
+    else
+        bun.default_allocator;
 }
 
 pub fn scope(self: Self) ?AllocationScope {
-    return if (comptime AllocationScope.enabled) self._scope else null;
+    return if (comptime AllocationScope.enabled) self.maybe_scope else null;
 }
 
 const bun = @import("bun");

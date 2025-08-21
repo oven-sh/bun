@@ -23,10 +23,8 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
     var js_code: usize = 0;
     var source_maps: usize = 0;
     var assets: usize = 0;
-    const dedupe_bits: u32 = @truncate(@abs(std.time.nanoTimestamp()));
-    const discard = voidFieldTypeDiscardHelper;
     // See https://github.com/ziglang/zig/issues/21879
-    _ = VoidFieldTypes(DevServer){
+    useAllFields(DevServer, .{
         // does not contain pointers
         .assume_perfect_incremental_bundling = {},
         .bun_watcher = {},
@@ -70,13 +68,13 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
             other_bytes += bundle.memoryCost();
         },
         .server_graph = {
-            const cost = dev.server_graph.memoryCostDetailed(dedupe_bits);
+            const cost = dev.server_graph.memoryCostDetailed();
             incremental_graph_server += cost.graph;
             js_code += cost.code;
             source_maps += cost.source_maps;
         },
         .client_graph = {
-            const cost = dev.client_graph.memoryCostDetailed(dedupe_bits);
+            const cost = dev.client_graph.memoryCostDetailed();
             incremental_graph_client += cost.graph;
             js_code += cost.code;
             source_maps += cost.source_maps;
@@ -91,15 +89,13 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
             other_bytes += memoryCostArrayHashMap(dev.source_maps.entries);
             for (dev.source_maps.entries.values()) |entry| {
                 source_maps += entry.files.memoryCost();
-                for (entry.files.items(.tags), entry.files.items(.data)) |tag, data| {
-                    switch (tag) {
-                        .ref => source_maps += data.ref.data.memoryCostWithDedupe(dedupe_bits),
-                        .empty => {},
-                    }
+                const files = entry.files.slice();
+                for (0..files.len) |i| {
+                    source_maps += files.get(i).memoryCost();
                 }
             }
         },
-        .incremental_result = discard(VoidFieldTypes(IncrementalResult){
+        .incremental_result = useAllFields(IncrementalResult, .{
             .had_adjusted_edges = {},
             .client_components_added = {
                 other_bytes += memoryCostArrayList(dev.incremental_result.client_components_added);
@@ -175,7 +171,7 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
             },
             .enable_after_bundle => {},
         },
-    };
+    });
     return .{
         .assets = assets,
         .incremental_graph_client = incremental_graph_client,
@@ -209,12 +205,10 @@ const std = @import("std");
 
 const bun = @import("bun");
 const jsc = bun.jsc;
+const useAllFields = bun.meta.useAllFields;
 const HTMLBundle = jsc.API.HTMLBundle;
 
 const DevServer = bun.bake.DevServer;
 const DeferredRequest = DevServer.DeferredRequest;
 const HmrSocket = DevServer.HmrSocket;
 const IncrementalResult = DevServer.IncrementalResult;
-
-const VoidFieldTypes = bun.meta.VoidFieldTypes;
-const voidFieldTypeDiscardHelper = bun.meta.voidFieldTypeDiscardHelper;

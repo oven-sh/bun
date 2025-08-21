@@ -39,8 +39,7 @@ magic: if (Environment.isDebug)
     enum(u128) { valid = 0x1ffd363f121f5c12 }
 else
     enum { valid } = .valid,
-/// All methods are no-op in release builds.
-allocation_scope: AllocationScope,
+allocation_scope: if (AllocationScope.enabled) AllocationScope else void,
 /// Absolute path to project root directory. For the HMR
 /// runtime, its module IDs are strings relative to this.
 root: []const u8,
@@ -268,9 +267,8 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     const separate_ssr_graph = if (options.framework.server_components) |sc| sc.separate_ssr_graph else false;
 
     const dev = bun.new(DevServer, .{
-        // 'init' is a no-op in release
-        .allocation_scope = AllocationScope.init(bun.default_allocator),
-
+        .allocation_scope = if (comptime AllocationScope.enabled)
+            AllocationScope.init(bun.default_allocator),
         .root = options.root,
         .vm = options.vm,
         .server = null,
@@ -394,8 +392,8 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     };
 
     errdefer dev.route_lookup.clearAndFree(alloc);
-    errdefer dev.client_graph.deinit(alloc);
-    errdefer dev.server_graph.deinit(alloc);
+    errdefer dev.client_graph.deinit();
+    errdefer dev.server_graph.deinit();
 
     dev.configuration_hash_key = hash_key: {
         var hash = std.hash.Wyhash.init(128);
@@ -537,8 +535,7 @@ pub fn deinit(dev: *DevServer) void {
     dev_server_deinit_count_for_testing +|= 1;
 
     const alloc = dev.allocator();
-    const discard = voidFieldTypeDiscardHelper;
-    _ = VoidFieldTypes(DevServer){
+    useAllFields(DevServer, .{
         .allocation_scope = {}, // deinit at end
         .assume_perfect_incremental_bundling = {},
         .bundler_options = {},
@@ -589,10 +586,10 @@ pub fn deinit(dev: *DevServer) void {
             }
             dev.route_bundles.deinit(alloc);
         },
-        .server_graph = dev.server_graph.deinit(alloc),
-        .client_graph = dev.client_graph.deinit(alloc),
+        .server_graph = dev.server_graph.deinit(),
+        .client_graph = dev.client_graph.deinit(),
         .assets = dev.assets.deinit(alloc),
-        .incremental_result = discard(VoidFieldTypes(IncrementalResult){
+        .incremental_result = useAllFields(IncrementalResult, .{
             .had_adjusted_edges = {},
             .client_components_added = dev.incremental_result.client_components_added.deinit(alloc),
             .framework_routes_affected = dev.incremental_result.framework_routes_affected.deinit(alloc),
@@ -649,7 +646,7 @@ pub fn deinit(dev: *DevServer) void {
             for (dev.source_maps.entries.values()) |*value| {
                 bun.assert(value.ref_count > 0);
                 value.ref_count = 0;
-                value.deinit(dev);
+                value.deinit();
             }
             dev.source_maps.entries.deinit(alloc);
 
@@ -675,8 +672,10 @@ pub fn deinit(dev: *DevServer) void {
             bun.debugAssert(dev.magic == .valid);
             dev.magic = undefined;
         },
-    };
-    dev.allocation_scope.deinit();
+    });
+    if (comptime AllocationScope.enabled) {
+        dev.allocation_scope.deinit();
+    }
     bun.destroy(dev);
 }
 
@@ -685,7 +684,7 @@ pub fn allocator(dev: *const DevServer) Allocator {
 }
 
 pub fn dev_allocator(dev: *const DevServer) DevAllocator {
-    return .init(dev.allocation_scope);
+    return .{ .maybe_scope = dev.allocation_scope };
 }
 
 pub const DevAllocator = @import("./DevServer/DevAllocator.zig");
@@ -1167,9 +1166,8 @@ fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointLi
 
     if (dev.has_tailwind_plugin_hack) |*map| {
         for (map.keys()) |abs_path| {
-            const file = dev.client_graph.bundled_files.get(abs_path) orelse
-                continue;
-            if (file.flags.kind == .css)
+            const file = (dev.client_graph.bundled_files.get(abs_path) orelse continue).unpack();
+            if (file.content == .css)
                 entry_points.appendCss(alloc, abs_path) catch bun.outOfMemory();
         }
     }
@@ -1452,9 +1450,8 @@ fn generateJavaScriptCodeForHTMLFile(
                 continue; // ignore non-JavaScript imports
         } else {
             // Find the in-graph import.
-            const file = dev.client_graph.bundled_files.get(import.path.text) orelse
-                continue;
-            if (file.flags.kind != .js)
+            const file = (dev.client_graph.bundled_files.get(import.path.text) orelse continue).unpack();
+            if (file.content != .js)
                 continue;
         }
         if (!any) {
@@ -2207,7 +2204,9 @@ pub fn finalizeBundle(
         if (html.bundled_html_text) |slice| {
             dev.allocator().free(slice);
         }
-        dev.allocation_scope.assertOwned(compile_result.code);
+        if (comptime AllocationScope.enabled) {
+            dev.allocation_scope.assertOwned(compile_result.code);
+        }
         html.bundled_html_text = compile_result.code;
         html.script_injection_offset = .init(compile_result.script_injection_offset);
 
@@ -2480,9 +2479,9 @@ pub fn finalizeBundle(
                     const values = dev.client_graph.bundled_files.values();
                     for (dev.client_graph.current_chunk_parts.items) |part| {
                         source_map_hash.update(keys[part.get()]);
-                        const val = &values[part.get()];
-                        if (val.flags.source_map_state == .ref) {
-                            source_map_hash.update(val.source_map.ref.data.vlq());
+                        const val = values[part.get()].unpack();
+                        if (val.source_map.get()) |source_map| {
+                            source_map_hash.update(source_map.vlq());
                         }
                     }
                     // Set the bottom bit. This ensures that the resource can never be confused for a route bundle.
@@ -2780,7 +2779,7 @@ pub fn isFileCached(dev: *DevServer, path: []const u8, side: bake.Graph) ?CacheE
             const index = g.bundled_files.getIndex(path) orelse
                 return null; // non-existent files are considered stale
             if (!g.stale_files.isSet(index)) {
-                return .{ .kind = g.bundled_files.values()[index].fileKind() };
+                return .{ .kind = g.getFileByIndex(.init(@intCast(index))).fileKind() };
             }
             return null;
         },
@@ -2864,8 +2863,10 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !Rou
             } },
             .html => |html| brk: {
                 const incremental_graph_index = try dev.client_graph.insertStaleExtra(html.bundle.data.path, false, true);
-                const file = &dev.client_graph.bundled_files.values()[incremental_graph_index.get()];
-                file.source_map.empty.html_bundle_route_index = .init(bundle_index.get());
+                const packed_file = &dev.client_graph.bundled_files.values()[incremental_graph_index.get()];
+                var file = packed_file.unpack();
+                file.html_route_bundle_index = bundle_index;
+                packed_file.* = file.pack();
                 break :brk .{ .html = .{
                     .html_bundle = .initRef(html),
                     .bundled_file = incremental_graph_index,
@@ -2985,7 +2986,7 @@ fn sendBuiltInNotFound(resp: anytype) void {
 }
 
 fn printMemoryLine(dev: *DevServer) void {
-    if (comptime !bun.Environment.enableAllocScopes) {
+    if (comptime !AllocationScope.enabled) {
         return;
     }
     if (!debug.isVisible()) return;
@@ -3012,7 +3013,7 @@ pub const FileKind = enum(u2) {
     /// '/_bun/css/0000000000000000.css'
     css,
 
-    pub fn hasInlinejscodeChunk(self: @This()) bool {
+    pub fn hasInlineJsCodeChunk(self: @This()) bool {
         return switch (self) {
             .js, .asset => true,
             else => false,
@@ -3283,7 +3284,7 @@ pub fn writeMemoryVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)
         .source_maps = @truncate(cost.source_maps),
         .assets = @truncate(cost.assets),
         .other = @truncate(cost.other),
-        .devserver_tracked = if (AllocationScope.enabled)
+        .devserver_tracked = if (comptime AllocationScope.enabled)
             @truncate(dev.allocation_scope.total())
         else
             0,
@@ -3328,23 +3329,24 @@ pub fn writeVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)) !voi
             g.bundled_files.values(),
             0..,
         ) |k, v, i| {
+            const file = v.unpack();
             const relative_path_buf = bun.path_buffer_pool.get();
             defer bun.path_buffer_pool.put(relative_path_buf);
             const normalized_key = dev.relativePath(relative_path_buf, k);
             try w.writeInt(u32, @intCast(normalized_key.len), .little);
             if (k.len == 0) continue;
             try w.writeAll(normalized_key);
-            try w.writeByte(@intFromBool(g.stale_files.isSetAllowOutOfBound(i, true) or switch (side) {
-                .server => v.failed,
-                .client => v.flags.failed,
-            }));
-            try w.writeByte(@intFromBool(side == .server and v.is_rsc));
-            try w.writeByte(@intFromBool(side == .server and v.is_ssr));
-            try w.writeByte(@intFromBool(if (side == .server) v.is_route else v.flags.is_html_route));
-            try w.writeByte(@intFromBool(side == .client and v.flags.is_special_framework_file));
+            try w.writeByte(@intFromBool(g.stale_files.isSetAllowOutOfBound(i, true) or file.failed));
+            try w.writeByte(@intFromBool(side == .server and file.is_rsc));
+            try w.writeByte(@intFromBool(side == .server and file.is_ssr));
             try w.writeByte(@intFromBool(switch (side) {
-                .server => v.is_client_component_boundary,
-                .client => v.flags.is_hmr_root,
+                .server => file.is_route,
+                .client => file.html_route_bundle_index != null,
+            }));
+            try w.writeByte(@intFromBool(side == .client and file.is_special_framework_file));
+            try w.writeByte(@intFromBool(switch (side) {
+                .server => file.is_client_component_boundary,
+                .client => file.is_hmr_root,
             }));
         }
     }
@@ -4067,6 +4069,7 @@ const Log = bun.logger.Log;
 const MimeType = bun.http.MimeType;
 const ThreadLocalArena = bun.allocators.MimallocArena;
 const Transpiler = bun.transpiler.Transpiler;
+const useAllFields = bun.meta.useAllFields;
 const EventLoopTimer = bun.api.Timer.EventLoopTimer;
 const StaticRoute = bun.api.server.StaticRoute;
 
@@ -4087,9 +4090,6 @@ const Plugin = jsc.API.JSBundler.Plugin;
 
 const BunFrontendDevServerAgent = jsc.Debugger.BunFrontendDevServerAgent;
 const DebuggerId = jsc.Debugger.DebuggerId;
-
-const VoidFieldTypes = bun.meta.VoidFieldTypes;
-const voidFieldTypeDiscardHelper = bun.meta.voidFieldTypeDiscardHelper;
 
 const uws = bun.uws;
 const AnyResponse = bun.uws.AnyResponse;

@@ -1,14 +1,14 @@
-/// Storage for source maps on `/_bun/client/{id}.js.map`
-///
-/// All source maps are referenced counted, so that when a websocket disconnects
-/// or a bundle is replaced, the unreachable source map URLs are revoked. Source
-/// maps that aren't reachable from IncrementalGraph can still be reached by
-/// a browser tab if it has a callback to a previously loaded chunk; so DevServer
-/// should be aware of it.
-pub const SourceMapStore = @This();
+//! Storage for source maps on `/_bun/client/{id}.js.map`
+//!
+//! All source maps are referenced counted, so that when a websocket disconnects
+//! or a bundle is replaced, the unreachable source map URLs are revoked. Source
+//! maps that aren't reachable from IncrementalGraph can still be reached by
+//! a browser tab if it has a callback to a previously loaded chunk; so DevServer
+//! should be aware of it.
+const Self = @This();
 
 /// See `SourceId` for what the content of u64 is.
-pub const Key = bun.GenericIndex(u64, .{ "Key of", SourceMapStore });
+pub const Key = bun.GenericIndex(u64, .{ "Key of", Self });
 
 entries: AutoArrayHashMapUnmanaged(Key, Entry),
 /// When a HTML bundle is loaded, it places a "weak reference" to the
@@ -20,7 +20,7 @@ weak_refs: bun.LinearFifo(WeakRef, .{ .Static = weak_ref_entry_max }),
 /// Shared
 weak_ref_sweep_timer: EventLoopTimer,
 
-pub const empty: SourceMapStore = .{
+pub const empty: Self = .{
     .entries = .empty,
     .weak_ref_sweep_timer = .initPaused(.DevServerSweepSourceMaps),
     .weak_refs = .init(),
@@ -54,6 +54,7 @@ pub const SourceId = packed struct(u64) {
 /// `SourceMapStore.Entry` is the information + refcount holder to
 /// construct the actual JSON file associated with a bundle/hot update.
 pub const Entry = struct {
+    dev_allocator: DevAllocator,
     /// Sum of:
     /// - How many active sockets have code that could reference this source map?
     /// - For route bundle client scripts, +1 until invalidation.
@@ -62,13 +63,13 @@ pub const Entry = struct {
     /// Outer slice is owned, inner slice is shared with IncrementalGraph.
     paths: []const []const u8,
     /// Indexes are off by one because this excludes the HMR Runtime.
-    files: bun.MultiArrayList(PackedMap.RefOrEmpty),
+    files: bun.MultiArrayList(PackedMap.Shared),
     /// The memory cost can be shared between many entries and IncrementalGraph
     /// So this is only used for eviction logic, to pretend this was the only
     /// entry. To compute the memory cost of DevServer, this cannot be used.
     overlapping_memory_cost: u32,
 
-    pub fn sourceContents(entry: @This()) []const bun.StringPointer {
+    pub fn sourceContents(entry: Entry) []const bun.StringPointer {
         return entry.source_contents[0..entry.file_paths.len];
     }
 
@@ -145,16 +146,16 @@ pub const Entry = struct {
         j.pushStatic(
             \\],"sourcesContent":["// (Bun's internal HMR runtime is minified)"
         );
-        for (map_files.items(.tags), map_files.items(.data)) |tag, chunk| {
-            // For empty chunks, put a blank entry. This allows HTML
-            // files to get their stack remapped, despite having no
-            // actual mappings.
-            if (tag == .empty) {
+        for (0..map_files.len) |i| {
+            const chunk = map_files.get(i);
+            const source_map = chunk.get() orelse {
+                // For empty chunks, put a blank entry. This allows HTML files to get their stack
+                // remapped, despite having no actual mappings.
                 j.pushStatic(",\"\"");
                 continue;
-            }
+            };
             j.pushStatic(",");
-            const quoted_slice = chunk.ref.data.quotedContents();
+            const quoted_slice = source_map.quotedContents();
             if (quoted_slice.len == 0) {
                 bun.debugAssert(false); // vlq without source contents!
                 j.pushStatic(",\"// Did not have source contents for this file.\n// This is a bug in Bun's bundler and should be reported with a reproduction.\"");
@@ -210,20 +211,9 @@ pub const Entry = struct {
         var lines_between: u32 = runtime.line_count + 2;
 
         // Join all of the mappings together.
-        for (map_files.items(.tags), map_files.items(.data), 1..) |tag, chunk, source_index| switch (tag) {
-            .empty => {
-                lines_between += (chunk.empty.line_count.unwrap() orelse
-                    // NOTE: It is too late to compute this info since the
-                    // bundled text may have been freed already. For example, a
-                    // HMR chunk is never persisted.
-                    @panic("Missing internal precomputed line count.")).get();
-
-                // - Empty file has no breakpoints that could remap.
-                // - Codegen of HTML files cannot throw.
-                continue;
-            },
-            .ref => {
-                const content = chunk.ref.data;
+        for (1..map_files.len) |source_index| switch (map_files.get(source_index)) {
+            .some => |source_map| {
+                const content = source_map.get();
                 const start_state: SourceMap.SourceMapState = .{
                     .source_index = @intCast(source_index),
                     .generated_line = @intCast(lines_between),
@@ -249,24 +239,35 @@ pub const Entry = struct {
                     .original_column = content.end_state.original_column,
                 };
             },
+            .line_count => |count| {
+                lines_between += count.get();
+            },
+            .none => {
+                // NOTE: It is too late to compute the line count since the bundled text may
+                // have been freed already. For example, a HMR chunk is never persisted.
+                @panic("Missing internal precomputed line count.");
+            },
         };
     }
 
-    pub fn deinit(entry: *Entry, dev: *DevServer) void {
-        _ = VoidFieldTypes(Entry){
+    pub fn deinit(entry: *Entry) void {
+        useAllFields(Entry, .{
+            .dev_allocator = {},
             .ref_count = assert(entry.ref_count == 0),
             .overlapping_memory_cost = {},
             .files = {
-                for (entry.files.items(.tags), entry.files.items(.data)) |tag, data| {
-                    switch (tag) {
-                        .ref => data.ref.derefWithContext(dev),
-                        .empty => {},
-                    }
+                const files = entry.files.slice();
+                for (0..files.len) |i| {
+                    files.get(i).deinit();
                 }
-                entry.files.deinit(dev.allocator());
+                entry.files.deinit(entry.allocator());
             },
-            .paths = dev.allocator().free(entry.paths),
-        };
+            .paths = entry.allocator().free(entry.paths),
+        });
+    }
+
+    fn allocator(entry: *const Entry) Allocator {
+        return entry.dev_allocator.get();
     }
 };
 
@@ -297,8 +298,16 @@ pub const WeakRef = struct {
     }
 };
 
-pub fn owner(store: *SourceMapStore) *DevServer {
+pub fn owner(store: *Self) *DevServer {
     return @alignCast(@fieldParentPtr("source_maps", store));
+}
+
+fn dev_allocator(store: *Self) DevAllocator {
+    return store.owner().dev_allocator();
+}
+
+fn allocator(store: *Self) Allocator {
+    return store.dev_allocator().get();
 }
 
 const PutOrIncrementRefCount = union(enum) {
@@ -308,11 +317,13 @@ const PutOrIncrementRefCount = union(enum) {
     /// Already exists, ref count was incremented.
     shared: *Entry,
 };
-pub fn putOrIncrementRefCount(store: *SourceMapStore, script_id: Key, ref_count: u32) !PutOrIncrementRefCount {
-    const gop = try store.entries.getOrPut(store.owner().allocator(), script_id);
+
+pub fn putOrIncrementRefCount(store: *Self, script_id: Key, ref_count: u32) !PutOrIncrementRefCount {
+    const gop = try store.entries.getOrPut(store.allocator(), script_id);
     if (!gop.found_existing) {
         bun.debugAssert(ref_count > 0); // invalid state
         gop.value_ptr.* = .{
+            .dev_allocator = store.dev_allocator(),
             .ref_count = ref_count,
             .overlapping_memory_cost = undefined,
             .paths = undefined,
@@ -326,29 +337,29 @@ pub fn putOrIncrementRefCount(store: *SourceMapStore, script_id: Key, ref_count:
     }
 }
 
-pub fn unref(store: *SourceMapStore, key: Key) void {
+pub fn unref(store: *Self, key: Key) void {
     unrefCount(store, key, 1);
 }
 
-pub fn unrefCount(store: *SourceMapStore, key: Key, count: u32) void {
+pub fn unrefCount(store: *Self, key: Key, count: u32) void {
     const index = store.entries.getIndex(key) orelse
         return bun.debugAssert(false);
     unrefAtIndex(store, index, count);
 }
 
-fn unrefAtIndex(store: *SourceMapStore, index: usize, count: u32) void {
+fn unrefAtIndex(store: *Self, index: usize, count: u32) void {
     const e = &store.entries.values()[index];
     e.ref_count -= count;
     if (bun.Environment.enable_logs) {
         mapLog("dec {x}, {d} | {d} -> {d}", .{ store.entries.keys()[index].get(), count, e.ref_count + count, e.ref_count });
     }
     if (e.ref_count == 0) {
-        e.deinit(store.owner());
+        e.deinit();
         store.entries.swapRemoveAt(index);
     }
 }
 
-pub fn addWeakRef(store: *SourceMapStore, key: Key) void {
+pub fn addWeakRef(store: *Self, key: Key) void {
     // This function expects that `weak_ref_entry_max` is low.
     const entry = store.entries.getPtr(key) orelse
         return bun.debugAssert(false);
@@ -390,7 +401,7 @@ pub fn addWeakRef(store: *SourceMapStore, key: Key) void {
 }
 
 /// Returns true if the ref count was incremented (meaning there was a source map to transfer)
-pub fn removeOrUpgradeWeakRef(store: *SourceMapStore, key: Key, mode: enum(u1) {
+pub fn removeOrUpgradeWeakRef(store: *Self, key: Key, mode: enum(u1) {
     /// Remove the weak ref entirely
     remove = 0,
     /// Convert the weak ref into a strong ref
@@ -420,7 +431,7 @@ pub fn removeOrUpgradeWeakRef(store: *SourceMapStore, key: Key, mode: enum(u1) {
     return true;
 }
 
-pub fn locateWeakRef(store: *SourceMapStore, key: Key) ?struct { index: usize, ref: WeakRef } {
+pub fn locateWeakRef(store: *Self, key: Key) ?struct { index: usize, ref: WeakRef } {
     for (0..store.weak_refs.count) |i| {
         const ref = store.weak_refs.peekItem(i);
         if (ref.key() == key) return .{ .index = i, .ref = ref };
@@ -430,7 +441,7 @@ pub fn locateWeakRef(store: *SourceMapStore, key: Key) ?struct { index: usize, r
 
 pub fn sweepWeakRefs(timer: *EventLoopTimer, now_ts: *const bun.timespec) EventLoopTimer.Arm {
     mapLog("sweepWeakRefs", .{});
-    const store: *SourceMapStore = @fieldParentPtr("weak_ref_sweep_timer", timer);
+    const store: *Self = @fieldParentPtr("weak_ref_sweep_timer", timer);
     assert(store.owner().magic == .valid);
 
     const now: u64 = @max(now_ts.sec, 0);
@@ -461,22 +472,22 @@ pub const GetResult = struct {
     index: bun.GenericIndex(u32, Entry),
     mappings: SourceMap.Mapping.List,
     file_paths: []const []const u8,
-    entry_files: *const bun.MultiArrayList(PackedMap.RefOrEmpty),
+    entry_files: *const bun.MultiArrayList(PackedMap.Shared),
 
-    pub fn deinit(self: *@This(), allocator: Allocator) void {
-        self.mappings.deinit(allocator);
+    pub fn deinit(self: *@This(), alloc: Allocator) void {
+        self.mappings.deinit(alloc);
         // file paths and source contents are borrowed
     }
 };
 
 /// This is used in exactly one place: remapping errors.
 /// In that function, an arena allows reusing memory between different source maps
-pub fn getParsedSourceMap(store: *SourceMapStore, script_id: Key, arena: Allocator, gpa: Allocator) ?GetResult {
+pub fn getParsedSourceMap(store: *Self, script_id: Key, arena: Allocator, gpa: Allocator) ?GetResult {
     const index = store.entries.getIndex(script_id) orelse
         return null; // source map was collected.
     const entry = &store.entries.values()[index];
 
-    const script_id_decoded: SourceMapStore.SourceId = @bitCast(script_id.get());
+    const script_id_decoded: SourceId = @bitCast(script_id.get());
     const vlq_bytes = entry.renderMappings(script_id_decoded.kind, arena, arena) catch bun.outOfMemory();
 
     switch (SourceMap.Mapping.parse(
@@ -509,11 +520,12 @@ const SourceMap = bun.sourcemap;
 const StringJoiner = bun.StringJoiner;
 const assert = bun.assert;
 const bake = bun.bake;
-const VoidFieldTypes = bun.meta.VoidFieldTypes;
+const useAllFields = bun.meta.useAllFields;
 const EventLoopTimer = bun.api.Timer.EventLoopTimer;
 
 const DevServer = bun.bake.DevServer;
 const ChunkKind = DevServer.ChunkKind;
+const DevAllocator = DevServer.DevAllocator;
 const PackedMap = DevServer.PackedMap;
 const dumpBundle = DevServer.dumpBundle;
 const mapLog = DevServer.mapLog;

@@ -169,8 +169,8 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
 
                 if (runtime_lines == null) {
                     const file = result.entry_files.get(@intCast(index - 1));
-                    if (file != .empty) {
-                        const json_encoded_source_code = file.ref.data.quotedContents();
+                    if (file.get()) |source_map| {
+                        const json_encoded_source_code = source_map.quotedContents();
                         // First line of interest is two above the target line.
                         const target_line = @as(usize, @intCast(frame.position.line.zeroBased()));
                         first_line_of_interest = target_line -| 2;

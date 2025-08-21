@@ -1,0 +1,40 @@
+{
+	"name": "@platform-test/linux-x64-musl",
+	"versions": {
+		"1.0.0": {
+			"name": "@platform-test/linux-x64-musl",
+			"version": "1.0.0",
+			"description": "Platform test package for linux-x64-musl",
+			"main": "index.js",
+			"scripts": {
+				"postinstall": "node postinstall.js"
+			},
+			"os": [
+				"linux"
+			],
+			"cpu": [
+				"x64"
+			],
+			"libc": [
+				"musl"
+			],
+			"_id": "@platform-test/linux-x64-musl@1.0.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-PLACEHOLDER",
+				"shasum": "PLACEHOLDER",
+				"tarball": "http://localhost:4873/@platform-test/linux-x64-musl/-/platform-test-linux-x64-musl-1.0.0.tgz"
+			}
+		}
+	},
+	"time": {
+		"modified": "2025-07-18T16:17:21.085Z",
+		"created": "2025-07-18T16:17:21.085Z",
+		"1.0.0": "2025-07-18T16:17:21.085Z"
+	},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_id": "@platform-test/linux-x64-musl"
+}

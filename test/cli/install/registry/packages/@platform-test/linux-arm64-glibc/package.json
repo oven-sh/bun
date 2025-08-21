@@ -1,0 +1,40 @@
+{
+	"name": "@platform-test/linux-arm64-glibc",
+	"versions": {
+		"1.0.0": {
+			"name": "@platform-test/linux-arm64-glibc",
+			"version": "1.0.0",
+			"description": "Platform test package for linux-arm64-glibc",
+			"main": "index.js",
+			"scripts": {
+				"postinstall": "node postinstall.js"
+			},
+			"os": [
+				"linux"
+			],
+			"cpu": [
+				"arm64"
+			],
+			"libc": [
+				"glibc"
+			],
+			"_id": "@platform-test/linux-arm64-glibc@1.0.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-PLACEHOLDER",
+				"shasum": "PLACEHOLDER",
+				"tarball": "http://localhost:4873/@platform-test/linux-arm64-glibc/-/platform-test-linux-arm64-glibc-1.0.0.tgz"
+			}
+		}
+	},
+	"time": {
+		"modified": "2025-07-18T16:17:21.043Z",
+		"created": "2025-07-18T16:17:21.043Z",
+		"1.0.0": "2025-07-18T16:17:21.043Z"
+	},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_id": "@platform-test/linux-arm64-glibc"
+}

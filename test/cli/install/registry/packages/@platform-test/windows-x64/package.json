@@ -1,0 +1,37 @@
+{
+	"name": "@platform-test/windows-x64",
+	"versions": {
+		"1.0.0": {
+			"name": "@platform-test/windows-x64",
+			"version": "1.0.0",
+			"description": "Platform test package for windows-x64",
+			"main": "index.js",
+			"scripts": {
+				"postinstall": "node postinstall.js"
+			},
+			"os": [
+				"win32"
+			],
+			"cpu": [
+				"x64"
+			],
+			"_id": "@platform-test/windows-x64@1.0.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-PLACEHOLDER",
+				"shasum": "PLACEHOLDER",
+				"tarball": "http://localhost:4873/@platform-test/windows-x64/-/platform-test-windows-x64-1.0.0.tgz"
+			}
+		}
+	},
+	"time": {
+		"modified": "2025-07-18T16:17:20.981Z",
+		"created": "2025-07-18T16:17:20.981Z",
+		"1.0.0": "2025-07-18T16:17:20.981Z"
+	},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_id": "@platform-test/windows-x64"
+}

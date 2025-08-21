@@ -1,0 +1,41 @@
+{
+	"name": "platform-test",
+	"versions": {
+		"1.0.0": {
+			"name": "platform-test",
+			"version": "1.0.0",
+			"description": "Main platform test package with optional platform-specific dependencies",
+			"main": "index.js",
+			"optionalDependencies": {
+				"@platform-test/windows-x64": "1.0.0",
+				"@platform-test/windows-ia32": "1.0.0",
+				"@platform-test/linux-x64": "1.0.0",
+				"@platform-test/linux-x64-glibc": "1.0.0",
+				"@platform-test/linux-arm64": "1.0.0",
+				"@platform-test/linux-arm64-glibc": "1.0.0",
+				"@platform-test/linux-arm": "1.0.0",
+				"@platform-test/linux-x64-musl": "1.0.0",
+				"@platform-test/linux-arm64-musl": "1.0.0",
+				"@platform-test/darwin-x64": "1.0.0",
+				"@platform-test/darwin-arm64": "1.0.0"
+			},
+			"_id": "platform-test@1.0.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-PLACEHOLDER",
+				"shasum": "PLACEHOLDER",
+				"tarball": "http://localhost:4873/platform-test/-/platform-test-1.0.0.tgz"
+			}
+		}
+	},
+	"time": {
+		"modified": "2025-07-18T16:17:21.135Z",
+		"created": "2025-07-18T16:17:21.135Z",
+		"1.0.0": "2025-07-18T16:17:21.135Z"
+	},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_id": "platform-test"
+}

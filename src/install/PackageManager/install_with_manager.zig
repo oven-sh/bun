@@ -1249,6 +1249,20 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
 
     try scanner.spawn();
 
+    var progress_node: ?*Progress.Node = null;
+    if (manager.options.log_level != .verbose and manager.options.log_level != .silent) {
+        manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
+        const scanner_name = if (Output.isEmojiEnabled())
+            "  🔐 Scanning packages with security provider"
+        else
+            "Scanning packages with security provider";
+        progress_node = manager.progress.start(scanner_name, 0);
+        if (progress_node) |node| {
+            node.activate();
+            manager.progress.refresh();
+        }
+    }
+
     var closure = struct {
         scanner: *SecurityScanSubprocess,
 
@@ -1258,6 +1272,13 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
     }{ .scanner = scanner };
 
     manager.sleepUntil(&closure, &@TypeOf(closure).isDone);
+
+    if (progress_node) |node| {
+        node.end();
+        manager.progress.refresh();
+        manager.progress.root.end();
+        manager.progress = .{};
+    }
 
     const packages_scanned = pkg_dedupe.count();
     try scanner.handleResults(&package_paths, start_time, packages_scanned, security_provider);
@@ -1451,7 +1472,11 @@ pub const SecurityScanSubprocess = struct {
             }
         } else if (this.manager.options.log_level != .silent and duration >= 1000) {
             // Show progress message for non-verbose, non-silent mode when it takes > 1 second
-            Output.prettyErrorln("[{s}] Scanned {d} package{s} [{d}ms]", .{ security_provider, packages_scanned, if (packages_scanned == 1) "" else "s", duration });
+            if (packages_scanned == 1) {
+                Output.prettyErrorln("<d>[{s}] Scanning 1 package took {d}ms<r>", .{ security_provider, duration });
+            } else {
+                Output.prettyErrorln("<d>[{s}] Scanning {d} packages took {d}ms<r>", .{ security_provider, packages_scanned, duration });
+            }
         }
 
         try handleSecurityAdvisories(this.manager, this.ipc_data.items, package_paths);

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
-describe("CI restrictions", () => {
+describe.skipIf(Bun.semver.satisfies(Bun.version.split("-")[0], "< 1.3"))("CI restrictions", () => {
   describe("test.only restrictions", () => {
     test("test.only should work when CI=false", async () => {
       const dir = tempDirWithFiles("ci-test-only-false", {

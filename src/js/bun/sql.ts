@@ -1,5 +1,5 @@
-import type { PostgresAdapter } from "internal/sql/postgres";
 import type { MySQLAdapter } from "internal/sql/mysql";
+import type { PostgresAdapter } from "internal/sql/postgres";
 import type { BaseQueryHandle, Query } from "internal/sql/query";
 import type { SQLHelper } from "internal/sql/shared";
 

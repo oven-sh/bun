@@ -84,6 +84,7 @@ pub fn mysqlErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, e
 }
 
 const bun = @import("bun");
+const createMySQLError = @import("./ErrorPacket.zig").createMySQLError;
+
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
-const createMySQLError = @import("./ErrorPacket.zig").createMySQLError;

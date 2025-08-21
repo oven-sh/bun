@@ -53,6 +53,8 @@ get_windows_temp_dir() {
         if [[ -n "$temp_dir" ]]; then
             # Convert Windows path to Unix format for bash
             temp_dir=$(cygpath -u "$temp_dir" 2>/dev/null || echo "$temp_dir")
+            # Remove trailing slash to prevent double slashes
+            temp_dir="${temp_dir%/}"
             if [[ -d "$temp_dir" ]] && [[ -w "$temp_dir" ]]; then
                 echo "$temp_dir/keylocker-tools"
                 return 0
@@ -60,7 +62,7 @@ get_windows_temp_dir() {
         fi
     fi
     
-    # Method 2: Standard temp directories
+    # Method 2: Standard temp directories  
     for dir in "/tmp" "/var/tmp" "/c/temp" "/c/Windows/Temp" "$HOME"; do
         if [[ -d "$dir" ]] && [[ -w "$dir" ]]; then
             echo "$dir/keylocker-tools"
@@ -209,6 +211,8 @@ install_keylocker() {
                     # Convert to Unix path for bash operations  
                     local alt_temp_dir
                     alt_temp_dir=$(cygpath -u "$ps_temp_dir" 2>/dev/null || echo "$ps_temp_dir")
+                    # Remove trailing slash to prevent double slashes
+                    alt_temp_dir="${alt_temp_dir%/}"
                     alt_temp_dir="$alt_temp_dir/keylocker-$$"
                     
                     log_info "Trying PowerShell temp directory: $alt_temp_dir"
@@ -298,26 +302,46 @@ install_keylocker() {
     local file_size=$(wc -c < "$msi_path" | tr -d ' ')
     log_info "MSI file size: $file_size bytes"
     
+    # Check if running with administrator privileges
+    if command -v powershell >/dev/null 2>&1; then
+        local is_admin=$(powershell -Command "([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)" 2>/dev/null || echo "False")
+        log_info "Running with administrator privileges: $is_admin"
+    fi
+    
     # Try multiple installation approaches with better error detection
     local install_success=false
     local install_log_path="/tmp/keylocker-install-$$.log"
     
     # Method 1: Direct msiexec with full automation and proper logging
     log_info "Attempting MSI installation (method 1: direct msiexec)..."
-    if cmd //c "msiexec.exe /i \"$win_msi_path\" /quiet /norestart /L*V \"$(cygpath -w "$install_log_path" 2>/dev/null || echo "$install_log_path")\" ACCEPT_EULA=1 ADDLOCAL=ALL ALLUSERS=1" 2>&1; then
-        log_info "MSI installer command completed (method 1)"
-        sleep 20  # Wait for installation to complete
-        
-        # Check if tools were actually installed
-        if [[ -f "/c/Program Files/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]] || 
-           [[ -f "/c/Program Files (x86)/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]]; then
-            install_success=true
-            log_info "MSI installation verified successful (method 1)"
-        else
-            log_info "MSI command succeeded but tools not found, trying method 2..."
-        fi
+    local msi_exit_code=0
+    
+    # Run msiexec and capture exit code
+    cmd //c "msiexec.exe /i \"$win_msi_path\" /quiet /norestart /L*V \"$(cygpath -w "$install_log_path" 2>/dev/null || echo "$install_log_path")\" ACCEPT_EULA=1 ADDLOCAL=ALL ALLUSERS=1" 2>&1
+    msi_exit_code=$?
+    
+    log_info "MSI installer command completed with exit code: $msi_exit_code"
+    sleep 20  # Wait for installation to complete
+    
+    # Show some log content if available
+    if [[ -f "$install_log_path" ]]; then
+        log_info "MSI installation log (last 20 lines):"
+        tail -20 "$install_log_path" 2>/dev/null || true
+    fi
+    
+    # Check if tools were actually installed  
+    if [[ -f "/c/Program Files/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]] || 
+       [[ -f "/c/Program Files (x86)/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]]; then
+        install_success=true
+        log_info "MSI installation verified successful (method 1)"
     else
-        log_info "Method 1 failed, trying method 2..."
+        log_info "MSI exit code $msi_exit_code but tools not found, trying method 2..."
+        
+        # List what's actually in Program Files after installation
+        log_info "Contents of /c/Program Files after installation:"
+        ls -la "/c/Program Files/" 2>/dev/null | grep -i digicert || true
+        log_info "Contents of /c/Program Files (x86) after installation:"  
+        ls -la "/c/Program Files (x86)/" 2>/dev/null | grep -i digicert || true
     fi
     
     # Method 2: PowerShell with error handling
@@ -391,9 +415,55 @@ install_keylocker() {
         done
         log_error "Please ensure you have administrator privileges"
         
-        # Try to find where it might have been installed
-        log_info "Searching for smctl.exe in common locations..."
-        find /c/Program* -name "smctl.exe" 2>/dev/null | head -5 || true
+        # Comprehensive search for KeyLocker installation
+        log_info "Searching for smctl.exe in all possible locations..."
+        
+        # Method 1: Search common program directories
+        local search_paths=(
+            "/c/Program Files"
+            "/c/Program Files (x86)" 
+            "/c/ProgramData"
+            "/c/Users/*/AppData/Local"
+            "/c/Windows/System32"
+            "/c/Windows/SysWOW64"
+        )
+        
+        for search_path in "${search_paths[@]}"; do
+            if [[ -d "$search_path" ]]; then
+                log_info "Searching in: $search_path"
+                find "$search_path" -name "smctl.exe" 2>/dev/null | head -5 | while read -r found_path; do
+                    log_info "Found smctl.exe at: $found_path"
+                done
+            fi
+        done
+        
+        # Method 2: Search for DigiCert directories
+        log_info "Searching for DigiCert directories..."
+        find /c/ -type d -name "*DigiCert*" 2>/dev/null | head -10 | while read -r dir; do
+            log_info "Found DigiCert directory: $dir"
+            if [[ -f "$dir/smctl.exe" ]]; then
+                log_info "  Contains smctl.exe!"
+            fi
+        done
+        
+        # Method 3: Search for any KeyLocker-related files
+        log_info "Searching for KeyLocker-related files..."
+        find /c/ -name "*keylocker*" -o -name "*smctl*" 2>/dev/null | head -10 | while read -r file; do
+            log_info "Found KeyLocker-related file: $file"
+        done
+        
+        # Method 4: Check Windows registry for installation path (if possible)
+        if command -v reg >/dev/null 2>&1; then
+            log_info "Checking Windows registry for DigiCert installations..."
+            reg query "HKLM\\SOFTWARE\\DigiCert" /s 2>/dev/null | grep -i "keylocker\|smctl" || true
+            reg query "HKLM\\SOFTWARE\\WOW6432Node\\DigiCert" /s 2>/dev/null | grep -i "keylocker\|smctl" || true
+        fi
+        
+        # Method 5: List all recently installed programs
+        if command -v powershell >/dev/null 2>&1; then
+            log_info "Checking installed programs for DigiCert..."
+            powershell -Command "Get-WmiObject -Class Win32_Product | Where-Object { \$_.Name -like '*DigiCert*' } | Select-Object Name, InstallLocation" 2>/dev/null || true
+        fi
         
         exit 1
     fi

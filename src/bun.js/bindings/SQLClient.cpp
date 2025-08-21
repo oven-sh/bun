@@ -322,7 +322,6 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                 ASSERT(!cell.isIndexedColumn());
                 ASSERT(cell.isNamedColumn());
                 if (names.has_value()) {
-
                     auto name = names.value()[i];
                     object->putDirect(vm, Identifier::fromString(vm, name.name.toWTFString()), value);
 

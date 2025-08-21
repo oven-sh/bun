@@ -119,8 +119,8 @@ pub fn bindAndExecute(this: *MySQLQuery, writer: anytype, statement: *MySQLState
     defer execute.deinit();
     try this.bind(&execute, globalObject);
     try execute.write(writer);
-    this.status = .running;
     try packet.end();
+    this.status = .running;
 }
 
 fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject: *jsc.JSGlobalObject) !void {
@@ -131,24 +131,22 @@ fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject: *j
     var iter = try QueryBindingIterator.init(binding_value, columns_value, globalObject);
 
     var i: u32 = 0;
-    var params = try bun.default_allocator.alloc(Data, execute.param_types.len);
+    var params = try bun.default_allocator.alloc(Value, execute.param_types.len);
     errdefer {
         for (params[0..i]) |*param| {
-            param.deinit();
+            param.deinit(bun.default_allocator);
         }
         bun.default_allocator.free(params);
     }
     while (try iter.next()) |js_value| {
         const param = execute.param_types[i];
         debug("param: {s} unsigned? {}", .{ @tagName(param.type), param.flags.UNSIGNED });
-        var value = try Value.fromJS(
+        params[i] = try Value.fromJS(
             js_value,
             globalObject,
             param.type,
             param.flags.UNSIGNED,
         );
-        defer value.deinit(bun.default_allocator);
-        params[i] = try value.toData(param.type);
         i += 1;
     }
 
@@ -391,6 +389,7 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
         if (can_execute) {
             connection.sequence_id = 0;
             MySQLRequest.executeQuery(query_str.slice(), MySQLConnection.Writer, writer) catch |err| {
+                debug("executeQuery failed: {s}", .{@errorName(err)});
                 // fail to run do cleanup
                 this.statement = null;
                 bun.default_allocator.destroy(stmt);
@@ -415,14 +414,11 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
 
             return globalObject.throwOutOfMemory();
         };
+        debug("doRun: wrote query to queue", .{});
 
         this.thisValue.upgrade(globalObject);
         js.targetSetCached(this_value, globalObject, query);
-        if (this.status == .running) {
-            connection.flushDataAndResetTimeout();
-        } else {
-            connection.resetConnectionTimeout();
-        }
+        connection.flushDataAndResetTimeout();
         return .js_undefined;
     }
     // prepared statements are always binary in MySQL
@@ -473,7 +469,6 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
                         this.flags.pipelined = true;
                         connection.pipelined_requests += 1;
                         connection.flags.is_ready_for_query = false;
-                        connection.flushDataAndResetTimeout();
                         did_write = true;
                     }
                 },
@@ -503,10 +498,7 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
     this.thisValue.upgrade(globalObject);
 
     js.targetSetCached(this_value, globalObject, query);
-
-    if (did_write) {
-        connection.flushDataAndResetTimeout();
-    } else if (can_execute) {
+    if (!did_write and can_execute) {
         debug("doRun: preparing query", .{});
 
         this.statement.?.status = .parsing;
@@ -516,11 +508,9 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
         };
         connection.flags.waiting_to_prepare = true;
         connection.sequence_id = 0;
-        connection.flushDataAndResetTimeout();
-    } else {
-        debug("doRun: wrote query to queue", .{});
-        connection.resetConnectionTimeout();
     }
+    connection.flushDataAndResetTimeout();
+
     return .js_undefined;
 }
 
@@ -533,7 +523,7 @@ pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 pub const toJS = js.toJS;
 
-const debug = bun.Output.scoped(.MySQLQuery, .hidden);
+const debug = bun.Output.scoped(.MySQLQuery, .visible);
 // TODO: move to shared IF POSSIBLE
 
 const ErrorPacket = @import("./protocol/ErrorPacket.zig");

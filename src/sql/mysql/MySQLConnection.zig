@@ -53,7 +53,7 @@ flags: ConnectionFlags = .{},
 /// Before being connected, this is a connection timeout timer.
 /// After being connected, this is an idle timeout timer.
 timer: bun.api.Timer.EventLoopTimer = .{
-    .tag = .PostgresSQLConnectionTimeout,
+    .tag = .MySQLConnectionTimeout,
     .next = .{
         .sec = 0,
         .nsec = 0,
@@ -65,7 +65,7 @@ timer: bun.api.Timer.EventLoopTimer = .{
 /// It stops when the connection is closed.
 max_lifetime_interval_ms: u32 = 0,
 max_lifetime_timer: bun.api.Timer.EventLoopTimer = .{
-    .tag = .PostgresSQLConnectionMaxLifetime,
+    .tag = .MySQLConnectionMaxLifetime,
     .next = .{
         .sec = 0,
         .nsec = 0,
@@ -132,13 +132,26 @@ fn updateHasPendingActivity(this: *MySQLConnection) void {
     this.pending_activity_count.store(a + b, .release);
 }
 
+fn hasDataToSend(this: *@This()) bool {
+    if (this.write_buffer.len() > 0) {
+        return true;
+    }
+    if (this.current()) |request| {
+        switch (request.status) {
+            .pending, .binding => return true,
+            else => return false,
+        }
+    }
+    return false;
+}
+
 fn registerAutoFlusher(this: *@This()) void {
-    const data_to_send = this.write_buffer.len();
-    debug("registerAutoFlusher: backpressure: {} registered: {} data_to_send: {}", .{ this.flags.has_backpressure, this.auto_flusher.registered, data_to_send });
+    const has_data_to_send = this.hasDataToSend();
+    debug("registerAutoFlusher: backpressure: {} registered: {} has_data_to_send: {}", .{ this.flags.has_backpressure, this.auto_flusher.registered, has_data_to_send });
 
     if (!this.auto_flusher.registered and // should not be registered
         !this.flags.has_backpressure and // if has backpressure we need to wait for onWritable event
-        data_to_send > 0 and // we need data to send
+        has_data_to_send and // we need data to send
         this.status == .connected //and we need to be connected
     ) {
         AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(@This(), this, this.vm);
@@ -405,6 +418,7 @@ pub fn disconnect(this: *@This()) void {
 
         // Fail any pending requests
         for (requests) |request| {
+            this.finishRequest(request);
             request.onError(.{
                 .error_code = 2013, // CR_SERVER_LOST
                 .error_message = .{ .temporary = "Lost connection to MySQL server" },
@@ -415,13 +429,18 @@ pub fn disconnect(this: *@This()) void {
     }
 }
 
-fn cleanupSuccessQuery(this: *@This(), item: *MySQLQuery) void {
-    if (item.flags.simple) {
-        this.nonpipelinable_requests -= 1;
-    } else if (item.flags.pipelined) {
-        this.pipelined_requests -= 1;
-    } else if (this.flags.waiting_to_prepare) {
-        this.flags.waiting_to_prepare = false;
+fn finishRequest(this: *@This(), item: *MySQLQuery) void {
+    switch (item.status) {
+        .running, .binding, .partial_response => {
+            if (item.flags.simple) {
+                this.nonpipelinable_requests -= 1;
+            } else if (item.flags.pipelined) {
+                this.pipelined_requests -= 1;
+            } else if (this.flags.waiting_to_prepare) {
+                this.flags.waiting_to_prepare = false;
+            }
+        },
+        .success, .fail, .pending => {},
     }
 }
 
@@ -461,6 +480,7 @@ fn cleanUpRequests(this: *@This(), js_reason: ?jsc.JSValue) void {
             .running,
             .partial_response,
             => {
+                this.finishRequest(request);
                 if (!this.vm.isShuttingDown()) {
                     if (js_reason) |reason| {
                         request.onJSError(reason, this.globalObject);
@@ -489,7 +509,6 @@ fn advance(this: *@This()) void {
             // so we do the cleanup her
             switch (result.status) {
                 .success => {
-                    this.cleanupSuccessQuery(result);
                     result.deref();
                     this.requests.discard(1);
                     continue;
@@ -541,13 +560,13 @@ fn advance(this: *@This()) void {
                     this.nonpipelinable_requests += 1;
                     this.flags.is_ready_for_query = false;
                     req.status = .running;
+                    this.flushDataAndResetTimeout();
                     return;
                 } else {
                     if (req.statement) |statement| {
                         switch (statement.status) {
                             .failed => {
                                 debug("stmt failed", .{});
-                                this.cleanupSuccessQuery(req);
                                 req.onError(statement.error_response, this.globalObject);
                                 if (offset == 0) {
                                     req.deref();
@@ -635,7 +654,6 @@ fn advance(this: *@This()) void {
                 continue;
             },
             .success => {
-                this.cleanupSuccessQuery(req);
                 if (offset > 0) {
                     // deinit later
                     req.status = .fail;
@@ -718,6 +736,7 @@ pub fn onTimeout(this: *MySQLConnection) void {
 
 pub fn onDrain(this: *MySQLConnection) void {
     debug("onDrain", .{});
+    this.flags.has_backpressure = false;
     this.drainInternal();
 }
 
@@ -923,6 +942,7 @@ pub fn deinit(this: *MySQLConnection) void {
 
     // Clear any pending requests first
     for (requests.readableSlice(0)) |request| {
+        this.finishRequest(request);
         request.onError(.{
             .error_code = 2013,
             .error_message = .{ .temporary = "Connection closed" },
@@ -1379,6 +1399,12 @@ pub fn handleCommand(this: *MySQLConnection, comptime Context: type, reader: New
                 try this.handleResultSet(Context, reader, header_length);
             },
             .failed => {
+                defer {
+                    this.advance();
+                    this.registerAutoFlusher();
+                }
+                this.flags.is_ready_for_query = true;
+                this.finishRequest(request);
                 // Statement failed, clean up
                 request.onError(statement.error_response, this.globalObject);
             },
@@ -1627,7 +1653,12 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
             var err = ErrorPacket{};
             try err.decode(reader);
             defer err.deinit();
-
+            defer {
+                this.advance();
+                this.registerAutoFlusher();
+            }
+            this.flags.is_ready_for_query = true;
+            this.finishRequest(request);
             statement.status = .failed;
             statement.error_response = err;
             request.onError(err, this.globalObject);
@@ -1648,7 +1679,9 @@ fn handleResultSetOK(this: *MySQLConnection, request: *MySQLQuery, statement: *M
         this.advance();
         this.registerAutoFlusher();
     }
-
+    if (this.flags.is_ready_for_query) {
+        this.finishRequest(request);
+    }
     request.onResult(statement.result_count, this.globalObject, this.js_value, this.flags.is_ready_for_query);
     statement.reset();
 }
@@ -1678,6 +1711,9 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
             if (request.statement) |statement| {
                 statement.reset();
             }
+
+            this.flags.is_ready_for_query = true;
+            this.finishRequest(request);
             request.onError(err, this.globalObject);
         },
 
@@ -1703,6 +1739,8 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 }
                 if (statement.columns.len != header.field_count) {
                     debug("header field count mismatch: {d} != {d}", .{ statement.columns.len, header.field_count });
+                    statement.cached_structure.deinit();
+                    statement.cached_structure = .{};
                     if (statement.columns.len > 0) {
                         for (statement.columns) |*column| {
                             column.deinit();
@@ -1710,8 +1748,9 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                         bun.default_allocator.free(statement.columns);
                     }
                     statement.columns = try bun.default_allocator.alloc(ColumnDefinition41, header.field_count);
+                    statement.columns_received = 0;
                 }
-
+                statement.execution_flags.needs_duplicate_check = true;
                 statement.execution_flags.header_received = true;
                 return;
             } else if (statement.columns_received < statement.columns.len) {
@@ -1744,11 +1783,6 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                     .raw = request.flags.result_mode == .raw,
                     .bigint = request.flags.bigint,
                 };
-                defer row.deinit(allocator);
-                try row.decode(allocator, reader);
-
-                const pending_value = MySQLQuery.js.pendingValueGetCached(request.thisValue.get()) orelse .zero;
-
                 var structure: JSValue = .js_undefined;
                 var cached_structure: ?CachedStructure = null;
                 switch (request.flags.result_mode) {
@@ -1760,6 +1794,10 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                         // no need to check for duplicate fields or structure
                     },
                 }
+                defer row.deinit(allocator);
+                try row.decode(allocator, reader);
+
+                const pending_value = MySQLQuery.js.pendingValueGetCached(request.thisValue.get()) orelse .zero;
 
                 // Process row data
                 const row_value = row.toJS(
@@ -1771,6 +1809,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                     cached_structure,
                 );
                 if (this.globalObject.tryTakeException()) |err| {
+                    this.finishRequest(request);
                     request.onJSError(err, this.globalObject);
                     return error.JSError;
                 }
@@ -1852,7 +1891,7 @@ pub const toJS = js.toJS;
 const MAX_PIPELINE_SIZE = std.math.maxInt(u16); // about 64KB per connection
 
 const PreparedStatementsMap = std.HashMapUnmanaged(u64, *MySQLStatement, bun.IdentityContext(u64), 80);
-const debug = bun.Output.scoped(.MySQLConnection, .hidden);
+const debug = bun.Output.scoped(.MySQLConnection, .visible);
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 const Queue = std.fifo.LinearFifo(*MySQLQuery, .Dynamic);
 

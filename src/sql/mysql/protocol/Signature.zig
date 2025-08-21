@@ -50,9 +50,15 @@ pub fn generate(globalObject: *jsc.JSGlobalObject, query: []const u8, array_valu
             try name.appendSlice(".null");
             continue;
         }
-        var unsigned = true;
+        var unsigned = false;
         const tag = try types.FieldType.fromJS(globalObject, value, &unsigned);
-        try name.appendSlice(@tagName(tag));
+        if (unsigned) {
+            // 128 is more than enought right now
+            var tag_name_buf = [_]u8{0} ** 128;
+            try name.appendSlice(std.fmt.bufPrint(tag_name_buf[0..], "U{s}", .{@tagName(tag)}) catch @tagName(tag));
+        } else {
+            try name.appendSlice(@tagName(tag));
+        }
         // TODO: add flags if necessary right now the only relevant would be unsigned but is JS and is never unsigned
         try fields.append(.{ .type = tag, .flags = .{ .UNSIGNED = unsigned } });
     }

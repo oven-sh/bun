@@ -1,4 +1,5 @@
 pub fn decodeBinaryValue(field_type: types.FieldType, raw: bool, bigint: bool, unsigned: bool, comptime Context: type, reader: NewReader(Context)) !SQLDataCell {
+    debug("decodeBinaryValue: {s}", .{@tagName(field_type)});
     return switch (field_type) {
         .MYSQL_TYPE_TINY => {
             if (raw) {
@@ -93,7 +94,7 @@ pub fn decodeBinaryValue(field_type: types.FieldType, raw: bool, bigint: bool, u
                 var data = try reader.read(4);
                 defer data.deinit();
                 const time = try DateTime.fromData(&data);
-                const timestamp: f64 = @floatFromInt(time.toUnixTimestamp());
+                const timestamp: f64 = @floatFromInt(time.toUnixTimestamp() + @divFloor(time.microsecond, 1000));
                 return SQLDataCell{ .tag = .date, .value = .{ .date = timestamp * 1000 } };
             },
             else => error.InvalidBinaryValue,
@@ -104,8 +105,7 @@ pub fn decodeBinaryValue(field_type: types.FieldType, raw: bool, bigint: bool, u
                 var data = try reader.read(l);
                 defer data.deinit();
                 const time = try DateTime.fromData(&data);
-                const timestamp: f64 = @floatFromInt(time.toUnixTimestamp());
-                return SQLDataCell{ .tag = .date, .value = .{ .date = timestamp * 1000 } };
+                return SQLDataCell{ .tag = .date, .value = .{ .date = time.toJSTimestamp() } };
             },
             else => error.InvalidBinaryValue,
         },
@@ -114,13 +114,25 @@ pub fn decodeBinaryValue(field_type: types.FieldType, raw: bool, bigint: bool, u
             4, 7 => |l| {
                 var data = try reader.read(l);
                 defer data.deinit();
-                const time = try DateTime.fromData(&data);
+                const time = try Time.fromData(&data);
                 const timestamp: f64 = @floatFromInt(time.toUnixTimestamp());
                 return SQLDataCell{ .tag = .date, .value = .{ .date = timestamp * 1000 } };
             },
             else => error.InvalidBinaryValue,
         },
-        .MYSQL_TYPE_ENUM, .MYSQL_TYPE_SET, .MYSQL_TYPE_GEOMETRY, .MYSQL_TYPE_NEWDECIMAL, .MYSQL_TYPE_STRING, .MYSQL_TYPE_VARCHAR, .MYSQL_TYPE_VAR_STRING => {
+        .MYSQL_TYPE_ENUM,
+        .MYSQL_TYPE_SET,
+        .MYSQL_TYPE_GEOMETRY,
+        .MYSQL_TYPE_NEWDECIMAL,
+        .MYSQL_TYPE_STRING,
+        .MYSQL_TYPE_VARCHAR,
+        .MYSQL_TYPE_VAR_STRING,
+        // We could return Buffer here BUT TEXT, LONGTEXT, MEDIUMTEXT, TINYTEXT, etc. are BLOB and the user expects a string
+        .MYSQL_TYPE_TINY_BLOB,
+        .MYSQL_TYPE_MEDIUM_BLOB,
+        .MYSQL_TYPE_LONG_BLOB,
+        .MYSQL_TYPE_BLOB,
+        => {
             if (raw) {
                 var data = try reader.rawEncodeLenData();
                 defer data.deinit();
@@ -132,19 +144,7 @@ pub fn decodeBinaryValue(field_type: types.FieldType, raw: bool, bigint: bool, u
             const slice = string_data.slice();
             return SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
         },
-        .MYSQL_TYPE_TINY_BLOB,
-        .MYSQL_TYPE_MEDIUM_BLOB,
-        .MYSQL_TYPE_LONG_BLOB,
-        .MYSQL_TYPE_BLOB,
-        => {
-            if (raw) {
-                var data = try reader.rawEncodeLenData();
-                defer data.deinit();
-                return SQLDataCell.raw(&data);
-            }
-            var val = try reader.encodeLenString();
-            return SQLDataCell.raw(&val);
-        },
+
         .MYSQL_TYPE_JSON => {
             if (raw) {
                 var data = try reader.rawEncodeLenData();
@@ -169,3 +169,4 @@ const SQLDataCell = @import("../../shared/SQLDataCell.zig").SQLDataCell;
 const Value = @import("../MySQLTypes.zig").Value;
 const DateTime = Value.DateTime;
 const Time = Value.Time;
+const debug = bun.Output.scoped(.MySQLDecodeBinaryValue, .visible);

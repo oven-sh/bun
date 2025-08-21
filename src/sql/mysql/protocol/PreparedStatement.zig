@@ -48,7 +48,7 @@ pub const Execute = struct {
     /// Number of times to execute the statement (usually 1)
     iteration_count: u32 = 1,
     /// Parameter values to bind to the prepared statement
-    params: []Data = &[_]Data{},
+    params: []Value = &[_]Value{},
     /// Types of each parameter in the prepared statement
     param_types: []const Param,
     /// Whether to send parameter types. Set to true for first execution, false for subsequent executions
@@ -56,7 +56,7 @@ pub const Execute = struct {
 
     pub fn deinit(this: *Execute) void {
         for (this.params) |*param| {
-            param.deinit();
+            param.deinit(bun.default_allocator);
         }
     }
 
@@ -69,10 +69,8 @@ pub const Execute = struct {
         @memset(null_bitmap, 0);
 
         for (this.params, 0..) |param, i| {
-            if (param == .empty) {
+            if (param == .null) {
                 null_bitmap[i >> 3] |= @as(u8, 1) << @as(u3, @truncate(i & 7));
-            } else {
-                bun.assert(param.slice().len > 0);
             }
         }
 
@@ -102,14 +100,14 @@ pub const Execute = struct {
 
             // Write parameter values
             for (this.params, this.param_types) |*param, param_type| {
-                if (param.* == .empty or param_type.type == .MYSQL_TYPE_NULL) continue;
+                if (param.* == .null or param_type.type == .MYSQL_TYPE_NULL) continue;
 
-                const value = param.slice();
-                debug("Write param type {s} len {d} hex {s}", .{ @tagName(param_type.type), value.len, std.fmt.fmtSliceHexLower(value) });
+                var value = try param.toData(param_type.type);
+                defer value.deinit();
                 if (param_type.type.isBinaryFormatSupported()) {
-                    try writer.write(value);
+                    try writer.write(value.slice());
                 } else {
-                    try writer.writeLengthEncodedString(value);
+                    try writer.writeLengthEncodedString(value.slice());
                 }
             }
         }
@@ -148,6 +146,7 @@ const bun = @import("bun");
 const std = @import("std");
 const CommandType = @import("./CommandType.zig").CommandType;
 const Data = @import("../../shared/Data.zig").Data;
+const Value = @import("../MySQLTypes.zig").Value;
 const Param = @import("../MySQLStatement.zig").Param;
 
 const NewReader = @import("./NewReader.zig").NewReader;

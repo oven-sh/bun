@@ -325,15 +325,24 @@ pub const FieldType = enum(u8) {
 
         if (value.isAnyInt()) {
             const int = value.toInt64();
-            if (int >= std.math.minInt(i32) and int <= std.math.maxInt(i32)) {
+
+            if (int >= 0) {
+                if (int <= std.math.maxInt(i32)) {
+                    return .MYSQL_TYPE_LONG;
+                }
+                if (int <= std.math.maxInt(u32)) {
+                    unsigned.* = true;
+                    return .MYSQL_TYPE_LONG;
+                }
+                if (int >= std.math.maxInt(i64)) {
+                    unsigned.* = true;
+                    return .MYSQL_TYPE_LONGLONG;
+                }
+                return .MYSQL_TYPE_LONGLONG;
+            }
+            if (int >= std.math.minInt(i32)) {
                 return .MYSQL_TYPE_LONG;
             }
-
-            if (int >= 0 and int <= std.math.maxInt(u32)) {
-                unsigned.* = true;
-                return .MYSQL_TYPE_LONG;
-            }
-
             return .MYSQL_TYPE_LONGLONG;
         }
 
@@ -420,10 +429,7 @@ pub const Value = union(enum) {
             },
             // .decimal => |dec| return try dec.toBinary(field_type),
             .string_data, .bytes_data => |data| return data,
-            .string, .bytes => |slice| return if (slice.len > 0)
-                Data{ .temporary = slice.slice() }
-            else
-                Data{ .empty = {} },
+            .string, .bytes => |slice| return if (slice.len > 0) Data{ .temporary = slice.slice() } else Data{ .empty = {} },
         }
 
         return try Data.create(buffer[0..stream.pos], bun.default_allocator);
@@ -626,7 +632,7 @@ pub const Value = union(enum) {
                         .hour = val[4],
                         .minute = val[5],
                         .second = val[6],
-                        .microsecond = std.mem.readInt(u32, val[8..12], .little),
+                        .microsecond = std.mem.readInt(u32, val[7..11], .little),
                     };
                 },
                 else => bun.Output.panic("Invalid datetime length: {d}", .{val.len}),
@@ -636,30 +642,33 @@ pub const Value = union(enum) {
         pub fn toBinary(this: *const DateTime, field_type: FieldType, buffer: []u8) u8 {
             switch (field_type) {
                 .MYSQL_TYPE_YEAR => {
-                    std.mem.writeInt(u16, buffer[0..2], this.year, .little);
-                    return 2;
+                    buffer[0] = 2;
+                    std.mem.writeInt(u16, buffer[1..3], this.year, .little);
+                    return 3;
                 },
                 .MYSQL_TYPE_DATE => {
-                    std.mem.writeInt(u16, buffer[0..2], this.year, .little);
-                    buffer[2] = this.month;
-                    buffer[3] = this.day;
-                    return 4;
+                    buffer[0] = 4;
+                    std.mem.writeInt(u16, buffer[1..3], this.year, .little);
+                    buffer[3] = this.month;
+                    buffer[4] = this.day;
+                    return 5;
                 },
                 .MYSQL_TYPE_DATETIME => {
-                    std.mem.writeInt(u16, buffer[0..2], this.year, .little);
-                    buffer[2] = this.month;
-                    buffer[3] = this.day;
-                    buffer[4] = this.hour;
-                    buffer[5] = this.minute;
-                    buffer[6] = this.second;
+                    buffer[0] = if (this.microsecond == 0) 7 else 11;
+                    std.mem.writeInt(u16, buffer[1..3], this.year, .little);
+                    buffer[3] = this.month;
+                    buffer[4] = this.day;
+                    buffer[5] = this.hour;
+                    buffer[6] = this.minute;
+                    buffer[7] = this.second;
                     if (this.microsecond == 0) {
-                        return 7;
+                        return 8;
                     } else {
-                        std.mem.writeInt(u32, buffer[7..11], this.microsecond, .little);
-                        return 11;
+                        std.mem.writeInt(u32, buffer[8..12], this.microsecond, .little);
+                        return 12;
                     }
                 },
-                else => unreachable,
+                else => return 0,
             }
         }
 
@@ -674,7 +683,11 @@ pub const Value = union(enum) {
             return ts;
         }
 
-        pub fn fromUnixTimestamp(timestamp: i64) DateTime {
+        pub fn toJSTimestamp(this: *const DateTime) f64 {
+            return @as(f64, @floatFromInt(this.toUnixTimestamp())) * 1000 + @as(f64, @floatFromInt(this.microsecond)) / 1000;
+        }
+
+        pub fn fromUnixTimestamp(timestamp: i64, microseconds: u32) DateTime {
             var ts = timestamp;
             const days = @divFloor(ts, 86400);
             ts = @mod(ts, 86400);
@@ -693,23 +706,28 @@ pub const Value = union(enum) {
                 .hour = @intCast(hour),
                 .minute = @intCast(minute),
                 .second = @intCast(second),
+                .microsecond = microseconds,
             };
         }
 
         pub fn toJS(this: DateTime, globalObject: *JSC.JSGlobalObject) JSValue {
-            const ts = this.toUnixTimestamp();
-            return JSValue.fromDateNumber(globalObject, @floatFromInt(ts * 1000));
+            return JSValue.fromDateNumber(globalObject, this.toJSTimestamp());
         }
 
         pub fn fromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) !DateTime {
             if (value.isDate()) {
-                const ts = @divFloor(@as(i64, @intFromFloat(value.getUnixTimestamp())), 1000);
-                return DateTime.fromUnixTimestamp(ts);
+                // this is actually ms not seconds
+                const total_ms = value.getUnixTimestamp();
+                const ts: i64 = @intFromFloat(@divFloor(total_ms, 1000));
+                const ms: u32 = @intFromFloat(total_ms - (@as(f64, @floatFromInt(ts)) * 1000));
+                return DateTime.fromUnixTimestamp(ts, ms * 1000);
             }
 
             if (value.isNumber()) {
-                const double = value.asNumber();
-                return DateTime.fromUnixTimestamp(@intFromFloat(double));
+                const total_ms = value.asNumber();
+                const ts: i64 = @intFromFloat(@divFloor(total_ms, 1000));
+                const ms: u32 = @intFromFloat(total_ms - (@as(f64, @floatFromInt(ts)) * 1000));
+                return DateTime.fromUnixTimestamp(ts, ms * 1000);
             }
 
             return globalObject.throwInvalidArguments("Expected a date or number", .{});
@@ -766,18 +784,16 @@ pub const Value = union(enum) {
             }
 
             var time = Time{};
-            const length = val[0];
-
-            if (length >= 8) {
-                time.negative = val[1] != 0;
-                time.days = std.mem.readInt(u32, val[2..6], .little);
-                time.hours = val[6];
-                time.minutes = val[7];
-                time.seconds = val[8];
+            if (val.len >= 8) {
+                time.negative = val[0] != 0;
+                time.days = std.mem.readInt(u32, val[1..5], .little);
+                time.hours = val[5];
+                time.minutes = val[6];
+                time.seconds = val[7];
             }
 
-            if (length > 8) {
-                time.microseconds = std.mem.readInt(u32, val[9..13], .little);
+            if (val.len > 8) {
+                time.microseconds = std.mem.readInt(u32, val[8..12], .little);
             }
 
             return time;
@@ -887,7 +903,7 @@ fn gregorianDays(year: u16, month: u8, day: u8) i32 {
         days += daysInMonth(year, m - 1);
     }
 
-    return days + day - 1;
+    return days + day;
 }
 
 const Date = struct {

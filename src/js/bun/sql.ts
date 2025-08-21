@@ -696,12 +696,16 @@ function onResolveSQLQuery(query, result, commandTag, count, queries, is_last) {
   }
   /// prepared statements
   $assert(result instanceof SQLResultArray, "Invalid result array");
-  if (typeof commandTag === "string") {
-    if (commandTag.length > 0) {
-      result.command = commandTag;
+  if (query[_adapter] !== "mysql") {
+    result.command = commandTag;
+
+    if (typeof commandTag === "string") {
+      if (commandTag.length > 0) {
+        result.command = commandTag;
+      }
+    } else {
+      result.command = cmds[commandTag];
     }
-  } else {
-    result.command = cmds[commandTag];
   }
 
   result.count = count || 0;
@@ -1496,6 +1500,9 @@ function loadOptions(o: Bun.SQL.Options) {
   bigint ??= o.bigint;
   // we need to explicitly set prepare to false if it is false
   if (o.prepare === false) {
+    if (adapter === "mysql") {
+      throw $ERR_INVALID_ARG_VALUE("options.prepare", false, "prepared: false is not supported in MySQL");
+    }
     prepare = false;
   }
 

@@ -49,6 +49,7 @@ pub const Row = struct {
     }
 
     fn parseValueAndSetCell(this: *Row, cell: *SQLDataCell, column: *const ColumnDefinition41, value: *const Data) void {
+        debug("parseValueAndSetCell: {s} {s}", .{ @tagName(column.column_type), value.slice() });
         return switch (column.column_type) {
             .MYSQL_TYPE_FLOAT, .MYSQL_TYPE_DOUBLE => {
                 const val: f64 = bun.parseDouble(value.slice()) catch std.math.nan(f64);
@@ -82,23 +83,26 @@ pub const Row = struct {
                     const val: u64 = std.fmt.parseInt(u64, value.slice(), 10) catch 0;
                     if (val <= std.math.maxInt(u32)) {
                         cell.* = SQLDataCell{ .tag = .uint4, .value = .{ .uint4 = @intCast(val) } };
-                    } else if (this.bigint) {
+                        return;
+                    }
+                    if (this.bigint) {
                         cell.* = SQLDataCell{ .tag = .uint8, .value = .{ .uint8 = val } };
+                        return;
                     }
                 } else {
                     const val: i64 = std.fmt.parseInt(i64, value.slice(), 10) catch 0;
                     if (val >= std.math.minInt(i32) and val <= std.math.maxInt(i32)) {
                         cell.* = SQLDataCell{ .tag = .int4, .value = .{ .int4 = @intCast(val) } };
-                    } else if (this.bigint) {
+                        return;
+                    }
+                    if (this.bigint) {
                         cell.* = SQLDataCell{ .tag = .int8, .value = .{ .int8 = val } };
+                        return;
                     }
                 }
 
                 const slice = value.slice();
                 cell.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
-            },
-            .MYSQL_TYPE_TINY_BLOB, .MYSQL_TYPE_MEDIUM_BLOB, .MYSQL_TYPE_LONG_BLOB, .MYSQL_TYPE_BLOB => {
-                cell.* = SQLDataCell.raw(value);
             },
             .MYSQL_TYPE_JSON => {
                 const slice = value.slice();
@@ -238,3 +242,4 @@ const decoderWrap = @import("./NewReader.zig").decoderWrap;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
+const debug = bun.Output.scoped(.MySQLResultSet, .visible);

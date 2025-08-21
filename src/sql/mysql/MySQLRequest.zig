@@ -3,7 +3,7 @@ pub fn executeQuery(
     comptime Context: type,
     writer: NewWriter(Context),
 ) !void {
-    debug("executeQuery {s}", .{query});
+    debug("executeQuery len: {d} {s}", .{ query.len, query });
     // resets the sequence id to zero every time we send a query
     var packet = try writer.start(0);
     try writer.int1(@intFromEnum(CommandType.COM_QUERY));
@@ -24,7 +24,7 @@ pub fn prepareRequest(
     try packet.end();
 }
 
-const debug = bun.Output.scoped(.MySQLRequest, .hidden);
+const debug = bun.Output.scoped(.MySQLRequest, .visible);
 
 const bun = @import("bun");
 const CommandType = @import("./protocol/CommandType.zig").CommandType;

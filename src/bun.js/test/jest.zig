@@ -529,29 +529,12 @@ pub const Jest = struct {
 
     pub fn call(
         globalObject: *JSGlobalObject,
-        callframe: *CallFrame,
+        _: *CallFrame,
     ) bun.JSError!JSValue {
         const vm = globalObject.bunVM();
         if (vm.is_in_preload or runner == null) {
             return Bun__Jest__testPreloadObject(globalObject);
         }
-
-        const arguments = callframe.arguments_old(2).slice();
-
-        if (arguments.len < 1 or !arguments[0].isString()) {
-            return globalObject.throw("Bun.jest() expects a string filename", .{});
-        }
-        var str = try arguments[0].toSlice(globalObject, bun.default_allocator);
-        defer str.deinit();
-        const slice = str.slice();
-
-        if (!std.fs.path.isAbsolute(slice)) {
-            return globalObject.throw("Bun.jest() expects an absolute file path, got '{s}'", .{slice});
-        }
-
-        const filepath = Fs.FileSystem.instance.filename_store.append([]const u8, slice) catch unreachable;
-        var scope = runner.?.getOrPutFile(filepath);
-        scope.push();
 
         return Bun__Jest__testModuleObject(globalObject);
     }
@@ -2495,7 +2478,6 @@ const ExpectTypeOf = expect.ExpectTypeOf;
 const bun = @import("bun");
 const ArrayIdentityContext = bun.ArrayIdentityContext;
 const Environment = bun.Environment;
-const Fs = bun.fs;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
 const RegularExpression = bun.RegularExpression;

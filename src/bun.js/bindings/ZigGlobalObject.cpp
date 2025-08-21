@@ -2225,6 +2225,10 @@ extern "C" JSC::EncodedJSValue Bun__Jest__testModuleObject(Zig::GlobalObject* gl
 {
     return JSValue::encode(globalObject->lazyTestModuleObject());
 }
+extern "C" JSC::EncodedJSValue Bun__ExpectTypeOf__getSingleton(Zig::GlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->lazyExpectTypeOfSingleton());
+}
 
 static inline JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBufferBody(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
@@ -2865,6 +2869,17 @@ void GlobalObject::finishCreation(VM& vm)
 
             JSValue result = JSValue::decode(Bun__Jest__createTestPreloadObject(globalObject));
             init.set(result.toObject(globalObject));
+        });
+
+    m_lazyExpectTypeOfSingleton.initLater(
+        [](const Initializer<JSObject>& init) {
+            Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(init.owner);
+            auto& vm = globalObject->vm();
+
+            // Create a single ExpectTypeOf instance that will be reused
+            // Pass nullptr as ctx since ExpectTypeOf has no data
+            auto* expectTypeOf = WebCore::JSExpectTypeOf::create(vm, globalObject, globalObject->JSExpectTypeOfStructure(), nullptr);
+            init.set(expectTypeOf);
         });
 
     m_testMatcherUtilsObject.initLater(

@@ -157,7 +157,7 @@ describe("Security Provider Edge Cases", () => {
     };`,
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("Security provider must be version 1");
+      expect(err).toContain("Security scanner must be version 1");
     },
   });
 
@@ -168,7 +168,7 @@ describe("Security Provider Edge Cases", () => {
     };`,
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("Security provider must be version 1");
+      expect(err).toContain("Security scanner must be version 1");
     },
   });
 
@@ -200,7 +200,7 @@ describe("Invalid Return Values", () => {
     scanner: async () => "not an array" as any,
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("Security provider must return an array of advisories");
+      expect(err).toContain("Security scanner must return an array of advisories");
     },
   });
 
@@ -208,7 +208,7 @@ describe("Invalid Return Values", () => {
     scanner: async () => null as any,
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("Security provider must return an array of advisories");
+      expect(err).toContain("Security scanner must return an array of advisories");
     },
   });
 
@@ -216,7 +216,7 @@ describe("Invalid Return Values", () => {
     scanner: async () => undefined as any,
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("Security provider must return an array of advisories");
+      expect(err).toContain("Security scanner must return an array of advisories");
     },
   });
 
@@ -492,7 +492,7 @@ describe("Process Behavior", () => {
     `,
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("Security provider exited with code 42 without sending data");
+      expect(err).toContain("Security scanner exited with code 42 without sending data");
     },
   });
 });

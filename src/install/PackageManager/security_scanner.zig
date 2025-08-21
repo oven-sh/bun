@@ -435,16 +435,16 @@ pub const SecurityScanSubprocess = struct {
             switch (status) {
                 .exited => |exit| {
                     if (exit.code != 0) {
-                        Output.errGeneric("Security provider exited with code {d} without sending data", .{exit.code});
+                        Output.errGeneric("Security scanner exited with code {d} without sending data", .{exit.code});
                     } else {
-                        Output.errGeneric("Security provider exited without sending any data", .{});
+                        Output.errGeneric("Security scanner exited without sending any data", .{});
                     }
                 },
                 .signaled => |sig| {
-                    Output.errGeneric("Security provider terminated by signal {s} without sending data", .{@tagName(sig)});
+                    Output.errGeneric("Security scanner terminated by signal {s} without sending data", .{@tagName(sig)});
                 },
                 else => {
-                    Output.errGeneric("Security provider terminated abnormally without sending data", .{});
+                    Output.errGeneric("Security scanner terminated abnormally without sending data", .{});
                 },
             }
             Global.exit(1);
@@ -483,16 +483,16 @@ pub const SecurityScanSubprocess = struct {
             switch (status) {
                 .exited => |exited| {
                     if (exited.code != 0) {
-                        Output.errGeneric("Security provider failed with exit code: {d}", .{exited.code});
+                        Output.errGeneric("Security scanner failed with exit code: {d}", .{exited.code});
                         Global.exit(1);
                     }
                 },
                 .signaled => |signal| {
-                    Output.errGeneric("Security provider was terminated by signal: {s}", .{@tagName(signal)});
+                    Output.errGeneric("Security scanner was terminated by signal: {s}", .{@tagName(signal)});
                     Global.exit(1);
                 },
                 else => {
-                    Output.errGeneric("Security provider failed", .{});
+                    Output.errGeneric("Security scanner failed", .{});
                     Global.exit(1);
                 },
             }
@@ -512,7 +512,7 @@ fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, pack
     defer temp_log.deinit();
 
     const json_expr = bun.json.parseUTF8(&json_source, &temp_log, manager.allocator) catch |err| {
-        Output.errGeneric("Security provider returned invalid JSON: {s}", .{@errorName(err)});
+        Output.errGeneric("Security scanner returned invalid JSON: {s}", .{@errorName(err)});
         if (ipc_data.len < 1000) {
             // If the response is reasonably small, show it to help debugging
             Output.errGeneric("Response: {s}", .{ipc_data});
@@ -527,19 +527,19 @@ fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, pack
     defer advisories_list.deinit();
 
     if (json_expr.data != .e_object) {
-        Output.errGeneric("Security provider response must be a JSON object, got: {s}", .{@tagName(json_expr.data)});
+        Output.errGeneric("Security scanner response must be a JSON object, got: {s}", .{@tagName(json_expr.data)});
         Global.exit(1);
     }
 
     const obj = json_expr.data.e_object;
 
     const advisories_expr = obj.get("advisories") orelse {
-        Output.errGeneric("Security provider response missing required 'advisories' field", .{});
+        Output.errGeneric("Security scanner response missing required 'advisories' field", .{});
         Global.exit(1);
     };
 
     if (advisories_expr.data != .e_array) {
-        Output.errGeneric("Security provider 'advisories' field must be an array, got: {s}", .{@tagName(advisories_expr.data)});
+        Output.errGeneric("Security scanner 'advisories' field must be an array, got: {s}", .{@tagName(advisories_expr.data)});
         Global.exit(1);
     }
 

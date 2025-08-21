@@ -3041,7 +3041,7 @@ pub const api = struct {
 
         node_linker: ?bun.install.PackageManager.Options.NodeLinker = null,
 
-        security_provider: ?[]const u8 = null,
+        security_scanner: ?[]const u8 = null,
 
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);

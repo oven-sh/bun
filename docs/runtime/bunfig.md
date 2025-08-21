@@ -496,7 +496,7 @@ Whether to generate a non-Bun lockfile alongside `bun.lock`. (A `bun.lock` will 
 print = "yarn"
 ```
 
-### `install.security.provider`
+### `install.security.scanner`
 
 Configure a security provider to scan packages for vulnerabilities before installation.
 
@@ -510,7 +510,7 @@ Then configure it in your `bunfig.toml`:
 
 ```toml
 [install.security]
-provider = "@acme/bun-security-provider"
+scanner = "@acme/bun-security-provider"
 ```
 
 When a security provider is configured:

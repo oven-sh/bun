@@ -12,6 +12,25 @@ set -euo pipefail
 : "${SM_HOST:?Error: SM_HOST environment variable is required}"
 : "${SM_CLIENT_CERT_FILE:?Error: SM_CLIENT_CERT_FILE environment variable is required (Base64-encoded certificate content)}"
 
+# Verify all required environment variables are present and non-empty
+verify_env_vars() {
+    local missing_vars=()
+    
+    [[ -z "${SM_API_KEY:-}" ]] && missing_vars+=("SM_API_KEY")
+    [[ -z "${SM_CLIENT_CERT_PASSWORD:-}" ]] && missing_vars+=("SM_CLIENT_CERT_PASSWORD")
+    [[ -z "${SM_KEYPAIR_ALIAS:-}" ]] && missing_vars+=("SM_KEYPAIR_ALIAS")
+    [[ -z "${SM_HOST:-}" ]] && missing_vars+=("SM_HOST")
+    [[ -z "${SM_CLIENT_CERT_FILE:-}" ]] && missing_vars+=("SM_CLIENT_CERT_FILE")
+    
+    if [[ ${#missing_vars[@]} -gt 0 ]]; then
+        log_error "Missing required environment variables: ${missing_vars[*]}"
+        log_error "These should be set by Buildkite secrets or local environment"
+        exit 1
+    fi
+    
+    log_info "All required environment variables are present"
+}
+
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLS_DIR="${TOOLS_DIR:-/tmp/keylocker-tools}"
@@ -28,6 +47,11 @@ log_error() {
 
 log_success() {
     echo "[SUCCESS] $1"
+}
+
+# Secure logging function that never echoes sensitive data
+log_secure() {
+    echo "[INFO] $1" >/dev/null 2>&1
 }
 
 # Cleanup function
@@ -110,18 +134,36 @@ install_keylocker() {
     # Convert path for Windows
     local win_msi_path="$(cygpath -w "$msi_path" 2>/dev/null || echo "$msi_path")"
     
-    # Install MSI
+    # Install MSI with comprehensive automation
     log_info "Running MSI installer..."
-    if cmd //c "msiexec.exe /i \"$win_msi_path\" /qn /norestart ACCEPT_EULA=1 ADDLOCAL=ALL" 2>/dev/null; then
-        log_info "MSI installation completed"
+    
+    # Try multiple installation approaches
+    local install_success=false
+    
+    # Method 1: Direct msiexec with full automation
+    if cmd //c "msiexec.exe /i \"$win_msi_path\" /quiet /norestart /L*V /tmp/keylocker-install.log ACCEPT_EULA=1 ADDLOCAL=ALL ALLUSERS=1" >/dev/null 2>&1; then
+        install_success=true
+        log_info "MSI installation completed (method 1)"
     else
-        # Try with PowerShell elevation if direct install fails
+        # Method 2: PowerShell with elevated privileges and wait
         log_info "Attempting installation with elevated privileges..."
-        powershell -Command "Start-Process msiexec.exe -ArgumentList '/i', '\"$win_msi_path\"', '/qn', '/norestart', 'ACCEPT_EULA=1', 'ADDLOCAL=ALL' -Verb RunAs -Wait" 2>/dev/null || true
+        if powershell -Command "try { Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i', '\"$win_msi_path\"', '/quiet', '/norestart', '/L*V', '/tmp/keylocker-install.log', 'ACCEPT_EULA=1', 'ADDLOCAL=ALL', 'ALLUSERS=1' -Verb RunAs -Wait -PassThru | Out-Null; exit 0 } catch { exit 1 }" >/dev/null 2>&1; then
+            install_success=true
+            log_info "MSI installation completed (method 2)"
+        else
+            # Method 3: Try without elevation but with longer wait
+            log_info "Trying installation without elevation..."
+            cmd //c "msiexec.exe /i \"$win_msi_path\" /passive /norestart /L*V /tmp/keylocker-install.log ACCEPT_EULA=1 ADDLOCAL=ALL" >/dev/null 2>&1 &
+            sleep 30
+            if [[ -f "/c/Program Files/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]]; then
+                install_success=true
+                log_info "MSI installation completed (method 3)"
+            fi
+        fi
     fi
     
-    # Wait for installation to complete
-    sleep 10
+    # Wait additional time for installation to fully complete
+    sleep 15
     
     # Verify installation
     if [[ ! -f "/c/Program Files/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]]; then
@@ -166,19 +208,19 @@ setup_environment() {
         exit 1
     fi
     
-    # Save credentials to Windows credential store
-    log_info "Saving credentials..."
-    if ! smctl credentials save "$SM_API_KEY" "$SM_CLIENT_CERT_PASSWORD" 2>/dev/null; then
+    # Save credentials to Windows credential store (no logging to prevent exposure)
+    if ! smctl credentials save "$SM_API_KEY" "$SM_CLIENT_CERT_PASSWORD" >/dev/null 2>&1; then
         log_error "Failed to save credentials"
         exit 1
     fi
+    log_info "Credentials saved securely"
     
-    # Sync certificates with Windows certificate store
-    log_info "Syncing certificates..."
-    if ! smctl windows certsync --keypair-alias="$SM_KEYPAIR_ALIAS" 2>/dev/null; then
+    # Sync certificates with Windows certificate store (no logging to prevent exposure)
+    if ! smctl windows certsync --keypair-alias="$SM_KEYPAIR_ALIAS" >/dev/null 2>&1; then
         log_error "Failed to sync certificates"
         exit 1
     fi
+    log_info "Certificates synced successfully"
     
     log_success "Environment setup completed"
 }
@@ -198,19 +240,19 @@ sign_executable() {
     
     log_info "Signing $exe_name..."
     
-    # Sign with smctl
-    if ! smctl sign --keypair-alias="$SM_KEYPAIR_ALIAS" --input "$win_path" 2>&1 | grep -q "SUCCESSFUL"; then
+    # Sign with smctl (suppress output to prevent credential exposure)
+    if ! smctl sign --keypair-alias="$SM_KEYPAIR_ALIAS" --input "$win_path" >/dev/null 2>&1; then
         log_error "Failed to sign $exe_name"
         return 1
     fi
     
     log_success "Signed $exe_name"
     
-    # Verify signature with smctl
+    # Verify signature with smctl (suppress output to prevent info exposure)
     log_info "Verifying signature for $exe_name..."
-    if ! smctl sign verify --input "$win_path" 2>&1 | grep -q -E "(Valid|Success|Verified)"; then
-        # Try alternate verification
-        if ! signtool verify //pa "$win_path" 2>&1 | grep -q "Successfully verified"; then
+    if ! smctl sign verify --input "$win_path" >/dev/null 2>&1; then
+        # Try alternate verification with signtool
+        if ! signtool verify //pa "$win_path" >/dev/null 2>&1; then
             log_error "Signature verification failed for $exe_name"
             return 1
         fi
@@ -228,6 +270,9 @@ main() {
     fi
     
     log_info "Starting Windows code signing process..."
+    
+    # Verify environment variables
+    verify_env_vars
     
     # Setup certificate from Base64
     setup_certificate

@@ -228,23 +228,23 @@ async function spawn(command, args, options, label) {
     if (process.env.BUN_LINK_ONLY && isWindows) {
       env ||= options?.env || { ...process.env };
       env.SM_CLIENT_CERT_PASSWORD = getSecret("SM_CLIENT_CERT_PASSWORD", {
-        redact: false,
+        redact: true,
         required: true,
       });
       env.SM_CLIENT_CERT_FILE = getSecret("SM_CLIENT_CERT_FILE", {
-        redact: false,
+        redact: true,
         required: true,
       });
       env.SM_API_KEY = getSecret("SM_API_KEY", {
-        redact: false,
+        redact: true,
         required: true,
       });
       env.SM_KEYPAIR_ALIAS = getSecret("SM_KEYPAIR_ALIAS", {
-        redact: false,
+        redact: true,
         required: true,
       });
       env.SM_HOST = getSecret("SM_HOST", {
-        redact: false,
+        redact: true,
         required: true,
       });
     }

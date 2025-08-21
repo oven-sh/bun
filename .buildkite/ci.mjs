@@ -434,10 +434,15 @@ function getBuildEnv(target, options) {
  * @param {PipelineOptions} options
  * @returns {string}
  */
-function getBuildCommand(target, options) {
+function getBuildCommand(target, options, label) {
   const { profile } = target;
 
   const label = profile || "release";
+
+  if (target.os === "windows" && label === "build-bun") {
+    return `bun run build:${label} -DENABLE_WINDOWS_CODESIGNING=ON`;
+  }
+
   return `bun run build:${label}`;
 }
 
@@ -534,7 +539,7 @@ function getLinkBunStep(platform, options) {
       BUN_LINK_ONLY: "ON",
       ...getBuildEnv(platform, options),
     },
-    command: `${getBuildCommand(platform, options)} --target bun`,
+    command: `${getBuildCommand(platform, options, "build-bun")} --target bun`,
   };
 }
 

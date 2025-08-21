@@ -1790,6 +1790,10 @@ pub const TestCommand = struct {
         const file_path = resolution.path_pair.primary.text;
         const file_title = bun.path.relative(FileSystem.instance.top_level_dir, file_path);
 
+        var describe2Root = &jest.Jest.runner.?.describe2Root;
+        describe2Root.enterFile(file_path);
+        defer describe2Root.exitFile();
+
         // In Github Actions, append a special prefix that will group
         // subsequent log lines into a collapsable group.
         // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#grouping-log-lines
@@ -1836,36 +1840,30 @@ pub const TestCommand = struct {
 
             const file_end = reporter.jest.files.len;
 
-            // Check if describe2 is available and has tests to run
-            if (jest.Jest.runner.?.describe2Root) |*buntestFiles| {
-                var i: usize = 0;
-                while (i < buntestFiles.files.items.len) : (i += 1) {
-                    const buntest = buntestFiles.files.items[i];
+            {
+                // Check if describe2 is available and has tests to run
+                bun.assert(describe2Root.active_file != null);
+                const buntest = describe2Root.active_file.?;
 
-                    // Automatically execute describe2 tests
-                    try buntest.run(vm.global);
+                // Automatically execute describe2 tests
+                try buntest.run(vm.global);
 
-                    // Process event loop while describe2 tests are running
+                // Process event loop while describe2 tests are running
+                vm.eventLoop().tick();
+
+                var prev_unhandled_count = vm.unhandled_error_counter;
+                while (buntest.phase != .done) {
+                    vm.eventLoop().autoTick();
+                    if (buntest.phase == .done) break;
                     vm.eventLoop().tick();
 
-                    var prev_unhandled_count = vm.unhandled_error_counter;
-                    while (buntest.phase != .done) {
-                        vm.eventLoop().autoTick();
-                        if (buntest.phase == .done) break;
-                        vm.eventLoop().tick();
-
-                        while (prev_unhandled_count < vm.unhandled_error_counter) {
-                            vm.global.handleRejectedPromises();
-                            prev_unhandled_count = vm.unhandled_error_counter;
-                        }
+                    while (prev_unhandled_count < vm.unhandled_error_counter) {
+                        vm.global.handleRejectedPromises();
+                        prev_unhandled_count = vm.unhandled_error_counter;
                     }
-
-                    vm.eventLoop().tickImmediateTasks(vm);
-
-                    // Automatically cleanup describe2 after tests complete
-                    buntest.deinit();
                 }
-                jest.Jest.runner.?.describe2Root = null;
+
+                vm.eventLoop().tickImmediateTasks(vm);
             }
 
             for (file_start..file_end) |module_id| {

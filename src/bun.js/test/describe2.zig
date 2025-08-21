@@ -52,10 +52,7 @@ pub const js_fns = struct {
         if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
             @panic("TODO return Bun__Jest__testPreloadObject(globalThis)");
         }
-        if (bun.jsc.Jest.Jest.runner.?.describe2Root == null) {
-            return globalThis.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
-        }
-        const bunTestRoot = &bun.jsc.Jest.Jest.runner.?.describe2Root.?;
+        const bunTestRoot = &bun.jsc.Jest.Jest.runner.?.describe2Root;
         const bunTest = bunTestRoot.getActive();
 
         if (cfg.only) try errorInCI(globalThis, cfg.signature);
@@ -106,10 +103,7 @@ pub const js_fns = struct {
         if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
             @panic("TODO return Bun__Jest__testPreloadObject(globalThis)");
         }
-        if (bun.jsc.Jest.Jest.runner.?.describe2Root == null) {
-            return globalThis.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
-        }
-        const bunTestRoot = &bun.jsc.Jest.Jest.runner.?.describe2Root.?;
+        const bunTestRoot = &bun.jsc.Jest.Jest.runner.?.describe2Root;
         const bunTest = bunTestRoot.getActive();
 
         if (cfg.only) try errorInCI(globalThis, cfg.signature);
@@ -154,10 +148,7 @@ pub const js_fns = struct {
                 if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
                     @panic("TODO return Bun__Jest__testPreloadObject(globalThis)");
                 }
-                if (bun.jsc.Jest.Jest.runner.?.describe2Root == null) {
-                    return globalThis.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
-                }
-                const bunTestRoot = &bun.jsc.Jest.Jest.runner.?.describe2Root.?;
+                const bunTestRoot = &bun.jsc.Jest.Jest.runner.?.describe2Root;
                 const bunTest = bunTestRoot.getActive();
 
                 const callback = callFrame.argumentsAsArray(1)[0];
@@ -177,42 +168,39 @@ pub const js_fns = struct {
     }
 };
 
-pub const BunTest = struct { // TODO: this is bad; try again
+pub const BunTest = struct {
     gpa: std.mem.Allocator,
-    files: std.ArrayListUnmanaged(*BunTestFile), // TODO: this should be a list of JSValues
     active_file: ?*BunTestFile,
 
     pub fn init(outer_gpa: std.mem.Allocator) BunTest {
         return .{
             .gpa = outer_gpa,
-            .files = .empty,
             .active_file = null,
         };
     }
     pub fn deinit(this: *BunTest) void {
-        // TODO: this is never called, fix
-        for (this.files.items) |*file| this.gpa.destroy(file);
-        this.files.deinit(this.gpa);
+        bun.assert(this.active_file == null);
     }
 
     pub fn getActive(this: *BunTest) *BunTestFile {
-        return this.active_file orelse {
-            if (this.files.items.len == 0) {
-                const file = bun.create(this.gpa, BunTestFile, .init(this.gpa));
-                this.files.append(this.gpa, file) catch bun.outOfMemory();
-                this.active_file = file;
-                return file;
-            } else if (this.files.items.len == 1) {
-                return this.files.items[0];
-            } else {
-                @panic("TODO: support multiple files");
-            }
-        };
+        return this.active_file orelse @panic("TODO: handle preload environment");
+    }
+
+    pub fn enterFile(this: *BunTest, _: []const u8) void {
+        bun.assert(this.active_file == null);
+        this.active_file = bun.create(this.gpa, BunTestFile, .init(this.gpa, this));
+    }
+    pub fn exitFile(this: *BunTest) void {
+        bun.assert(this.active_file != null);
+        this.active_file.?.deinit();
+        this.gpa.destroy(this.active_file.?);
+        this.active_file = null;
     }
 };
 
 /// TODO: this will be a JSValue (returned by `Bun.jest(...)`). there will be one per file. they will be gc objects and cleaned up when no longer used.
 pub const BunTestFile = struct {
+    buntest: *BunTest,
     in_run_loop: bool,
     allocation_scope: *bun.AllocationScope,
     gpa: std.mem.Allocator,
@@ -226,13 +214,14 @@ pub const BunTestFile = struct {
     collection: Collection,
     execution: Execution,
 
-    pub fn init(outer_gpa: std.mem.Allocator) BunTestFile {
+    pub fn init(outer_gpa: std.mem.Allocator, bunTest: *BunTest) BunTestFile {
         group.begin(@src());
         defer group.end();
 
         var allocation_scope = bun.create(outer_gpa, bun.AllocationScope, bun.AllocationScope.init(outer_gpa));
         const gpa = allocation_scope.allocator();
         return .{
+            .buntest = bunTest,
             .in_run_loop = false,
             .allocation_scope = allocation_scope,
             .gpa = gpa,

@@ -1951,9 +1951,7 @@ inline fn createScope(
 
     if (tag_to_use == .only or parent.tag == .only) {
         // Prevent test.only in CI environments
-        if (ci_info.detectCI()) |_| {
-            return globalThis.throwPretty((if (is_test) "test" else "describe") ++ ".only is not allowed in CI environments\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{});
-        }
+        try errorInCI(globalThis, (if (is_test) "test" else "describe") ++ ".only is not allowed in CI environments");
         Jest.runner.?.setOnly();
         tag_to_use = .only;
     } else if (is_test and Jest.runner.?.only and parent.tag != .only) {
@@ -2335,9 +2333,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
 
             if (tag == .only) {
                 // Prevent test.only in CI environments
-                if (ci_info.detectCI()) |_| {
-                    return globalThis.throwPretty(".only is not allowed in CI environments\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{});
-                }
+                try errorInCI(globalThis, ".only is not allowed in CI environments");
                 Jest.runner.?.setOnly();
             }
 
@@ -2487,6 +2483,13 @@ fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObject)
         }
     }
     return 0;
+}
+
+pub fn errorInCI(globalObject: *jsc.JSGlobalObject, message: []const u8) bun.JSError!void {
+    // if (!bun.FeatureFlags.breaking_changes_1_3) return; // this is a breaking change for version 1.3
+    if (ci_info.detectCI()) |_| {
+        return globalObject.throwPretty("{s}\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{message});
+    }
 }
 
 const string = []const u8;

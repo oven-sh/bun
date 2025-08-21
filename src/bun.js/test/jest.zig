@@ -2486,7 +2486,7 @@ fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObject)
 }
 
 pub fn errorInCI(globalObject: *jsc.JSGlobalObject, message: []const u8) bun.JSError!void {
-    // if (!bun.FeatureFlags.breaking_changes_1_3) return; // this is a breaking change for version 1.3
+    if (!bun.FeatureFlags.breaking_changes_1_3) return; // this is a breaking change for version 1.3
     if (ci_info.detectCI()) |_| {
         return globalObject.throwPretty("{s}\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{message});
     }

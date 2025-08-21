@@ -207,7 +207,7 @@ pub const Row = struct {
             }
 
             const column = this.columns[i];
-            value.* = try decodeBinaryValue(column.column_type, this.raw, this.bigint, column.flags.UNSIGNED, Context, reader);
+            value.* = try decodeBinaryValue(this.globalObject, column.column_type, this.raw, this.bigint, column.flags.UNSIGNED, Context, reader);
             value.index = switch (column.name_or_index) {
                 // The indexed columns can be out of order.
                 .index => |idx| idx,

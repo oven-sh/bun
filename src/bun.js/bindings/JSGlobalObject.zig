@@ -21,6 +21,10 @@ pub const JSGlobalObject = opaque {
         JSGlobalObject__throwOutOfMemoryError(this);
         return .zero;
     }
+    pub fn gregorianDateTimeToMS(this: *jsc.JSGlobalObject, year: i32, month: i32, day: i32, hour: i32, minute: i32, second: i32, millisecond: i32) bun.JSError!f64 {
+        jsc.markBinding(@src());
+        return bun.cpp.Bun__gregorianDateTimeToMS(this, year, month, day, hour, minute, second, millisecond);
+    }
 
     pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) bun.JSError {
         const err = this.createErrorInstance("{s}", .{msg});

@@ -73,6 +73,8 @@
 #include "wtf/text/StringImpl.h"
 #include "wtf/text/StringView.h"
 #include "wtf/text/WTFString.h"
+#include "wtf/GregorianDateTime.h"
+
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JSFetchHeaders.h"
 #include "FetchHeaders.h"
@@ -6236,6 +6238,19 @@ extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__parseDate(JSC::JSGlobalObject*
 {
     auto& vm = JSC::getVM(globalObject);
     return vm.dateCache.parseDate(globalObject, vm, str->toWTFString());
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__gregorianDateTimeToMS(JSC::JSGlobalObject* globalObject, int year, int month, int day, int hour, int minute, int second, int millisecond)
+{
+    auto& vm = JSC::getVM(globalObject);
+    WTF::GregorianDateTime dateTime;
+    dateTime.setYear(year);
+    dateTime.setMonth(month - 1);
+    dateTime.setMonthDay(day);
+    dateTime.setHour(hour);
+    dateTime.setMinute(minute);
+    dateTime.setSecond(second);
+    return vm.dateCache.gregorianDateTimeToMS(dateTime, millisecond, WTF::TimeType::LocalTime);
 }
 
 extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNumber(JSC::JSGlobalObject* globalObject, double unixTimestamp)

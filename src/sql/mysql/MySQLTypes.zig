@@ -393,7 +393,6 @@ pub const Value = union(enum) {
     bytes: JSC.ZigString.Slice,
     bytes_data: Data,
     date: DateTime,
-    timestamp: Timestamp,
     time: Time,
     // decimal: Decimal,
 
@@ -424,7 +423,7 @@ pub const Value = union(enum) {
             .ulong => |l| try writer.writeInt(u64, l, .little),
             .float => |f| try writer.writeInt(u32, @bitCast(f), .little),
             .double => |d| try writer.writeInt(u64, @bitCast(d), .little),
-            inline .date, .timestamp, .time => |d| {
+            inline .date, .time => |d| {
                 stream.pos = d.toBinary(field_type, &buffer);
             },
             // .decimal => |dec| return try dec.toBinary(field_type),
@@ -463,9 +462,7 @@ pub const Value = union(enum) {
             .MYSQL_TYPE_FLOAT => Value{ .float = @floatCast(try value.coerce(f64, globalObject)) },
             .MYSQL_TYPE_DOUBLE => Value{ .double = try value.coerce(f64, globalObject) },
             .MYSQL_TYPE_TIME => Value{ .time = try Time.fromJS(value, globalObject) },
-            .MYSQL_TYPE_DATE => Value{ .date = try DateTime.fromJS(value, globalObject) },
-            .MYSQL_TYPE_DATETIME => Value{ .date = try DateTime.fromJS(value, globalObject) },
-            .MYSQL_TYPE_TIMESTAMP => Value{ .timestamp = try Timestamp.fromJS(value, globalObject) },
+            .MYSQL_TYPE_DATE, .MYSQL_TYPE_TIMESTAMP, .MYSQL_TYPE_DATETIME => Value{ .date = try DateTime.fromJS(value, globalObject) },
             .MYSQL_TYPE_TINY_BLOB, .MYSQL_TYPE_MEDIUM_BLOB, .MYSQL_TYPE_LONG_BLOB, .MYSQL_TYPE_BLOB => {
                 if (value.asArrayBuffer(globalObject)) |array_buffer| {
                     return Value{ .bytes = JSC.ZigString.Slice.fromUTF8NeverFree(array_buffer.slice()) };
@@ -503,68 +500,6 @@ pub const Value = union(enum) {
         };
     }
 
-    pub const Timestamp = struct {
-        seconds: u32,
-        microseconds: u24,
-
-        pub fn fromData(data: *const Data) !Timestamp {
-            return fromBinary(data.slice());
-        }
-
-        pub fn fromBinary(val: []const u8) Timestamp {
-            return .{
-                // Bytes 0-3: [seconds]  (32-bit little-endian unsigned integer)
-                //    Number of seconds since Unix epoch
-                .seconds = std.mem.readInt(u32, val[0..4], .little),
-                // Bytes 4-6: [microseconds] (24-bit little-endian unsigned integer)
-                .microseconds = if (val.len == 7) std.mem.readInt(u24, val[4..7], .little) else 0,
-            };
-        }
-
-        pub fn fromUnixTimestamp(timestamp: i64) Timestamp {
-            const timestamp_u64: u64 = @intCast(@max(timestamp, 0));
-            return .{
-                .seconds = @truncate(timestamp_u64),
-                .microseconds = @truncate(@mod(timestamp_u64, 1_000_000)),
-            };
-        }
-
-        pub fn fromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) !Timestamp {
-            if (value.isDate()) {
-                const ts = @divFloor(@as(i64, @intFromFloat(value.getUnixTimestamp())), 1000);
-                return Timestamp.fromUnixTimestamp(ts);
-            }
-
-            if (value.isNumber()) {
-                const double = value.asNumber();
-                return Timestamp.fromUnixTimestamp(@intFromFloat(double));
-            }
-
-            return globalObject.throwInvalidArguments("Expected a date or number", .{});
-        }
-
-        pub fn toUnixTimestamp(this: Timestamp) f64 {
-            return @as(f64, @floatFromInt(this.seconds)) + @as(f64, @floatFromInt(this.microseconds)) / 1_000_000;
-        }
-
-        pub fn toJS(this: Timestamp, globalObject: *JSC.JSGlobalObject) JSValue {
-            const timestamp: f64 = @floatCast(this.toUnixTimestamp());
-            return JSValue.fromDateNumber(globalObject, timestamp * 1000);
-        }
-
-        pub fn toBinary(this: *const Timestamp, field_type: FieldType, buffer: []u8) u8 {
-            std.mem.writeInt(u32, buffer[0..4], this.seconds, .little);
-            std.mem.writeInt(u24, buffer[4..7], this.microseconds, .little);
-            return switch (field_type) {
-                // [4 bytes] - unix timestamp as uint32_t LE
-                .MYSQL_TYPE_TIMESTAMP => 4,
-                // [7 bytes] - unix timestamp as uint32_t LE + microseconds as uint24_t LE
-                .MYSQL_TYPE_TIMESTAMP2 => 7,
-                else => unreachable,
-            };
-        }
-    };
-
     pub const DateTime = struct {
         year: u16 = 0,
         month: u8 = 0,
@@ -576,14 +511,6 @@ pub const Value = union(enum) {
 
         pub fn fromData(data: *const Data) !DateTime {
             return fromBinary(data.slice());
-        }
-
-        pub fn fromBinaryDate(val: []const u8) DateTime {
-            return .{
-                .year = std.mem.readInt(u16, val[0..2], .little),
-                .month = val[2],
-                .day = val[3],
-            };
         }
 
         pub fn fromBinary(val: []const u8) DateTime {
@@ -672,19 +599,16 @@ pub const Value = union(enum) {
             }
         }
 
-        pub fn toUnixTimestamp(this: *const DateTime) i64 {
-            // Convert to Unix timestamp (seconds since 1970-01-01)
-            var ts: i64 = 0;
-            const days = gregorianDays(this.year, this.month, this.day);
-            ts += days * 86400;
-            ts += @as(i64, this.hour) * 3600;
-            ts += @as(i64, this.minute) * 60;
-            ts += this.second;
-            return ts;
-        }
-
-        pub fn toJSTimestamp(this: *const DateTime) f64 {
-            return @as(f64, @floatFromInt(this.toUnixTimestamp())) * 1000 + @as(f64, @floatFromInt(this.microsecond)) / 1000;
+        pub fn toJSTimestamp(this: *const DateTime, globalObject: *JSC.JSGlobalObject) bun.JSError!f64 {
+            return globalObject.gregorianDateTimeToMS(
+                this.year,
+                this.month,
+                this.day,
+                this.hour,
+                this.minute,
+                this.second,
+                if (this.microsecond > 0) @intCast(@divFloor(this.microsecond, 1000)) else 0,
+            );
         }
 
         pub fn fromUnixTimestamp(timestamp: i64, microseconds: u32) DateTime {
@@ -744,23 +668,32 @@ pub const Value = union(enum) {
 
         pub fn fromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) !Time {
             if (value.isDate()) {
-                const ts = @divFloor(@as(i64, @intFromFloat(value.getUnixTimestamp())), 1000);
-                return Time.fromUnixTimestamp(ts);
-            } else if (value.isAnyInt()) {
-                const int = value.toInt64();
-                return Time.fromUnixTimestamp(int);
+                const total_ms = value.getUnixTimestamp();
+                const ts: i64 = @intFromFloat(@divFloor(total_ms, 1000));
+                const ms: u32 = @intFromFloat(total_ms - (@as(f64, @floatFromInt(ts)) * 1000));
+                return Time.fromUnixTimestamp(ts, ms * 1000);
+            } else if (value.isNumber()) {
+                const total_ms = value.asNumber();
+                const ts: i64 = @intFromFloat(@divFloor(total_ms, 1000));
+                const ms: u32 = @intFromFloat(total_ms - (@as(f64, @floatFromInt(ts)) * 1000));
+                return Time.fromUnixTimestamp(ts, ms * 1000);
             } else {
                 return globalObject.throwInvalidArguments("Expected a date or number", .{});
             }
         }
 
-        pub fn fromUnixTimestamp(timestamp: i64) Time {
+        pub fn fromUnixTimestamp(timestamp: i64, microseconds: u32) Time {
+            const days = @divFloor(timestamp, 86400);
+            const hours = @divFloor(@mod(timestamp, 86400), 3600);
+            const minutes = @divFloor(@mod(timestamp, 3600), 60);
+            const seconds = @mod(timestamp, 60);
             return .{
                 .negative = timestamp < 0,
-                .days = @intCast(@divFloor(timestamp, 86400)),
-                .hours = @intCast(@divFloor(@mod(timestamp, 86400), 3600)),
-                .minutes = @intCast(@divFloor(@mod(timestamp, 3600), 60)),
-                .seconds = @intCast(@mod(timestamp, 60)),
+                .days = @intCast(days),
+                .hours = @intCast(hours),
+                .minutes = @intCast(minutes),
+                .seconds = @intCast(seconds),
+                .microseconds = microseconds,
             };
         }
 
@@ -770,7 +703,6 @@ pub const Value = union(enum) {
             total_ms +|= @as(i64, this.hours) *| 3600000;
             total_ms +|= @as(i64, this.minutes) *| 60000;
             total_ms +|= @as(i64, this.seconds) *| 1000;
-            total_ms +|= @divFloor(this.microseconds, 1000);
             return total_ms;
         }
 
@@ -798,8 +730,7 @@ pub const Value = union(enum) {
 
             return time;
         }
-
-        pub fn toJS(this: Time, _: *JSC.JSGlobalObject) JSValue {
+        pub fn toJSTimestamp(this: *const Time) f64 {
             var total_ms: i64 = 0;
             total_ms +|= @as(i64, this.days) * 86400000;
             total_ms +|= @as(i64, this.hours) * 3600000;
@@ -811,7 +742,10 @@ pub const Value = union(enum) {
                 total_ms = -total_ms;
             }
 
-            return JSValue.jsDoubleNumber(@floatFromInt(total_ms));
+            return @as(f64, @floatFromInt(total_ms));
+        }
+        pub fn toJS(this: Time, _: *JSC.JSGlobalObject) JSValue {
+            return JSValue.jsDoubleNumber(this.toJSTimestamp());
         }
 
         pub fn toBinary(this: *const Time, field_type: FieldType, buffer: []u8) u8 {
@@ -891,19 +825,6 @@ fn daysInMonth(year: u16, month: u8) u8 {
         return 29;
     }
     return days[month - 1];
-}
-
-fn gregorianDays(year: u16, month: u8, day: u8) i32 {
-    // Calculate days since 1970-01-01
-    const y = @as(i32, year) - 1970;
-    var days: i32 = y * 365 + @divFloor(y, 4) - @divFloor(y, 100) + @divFloor(y, 400);
-
-    var m = month;
-    while (m > 1) : (m -= 1) {
-        days += daysInMonth(year, m - 1);
-    }
-
-    return days + day;
 }
 
 const Date = struct {

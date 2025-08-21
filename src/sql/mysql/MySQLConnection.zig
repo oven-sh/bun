@@ -436,11 +436,13 @@ fn finishRequest(this: *@This(), item: *MySQLQuery) void {
                 this.nonpipelinable_requests -= 1;
             } else if (item.flags.pipelined) {
                 this.pipelined_requests -= 1;
-            } else if (this.flags.waiting_to_prepare) {
+            }
+        },
+        .success, .fail, .pending => {
+            if (this.flags.waiting_to_prepare) {
                 this.flags.waiting_to_prepare = false;
             }
         },
-        .success, .fail, .pending => {},
     }
 }
 
@@ -455,6 +457,9 @@ fn current(this: *@This()) ?*MySQLQuery {
 pub fn canExecuteQuery(this: *@This()) bool {
     if (this.status != .connected) return false;
     return this.flags.is_ready_for_query and this.current() == null;
+}
+pub fn canPrepareQuery(this: *@This()) bool {
+    return this.flags.is_ready_for_query and !this.flags.waiting_to_prepare and this.pipelined_requests == 0;
 }
 
 fn cleanUpRequests(this: *@This(), js_reason: ?jsc.JSValue) void {
@@ -609,7 +614,7 @@ fn advance(this: *@This()) void {
                                 continue;
                             },
                             .pending => {
-                                if (this.pipelined_requests > 0 or !this.flags.is_ready_for_query) {
+                                if (!this.canPrepareQuery()) {
                                     debug("need to wait to finish the pipeline before starting a new query preparation", .{});
                                     // need to wait to finish the pipeline before starting a new query preparation
                                     return;

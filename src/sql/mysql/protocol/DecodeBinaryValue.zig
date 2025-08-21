@@ -1,4 +1,4 @@
-pub fn decodeBinaryValue(field_type: types.FieldType, raw: bool, bigint: bool, unsigned: bool, comptime Context: type, reader: NewReader(Context)) !SQLDataCell {
+pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.FieldType, raw: bool, bigint: bool, unsigned: bool, comptime Context: type, reader: NewReader(Context)) !SQLDataCell {
     debug("decodeBinaryValue: {s}", .{@tagName(field_type)});
     return switch (field_type) {
         .MYSQL_TYPE_TINY => {
@@ -82,44 +82,22 @@ pub fn decodeBinaryValue(field_type: types.FieldType, raw: bool, bigint: bool, u
                     var data = try reader.read(l);
                     defer data.deinit();
                     const time = try Time.fromData(&data);
-                    const timestamp: f64 = @floatFromInt(time.toUnixTimestamp());
-                    return SQLDataCell{ .tag = .date, .value = .{ .date = timestamp * 1000 } };
+                    return SQLDataCell{ .tag = .date, .value = .{ .date = time.toJSTimestamp() } };
                 },
                 else => return error.InvalidBinaryValue,
             };
         },
-        .MYSQL_TYPE_DATE => switch (try reader.byte()) {
-            0 => SQLDataCell{ .tag = .null, .value = .{ .null = 0 } },
-            4 => {
-                var data = try reader.read(4);
-                defer data.deinit();
-                const time = try DateTime.fromData(&data);
-                const timestamp: f64 = @floatFromInt(time.toUnixTimestamp() + @divFloor(time.microsecond, 1000));
-                return SQLDataCell{ .tag = .date, .value = .{ .date = timestamp * 1000 } };
-            },
-            else => error.InvalidBinaryValue,
-        },
-        .MYSQL_TYPE_DATETIME => switch (try reader.byte()) {
+        .MYSQL_TYPE_DATE, .MYSQL_TYPE_TIMESTAMP, .MYSQL_TYPE_DATETIME => switch (try reader.byte()) {
             0 => SQLDataCell{ .tag = .null, .value = .{ .null = 0 } },
             11, 7, 4 => |l| {
                 var data = try reader.read(l);
                 defer data.deinit();
                 const time = try DateTime.fromData(&data);
-                return SQLDataCell{ .tag = .date, .value = .{ .date = time.toJSTimestamp() } };
+                return SQLDataCell{ .tag = .date, .value = .{ .date = try time.toJSTimestamp(globalObject) } };
             },
             else => error.InvalidBinaryValue,
         },
-        .MYSQL_TYPE_TIMESTAMP => switch (try reader.byte()) {
-            0 => SQLDataCell{ .tag = .null, .value = .{ .null = 0 } },
-            4, 7 => |l| {
-                var data = try reader.read(l);
-                defer data.deinit();
-                const time = try Time.fromData(&data);
-                const timestamp: f64 = @floatFromInt(time.toUnixTimestamp());
-                return SQLDataCell{ .tag = .date, .value = .{ .date = timestamp * 1000 } };
-            },
-            else => error.InvalidBinaryValue,
-        },
+
         .MYSQL_TYPE_ENUM,
         .MYSQL_TYPE_SET,
         .MYSQL_TYPE_GEOMETRY,
@@ -170,3 +148,4 @@ const Value = @import("../MySQLTypes.zig").Value;
 const DateTime = Value.DateTime;
 const Time = Value.Time;
 const debug = bun.Output.scoped(.MySQLDecodeBinaryValue, .visible);
+const jsc = bun.jsc;

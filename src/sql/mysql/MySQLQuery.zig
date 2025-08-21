@@ -500,14 +500,15 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
     js.targetSetCached(this_value, globalObject, query);
     if (!did_write and can_execute) {
         debug("doRun: preparing query", .{});
-
-        this.statement.?.status = .parsing;
-        MySQLRequest.prepareRequest(query_str.slice(), MySQLConnection.Writer, writer) catch |err| {
-            this.deref();
-            return globalObject.throwError(err, "failed to prepare query");
-        };
-        connection.flags.waiting_to_prepare = true;
-        connection.sequence_id = 0;
+        if (connection.canPrepareQuery()) {
+            this.statement.?.status = .parsing;
+            MySQLRequest.prepareRequest(query_str.slice(), MySQLConnection.Writer, writer) catch |err| {
+                this.deref();
+                return globalObject.throwError(err, "failed to prepare query");
+            };
+            connection.flags.waiting_to_prepare = true;
+            connection.flags.is_ready_for_query = false;
+        }
     }
     connection.flushDataAndResetTimeout();
 

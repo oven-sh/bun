@@ -735,7 +735,6 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
-const Progress = bun.Progress;
 const jsc = bun.jsc;
 const logger = bun.logger;
 const FileSystem = bun.fs.FileSystem;

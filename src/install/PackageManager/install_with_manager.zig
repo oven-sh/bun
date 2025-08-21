@@ -1259,7 +1259,8 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
 
     manager.sleepUntil(&closure, &@TypeOf(closure).isDone);
 
-    try scanner.handleResults(&package_paths, start_time);
+    const packages_scanned = pkg_dedupe.count();
+    try scanner.handleResults(&package_paths, start_time, packages_scanned, security_provider);
 }
 
 const SecurityAdvisoryLevel = enum { fatal, warn };
@@ -1403,7 +1404,7 @@ pub const SecurityScanSubprocess = struct {
         }
     }
 
-    pub fn handleResults(this: *SecurityScanSubprocess, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath), start_time: i64) !void {
+    pub fn handleResults(this: *SecurityScanSubprocess, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath), start_time: i64, packages_scanned: usize, security_provider: []const u8) !void {
         defer {
             this.ipc_data.deinit();
             this.stderr_data.deinit();
@@ -1430,9 +1431,9 @@ pub const SecurityScanSubprocess = struct {
             Global.exit(1);
         }
 
+        const duration = std.time.milliTimestamp() - start_time;
+        
         if (this.manager.options.log_level == .verbose) {
-            const duration = std.time.milliTimestamp() - start_time;
-
             switch (status) {
                 .exited => |exit| {
                     if (exit.code == 0) {
@@ -1448,6 +1449,14 @@ pub const SecurityScanSubprocess = struct {
                     Output.prettyErrorln("<d>[SecurityProvider]<r> Completed with unknown status [{d}ms]", .{duration});
                 },
             }
+        } else if (this.manager.options.log_level != .silent and duration >= 1000) {
+            // Show progress message for non-verbose, non-silent mode when it takes > 1 second
+            Output.prettyErrorln("[{s}] Scanned {d} package{s} [{d}ms]", .{ 
+                security_provider, 
+                packages_scanned,
+                if (packages_scanned == 1) "" else "s",
+                duration 
+            });
         }
 
         try handleSecurityAdvisories(this.manager, this.ipc_data.items, package_paths);

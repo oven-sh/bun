@@ -71,7 +71,7 @@ function test(
       });
 
       if (options.fails) {
-        expect(out).toContain("Installation cancelled due to fatal security issues");
+        expect(out).toContain("bun install aborted due to fatal security advisories");
       }
 
       await options.expect?.({ out, err });
@@ -92,6 +92,17 @@ test("basic", {
       url: "https://example.com/advisory-1",
     },
   ],
+});
+
+test("shows progress message when scanner takes more than 1 second", {
+  testTimeout: 5000,
+  scanner: async () => {
+    await Bun.sleep(2000);
+    return [];
+  },
+  expect: async ({ err }) => {
+    expect(err).toMatch(/\[\.\/scanner\.ts\] Scanned \d+ packages? \[\d+ms\]/);
+  },
 });
 
 test("expect output to contain the advisory", {

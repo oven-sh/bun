@@ -1558,7 +1558,6 @@ fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, pack
         var has_fatal = false;
         var has_warn = false;
 
-        Output.pretty("<red>Security advisories found:<r>\n", .{});
         for (advisories_list.items) |advisory| {
             Output.print("\n", .{});
 
@@ -1614,7 +1613,7 @@ fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, pack
         }
 
         if (has_fatal) {
-            Output.pretty("\n<red>Installation cancelled due to fatal security issues.<r>\n", .{});
+            Output.pretty("\n<red>bun install aborted due to fatal security advisories<r>\n", .{});
             Global.exit(1);
         } else if (has_warn) {
             const can_prompt = Output.enable_ansi_colors_stdout;

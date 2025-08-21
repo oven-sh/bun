@@ -570,9 +570,6 @@ describe("Edge Cases", () => {
   test("empty advisories array", {
     scanner: async () => [],
     expectedExitCode: 0,
-    expect: ({ out }) => {
-      expect(out).not.toContain("Security advisories found");
-    },
   });
 
   test("special characters in advisory", {

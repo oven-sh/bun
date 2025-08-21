@@ -410,6 +410,12 @@ pub fn AstMaybe(
                         }, .loc = loc };
                     }
 
+                    if (strings.eqlComptime(name, "glob")) {
+                        return .{ .data = .{
+                            .e_special = .import_meta_glob,
+                        }, .loc = loc };
+                    }
+
                     // Inline import.meta properties for Bake
                     if (p.options.framework != null) {
                         if (strings.eqlComptime(name, "dir") or strings.eqlComptime(name, "dirname")) {

@@ -1236,6 +1236,25 @@ if(NOT BUN_CPP_ONLY)
         message(FATAL_ERROR "Windows signing script not found: ${SIGN_SCRIPT}")
       endif()
       
+      # Find bash executable for Windows
+      find_program(BASH_EXECUTABLE 
+        NAMES bash bash.exe
+        PATHS 
+          "C:/Program Files/Git/bin"
+          "C:/Program Files (x86)/Git/bin"
+          "C:/msys64/usr/bin"
+          "C:/cygwin64/bin"
+          "C:/Windows/System32/bash.exe"
+        DOC "Path to bash executable"
+      )
+      
+      if(NOT BASH_EXECUTABLE)
+        message(WARNING "bash executable not found, trying default bash command")
+        set(BASH_EXECUTABLE "bash")
+      endif()
+      
+      message(STATUS "Using bash executable: ${BASH_EXECUTABLE}")
+      
       # Sign both bun-profile.exe and bun.exe after stripping
       register_command(
         TARGET
@@ -1245,7 +1264,7 @@ if(NOT BUN_CPP_ONLY)
         COMMENT
           "Code signing bun-profile.exe and bun.exe with DigiCert KeyLocker"
         COMMAND
-          bash "${SIGN_SCRIPT}" "${BUILD_PATH}/${bunExe}" "${BUILD_PATH}/${bunStripExe}"
+          "${BASH_EXECUTABLE}" "${SIGN_SCRIPT}" "${BUILD_PATH}/${bunExe}" "${BUILD_PATH}/${bunStripExe}"
         CWD
           ${CMAKE_SOURCE_DIR}
         SOURCES

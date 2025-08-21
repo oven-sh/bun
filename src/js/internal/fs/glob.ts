@@ -83,7 +83,7 @@ function createDirent(path: string, cwd?: string): any {
     UV_DIRENT_FIFO,
     UV_DIRENT_SOCKET,
     UV_DIRENT_CHAR,
-    UV_DIRENT_BLOCK
+    UV_DIRENT_BLOCK,
   } = constants;
 
   try {

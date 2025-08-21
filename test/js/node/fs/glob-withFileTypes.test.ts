@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { globSync, Dirent } from "fs";
+import { Dirent, globSync } from "fs";
 import { tempDirWithFiles } from "harness";
 
 test("fs.globSync with withFileTypes should return Dirent objects", async () => {
@@ -23,7 +23,7 @@ test("fs.globSync with withFileTypes should return Dirent objects", async () => 
   for (const dirent of results) {
     // Check that we got proper Dirent objects with instanceof
     expect(dirent instanceof Dirent).toBe(true);
-    
+
     // Check that we got Dirent objects
     expect(dirent).toHaveProperty("name");
     expect(dirent).toHaveProperty("isFile");

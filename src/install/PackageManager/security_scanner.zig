@@ -213,7 +213,7 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
         \\try {{
         \\  const {{scanner}} = await import(scannerModuleName);
         \\}} catch (error) {{
-        \\  const msg = `\x1b[31merror: \x1b[0mFailed to import security scanner: \x1b[1m'${scannerModuleName}'\x1b[0m - if you use a security scanner from npm, please run '\x1b[36mbun install\x1b[0m' before adding other packages.`;
+        \\  const msg = `\x1b[31merror: \x1b[0mFailed to import security scanner: \x1b[1m'${{scannerModuleName}}'\x1b[0m - if you use a security scanner from npm, please run '\x1b[36mbun install\x1b[0m' before adding other packages.`;
         \\  console.error(msg);
         \\  process.exit(1);
         \\}}

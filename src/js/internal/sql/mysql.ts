@@ -15,8 +15,6 @@ const {
   init: initMySQL,
 } = $zig("mysql.zig", "createBinding") as MySQLDotZig;
 
-const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
-
 function wrapError(error: Error | MySQLErrorOptions) {
   if (Error.isError(error)) {
     return error;

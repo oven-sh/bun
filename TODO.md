@@ -14,6 +14,7 @@ Complete before merge:
 - [ ] remove describe2BeforeAll.ts
 - [ ] search for TODOs in the diff and fix them all
 - [ ] replace asserts with runtime throws or debug-only asserts (waitForPromise breaks many expectations)
+- [ ] check the todo list in https://linear.app/oven/issue/ENG-20152/new-buntest, confirm it fixes all those issues (or doesn't make them worse). add reproductions
 - [ ] decide what to do about strong
 - [ ] remove TODO.md
 

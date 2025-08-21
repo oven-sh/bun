@@ -700,7 +700,7 @@ pub fn GlobWalker_(
                 while (true) {
                     // Check for abort signal
                     if (this.walker.did_abort.load(.monotonic)) {
-                        return .{ .result = null };
+                        return .{ .err = Syscall.Error.fromCode(bun.sys.E.CANCELED, .open) };
                     }
                     
                     switch (this.iter_state) {
@@ -1099,6 +1099,13 @@ pub fn GlobWalker_(
             // copy arena after all allocations are successful
             this.arena = arena.*;
 
+            // Register abort signal callback if provided
+            if (abort_signal) |signal| {
+                _ = signal.ref();
+                signal.pendingActivityRef();
+                _ = signal.addListener(this, onAbortSignal);
+            }
+
             if (bun.Environment.allow_assert) {
                 this.debugPatternComopnents();
             }
@@ -1137,80 +1144,6 @@ pub fn GlobWalker_(
             }
         }
         
-        fn matchesIgnorePattern(this: *GlobWalker, path: []const u8, pattern: []const u8) bool {
-            // Simple glob pattern matching for ignore patterns
-            // For now, implement basic support for ** and * patterns
-            
-            if (std.mem.eql(u8, pattern, path)) {
-                return true;
-            }
-            
-            // Handle ** pattern (matches any number of directories)
-            if (std.mem.indexOf(u8, pattern, "**")) |_| {
-                return this.matchesGlobPattern(path, pattern);
-            }
-            
-            // Handle * pattern  
-            if (std.mem.indexOf(u8, pattern, "*")) |_| {
-                return this.matchesGlobPattern(path, pattern);
-            }
-            
-            // Check if path starts with pattern (for directory prefixes)
-            return std.mem.startsWith(u8, path, pattern);
-        }
-        
-        fn matchesGlobPattern(this: *GlobWalker, text: []const u8, pattern: []const u8) bool {
-            
-            // Simple glob matching implementation
-            var text_idx: usize = 0;
-            var pattern_idx: usize = 0;
-            
-            while (pattern_idx < pattern.len and text_idx < text.len) {
-                if (pattern_idx + 1 < pattern.len and 
-                    pattern[pattern_idx] == '*' and pattern[pattern_idx + 1] == '*') {
-                    // Handle ** pattern
-                    pattern_idx += 2;
-                    if (pattern_idx >= pattern.len) return true; // ** at end matches everything
-                    
-                    // Skip to next non-** part of pattern
-                    if (pattern_idx < pattern.len and pattern[pattern_idx] == '/') {
-                        pattern_idx += 1;
-                    }
-                    
-                    // Find the next part of the pattern in the text
-                    while (text_idx < text.len) {
-                        if (this.matchesGlobPattern(text[text_idx..], pattern[pattern_idx..])) {
-                            return true;
-                        }
-                        text_idx += 1;
-                    }
-                    return false;
-                } else if (pattern[pattern_idx] == '*') {
-                    // Handle single * pattern
-                    pattern_idx += 1;
-                    if (pattern_idx >= pattern.len) return true; // * at end matches everything remaining
-                    
-                    // Find next non-* character in pattern
-                    const next_char = pattern[pattern_idx];
-                    
-                    // Find next occurrence of that character in text
-                    while (text_idx < text.len and text[text_idx] != next_char) {
-                        text_idx += 1;
-                    }
-                    
-                    if (text_idx >= text.len) return false;
-                } else if (pattern[pattern_idx] == text[text_idx]) {
-                    pattern_idx += 1;
-                    text_idx += 1;
-                } else {
-                    return false;
-                }
-            }
-            
-            // Check if we've consumed both strings or pattern ends with *
-            return pattern_idx >= pattern.len or 
-                   (pattern_idx == pattern.len - 1 and pattern[pattern_idx] == '*');
-        }
         
         fn finalizeSortedResults(this: *GlobWalker) !void {
             if (this.sortable_results == null) return;
@@ -1263,11 +1196,10 @@ pub fn GlobWalker_(
                 // so we don't need to do anything here
                 
                 // Early exit if we have enough results and not sorting (sorting requires collecting all results)
-                if (this.sort_field == null) {
-                    if (this.limit) |limit| {
-                        if (this.matchedPaths.keys().len >= limit and this.matched_count >= this.offset + limit) {
-                            break;
-                        }
+                // Once we've set has_more, we can exit early
+                if (this.sort_field == null and this.limit != null) {
+                    if (this.has_more) {
+                        break;
                     }
                 }
             }
@@ -1527,7 +1459,7 @@ pub fn GlobWalker_(
                 return null;
             }
             
-            // Handle limit: if we've reached the limit, mark that we have more results
+            // Handle limit: if we would exceed the limit, mark that we have more results
             if (this.limit) |limit| {
                 if (this.matchedPaths.keys().len >= limit) {
                     this.has_more = true;
@@ -1560,14 +1492,10 @@ pub fn GlobWalker_(
             const name_matched_path = try this.join(subdir_parts);
             
             // Check ignore patterns
-            if (this.ignore_patterns) |patterns| {
-                for (patterns) |pattern| {
-                    if (this.matchesIgnorePattern(name_matched_path, pattern)) {
-                        // Free the allocated path since we're not using it
-                        this.arena.allocator().free(name_matched_path);
-                        return null;
-                    }
-                }
+            if (this.isIgnored(name_matched_path)) {
+                // Free the allocated path since we're not using it
+                this.arena.allocator().free(name_matched_path);
+                return null;
             }
             
             // If sorting is enabled, collect results for later sorting
@@ -1579,13 +1507,25 @@ pub fn GlobWalker_(
                 // Get file stat for sorting (except for name-only sorting)
                 var stat: ?bun.Stat = null;
                 if (this.sort_field != .name) {
-                    // Convert to null-terminated string for statat
-                    var path_buf: bun.PathBuffer = undefined;
-                    @memcpy(path_buf[0..name_matched_path.len], name_matched_path);
-                    path_buf[name_matched_path.len] = 0;
-                    const path_z = path_buf[0..name_matched_path.len :0];
+                    // Create full path by combining CWD with the matched path
+                    var full_path: bun.PathBuffer = undefined;
+                    const full_path_slice = if (this.cwd.len > 0) 
+                        std.fmt.bufPrint(&full_path, "{s}/{s}", .{this.cwd, name_matched_path}) catch blk: {
+                            @memcpy(full_path[0..name_matched_path.len], name_matched_path);
+                            break :blk full_path[0..name_matched_path.len];
+                        }
+                    else 
+                        std.fmt.bufPrint(&full_path, "{s}", .{name_matched_path}) catch blk: {
+                            @memcpy(full_path[0..name_matched_path.len], name_matched_path);
+                            break :blk full_path[0..name_matched_path.len];
+                        };
+                    const full_path_len = full_path_slice.len;
                     
-                    const stat_result = Accessor.statat(.empty, path_z);
+                    // Convert to null-terminated string for stat
+                    full_path[full_path_len] = 0;
+                    const path_z = full_path[0..full_path_len :0];
+                    
+                    const stat_result = bun.sys.stat(path_z);
                     if (stat_result == .result) {
                         stat = stat_result.result;
                     }
@@ -1607,7 +1547,7 @@ pub fn GlobWalker_(
                 return null;
             }
             
-            // Handle limit: if we've reached the limit, mark that we have more results
+            // Handle limit: if we would exceed the limit, mark that we have more results
             if (this.limit) |limit| {
                 if (this.matchedPaths.keys().len >= limit) {
                     this.has_more = true;
@@ -1983,19 +1923,46 @@ pub const SortField = enum {
         return switch (field) {
             .name => std.mem.order(u8, a_name, b_name) == .lt,
             .mtime => {
-                const a_time = if (a_stat) |stat| @as(i64, stat.mtime().sec) else 0;
-                const b_time = if (b_stat) |stat| @as(i64, stat.mtime().sec) else 0;
-                return a_time < b_time;
+                if (a_stat == null and b_stat == null) return false;
+                if (a_stat == null) return true;
+                if (b_stat == null) return false;
+                
+                const a_sec = @as(i128, a_stat.?.mtime().sec);
+                const b_sec = @as(i128, b_stat.?.mtime().sec);
+                const a_nsec = @as(i128, a_stat.?.mtime().nsec);
+                const b_nsec = @as(i128, b_stat.?.mtime().nsec);
+                
+                const a_nanos = a_sec * std.time.ns_per_s + a_nsec;
+                const b_nanos = b_sec * std.time.ns_per_s + b_nsec;
+                return a_nanos < b_nanos;
             },
             .atime => {
-                const a_time = if (a_stat) |stat| @as(i64, stat.atime().sec) else 0;
-                const b_time = if (b_stat) |stat| @as(i64, stat.atime().sec) else 0;
-                return a_time < b_time;
+                if (a_stat == null and b_stat == null) return false;
+                if (a_stat == null) return true;
+                if (b_stat == null) return false;
+                
+                const a_sec = @as(i128, a_stat.?.atime().sec);
+                const b_sec = @as(i128, b_stat.?.atime().sec);
+                const a_nsec = @as(i128, a_stat.?.atime().nsec);
+                const b_nsec = @as(i128, b_stat.?.atime().nsec);
+                
+                const a_nanos = a_sec * std.time.ns_per_s + a_nsec;
+                const b_nanos = b_sec * std.time.ns_per_s + b_nsec;
+                return a_nanos < b_nanos;
             },
             .ctime => {
-                const a_time = if (a_stat) |stat| @as(i64, stat.ctime().sec) else 0;
-                const b_time = if (b_stat) |stat| @as(i64, stat.ctime().sec) else 0;
-                return a_time < b_time;
+                if (a_stat == null and b_stat == null) return false;
+                if (a_stat == null) return true;
+                if (b_stat == null) return false;
+                
+                const a_sec = @as(i128, a_stat.?.ctime().sec);
+                const b_sec = @as(i128, b_stat.?.ctime().sec);
+                const a_nsec = @as(i128, a_stat.?.ctime().nsec);
+                const b_nsec = @as(i128, b_stat.?.ctime().nsec);
+                
+                const a_nanos = a_sec * std.time.ns_per_s + a_nsec;
+                const b_nanos = b_sec * std.time.ns_per_s + b_nsec;
+                return a_nanos < b_nanos;
             },
             .size => {
                 const a_size = if (a_stat) |stat| stat.size else 0;

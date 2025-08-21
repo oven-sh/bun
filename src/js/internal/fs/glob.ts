@@ -14,10 +14,11 @@ interface GlobOptions {
   withFileTypes?: boolean;
 }
 
-async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGenerator<string> {
+async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGenerator<string | any> {
   const patterns = validatePattern(pattern);
   const globOptions = mapOptions(options || {});
   const exclude = globOptions.exclude;
+  const withFileTypes = options?.withFileTypes || false;
   const excludeGlobs = Array.isArray(exclude)
     ? exclude.flatMap(pattern => [new Bun.Glob(pattern), new Bun.Glob(pattern.replace(/\/+$/, "") + "/**")])
     : null;
@@ -32,15 +33,20 @@ async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGe
         }
       }
 
-      yield ent;
+      if (withFileTypes) {
+        yield createDirent(ent, globOptions.cwd);
+      } else {
+        yield ent;
+      }
     }
   }
 }
 
-function* globSync(pattern: string | string[], options?: GlobOptions): Generator<string> {
+function* globSync(pattern: string | string[], options?: GlobOptions): Generator<string | any> {
   const patterns = validatePattern(pattern);
   const globOptions = mapOptions(options || {});
   const exclude = globOptions.exclude;
+  const withFileTypes = options?.withFileTypes || false;
   const excludeGlobs = Array.isArray(exclude)
     ? exclude.flatMap(pattern => [new Bun.Glob(pattern), new Bun.Glob(pattern.replace(/\/+$/, "") + "/**")])
     : null;
@@ -55,8 +61,78 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
         }
       }
 
-      yield ent;
+      if (withFileTypes) {
+        yield createDirent(ent, globOptions.cwd);
+      } else {
+        yield ent;
+      }
     }
+  }
+}
+
+function createDirent(path: string, cwd?: string): any {
+  const { basename, dirname, resolve, join } = require("node:path");
+  const { lstatSync } = require("node:fs");
+  
+  try {
+    // Construct the full path if cwd is provided
+    const fullPath = cwd ? join(cwd, path) : path;
+    
+    // Use lstatSync to get file info without following symlinks
+    const stats = lstatSync(fullPath);
+    const name = basename(path);
+    // The parent path should be the directory containing the matched file
+    const parentPath = cwd ? resolve(cwd, dirname(path)) : resolve(dirname(path));
+    
+    // Get the file type number that matches DirEntType enum from the C++ code
+    let type: number;
+    if (stats.isFile()) {
+      type = 1; // File
+    } else if (stats.isDirectory()) {
+      type = 2; // Directory  
+    } else if (stats.isSymbolicLink()) {
+      type = 3; // SymLink
+    } else if (stats.isFIFO()) {
+      type = 4; // NamedPipe
+    } else if (stats.isSocket()) {
+      type = 5; // UnixDomainSocket
+    } else if (stats.isCharacterDevice()) {
+      type = 6; // CharacterDevice
+    } else if (stats.isBlockDevice()) {
+      type = 7; // BlockDevice
+    } else {
+      type = 0; // Unknown
+    }
+    
+    // Create a Dirent-like object compatible with Node.js Dirent
+    return {
+      name,
+      parentPath,
+      path: parentPath,
+      isFile() { return type === 1; },
+      isDirectory() { return type === 2; },
+      isSymbolicLink() { return type === 3; },
+      isBlockDevice() { return type === 7; },
+      isCharacterDevice() { return type === 6; },
+      isFIFO() { return type === 4; },
+      isSocket() { return type === 5; },
+    };
+  } catch (err) {
+    // If stat fails (e.g., broken symlink), create a Dirent with unknown type
+    const name = basename(path);
+    const parentPath = cwd ? resolve(cwd, dirname(path)) : resolve(dirname(path));
+    return {
+      name,
+      parentPath,  
+      path: parentPath,
+      isFile() { return false; },
+      isDirectory() { return false; },
+      isSymbolicLink() { return false; },
+      isBlockDevice() { return false; },
+      isCharacterDevice() { return false; },
+      isFIFO() { return false; },
+      isSocket() { return false; },
+    };
   }
 }
 
@@ -86,9 +162,7 @@ function mapOptions(options: GlobOptions): GlobScanOptions & { exclude: GlobOpti
     validateFunction(exclude, "options.exclude");
   }
 
-  if (options.withFileTypes) {
-    throw new TypeError("fs.glob does not support options.withFileTypes yet. Please open an issue on GitHub.");
-  }
+  // withFileTypes is now supported
 
   return {
     // NOTE: this is subtly different from Glob's default behavior.

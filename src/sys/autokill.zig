@@ -42,7 +42,7 @@ fn getChildPids(parent: c_int) ![]c_int {
         defer bun.default_allocator.free(contents);
 
         var list = std.ArrayList(c_int).init(bun.default_allocator);
-        var iter = std.mem.tokenize(u8, contents, " \n");
+        var iter = std.mem.tokenizeAny(u8, contents, " \n");
         while (iter.next()) |pid_str| {
             const pid = std.fmt.parseInt(c_int, pid_str, 10) catch continue;
             list.append(pid) catch continue;
@@ -104,7 +104,7 @@ fn getChildPidsFallback(parent: c_int) ![]c_int {
         const after_comm = stat_contents[last_paren + 1 ..];
         
         // Parse: " state ppid ..."
-        var parts = std.mem.tokenize(u8, after_comm, " ");
+        var parts = std.mem.tokenizeAny(u8, after_comm, " ");
         _ = parts.next(); // skip state
         const ppid_str = parts.next() orelse continue;
         const ppid = std.fmt.parseInt(c_int, ppid_str, 10) catch continue;
@@ -121,13 +121,17 @@ fn killProcessTreeRecursive(pid: c_int, killed: *std.AutoHashMap(c_int, void)) !
     const current_pid = std.c.getpid();
     
     // Avoid cycles and killing ourselves
-    if (killed.contains(pid) or pid == current_pid) {
+    if (killed.contains(pid) or pid == current_pid or pid <= 0) {
         return;
     }
     try killed.put(pid, {});
     
+    // First kill this process to prevent it from spawning more children
+    _ = std.c.kill(pid, 9); // SIGKILL
+    
     // Get children and kill them recursively
-    const children = try getChildPids(pid);
+    // Use catch to handle cases where the process was already killed
+    const children = getChildPids(pid) catch return;
     defer if (children.len > 0) bun.default_allocator.free(children);
     
     for (children) |child| {
@@ -135,9 +139,6 @@ fn killProcessTreeRecursive(pid: c_int, killed: *std.AutoHashMap(c_int, void)) !
             killProcessTreeRecursive(child, killed) catch {};
         }
     }
-    
-    // Kill this process
-    _ = std.c.kill(pid, 9); // SIGKILL
 }
 
 export fn Bun__autokillChildProcesses() void {

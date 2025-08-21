@@ -1008,6 +1008,11 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
         return;
     }
 
+    if (manager.options.log_level == .verbose) {
+        Output.prettyErrorln("<d>[SecurityProvider]<r> Running at '{s}'", .{security_provider});
+    }
+    const start_time = std.time.milliTimestamp();
+
     var pkg_dedupe: std.AutoArrayHashMap(PackageID, void) = .init(bun.default_allocator);
     defer pkg_dedupe.deinit();
 
@@ -1254,7 +1259,7 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
 
     manager.sleepUntil(&closure, &@TypeOf(closure).isDone);
 
-    try scanner.handleResults(&package_paths);
+    try scanner.handleResults(&package_paths, start_time);
 }
 
 const SecurityAdvisoryLevel = enum { fatal, warn };
@@ -1398,7 +1403,7 @@ pub const SecurityScanSubprocess = struct {
         }
     }
 
-    pub fn handleResults(this: *SecurityScanSubprocess, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath)) !void {
+    pub fn handleResults(this: *SecurityScanSubprocess, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath), start_time: i64) !void {
         defer {
             this.ipc_data.deinit();
             this.stderr_data.deinit();
@@ -1423,6 +1428,26 @@ pub const SecurityScanSubprocess = struct {
                 },
             }
             Global.exit(1);
+        }
+
+        if (this.manager.options.log_level == .verbose) {
+            const duration = std.time.milliTimestamp() - start_time;
+
+            switch (status) {
+                .exited => |exit| {
+                    if (exit.code == 0) {
+                        Output.prettyErrorln("<d>[SecurityProvider]<r> Completed with exit code {d} [{d}ms]", .{ exit.code, duration });
+                    } else {
+                        Output.prettyErrorln("<d>[SecurityProvider]<r> Failed with exit code {d} [{d}ms]", .{ exit.code, duration });
+                    }
+                },
+                .signaled => |sig| {
+                    Output.prettyErrorln("<d>[SecurityProvider]<r> Terminated by signal {s} [{d}ms]", .{ @tagName(sig), duration });
+                },
+                else => {
+                    Output.prettyErrorln("<d>[SecurityProvider]<r> Completed with unknown status [{d}ms]", .{duration});
+                },
+            }
         }
 
         try handleSecurityAdvisories(this.manager, this.ipc_data.items, package_paths);

@@ -437,8 +437,6 @@ function getBuildEnv(target, options) {
 function getBuildCommand(target, options, label) {
   const { profile } = target;
 
-  const label = profile || "release";
-
   if (target.os === "windows" && label === "build-bun") {
     return `bun run build:${label} -DENABLE_WINDOWS_CODESIGNING=ON`;
   }

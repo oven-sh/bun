@@ -202,10 +202,16 @@ pub const WatchEvent = struct {
 };
 
 pub const WatchItem = struct {
+    /// The memory for this string is supposed to be allocated under
+    /// BSSStringList and thus we don't need to free it.
+    ///
+    /// FIXME: This is not true when the `comptime clone_file_path` is set to
+    ///        true. This could mean we leak memory too aggresively.
     file_path: string,
     // filepath hash for quick comparison
     hash: u32,
     loader: options.Loader,
+    /// Owned by the watcher
     fd: bun.FileDescriptor,
     count: u32,
     parent_hash: u32,
@@ -499,6 +505,7 @@ pub fn appendFileMaybeLock(
     loader: options.Loader,
     dir_fd: bun.FileDescriptor,
     package_json: ?*PackageJSON,
+    // TODO: this arg makes it easy to leak memory by a lot, all paths should come from the FS cache instead
     comptime clone_file_path: bool,
     comptime lock: bool,
 ) bun.sys.Maybe(void) {
@@ -576,6 +583,7 @@ pub fn appendFile(
     loader: options.Loader,
     dir_fd: bun.FileDescriptor,
     package_json: ?*PackageJSON,
+    // TODO: this arg makes it easy to leak memory by a lot, all paths should come from the FS cache instead
     comptime clone_file_path: bool,
 ) bun.sys.Maybe(void) {
     return appendFileMaybeLock(this, fd, file_path, hash, loader, dir_fd, package_json, clone_file_path, true);
@@ -586,6 +594,7 @@ pub fn addDirectory(
     fd: bun.FileDescriptor,
     file_path: string,
     hash: HashType,
+    // TODO: this arg makes it easy to leak memory by a lot, all paths should come from the FS cache instead
     comptime clone_file_path: bool,
 ) bun.sys.Maybe(WatchItemIndex) {
     this.mutex.lock();
@@ -608,6 +617,7 @@ pub fn addFile(
     loader: options.Loader,
     dir_fd: bun.FileDescriptor,
     package_json: ?*PackageJSON,
+    // TODO: this arg makes it easy to leak memory by a lot, all paths should come from the FS cache instead
     comptime clone_file_path: bool,
 ) bun.sys.Maybe(void) {
     // This must lock due to concurrent transpiler

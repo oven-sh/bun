@@ -1245,7 +1245,7 @@ if(NOT BUN_CPP_ONLY)
         COMMENT
           "Code signing bun-profile.exe and bun.exe with DigiCert KeyLocker"
         COMMAND
-          bash "${SIGN_SCRIPT}" "${BUILD_PATH}/${bunExe}" "${BUILD_PATH}/${bunStripExe}" || echo "WARNING: Code signing failed but build continues"
+          bash "${SIGN_SCRIPT}" "${BUILD_PATH}/${bunExe}" "${BUILD_PATH}/${bunStripExe}"
         CWD
           ${CMAKE_SOURCE_DIR}
         SOURCES

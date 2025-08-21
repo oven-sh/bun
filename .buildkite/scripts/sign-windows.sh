@@ -25,7 +25,7 @@ verify_env_vars() {
     if [[ ${#missing_vars[@]} -gt 0 ]]; then
         log_error "Missing required environment variables: ${missing_vars[*]}"
         log_error "These should be set by Buildkite secrets or local environment"
-        return 1
+        exit 1
     fi
     
     log_info "All required environment variables are present"
@@ -89,7 +89,7 @@ setup_certificate() {
             log_info "Certificate decoded successfully from file"
         else
             log_error "Failed to decode Base64 certificate from file"
-            return 1
+            exit 1
         fi
     else
         # In CI environment, use variable directly
@@ -98,14 +98,14 @@ setup_certificate() {
             log_info "Certificate decoded successfully"
         else
             log_error "Failed to decode Base64 certificate"
-            return 1
+            exit 1
         fi
     fi
     
     # Verify certificate file was created
     if [[ ! -f "$TEMP_CERT" ]] || [[ ! -s "$TEMP_CERT" ]]; then
         log_error "Certificate file is empty or was not created"
-        return 1
+        exit 1
     fi
     
     # Update environment variable to point to decoded certificate
@@ -147,29 +147,55 @@ install_keylocker() {
         # Try downloading with multiple approaches
         local download_success=false
         
-        # Method 1: Standard curl with progress and retries
-        log_info "Attempting download (method 1)..."
+        # Method 1: Standard curl with retries and verbose error info
+        log_info "Attempting download (method 1: curl with retries)..."
         if curl --fail --show-error --location --retry 3 --retry-delay 5 \
-               --connect-timeout 30 --max-time 300 \
-               --output "$msi_path" "$KEYLOCKER_URL" 2>/dev/null; then
+               --connect-timeout 30 --max-time 600 \
+               --output "$msi_path" "$KEYLOCKER_URL"; then
             download_success=true
             log_info "Download successful (method 1)"
         else
-            log_info "Method 1 failed, trying alternative..."
+            log_info "Method 1 failed, trying alternative temp directory..."
             
-            # Method 2: Use temporary file first, then move
-            local temp_file="$TOOLS_DIR/keylocker_temp_$$.msi"
-            if curl --fail --show-error --location --retry 2 \
-                   --connect-timeout 30 --max-time 300 \
-                   --output "$temp_file" "$KEYLOCKER_URL" 2>/dev/null; then
-                if mv "$temp_file" "$msi_path" 2>/dev/null; then
-                    download_success=true
-                    log_info "Download successful (method 2)"
+            # Method 2: Try different temp directory
+            local alt_temp_dir="/c/temp/keylocker-$$"
+            mkdir -p "$alt_temp_dir" 2>/dev/null || true
+            if [[ -w "$alt_temp_dir" ]]; then
+                local alt_msi_path="$alt_temp_dir/Keylockertools-windows-x64.msi"
+                log_info "Attempting download (method 2: alt temp dir)..."
+                if curl --fail --show-error --location --retry 2 --retry-delay 3 \
+                       --connect-timeout 30 --max-time 600 \
+                       --output "$alt_msi_path" "$KEYLOCKER_URL"; then
+                    if mv "$alt_msi_path" "$msi_path" 2>/dev/null; then
+                        download_success=true
+                        log_info "Download successful (method 2)"
+                        rm -rf "$alt_temp_dir" 2>/dev/null || true
+                    else
+                        log_info "Move failed, cleaning up..."
+                        rm -rf "$alt_temp_dir" 2>/dev/null || true
+                    fi
                 else
-                    rm -f "$temp_file" 2>/dev/null || true
+                    rm -rf "$alt_temp_dir" 2>/dev/null || true
                 fi
-            else
-                rm -f "$temp_file" 2>/dev/null || true
+            fi
+            
+            # Method 3: Try wget as fallback
+            if [[ "$download_success" != "true" ]] && command -v wget >/dev/null 2>&1; then
+                log_info "Attempting download (method 3: wget)..."
+                if wget --tries=2 --timeout=30 --connect-timeout=30 \
+                       --output-document="$msi_path" "$KEYLOCKER_URL" >/dev/null 2>&1; then
+                    download_success=true
+                    log_info "Download successful (method 3)"
+                fi
+            fi
+            
+            # Method 4: PowerShell as last resort
+            if [[ "$download_success" != "true" ]]; then
+                log_info "Attempting download (method 4: PowerShell)..."
+                if powershell -Command "try { Invoke-WebRequest -Uri '$KEYLOCKER_URL' -OutFile '$msi_path' -UseBasicParsing -TimeoutSec 300; exit 0 } catch { exit 1 }" >/dev/null 2>&1; then
+                    download_success=true
+                    log_info "Download successful (method 4)"
+                fi
             fi
         fi
         
@@ -179,10 +205,10 @@ install_keylocker() {
             log_info "Checking if KeyLocker tools are already installed..."
             if [[ -f "/c/Program Files/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]]; then
                 log_info "KeyLocker tools found, skipping download"
-                return 0
             else
                 log_error "KeyLocker tools not found and download failed"
-                return 1
+                log_error "Code signing is required for Windows builds"
+                exit 1
             fi
         fi
     fi
@@ -233,7 +259,7 @@ install_keylocker() {
     if [[ ! -f "/c/Program Files/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]]; then
         log_error "KeyLocker tools installation failed"
         log_error "Please ensure you have administrator privileges"
-        return 1
+        exit 1
     fi
     
     log_success "KeyLocker tools installed successfully"
@@ -269,20 +295,20 @@ setup_environment() {
     
     if [[ "$signtool_found" == false ]]; then
         log_error "signtool.exe not found in Windows SDK"
-        return 1
+        exit 1
     fi
     
     # Save credentials to Windows credential store (no logging to prevent exposure)
     if ! smctl credentials save "$SM_API_KEY" "$SM_CLIENT_CERT_PASSWORD" >/dev/null 2>&1; then
         log_error "Failed to save credentials"
-        return 1
+        exit 1
     fi
     log_info "Credentials saved securely"
     
     # Sync certificates with Windows certificate store (no logging to prevent exposure)
     if ! smctl windows certsync --keypair-alias="$SM_KEYPAIR_ALIAS" >/dev/null 2>&1; then
         log_error "Failed to sync certificates"
-        return 1
+        exit 1
     fi
     log_info "Certificates synced successfully"
     
@@ -345,30 +371,21 @@ main() {
     done
     
     if [[ "$files_exist" != "true" ]]; then
-        log_info "No files to sign found, skipping signing process"
-        return 0
+        log_error "No files to sign found - build should have created executables"
+        exit 1
     fi
     
-    # Try to set up signing, but don't fail build if it doesn't work
-    if ! verify_env_vars; then
-        log_error "Environment variables not available, skipping signing"
-        return 0
-    fi
+    # Verify environment variables
+    verify_env_vars
     
-    if ! setup_certificate; then
-        log_error "Certificate setup failed, skipping signing"
-        return 0
-    fi
+    # Setup certificate from Base64
+    setup_certificate
     
-    if ! install_keylocker; then
-        log_error "KeyLocker installation failed, skipping signing"
-        return 0
-    fi
+    # Install KeyLocker if needed
+    install_keylocker
     
-    if ! setup_environment; then
-        log_error "Environment setup failed, skipping signing"
-        return 0
-    fi
+    # Setup environment
+    setup_environment
     
     # Sign all provided executables
     local failed=0

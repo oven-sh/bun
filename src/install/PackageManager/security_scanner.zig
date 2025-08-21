@@ -221,7 +221,7 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
         \\
         \\try {{
         \\  if (typeof scanner !== 'object' || scanner === null || typeof scanner.version !== 'string') {{
-        \\    throw new Error('Security scanner must export a 'scanner' object with a version property');
+        \\    throw new Error("Security scanner must export a 'scanner' object with a version property");
         \\  }}
         \\
         \\  if (scanner.version !== '1') {{

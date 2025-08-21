@@ -627,7 +627,9 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSFloat64Array>, m_statFsValues)                                    \
     V(public, LazyPropertyOfGlobalObject<JSBigInt64Array>, m_bigintStatFsValues)                             \
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMDontContextify)                                    \
-    V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMUseMainContextDefaultLoader)
+    V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMUseMainContextDefaultLoader)                       \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcSerializeFunction)                                \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcParseHandleFunction)
 
 #define DECLARE_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
     visibility:                                             \

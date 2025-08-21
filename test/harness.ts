@@ -23,6 +23,7 @@ export const isLinux = process.platform === "linux";
 export const isPosix = isMacOS || isLinux;
 export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
+export const isArm64 = process.arch === "arm64";
 export const isDebug = Bun.version.includes("debug");
 export const isCI = process.env.CI !== undefined;
 export const libcFamily: "glibc" | "musl" =
@@ -263,13 +264,31 @@ export function tempDirWithFiles(
   return base;
 }
 
+class DisposableString extends String {
+  [Symbol.dispose]() {
+    fs.rmSync(this + "", { recursive: true, force: true });
+  }
+  [Symbol.asyncDispose]() {
+    return fs.promises.rm(this + "", { recursive: true, force: true });
+  }
+}
+
+export function tempDir(
+  basename: string,
+  filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
+): DisposableString {
+  const base = tempDirWithFiles(basename, filesOrAbsolutePathToCopyFolderFrom);
+
+  return new DisposableString(base);
+}
+
 export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string): string {
   const base = tmpdirSync();
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return base;
 }
 
-export function bunRun(file: string, env?: Record<string, string> | NodeJS.ProcessEnv) {
+export function bunRun(file: string, env?: Record<string, string> | NodeJS.ProcessEnv, dump = false) {
   var path = require("path");
   const result = Bun.spawnSync([bunExe(), file], {
     cwd: path.dirname(file),
@@ -278,11 +297,21 @@ export function bunRun(file: string, env?: Record<string, string> | NodeJS.Proce
       NODE_ENV: undefined,
       ...env,
     },
+    stdin: "ignore",
+    stdout: !dump ? "pipe" : "inherit",
+    stderr: !dump ? "pipe" : "inherit",
   });
-  if (!result.success) throw new Error(result.stderr.toString("utf8"));
+  if (!result.success) {
+    if (dump) {
+      throw new Error(
+        "exited with code " + result.exitCode + (result.signalCode ? `signal: ${result.signalCode}` : ""),
+      );
+    }
+    throw new Error(String(result.stderr) + "\n" + String(result.stdout));
+  }
   return {
-    stdout: result.stdout.toString("utf8").trim(),
-    stderr: result.stderr.toString("utf8").trim(),
+    stdout: String(result.stdout ?? "").trim(),
+    stderr: String(result.stderr ?? "").trim(),
   };
 }
 

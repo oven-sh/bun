@@ -3697,6 +3697,7 @@ src/ptr/meta.zig
 src/ptr/owned.zig
 src/ptr/owned/maybe.zig
 src/ptr/ref_count.zig
+src/ptr/shared.zig
 src/ptr/tagged_pointer.zig
 src/ptr/weak_ptr.zig
 src/renamer.zig

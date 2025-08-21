@@ -120,7 +120,8 @@ pub fn onJSError(this: *@This(), err: jsc.JSValue, globalObject: *jsc.JSGlobalOb
     });
 }
 pub fn onError(this: *@This(), err: PostgresSQLStatement.Error, globalObject: *jsc.JSGlobalObject) void {
-    this.onJSError(err.toJS(globalObject), globalObject);
+    const e = err.toJS(globalObject) catch return;
+    this.onJSError(e, globalObject);
 }
 
 pub fn allowGC(thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject) void {
@@ -376,7 +377,6 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
                         const error_response = stmt.error_response.?.toJS(globalObject);
                         stmt.deref();
                         this.deref();
-                        // If the statement failed, we need to throw the error
                         return globalObject.throwValue(error_response);
                     },
                     .prepared => {

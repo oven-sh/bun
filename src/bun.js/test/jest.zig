@@ -953,7 +953,7 @@ pub const DescribeScope = struct {
 
                 cb.protect();
                 @field(DescribeScope.active.?, @tagName(hook) ++ "s").append(bun.default_allocator, cb) catch unreachable;
-                return JSValue.jsBoolean(true);
+                return .true;
             }
         }.run;
     }

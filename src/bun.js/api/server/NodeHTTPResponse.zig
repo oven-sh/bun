@@ -606,7 +606,7 @@ pub fn doResume(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, _: *
         return .false;
     }
 
-    var result = jsc.JSValue.true;
+    var result: jsc.JSValue = .true;
     if (this.flags.is_data_buffered_during_pause) {
         this.raw_response.clearOnData();
         this.flags.is_data_buffered_during_pause = false;

@@ -211,8 +211,9 @@ pub const Entry = struct {
         var lines_between: u32 = runtime.line_count + 2;
 
         // Join all of the mappings together.
-        for (1..map_files.len) |source_index| switch (map_files.get(source_index)) {
+        for (0..map_files.len) |i| switch (map_files.get(i)) {
             .some => |source_map| {
+                const source_index = i + 1;
                 const content = source_map.get();
                 const start_state: SourceMap.SourceMapState = .{
                     .source_index = @intCast(source_index),

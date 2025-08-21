@@ -107,7 +107,7 @@ pub const TestRunner = struct {
     unhandled_errors_between_tests: u32 = 0,
     summary: Summary = Summary{},
 
-    describe2: ?Describe2.BunTestFile,
+    describe2Root: ?Describe2.BunTest,
 
     pub const Drainer = jsc.AnyTask.New(TestRunner, drain);
 
@@ -2476,7 +2476,7 @@ fn callJSFunctionForTestRunner(vm: *jsc.VirtualMachine, globalObject: *JSGlobalO
 
 extern fn Bun__CallFrame__getLineNumber(callframe: *jsc.CallFrame, globalObject: *jsc.JSGlobalObject) u32;
 
-fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObject) u32 {
+pub fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObject) u32 {
     if (Jest.runner) |runner| {
         if (runner.test_options.file_reporter == .junit) {
             return Bun__CallFrame__getLineNumber(callframe, globalThis);

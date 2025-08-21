@@ -614,7 +614,7 @@ pub const CommandLineReporter = struct {
         var scopes_stack = std.BoundedArray(*describe2.DescribeScope, 64).init(0) catch unreachable;
         var parent_: ?*describe2.DescribeScope = test_entry.parent;
         const assertions = sequence.expect_call_count;
-        const line_number = 0; // TODO: get the line number
+        const line_number = test_entry.line_no;
 
         const file = buntest.getFile();
 
@@ -1317,7 +1317,7 @@ pub const TestCommand = struct {
                     .counts = &snapshot_counts,
                     .inline_snapshots_to_write = &inline_snapshots_to_write,
                 },
-                .describe2 = .init(ctx.allocator),
+                .describe2Root = .init(ctx.allocator),
             },
         };
         reporter.repeat_count = @max(ctx.test_options.repeat_count, 1);
@@ -1837,30 +1837,35 @@ pub const TestCommand = struct {
             const file_end = reporter.jest.files.len;
 
             // Check if describe2 is available and has tests to run
-            if (jest.Jest.runner.?.describe2) |*buntest| {
-                // Automatically execute describe2 tests
-                try buntest.run(vm.global);
+            if (jest.Jest.runner.?.describe2Root) |*buntestFiles| {
+                var i: usize = 0;
+                while (i < buntestFiles.files.items.len) : (i += 1) {
+                    const buntest = buntestFiles.files.items[i];
 
-                // Process event loop while describe2 tests are running
-                vm.eventLoop().tick();
+                    // Automatically execute describe2 tests
+                    try buntest.run(vm.global);
 
-                var prev_unhandled_count = vm.unhandled_error_counter;
-                while (buntest.phase != .done) {
-                    vm.eventLoop().autoTick();
-                    if (buntest.phase == .done) break;
+                    // Process event loop while describe2 tests are running
                     vm.eventLoop().tick();
 
-                    while (prev_unhandled_count < vm.unhandled_error_counter) {
-                        vm.global.handleRejectedPromises();
-                        prev_unhandled_count = vm.unhandled_error_counter;
+                    var prev_unhandled_count = vm.unhandled_error_counter;
+                    while (buntest.phase != .done) {
+                        vm.eventLoop().autoTick();
+                        if (buntest.phase == .done) break;
+                        vm.eventLoop().tick();
+
+                        while (prev_unhandled_count < vm.unhandled_error_counter) {
+                            vm.global.handleRejectedPromises();
+                            prev_unhandled_count = vm.unhandled_error_counter;
+                        }
                     }
+
+                    vm.eventLoop().tickImmediateTasks(vm);
+
+                    // Automatically cleanup describe2 after tests complete
+                    buntest.deinit();
                 }
-
-                vm.eventLoop().tickImmediateTasks(vm);
-
-                // Automatically cleanup describe2 after tests complete
-                buntest.deinit();
-                jest.Jest.runner.?.describe2 = null;
+                jest.Jest.runner.?.describe2Root = null;
             }
 
             for (file_start..file_end) |module_id| {

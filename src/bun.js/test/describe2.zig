@@ -52,10 +52,11 @@ pub const js_fns = struct {
         if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
             @panic("TODO return Bun__Jest__testPreloadObject(globalThis)");
         }
-        if (bun.jsc.Jest.Jest.runner.?.describe2 == null) {
+        if (bun.jsc.Jest.Jest.runner.?.describe2Root == null) {
             return globalThis.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
         }
-        const bunTest = &bun.jsc.Jest.Jest.runner.?.describe2.?;
+        const bunTestRoot = &bun.jsc.Jest.Jest.runner.?.describe2Root.?;
+        const bunTest = bunTestRoot.getActive();
 
         if (cfg.only) try errorInCI(globalThis, cfg.signature);
 
@@ -105,10 +106,11 @@ pub const js_fns = struct {
         if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
             @panic("TODO return Bun__Jest__testPreloadObject(globalThis)");
         }
-        if (bun.jsc.Jest.Jest.runner.?.describe2 == null) {
+        if (bun.jsc.Jest.Jest.runner.?.describe2Root == null) {
             return globalThis.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
         }
-        const bunTest = &bun.jsc.Jest.Jest.runner.?.describe2.?;
+        const bunTestRoot = &bun.jsc.Jest.Jest.runner.?.describe2Root.?;
+        const bunTest = bunTestRoot.getActive();
 
         if (cfg.only) try errorInCI(globalThis, cfg.signature);
 
@@ -121,6 +123,8 @@ pub const js_fns = struct {
         const description_str = try getDescription(bunTest.gpa, globalThis, description, cfg.signature);
         defer bunTest.gpa.free(description_str);
 
+        const line_no = jsc.Jest.captureTestLineNumber(callFrame, globalThis);
+
         switch (bunTest.phase) {
             .collection => {
                 try bunTest.collection.enqueueTestCallback(callback, .{
@@ -128,6 +132,7 @@ pub const js_fns = struct {
                     .self_concurrent = cfg.concurrent,
                     .self_only = cfg.only,
                     .mode = cfg.mode,
+                    .line_no = line_no,
                 });
                 return .js_undefined;
             },
@@ -149,10 +154,11 @@ pub const js_fns = struct {
                 if (vm.is_in_preload or bun.jsc.Jest.Jest.runner == null) {
                     @panic("TODO return Bun__Jest__testPreloadObject(globalThis)");
                 }
-                if (bun.jsc.Jest.Jest.runner.?.describe2 == null) {
+                if (bun.jsc.Jest.Jest.runner.?.describe2Root == null) {
                     return globalThis.throw("The describe2 was already forDebuggingDeinitNow-ed", .{});
                 }
-                const bunTest = &bun.jsc.Jest.Jest.runner.?.describe2.?;
+                const bunTestRoot = &bun.jsc.Jest.Jest.runner.?.describe2Root.?;
+                const bunTest = bunTestRoot.getActive();
 
                 const callback = callFrame.argumentsAsArray(1)[0];
 
@@ -171,7 +177,41 @@ pub const js_fns = struct {
     }
 };
 
-/// this will be a JSValue (returned by `Bun.jest(...)`). there will be one per file. they will be gc objects and cleaned up when no longer used.
+pub const BunTest = struct { // TODO: this is bad; try again
+    gpa: std.mem.Allocator,
+    files: std.ArrayListUnmanaged(*BunTestFile), // TODO: this should be a list of JSValues
+    active_file: ?*BunTestFile,
+
+    pub fn init(outer_gpa: std.mem.Allocator) BunTest {
+        return .{
+            .gpa = outer_gpa,
+            .files = .empty,
+            .active_file = null,
+        };
+    }
+    pub fn deinit(this: *BunTest) void {
+        // TODO: this is never called, fix
+        for (this.files.items) |*file| this.gpa.destroy(file);
+        this.files.deinit(this.gpa);
+    }
+
+    pub fn getActive(this: *BunTest) *BunTestFile {
+        return this.active_file orelse {
+            if (this.files.items.len == 0) {
+                const file = bun.create(this.gpa, BunTestFile, .init(this.gpa));
+                this.files.append(this.gpa, file) catch bun.outOfMemory();
+                this.active_file = file;
+                return file;
+            } else if (this.files.items.len == 1) {
+                return this.files.items[0];
+            } else {
+                @panic("TODO: support multiple files");
+            }
+        };
+    }
+};
+
+/// TODO: this will be a JSValue (returned by `Bun.jest(...)`). there will be one per file. they will be gc objects and cleaned up when no longer used.
 pub const BunTestFile = struct {
     in_run_loop: bool,
     allocation_scope: *bun.AllocationScope,
@@ -508,6 +548,8 @@ pub const ExecutionEntry = struct {
     name: ?[]const u8,
     concurrent: bool,
     only: bool,
+    /// only available if using junit reporter, otherwise 0
+    line_no: u32,
     pub fn destroy(this: *ExecutionEntry, buntest: *BunTestFile) void {
         this.callback.deinit();
         if (this.name) |name| buntest.gpa.free(name);

@@ -63,7 +63,7 @@ pub fn enqueueDescribeCallback(this: *Collection, callback: ?jsc.JSValue, cfg: s
     }
 }
 
-pub fn enqueueTestCallback(this: *Collection, callback: ?jsc.JSValue, cfg: struct { name: ?[]const u8, self_concurrent: bool, self_only: bool, mode: describe2.ExecutionEntryTag }) bun.JSError!void {
+pub fn enqueueTestCallback(this: *Collection, callback: ?jsc.JSValue, cfg: struct { name: ?[]const u8, self_concurrent: bool, self_only: bool, mode: describe2.ExecutionEntryTag, line_no: u32 }) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
@@ -77,6 +77,7 @@ pub fn enqueueTestCallback(this: *Collection, callback: ?jsc.JSValue, cfg: struc
         .name = if (cfg.name) |test_name| this.bunTest().gpa.dupe(u8, test_name) catch bun.outOfMemory() else null,
         .concurrent = this.active_scope.concurrent or cfg.self_concurrent,
         .only = cfg.self_only,
+        .line_no = cfg.line_no,
     });
     try this.active_scope.append(.{ .test_callback = test_callback });
 }
@@ -94,6 +95,7 @@ pub fn enqueueHookCallback(this: *Collection, globalThis: *jsc.JSGlobalObject, c
         .name = null,
         .concurrent = this.active_scope.concurrent,
         .only = false,
+        .line_no = 0,
     });
     try this.active_scope.appendHook(tag, hook_callback);
 }

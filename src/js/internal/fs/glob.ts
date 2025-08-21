@@ -74,6 +74,17 @@ function createDirent(path: string, cwd?: string): any {
   const { basename, dirname, resolve, join } = require("node:path");
   const { lstatSync } = require("node:fs");
 
+  // UV_DIRENT constants that match the C++ DirEntType enum
+  // These values match the uv_dirent_type_t enum from libuv
+  const UV_DIRENT_UNKNOWN = 0;
+  const UV_DIRENT_FILE = 1;
+  const UV_DIRENT_DIR = 2;
+  const UV_DIRENT_LINK = 3;
+  const UV_DIRENT_FIFO = 4;
+  const UV_DIRENT_SOCKET = 5;
+  const UV_DIRENT_CHAR = 6;
+  const UV_DIRENT_BLOCK = 7;
+
   try {
     // Construct the full path if cwd is provided
     const fullPath = cwd ? join(cwd, path) : path;
@@ -87,21 +98,21 @@ function createDirent(path: string, cwd?: string): any {
     // Get the file type number that matches DirEntType enum from the C++ code
     let type: number;
     if (stats.isFile()) {
-      type = 1; // File
+      type = UV_DIRENT_FILE;
     } else if (stats.isDirectory()) {
-      type = 2; // Directory
+      type = UV_DIRENT_DIR;
     } else if (stats.isSymbolicLink()) {
-      type = 3; // SymLink
+      type = UV_DIRENT_LINK;
     } else if (stats.isFIFO()) {
-      type = 4; // NamedPipe
+      type = UV_DIRENT_FIFO;
     } else if (stats.isSocket()) {
-      type = 5; // UnixDomainSocket
+      type = UV_DIRENT_SOCKET;
     } else if (stats.isCharacterDevice()) {
-      type = 6; // CharacterDevice
+      type = UV_DIRENT_CHAR;
     } else if (stats.isBlockDevice()) {
-      type = 7; // BlockDevice
+      type = UV_DIRENT_BLOCK;
     } else {
-      type = 0; // Unknown
+      type = UV_DIRENT_UNKNOWN;
     }
 
     // Create a Dirent-like object compatible with Node.js Dirent
@@ -110,25 +121,25 @@ function createDirent(path: string, cwd?: string): any {
       parentPath,
       path: parentPath,
       isFile() {
-        return type === 1;
+        return type === UV_DIRENT_FILE;
       },
       isDirectory() {
-        return type === 2;
+        return type === UV_DIRENT_DIR;
       },
       isSymbolicLink() {
-        return type === 3;
+        return type === UV_DIRENT_LINK;
       },
       isBlockDevice() {
-        return type === 7;
+        return type === UV_DIRENT_BLOCK;
       },
       isCharacterDevice() {
-        return type === 6;
+        return type === UV_DIRENT_CHAR;
       },
       isFIFO() {
-        return type === 4;
+        return type === UV_DIRENT_FIFO;
       },
       isSocket() {
-        return type === 5;
+        return type === UV_DIRENT_SOCKET;
       },
     };
   } catch (err) {

@@ -39,17 +39,11 @@ pub fn dumpOrder(this: *Execution) bun.JSError!void {
     }
 }
 
-const std = @import("std");
+const bun = @import("bun");
 
 const describe2 = @import("./describe2.zig");
-const BunTest = describe2.BunTest;
 const DescribeScope = describe2.DescribeScope;
 const Execution = describe2.Execution;
 const ExecutionEntry = describe2.ExecutionEntry;
 const TestScheduleEntry = describe2.TestScheduleEntry;
 const groupLog = describe2.group;
-
-const test_command = @import("../../cli/test_command.zig");
-
-const bun = @import("bun");
-const jsc = bun.jsc;

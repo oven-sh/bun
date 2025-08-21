@@ -591,11 +591,10 @@ pub const group = struct {
     }
 };
 
+const ci_info = @import("../../ci_info.zig");
 const std = @import("std");
 const test_command = @import("../../cli/test_command.zig");
 
 const bun = @import("bun");
 const jsc = bun.jsc;
 const Strong = jsc.Strong.Safe;
-
-const ci_info = @import("../../ci_info.zig");

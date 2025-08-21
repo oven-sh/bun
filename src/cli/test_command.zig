@@ -798,7 +798,6 @@ pub const CommandLineReporter = struct {
         return &this.jest.summary;
     }
 
-    const describe2 = @import("../bun.js/test/describe2.zig");
     pub fn handleTestCompleted(buntest: *describe2.BunTest, sequence: *describe2.Execution.ExecutionSequence, test_entry: *describe2.ExecutionEntry, elapsed_ns: u64) void {
         var writer = Output.errorWriterBuffered();
         defer Output.flush();
@@ -1841,24 +1840,24 @@ pub const TestCommand = struct {
             if (jest.Jest.runner.?.describe2) |*buntest| {
                 // Automatically execute describe2 tests
                 try buntest.run(vm.global);
-                
+
                 // Process event loop while describe2 tests are running
                 vm.eventLoop().tick();
-                
+
                 var prev_unhandled_count = vm.unhandled_error_counter;
                 while (buntest.phase != .done) {
                     vm.eventLoop().autoTick();
                     if (buntest.phase == .done) break;
                     vm.eventLoop().tick();
-                    
+
                     while (prev_unhandled_count < vm.unhandled_error_counter) {
                         vm.global.handleRejectedPromises();
                         prev_unhandled_count = vm.unhandled_error_counter;
                     }
                 }
-                
+
                 vm.eventLoop().tickImmediateTasks(vm);
-                
+
                 // Automatically cleanup describe2 after tests complete
                 buntest.deinit();
                 jest.Jest.runner.?.describe2 = null;
@@ -1950,6 +1949,7 @@ const string = []const u8;
 
 const DotEnv = @import("../env_loader.zig");
 const Scanner = @import("./test/Scanner.zig");
+const describe2 = @import("../bun.js/test/describe2.zig");
 const options = @import("../options.zig");
 const resolve_path = @import("../resolver/resolve_path.zig");
 const std = @import("std");

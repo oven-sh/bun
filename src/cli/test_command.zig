@@ -605,7 +605,7 @@ pub const CommandLineReporter = struct {
 
     fn printTestLine(
         comptime status: TestRunner.Test.Status,
-        buntest: *describe2.BunTest,
+        buntest: *describe2.BunTestFile,
         sequence: *describe2.Execution.ExecutionSequence,
         test_entry: *describe2.ExecutionEntry,
         elapsed_ns: u64,
@@ -798,7 +798,7 @@ pub const CommandLineReporter = struct {
         return &this.jest.summary;
     }
 
-    pub fn handleTestCompleted(buntest: *describe2.BunTest, sequence: *describe2.Execution.ExecutionSequence, test_entry: *describe2.ExecutionEntry, elapsed_ns: u64) void {
+    pub fn handleTestCompleted(buntest: *describe2.BunTestFile, sequence: *describe2.Execution.ExecutionSequence, test_entry: *describe2.ExecutionEntry, elapsed_ns: u64) void {
         var writer = Output.errorWriterBuffered();
         defer Output.flush();
 

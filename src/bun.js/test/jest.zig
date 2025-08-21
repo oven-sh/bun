@@ -107,7 +107,7 @@ pub const TestRunner = struct {
     unhandled_errors_between_tests: u32 = 0,
     summary: Summary = Summary{},
 
-    describe2: ?Describe2.BunTest,
+    describe2: ?Describe2.BunTestFile,
 
     pub const Drainer = jsc.AnyTask.New(TestRunner, drain);
 

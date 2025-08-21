@@ -35,7 +35,7 @@ pub fn deinit(this: *Collection) void {
     this.describe_callback_queue.deinit();
 }
 
-fn bunTest(this: *Collection) *BunTest {
+fn bunTest(this: *Collection) *BunTestFile {
     return @fieldParentPtr("collection", this);
 }
 
@@ -145,7 +145,7 @@ pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, resul
 const std = @import("std");
 
 const describe2 = @import("./describe2.zig");
-const BunTest = describe2.BunTest;
+const BunTestFile = describe2.BunTestFile;
 const Collection = describe2.Collection;
 const DescribeScope = describe2.DescribeScope;
 const group = describe2.group;

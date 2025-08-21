@@ -172,7 +172,7 @@ pub const js_fns = struct {
 };
 
 /// this will be a JSValue (returned by `Bun.jest(...)`). there will be one per file. they will be gc objects and cleaned up when no longer used.
-pub const BunTest = struct {
+pub const BunTestFile = struct {
     in_run_loop: bool,
     allocation_scope: *bun.AllocationScope,
     gpa: std.mem.Allocator,
@@ -186,7 +186,7 @@ pub const BunTest = struct {
     collection: Collection,
     execution: Execution,
 
-    pub fn init(outer_gpa: std.mem.Allocator) BunTest {
+    pub fn init(outer_gpa: std.mem.Allocator) BunTestFile {
         group.begin(@src());
         defer group.end();
 
@@ -201,7 +201,7 @@ pub const BunTest = struct {
             .execution = .init(gpa),
         };
     }
-    pub fn deinit(this: *BunTest) void {
+    pub fn deinit(this: *BunTestFile) void {
         group.begin(@src());
         defer group.end();
 
@@ -215,22 +215,22 @@ pub const BunTest = struct {
     }
 
     const RefData = struct {
-        buntest: *BunTest,
+        buntest: *BunTestFile,
         data: u64,
         pub fn deinit(this: *RefData) void {
             // TODO jsvalue(this).unprotect()
             this.buntest.gpa.destroy(this);
         }
     };
-    pub fn ref(this: *BunTest, data: u64) *anyopaque {
+    pub fn ref(this: *BunTestFile, data: u64) *anyopaque {
         // TODO jsvalue(this).protect()
         return bun.create(this.gpa, RefData, .{ .buntest = this, .data = data });
     }
 
-    pub fn getFile(_: *BunTest) []const u8 {
+    pub fn getFile(_: *BunTestFile) []const u8 {
         return "/TODO/"; // TODO: store the file name (each file has its own BunTest instance)
     }
-    pub fn getReporter(_: *BunTest) ?test_command.FileReporter {
+    pub fn getReporter(_: *BunTestFile) ?test_command.FileReporter {
         return null; // TODO: get the reporter
     }
 
@@ -257,11 +257,11 @@ pub const BunTest = struct {
     fn bunTestCatch(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         return bunTestThenOrCatch(globalThis, callframe, true);
     }
-    fn addThen(this: *BunTest, globalThis: *jsc.JSGlobalObject, promise: jsc.JSValue, data: u64) void {
+    fn addThen(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, promise: jsc.JSValue, data: u64) void {
         promise.then(globalThis, this.ref(data), bunTestThen, bunTestCatch); // TODO: this function is odd. it requires manually exporting the describeCallbackThen as a toJSHostFn and also adding logic in c++
     }
 
-    pub fn run(this: *BunTest, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
+    pub fn run(this: *BunTestFile, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
         group.begin(@src());
         defer group.end();
 
@@ -315,7 +315,7 @@ pub const BunTest = struct {
         comptime unreachable;
     }
 
-    fn _advance(this: *BunTest, globalThis: *jsc.JSGlobalObject) bun.JSError!enum { cont, exit } {
+    fn _advance(this: *BunTestFile, globalThis: *jsc.JSGlobalObject) bun.JSError!enum { cont, exit } {
         group.begin(@src());
         defer group.end();
         group.log("advance from {s}", .{@tagName(this.phase)});
@@ -359,7 +359,7 @@ pub const BunTest = struct {
         }
     }
 
-    fn runOneCompleted(this: *BunTest, globalThis: *jsc.JSGlobalObject, result_is_error: bool, result_value: jsc.JSValue, data: u64) bun.JSError!void {
+    fn runOneCompleted(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, result_is_error: bool, result_value: jsc.JSValue, data: u64) bun.JSError!void {
         switch (this.phase) {
             .collection => try this.collection.runOneCompleted(globalThis, result_is_error, result_value, data),
             .execution => try this.execution.runOneCompleted(globalThis, result_is_error, result_value, data),
@@ -371,7 +371,7 @@ pub const BunTest = struct {
         continue_sync,
         continue_async,
     };
-    fn _callTestCallbackNow(this: *BunTest, globalThis: *jsc.JSGlobalObject, cfg: CallbackEntry) bun.JSError!CallNowResult {
+    fn _callTestCallbackNow(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, cfg: CallbackEntry) bun.JSError!CallNowResult {
         group.begin(@src());
         defer group.end();
 
@@ -444,7 +444,7 @@ pub const DescribeScope = struct {
             .filter = .no, // TODO: impl filtering
         };
     }
-    pub fn destroy(this: *DescribeScope, buntest: *BunTest) void {
+    pub fn destroy(this: *DescribeScope, buntest: *BunTestFile) void {
         for (this.entries.items) |*entry| entry.deinit(buntest);
         for (this.beforeAll.items) |item| item.destroy(buntest);
         for (this.beforeEach.items) |item| item.destroy(buntest);
@@ -508,7 +508,7 @@ pub const ExecutionEntry = struct {
     name: ?[]const u8,
     concurrent: bool,
     only: bool,
-    pub fn destroy(this: *ExecutionEntry, buntest: *BunTest) void {
+    pub fn destroy(this: *ExecutionEntry, buntest: *BunTestFile) void {
         this.callback.deinit();
         if (this.name) |name| buntest.gpa.free(name);
         buntest.gpa.destroy(this);
@@ -519,7 +519,7 @@ pub const TestScheduleEntry = union(enum) {
     test_callback: *ExecutionEntry,
     fn deinit(
         this: *TestScheduleEntry,
-        buntest: *BunTest,
+        buntest: *BunTestFile,
     ) void {
         switch (this.*) {
             .describe => |describe| describe.destroy(buntest),

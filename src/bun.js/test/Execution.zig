@@ -60,7 +60,7 @@ pub fn deinit(this: *Execution) void {
     this._entries.deinit();
 }
 
-fn bunTest(this: *Execution) *BunTest {
+fn bunTest(this: *Execution) *BunTestFile {
     return @fieldParentPtr("execution", this);
 }
 
@@ -204,7 +204,7 @@ const std = @import("std");
 const test_command = @import("../../cli/test_command.zig");
 
 const describe2 = @import("./describe2.zig");
-const BunTest = describe2.BunTest;
+const BunTestFile = describe2.BunTestFile;
 const Execution = describe2.Execution;
 const ExecutionEntry = describe2.ExecutionEntry;
 const groupLog = describe2.group;

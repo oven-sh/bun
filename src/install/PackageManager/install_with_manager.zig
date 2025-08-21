@@ -1252,10 +1252,7 @@ fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
     var progress_node: ?*Progress.Node = null;
     if (manager.options.log_level != .verbose and manager.options.log_level != .silent) {
         manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
-        const scanner_name = if (Output.isEmojiEnabled())
-            "  🔐 Scanning packages with security provider"
-        else
-            "Scanning packages with security provider";
+        const scanner_name = if (Output.isEmojiEnabled()) "  👮 Scanning packages with security provider" else "Scanning packages with security provider";
         progress_node = manager.progress.start(scanner_name, 0);
         if (progress_node) |node| {
             node.activate();

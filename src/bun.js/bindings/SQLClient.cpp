@@ -147,7 +147,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
     }
     case DataCellTag::String: {
         if (cell.value.string) {
-            return jsString(vm, WTF::String(cell.value.string));
+            return jsString(vm, WTF::String(std::exchange(cell.value.string, nullptr)));
         }
         return jsEmptyString(vm);
     }
@@ -379,22 +379,16 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
     case BunResultMode::Raw: // raw is just array mode with raw values
     case BunResultMode::Values: // values
     {
-        auto* array = JSC::constructEmptyArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), count);
-        RETURN_IF_EXCEPTION(scope, {});
-
+        MarkedArgumentBuffer args;
         for (uint32_t i = 0; i < count; i++) {
             auto& cell = cells[i];
             JSValue value = toJS(vm, globalObject, cell);
             RETURN_IF_EXCEPTION(scope, {});
-            array->putDirectIndex(globalObject, i, value);
+            args.append(value);
         }
-        return array;
-    }
 
-    default:
-        // not a valid result mode
-        ASSERT_NOT_REACHED();
-        return jsUndefined();
+        return JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args);
+    }
     }
 }
 static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCell* cells, uint32_t count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags, BunResultMode result_mode, ExternColumnIdentifier* namesPtr, uint32_t namesCount)

@@ -1468,11 +1468,11 @@ pub const SecurityScanSubprocess = struct {
                 },
             }
         } else if (this.manager.options.log_level != .silent and duration >= 1000) {
-            // Show progress message for non-verbose, non-silent mode when it takes > 1 second
+            const maybeHourglass = if (Output.isEmojiEnabled()) "⏳" else "";
             if (packages_scanned == 1) {
-                Output.prettyErrorln("<d>[{s}] Scanning 1 package took {d}ms<r>", .{ security_provider, duration });
+                Output.prettyErrorln("{s}<d>[{s}] Scanning 1 package took {d}ms<r>", .{ maybeHourglass, security_provider, duration });
             } else {
-                Output.prettyErrorln("<d>[{s}] Scanning {d} packages took {d}ms<r>", .{ security_provider, packages_scanned, duration });
+                Output.prettyErrorln("{s}<d>[{s}] Scanning {d} packages took {d}ms<r>", .{ maybeHourglass, security_provider, packages_scanned, duration });
             }
         }
 

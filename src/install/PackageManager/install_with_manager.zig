@@ -1470,9 +1470,9 @@ pub const SecurityScanSubprocess = struct {
         } else if (this.manager.options.log_level != .silent and duration >= 1000) {
             const maybeHourglass = if (Output.isEmojiEnabled()) "⏳" else "";
             if (packages_scanned == 1) {
-                Output.prettyErrorln("{s}<d>[{s}] Scanning 1 package took {d}ms<r>", .{ maybeHourglass, security_provider, duration });
+                Output.prettyErrorln("<d>{s}[{s}] Scanning 1 package took {d}ms<r>", .{ maybeHourglass, security_provider, duration });
             } else {
-                Output.prettyErrorln("{s}<d>[{s}] Scanning {d} packages took {d}ms<r>", .{ maybeHourglass, security_provider, packages_scanned, duration });
+                Output.prettyErrorln("<d>{s}[{s}] Scanning {d} packages took {d}ms<r>", .{ maybeHourglass, security_provider, packages_scanned, duration });
             }
         }
 

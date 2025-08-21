@@ -95,13 +95,12 @@ test("basic", {
 });
 
 test("shows progress message when scanner takes more than 1 second", {
-  testTimeout: 5000,
   scanner: async () => {
     await Bun.sleep(2000);
     return [];
   },
   expect: async ({ err }) => {
-    expect(err).toMatch(/\[\.\/scanner\.ts\] Scanned \d+ packages? \[\d+ms\]/);
+    expect(err).toMatch(/\[\.\/scanner\.ts\] Scanning \d+ packages? took \d+ms/);
   },
 });
 

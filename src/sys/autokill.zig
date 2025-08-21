@@ -16,9 +16,17 @@ pub fn killAllChildProcesses() void {
     const children = getChildPids(current_pid) catch return;
     defer if (children.len > 0) bun.default_allocator.free(children);
 
-    // Kill each child tree recursively
+    // First pass: SIGSTOP all processes in the tree to freeze them
     for (children) |child| {
-        killProcessTreeRecursive(child, &killed) catch {};
+        killProcessTreeRecursive(child, &killed, current_pid, true) catch {};
+    }
+
+    // Clear the killed map for the second pass
+    killed.clearRetainingCapacity();
+
+    // Second pass: SIGKILL all processes in the tree
+    for (children) |child| {
+        killProcessTreeRecursive(child, &killed, current_pid, false) catch {};
     }
 }
 
@@ -117,26 +125,28 @@ fn getChildPidsFallback(parent: c_int) ![]c_int {
     return list.toOwnedSlice();
 }
 
-fn killProcessTreeRecursive(pid: c_int, killed: *std.AutoHashMap(c_int, void)) !void {
-    const current_pid = std.c.getpid();
-    
+fn killProcessTreeRecursive(pid: c_int, killed: *std.AutoHashMap(c_int, void), current_pid: c_int, stop_only: bool) !void {
     // Avoid cycles and killing ourselves
     if (killed.contains(pid) or pid == current_pid or pid <= 0) {
         return;
     }
     try killed.put(pid, {});
     
-    // First kill this process to prevent it from spawning more children
-    _ = std.c.kill(pid, 9); // SIGKILL
+    if (stop_only) {
+        // First pass: SIGSTOP to freeze the process tree
+        _ = std.c.kill(pid, 19); // SIGSTOP
+    } else {
+        // Second pass: SIGKILL to actually kill the processes
+        _ = std.c.kill(pid, 9); // SIGKILL
+    }
     
-    // Get children and kill them recursively
-    // Use catch to handle cases where the process was already killed
+    // Get children and process them recursively
     const children = getChildPids(pid) catch return;
     defer if (children.len > 0) bun.default_allocator.free(children);
     
     for (children) |child| {
         if (child > 0) {
-            killProcessTreeRecursive(child, killed) catch {};
+            killProcessTreeRecursive(child, killed, current_pid, stop_only) catch {};
         }
     }
 }

@@ -117,7 +117,12 @@ const advanced = struct {
     }
 
     pub fn serialize(writer: *bun.io.StreamBuffer, global: *jsc.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
-        const serialized = try value.serialize(global, true);
+        const serialized = try value.serialize(global, .{
+            // IPC sends across process.
+            .forCrossProcessTransfer = true,
+
+            .forStorage = false,
+        });
         defer serialized.deinit();
 
         const size: u32 = @intCast(serialized.data.len);
@@ -510,7 +515,7 @@ pub const SendQueue = struct {
         }
         this.keep_alive.disable();
         this.socket = .closed;
-        this._onAfterIPCClosed();
+        this.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, _onAfterIPCClosed).init(this));
     }
     fn _windowsClose(this: *SendQueue) void {
         log("SendQueue#_windowsClose", .{});
@@ -519,7 +524,7 @@ pub const SendQueue = struct {
         pipe.data = pipe;
         pipe.close(&_windowsOnClosed);
         this._socketClosed();
-        this._onAfterIPCClosed();
+        this.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, _onAfterIPCClosed).init(this));
     }
     fn _windowsOnClosed(windows: *uv.Pipe) callconv(.C) void {
         log("SendQueue#_windowsOnClosed", .{});
@@ -1075,8 +1080,7 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
                 if (!ack) return;
 
                 // Get file descriptor and clear it
-                const fd = send_queue.incoming_fd.?;
-                send_queue.incoming_fd = null;
+                const fd: bun.FD = bun.take(&send_queue.incoming_fd).?;
 
                 const target: bun.jsc.JSValue = switch (send_queue.owner) {
                     .subprocess => |subprocess| subprocess.this_jsvalue,
@@ -1353,7 +1357,7 @@ pub const IPCHandlers = struct {
 
         pub fn onClose(send_queue: *SendQueue) void {
             log("NewNamedPipeIPCHandler#onClose\n", .{});
-            send_queue._onAfterIPCClosed();
+            send_queue.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, SendQueue._onAfterIPCClosed).init(send_queue));
         }
     };
 };

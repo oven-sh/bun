@@ -1568,7 +1568,7 @@ pub const JSValue = enum(i64) {
     ///
     /// Returns null when the value is:
     /// - JSValue.null
-    /// - JSValue.false
+    /// - .false
     /// - .js_undefined
     /// - an empty string
     pub fn getStringish(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?bun.String {
@@ -2168,7 +2168,7 @@ pub const JSValue = enum(i64) {
         return bun.jsc.fromJSHostCall(global, @src(), Bun__JSValue__deserialize, .{ global, bytes.ptr, bytes.len });
     }
 
-    extern fn Bun__serializeJSValue(global: *jsc.JSGlobalObject, value: JSValue, forTransfer: bool) SerializedScriptValue.External;
+    extern fn Bun__serializeJSValue(global: *jsc.JSGlobalObject, value: JSValue, flags: u8) SerializedScriptValue.External;
     extern fn Bun__SerializedScriptSlice__free(*anyopaque) void;
 
     pub const SerializedScriptValue = struct {
@@ -2186,10 +2186,20 @@ pub const JSValue = enum(i64) {
         }
     };
 
+    pub const SerializedFlags = packed struct(u8) {
+        forCrossProcessTransfer: bool = false,
+        forStorage: bool = false,
+        _padding: u6 = 0,
+    };
+
     /// Throws a JS exception and returns null if the serialization fails, otherwise returns a SerializedScriptValue.
     /// Must be freed when you are done with the bytes.
-    pub inline fn serialize(this: JSValue, global: *JSGlobalObject, forTransfer: bool) bun.JSError!SerializedScriptValue {
-        const value = try bun.jsc.fromJSHostCallGeneric(global, @src(), Bun__serializeJSValue, .{ global, this, forTransfer });
+    pub inline fn serialize(this: JSValue, global: *JSGlobalObject, flags: SerializedFlags) bun.JSError!SerializedScriptValue {
+        var flags_u8: u8 = 0;
+        if (flags.forCrossProcessTransfer) flags_u8 |= 1 << 0;
+        if (flags.forStorage) flags_u8 |= 1 << 1;
+
+        const value = try bun.jsc.fromJSHostCallGeneric(global, @src(), Bun__serializeJSValue, .{ global, this, flags_u8 });
         return .{ .data = value.bytes.?[0..value.size], .handle = value.handle.? };
     }
 

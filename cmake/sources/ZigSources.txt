@@ -731,6 +731,7 @@ src/install/PackageManager/patchPackage.zig
 src/install/PackageManager/processDependencyList.zig
 src/install/PackageManager/ProgressStrings.zig
 src/install/PackageManager/runTasks.zig
+src/install/PackageManager/security_scanner.zig
 src/install/PackageManager/updatePackageJSONAndInstall.zig
 src/install/PackageManager/UpdateRequest.zig
 src/install/PackageManager/WorkspacePackageJSONCache.zig
@@ -796,6 +797,7 @@ src/ptr/meta.zig
 src/ptr/owned.zig
 src/ptr/owned/maybe.zig
 src/ptr/ref_count.zig
+src/ptr/shared.zig
 src/ptr/tagged_pointer.zig
 src/ptr/weak_ptr.zig
 src/renamer.zig

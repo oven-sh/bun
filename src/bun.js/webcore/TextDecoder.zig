@@ -203,7 +203,7 @@ fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice
             //
             // It's not clear why we couldn't jusst use Latin1 here, but tests failures proved it necessary.
             const out_length = strings.elementLengthLatin1IntoUTF16([]const u8, buffer_slice);
-            const bytes = try globalThis.allocator().alloc(u16, out_length);
+            const bytes = try bun.default_allocator.alloc(u16, out_length);
 
             const out = strings.copyLatin1IntoUTF16([]u16, bytes, []const u8, buffer_slice);
             return ZigString.toExternalU16(bytes.ptr, out.written, globalThis);

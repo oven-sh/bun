@@ -1,10 +1,4 @@
 pub const BuildCommand = struct {
-    const compile_define_keys = &.{
-        "process.platform",
-        "process.arch",
-        "process.versions.bun",
-    };
-
     pub fn exec(ctx: Command.Context, fetcher: ?*BundleV2.DependenciesScanner) !void {
         Global.configureAllocator(.{ .long_running = true });
         const allocator = ctx.allocator;
@@ -26,7 +20,9 @@ pub const BuildCommand = struct {
         const compile_target = &ctx.bundler_options.compile_target;
 
         if (ctx.bundler_options.compile) {
+            const compile_define_keys = compile_target.defineKeys();
             const compile_define_values = compile_target.defineValues();
+
             if (ctx.args.define) |*define| {
                 var keys = try std.ArrayList(string).initCapacity(bun.default_allocator, compile_define_keys.len + define.keys.len);
                 keys.appendSliceAssumeCapacity(compile_define_keys);
@@ -426,7 +422,7 @@ pub const BuildCommand = struct {
                     }
                 }
 
-                try bun.StandaloneModuleGraph.toExecutable(
+                const result = bun.StandaloneModuleGraph.toExecutable(
                     compile_target,
                     allocator,
                     output_files,
@@ -438,7 +434,17 @@ pub const BuildCommand = struct {
                     ctx.bundler_options.windows_hide_console,
                     ctx.bundler_options.windows_icon,
                     ctx.bundler_options.compile_exec_argv orelse "",
-                );
+                    null,
+                ) catch |err| {
+                    Output.printErrorln("failed to create executable: {s}", .{@errorName(err)});
+                    Global.exit(1);
+                };
+
+                if (result != .success) {
+                    Output.printErrorln("{s}", .{result.error_message});
+                    Global.exit(1);
+                }
+
                 const compiled_elapsed = @divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bundled_end)), @as(i64, std.time.ns_per_ms));
                 const compiled_elapsed_digit_count: isize = switch (compiled_elapsed) {
                     0...9 => 3,

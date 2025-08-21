@@ -200,6 +200,37 @@ function assertIsOptionsOfAdapter<A extends Bun.SQL.__internal.Adapter>(
   }
 }
 
+function hasProtocol(url: string) {
+  if (typeof url !== "string") return false;
+  const protocols: string[] = [
+    "http",
+    "https",
+    "ftp",
+    "postgres",
+    "postgresql",
+    "mysql",
+    "mysql2",
+    "mariadb",
+    "file",
+    "sqlite",
+  ];
+  for (const protocol of protocols) {
+    if (url.startsWith(protocol + "://")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function defaultToPostgresIfNoProtocol(url: string | URL | null): URL {
+  if (url instanceof URL) {
+    return url;
+  }
+  if (hasProtocol(url as string)) {
+    return new URL(url as string);
+  }
+  return new URL("postgres://" + url);
+}
 function parseOptions(
   stringOrUrlOrOptions: Bun.SQL.Options | string | URL | undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options,
@@ -253,7 +284,7 @@ function parseOptions(
   if (!stringOrUrl) {
     const url = options?.url;
     if (typeof url === "string") {
-      stringOrUrl = new URL(url);
+      stringOrUrl = defaultToPostgresIfNoProtocol(url);
     } else if (url instanceof URL) {
       stringOrUrl = url;
     }
@@ -310,7 +341,7 @@ function parseOptions(
     } else if (options?.url) {
       const _url = options.url;
       if (typeof _url === "string") {
-        url = new URL(_url);
+        url = defaultToPostgresIfNoProtocol(_url);
       } else if (_url && typeof _url === "object" && _url instanceof URL) {
         url = _url;
       }
@@ -321,7 +352,7 @@ function parseOptions(
     }
   } else if (typeof stringOrUrl === "string") {
     try {
-      url = new URL(stringOrUrl);
+      url = defaultToPostgresIfNoProtocol(stringOrUrl);
     } catch (e) {
       throw new Error(`Invalid URL '${stringOrUrl}' for postgres. Did you mean to specify \`{ adapter: "sqlite" }\`?`, {
         cause: e,
@@ -360,6 +391,9 @@ function parseOptions(
   }
   if (adapter) {
     switch (adapter) {
+      case "http":
+      case "https":
+      case "ftp":
       case "postgres":
       case "postgresql":
         adapter = "postgres";
@@ -369,6 +403,7 @@ function parseOptions(
       case "mariadb":
         adapter = "mysql";
         break;
+      case "file":
       case "sqlite":
         adapter = "sqlite";
         break;

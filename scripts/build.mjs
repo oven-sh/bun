@@ -231,27 +231,27 @@ async function spawn(command, args, options, label) {
         redact: true,
         required: true,
       });
-      
+
       // SECURITY: Decode certificate in JavaScript, never pass content through shell
       const certBase64 = getSecret("SM_CLIENT_CERT_FILE", {
         redact: true,
         required: true,
       });
-      
+
       // Create secure temp file for certificate (decoded here, not in shell)
       const tempCertPath = join(process.env.TEMP || process.env.TMP || "/tmp", `digicert_cert_${process.pid}.p12`);
       try {
-        const certBuffer = Buffer.from(certBase64, 'base64');
-        require('fs').writeFileSync(tempCertPath, certBuffer, { mode: 0o600 });
+        const certBuffer = Buffer.from(certBase64, "base64");
+        require("fs").writeFileSync(tempCertPath, certBuffer, { mode: 0o600 });
         console.log(`[SECURITY] Certificate decoded and written to temporary file securely`);
-        
+
         // Pass only the file path, never the certificate content
         env.SM_CLIENT_CERT_FILE = tempCertPath;
-        
+
         // Clean up temp cert file after process exits
-        process.on('exit', () => {
+        process.on("exit", () => {
           try {
-            require('fs').unlinkSync(tempCertPath);
+            require("fs").unlinkSync(tempCertPath);
           } catch (e) {
             // Ignore cleanup errors
           }
@@ -260,7 +260,7 @@ async function spawn(command, args, options, label) {
         console.error(`[ERROR] Failed to decode certificate: ${error.message}`);
         process.exit(1);
       }
-      
+
       env.SM_API_KEY = getSecret("SM_API_KEY", {
         redact: true,
         required: true,

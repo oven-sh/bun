@@ -146,13 +146,13 @@ class Request extends WebRequest {
  * It's overall a positive on speed to override the implementation, since most people will use something
  * like `.json()` or `.text()`, which is faster in Bun's native fetch, vs `node-fetch` going
  * through `node:http`, a node stream, then processing the data.
- * 
+ *
  * However, when an agent with family option is provided, we fall back to node:https
  * to ensure proper IPv6/IPv4 DNS resolution.
  */
-async function fetch(url: any, init?: RequestInit & { body?: any, agent?: any }) {
+async function fetch(url: any, init?: RequestInit & { body?: any; agent?: any }) {
   // Check if agent with family option is provided - if so, use node:https for proper DNS handling
-  if (init?.agent && init.agent.options && typeof init.agent.options.family === 'number') {
+  if (init?.agent && init.agent.options && typeof init.agent.options.family === "number") {
     return await fetchViaNodeHttps(url, init);
   }
 
@@ -186,7 +186,7 @@ async function fetchViaNodeHttps(url: any, init: any): Promise<Response> {
 
   // Parse URL
   const urlObj = new URL(url);
-  const isHttps = urlObj.protocol === 'https:';
+  const isHttps = urlObj.protocol === "https:";
   const request = isHttps ? https.request : http.request;
 
   // Convert init to node:https options
@@ -194,7 +194,7 @@ async function fetchViaNodeHttps(url: any, init: any): Promise<Response> {
     hostname: urlObj.hostname,
     port: urlObj.port || (isHttps ? 443 : 80),
     path: urlObj.pathname + urlObj.search,
-    method: init?.method || 'GET',
+    method: init?.method || "GET",
     headers: {},
     agent: init?.agent,
   };
@@ -205,7 +205,7 @@ async function fetchViaNodeHttps(url: any, init: any): Promise<Response> {
       for (const [key, value] of init.headers.entries()) {
         options.headers[key] = value;
       }
-    } else if (typeof init.headers === 'object') {
+    } else if (typeof init.headers === "object") {
       Object.assign(options.headers, init.headers);
     }
   }
@@ -213,40 +213,40 @@ async function fetchViaNodeHttps(url: any, init: any): Promise<Response> {
   return new Promise((resolve, reject) => {
     const req = request(options, (res: any) => {
       const chunks: any[] = [];
-      
-      res.on('data', (chunk: any) => {
+
+      res.on("data", (chunk: any) => {
         chunks.push(chunk);
       });
-      
-      res.on('end', () => {
+
+      res.on("end", () => {
         const body = Buffer.concat(chunks);
-        
+
         // Convert Node.js response to fetch Response
         const headers = new Headers();
         for (const [key, value] of Object.entries(res.headers)) {
           if (Array.isArray(value)) {
             value.forEach(v => headers.append(key, v));
-          } else if (typeof value === 'string') {
+          } else if (typeof value === "string") {
             headers.set(key, value);
           }
         }
-        
+
         const response = new Response(body, {
           status: res.statusCode,
           statusText: res.statusMessage,
           headers: headers,
         });
-        
+
         Object.setPrototypeOf(response, ResponsePrototype);
         resolve(response);
       });
     });
 
-    req.on('error', reject);
+    req.on("error", reject);
 
     // Handle request body
     if (init?.body) {
-      if (typeof init.body === 'string') {
+      if (typeof init.body === "string") {
         req.write(init.body);
         req.end();
       } else if (init.body instanceof Buffer) {
@@ -257,10 +257,13 @@ async function fetchViaNodeHttps(url: any, init: any): Promise<Response> {
         return; // Don't call req.end() - pipe will do it
       } else if (init.body instanceof Blob) {
         // Handle Blob body asynchronously
-        init.body.arrayBuffer().then(arrayBuffer => {
-          req.write(Buffer.from(arrayBuffer));
-          req.end();
-        }).catch(reject);
+        init.body
+          .arrayBuffer()
+          .then(arrayBuffer => {
+            req.write(Buffer.from(arrayBuffer));
+            req.end();
+          })
+          .catch(reject);
         return;
       } else {
         req.end();

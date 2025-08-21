@@ -208,6 +208,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_MYSQL_CONNECTION_TIMEOUT", Error, "MySQLError"],
   ["ERR_MYSQL_IDLE_TIMEOUT", Error, "MySQLError"],
   ["ERR_MYSQL_LIFETIME_TIMEOUT", Error, "MySQLError"],
+  ["ERR_UNHANDLED_REJECTION", Error, "UnhandledPromiseRejection"],
   ["ERR_REQUIRE_ASYNC_MODULE", Error],
   ["ERR_S3_INVALID_ENDPOINT", Error],
   ["ERR_S3_INVALID_METHOD", Error],

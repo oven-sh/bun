@@ -72,18 +72,18 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
 
 function createDirent(path: string, cwd?: string): any {
   const { basename, dirname, resolve, join } = require("node:path");
-  const { lstatSync } = require("node:fs");
+  const { lstatSync, Dirent } = require("node:fs");
 
   // UV_DIRENT constants that match the C++ DirEntType enum
   // These values match the uv_dirent_type_t enum from libuv
-  const UV_DIRENT_UNKNOWN = 0;
-  const UV_DIRENT_FILE = 1;
-  const UV_DIRENT_DIR = 2;
-  const UV_DIRENT_LINK = 3;
-  const UV_DIRENT_FIFO = 4;
-  const UV_DIRENT_SOCKET = 5;
-  const UV_DIRENT_CHAR = 6;
-  const UV_DIRENT_BLOCK = 7;
+  const UV_DIRENT_UNKNOWN = 0 as const;
+  const UV_DIRENT_FILE = 1 as const;
+  const UV_DIRENT_DIR = 2 as const;
+  const UV_DIRENT_LINK = 3 as const;
+  const UV_DIRENT_FIFO = 4 as const;
+  const UV_DIRENT_SOCKET = 5 as const;
+  const UV_DIRENT_CHAR = 6 as const;
+  const UV_DIRENT_BLOCK = 7 as const;
 
   try {
     // Construct the full path if cwd is provided
@@ -115,63 +115,13 @@ function createDirent(path: string, cwd?: string): any {
       type = UV_DIRENT_UNKNOWN;
     }
 
-    // Create a Dirent-like object compatible with Node.js Dirent
-    return {
-      name,
-      parentPath,
-      path: parentPath,
-      isFile() {
-        return type === UV_DIRENT_FILE;
-      },
-      isDirectory() {
-        return type === UV_DIRENT_DIR;
-      },
-      isSymbolicLink() {
-        return type === UV_DIRENT_LINK;
-      },
-      isBlockDevice() {
-        return type === UV_DIRENT_BLOCK;
-      },
-      isCharacterDevice() {
-        return type === UV_DIRENT_CHAR;
-      },
-      isFIFO() {
-        return type === UV_DIRENT_FIFO;
-      },
-      isSocket() {
-        return type === UV_DIRENT_SOCKET;
-      },
-    };
+    // Create a proper Dirent object using the constructor
+    return new Dirent(name, type, parentPath);
   } catch (err) {
     // If stat fails (e.g., broken symlink), create a Dirent with unknown type
     const name = basename(path);
     const parentPath = cwd ? resolve(cwd, dirname(path)) : resolve(dirname(path));
-    return {
-      name,
-      parentPath,
-      path: parentPath,
-      isFile() {
-        return false;
-      },
-      isDirectory() {
-        return false;
-      },
-      isSymbolicLink() {
-        return false;
-      },
-      isBlockDevice() {
-        return false;
-      },
-      isCharacterDevice() {
-        return false;
-      },
-      isFIFO() {
-        return false;
-      },
-      isSocket() {
-        return false;
-      },
-    };
+    return new Dirent(name, UV_DIRENT_UNKNOWN, parentPath);
   }
 }
 

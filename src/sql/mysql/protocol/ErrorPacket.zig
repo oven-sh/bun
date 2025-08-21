@@ -72,7 +72,6 @@ pub fn toJS(this: ErrorPacket, globalObject: *JSC.JSGlobalObject) JSValue {
     }) catch |err| globalObject.takeException(err);
 }
 
-const std = @import("std");
 const bun = @import("bun");
 const Data = @import("../../shared/Data.zig").Data;
 

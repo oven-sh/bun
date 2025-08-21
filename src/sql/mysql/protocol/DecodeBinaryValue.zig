@@ -138,7 +138,8 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
     };
 }
 
-const bun = @import("bun");
+const debug = bun.Output.scoped(.MySQLDecodeBinaryValue, .visible);
+
 const std = @import("std");
 const types = @import("../MySQLTypes.zig");
 const NewReader = @import("./NewReader.zig").NewReader;
@@ -147,5 +148,6 @@ const SQLDataCell = @import("../../shared/SQLDataCell.zig").SQLDataCell;
 const Value = @import("../MySQLTypes.zig").Value;
 const DateTime = Value.DateTime;
 const Time = Value.Time;
-const debug = bun.Output.scoped(.MySQLDecodeBinaryValue, .visible);
+
+const bun = @import("bun");
 const jsc = bun.jsc;

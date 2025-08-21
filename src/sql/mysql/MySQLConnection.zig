@@ -1903,6 +1903,7 @@ const debug = bun.Output.scoped(.MySQLConnection, .visible);
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 const Queue = std.fifo.LinearFifo(*MySQLQuery, .Dynamic);
 
+const AnyMySQLError = @import("./protocol/AnyMySQLError.zig");
 const Auth = @import("./protocol/Auth.zig");
 const AuthSwitchRequest = @import("./protocol/AuthSwitchRequest.zig");
 const AuthSwitchResponse = @import("./protocol/AuthSwitchResponse.zig");
@@ -1939,7 +1940,6 @@ const TLSStatus = @import("./TLSStatus.zig").TLSStatus;
 
 const bun = @import("bun");
 const BoringSSL = bun.BoringSSL;
-const String = bun.String;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
@@ -1947,4 +1947,3 @@ const AutoFlusher = jsc.WebCore.AutoFlusher;
 
 const uws = bun.uws;
 const Socket = uws.AnySocket;
-const AnyMySQLError = @import("./protocol/AnyMySQLError.zig");

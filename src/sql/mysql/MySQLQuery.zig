@@ -527,6 +527,7 @@ pub const toJS = js.toJS;
 const debug = bun.Output.scoped(.MySQLQuery, .visible);
 // TODO: move to shared IF POSSIBLE
 
+const AnyMySQLError = @import("./protocol/AnyMySQLError.zig");
 const ErrorPacket = @import("./protocol/ErrorPacket.zig");
 const MySQLConnection = @import("./MySQLConnection.zig");
 const MySQLRequest = @import("./MySQLRequest.zig");
@@ -536,7 +537,6 @@ const Signature = @import("./protocol/Signature.zig");
 const bun = @import("bun");
 const std = @import("std");
 const CommandTag = @import("../postgres/CommandTag.zig").CommandTag;
-const Data = @import("../shared/Data.zig").Data;
 const QueryBindingIterator = @import("../shared/QueryBindingIterator.zig").QueryBindingIterator;
 const SQLQueryResultMode = @import("../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
 const Value = @import("./MySQLTypes.zig").Value;
@@ -544,4 +544,3 @@ const Value = @import("./MySQLTypes.zig").Value;
 const jsc = bun.jsc;
 const JSRef = jsc.JSRef;
 const JSValue = jsc.JSValue;
-const AnyMySQLError = @import("./protocol/AnyMySQLError.zig");

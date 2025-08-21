@@ -130,7 +130,7 @@ pub fn decoderWrap(comptime Container: type, comptime decodeFn: anytype) type {
     };
 }
 
+const AnyMySQLError = @import("./AnyMySQLError.zig");
 const std = @import("std");
 const Data = @import("../../shared/Data.zig").Data;
 const decodeLengthInt = @import("./EncodeInt.zig").decodeLengthInt;
-const AnyMySQLError = @import("./AnyMySQLError.zig");

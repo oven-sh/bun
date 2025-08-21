@@ -101,16 +101,15 @@ pub const Execute = struct {
 
 const debug = bun.Output.scoped(.PreparedStatement, .hidden);
 
+const AnyMySQLError = @import("./AnyMySQLError.zig");
 const bun = @import("bun");
 const std = @import("std");
 const CommandType = @import("./CommandType.zig").CommandType;
-const Data = @import("../../shared/Data.zig").Data;
-const Value = @import("../MySQLTypes.zig").Value;
 const Param = @import("../MySQLStatement.zig").Param;
+const Value = @import("../MySQLTypes.zig").Value;
 
 const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;
 
 const NewWriter = @import("./NewWriter.zig").NewWriter;
 const writeWrap = @import("./NewWriter.zig").writeWrap;
-const AnyMySQLError = @import("./AnyMySQLError.zig");

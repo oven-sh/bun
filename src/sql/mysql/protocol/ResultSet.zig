@@ -227,6 +227,9 @@ pub const Row = struct {
     pub const decode = decoderWrap(Row, decodeInternal).decodeAllocator;
 };
 
+const debug = bun.Output.scoped(.MySQLResultSet, .visible);
+
+const AnyMySQLError = @import("./AnyMySQLError.zig");
 const CachedStructure = @import("../../shared/CachedStructure.zig");
 const ColumnDefinition41 = @import("./ColumnDefinition41.zig");
 const bun = @import("bun");
@@ -242,5 +245,3 @@ const decoderWrap = @import("./NewReader.zig").decoderWrap;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
-const debug = bun.Output.scoped(.MySQLResultSet, .visible);
-const AnyMySQLError = @import("./AnyMySQLError.zig");

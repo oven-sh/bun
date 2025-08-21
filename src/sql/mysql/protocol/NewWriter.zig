@@ -121,6 +121,7 @@ pub fn writeWrap(comptime Container: type, comptime writeFn: anytype) type {
 
 const debug = bun.Output.scoped(.NewWriter, .hidden);
 
+const AnyMySQLError = @import("./AnyMySQLError.zig");
 const PacketHeader = @import("./PacketHeader.zig");
 const bun = @import("bun");
 const std = @import("std");
@@ -129,4 +130,3 @@ const encodeLengthInt = @import("./EncodeInt.zig").encodeLengthInt;
 const types = @import("../MySQLTypes.zig");
 const MySQLInt32 = types.MySQLInt32;
 const MySQLInt64 = types.MySQLInt64;
-const AnyMySQLError = @import("./AnyMySQLError.zig");

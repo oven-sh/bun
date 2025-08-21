@@ -865,6 +865,7 @@ pub const int3 = u24;
 pub const int4 = u32;
 pub const int8 = u64;
 
+const AnyMySQLError = @import("./protocol/AnyMySQLError.zig");
 const std = @import("std");
 const Data = @import("../shared/Data.zig").Data;
 
@@ -874,4 +875,3 @@ const String = bun.String;
 const JSC = bun.jsc;
 const JSValue = JSC.JSValue;
 const ZigString = JSC.ZigString;
-const AnyMySQLError = @import("./protocol/AnyMySQLError.zig");

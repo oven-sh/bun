@@ -100,7 +100,6 @@ const debug = bun.Output.scoped(.MySQLConnection, .hidden);
 
 const Capabilities = @import("../Capabilities.zig");
 const bun = @import("bun");
-const std = @import("std");
 const CharacterSet = @import("./CharacterSet.zig").CharacterSet;
 const Data = @import("../../shared/Data.zig").Data;
 const encodeLengthInt = @import("./EncodeInt.zig").encodeLengthInt;

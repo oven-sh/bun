@@ -61,9 +61,10 @@ pub fn execute(query: []const u8, writer: anytype) !void {
 const debug = bun.Output.scoped(.MySQLQuery, .visible);
 
 const bun = @import("bun");
+const std = @import("std");
 const CommandType = @import("./CommandType.zig").CommandType;
-const NewWriter = @import("./NewWriter.zig").NewWriter;
 const Data = @import("../../shared/Data.zig").Data;
 const Param = @import("../MySQLStatement.zig").Param;
-const std = @import("std");
+
+const NewWriter = @import("./NewWriter.zig").NewWriter;
 const writeWrap = @import("./NewWriter.zig").writeWrap;

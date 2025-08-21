@@ -1,6 +1,6 @@
+import type { PostgresErrorOptions } from "internal/sql/errors";
 import type { Query } from "./query";
 import type { DatabaseAdapter, SQLHelper, SQLResultArray, SSLMode } from "./shared";
-import type { PostgresErrorOptions, PostgresErrorOptions } from "internal/sql/errors";
 const { SQLHelper, SSLMode, SQLResultArray } = require("internal/sql/shared");
 const {
   Query,

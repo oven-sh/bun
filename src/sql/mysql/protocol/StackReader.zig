@@ -72,7 +72,7 @@ pub fn readZ(this: StackReader) AnyMySQLError.Error!Data {
     return error.ShortRead;
 }
 
+const AnyMySQLError = @import("./AnyMySQLError.zig");
 const bun = @import("bun");
 const Data = @import("../../shared/Data.zig").Data;
 const NewReader = @import("./NewReader.zig").NewReader;
-const AnyMySQLError = @import("./AnyMySQLError.zig");

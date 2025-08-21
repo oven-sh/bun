@@ -1,8 +1,8 @@
 import { SQL, randomUUIDv7 } from "bun";
-import { expect, test, describe, mock } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { describeWithContainer, tempDirWithFiles } from "harness";
-import path from "path";
 import net from "net";
+import path from "path";
 const dir = tempDirWithFiles("sql-test", {
   "select-param.sql": `select ? as x`,
   "select.sql": `select CAST(1 AS SIGNED) as x`,

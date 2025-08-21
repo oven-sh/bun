@@ -213,11 +213,8 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
         \\try {{
         \\  const {{scanner}} = await import(scannerModuleName);
         \\}} catch (error) {{
-        \\  const lines = [
-        \\    Bun.color("red", "ansi") + "error:" + "\x1b[0m" + "Failed to import security scanner: " + scannerModuleName + ".",
-        \\    "If you use a security scanner from npm, please run 'bun install' before adding other packages.",
-        \\  ];
-        \\  console.error(lines.join('\n'));
+        \\  const msg = `\x1b[31merror: \x1b[0mFailed to import security scanner: \x1b[1m'${scannerModuleName}'\x1b[0m - if you use a security scanner from npm, please run '\x1b[36mbun install\x1b[0m' before adding other packages.`;
+        \\  console.error(msg);
         \\  process.exit(1);
         \\}}
         \\
@@ -270,17 +267,6 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
 
     try scanner.spawn();
 
-    var progress_node: ?*Progress.Node = null;
-    if (manager.options.log_level != .verbose and manager.options.log_level != .silent) {
-        manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
-        const scanner_name = if (Output.isEmojiEnabled()) "  👮 Scanning packages with security provider" else "Scanning packages with security provider";
-        progress_node = manager.progress.start(scanner_name, 0);
-        if (progress_node) |node| {
-            node.activate();
-            manager.progress.refresh();
-        }
-    }
-
     var closure = struct {
         scanner: *SecurityScanSubprocess,
 
@@ -290,13 +276,6 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
     }{ .scanner = scanner };
 
     manager.sleepUntil(&closure, &@TypeOf(closure).isDone);
-
-    if (progress_node) |node| {
-        node.end();
-        manager.progress.refresh();
-        manager.progress.root.end();
-        manager.progress = .{};
-    }
 
     const packages_scanned = pkg_dedupe.count();
     try scanner.handleResults(&package_paths, start_time, packages_scanned, security_scanner);

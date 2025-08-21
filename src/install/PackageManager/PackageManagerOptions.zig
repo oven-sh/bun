@@ -284,6 +284,7 @@ pub fn load(
 
         if (config.security_scanner) |security_scanner| {
             this.security_scanner = security_scanner;
+            this.do.prefetch_resolved_tarballs = false;
         }
 
         if (config.cafile) |cafile| {

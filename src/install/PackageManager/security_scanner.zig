@@ -209,9 +209,10 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
     try code_writer.print(
         \\let scanner;
         \\const scannerModuleName = '{s}';
+        \\const packages = {s};
         \\
         \\try {{
-        \\  const {{scanner}} = await import(scannerModuleName);
+        \\  scanner = (await import(scannerModuleName)).scanner;
         \\}} catch (error) {{
         \\  const msg = `\x1b[31merror: \x1b[0mFailed to import security scanner: \x1b[1m'${{scannerModuleName}}'\x1b[0m - if you use a security scanner from npm, please run '\x1b[36mbun install\x1b[0m' before adding other packages.`;
         \\  console.error(msg);
@@ -219,14 +220,16 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
         \\}}
         \\
         \\try {{
-        \\  const packages = {s};
+        \\  if (typeof scanner !== 'object' || scanner === null || typeof scanner.version !== 'string') {{
+        \\    throw new Error('Security scanner must export a 'scanner' object with a version property');
+        \\  }}
         \\
         \\  if (scanner.version !== '1') {{
         \\    throw new Error('Security scanner must be version 1');
         \\  }}
         \\
         \\  if (typeof scanner.scan !== 'function') {{
-        \\    throw new Error('scanner.scan is not a function');
+        \\    throw new Error('scanner.scan is not a function, got ' + typeof scanner.scan);
         \\  }}
         \\
         \\  const result = await scanner.scan({{ packages }});

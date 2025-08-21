@@ -40,7 +40,7 @@ function test(
       if (typeof options.scanner === "string") {
         await write(scannerPath, options.scanner);
       } else {
-        const s = `export const provider = {
+        const s = `export const scanner = {
   version: "1",
   scan: ${options.scanner.toString()},
 };`;
@@ -49,8 +49,8 @@ function test(
 
       const bunfig = await read("./bunfig.toml").text();
       if (options.bunfigProvider !== false) {
-        const providerPath = options.bunfigProvider ?? "./scanner.ts";
-        await write("./bunfig.toml", `${bunfig}\n[install.security]\nprovider = "${providerPath}"`);
+        const scannerPath = options.bunfigProvider ?? "./scanner.ts";
+        await write("./bunfig.toml", `${bunfig}\n[install.security]\nscanner = "${scannerPath}"`);
       }
 
       await write("package.json", {

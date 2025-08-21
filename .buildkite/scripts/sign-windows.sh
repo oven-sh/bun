@@ -5,6 +5,16 @@
 
 set -euo pipefail
 
+# CRITICAL SECURITY: Disable all debugging and verbose output that could leak secrets
+set +x  # Disable command echoing
+unset BASH_XTRACEFD 2>/dev/null || true  # Disable trace file descriptor
+export PS4=''  # Clear debug prompt to prevent variable expansion leaks
+
+# Prevent accidental secret logging by unsetting debug variables
+unset CMAKE_VERBOSE_MAKEFILE 2>/dev/null || true
+unset VERBOSE 2>/dev/null || true
+unset DEBUG 2>/dev/null || true
+
 # Required environment variables (must be set locally or by Buildkite)
 : "${SM_API_KEY:?Error: SM_API_KEY environment variable is required}"
 : "${SM_CLIENT_CERT_PASSWORD:?Error: SM_CLIENT_CERT_PASSWORD environment variable is required}"
@@ -33,23 +43,42 @@ verify_env_vars() {
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Use Windows-compatible temp directories
-if [[ -n "${TEMP:-}" ]] && [[ -d "${TEMP}" ]] && [[ -w "${TEMP}" ]]; then
-    # Use Windows TEMP environment variable
-    TOOLS_DIR="${TOOLS_DIR:-${TEMP}/keylocker-tools}"
-elif [[ -n "${TMP:-}" ]] && [[ -d "${TMP}" ]] && [[ -w "${TMP}" ]]; then
-    # Use Windows TMP environment variable  
-    TOOLS_DIR="${TOOLS_DIR:-${TMP}/keylocker-tools}"
-elif [[ -d "/c/temp" ]] && [[ -w "/c/temp" ]]; then
-    # Use C:\temp if it exists
-    TOOLS_DIR="${TOOLS_DIR:-/c/temp/keylocker-tools}"
-elif [[ -w "$HOME" ]]; then
-    # Fallback to home directory
-    TOOLS_DIR="${TOOLS_DIR:-$HOME/keylocker-tools}"
-else
-    # Last resort - create in current directory
-    TOOLS_DIR="${TOOLS_DIR:-./keylocker-tools}"
-fi
+# Use Windows-compatible temp directories with proper path conversion
+get_windows_temp_dir() {
+    # Try to get a working temp directory, converting Windows paths to Unix format
+    local temp_base=""
+    
+    # Method 1: Use Windows TEMP environment variable, convert to Unix path
+    if [[ -n "${TEMP:-}" ]]; then
+        # Convert Windows path like C:\Windows\TEMP to /c/Windows/TEMP
+        temp_base="${TEMP//\\//}"  # Replace backslashes with forward slashes
+        temp_base="${temp_base//C:/\/c}"  # Convert C: to /c
+        temp_base="${temp_base//c:/\/c}"  # Convert c: to /c (lowercase)
+    elif [[ -n "${TMP:-}" ]]; then
+        temp_base="${TMP//\\//}"
+        temp_base="${temp_base//C:/\/c}"
+        temp_base="${temp_base//c:/\/c}"
+    fi
+    
+    # Validate the converted path exists and is writable
+    if [[ -n "$temp_base" ]] && [[ -d "$temp_base" ]] && [[ -w "$temp_base" ]]; then
+        echo "$temp_base/keylocker-tools"
+        return 0
+    fi
+    
+    # Method 2: Try standard Unix-style paths that might exist in CI
+    for dir in "/tmp" "/var/tmp" "/c/temp" "$HOME"; do
+        if [[ -d "$dir" ]] && [[ -w "$dir" ]]; then
+            echo "$dir/keylocker-tools"
+            return 0
+        fi
+    done
+    
+    # Last resort
+    echo "./keylocker-tools"
+}
+
+TOOLS_DIR="${TOOLS_DIR:-$(get_windows_temp_dir)}"
 KEYLOCKER_URL="https://bun-ci-assets.bun.sh/Keylockertools-windows-x64.msi"
 
 # Logging functions
@@ -99,9 +128,10 @@ setup_certificate() {
             exit 1
         fi
     else
-        # In CI environment, use variable directly
+        # In CI environment, use variable directly (NEVER echo the content!)
         log_info "Using certificate from environment variable..."
-        if echo "$SM_CLIENT_CERT_FILE" | base64 -d > "$TEMP_CERT" 2>/dev/null; then
+        # Use printf instead of echo to avoid any shell interpretation or output
+        if printf '%s' "$SM_CLIENT_CERT_FILE" | base64 -d > "$TEMP_CERT" 2>/dev/null; then
             log_info "Certificate decoded successfully"
         else
             log_error "Failed to decode Base64 certificate"
@@ -285,10 +315,34 @@ install_keylocker() {
     # Wait additional time for installation to fully complete
     sleep 15
     
-    # Verify installation
-    if [[ ! -f "/c/Program Files/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]]; then
-        log_error "KeyLocker tools installation failed"
+    # Verify installation with multiple possible paths
+    local smctl_found=false
+    local smctl_paths=(
+        "/c/Program Files/DigiCert/DigiCert Keylocker Tools/smctl.exe"
+        "/c/Program Files (x86)/DigiCert/DigiCert Keylocker Tools/smctl.exe"
+        "/c/ProgramFiles/DigiCert/DigiCert Keylocker Tools/smctl.exe"
+    )
+    
+    for path in "${smctl_paths[@]}"; do
+        if [[ -f "$path" ]]; then
+            log_info "Found KeyLocker tools at: $path"
+            smctl_found=true
+            break
+        fi
+    done
+    
+    if [[ "$smctl_found" != "true" ]]; then
+        log_error "KeyLocker tools installation failed - smctl.exe not found"
+        log_error "Searched paths:"
+        for path in "${smctl_paths[@]}"; do
+            log_error "  $path"
+        done
         log_error "Please ensure you have administrator privileges"
+        
+        # Try to find where it might have been installed
+        log_info "Searching for smctl.exe in common locations..."
+        find /c/Program* -name "smctl.exe" 2>/dev/null | head -5 || true
+        
         exit 1
     fi
     
@@ -304,10 +358,27 @@ setup_environment() {
     export SM_API_KEY="$SM_API_KEY"
     export SM_CLIENT_CERT_PASSWORD="$SM_CLIENT_CERT_PASSWORD"
     
-    # Add KeyLocker tools to PATH
-    local smctl_path="/c/Program Files/DigiCert/DigiCert Keylocker Tools"
-    if [[ ":$PATH:" != *":$smctl_path:"* ]]; then
+    # Add KeyLocker tools to PATH - find the actual installation directory
+    local smctl_path=""
+    local smctl_paths=(
+        "/c/Program Files/DigiCert/DigiCert Keylocker Tools"
+        "/c/Program Files (x86)/DigiCert/DigiCert Keylocker Tools"
+        "/c/ProgramFiles/DigiCert/DigiCert Keylocker Tools"
+    )
+    
+    for path in "${smctl_paths[@]}"; do
+        if [[ -f "$path/smctl.exe" ]]; then
+            smctl_path="$path"
+            break
+        fi
+    done
+    
+    if [[ -n "$smctl_path" ]] && [[ ":$PATH:" != *":$smctl_path:"* ]]; then
         export PATH="$PATH:$smctl_path"
+        log_info "Added KeyLocker tools to PATH: $smctl_path"
+    else
+        log_error "Could not find KeyLocker tools to add to PATH"
+        exit 1
     fi
     
     # Find and add signtool to PATH

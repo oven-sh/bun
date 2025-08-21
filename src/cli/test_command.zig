@@ -1816,6 +1816,10 @@ pub const TestCommand = struct {
         const file_path = resolution.path_pair.primary.text;
         const file_title = bun.path.relative(FileSystem.instance.top_level_dir, file_path);
 
+        const filepath = bun.fs.FileSystem.instance.filename_store.append([]const u8, file_path) catch unreachable;
+        var scope = bun.jsc.Jest.Jest.runner.?.getOrPutFile(filepath);
+        scope.push();
+
         // In Github Actions, append a special prefix that will group
         // subsequent log lines into a collapsable group.
         // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#grouping-log-lines

@@ -25,6 +25,8 @@ thread: std.Thread = undefined,
 running: bool = true,
 close_descriptors: bool = false,
 
+exclude_patterns: []const []const u8 = &.{},
+
 evict_list: [max_eviction_count]WatchItemIndex = undefined,
 evict_list_i: WatchItemIndex = 0,
 
@@ -47,13 +49,23 @@ pub const WatchList = std.MultiArrayList(WatchItem);
 pub const HashType = u32;
 const no_watch_item: WatchItemIndex = std.math.maxInt(WatchItemIndex);
 
+pub const InitConfig = struct {
+    exclude_patterns: []const []const u8 = &.{},
+};
+
 /// Initializes a watcher. Each watcher is tied to some context type, which
 /// receives watch callbacks on the watcher thread. This function does not
 /// actually start the watcher thread.
 ///
-///     const watcher = try Watcher.init(T, instance_of_t, fs, bun.default_allocator)
+/// Basic usage:
+///     const watcher = try Watcher.init(T, instance_of_t, fs, bun.default_allocator, .{})
 ///     errdefer watcher.deinit(false);
 ///     try watcher.start();
+///
+/// With patterns for filtering:
+///     const watcher = try Watcher.init(T, instance_of_t, fs, bun.default_allocator, .{
+///         .exclude_patterns = &[_][]const u8{"*.log", "tmp/**"},
+///     })
 ///
 /// To integrate a started watcher into module resolution:
 ///
@@ -62,7 +74,7 @@ const no_watch_item: WatchItemIndex = std.math.maxInt(WatchItemIndex);
 /// To integrate a started watcher into bundle_v2:
 ///
 ///     bundle_v2.bun_watcher = watcher;
-pub fn init(comptime T: type, ctx: *T, fs: *bun.fs.FileSystem, allocator: std.mem.Allocator) !*Watcher {
+pub fn init(comptime T: type, ctx: *T, fs: *bun.fs.FileSystem, allocator: std.mem.Allocator, config: InitConfig) !*Watcher {
     const wrapped = struct {
         fn onFileUpdateWrapped(ctx_opaque: *anyopaque, events: []WatchEvent, changed_files: []?[:0]u8, watchlist: WatchList) void {
             T.onFileUpdate(@alignCast(@ptrCast(ctx_opaque)), events, changed_files, watchlist);
@@ -91,6 +103,7 @@ pub fn init(comptime T: type, ctx: *T, fs: *bun.fs.FileSystem, allocator: std.me
         .platform = .{},
         .watch_events = try allocator.alloc(WatchEvent, max_count),
         .changed_filepaths = [_]?[:0]u8{null} ** max_count,
+        .exclude_patterns = config.exclude_patterns,
     };
 
     try Platform.init(&watcher.platform, fs.top_level_dir);
@@ -300,6 +313,30 @@ fn watchLoop(this: *Watcher) bun.sys.Maybe(void) {
     return .success;
 }
 
+fn shouldExcludeFile(this: *Watcher, file_path: string) bool {
+    if (this.exclude_patterns.len == 0) {
+        return false;
+    }
+
+    const relative_path = if (strings.startsWith(file_path, this.cwd))
+        file_path[this.cwd.len..]
+    else
+        file_path;
+
+    const clean_path = if (relative_path.len > 0 and relative_path[0] == '/')
+        relative_path[1..]
+    else
+        relative_path;
+
+    for (this.exclude_patterns) |pattern| {
+        if (glob.match(this.allocator, pattern, clean_path).matches()) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 fn appendFileAssumeCapacity(
     this: *Watcher,
     fd: bun.FileDescriptor,
@@ -317,6 +354,13 @@ fn appendFileAssumeCapacity(
             Output.warn("File {s} is not in the project directory and will not be watched\n", .{file_path});
             return .success;
         }
+    }
+
+    if (this.shouldExcludeFile(file_path)) {
+        if (comptime DebugLogScope.isVisible()) {
+            log("Excluded file from watch: {s}", .{file_path});
+        }
+        return .success;
     }
 
     const watchlist_id = this.watchlist.len;
@@ -687,3 +731,4 @@ const FeatureFlags = bun.FeatureFlags;
 const Mutex = bun.Mutex;
 const Output = bun.Output;
 const strings = bun.strings;
+const glob = @import("./glob/match.zig");

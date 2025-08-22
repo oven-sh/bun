@@ -282,7 +282,7 @@ pub const BunTestFile = struct {
         const this = refdata.buntest;
 
         if (is_catch) {
-            try this.onUncaughtException(globalThis, result, true, refdata.data);
+            this.onUncaughtException(globalThis, result, true, refdata.data);
         }
 
         try this.runOneCompleted(globalThis, if (is_catch) null else result, refdata.data);
@@ -427,7 +427,7 @@ pub const BunTestFile = struct {
         }
 
         const result: ?jsc.JSValue = cfg.callback.get().call(globalThis, .js_undefined, &.{}) catch |e| blk: {
-            try this.onUncaughtException(globalThis, globalThis.takeError(e), false, cfg.data);
+            this.onUncaughtException(globalThis, globalThis.takeError(e), false, cfg.data);
             group.log("callTestCallback -> error", .{});
             break :blk null;
         };
@@ -443,13 +443,41 @@ pub const BunTestFile = struct {
         return .continue_sync;
     }
 
-    fn onUncaughtException(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, result: jsc.JSValue, is_rejection: bool, user_data: ?u64) bun.JSError!void {
-        _ = this;
-        _ = user_data;
-        _ = globalThis.bunVM().uncaughtException(globalThis, result, is_rejection); // TODO: this shouldn't call uncaught exception, instead it should be the uncaught exception handler
-        // if in execution, it asks if execution can handle the error. if it can, return. if it can't, print uncaught exception between tests.
-        // the main uncaughtException handler will call this with user_data null, and then execution can decide if it can route it based on how many sequences there are in the group (1 ? ok : fail)
+    /// called from the uncaught exception handler, or if a test callback rejects or throws an error
+    pub fn onUncaughtException(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, result: jsc.JSValue, is_rejection: bool, user_data: ?u64) void {
+        group.begin(@src());
+        defer group.end();
+
+        _ = is_rejection;
+
+        const handle_status: HandleUncaughtExceptionResult = switch (this.phase) {
+            .collection, .done => .unhandled,
+            .execution => this.execution.handleUncaughtException(user_data),
+        };
+
+        if (handle_status == .consumed) return; // do not print error, it was already consumed
+
+        if (handle_status == .unhandled) {
+            bun.Output.prettyErrorln(
+                \\<r>
+                \\<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>
+                \\<d>-------------------------------<r>
+                \\
+            , .{});
+        }
+        globalThis.bunVM().runErrorHandlerWithDedupe(result, null);
+        bun.Output.flush();
+        if (handle_status == .unhandled) {
+            bun.Output.prettyError("<r><d>-------------------------------<r>\n\n", .{});
+            bun.Output.flush();
+        }
     }
+};
+
+pub const HandleUncaughtExceptionResult = enum {
+    consumed,
+    handled,
+    unhandled,
 };
 
 pub const CallbackQueue = std.ArrayList(CallbackEntry);
@@ -575,6 +603,8 @@ pub const ExecutionEntry = struct {
     callback: Strong.Optional,
     /// only available if using junit reporter, otherwise 0
     line_no: u32,
+    result: Execution.Result = .pending,
+
     fn create(buntest: *BunTestFile, name_not_owned: ?[]const u8, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
         const entry = bun.create(buntest.gpa, ExecutionEntry, .{
             .base = .init(base, buntest, name_not_owned, parent),

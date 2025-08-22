@@ -45,14 +45,14 @@ fn fmtStatusTextLine(status: describe2.Execution.Result, emoji_or_color: bool) [
     // For now, they are the same.
     return switch (emoji_or_color) {
         true => switch (status) {
-            .pending => Output.prettyFmt("<r><black>…<r>", emoji_or_color),
+            .pending => Output.prettyFmt("<r><d>…<r>", emoji_or_color),
             .pass => Output.prettyFmt("<r><green>✓<r>", emoji_or_color),
             .fail, .timeout, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => Output.prettyFmt("<r><red>✗<r>", emoji_or_color),
             .skip, .skipped_because_label => Output.prettyFmt("<r><yellow>»<d>", emoji_or_color),
             .todo => Output.prettyFmt("<r><magenta>✎<r>", emoji_or_color),
         },
         else => switch (status) {
-            .pending => Output.prettyFmt("<r><black>(pending)<r>", emoji_or_color),
+            .pending => Output.prettyFmt("<r><d>(pending)<r>", emoji_or_color),
             .pass => Output.prettyFmt("<r><green>(pass)<r>", emoji_or_color),
             .fail, .timeout, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => Output.prettyFmt("<r><red>(fail)<r>", emoji_or_color),
             .skip, .skipped_because_label => Output.prettyFmt("<r><yellow>(skip)<d>", emoji_or_color),
@@ -621,7 +621,7 @@ pub const CommandLineReporter = struct {
         }
 
         const scopes: []*describe2.DescribeScope = scopes_stack.slice();
-        const display_label = test_entry.base.name orelse "test";
+        const display_label = test_entry.base.name orelse "(unnamed)";
 
         // Quieter output when claude code is in use.
         if (!Output.isAIAgent() or status == .fail) {
@@ -669,6 +669,17 @@ pub const CommandLineReporter = struct {
             }
 
             writer.writeAll("\n") catch unreachable;
+
+            switch (Output.enable_ansi_colors_stderr) {
+                inline else => |colors| switch (status) {
+                    .pending, .pass, .skip, .skipped_because_label, .todo, .timeout, .fail => {},
+
+                    .fail_because_failing_test_passed => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n", colors)) catch {},
+                    .fail_because_todo_passed => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` if tested behavior now works<r>\n", colors)) catch {},
+                    .fail_because_expected_assertion_count => @panic("TODO: print the expected and actual assertion counts"),
+                    .fail_because_expected_has_assertions => @panic("TODO: print the expected and actual assertion counts"),
+                },
+            }
         }
 
         if (@as(?FileReporter, null)) |reporter| {

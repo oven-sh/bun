@@ -19,6 +19,10 @@ pub const ExecutionSequence = struct {
     executing: bool = false,
     started_at: bun.timespec = bun.timespec.epoch,
     expect_call_count: u32 = 0, // TODO: impl incrementExpectCallCounter to increment this number and others
+
+    fn failMeansPass(this: ExecutionSequence) bool {
+        return this.test_entry != null and this.test_entry.?.base.mode == .failing;
+    }
 };
 pub const Result = enum {
     pending,
@@ -136,7 +140,7 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
         this.order_index += 1;
     }
 }
-pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, result_value: ?jsc.JSValue, data: u64) bun.JSError!void {
+pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, _: ?jsc.JSValue, data: u64) bun.JSError!void {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -155,13 +159,8 @@ pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, result_value: ?
 
     sequence.executing = false;
     sequence.entry_index += 1;
-    if (result_value == null) {
-        sequence.result = .fail;
-        // TODO: if this is a beforeAll, maybe we skip running the test?
-        groupLog.log("TODO: log error", .{});
-    } else if (sequence.result == .pending) {
-        sequence.result = .pass;
-    }
+
+    // TODO: see what vitest does when a beforeAll fails. does it still run the test?
 }
 fn onSequenceStarted(this: *Execution, sequence_index: usize) void {
     const sequence = &this._sequences.items[sequence_index];
@@ -170,7 +169,19 @@ fn onSequenceStarted(this: *Execution, sequence_index: usize) void {
 fn onSequenceCompleted(this: *Execution, sequence_index: usize) void {
     const sequence = &this._sequences.items[sequence_index];
     const elapsed_ns = sequence.started_at.sinceNow();
-    test_command.CommandLineReporter.handleTestCompleted(this.bunTest(), sequence, sequence.test_entry orelse return, elapsed_ns);
+    if (sequence.result == .pending) {
+        sequence.result = .pass;
+    }
+    if (sequence.failMeansPass()) {
+        sequence.result = switch (sequence.result) {
+            .fail => .pass,
+            .pass => .fail_because_failing_test_passed,
+            else => sequence.result,
+        };
+    }
+    if (sequence.entry_start < sequence.entry_end and (sequence.test_entry != null or sequence.result != .pass)) {
+        test_command.CommandLineReporter.handleTestCompleted(this.bunTest(), sequence, sequence.test_entry orelse this._entries.items[sequence.entry_start], elapsed_ns);
+    }
 }
 pub fn resetGroup(this: *Execution, group_index: usize) void {
     groupLog.begin(@src());
@@ -193,6 +204,29 @@ pub fn resetSequence(this: *Execution, sequence_index: usize) void {
         // already failed or skipped; don't run
         sequence.entry_index = sequence.entry_end;
     }
+}
+
+pub fn handleUncaughtException(this: *Execution, user_data: ?u64) describe2.HandleUncaughtExceptionResult {
+    groupLog.begin(@src());
+    defer groupLog.end();
+
+    const current_group = this.order.items[this.order_index];
+    const sequence: *ExecutionSequence = if (current_group.sequence_start + 1 == current_group.sequence_end) blk: {
+        groupLog.log("handleUncaughtException: there is only one sequence in the group", .{});
+        break :blk &this._sequences.items[current_group.sequence_start];
+    } else if (user_data != null and user_data.? >= current_group.sequence_start and user_data.? < current_group.sequence_end) blk: {
+        groupLog.log("handleUncaughtException: there are multiple sequences in the group and user_data is provided", .{});
+        break :blk &this._sequences.items[user_data.?];
+    } else {
+        groupLog.log("handleUncaughtException: there are multiple sequences in the group and user_data is not provided or invalid", .{});
+        return .unhandled;
+    };
+
+    sequence.result = .fail;
+    if (sequence.failMeansPass()) {
+        return .consumed;
+    }
+    return .handled;
 }
 
 const std = @import("std");

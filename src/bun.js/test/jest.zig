@@ -1391,6 +1391,10 @@ pub const TestRunnerTask = struct {
     }
 
     pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, globalObject: *JSGlobalObject, rejection: JSValue) void {
+        if (Jest.runner != null and Jest.runner.?.describe2Root.active_file != null) {
+            return Jest.runner.?.describe2Root.active_file.?.onUncaughtException(globalObject, rejection, true, null);
+        }
+
         var deduped = false;
         const is_unhandled = jsc_vm.onUnhandledRejectionCtx == null;
 

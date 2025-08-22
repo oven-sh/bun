@@ -4,12 +4,16 @@ describe("failure", () => {
   test("should fail", () => {
     // expect(1).toBe(2);
   });
-  test.failing("should pass", () => {
+  test.failing("should pass", 100, () => {
     expect(1).toBe(1);
   });
-  test.failing("should fail", () => {
-    expect(1).toBe(2);
-  });
+  test.failing(
+    "should fail",
+    () => {
+      expect(1).toBe(2);
+    },
+    { timeout: 100 },
+  );
 });
 
 describe("afterEach demo", () => {
@@ -26,4 +30,10 @@ describe("afterEach demo", () => {
 
 afterAll(() => {
   throw new Error("error in afterAll");
+});
+
+describe(() => {
+  test("should pass", () => {
+    expect(1).toBe(1);
+  });
 });

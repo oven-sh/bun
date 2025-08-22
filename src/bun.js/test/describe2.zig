@@ -42,6 +42,74 @@ pub const js_fns = struct {
             }
         };
     }
+    const ParseArgumentsResult = struct {
+        description: ?[]const u8,
+        callback: jsc.JSValue,
+        options: struct {
+            timeout: ?f64 = null, // TODO: use this value
+            retry: ?f64 = null, // TODO: use this value
+            repeats: ?f64 = null, // TODO: use this value
+        },
+        pub fn deinit(this: *ParseArgumentsResult, gpa: std.mem.Allocator) void {
+            if (this.description) |str| gpa.free(str);
+        }
+    };
+    fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: []const u8, bunTest: *BunTestFile) bun.JSError!ParseArgumentsResult {
+        var a1, var a2, var a3 = callframe.argumentsAsArray(3);
+
+        if (a1.isFunction()) {
+            a3 = a2;
+            a2 = a1;
+            a1 = .js_undefined;
+        }
+        if (!a2.isFunction() and a3.isFunction()) {
+            const tmp = a2;
+            a2 = a3;
+            a3 = tmp;
+        }
+
+        const description, const callback, const options = .{ a1, a2, a3 };
+
+        if (!callback.isFunction()) return globalThis.throw("{s} expects a function as the second argument", .{signature});
+
+        var result: ParseArgumentsResult = .{
+            .description = null,
+            .callback = callback.withAsyncContextIfNeeded(globalThis),
+            .options = .{},
+        };
+        errdefer result.deinit(bunTest.gpa);
+
+        if (options.isNumber()) {
+            result.options.timeout = options.asNumber();
+        } else if (options.isObject()) {
+            if (try options.get(globalThis, "timeout")) |timeout| {
+                if (!timeout.isNumber()) {
+                    return globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
+                }
+                result.options.timeout = timeout.asNumber();
+            }
+            if (try options.get(globalThis, "retry")) |retries| {
+                if (!retries.isNumber()) {
+                    return globalThis.throwPretty("{s} expects retry to be a number", .{signature});
+                }
+                result.options.retry = retries.asNumber();
+            }
+            if (try options.get(globalThis, "repeats")) |repeats| {
+                if (!repeats.isNumber()) {
+                    return globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
+                }
+                result.options.repeats = repeats.asNumber();
+            }
+        } else if (options.isUndefinedOrNull()) {
+            // no options
+        } else {
+            return globalThis.throw("describe() expects a number, object, or undefined as the third argument", .{});
+        }
+
+        result.description = if (description.isUndefinedOrNull()) null else try getDescription(bunTest.gpa, globalThis, description, signature);
+
+        return result;
+    }
     fn describeFn(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, cfg: DescribeConfig) bun.JSError!jsc.JSValue {
         group.begin(@src());
         defer group.end();
@@ -51,14 +119,12 @@ pub const js_fns = struct {
 
         if (cfg.base.self_only) try errorInCI(globalThis, cfg.signature);
 
-        const description, var callback = callframe.argumentsAsArray(2);
-        callback = callback.withAsyncContextIfNeeded(globalThis);
-        const description_str = try getDescription(bunTest.gpa, globalThis, description, cfg.signature);
-        defer bunTest.gpa.free(description_str);
+        var args = try parseArguments(globalThis, callframe, cfg.signature, bunTest);
+        defer args.deinit(bunTest.gpa);
 
         switch (bunTest.phase) {
             .collection => {
-                try bunTest.collection.enqueueDescribeCallback(callback, description_str, cfg.base);
+                try bunTest.collection.enqueueDescribeCallback(args.callback, args.description, cfg.base);
                 return .js_undefined; // vitest doesn't return a promise, even for `describe(async () => {})`
             },
             .execution => {
@@ -118,21 +184,15 @@ pub const js_fns = struct {
 
         if (cfg.base.self_only) try errorInCI(globalThis, cfg.signature);
 
-        const description, var callback: ?jsc.JSValue = callFrame.argumentsAsArray(2);
-        if (cfg.base.self_mode.needsCallback()) {
-            callback = callback.?.withAsyncContextIfNeeded(globalThis);
-        } else {
-            callback = null;
-        }
-        const description_str = try getDescription(bunTest.gpa, globalThis, description, cfg.signature);
-        defer bunTest.gpa.free(description_str);
+        var args = try parseArguments(globalThis, callFrame, cfg.signature, bunTest);
+        defer args.deinit(bunTest.gpa);
 
         const line_no = jsc.Jest.captureTestLineNumber(callFrame, globalThis);
 
         switch (bunTest.phase) {
             .collection => {
-                try bunTest.collection.enqueueTestCallback(description_str, .{
-                    .callback = callback,
+                try bunTest.collection.enqueueTestCallback(args.description, .{
+                    .callback = args.callback,
                     .line_no = line_no,
                 }, cfg.base);
                 return .js_undefined;
@@ -157,6 +217,9 @@ pub const js_fns = struct {
                 };
 
                 const callback = callFrame.argumentsAsArray(1)[0];
+                if (!callback.isFunction()) {
+                    return globalThis.throw("beforeAll/beforeEach/afterEach/afterAll() expects a function as the first argument", .{});
+                }
 
                 switch (bunTest.phase) {
                     .collection => {

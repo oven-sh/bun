@@ -240,6 +240,7 @@ pub const JSGlobalObject = opaque {
     };
     extern fn Bun__runOnLoadPlugins(*jsc.JSGlobalObject, ?*const bun.String, *const bun.String, BunPluginTarget) JSValue;
     extern fn Bun__runOnResolvePlugins(*jsc.JSGlobalObject, ?*const bun.String, *const bun.String, *const String, BunPluginTarget) JSValue;
+    extern fn Bun__runOnEndPlugins(*jsc.JSGlobalObject, JSValue) JSValue;
 
     pub fn runOnLoadPlugins(this: *JSGlobalObject, namespace_: bun.String, path: bun.String, target: BunPluginTarget) bun.JSError!?JSValue {
         jsc.markBinding(@src());
@@ -253,6 +254,11 @@ pub const JSGlobalObject = opaque {
         const result = try bun.jsc.fromJSHostCall(this, @src(), Bun__runOnResolvePlugins, .{ this, if (namespace_.length() > 0) &namespace_ else null, &path, &source, target });
         if (result.isUndefinedOrNull()) return null;
         return result;
+    }
+
+    pub fn runOnEndPlugins(this: *JSGlobalObject, build_result: JSValue) bun.JSError!JSValue {
+        jsc.markBinding(@src());
+        return try bun.jsc.fromJSHostCall(this, @src(), Bun__runOnEndPlugins, .{ this, build_result });
     }
 
     pub fn createErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {

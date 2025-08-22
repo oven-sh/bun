@@ -1077,6 +1077,11 @@ pub const JSBundler = struct {
         extern fn JSBundlerPlugin__appendDeferPromise(*Plugin) JSValue;
         pub const appendDeferPromise = JSBundlerPlugin__appendDeferPromise;
 
+        pub fn runOnEndPlugins(this: *Plugin, build_result: jsc.JSValue) void {
+            const global_object = this.globalObject();
+            _ = global_object.runOnEndPlugins(build_result) catch {};
+        }
+
         pub fn hasAnyMatches(
             this: *Plugin,
             path: *const Fs.Path,

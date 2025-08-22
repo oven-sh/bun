@@ -1867,6 +1867,8 @@ pub const BundleV2 = struct {
             return result;
         }
 
+
+
         fn toJSError(this: *JSBundleCompletionTask, promise: *jsc.JSPromise, globalThis: *jsc.JSGlobalObject) void {
             if (this.config.throw_on_error) {
                 promise.reject(globalThis, this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed")));
@@ -1887,6 +1889,11 @@ pub const BundleV2 = struct {
                     return promise.reject(globalThis, err);
                 },
             );
+            
+            // Run onEnd plugins before resolving - error case
+            if (this.plugins) |plugins| {
+                plugins.runOnEndPlugins(root_obj);
+            }
 
             promise.resolve(globalThis, root_obj);
         }
@@ -1985,6 +1992,12 @@ pub const BundleV2 = struct {
                             return promise.reject(globalThis, err);
                         },
                     );
+                    
+                    // Run onEnd plugins before resolving - success case
+                    if (this.plugins) |plugins| {
+                        plugins.runOnEndPlugins(root_obj);
+                    }
+                    
                     promise.resolve(globalThis, root_obj);
                 },
             }

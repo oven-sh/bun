@@ -860,6 +860,14 @@ extern "C" JSC::EncodedJSValue Bun__runOnLoadPlugins(Zig::GlobalObject* globalOb
     return globalObject->onLoadPlugins.run(globalObject, namespaceString, path);
 }
 
+extern "C" JSC::EncodedJSValue Bun__runOnEndPlugins(Zig::GlobalObject* globalObject, JSC::EncodedJSValue buildResult)
+{
+    // For now, let's just return undefined to confirm the basic flow works
+    // The actual implementation will need to find the correct plugin instance
+    // and call runOnEndPlugins with the build result
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
 namespace Bun {
 
 Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)

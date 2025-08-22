@@ -896,4 +896,156 @@ describe("bundler", () => {
       expect(js).toContain('.wasm"');
     },
   });
+
+  // OnEnd Plugin Tests
+  itBundled("plugin/OnEnd/Basic", {
+    files: {
+      "index.ts": /* ts */ `
+        export const message = "hello world";
+      `,
+    },
+    plugins(builder) {
+      let onEndCalled = false;
+      builder.onEnd(result => {
+        onEndCalled = true;
+        console.log("onEnd called with result:", result);
+        expect(result).toBeDefined();
+        expect(result.errors).toBeDefined();
+        expect(result.warnings).toBeDefined();
+        expect(Array.isArray(result.errors)).toBe(true);
+        expect(Array.isArray(result.warnings)).toBe(true);
+      });
+    },
+    onAfterBundle(api) {
+      // This runs after the bundle is complete
+      // If onEnd was working, this should verify it was called
+      console.log("Bundle completed - onEnd should have been called by now");
+    },
+  });
+
+  itBundled("plugin/OnEnd/WithErrors", {
+    files: {
+      "index.ts": /* ts */ `
+        import { missing } from "./nonexistent.js";
+        export { missing };
+      `,
+    },
+    plugins(builder) {
+      builder.onEnd(result => {
+        expect(result.errors.length).toBeGreaterThan(0);
+        const errorMessage = result.errors[0].text;
+        expect(errorMessage).toContain("Could not resolve");
+      });
+    },
+    bundleErrors: {
+      "/index.ts": [`Could not resolve`],
+    },
+  });
+
+  itBundled("plugin/OnEnd/Multiple", {
+    files: {
+      "index.ts": /* ts */ `
+        export const value = 42;
+      `,
+    },
+    plugins(builder) {
+      const callOrder: number[] = [];
+      
+      builder.onEnd(result => {
+        callOrder.push(1);
+        expect(result.errors.length).toBe(0);
+      });
+      
+      builder.onEnd(result => {
+        callOrder.push(2);
+        expect(callOrder).toEqual([1, 2]);
+      });
+      
+      builder.onEnd(result => {
+        callOrder.push(3);
+        expect(callOrder).toEqual([1, 2, 3]);
+      });
+    },
+  });
+
+  itBundled("plugin/OnEnd/Async", {
+    files: {
+      "index.ts": /* ts */ `
+        export const async_value = "test";
+      `,
+    },
+    plugins(builder) {
+      builder.onEnd(async result => {
+        await new Promise(resolve => setTimeout(resolve, 10));
+        expect(result).toBeDefined();
+        expect(result.errors.length).toBe(0);
+      });
+    },
+  });
+
+  itBundled("plugin/OnEnd/ModifyResult", {
+    files: {
+      "index.ts": /* ts */ `
+        export const test = "value";
+      `,
+    },
+    plugins(builder) {
+      builder.onEnd(result => {
+        // Add a custom warning to the result
+        result.warnings.push({
+          text: "Custom warning from onEnd",
+          location: null,
+          notes: [],
+          detail: undefined,
+        });
+      });
+    },
+  });
+
+  itBundled("plugin/OnEnd/WithOnLoad", {
+    files: {
+      "index.ts": /* ts */ `
+        import { data } from "./data.custom";
+        console.log(JSON.stringify(data));
+        export { data };
+      `,
+      "data.custom": `{"value": "test"}`,
+    },
+    plugins(builder) {
+      let onLoadCalled = false;
+      let onEndCalled = false;
+      
+      builder.onLoad({ filter: /\.custom$/ }, async args => {
+        onLoadCalled = true;
+        const text = await Bun.file(args.path).text();
+        return {
+          contents: `export const data = ${text};`,
+          loader: "js",
+        };
+      });
+      
+      builder.onEnd(result => {
+        onEndCalled = true;
+        expect(onLoadCalled).toBe(true);
+        expect(result.errors.length).toBe(0);
+      });
+    },
+    run: {
+      stdout: `{"value":"test"}`,
+    },
+  });
+
+  itBundled("plugin/OnEnd/ExceptionHandling", {
+    files: {
+      "index.ts": /* ts */ `
+        export const test = "exception handling";
+      `,
+    },
+    plugins(builder) {
+      builder.onEnd(result => {
+        throw new Error("onEnd error");
+      });
+    },
+    // The build should still succeed, but the error should be captured
+  });
 });

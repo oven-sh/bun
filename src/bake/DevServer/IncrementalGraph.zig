@@ -133,6 +133,13 @@ const ClientFile = struct {
                 .is_special_framework_file = data.is_special_framework_file,
             };
         }
+
+        comptime {
+            if (!Environment.ci_assert) {
+                bun.assert_eql(@sizeOf(@This()), @sizeOf(u64) * 3);
+                bun.assert_eql(@alignOf(@This()), @alignOf([*]u8));
+            }
+        }
     };
 
     pub fn pack(self: *const ClientFile) Packed {

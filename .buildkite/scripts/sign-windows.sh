@@ -151,10 +151,23 @@ setup_certificate() {
 
 # Install DigiCert KeyLocker tools if not present
 install_keylocker() {
-    if [[ -f "/c/Program Files/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]]; then
-        log_info "KeyLocker tools already installed"
-        return 0
-    fi
+    # Check multiple possible installation paths (note: case matters - "Keylocker" not "KeyLocker")
+    local current_user=$(whoami 2>/dev/null || echo "")
+    local smctl_paths=(
+        "/c/Program Files/DigiCert/DigiCert Keylocker Tools/smctl.exe"
+        "/c/Program Files (x86)/DigiCert/DigiCert Keylocker Tools/smctl.exe"
+        "/c/Program Files/DigiCert/DigiCert One Signing Manager Tools/smctl.exe"
+        "/c/Program Files (x86)/DigiCert/DigiCert One Signing Manager Tools/smctl.exe"
+        "/c/Users/$current_user/AppData/Local/DigiCert/DigiCert Keylocker Tools/smctl.exe"
+        "/c/Users/$current_user/AppData/Roaming/DigiCert/DigiCert Keylocker Tools/smctl.exe"
+    )
+    
+    for path in "${smctl_paths[@]}"; do
+        if [[ -f "$path" ]]; then
+            log_info "KeyLocker tools already installed at: $path"
+            return 0
+        fi
+    done
     
     log_info "Installing DigiCert KeyLocker tools..."
     log_info "Using tools directory: $TOOLS_DIR"
@@ -509,6 +522,8 @@ setup_environment() {
     local smctl_paths=(
         "/c/Program Files/DigiCert/DigiCert Keylocker Tools"
         "/c/Program Files (x86)/DigiCert/DigiCert Keylocker Tools"
+        "/c/Program Files/DigiCert/DigiCert One Signing Manager Tools"
+        "/c/Program Files (x86)/DigiCert/DigiCert One Signing Manager Tools"
         "/c/ProgramFiles/DigiCert/DigiCert Keylocker Tools"
         "/c/Users/$current_user/AppData/Local/DigiCert/DigiCert Keylocker Tools"
         "/c/Users/$current_user/AppData/Roaming/DigiCert/DigiCert Keylocker Tools"
@@ -521,11 +536,17 @@ setup_environment() {
         fi
     done
     
-    if [[ -n "$smctl_path" ]] && [[ ":$PATH:" != *":$smctl_path:"* ]]; then
-        export PATH="$PATH:$smctl_path"
-        log_info "Added KeyLocker tools to PATH: $smctl_path"
+    if [[ -n "$smctl_path" ]]; then
+        if [[ ":$PATH:" != *":$smctl_path:"* ]]; then
+            export PATH="$PATH:$smctl_path"
+            log_info "Added KeyLocker tools to PATH: $smctl_path"
+        else
+            log_info "KeyLocker tools already in PATH: $smctl_path"
+        fi
     else
         log_error "Could not find KeyLocker tools to add to PATH"
+        log_info "Searching for smctl.exe..."
+        find "/c/Program Files" "/c/Program Files (x86)" -name "smctl.exe" 2>/dev/null | head -10
         exit 1
     fi
     

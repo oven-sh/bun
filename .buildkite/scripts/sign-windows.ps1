@@ -101,34 +101,51 @@ function Check-Environment {
 function Setup-Certificate {
     Log-Info "Setting up certificate..."
     
-    # Check if certificate is base64 content or file path
-    # Note: BuildKite secrets can be short base64 strings (e.g., 24 chars)
-    # We should try to decode ANY string that's not an existing file path
-    if (!(Test-Path $env:SM_CLIENT_CERT_FILE)) {
-        Log-Info "Certificate appears to be base64 content, decoding..."
-        Log-Debug "Base64 string length: $($env:SM_CLIENT_CERT_FILE.Length) characters"
+    # Always try to decode as base64 first
+    # If it fails, then treat as file path
+    try {
+        Log-Info "Attempting to decode certificate as base64..."
+        Log-Debug "Input string length: $($env:SM_CLIENT_CERT_FILE.Length) characters"
         
         $tempCertPath = Join-Path $env:TEMP "digicert_cert_$(Get-Random).p12"
         
-        try {
-            $certBytes = [System.Convert]::FromBase64String($env:SM_CLIENT_CERT_FILE)
-            [System.IO.File]::WriteAllBytes($tempCertPath, $certBytes)
-            
-            # Update environment to point to file
-            $env:SM_CLIENT_CERT_FILE = $tempCertPath
-            
-            Log-Success "Certificate decoded and written to: $tempCertPath"
-            Log-Debug "Decoded certificate file size: $((Get-Item $tempCertPath).Length) bytes"
-            
-            # Register cleanup
-            $global:TEMP_CERT_PATH = $tempCertPath
-            
-        } catch {
-            throw "Failed to decode certificate from base64: $_"
+        # Try to decode as base64
+        $certBytes = [System.Convert]::FromBase64String($env:SM_CLIENT_CERT_FILE)
+        [System.IO.File]::WriteAllBytes($tempCertPath, $certBytes)
+        
+        # Validate the decoded certificate size
+        $fileSize = (Get-Item $tempCertPath).Length
+        if ($fileSize -lt 100) {
+            throw "Decoded certificate too small: $fileSize bytes (expected >100 bytes)"
         }
-    } else {
-        Log-Info "Using existing certificate file: $env:SM_CLIENT_CERT_FILE"
-        Log-Debug "Certificate file size: $((Get-Item $env:SM_CLIENT_CERT_FILE).Length) bytes"
+        
+        # Update environment to point to file
+        $env:SM_CLIENT_CERT_FILE = $tempCertPath
+        
+        Log-Success "Certificate decoded and written to: $tempCertPath"
+        Log-Debug "Decoded certificate file size: $fileSize bytes"
+        
+        # Register cleanup
+        $global:TEMP_CERT_PATH = $tempCertPath
+        
+    } catch {
+        # If base64 decode fails, check if it's a file path
+        Log-Info "Base64 decode failed, checking if it's a file path..."
+        Log-Debug "Decode error: $_"
+        
+        if (Test-Path $env:SM_CLIENT_CERT_FILE) {
+            $fileSize = (Get-Item $env:SM_CLIENT_CERT_FILE).Length
+            
+            # Validate file size
+            if ($fileSize -lt 100) {
+                throw "Certificate file too small: $fileSize bytes at $env:SM_CLIENT_CERT_FILE (possibly corrupted)"
+            }
+            
+            Log-Info "Using certificate file: $env:SM_CLIENT_CERT_FILE"
+            Log-Debug "Certificate file size: $fileSize bytes"
+        } else {
+            throw "SM_CLIENT_CERT_FILE is neither valid base64 nor an existing file: $env:SM_CLIENT_CERT_FILE"
+        }
     }
 }
 

@@ -224,39 +224,6 @@ async function spawn(command, args, options, label) {
 
   const pipe = process.env.CI === "true";
 
-  // Handle Windows signing credentials securely for both CI and local builds
-  if (isWindows && (process.env.SM_CLIENT_CERT_FILE || process.env.SM_API_KEY)) {
-    env ||= options?.env || { ...process.env };
-
-    // If certificate is provided as base64 content (>100 chars), convert to temp file
-    if (env.SM_CLIENT_CERT_FILE && env.SM_CLIENT_CERT_FILE.length > 100) {
-      const certBase64 = env.SM_CLIENT_CERT_FILE;
-      const tempCertPath = join(process.env.TEMP || process.env.TMP || "/tmp", `digicert_cert_${process.pid}.p12`);
-
-      try {
-        const certBuffer = Buffer.from(certBase64, "base64");
-        require("fs").writeFileSync(tempCertPath, certBuffer, { mode: 0o600 });
-        console.log(`[SECURITY] Certificate written to temporary file`);
-
-        // Replace the content with just the file path
-        env.SM_CLIENT_CERT_FILE = tempCertPath;
-
-        // Clean up temp cert file after process exits
-        process.on("exit", () => {
-          try {
-            require("fs").unlinkSync(tempCertPath);
-            console.log(`[SECURITY] Temporary certificate file cleaned up`);
-          } catch (e) {
-            // Ignore cleanup errors
-          }
-        });
-      } catch (error) {
-        console.error(`[ERROR] Failed to process certificate: ${error.message}`);
-        process.exit(1);
-      }
-    }
-  }
-
   if (isBuildkite()) {
     if (process.env.BUN_LINK_ONLY && isWindows) {
       env ||= options?.env || { ...process.env };

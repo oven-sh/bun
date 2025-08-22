@@ -69,7 +69,6 @@ export function renderToHtml(
         bootstrapModules,
         onError(error) {
           if (!signal.aborted) {
-            // console.error(error);
             // Abort the rendering and close the stream
             signal.aborted = error;
             abort();

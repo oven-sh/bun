@@ -232,17 +232,17 @@ pub fn setDevServerAsyncLocalStorage(this: *VirtualMachine, global: *jsc.JSGloba
 pub export fn VirtualMachine__setDevServerAsyncLocalStorage(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) jsc.JSValue {
     const arguments = callframe.arguments_old(1).slice();
     const vm = global.bunVM();
-    
+
     if (arguments.len < 1) {
         _ = global.throwInvalidArguments("setDevServerAsyncLocalStorage expects 1 argument", .{}) catch {};
         return .zero;
     }
-    
+
     vm.setDevServerAsyncLocalStorage(global, arguments[0]);
     return .js_undefined;
 }
 
-// JavaScript binding to get the AsyncLocalStorage instance  
+// JavaScript binding to get the AsyncLocalStorage instance
 pub export fn VirtualMachine__getDevServerAsyncLocalStorage(global: *jsc.JSGlobalObject, _: *jsc.CallFrame) jsc.JSValue {
     const vm = global.bunVM();
     return vm.getDevServerAsyncLocalStorage() orelse .js_undefined;

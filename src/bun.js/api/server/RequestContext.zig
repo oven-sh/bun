@@ -55,6 +55,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         /// Defer finalization until after the request handler task is completed?
         defer_deinit_until_callback_completes: ?*bool = null,
 
+        onAbortCb: ?*const fn (this: *anyopaque) void = null,
+        onAbortData: ?*anyopaque = null,
+
         // TODO: support builtin compression
         const can_sendfile = !ssl_enabled and !Environment.isWindows;
 
@@ -201,6 +204,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         /// destroy RequestContext, should be only called by deref or if defer_deinit_until_callback_completes is ref is set to true
         pub fn deinit(this: *RequestContext) void {
+            ctxLog("deinit", .{});
             this.detachResponse();
             this.endRequestStreamingAndDrain();
             // TODO: has_marked_complete is doing something?
@@ -436,6 +440,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         pub fn end(this: *RequestContext, data: []const u8, closeConnection: bool) void {
+            ctxLog("end", .{});
             if (this.resp) |resp| {
                 defer this.deref();
 
@@ -461,6 +466,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         pub fn endWithoutBody(this: *RequestContext, closeConnection: bool) void {
+            ctxLog("endWithoutBody", .{});
             if (this.resp) |resp| {
                 defer this.deref();
 
@@ -556,11 +562,15 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         pub fn onAbort(this: *RequestContext, resp: *App.Response) void {
+            ctxLog("onAbort", .{});
             assert(this.resp == resp);
             assert(!this.flags.aborted);
             assert(this.server != null);
             // mark request as aborted
             this.flags.aborted = true;
+            if (this.onAbortData != null and this.onAbortCb != null) {
+                this.onAbortCb.?(this.onAbortData.?);
+            }
 
             this.detachResponse();
             var any_js_calls = false;

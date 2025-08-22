@@ -5930,6 +5930,7 @@ extern "C" void JSC__JSValue__transformToReactElement(JSC::EncodedJSValue respon
 }
 
 /// TODO: This could just be a builtin function and be 10x less lines of code why is it in C++
+/// TODO: this should actually just be a special Response sub-class and the transpiler rewrites the code to use this
 ///
 /// What this function does is make a Response object pretend to be a React
 /// component. To do this we have to put a couple properties on it:

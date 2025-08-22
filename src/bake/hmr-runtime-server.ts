@@ -13,11 +13,25 @@ if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
 export type RequestContext = {
   responseOptions: ResponseInit;
   streamingStarted?: boolean;
-  abortNonStreaming?: (path: string, params: Record<string, string> | null) => {};
+  renderAbort?: (path: string, params: Record<string, any> | null) => never;
 };
 
 // Create the AsyncLocalStorage instance for propagating response options
 const responseOptionsALS = new AsyncLocalStorage();
+
+/// Created when the user does `return Response.render(...)`
+class RenderAbortError extends Error {
+  constructor(
+    public path: string,
+    public params: Record<string, any> | null,
+  ) {
+    super("Response.render() called");
+    this.name = "RenderAbortError";
+  }
+}
+
+// Make RenderAbortError globally available for other modules
+(globalThis as any).RenderAbortError = RenderAbortError;
 
 interface Exports {
   handleRequest: (
@@ -85,30 +99,49 @@ server_exports = {
       responseOptions: {},
     };
 
-    // Run the renderer inside the AsyncLocalStorage context
-    // This allows Response constructors to access the stored options
-    const response = await responseOptionsALS.run(storeValue, async () => {
-      return await serverRenderer(
-        requestWithCookies,
-        {
-          styles: styles,
-          modules: [clientEntryUrl],
-          layouts,
-          pageModule,
-          modulepreload: [],
-          params,
-          // Pass request in metadata when mode is 'ssr'
-          request: pageModule.mode === "ssr" ? requestWithCookies : undefined,
-        },
-        responseOptionsALS,
-      );
-    });
+    try {
+      // Run the renderer inside the AsyncLocalStorage context
+      // This allows Response constructors to access the stored options
+      const response = await responseOptionsALS.run(storeValue, async () => {
+        return await serverRenderer(
+          requestWithCookies,
+          {
+            styles: styles,
+            modules: [clientEntryUrl],
+            layouts,
+            pageModule,
+            modulepreload: [],
+            params,
+            // Pass request in metadata when mode is 'ssr'
+            request: pageModule.mode === "ssr" ? requestWithCookies : undefined,
+          },
+          responseOptionsALS,
+        );
+      });
 
-    if (!(response instanceof Response)) {
-      throw new Error(`Server-side request handler was expected to return a Response object.`);
+      if (!(response instanceof Response)) {
+        throw new Error(`Server-side request handler was expected to return a Response object.`);
+      }
+
+      return response;
+    } catch (error) {
+      // Handle Response.render() aborts
+      if (error instanceof RenderAbortError) {
+        // TODO: Implement route resolution to get the new route modules
+        // For now, we'll need to get this information from the native side
+        // The native code will need to resolve the route and call handleRequest again
+
+        // Store the render error info so native code can access it
+        (globalThis as any).__lastRenderAbort = {
+          path: error.path,
+          params: error.params,
+        };
+
+        // Re-throw to let native code handle the recursive call
+        throw error;
+      }
+      throw error;
     }
-
-    return response;
   },
   async registerUpdate(modules, componentManifestAdd, componentManifestDelete) {
     replaceModules(modules);

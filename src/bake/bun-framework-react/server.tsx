@@ -140,6 +140,22 @@ export async function render(
     // FIXME: this is bad and could be done way better
     // FIXME: why are we even doing stream stuff is `streaming=false`, is there a way to do RSC without stream
 
+    // Set up the render abort handler for non-streaming mode
+    if (als) {
+      const store = als.getStore();
+      if (store) {
+        store.renderAbort = (path: string, params: Record<string, any> | null) => {
+          // Create the abort error
+          const abortError = new (globalThis as any).RenderAbortError(path, params);
+          // Abort the current render
+          signal.aborted = abortError;
+          signal.abort(abortError);
+          rscPayload.destroy(abortError);
+          throw abortError;
+        };
+      }
+    }
+
     // Buffer the entire response and return it all at once
     const htmlStream = renderToHtml(rscPayload, meta.modules, signal);
     const chunks: Uint8Array[] = [];
@@ -149,6 +165,21 @@ export async function render(
       let keepGoing = true;
       do {
         const { done, value } = await reader.read();
+
+        // Check if the render was aborted with an error
+        if (signal.aborted) {
+          // If it's a RenderAbortError, re-throw it to be handled upstream
+          if (signal.aborted instanceof (globalThis as any).RenderAbortError) {
+            throw signal.aborted;
+          }
+          // For some reason in react-server-dom the `stream.on("error")`
+          // handler creates a new Error???
+          if (signal.aborted.message !== "Connection closed.") {
+            // For other errors, we can handle them here or re-throw
+            throw signal.aborted;
+          }
+        }
+
         keepGoing = !done;
         if (!done) {
           chunks.push(value);
@@ -200,7 +231,7 @@ export async function prerender(meta: Bake.RouteMetadata) {
   try {
     html = await renderToStaticHtml(rscPayload, meta.modules);
   } catch (err) {
-    console.error("ah fuck");
+    //console.error("ah fuck");
     return undefined;
   }
   const rsc = new Blob(rscChunks, { type: "text/x-component" });

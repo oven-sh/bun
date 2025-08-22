@@ -1081,20 +1081,30 @@ fn deferRequest(
     resp: AnyResponse,
 ) !void {
     const deferred = dev.deferred_request_pool.get();
+    debug.log("DeferredRequest(0x{x}).init", .{@intFromPtr(&deferred.data)});
     const method = bun.http.Method.which(req.method()) orelse .POST;
     deferred.data = .{
         .route_bundle_index = route_bundle_index,
         .dev = dev,
         .ref_count = .init(),
         .handler = switch (kind) {
-            .bundled_html_page => .{ .bundled_html_page = .{ .response = resp, .method = method } },
-            .server_handler => .{
-                .server_handler = dev.server.?.prepareAndSaveJsRequestContext(req, resp, dev.vm.global, method) orelse return,
+            .bundled_html_page => brk: {
+                resp.onAborted(*DeferredRequest, DeferredRequest.onAbort, &deferred.data);
+                break :brk .{ .bundled_html_page = .{ .response = resp, .method = method } };
+            },
+            .server_handler => brk: {
+                const server_handler = dev.server.?.prepareAndSaveJsRequestContext(req, resp, dev.vm.global, method) orelse {
+                    dev.deferred_request_pool.put(deferred);
+                    return;
+                };
+                server_handler.ctx.setAbortCallback(DeferredRequest.onAbortWrapper, &deferred.data);
+                break :brk .{
+                    .server_handler = server_handler,
+                };
             },
         },
     };
     deferred.data.ref();
-    resp.onAborted(*DeferredRequest, DeferredRequest.onAbort, &deferred.data);
     requests_array.prepend(deferred);
 }
 
@@ -1562,7 +1572,11 @@ pub const DeferredRequest = struct {
     pub const List = std.SinglyLinkedList(DeferredRequest);
     pub const Node = List.Node;
 
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinitImpl, .{});
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinitImpl, .{
+        .debug_name = "DeferredRequest",
+    });
+
+    const debugLog = bun.Output.Scoped("DlogeferredRequest", .hidden).log;
 
     route_bundle_index: RouteBundle.Index,
     handler: Handler,
@@ -1595,8 +1609,18 @@ pub const DeferredRequest = struct {
         };
     };
 
-    fn onAbort(this: *DeferredRequest, resp: AnyResponse) void {
-        _ = resp;
+    fn onAbortWrapper(this: *anyopaque) void {
+        const self: *DeferredRequest = @alignCast(@ptrCast(this));
+        self.onAbortImpl();
+    }
+
+    fn onAbort(this: *DeferredRequest, _: AnyResponse) void {
+        this.onAbortImpl();
+    }
+
+    fn onAbortImpl(this: *DeferredRequest) void {
+        debugLog("DeferredRequest(0x{x}) onAbort", .{@intFromPtr(this)});
+
         this.abort();
         assert(this.handler == .aborted);
     }
@@ -1607,6 +1631,7 @@ pub const DeferredRequest = struct {
     /// such as for bundling failures or aborting the server.
     /// Does not free the underlying `DeferredRequest.Node`
     fn deinitImpl(this: *DeferredRequest) void {
+        debugLog("DeferredRequest(0x{x}) deinitImpl", .{@intFromPtr(this)});
         this.ref_count.assertNoRefs();
 
         defer this.dev.deferred_request_pool.put(@fieldParentPtr("data", this));
@@ -1618,11 +1643,11 @@ pub const DeferredRequest = struct {
 
     /// Deinitializes state by aborting the connection.
     fn abort(this: *DeferredRequest) void {
+        debugLog("DeferredRequest(0x{x}) abort", .{@intFromPtr(this)});
         var handler = this.handler;
         this.handler = .aborted;
         switch (handler) {
             .server_handler => |*saved| {
-                saved.ctx.onAbort(saved.response);
                 saved.js_request.deinit();
             },
             .bundled_html_page => |r| {

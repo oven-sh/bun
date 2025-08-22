@@ -530,8 +530,7 @@ pub fn constructRender(
         return globalThis.throwInvalidArguments("Response.render() is only available in the Bun dev server", .{});
     }
 
-    // For now, just stub - we'll implement the actual logic later
-    // We expect two arguments: path and params
+    // Validate arguments
     if (arguments.len < 1) {
         return globalThis.throwInvalidArguments("Response.render() requires at least a path argument", .{});
     }
@@ -541,9 +540,39 @@ pub fn constructRender(
         return globalThis.throwInvalidArguments("Response.render() path must be a string", .{});
     }
 
-    // TODO: Implement actual render logic
-    // For now, return an error response indicating this is not yet implemented
-    return globalThis.throwTODO("Response.render() is not yet fully implemented");
+    // Get params if provided (second argument)
+    const params_arg = if (arguments.len >= 2) arguments.ptr[1] else JSValue.jsNull();
+
+    // Get the AsyncLocalStorage instance
+    const als = vm.dev_server_async_local_storage.get() orelse {
+        return globalThis.throwInvalidArguments("Response.render() AsyncLocalStorage not found", .{});
+    };
+
+    // Call als.getStore() to get the current store
+    const getStore_fn = try als.get(globalThis, "getStore") orelse {
+        return globalThis.throwInvalidArguments("Response.render() getStore method not found", .{});
+    };
+
+    const store = try getStore_fn.call(globalThis, als, &.{});
+
+    if (store.isUndefinedOrNull()) {
+        return globalThis.throwInvalidArguments("Response.render() no active context", .{});
+    }
+
+    // Get the renderAbort function from the store
+    const renderAbort = try store.get(globalThis, "renderAbort") orelse {
+        return globalThis.throwInvalidArguments("Response.render() is only available in non-streaming mode", .{});
+    };
+
+    if (!renderAbort.isCallable()) {
+        return globalThis.throwInvalidArguments("Response.render() is only available in non-streaming mode", .{});
+    }
+
+    // Call renderAbort(path, params) - this will throw and abort the render
+    _ = try renderAbort.call(globalThis, store, &.{ path_arg, params_arg });
+
+    // This should not be reached as renderAbort should throw
+    return .js_undefined;
 }
 
 pub fn constructError(

@@ -425,7 +425,7 @@ function parseOptions(
   path ||= (options as { path?: string }).path || "";
 
   if (adapter === "postgres") {
-    // add /.s.PGSQL.${port} if it doesn't exist
+    // add /.s.PGSQL.${port} if the unix domain socket is listening on that path
     if (path && Number.isSafeInteger(port) && path?.indexOf("/.s.PGSQL.") === -1) {
       const pathWithSocket = `${path}/.s.PGSQL.${port}`;
       if (!fs) {

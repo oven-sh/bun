@@ -147,24 +147,24 @@ if (isDockerEnabled()) {
   // --- Expected pg_hba.conf ---
   process.env.DATABASE_URL = `postgres://bun_sql_test@localhost:${container.port}/bun_sql_test`;
 
-  const login: Bun.SQL.PostgresOptions = {
+  const login: Bun.SQL.PostgresOrMySQLOptions = {
     username: "bun_sql_test",
     port: container.port,
   };
 
-  const login_md5: Bun.SQL.PostgresOptions = {
+  const login_md5: Bun.SQL.PostgresOrMySQLOptions = {
     username: "bun_sql_test_md5",
     password: "bun_sql_test_md5",
     port: container.port,
   };
 
-  const login_scram: Bun.SQL.PostgresOptions = {
+  const login_scram: Bun.SQL.PostgresOrMySQLOptions = {
     username: "bun_sql_test_scram",
     password: "bun_sql_test_scram",
     port: container.port,
   };
 
-  const options: Bun.SQL.PostgresOptions = {
+  const options: Bun.SQL.PostgresOrMySQLOptions = {
     db: "bun_sql_test",
     username: login.username,
     password: login.password,

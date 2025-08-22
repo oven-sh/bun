@@ -200,16 +200,47 @@ function assertIsOptionsOfAdapter<A extends Bun.SQL.__internal.Adapter>(
   }
 }
 
+function hasProtocol(url: string) {
+  if (typeof url !== "string") return false;
+  const protocols: string[] = [
+    "http",
+    "https",
+    "ftp",
+    "postgres",
+    "postgresql",
+    "mysql",
+    "mysql2",
+    "mariadb",
+    "file",
+    "sqlite",
+  ];
+  for (const protocol of protocols) {
+    if (url.startsWith(protocol + "://")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function defaultToPostgresIfNoProtocol(url: string | URL | null): URL {
+  if (url instanceof URL) {
+    return url;
+  }
+  if (hasProtocol(url as string)) {
+    return new URL(url as string);
+  }
+  return new URL("postgres://" + url);
+}
 function parseOptions(
   stringOrUrlOrOptions: Bun.SQL.Options | string | URL | undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options,
 ): Bun.SQL.__internal.DefinedOptions {
   const env = Bun.env;
 
-  let [stringOrUrl = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL || null, options]: [
-    string | URL | null,
-    Bun.SQL.Options,
-  ] =
+  let [
+    stringOrUrl = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL || env.MYSQL_URL || null,
+    options,
+  ]: [string | URL | null, Bun.SQL.Options] =
     typeof stringOrUrlOrOptions === "string" || stringOrUrlOrOptions instanceof URL
       ? [stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty]
       : stringOrUrlOrOptions
@@ -250,16 +281,14 @@ function parseOptions(
     return parseSQLiteOptionsWithQueryParams(sqliteOptions, stringOrUrl);
   }
 
-  if (options.adapter !== undefined && options.adapter !== "postgres" && options.adapter !== "postgresql") {
-    options.adapter satisfies never; // This will type error if we support a new adapter in the future, which will let us know to update this check
-    throw new Error(`Unsupported adapter: ${options.adapter}. Supported adapters: "postgres", "sqlite"`);
+  if (!stringOrUrl) {
+    const url = options?.url;
+    if (typeof url === "string") {
+      stringOrUrl = defaultToPostgresIfNoProtocol(url);
+    } else if (url instanceof URL) {
+      stringOrUrl = url;
+    }
   }
-
-  // @ts-expect-error Compatibility
-  if (options.adapter === "postgresql") options.adapter = "postgres";
-  if (options.adapter === undefined) options.adapter = "postgres";
-
-  assertIsOptionsOfAdapter(options, "postgres");
 
   let hostname: string | undefined,
     port: number | string | undefined,
@@ -276,7 +305,8 @@ function parseOptions(
     onclose: ((client: Bun.SQL) => void) | undefined,
     max: number | null | undefined,
     bigint: boolean | undefined,
-    path: string | string[];
+    path: string | string[],
+    adapter: Bun.SQL.__internal.Adapter;
 
   let prepare = true;
   let sslMode: SSLMode = SSLMode.disable;
@@ -311,7 +341,7 @@ function parseOptions(
     } else if (options?.url) {
       const _url = options.url;
       if (typeof _url === "string") {
-        url = new URL(_url);
+        url = defaultToPostgresIfNoProtocol(_url);
       } else if (_url && typeof _url === "object" && _url instanceof URL) {
         url = _url;
       }
@@ -322,7 +352,7 @@ function parseOptions(
     }
   } else if (typeof stringOrUrl === "string") {
     try {
-      url = new URL(stringOrUrl);
+      url = defaultToPostgresIfNoProtocol(stringOrUrl);
     } catch (e) {
       throw new Error(`Invalid URL '${stringOrUrl}' for postgres. Did you mean to specify \`{ adapter: "sqlite" }\`?`, {
         cause: e,
@@ -330,14 +360,18 @@ function parseOptions(
     }
   }
   query = "";
-
+  adapter = options.adapter;
   if (url) {
-    ({ hostname, port, username, password } = options);
+    ({ hostname, port, username, password, adapter } = options);
     // object overrides url
     hostname ||= url.hostname;
     port ||= url.port;
     username ||= decodeIfValid(url.username);
     password ||= decodeIfValid(url.password);
+    adapter ||= url.protocol as Bun.SQL.__internal.Adapter;
+    if (adapter && adapter[adapter.length - 1] === ":") {
+      adapter = adapter.slice(0, -1) as Bun.SQL.__internal.Adapter;
+    }
 
     const queryObject = url.searchParams.toJSON();
     for (const key in queryObject) {
@@ -355,20 +389,57 @@ function parseOptions(
     }
     query = query.trim();
   }
+  if (adapter) {
+    switch (adapter) {
+      case "http":
+      case "https":
+      case "ftp":
+      case "postgres":
+      case "postgresql":
+        adapter = "postgres";
+        break;
+      case "mysql":
+      case "mysql2":
+      case "mariadb":
+        adapter = "mysql";
+        break;
+      case "file":
+      case "sqlite":
+        adapter = "sqlite";
+        break;
+      default:
+        options.adapter satisfies never; // This will type error if we support a new adapter in the future, which will let us know to update this check
+        throw new Error(`Unsupported adapter: ${options.adapter}. Supported adapters: "postgres", "sqlite", "mysql"`);
+    }
+  } else {
+    adapter = "postgres";
+  }
+  options.adapter = adapter;
+  assertIsOptionsOfAdapter(options, adapter);
   hostname ||= options.hostname || options.host || env.PGHOST || "localhost";
 
-  port ||= Number(options.port || env.PGPORT || 5432);
+  port ||= Number(options.port || env.PGPORT || (adapter === "mysql" ? 3306 : 5432));
 
   path ||= (options as { path?: string }).path || "";
   // add /.s.PGSQL.${port} if it doesn't exist
-  if (path && path?.indexOf("/.s.PGSQL.") === -1) {
+  if (path && path?.indexOf("/.s.PGSQL.") === -1 && adapter === "postgres") {
     path = `${path}/.s.PGSQL.${port}`;
   }
 
   username ||=
-    options.username || options.user || env.PGUSERNAME || env.PGUSER || env.USER || env.USERNAME || "postgres";
+    options.username ||
+    options.user ||
+    env.PGUSERNAME ||
+    env.PGUSER ||
+    env.USER ||
+    env.USERNAME ||
+    (adapter === "mysql" ? "root" : "postgres"); // default username for mysql is root and for postgres is postgres;
   database ||=
-    options.database || options.db || decodeIfValid((url?.pathname ?? "").slice(1)) || env.PGDATABASE || username;
+    options.database ||
+    options.db ||
+    decodeIfValid((url?.pathname ?? "").slice(1)) ||
+    env.PGDATABASE ||
+    (adapter === "mysql" ? "mysql" : username); // default database;
   password ||= options.password || options.pass || env.PGPASSWORD || "";
   const connection = options.connection;
   if (connection && $isObject(connection)) {
@@ -393,6 +464,9 @@ function parseOptions(
   bigint ??= options.bigint;
   // we need to explicitly set prepare to false if it is false
   if (options.prepare === false) {
+    if (adapter === "mysql") {
+      throw $ERR_INVALID_ARG_VALUE("options.prepare", false, "prepared: false is not supported in MySQL");
+    }
     prepare = false;
   }
 
@@ -470,8 +544,8 @@ function parseOptions(
     throw $ERR_INVALID_ARG_VALUE("port", port, "must be a non-negative integer between 1 and 65535");
   }
 
-  const ret: Bun.SQL.__internal.DefinedPostgresOptions = {
-    adapter: "postgres",
+  const ret: Bun.SQL.__internal.DefinedOptions = {
+    adapter,
     hostname,
     port,
     username,
@@ -545,6 +619,11 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
 
   getCommitDistributedSQL?(name: string): string;
   getRollbackDistributedSQL?(name: string): string;
+  escapeIdentifier(name: string): string;
+  notTaggedCallError(): Error;
+  connectionClosedError(): Error;
+  queryCancelledError(): Error;
+  invalidTransactionStateError(message: string): Error;
 }
 
 export default {

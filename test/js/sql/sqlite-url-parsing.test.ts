@@ -307,6 +307,11 @@ describe("SQLite URL Parsing Matrix", () => {
       "http://example.com/test.db",
       "https://example.com/test.db",
       "ftp://example.com/test.db",
+      "localhost/test.db",
+      "localhost:5432/test.db",
+      "example.com:3306/db",
+      "example.com/test",
+      "localhost",
       "postgres://user:pass@localhost/db",
       "postgresql://user:pass@localhost/db",
     ];
@@ -315,14 +320,6 @@ describe("SQLite URL Parsing Matrix", () => {
       const sql = new SQL(url);
       expect(sql.options.adapter).toBe("postgres");
       sql.close();
-    });
-  });
-
-  describe("Plain filenames without adapter should throw", () => {
-    test("plain filename without adapter throws", () => {
-      expect(() => new SQL("myapp.db")).toThrowErrorMatchingInlineSnapshot(
-        `"Invalid URL 'myapp.db' for postgres. Did you mean to specify \`{ adapter: "sqlite" }\`?"`,
-      );
     });
   });
 });

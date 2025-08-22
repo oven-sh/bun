@@ -64,6 +64,7 @@ typedef union DataCellValue {
     double number;
     int32_t integer;
     int64_t bigint;
+    uint64_t unsigned_bigint;
     uint8_t boolean;
     double date;
     double date_with_time_zone;
@@ -90,6 +91,7 @@ enum class DataCellTag : uint8_t {
     TypedArray = 11,
     Raw = 12,
     UnsignedInteger = 13,
+    UnsignedBigint = 14,
 };
 
 enum class BunResultMode : uint8_t {
@@ -160,6 +162,9 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         break;
     case DataCellTag::Bigint:
         return JSC::JSBigInt::createFrom(globalObject, cell.value.bigint);
+        break;
+    case DataCellTag::UnsignedBigint:
+        return JSC::JSBigInt::createFrom(globalObject, cell.value.unsigned_bigint);
         break;
     case DataCellTag::Boolean:
         return jsBoolean(cell.value.boolean);
@@ -317,7 +322,6 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                 ASSERT(!cell.isIndexedColumn());
                 ASSERT(cell.isNamedColumn());
                 if (names.has_value()) {
-
                     auto name = names.value()[i];
                     object->putDirect(vm, Identifier::fromString(vm, name.name.toWTFString()), value);
 

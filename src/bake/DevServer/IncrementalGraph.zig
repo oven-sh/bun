@@ -1,3 +1,198 @@
+const JsCode = []const u8;
+const CssAssetId = u64;
+
+// The server's incremental graph does not store previously bundled code because there is
+// only one instance of the server. Instead, it stores which module graphs it is a part of.
+// This makes sure that recompilation knows what bundler options to use.
+const ServerFile = struct {
+    /// Is this file built for the Server graph.
+    is_rsc: bool,
+    /// Is this file built for the SSR graph.
+    is_ssr: bool,
+    /// If set, the client graph contains a matching file.
+    /// The server
+    is_client_component_boundary: bool,
+    /// If this file is a route root, the route can be looked up in
+    /// the route list. This also stops dependency propagation.
+    is_route: bool,
+    /// If the file has an error, the failure can be looked up
+    /// in the `.failures` map.
+    failed: bool,
+    /// CSS and Asset files get special handling
+    kind: FileKind,
+
+    // `ClientFile` has a separate packed version, but `ServerFile` is already packed.
+    // We still need to define a `Packed` type, though, so we can write `File.Packed`
+    // regardless of `side`.
+    pub const Packed = ServerFile;
+
+    pub fn pack(self: *const ServerFile) Packed {
+        return self;
+    }
+
+    pub fn unpack(self: Packed) ServerFile {
+        return self;
+    }
+
+    fn stopsDependencyTrace(self: ServerFile) bool {
+        return self.is_client_component_boundary;
+    }
+
+    pub fn fileKind(self: *const ServerFile) FileKind {
+        return self.kind;
+    }
+};
+
+const Content = union(enum) {
+    unknown: void,
+    /// When stale, the code is "", otherwise it contains at least one non-whitespace
+    /// character, as empty chunks contain at least a function wrapper.
+    js: JsCode,
+    asset: JsCode,
+    /// A CSS root is the first file in a CSS bundle, aka the one that the JS or HTML file
+    /// points into.
+    ///
+    /// There are many complicated rules when CSS files reference each other, none of which
+    /// are modelled in IncrementalGraph. Instead, any change to downstream files will find
+    /// the CSS root, and queue it for a re-bundle. Additionally, CSS roots only have one
+    /// level of imports, as the code in `finalizeBundle` will add all referenced files as
+    /// edges directly to the root, creating a flat list instead of a tree. Those downstream
+    /// files remaining empty; only present so that invalidation can trace them to this
+    /// root.
+    css_root: CssAssetId,
+    css_child: void,
+
+    const Untagged = blk: {
+        var info = @typeInfo(Content);
+        info.@"union".tag_type = null;
+        break :blk @Type(info);
+    };
+};
+
+const ClientFile = struct {
+    content: Content,
+    source_map: PackedMap.Shared = .none,
+    /// This should always be null if `source_map` is `.some`, since HTML files do not have
+    /// source maps.
+    html_route_bundle_index: ?RouteBundle.Index = null,
+    /// If the file has an error, the failure can be looked up in the `.failures` map.
+    failed: bool = false,
+    /// For JS files, this is a component root; the server contains a matching file.
+    is_hmr_root: bool = false,
+    /// This is a file is an entry point to the framework. Changing this will always cause
+    /// a full page reload.
+    is_special_framework_file: bool = false,
+
+    /// Packed version of `ClientFile`. Don't access fields directly; call `unpack`.
+    // Due to padding, using `packed struct` here wouldn't save any space.
+    pub const Packed = struct {
+        unsafe_packed_data: struct {
+            content: Content.Untagged,
+            source_map: union {
+                some: Shared(*PackedMap),
+                none: struct {
+                    line_count: union {
+                        some: LineCount,
+                        none: void,
+                    },
+                    html_route_bundle_index: union {
+                        some: RouteBundle.Index,
+                        none: void,
+                    },
+                },
+            },
+            content_tag: std.meta.Tag(Content),
+            source_map_tag: std.meta.Tag(PackedMap.Shared),
+            is_html_route: bool,
+            failed: bool,
+            is_hmr_root: bool,
+            is_special_framework_file: bool,
+        },
+
+        pub fn unpack(self: Packed) ClientFile {
+            const data = self.unsafe_packed_data;
+            return .{
+                .content = switch (data.content_tag) {
+                    inline else => |tag| @unionInit(
+                        Content,
+                        @tagName(tag),
+                        @field(data.content, @tagName(tag)),
+                    ),
+                },
+                .source_map = switch (data.source_map_tag) {
+                    .some => .{ .some = data.source_map.some },
+                    .none => .none,
+                    .line_count => .{ .line_count = data.source_map.none.line_count.some },
+                },
+                .html_route_bundle_index = if (data.is_html_route)
+                    data.source_map.none.html_route_bundle_index.some
+                else
+                    null,
+                .failed = data.failed,
+                .is_hmr_root = data.is_hmr_root,
+                .is_special_framework_file = data.is_special_framework_file,
+            };
+        }
+    };
+
+    pub fn pack(self: *const ClientFile) Packed {
+        // HTML files should not have source maps
+        assert(self.html_route_bundle_index == null or self.source_map != .some);
+        return .{ .unsafe_packed_data = .{
+            .content = switch (std.meta.activeTag(self.content)) {
+                inline else => |tag| @unionInit(
+                    Content.Untagged,
+                    @tagName(tag),
+                    @field(self.content, @tagName(tag)),
+                ),
+            },
+            .source_map = switch (self.source_map) {
+                .some => |map| .{ .some = map },
+                else => .{ .none = .{
+                    .line_count = switch (self.source_map) {
+                        .line_count => |count| .{ .some = count },
+                        else => .{ .none = {} },
+                    },
+                    .html_route_bundle_index = if (self.html_route_bundle_index) |index|
+                        .{ .some = index }
+                    else
+                        .{ .none = {} },
+                } },
+            },
+            .content_tag = self.content,
+            .source_map_tag = self.source_map,
+            .is_html_route = self.html_route_bundle_index != null,
+            .failed = self.failed,
+            .is_hmr_root = self.is_hmr_root,
+            .is_special_framework_file = self.is_special_framework_file,
+        } };
+    }
+
+    pub fn kind(self: *const ClientFile) FileKind {
+        return switch (self.content) {
+            .unknown => .unknown,
+            .js => .js,
+            .asset => .asset,
+            .css_root, .css_child => .css,
+        };
+    }
+
+    fn jsCode(self: *const ClientFile) ?[]const u8 {
+        return switch (self.content) {
+            .js, .asset => |code| code,
+            else => null,
+        };
+    }
+
+    inline fn stopsDependencyTrace(_: ClientFile) bool {
+        return false;
+    }
+
+    pub fn fileKind(self: *const ClientFile) FileKind {
+        return self.kind();
+    }
+};
+
 /// The paradigm of Bake's incremental state is to store a separate list of files
 /// than the Graph in bundle_v2. When watch events happen, the bundler is run on
 /// the changed files, excluding non-stale files via `isFileStale`.
@@ -24,9 +219,6 @@
 /// lifetime for these sourcemaps is a bit tricky and depend on the lifetime of
 /// of WebSocket connections; see comments in `Assets` for more details.
 pub fn IncrementalGraph(comptime side: bake.Side) type {
-    const JsCode = []const u8;
-    const CssAssetId = u64;
-
     return struct {
         const Self = @This();
 
@@ -94,198 +286,6 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             .current_chunk_parts = .empty,
 
             .current_css_files = if (side == .client) .empty,
-        };
-
-        // The server's incremental graph does not store previously bundled code because there is
-        // only one instance of the server. Instead, it stores which module graphs it is a part of.
-        // This makes sure that recompilation knows what bundler options to use.
-        const ServerFile = struct {
-            /// Is this file built for the Server graph.
-            is_rsc: bool,
-            /// Is this file built for the SSR graph.
-            is_ssr: bool,
-            /// If set, the client graph contains a matching file.
-            /// The server
-            is_client_component_boundary: bool,
-            /// If this file is a route root, the route can be looked up in
-            /// the route list. This also stops dependency propagation.
-            is_route: bool,
-            /// If the file has an error, the failure can be looked up
-            /// in the `.failures` map.
-            failed: bool,
-            /// CSS and Asset files get special handling
-            kind: FileKind,
-
-            // `ClientFile` has a separate packed version, but `ServerFile` is already packed.
-            // We still need to define a `Packed` type, though, so we can write `File.Packed`
-            // regardless of `side`.
-            pub const Packed = ServerFile;
-
-            pub fn pack(self: *const ServerFile) Packed {
-                return self;
-            }
-
-            pub fn unpack(self: Packed) ServerFile {
-                return self;
-            }
-
-            fn stopsDependencyTrace(self: ServerFile) bool {
-                return self.is_client_component_boundary;
-            }
-
-            pub fn fileKind(self: *const ServerFile) FileKind {
-                return self.kind;
-            }
-        };
-
-        const Content = union(enum) {
-            unknown: void,
-            /// When stale, the code is "", otherwise it contains at least one non-whitespace
-            /// character, as empty chunks contain at least a function wrapper.
-            js: JsCode,
-            asset: JsCode,
-            /// A CSS root is the first file in a CSS bundle, aka the one that the JS or HTML file
-            /// points into.
-            ///
-            /// There are many complicated rules when CSS files reference each other, none of which
-            /// are modelled in IncrementalGraph. Instead, any change to downstream files will find
-            /// the CSS root, and queue it for a re-bundle. Additionally, CSS roots only have one
-            /// level of imports, as the code in `finalizeBundle` will add all referenced files as
-            /// edges directly to the root, creating a flat list instead of a tree. Those downstream
-            /// files remaining empty; only present so that invalidation can trace them to this
-            /// root.
-            css_root: CssAssetId,
-            css_child: void,
-
-            const Untagged = blk: {
-                var info = @typeInfo(Content);
-                info.@"union".tag_type = null;
-                break :blk @Type(info);
-            };
-        };
-
-        const ClientFile = struct {
-            content: Content,
-            source_map: PackedMap.Shared = .none,
-            /// This should always be null if `source_map` is `.some`, since HTML files do not have
-            /// source maps.
-            html_route_bundle_index: ?RouteBundle.Index = null,
-            /// If the file has an error, the failure can be looked up in the `.failures` map.
-            failed: bool = false,
-            /// For JS files, this is a component root; the server contains a matching file.
-            is_hmr_root: bool = false,
-            /// This is a file is an entry point to the framework. Changing this will always cause
-            /// a full page reload.
-            is_special_framework_file: bool = false,
-
-            /// Packed version of `ClientFile`. Don't access fields directly; call `unpack`.
-            // Due to padding, using `packed struct` here wouldn't save any space.
-            pub const Packed = struct {
-                unsafe_packed_data: struct {
-                    content: Content.Untagged,
-                    source_map: union {
-                        some: Shared(*PackedMap),
-                        none: struct {
-                            line_count: union {
-                                some: LineCount,
-                                none: void,
-                            },
-                            html_route_bundle_index: union {
-                                some: RouteBundle.Index,
-                                none: void,
-                            },
-                        },
-                    },
-                    content_tag: std.meta.Tag(Content),
-                    source_map_tag: std.meta.Tag(PackedMap.Shared),
-                    is_html_route: bool,
-                    failed: bool,
-                    is_hmr_root: bool,
-                    is_special_framework_file: bool,
-                },
-
-                pub fn unpack(self: Packed) ClientFile {
-                    const data = self.unsafe_packed_data;
-                    return .{
-                        .content = switch (data.content_tag) {
-                            inline else => |tag| @unionInit(
-                                Content,
-                                @tagName(tag),
-                                @field(data.content, @tagName(tag)),
-                            ),
-                        },
-                        .source_map = switch (data.source_map_tag) {
-                            .some => .{ .some = data.source_map.some },
-                            .none => .none,
-                            .line_count => .{ .line_count = data.source_map.none.line_count.some },
-                        },
-                        .html_route_bundle_index = if (data.is_html_route)
-                            data.source_map.none.html_route_bundle_index.some
-                        else
-                            null,
-                        .failed = data.failed,
-                        .is_hmr_root = data.is_hmr_root,
-                        .is_special_framework_file = data.is_special_framework_file,
-                    };
-                }
-            };
-
-            pub fn pack(self: *const ClientFile) Packed {
-                // HTML files should not have source maps
-                assert(self.html_route_bundle_index == null or self.source_map != .some);
-                return .{ .unsafe_packed_data = .{
-                    .content = switch (std.meta.activeTag(self.content)) {
-                        inline else => |tag| @unionInit(
-                            Content.Untagged,
-                            @tagName(tag),
-                            @field(self.content, @tagName(tag)),
-                        ),
-                    },
-                    .source_map = switch (self.source_map) {
-                        .some => |map| .{ .some = map },
-                        else => .{ .none = .{
-                            .line_count = switch (self.source_map) {
-                                .line_count => |count| .{ .some = count },
-                                else => .{ .none = {} },
-                            },
-                            .html_route_bundle_index = if (self.html_route_bundle_index) |index|
-                                .{ .some = index }
-                            else
-                                .{ .none = {} },
-                        } },
-                    },
-                    .content_tag = self.content,
-                    .source_map_tag = self.source_map,
-                    .is_html_route = self.html_route_bundle_index != null,
-                    .failed = self.failed,
-                    .is_hmr_root = self.is_hmr_root,
-                    .is_special_framework_file = self.is_special_framework_file,
-                } };
-            }
-
-            pub fn kind(self: *const ClientFile) FileKind {
-                return switch (self.content) {
-                    .unknown => .unknown,
-                    .js => .js,
-                    .asset => .asset,
-                    .css_root, .css_child => .css,
-                };
-            }
-
-            fn jsCode(self: *const ClientFile) ?[]const u8 {
-                return switch (self.content) {
-                    .js, .asset => |code| code,
-                    else => null,
-                };
-            }
-
-            inline fn stopsDependencyTrace(_: ClientFile) bool {
-                return false;
-            }
-
-            pub fn fileKind(self: *const ClientFile) FileKind {
-                return self.kind();
-            }
         };
 
         pub const File = switch (side) {

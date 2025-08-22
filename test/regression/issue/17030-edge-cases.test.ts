@@ -58,7 +58,7 @@ test("mixed parameter types work correctly", async () => {
   `;
 
   const result = await sql`SELECT * FROM test_mixed_types WHERE int_data = ${num}`;
-  
+
   expect(result[0].json_data).toEqual([1, 2, 3]);
   expect(result[0].text_data).toBe("hello world");
   expect(result[0].int_data).toBe(42);
@@ -78,7 +78,7 @@ test("objects are still handled as JSONB", async () => {
   `;
 
   const result = await sql`SELECT json_data FROM test_mixed_types WHERE json_data->>'name' = 'test'`;
-  
+
   expect(result[0].json_data).toEqual({ name: "test", numbers: [7, 8, 9] });
 });
 
@@ -96,7 +96,7 @@ test("empty arrays work", async () => {
   `;
 
   const result = await sql`SELECT json_data FROM test_mixed_types WHERE json_data = '[]'::jsonb`;
-  
+
   expect(result[0].json_data).toEqual([]);
 });
 
@@ -106,14 +106,23 @@ test("nested arrays work", async () => {
     return;
   }
 
-  const nestedArr = [[1, 2], [3, 4], [5, 6]];
+  const nestedArr = [
+    [1, 2],
+    [3, 4],
+    [5, 6],
+  ];
 
   await sql`
     INSERT INTO test_mixed_types (json_data)
     VALUES (${nestedArr})
   `;
 
-  const result = await sql`SELECT json_data FROM test_mixed_types WHERE id = currval(pg_get_serial_sequence('test_mixed_types', 'id'))`;
-  
-  expect(result[0].json_data).toEqual([[1, 2], [3, 4], [5, 6]]);
+  const result =
+    await sql`SELECT json_data FROM test_mixed_types WHERE id = currval(pg_get_serial_sequence('test_mixed_types', 'id'))`;
+
+  expect(result[0].json_data).toEqual([
+    [1, 2],
+    [3, 4],
+    [5, 6],
+  ]);
 });

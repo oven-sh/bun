@@ -642,14 +642,14 @@ test("onEnd Plugin executes callback", async () => {
   });
 
   let onEndCalled = false;
-  
+
   await Bun.build({
     entrypoints: [join(dir, "entry.js")],
     plugins: [
       {
         name: "plugin",
         setup(build) {
-          build.onEnd((result) => {
+          build.onEnd(result => {
             onEndCalled = true;
             expect(result).toHaveProperty("errors");
             expect(result).toHaveProperty("warnings");
@@ -660,7 +660,7 @@ test("onEnd Plugin executes callback", async () => {
       },
     ],
   });
-  
+
   expect(onEndCalled).toBe(true);
 });
 
@@ -674,14 +674,14 @@ test("onEnd Plugin handles multiple callbacks", async () => {
 
   let firstCalled = false;
   let secondCalled = false;
-  
+
   await Bun.build({
     entrypoints: [join(dir, "entry.js")],
     plugins: [
       {
         name: "plugin1",
         setup(build) {
-          build.onEnd((result) => {
+          build.onEnd(result => {
             firstCalled = true;
             expect(result).toHaveProperty("errors");
             expect(result).toHaveProperty("warnings");
@@ -689,9 +689,9 @@ test("onEnd Plugin handles multiple callbacks", async () => {
         },
       },
       {
-        name: "plugin2", 
+        name: "plugin2",
         setup(build) {
-          build.onEnd((result) => {
+          build.onEnd(result => {
             secondCalled = true;
             expect(result).toHaveProperty("errors");
             expect(result).toHaveProperty("warnings");
@@ -700,7 +700,7 @@ test("onEnd Plugin handles multiple callbacks", async () => {
       },
     ],
   });
-  
+
   expect(firstCalled).toBe(true);
   expect(secondCalled).toBe(true);
 });

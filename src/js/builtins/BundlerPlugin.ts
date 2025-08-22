@@ -124,13 +124,13 @@ export function runSetupFunction(
   isBake: boolean,
 ): Promise<Promise<any>[]> | Promise<any>[] | undefined {
   this.promises = promises;
-  
+
   // Register this plugin instance globally so C++ can find it for onEnd callbacks
   globalThis.activePluginInstance = this;
-  
+
   // Add the runOnEndPlugins method to this instance
   if (!this.runOnEndPlugins) {
-    this.runOnEndPlugins = function(buildResult) {
+    this.runOnEndPlugins = function (buildResult) {
       const { onEndCallbacks } = this;
       if (!onEndCallbacks || onEndCallbacks.length === 0) {
         return;
@@ -527,7 +527,6 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
     );
   }
 }
-
 
 export function runOnLoadPlugins(
   this: BundlerPlugin,

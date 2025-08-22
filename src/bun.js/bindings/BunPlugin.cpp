@@ -864,30 +864,30 @@ extern "C" JSC::EncodedJSValue Bun__runOnEndPlugins(Zig::GlobalObject* globalObj
 {
     JSC::VM& vm = globalObject->vm();
     JSC::JSLockHolder lock(vm);
-    
+
     // Get the current active plugin instance from the global object
     JSC::JSValue activePluginInstance = globalObject->get(globalObject, JSC::Identifier::fromString(vm, "activePluginInstance"));
     if (activePluginInstance.isUndefined() || !activePluginInstance.isObject()) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
-    
+
     // Get the runOnEndPlugins function from the active plugin instance
     JSC::JSObject* pluginObject = activePluginInstance.getObject();
     JSC::JSValue runOnEndFunction = pluginObject->get(globalObject, JSC::Identifier::fromString(vm, "runOnEndPlugins"));
-    
+
     if (runOnEndFunction.isUndefined() || !runOnEndFunction.isCallable()) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
-    
+
     // Call runOnEndPlugins with the build result
     JSC::CallData callData = JSC::getCallData(runOnEndFunction);
     if (callData.type == JSC::CallData::Type::None) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
-    
+
     JSC::MarkedArgumentBuffer args;
     args.append(JSC::JSValue::decode(buildResult));
-    
+
     JSC::JSValue result = JSC::call(globalObject, runOnEndFunction, callData, activePluginInstance, args);
     return JSC::JSValue::encode(result);
 }

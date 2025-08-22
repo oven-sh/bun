@@ -327,24 +327,21 @@ install_keylocker() {
     
     # Try multiple installation approaches with better error detection
     local install_success=false
-    local install_log_path="/tmp/keylocker-install-$$.log"
+    
+    # Create log file in Windows temp directory
+    local win_temp_dir=$(cmd //c "echo %TEMP%" 2>/dev/null | tr -d '\r\n')
+    local install_log_path="${win_temp_dir}\\keylocker-install-$$.log"
     
     # Method 1: Direct msiexec with full automation and proper logging
     log_info "Attempting MSI installation (method 1: direct msiexec)..."
     local msi_exit_code=0
     
-    # Run msiexec and capture exit code
-    cmd //c "msiexec.exe /i \"$win_msi_path\" /quiet /norestart /L*V \"$(cygpath -w "$install_log_path" 2>/dev/null || echo "$install_log_path")\" ACCEPT_EULA=1 ADDLOCAL=ALL ALLUSERS=1" 2>&1
+    # Run msiexec and capture exit code (without log file if it causes issues)
+    cmd //c "msiexec.exe /i \"$win_msi_path\" /quiet /norestart ACCEPT_EULA=1 ADDLOCAL=ALL ALLUSERS=1" 2>&1
     msi_exit_code=$?
     
     log_info "MSI installer command completed with exit code: $msi_exit_code"
     sleep 20  # Wait for installation to complete
-    
-    # Show some log content if available
-    if [[ -f "$install_log_path" ]]; then
-        log_info "MSI installation log (last 20 lines):"
-        tail -20 "$install_log_path" 2>/dev/null || true
-    fi
     
     # Check if tools were actually installed  
     if [[ -f "/c/Program Files/DigiCert/DigiCert Keylocker Tools/smctl.exe" ]] || 

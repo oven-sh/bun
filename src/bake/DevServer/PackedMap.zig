@@ -64,7 +64,7 @@ pub const LineCount = bun.GenericIndex(u32, u8);
 /// HTML, CSS, Assets, and failed files do not have source maps. These cases
 /// should never allocate an object. There is still relevant state for these
 /// files to encode, so a tagged union is used.
-pub const Shared = union(enum(u2)) {
+pub const Shared = union(enum) {
     some: bun.ptr.Shared(*PackedMap),
     none: void,
     line_count: LineCount,

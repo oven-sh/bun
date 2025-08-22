@@ -133,9 +133,35 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                 return self.is_client_component_boundary;
             }
 
-            pub fn fileKind(self: ServerFile) FileKind {
+            pub fn fileKind(self: *const ServerFile) FileKind {
                 return self.kind;
             }
+        };
+
+        const Content = union(enum) {
+            unknown: void,
+            /// When stale, the code is "", otherwise it contains at least one non-whitespace
+            /// character, as empty chunks contain at least a function wrapper.
+            js: JsCode,
+            asset: JsCode,
+            /// A CSS root is the first file in a CSS bundle, aka the one that the JS or HTML file
+            /// points into.
+            ///
+            /// There are many complicated rules when CSS files reference each other, none of which
+            /// are modelled in IncrementalGraph. Instead, any change to downstream files will find
+            /// the CSS root, and queue it for a re-bundle. Additionally, CSS roots only have one
+            /// level of imports, as the code in `finalizeBundle` will add all referenced files as
+            /// edges directly to the root, creating a flat list instead of a tree. Those downstream
+            /// files remaining empty; only present so that invalidation can trace them to this
+            /// root.
+            css_root: CssAssetId,
+            css_child: void,
+
+            const Untagged = blk: {
+                var info = @typeInfo(Content);
+                info.@"union".tag_type = null;
+                break :blk @Type(info);
+            };
         };
 
         const ClientFile = struct {
@@ -151,81 +177,55 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             /// This is a file is an entry point to the framework. Changing this will always cause
             /// a full page reload.
             is_special_framework_file: bool = false,
-            /// A CSS root is the first file in a CSS bundle, aka the one that the JS or HTML file
-            /// points into.
-            ///
-            /// There are many complicated rules when CSS files reference each other, none of which
-            /// are modelled in IncrementalGraph. Instead, any change to downstream files will find
-            /// the CSS root, and queue it for a re-bundle. Additionally, CSS roots only have one
-            /// level of imports, as the code in `finalizeBundle` will add all referenced files as
-            /// edges directly to the root, creating a flat list instead of a tree. Those downstream
-            /// files remaining empty; only present so that invalidation can trace them to this
-            /// root.
-            is_css_root: bool = false,
-
-            pub const Content = union(FileKind) {
-                unknown: void,
-                /// When stale, the code is "", otherwise it contains at least one non-whitespace
-                /// character, as empty chunks contain at least a function wrapper.
-                js: JsCode,
-                asset: JsCode,
-                css: CssAssetId,
-
-                const Untagged = blk: {
-                    var info = @typeInfo(Content);
-                    info.@"union".tag_type = null;
-                    break :blk @Type(info);
-                };
-            };
 
             /// Packed version of `ClientFile`. Don't access fields directly; call `unpack`.
+            // Due to padding, using `packed struct` here wouldn't save any space.
             pub const Packed = struct {
-                _content: Content.Untagged,
-                _source_map: union {
-                    some: Shared(*PackedMap),
-                    none: struct {
-                        line_count: union {
-                            some: LineCount,
-                            none: void,
-                        },
-                        html_route_bundle_index: union {
-                            some: RouteBundle.Index,
-                            none: void,
+                unsafe_packed_data: struct {
+                    content: Content.Untagged,
+                    source_map: union {
+                        some: Shared(*PackedMap),
+                        none: struct {
+                            line_count: union {
+                                some: LineCount,
+                                none: void,
+                            },
+                            html_route_bundle_index: union {
+                                some: RouteBundle.Index,
+                                none: void,
+                            },
                         },
                     },
-                },
-                _flags: packed struct {
-                    kind: FileKind,
+                    content_tag: std.meta.Tag(Content),
                     source_map_tag: std.meta.Tag(PackedMap.Shared),
                     is_html_route: bool,
                     failed: bool,
                     is_hmr_root: bool,
                     is_special_framework_file: bool,
-                    is_css_root: bool,
                 },
 
                 pub fn unpack(self: Packed) ClientFile {
+                    const data = self.unsafe_packed_data;
                     return .{
-                        .content = switch (self._flags.kind) {
+                        .content = switch (data.content_tag) {
                             inline else => |tag| @unionInit(
                                 Content,
                                 @tagName(tag),
-                                @field(self._content, @tagName(tag)),
+                                @field(data.content, @tagName(tag)),
                             ),
                         },
-                        .source_map = switch (self._flags.source_map_tag) {
-                            .some => .{ .some = self._source_map.some },
+                        .source_map = switch (data.source_map_tag) {
+                            .some => .{ .some = data.source_map.some },
                             .none => .none,
-                            .line_count => .{ .line_count = self._source_map.none.line_count.some },
+                            .line_count => .{ .line_count = data.source_map.none.line_count.some },
                         },
-                        .html_route_bundle_index = if (self._flags.is_html_route)
-                            self._source_map.none.html_route_bundle_index.some
+                        .html_route_bundle_index = if (data.is_html_route)
+                            data.source_map.none.html_route_bundle_index.some
                         else
                             null,
-                        .failed = self._flags.failed,
-                        .is_hmr_root = self._flags.is_hmr_root,
-                        .is_special_framework_file = self._flags.is_special_framework_file,
-                        .is_css_root = self._flags.is_css_root,
+                        .failed = data.failed,
+                        .is_hmr_root = data.is_hmr_root,
+                        .is_special_framework_file = data.is_special_framework_file,
                     };
                 }
             };
@@ -233,15 +233,15 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             pub fn pack(self: *const ClientFile) Packed {
                 // HTML files should not have source maps
                 assert(self.html_route_bundle_index == null or self.source_map != .some);
-                return .{
-                    ._content = switch (std.meta.activeTag(self.content)) {
+                return .{ .unsafe_packed_data = .{
+                    .content = switch (std.meta.activeTag(self.content)) {
                         inline else => |tag| @unionInit(
                             Content.Untagged,
                             @tagName(tag),
                             @field(self.content, @tagName(tag)),
                         ),
                     },
-                    ._source_map = switch (self.source_map) {
+                    .source_map = switch (self.source_map) {
                         .some => |map| .{ .some = map },
                         else => .{ .none = .{
                             .line_count = switch (self.source_map) {
@@ -254,15 +254,21 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                                 .{ .none = {} },
                         } },
                     },
-                    ._flags = .{
-                        .kind = self.content,
-                        .source_map_tag = self.source_map,
-                        .is_html_route = self.html_route_bundle_index != null,
-                        .failed = self.failed,
-                        .is_hmr_root = self.is_hmr_root,
-                        .is_special_framework_file = self.is_special_framework_file,
-                        .is_css_root = self.is_css_root,
-                    },
+                    .content_tag = self.content,
+                    .source_map_tag = self.source_map,
+                    .is_html_route = self.html_route_bundle_index != null,
+                    .failed = self.failed,
+                    .is_hmr_root = self.is_hmr_root,
+                    .is_special_framework_file = self.is_special_framework_file,
+                } };
+            }
+
+            pub fn kind(self: *const ClientFile) FileKind {
+                return switch (self.content) {
+                    .unknown => .unknown,
+                    .js => .js,
+                    .asset => .asset,
+                    .css_root, .css_child => .css,
                 };
             }
 
@@ -278,7 +284,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             }
 
             pub fn fileKind(self: *const ClientFile) FileKind {
-                return self.content;
+                return self.kind();
             }
         };
 
@@ -307,7 +313,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                 .js, .asset => |code| {
                     g.allocator().free(code);
                 },
-                .css => if (css == .unref_css) {
+                .css_root, .css_child => if (css == .unref_css) {
                     g.owner().assets.unrefByPath(key);
                 },
                 .unknown => {},
@@ -515,7 +521,8 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
 
                     gop.value_ptr.* = File.pack(&.{
                         .content = switch (content) {
-                            .css => |css| .{ .css = css },
+                            // non-root CSS files never get registered in this function
+                            .css => |css| .{ .css_root = css },
                             .js => |js| if (ctx.loaders[index.get()].isJavaScriptLike())
                                 .{ .js = js.code }
                             else
@@ -548,8 +555,6 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                         .html_route_bundle_index = html_route_bundle_index,
                         .is_hmr_root = ctx.server_to_client_bitset.isSet(index.get()),
                         .is_special_framework_file = is_special_framework_file,
-                        // non-root CSS files never get registered in this function
-                        .is_css_root = content == .css,
                     });
 
                     switch (content) {
@@ -1165,15 +1170,15 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                 },
                 .client => {
                     switch (file.content) {
-                        .css => |id| {
-                            // It is only possible to find CSS roots by tracing.
-                            bun.debugAssert(file.is_css_root);
-
+                        .css_child => {
+                            bun.assertf(false, "only CSS roots should be found by tracing", .{});
+                        },
+                        .css_root => |id| {
                             if (goal == .find_css) {
                                 try g.current_css_files.append(g.allocator(), id);
                             }
 
-                            // See the comment on `is_css_root` on how CSS roots
+                            // See the comment on `Content.css_root` on how CSS roots
                             // have a slightly different meaning for their assets.
                             // Regardless, CSS can't import JS, so this trace is done.
                             return;
@@ -1279,7 +1284,14 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             if (!gop.found_existing) {
                 gop.key_ptr.* = try dev_alloc.dupe(u8, abs_path);
                 gop.value_ptr.* = switch (side) {
-                    .client => File.pack(&.{ .content = .unknown }),
+                    .client => File.pack(&.{
+                        .content = switch (kind) {
+                            .unknown => .unknown,
+                            .js => .{ .js = "" },
+                            .asset => .{ .asset = "" },
+                            .css => .css_child,
+                        },
+                    }),
                     .server => .{
                         .is_rsc = false,
                         .is_ssr = false,
@@ -1513,8 +1525,8 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                 const data = values[index].unpack();
                 switch (side) {
                     .client => switch (data.content) {
-                        .css => {
-                            if (data.is_css_root) {
+                        .css_root, .css_child => {
+                            if (data.content == .css_root) {
                                 try entry_points.appendCss(alloc, path);
                             }
 
@@ -1525,7 +1537,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                                 g.stale_files.set(dep.get());
 
                                 const dep_file = values[dep.get()].unpack();
-                                if (dep_file.is_css_root) {
+                                if (dep_file.content == .css_root) {
                                     try entry_points.appendCss(alloc, keys[dep.get()]);
                                 }
 
@@ -1549,7 +1561,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                                 // asset URL. Additionally, it is currently seen
                                 // as a bit nicer in HMR to do this for all JS
                                 // files, though that could be reconsidered.
-                                if (dep_file.is_css_root) {
+                                if (dep_file.content == .css_root) {
                                     try entry_points.appendCss(alloc, keys[dep.get()]);
                                 } else {
                                     try entry_points.appendJs(alloc, keys[dep.get()], .client);

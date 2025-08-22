@@ -164,7 +164,7 @@ pub fn processFileList(
     if (dev.has_tailwind_plugin_hack) |*map| {
         for (map.keys()) |abs_path| {
             const file = (dev.client_graph.bundled_files.get(abs_path) orelse continue).unpack();
-            if (file.content == .css)
+            if (file.kind() == .css)
                 entry_points.appendCss(temp_alloc, abs_path) catch bun.outOfMemory();
         }
     }

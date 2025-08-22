@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
 
 test("issue #7392", async () => {
   const dir = tempDirWithFiles("issue-7392", {
@@ -50,6 +50,7 @@ test("issue #7392", async () => {
     cmd: [bunExe(), "test"],
     cwd: dir,
     stdio: ["inherit", "pipe", "pipe"],
+    env: bunEnv,
   });
 
   const code = await exited;

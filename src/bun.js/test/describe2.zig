@@ -100,9 +100,7 @@ pub const js_fns = struct {
     }
 
     const TestConfig = struct {
-        concurrent: bool,
-        only: bool,
-        mode: ExecutionEntryTag,
+        base: BaseScopeCfg,
         signature: []const u8,
     };
     pub fn genericTest(comptime cfg: TestConfig) type {
@@ -119,10 +117,10 @@ pub const js_fns = struct {
 
         const bunTest = try getActive(globalThis, .{ .signature = cfg.signature, .allow_in_preload = false });
 
-        if (cfg.only) try errorInCI(globalThis, cfg.signature);
+        if (cfg.base.self_only) try errorInCI(globalThis, cfg.signature);
 
         const description, var callback: ?jsc.JSValue = callFrame.argumentsAsArray(2);
-        if (cfg.mode.needsCallback()) {
+        if (cfg.base.self_mode.needsCallback()) {
             callback = callback.?.withAsyncContextIfNeeded(globalThis);
         } else {
             callback = null;
@@ -134,21 +132,12 @@ pub const js_fns = struct {
 
         switch (bunTest.phase) {
             .collection => {
+                var base = cfg.base;
+                base.name_not_owned = description_str;
                 try bunTest.collection.enqueueTestCallback(.{
                     .callback = callback,
                     .line_no = line_no,
-                }, .{
-                    .name_not_owned = description_str,
-                    .self_concurrent = cfg.concurrent,
-                    .self_only = cfg.only,
-                    .self_mode = switch (cfg.mode) {
-                        .normal => .normal,
-                        .skip => .skip,
-                        .todo => .todo,
-                        else => @panic("TODO"),
-                        // TODO: elim this switch
-                    },
-                });
+                }, base);
                 return .js_undefined;
             },
             .execution => {
@@ -472,7 +461,18 @@ pub const BaseScopeCfg = struct {
     self_only: bool = false,
     self_filter: bool = false,
 };
-pub const ScopeMode = enum { normal, skip, todo };
+pub const ScopeMode = enum {
+    normal,
+    skip,
+    todo,
+    fn needsCallback(this: ScopeMode) bool {
+        return switch (this) {
+            .normal => true,
+            .skip => false,
+            .todo => @panic("TODO: --todo flag should make .todo act like .failing"),
+        };
+    }
+};
 pub const BaseScope = struct {
     parent: ?*DescribeScope,
     name: ?[]const u8,
@@ -556,24 +556,6 @@ pub const DescribeScope = struct {
             .afterAll => try this.afterAll.append(entry),
         }
         return entry;
-    }
-};
-pub const ExecutionEntryTag = enum {
-    normal,
-    skip,
-    todo,
-
-    beforeAll,
-    beforeEach,
-    afterEach,
-    afterAll,
-
-    pub fn needsCallback(this: ExecutionEntryTag) bool {
-        return switch (this) {
-            .normal, .beforeAll, .beforeEach, .afterEach, .afterAll => true,
-            .skip => false,
-            .todo => @panic("TODO: --todo flag should make .todo act like .failing"),
-        };
     }
 };
 pub const ExecutionEntryCfg = struct {

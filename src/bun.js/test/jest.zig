@@ -374,12 +374,12 @@ pub const Jest = struct {
 
         const module = JSValue.createEmptyObject(globalObject, 14);
 
-        const test_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("test"), 2, Describe2.js_fns.genericTest(.{ .concurrent = false, .only = false, .mode = .normal, .signature = "test()" }).testFn, false);
+        const test_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("test"), 2, Describe2.js_fns.genericTest(.{ .base = .{}, .signature = "test()" }).testFn, false);
         module.put(globalObject, ZigString.static("test"), test_fn);
 
-        test_fn.put(globalObject, ZigString.static("concurrent"), jsc.host_fn.NewFunction(globalObject, ZigString.static("concurrent"), 2, Describe2.js_fns.genericTest(.{ .concurrent = true, .only = false, .mode = .normal, .signature = "test.concurrent()" }).testFn, false));
-        test_fn.put(globalObject, ZigString.static("only"), jsc.host_fn.NewFunction(globalObject, ZigString.static("only"), 2, Describe2.js_fns.genericTest(.{ .concurrent = false, .only = true, .mode = .normal, .signature = "test.only()" }).testFn, false));
-        test_fn.put(globalObject, ZigString.static("skip"), jsc.host_fn.NewFunction(globalObject, ZigString.static("skip"), 2, Describe2.js_fns.genericTest(.{ .concurrent = false, .only = false, .mode = .skip, .signature = "test.skip()" }).testFn, false));
+        test_fn.put(globalObject, ZigString.static("concurrent"), jsc.host_fn.NewFunction(globalObject, ZigString.static("concurrent"), 2, Describe2.js_fns.genericTest(.{ .base = .{ .self_concurrent = true }, .signature = "test.concurrent()" }).testFn, false));
+        test_fn.put(globalObject, ZigString.static("only"), jsc.host_fn.NewFunction(globalObject, ZigString.static("only"), 2, Describe2.js_fns.genericTest(.{ .base = .{ .self_only = true }, .signature = "test.only()" }).testFn, false));
+        test_fn.put(globalObject, ZigString.static("skip"), jsc.host_fn.NewFunction(globalObject, ZigString.static("skip"), 2, Describe2.js_fns.genericTest(.{ .base = .{ .self_mode = .skip }, .signature = "test.skip()" }).testFn, false));
 
         inline for (.{ "todo", "failing", "skipIf", "todoIf", "each" }) |method_name| {
             const name = ZigString.static(method_name);

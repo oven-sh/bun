@@ -1229,31 +1229,28 @@ if(NOT BUN_CPP_ONLY)
     
     # Then sign both executables on Windows
     if(WIN32 AND ENABLE_WINDOWS_CODESIGNING)
-      set(SIGN_SCRIPT "${CMAKE_SOURCE_DIR}/.buildkite/scripts/sign-windows.sh")
+      set(SIGN_SCRIPT "${CMAKE_SOURCE_DIR}/.buildkite/scripts/sign-windows.ps1")
       
       # Verify signing script exists
       if(NOT EXISTS "${SIGN_SCRIPT}")
         message(FATAL_ERROR "Windows signing script not found: ${SIGN_SCRIPT}")
       endif()
       
-      # Find bash executable for Windows
-      find_program(BASH_EXECUTABLE 
-        NAMES bash bash.exe
+      # Use PowerShell for Windows code signing (native Windows, no path issues)
+      find_program(POWERSHELL_EXECUTABLE 
+        NAMES pwsh.exe powershell.exe
         PATHS 
-          "C:/Program Files/Git/bin"
-          "C:/Program Files (x86)/Git/bin"
-          "C:/msys64/usr/bin"
-          "C:/cygwin64/bin"
-          "C:/Windows/System32/bash.exe"
-        DOC "Path to bash executable"
+          "$ENV{ProgramFiles}/PowerShell/7"
+          "$ENV{ProgramFiles(x86)}/PowerShell/7"
+          "$ENV{WINDIR}/System32/WindowsPowerShell/v1.0"
+        DOC "Path to PowerShell executable"
       )
       
-      if(NOT BASH_EXECUTABLE)
-        message(WARNING "bash executable not found, trying default bash command")
-        set(BASH_EXECUTABLE "bash")
+      if(NOT POWERSHELL_EXECUTABLE)
+        set(POWERSHELL_EXECUTABLE "powershell.exe")
       endif()
       
-      message(STATUS "Using bash executable: ${BASH_EXECUTABLE}")
+      message(STATUS "Using PowerShell executable: ${POWERSHELL_EXECUTABLE}")
       
       # Sign both bun-profile.exe and bun.exe after stripping
       register_command(
@@ -1264,7 +1261,7 @@ if(NOT BUN_CPP_ONLY)
         COMMENT
           "Code signing bun-profile.exe and bun.exe with DigiCert KeyLocker"
         COMMAND
-          "${BASH_EXECUTABLE}" "${SIGN_SCRIPT}" "${BUILD_PATH}/${bunExe}" "${BUILD_PATH}/${bunStripExe}"
+          "${POWERSHELL_EXECUTABLE}" "-NoProfile" "-ExecutionPolicy" "Bypass" "-File" "${SIGN_SCRIPT}" "-BunProfileExe" "${BUILD_PATH}/${bunExe}" "-BunExe" "${BUILD_PATH}/${bunStripExe}"
         CWD
           ${CMAKE_SOURCE_DIR}
         SOURCES

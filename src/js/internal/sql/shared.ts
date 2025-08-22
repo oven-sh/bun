@@ -1,7 +1,5 @@
 const PublicArray = globalThis.Array;
 
-let fs: typeof import("node:fs");
-
 declare global {
   interface NumberConstructor {
     isSafeInteger(number: unknown): number is number;
@@ -428,15 +426,11 @@ function parseOptions(
     // add /.s.PGSQL.${port} if the unix domain socket is listening on that path
     if (path && Number.isSafeInteger(port) && path?.indexOf("/.s.PGSQL.") === -1) {
       const pathWithSocket = `${path}/.s.PGSQL.${port}`;
-      if (!fs) {
-        // lazily load node:fs.
-        fs = require("node:fs") as unknown as typeof import("node:fs");
-      }
 
       // Only add the path if it actually exists. It would be better to just
       // always respect whatever the user passes in, but that would technically
       // be a breakpoint change at this point.
-      if (fs.existsSync(pathWithSocket)) {
+      if (require("node:fs").existsSync(pathWithSocket)) {
         path = pathWithSocket;
       }
     }
@@ -596,7 +590,7 @@ function parseOptions(
   }
 
   if (path) {
-    if (fs.existsSync(path)) {
+    if (require("node:fs").existsSync(path)) {
       ret.path = path;
     }
   }

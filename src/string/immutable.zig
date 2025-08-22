@@ -2251,7 +2251,6 @@ pub const copyUTF16IntoUTF8WithBufferImpl = unicode.copyUTF16IntoUTF8WithBufferI
 pub const decodeCheck = unicode.decodeCheck;
 pub const decodeWTF8RuneT = unicode.decodeWTF8RuneT;
 pub const decodeWTF8RuneTMultibyte = unicode.decodeWTF8RuneTMultibyte;
-pub const elementLengthLatin1IntoUTF16 = unicode.elementLengthLatin1IntoUTF16;
 pub const elementLengthCP1252IntoUTF16 = unicode.elementLengthCP1252IntoUTF16;
 pub const elementLengthLatin1IntoUTF8 = unicode.elementLengthLatin1IntoUTF8;
 pub const elementLengthUTF16IntoUTF8 = unicode.elementLengthUTF16IntoUTF8;

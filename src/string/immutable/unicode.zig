@@ -865,14 +865,9 @@ pub fn copyCP1252IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: t
     };
 }
 
-pub const elementLengthCP1252IntoUTF16 = elementLengthLatin1IntoUTF16; // these happen to be identical (because no cp1252 codepoints are > U+FFFF)
-pub fn elementLengthLatin1IntoUTF16(comptime Type: type, latin1_: Type) usize {
-    // latin1 is always at most 1 UTF-16 code unit long
-    if (comptime std.meta.Child([]const u16) == Type) {
-        return latin1_.len;
-    }
-
-    return bun.simdutf.length.utf16.from.latin1(latin1_);
+pub fn elementLengthCP1252IntoUTF16(comptime Type: type, cp1252_: Type) usize {
+    // cp1252 is always at most 1 UTF-16 code unit long
+    return cp1252_.len;
 }
 
 pub fn eqlUtf16(comptime self: string, other: []const u16) bool {

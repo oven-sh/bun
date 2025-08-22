@@ -292,16 +292,18 @@ pub fn writeU8(input: [*]const u8, len: usize, to_ptr: [*]u8, to_len: usize, com
             if (to_len < 2)
                 return 0;
 
-            switch (std.mem.isAligned(@intFromPtr(to_ptr), @alignOf([*]u16))) {
-                inline else => |is_aligned| {
-                    const OutputType = if (is_aligned) [*]u16 else [*]align(1) u16;
+            if (std.mem.isAligned(@intFromPtr(to_ptr), @alignOf([*]u16))) {
+                const buf = input[0..len];
 
-                    const buf = input[0..len];
+                const output = @as([*]u16, @ptrCast(@alignCast(to_ptr)))[0 .. to_len / 2];
+                const written = strings.copyLatin1IntoUTF16([]u16, output, []const u8, buf).written;
+                return written * 2;
+            } else {
+                const buf = input[0..len];
+                const output = @as([*]align(1) u16, @ptrCast(to_ptr))[0 .. to_len / 2];
 
-                    const output = @as(OutputType, @ptrCast(@alignCast(to_ptr)))[0 .. to_len / 2];
-                    for (output, buf) |*to_value, *from_value| to_value.* = from_value.*;
-                    return buf.len * 2;
-                },
+                const written = strings.copyLatin1IntoUTF16([]align(1) u16, output, []const u8, buf).written;
+                return written * 2;
             }
         },
 
@@ -437,7 +439,7 @@ pub fn constructFromU8(input: [*]const u8, len: usize, allocator: std.mem.Alloca
         // return as bytes
         .ucs2, .utf16le => {
             var to = allocator.alloc(u16, len) catch return &[_]u8{};
-            for (to, input[0..len]) |*to_value, *from_value| to_value.* = from_value.*;
+            _ = strings.copyLatin1IntoUTF16([]u16, to, []const u8, input[0..len]);
             return std.mem.sliceAsBytes(to[0..len]);
         },
 

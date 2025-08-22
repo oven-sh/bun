@@ -358,10 +358,10 @@ function Sign-Executable {
     
     # Sign the executable using smctl
     try {
-        # smctl sign command with proper arguments
+        # smctl sign command with keypair-alias
         $signArgs = @(
             "sign",
-            "--fingerprint", $env:SM_KEYPAIR_ALIAS,
+            "--keypair-alias", $env:SM_KEYPAIR_ALIAS,
             "--input", $ExePath,
             "--verbose"
         )

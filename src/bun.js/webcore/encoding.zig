@@ -289,6 +289,7 @@ pub fn writeU8(input: [*]const u8, len: usize, to_ptr: [*]u8, to_len: usize, com
         },
         // encode latin1 into UTF16
         .ucs2, .utf16le => {
+            if (true) @panic("TODO: CI");
             if (to_len < 2)
                 return 0;
 
@@ -438,6 +439,7 @@ pub fn constructFromU8(input: [*]const u8, len: usize, allocator: std.mem.Alloca
         // encode latin1 into UTF16
         // return as bytes
         .ucs2, .utf16le => {
+            if (true) @panic("TODO: CI");
             var to = allocator.alloc(u16, len) catch return &[_]u8{};
             _ = strings.copyLatin1IntoUTF16([]u16, to, []const u8, input[0..len]);
             return std.mem.sliceAsBytes(to[0..len]);

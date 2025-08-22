@@ -39,40 +39,37 @@ fn escapeXml(str: string, writer: anytype) !void {
         try writer.writeAll(str[last..]);
     }
 }
-fn fmtStatusTextLine(comptime status: @Type(.enum_literal), comptime emoji_or_color: bool) []const u8 {
-    comptime {
-        // emoji and color might be split into two different options in the future
-        // some terminals support color, but not emoji.
-        // For now, they are the same.
-        return switch (emoji_or_color) {
-            true => switch (status) {
-                .pass => Output.prettyFmt("<r><green>✓<r>", emoji_or_color),
-                .fail => Output.prettyFmt("<r><red>✗<r>", emoji_or_color),
-                .skip, .skipped_because_label => Output.prettyFmt("<r><yellow>»<d>", emoji_or_color),
-                .todo => Output.prettyFmt("<r><magenta>✎<r>", emoji_or_color),
-                else => @compileError("Invalid status " ++ @tagName(status)),
-            },
-            else => switch (status) {
-                .pass => Output.prettyFmt("<r><green>(pass)<r>", emoji_or_color),
-                .fail => Output.prettyFmt("<r><red>(fail)<r>", emoji_or_color),
-                .skip, .skipped_because_label => Output.prettyFmt("<r><yellow>(skip)<d>", emoji_or_color),
-                .todo => Output.prettyFmt("<r><magenta>(todo)<r>", emoji_or_color),
-                else => @compileError("Invalid status " ++ @tagName(status)),
-            },
-        };
-    }
+fn fmtStatusTextLine(status: describe2.Execution.Result, emoji_or_color: bool) []const u8 {
+    // emoji and color might be split into two different options in the future
+    // some terminals support color, but not emoji.
+    // For now, they are the same.
+    return switch (emoji_or_color) {
+        true => switch (status) {
+            .pending => Output.prettyFmt("<r><black>…<r>", emoji_or_color),
+            .pass => Output.prettyFmt("<r><green>✓<r>", emoji_or_color),
+            .fail, .timeout, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => Output.prettyFmt("<r><red>✗<r>", emoji_or_color),
+            .skip, .skipped_because_label => Output.prettyFmt("<r><yellow>»<d>", emoji_or_color),
+            .todo => Output.prettyFmt("<r><magenta>✎<r>", emoji_or_color),
+        },
+        else => switch (status) {
+            .pending => Output.prettyFmt("<r><black>(pending)<r>", emoji_or_color),
+            .pass => Output.prettyFmt("<r><green>(pass)<r>", emoji_or_color),
+            .fail, .timeout, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => Output.prettyFmt("<r><red>(fail)<r>", emoji_or_color),
+            .skip, .skipped_because_label => Output.prettyFmt("<r><yellow>(skip)<d>", emoji_or_color),
+            .todo => Output.prettyFmt("<r><magenta>(todo)<r>", emoji_or_color),
+        },
+    };
 }
 
-pub fn writeTestStatusLine(comptime status: @Type(.enum_literal), writer: anytype) void {
+pub fn writeTestStatusLine(comptime status: describe2.Execution.Result, writer: anytype) void {
     // When using AI agents, only print failures
     if (Output.isAIAgent() and status != .fail) {
         return;
     }
 
-    if (Output.enable_ansi_colors_stderr)
-        writer.print(fmtStatusTextLine(status, true), .{}) catch unreachable
-    else
-        writer.print(fmtStatusTextLine(status, false), .{}) catch unreachable;
+    switch (Output.enable_ansi_colors_stderr) {
+        inline else => |enable_ansi_colors_stderr| writer.print(comptime fmtStatusTextLine(status, enable_ansi_colors_stderr), .{}) catch unreachable,
+    }
 }
 
 // Remaining TODOs:
@@ -604,7 +601,7 @@ pub const CommandLineReporter = struct {
     pub fn handleTestStart(_: *TestRunner.Callback, _: Test.ID) void {}
 
     fn printTestLine(
-        comptime status: TestRunner.Test.Status,
+        comptime status: describe2.Execution.Result,
         buntest: *describe2.BunTestFile,
         sequence: *describe2.Execution.ExecutionSequence,
         test_entry: *describe2.ExecutionEntry,
@@ -799,63 +796,21 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn handleTestCompleted(buntest: *describe2.BunTestFile, sequence: *describe2.Execution.ExecutionSequence, test_entry: *describe2.ExecutionEntry, elapsed_ns: u64) void {
-        var writer = Output.errorWriterBuffered();
-        defer Output.flush();
+        var output_buf: std.ArrayListUnmanaged(u8) = .empty; // TODO: save skips and fails in skips_to_repeat_buf and fails_to_repeat_buf
+        defer output_buf.deinit(buntest.gpa);
+
+        const initial_length = output_buf.items.len;
+        var writer = output_buf.writer(buntest.gpa);
 
         switch (sequence.result) {
-            .pass => {
-                writeTestStatusLine(.pass, &writer);
-                printTestLine(.pass, buntest, sequence, test_entry, elapsed_ns, &writer);
+            inline else => |result| {
+                writeTestStatusLine(result, &writer);
+                printTestLine(result, buntest, sequence, test_entry, elapsed_ns, &writer);
             },
-            .skip => {
-                var skips_to_repeat_buf = std.ArrayListUnmanaged(u8).empty; // TODO: add back saving & using skips_to_repeat_buf
-                defer skips_to_repeat_buf.deinit(bun.default_allocator);
-
-                const initial_length = skips_to_repeat_buf.items.len;
-                var skip_writer = skips_to_repeat_buf.writer(bun.default_allocator);
-
-                writeTestStatusLine(.skip, &skip_writer);
-                printTestLine(.skip, buntest, sequence, test_entry, elapsed_ns, &skip_writer);
-
-                writer.writeAll(skips_to_repeat_buf.items[initial_length..]) catch {};
-            },
-            else => @panic("TODO: implement default case for printing status"),
-        }
-    }
-
-    pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        var writer_ = Output.errorWriterBuffered();
-        defer Output.flush();
-        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
-
-        this.jest.current_file.printIfNeeded();
-
-        // when the tests fail, we want to repeat the failures at the end
-        // so that you can see them better when there are lots of tests that ran
-        const initial_length = this.failures_to_repeat_buf.items.len;
-        var writer = this.failures_to_repeat_buf.writer(bun.default_allocator);
-
-        writeTestStatusLine(.fail, &writer);
-        const line_number = this.jest.tests.items(.line_number)[id];
-        printTestLine(.fail, label, elapsed_ns, parent, expectations, false, writer, file, this.file_reporter, line_number);
-
-        // We must always reset the colors because (skip) will have set them to <d>
-        if (Output.enable_ansi_colors_stderr) {
-            writer.writeAll(Output.prettyFmt("<r>", true)) catch {};
         }
 
-        writer_.writeAll(this.failures_to_repeat_buf.items[initial_length..]) catch {};
-
-        // this.updateDots();
-        this.summary().fail += 1;
-        this.summary().expectations += expectations;
-        this.jest.tests.items(.status)[id] = TestRunner.Test.Status.fail;
-
-        if (this.jest.bail == this.summary().fail) {
-            this.printSummary();
-            Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ this.jest.bail, if (this.jest.bail == 1) "" else "s" });
-            Global.exit(1);
-        }
+        const output_writer = Output.errorWriter(); // unbuffered. buffered is errorWriterBuffered() / Output.flush()
+        output_writer.writeAll(output_buf.items[initial_length..]) catch {};
     }
 
     pub fn handleTestFilteredOut(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {

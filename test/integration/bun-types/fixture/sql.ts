@@ -271,5 +271,5 @@ expectType<Bun.SQLSavepointContextCallback<"hey">>();
 // check some types exist
 expectType<Bun.SQL.AwaitPromisesArray<[]>>;
 expectType<Bun.SQL.SQLiteOptions>;
-expectType<Bun.SQL.PostgresOptions>;
+expectType<Bun.SQL.PostgresOrMySQLOptions>;
 expectType<Bun.SQL.ContextCallbackResult<unknown>>;

@@ -33,6 +33,13 @@ pub const JSValue = enum(i64) {
         return @as(JSValue, @enumFromInt(@as(i64, @bitCast(@intFromPtr(ptr)))));
     }
 
+    pub fn isBigIntInUInt64Range(this: JSValue, min: u64, max: u64) bool {
+        return bun.cpp.JSC__isBigIntInUInt64Range(this, min, max);
+    }
+
+    pub fn isBigIntInInt64Range(this: JSValue, min: i64, max: i64) bool {
+        return bun.cpp.JSC__isBigIntInInt64Range(this, min, max);
+    }
     pub fn coerceToInt32(this: JSValue, globalThis: *jsc.JSGlobalObject) bun.JSError!i32 {
         return bun.cpp.JSC__JSValue__coerceToInt32(this, globalThis);
     }
@@ -1568,7 +1575,7 @@ pub const JSValue = enum(i64) {
     ///
     /// Returns null when the value is:
     /// - JSValue.null
-    /// - JSValue.false
+    /// - .false
     /// - .js_undefined
     /// - an empty string
     pub fn getStringish(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?bun.String {

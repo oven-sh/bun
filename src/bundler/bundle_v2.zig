@@ -1878,7 +1878,7 @@ pub const BundleV2 = struct {
             root_obj.put(
                 globalThis,
                 jsc.ZigString.static("success"),
-                jsc.JSValue.jsBoolean(false),
+                .false,
             );
             root_obj.put(
                 globalThis,
@@ -1977,11 +1977,7 @@ pub const BundleV2 = struct {
                     }
 
                     root_obj.put(globalThis, jsc.ZigString.static("outputs"), output_files_js);
-                    root_obj.put(
-                        globalThis,
-                        jsc.ZigString.static("success"),
-                        jsc.JSValue.jsBoolean(true),
-                    );
+                    root_obj.put(globalThis, jsc.ZigString.static("success"), .true);
                     root_obj.put(
                         globalThis,
                         jsc.ZigString.static("logs"),

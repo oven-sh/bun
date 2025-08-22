@@ -1,8 +1,8 @@
 pub fn installWithManager(
     manager: *PackageManager,
     ctx: Command.Context,
-    root_package_json_contents: string,
-    original_cwd: string,
+    root_package_json_contents: []const u8,
+    original_cwd: []const u8,
 ) !void {
     const log_level = manager.options.log_level;
 
@@ -563,7 +563,12 @@ pub fn installWithManager(
                 return error.InstallFailed;
             }
         }
+
         manager.verifyResolutions(log_level);
+
+        if (manager.subcommand == .add and manager.options.security_scanner != null) {
+            try security_scanner.performSecurityScanAfterResolution(manager);
+        }
     }
 
     // append scripts to lockfile before generating new metahash
@@ -987,8 +992,7 @@ fn printBlockedPackagesInfo(summary: *const PackageInstall.Summary, global: bool
     }
 }
 
-const string = []const u8;
-
+const security_scanner = @import("./security_scanner.zig");
 const std = @import("std");
 const installHoistedPackages = @import("../hoisted_install.zig").installHoistedPackages;
 const installIsolatedPackages = @import("../isolated_install.zig").installIsolatedPackages;

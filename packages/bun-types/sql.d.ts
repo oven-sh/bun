@@ -82,6 +82,13 @@ declare module "bun" {
       );
     }
 
+    class MySQLError extends SQLError {
+      public readonly code: string;
+      public readonly errno: number | undefined;
+      public readonly sqlState: string | undefined;
+      constructor(message: string, options: { code: string; errno: number | undefined; sqlState: string | undefined });
+    }
+
     class SQLiteError extends SQLError {
       public readonly code: string;
       public readonly errno: number;
@@ -128,7 +135,7 @@ declare module "bun" {
       onclose?: ((err: Error | null) => void) | undefined;
     }
 
-    interface PostgresOptions {
+    interface PostgresOrMySQLOptions {
       /**
        * Connection URL (can be string or URL object)
        */
@@ -196,7 +203,7 @@ declare module "bun" {
        * Database adapter/driver to use
        * @default "postgres"
        */
-      adapter?: "postgres";
+      adapter?: "postgres" | "mysql" | "mariadb";
 
       /**
        * Maximum time in seconds to wait for connection to become available
@@ -265,14 +272,11 @@ declare module "bun" {
        */
       ssl?: TLSOptions | boolean | undefined;
 
-      // `.path` is currently unsupported in Bun, the implementation is
-      // incomplete.
-      //
-      // /**
-      //  * Unix domain socket path for connection
-      //  * @default ""
-      //    */
-      // path?: string | undefined;
+      /**
+       * Unix domain socket path for connection
+       * @default undefined
+       */
+      path?: string | undefined;
 
       /**
        * Callback executed when a connection attempt completes
@@ -332,7 +336,7 @@ declare module "bun" {
      * };
      * ```
      */
-    type Options = SQLiteOptions | PostgresOptions;
+    type Options = SQLiteOptions | PostgresOrMySQLOptions;
 
     /**
      * Represents a SQL query that can be executed, with additional control

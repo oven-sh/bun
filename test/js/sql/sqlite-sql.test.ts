@@ -17,14 +17,6 @@ describe("Connection & Initialization", () => {
       expect(myapp.options.adapter).toBe("sqlite");
       expect(myapp.options.filename).toBe("myapp.db");
 
-      const myapp2 = new SQL("myapp.db", { adapter: "sqlite" });
-      expect(myapp2.options.adapter).toBe("sqlite");
-      expect(myapp2.options.filename).toBe("myapp.db");
-
-      expect(() => new SQL("myapp.db")).toThrowErrorMatchingInlineSnapshot(
-        `"Invalid URL 'myapp.db' for postgres. Did you mean to specify \`{ adapter: "sqlite" }\`?"`,
-      );
-
       const postgres = new SQL("postgres://user1:pass2@localhost:5432/mydb");
       expect(postgres.options.adapter).not.toBe("sqlite");
     });
@@ -611,18 +603,6 @@ describe("Connection & Initialization", () => {
       expect(sql.options.filename).toBe(":memory:");
       sql.close();
     });
-
-    test("should throw for invalid URL without adapter", () => {
-      expect(() => new SQL("not-a-url")).toThrowErrorMatchingInlineSnapshot(
-        `"Invalid URL 'not-a-url' for postgres. Did you mean to specify \`{ adapter: "sqlite" }\`?"`,
-      );
-    });
-
-    test("should throw for postgres URL when sqlite adapter is expected", () => {
-      expect(() => new SQL("myapp.db")).toThrowErrorMatchingInlineSnapshot(
-        `"Invalid URL 'myapp.db' for postgres. Did you mean to specify \`{ adapter: "sqlite" }\`?"`,
-      );
-    });
   });
 
   describe("Mixed Configurations", () => {
@@ -690,8 +670,8 @@ describe("Connection & Initialization", () => {
 
   describe("Error Cases", () => {
     test("should throw for unsupported adapter", () => {
-      expect(() => new SQL({ adapter: "mysql" as any })).toThrowErrorMatchingInlineSnapshot(
-        `"Unsupported adapter: mysql. Supported adapters: "postgres", "sqlite""`,
+      expect(() => new SQL({ adapter: "mssql" as any })).toThrowErrorMatchingInlineSnapshot(
+        `"Unsupported adapter: mssql. Supported adapters: "postgres", "sqlite", "mysql""`,
       );
     });
 

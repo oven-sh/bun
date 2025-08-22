@@ -59,44 +59,20 @@ pub fn createPostgresError(
     message: []const u8,
     options: PostgresErrorOptions,
 ) bun.JSError!JSValue {
-    const bun_ns = (try globalObject.toJSValue().get(globalObject, "Bun")).?;
-    const sql_constructor = (try bun_ns.get(globalObject, "SQL")).?;
-    const pg_error_constructor = (try sql_constructor.get(globalObject, "PostgresError")).?;
-
-    const opts_obj = JSValue.createEmptyObject(globalObject, 0);
-    opts_obj.put(globalObject, jsc.ZigString.static("code"), jsc.ZigString.init(options.code).toJS(globalObject));
-
-    if (options.errno) |errno| opts_obj.put(globalObject, jsc.ZigString.static("errno"), jsc.ZigString.init(errno).toJS(globalObject));
-    if (options.detail) |detail| opts_obj.put(globalObject, jsc.ZigString.static("detail"), jsc.ZigString.init(detail).toJS(globalObject));
-    if (options.hint) |hint| opts_obj.put(globalObject, jsc.ZigString.static("hint"), jsc.ZigString.init(hint).toJS(globalObject));
-    if (options.severity) |severity| opts_obj.put(globalObject, jsc.ZigString.static("severity"), jsc.ZigString.init(severity).toJS(globalObject));
-    if (options.position) |pos| opts_obj.put(globalObject, jsc.ZigString.static("position"), jsc.ZigString.init(pos).toJS(globalObject));
-    if (options.internalPosition) |pos| opts_obj.put(globalObject, jsc.ZigString.static("internalPosition"), jsc.ZigString.init(pos).toJS(globalObject));
-    if (options.internalQuery) |query| opts_obj.put(globalObject, jsc.ZigString.static("internalQuery"), jsc.ZigString.init(query).toJS(globalObject));
-    if (options.where) |w| opts_obj.put(globalObject, jsc.ZigString.static("where"), jsc.ZigString.init(w).toJS(globalObject));
-    if (options.schema) |s| opts_obj.put(globalObject, jsc.ZigString.static("schema"), jsc.ZigString.init(s).toJS(globalObject));
-    if (options.table) |t| opts_obj.put(globalObject, jsc.ZigString.static("table"), jsc.ZigString.init(t).toJS(globalObject));
-    if (options.column) |c| opts_obj.put(globalObject, jsc.ZigString.static("column"), jsc.ZigString.init(c).toJS(globalObject));
-    if (options.dataType) |dt| opts_obj.put(globalObject, jsc.ZigString.static("dataType"), jsc.ZigString.init(dt).toJS(globalObject));
-    if (options.constraint) |c| opts_obj.put(globalObject, jsc.ZigString.static("constraint"), jsc.ZigString.init(c).toJS(globalObject));
-    if (options.file) |f| opts_obj.put(globalObject, jsc.ZigString.static("file"), jsc.ZigString.init(f).toJS(globalObject));
-    if (options.line) |l| opts_obj.put(globalObject, jsc.ZigString.static("line"), jsc.ZigString.init(l).toJS(globalObject));
-    if (options.routine) |r| opts_obj.put(globalObject, jsc.ZigString.static("routine"), jsc.ZigString.init(r).toJS(globalObject));
-
-    const args = [_]JSValue{
-        jsc.ZigString.init(message).toJS(globalObject),
-        opts_obj,
-    };
-
-    const JSC = @import("../../bun.js/javascript_core_c_api.zig");
-    var exception: JSC.JSValueRef = null;
-    const result = JSC.JSObjectCallAsConstructor(globalObject, pg_error_constructor.asObjectRef(), args.len, @ptrCast(&args), &exception);
-
-    if (exception != null) {
-        return bun.JSError.JSError;
+    const opts_obj = JSValue.createEmptyObject(globalObject, 18);
+    opts_obj.ensureStillAlive();
+    opts_obj.put(globalObject, jsc.ZigString.static("code"), try bun.String.createUTF8ForJS(globalObject, options.code));
+    inline for (std.meta.fields(PostgresErrorOptions)) |field| {
+        const FieldType = @typeInfo(@TypeOf(@field(options, field.name)));
+        if (FieldType == .optional) {
+            if (@field(options, field.name)) |value| {
+                opts_obj.put(globalObject, jsc.ZigString.static(field.name), try bun.String.createUTF8ForJS(globalObject, value));
+            }
+        }
     }
+    opts_obj.put(globalObject, jsc.ZigString.static("message"), try bun.String.createUTF8ForJS(globalObject, message));
 
-    return JSValue.fromRef(result);
+    return opts_obj;
 }
 
 pub fn postgresErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, err: AnyPostgresError) JSValue {
@@ -142,10 +118,8 @@ pub fn postgresErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8
         },
     };
 
-    const msg = message orelse std.fmt.allocPrint(bun.default_allocator, "Failed to bind query: {s}", .{@errorName(err)}) catch unreachable;
-    defer {
-        if (message == null) bun.default_allocator.free(msg);
-    }
+    var buffer_message = [_]u8{0} ** 256;
+    const msg = message orelse std.fmt.bufPrint(buffer_message[0..], "Failed to bind query: {s}", .{@errorName(err)}) catch "Failed to bind query";
 
     return createPostgresError(globalObject, msg, .{ .code = code }) catch |e| globalObject.takeError(e);
 }

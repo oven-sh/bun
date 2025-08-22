@@ -1758,7 +1758,7 @@ pub const ExpectMatcherContext = struct {
     pub fn getExpand(_: *ExpectMatcherContext, globalThis: *JSGlobalObject) JSValue {
         _ = globalThis;
         // TODO: this should return whether running tests in verbose mode or not (jest flag --expand), but bun currently doesn't have this switch
-        return JSValue.false;
+        return .false;
     }
 
     pub fn equals(_: *ExpectMatcherContext, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {

@@ -1240,9 +1240,9 @@ if(NOT BUN_CPP_ONLY)
       find_program(POWERSHELL_EXECUTABLE 
         NAMES pwsh.exe powershell.exe
         PATHS 
-          "$ENV{ProgramFiles}/PowerShell/7"
-          "$ENV{ProgramFiles(x86)}/PowerShell/7"
-          "$ENV{WINDIR}/System32/WindowsPowerShell/v1.0"
+          "C:/Program Files/PowerShell/7"
+          "C:/Program Files (x86)/PowerShell/7"
+          "C:/Windows/System32/WindowsPowerShell/v1.0"
         DOC "Path to PowerShell executable"
       )
       

@@ -307,7 +307,7 @@ function parseOptions(
     onclose: ((client: Bun.SQL) => void) | undefined,
     max: number | null | undefined,
     bigint: boolean | undefined,
-    path: string | string[],
+    path: string,
     adapter: Bun.SQL.__internal.Adapter;
 
   let prepare = true;
@@ -596,15 +596,8 @@ function parseOptions(
   }
 
   if (path) {
-    if (!Array.isArray(path)) {
-      path = [path];
-    }
-
-    for (const p of path) {
-      if (fs.existsSync(p)) {
-        ret.path = p;
-        break;
-      }
+    if (fs.existsSync(path)) {
+      ret.path = path;
     }
   }
 

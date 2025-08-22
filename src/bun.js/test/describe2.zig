@@ -59,7 +59,7 @@ pub const js_fns = struct {
 
         switch (bunTest.phase) {
             .collection => {
-                try bunTest.collection.enqueueDescribeCallback(callback, .{ .name = description_str, .self_concurrent = cfg.concurrent, .self_only = cfg.only });
+                try bunTest.collection.enqueueDescribeCallback(callback, .{ .name_not_owned = description_str, .self_concurrent = cfg.concurrent, .self_only = cfg.only });
                 return .js_undefined; // vitest doesn't return a promise, even for `describe(async () => {})`
             },
             .execution => {
@@ -134,12 +134,20 @@ pub const js_fns = struct {
 
         switch (bunTest.phase) {
             .collection => {
-                try bunTest.collection.enqueueTestCallback(callback, .{
-                    .name = description_str,
+                try bunTest.collection.enqueueTestCallback(.{
+                    .callback = callback,
+                    .line_no = line_no,
+                }, .{
+                    .name_not_owned = description_str,
                     .self_concurrent = cfg.concurrent,
                     .self_only = cfg.only,
-                    .mode = cfg.mode,
-                    .line_no = line_no,
+                    .self_mode = switch (cfg.mode) {
+                        .normal => .normal,
+                        .skip => .skip,
+                        .todo => .todo,
+                        else => @panic("TODO"),
+                        // TODO: elim this switch
+                    },
                 });
                 return .js_undefined;
             },
@@ -166,7 +174,11 @@ pub const js_fns = struct {
 
                 switch (bunTest.phase) {
                     .collection => {
-                        try bunTest.collection.enqueueHookCallback(globalThis, tag, callback);
+                        try bunTest.collection.enqueueHookCallback(tag, .{
+                            .callback = callback,
+                            .line_no = 0,
+                        }, .{});
+
                         return .js_undefined;
                     },
                     .execution => {
@@ -453,32 +465,54 @@ pub const CallbackEntry = struct {
 
 pub const Collection = @import("./Collection.zig");
 
-pub const DescribeScope = struct {
+pub const BaseScopeCfg = struct {
+    name_not_owned: ?[]const u8 = null,
+    self_concurrent: bool = false,
+    self_mode: ScopeMode = .normal,
+    self_only: bool = false,
+    self_filter: bool = false,
+};
+pub const ScopeMode = enum { normal, skip, todo };
+pub const BaseScope = struct {
     parent: ?*DescribeScope,
+    name: ?[]const u8,
+    concurrent: bool,
+    mode: ScopeMode,
+    only: enum { no, contains, yes },
+    filter: enum { no, contains, yes },
+    pub fn init(this: BaseScopeCfg, buntest: *BunTestFile, parent: ?*DescribeScope) BaseScope {
+        if (this.self_only and parent != null) parent.?.markContainsOnly();
+        return .{
+            .parent = parent,
+            .name = if (this.name_not_owned) |name| buntest.gpa.dupe(u8, name) catch bun.outOfMemory() else null,
+            .concurrent = this.self_concurrent or if (parent) |p| p.base.concurrent else false,
+            .mode = if (parent) |p| if (p.base.mode != .normal) p.base.mode else this.self_mode else this.self_mode,
+            .only = if (this.self_only) .yes else .no,
+            .filter = if (this.self_filter) .yes else .no,
+        };
+    }
+    pub fn deinit(this: BaseScope, buntest: *BunTestFile) void {
+        if (this.name) |name| buntest.gpa.free(name);
+    }
+};
+
+pub const DescribeScope = struct {
+    base: BaseScope,
     entries: std.ArrayList(TestScheduleEntry),
     beforeAll: std.ArrayList(*ExecutionEntry),
     beforeEach: std.ArrayList(*ExecutionEntry),
     afterEach: std.ArrayList(*ExecutionEntry),
     afterAll: std.ArrayList(*ExecutionEntry),
-    name: ?[]const u8,
-    concurrent: bool,
-    only: enum { no, contains, yes },
-    filter: enum { no, contains, yes },
 
-    pub fn init(gpa: std.mem.Allocator, parent: ?*DescribeScope, cfg: struct { name: ?[]const u8, self_concurrent: bool, self_only: bool }) DescribeScope {
-        const name_dupe = if (cfg.name) |name| gpa.dupe(u8, name) catch bun.outOfMemory() else null;
-        return .{
+    pub fn create(gpa: std.mem.Allocator, base: BaseScope) *DescribeScope {
+        return bun.create(gpa, DescribeScope, .{
+            .base = base,
             .entries = .init(gpa),
             .beforeEach = .init(gpa),
             .beforeAll = .init(gpa),
             .afterAll = .init(gpa),
             .afterEach = .init(gpa),
-            .parent = parent,
-            .name = name_dupe,
-            .concurrent = cfg.self_concurrent or if (parent) |p| p.concurrent else false,
-            .only = if (cfg.self_only) .yes else .no,
-            .filter = .no, // TODO: impl filtering
-        };
+        });
     }
     pub fn destroy(this: *DescribeScope, buntest: *BunTestFile) void {
         for (this.entries.items) |*entry| entry.deinit(buntest);
@@ -491,32 +525,37 @@ pub const DescribeScope = struct {
         this.beforeEach.deinit();
         this.afterAll.deinit();
         this.afterEach.deinit();
-        if (this.name) |name| buntest.gpa.free(name);
+        this.base.deinit(buntest);
         buntest.gpa.destroy(this);
     }
 
     fn markContainsOnly(this: *DescribeScope) void {
         var target: ?*DescribeScope = this;
         while (target) |scope| {
-            if (scope.only != .no) return; // already marked
-            scope.only = .contains;
-            target = scope.parent;
+            if (scope.base.only != .no) return; // already marked
+            scope.base.only = .contains;
+            target = scope.base.parent;
         }
     }
-    pub fn append(this: *DescribeScope, entry: TestScheduleEntry) bun.JSError!void {
-        try this.entries.append(entry);
-        switch (entry) {
-            .describe => |describe| if (describe.only != .no) this.markContainsOnly(),
-            .test_callback => |test_scope| if (test_scope.only) this.markContainsOnly(),
-        }
+    pub fn appendDescribe(this: *DescribeScope, buntest: *BunTestFile, base: BaseScopeCfg) bun.JSError!*DescribeScope {
+        const child = create(buntest.gpa, .init(base, buntest, this));
+        try this.entries.append(.{ .describe = child });
+        return child;
     }
-    pub fn appendHook(this: *DescribeScope, tag: enum { beforeAll, beforeEach, afterEach, afterAll }, entry: *ExecutionEntry) bun.JSError!void {
+    pub fn appendTest(this: *DescribeScope, buntest: *BunTestFile, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
+        const entry = try ExecutionEntry.create(buntest, cfg, this, base);
+        try this.entries.append(.{ .test_callback = entry });
+        return entry;
+    }
+    pub fn appendHook(this: *DescribeScope, buntest: *BunTestFile, tag: enum { beforeAll, beforeEach, afterEach, afterAll }, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
+        const entry = try ExecutionEntry.create(buntest, cfg, this, base);
         switch (tag) {
             .beforeAll => try this.beforeAll.append(entry),
             .beforeEach => try this.beforeEach.append(entry),
             .afterEach => try this.afterEach.append(entry),
             .afterAll => try this.afterAll.append(entry),
         }
+        return entry;
     }
 };
 pub const ExecutionEntryTag = enum {
@@ -537,18 +576,26 @@ pub const ExecutionEntryTag = enum {
         };
     }
 };
+pub const ExecutionEntryCfg = struct {
+    callback: ?jsc.JSValue,
+    line_no: u32,
+};
 pub const ExecutionEntry = struct {
-    parent: *DescribeScope,
-    tag: ExecutionEntryTag,
+    base: BaseScope,
     callback: Strong.Optional,
-    name: ?[]const u8,
-    concurrent: bool,
-    only: bool,
     /// only available if using junit reporter, otherwise 0
     line_no: u32,
+    fn create(buntest: *BunTestFile, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
+        const entry = bun.create(buntest.gpa, ExecutionEntry, .{
+            .base = .init(base, buntest, parent),
+            .callback = if (cfg.callback) |cb| .init(buntest.gpa, cb) else .empty,
+            .line_no = cfg.line_no,
+        });
+        return entry;
+    }
     pub fn destroy(this: *ExecutionEntry, buntest: *BunTestFile) void {
         this.callback.deinit();
-        if (this.name) |name| buntest.gpa.free(name);
+        this.base.deinit(buntest);
         buntest.gpa.destroy(this);
     }
 };
@@ -566,8 +613,8 @@ pub const TestScheduleEntry = union(enum) {
     }
     pub fn isOrContainsOnly(this: TestScheduleEntry) bool {
         switch (this) {
-            .describe => |describe| return describe.only != .no,
-            .test_callback => |test_callback| return test_callback.only,
+            .describe => |describe| return describe.base.only != .no,
+            .test_callback => |test_callback| return test_callback.base.only != .no,
         }
     }
 };

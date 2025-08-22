@@ -20,11 +20,11 @@ pub fn generateOrderDescribe(this: *Execution, current: *DescribeScope) bun.JSEr
         const sequences_start = this._sequences.items.len;
         try this._sequences.append(.{ .entry_start = entries_start, .entry_end = entries_end, .entry_index = entries_start, .test_entry = null }); // add sequence to concurrentgroup
         const sequences_end = this._sequences.items.len;
-        try appendOrExtendConcurrentGroup(this, current.concurrent, sequences_start, sequences_end); // add or extend the concurrent group
+        try appendOrExtendConcurrentGroup(this, current.base.concurrent, sequences_start, sequences_end); // add or extend the concurrent group
     }
 
     for (current.entries.items) |entry| {
-        if (current.only == .contains and !entry.isOrContainsOnly()) {
+        if (current.base.only == .contains and !entry.isOrContainsOnly()) {
             try discardOrderSub(this, entry);
             continue;
         }
@@ -43,7 +43,7 @@ pub fn generateOrderDescribe(this: *Execution, current: *DescribeScope) bun.JSEr
         const sequences_start = this._sequences.items.len;
         try this._sequences.append(.{ .entry_start = entries_start, .entry_end = entries_end, .entry_index = entries_start, .test_entry = null }); // add sequence to concurrentgroup
         const sequences_end = this._sequences.items.len;
-        try appendOrExtendConcurrentGroup(this, current.concurrent, sequences_start, sequences_end); // add or extend the concurrent group
+        try appendOrExtendConcurrentGroup(this, current.base.concurrent, sequences_start, sequences_end); // add or extend the concurrent group
     }
 }
 pub fn generateOrderTest(this: *Execution, current: *ExecutionEntry) bun.JSError!void {
@@ -55,17 +55,17 @@ pub fn generateOrderTest(this: *Execution, current: *ExecutionEntry) bun.JSError
         // determine length of beforeEach
         var beforeEachLen: usize = 0;
         {
-            var parent: ?*DescribeScope = current.parent;
-            while (parent) |p| : (parent = p.parent) {
+            var parent: ?*DescribeScope = current.base.parent;
+            while (parent) |p| : (parent = p.base.parent) {
                 beforeEachLen += p.beforeEach.items.len;
             }
         }
         // copy beforeEach entries
         const beforeEachSlice = try this._entries.addManyAsSlice(beforeEachLen); // add entries to sequence
         {
-            var parent: ?*DescribeScope = current.parent;
+            var parent: ?*DescribeScope = current.base.parent;
             var i: usize = beforeEachLen;
-            while (parent) |p| : (parent = p.parent) {
+            while (parent) |p| : (parent = p.base.parent) {
                 i -= p.beforeEach.items.len;
                 @memcpy(beforeEachSlice[i..][0..p.beforeEach.items.len], p.beforeEach.items);
             }
@@ -77,8 +77,8 @@ pub fn generateOrderTest(this: *Execution, current: *ExecutionEntry) bun.JSError
 
     // gather afterEach
     if (use_hooks) {
-        var parent: ?*DescribeScope = current.parent;
-        while (parent) |p| : (parent = p.parent) {
+        var parent: ?*DescribeScope = current.base.parent;
+        while (parent) |p| : (parent = p.base.parent) {
             var i: usize = p.afterEach.items.len;
             while (i > 0) {
                 i -= 1;
@@ -93,7 +93,7 @@ pub fn generateOrderTest(this: *Execution, current: *ExecutionEntry) bun.JSError
     const sequences_start = this._sequences.items.len;
     try this._sequences.append(.{ .entry_start = entries_start, .entry_end = entries_end, .entry_index = entries_start, .test_entry = current }); // add sequence to concurrentgroup
     const sequences_end = this._sequences.items.len;
-    try appendOrExtendConcurrentGroup(this, current.concurrent, sequences_start, sequences_end); // add or extend the concurrent group
+    try appendOrExtendConcurrentGroup(this, current.base.concurrent, sequences_start, sequences_end); // add or extend the concurrent group
 }
 
 pub fn appendOrExtendConcurrentGroup(this: *Execution, concurrent: bool, sequences_start: usize, sequences_end: usize) bun.JSError!void {

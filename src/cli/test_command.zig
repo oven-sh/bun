@@ -612,7 +612,7 @@ pub const CommandLineReporter = struct {
         writer: anytype,
     ) void {
         var scopes_stack = std.BoundedArray(*describe2.DescribeScope, 64).init(0) catch unreachable;
-        var parent_: ?*describe2.DescribeScope = test_entry.parent;
+        var parent_: ?*describe2.DescribeScope = test_entry.base.parent;
         const assertions = sequence.expect_call_count;
         const line_number = test_entry.line_no;
 
@@ -620,11 +620,11 @@ pub const CommandLineReporter = struct {
 
         while (parent_) |scope| {
             scopes_stack.append(scope) catch break;
-            parent_ = scope.parent;
+            parent_ = scope.base.parent;
         }
 
         const scopes: []*describe2.DescribeScope = scopes_stack.slice();
-        const display_label = test_entry.name orelse "test";
+        const display_label = test_entry.base.name orelse "test";
 
         // Quieter output when claude code is in use.
         if (!Output.isAIAgent() or status == .fail) {
@@ -634,7 +634,7 @@ pub const CommandLineReporter = struct {
                 for (scopes, 0..) |_, i| {
                     const index = (scopes.len - 1) - i;
                     const scope = scopes[index];
-                    const name: []const u8 = scope.name orelse "";
+                    const name: []const u8 = scope.base.name orelse "";
                     if (name.len == 0) continue;
                     writer.writeAll(" ") catch unreachable;
 
@@ -647,7 +647,7 @@ pub const CommandLineReporter = struct {
                 for (scopes, 0..) |_, i| {
                     const index = (scopes.len - 1) - i;
                     const scope = scopes[index];
-                    const name: []const u8 = scope.name orelse "";
+                    const name: []const u8 = scope.base.name orelse "";
                     if (name.len == 0) continue;
                     writer.writeAll(" ") catch unreachable;
                     writer.writeAll(name) catch unreachable;

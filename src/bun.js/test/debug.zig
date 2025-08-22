@@ -5,7 +5,7 @@ pub fn dumpSub(current: TestScheduleEntry) bun.JSError!void {
     }
 }
 pub fn dumpDescribe(describe: *DescribeScope) bun.JSError!void {
-    groupLog.beginMsg("describe {s} (concurrent={}, filter={s}, only={s})", .{ describe.name orelse "undefined", describe.concurrent, @tagName(describe.filter), @tagName(describe.only) });
+    groupLog.beginMsg("describe {s} (concurrent={}, filter={s}, only={s})", .{ describe.base.name orelse "undefined", describe.base.concurrent, @tagName(describe.base.filter), @tagName(describe.base.only) });
     defer groupLog.end();
 
     for (describe.beforeAll.items) |entry| try dumpTest(entry);
@@ -15,7 +15,7 @@ pub fn dumpDescribe(describe: *DescribeScope) bun.JSError!void {
     for (describe.afterAll.items) |entry| try dumpTest(entry);
 }
 pub fn dumpTest(current: *ExecutionEntry) bun.JSError!void {
-    groupLog.beginMsg("test {s} / {s} (concurrent={}, only={})", .{ @tagName(current.tag), current.name orelse "undefined", current.concurrent, current.only });
+    groupLog.beginMsg("test {s} (concurrent={}, only={})", .{ current.base.name orelse "undefined", current.base.concurrent, current.base.only });
     defer groupLog.end();
 }
 pub fn dumpOrder(this: *Execution) bun.JSError!void {
@@ -33,7 +33,7 @@ pub fn dumpOrder(this: *Execution) bun.JSError!void {
 
             for (sequence.entry_start..sequence.entry_end) |entry_index| {
                 const entry = this._entries.items[entry_index];
-                groupLog.log("{d}: ExecutionEntry {d}: {s} / {s}", .{ entry_index, entry_index, @tagName(entry.tag), entry.name orelse "undefined" });
+                groupLog.log("{d}: ExecutionEntry {d}: {s}", .{ entry_index, entry_index, entry.base.name orelse "undefined" });
             }
         }
     }

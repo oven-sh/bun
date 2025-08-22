@@ -108,7 +108,7 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
                     try callback_queue.append(.{ .callback = .init(this.bunTest().gpa, cb), .done_parameter = true, .data = sequence_index });
                     status = .execute;
                     break;
-                } else switch (next_item.tag) {
+                } else switch (next_item.base.mode) {
                     .skip => {
                         sequence.executing = false;
                         sequence.entry_index += 1;

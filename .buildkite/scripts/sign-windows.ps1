@@ -31,7 +31,9 @@ function Log-Error {
 
 function Log-Debug {
     param([string]$Message)
-    Write-Host "[DEBUG] $Message" -ForegroundColor Gray
+    if ($env:DEBUG -eq "true" -or $env:DEBUG -eq "1") {
+        Write-Host "[DEBUG] $Message" -ForegroundColor Gray
+    }
 }
 
 # Load Visual Studio environment if not already loaded

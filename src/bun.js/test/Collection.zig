@@ -46,16 +46,16 @@ fn bunTest(this: *Collection) *BunTestFile {
     return @fieldParentPtr("collection", this);
 }
 
-pub fn enqueueDescribeCallback(this: *Collection, callback: ?jsc.JSValue, cfg: describe2.BaseScopeCfg) bun.JSError!void {
+pub fn enqueueDescribeCallback(this: *Collection, callback: ?jsc.JSValue, name_not_owned: ?[]const u8, cfg: describe2.BaseScopeCfg) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
     bun.assert(!this.locked);
     const buntest = this.bunTest();
 
-    const new_scope = try this.active_scope.appendDescribe(buntest, cfg);
+    const new_scope = try this.active_scope.appendDescribe(buntest, name_not_owned, cfg);
     if (callback) |cb| {
-        group.log("enqueueDescribeCallback / {s} / in scope: {s}", .{ cfg.name_not_owned orelse "undefined", this.active_scope.base.name orelse "undefined" });
+        group.log("enqueueDescribeCallback / {s} / in scope: {s}", .{ name_not_owned orelse "undefined", this.active_scope.base.name orelse "undefined" });
         try this.describe_callback_queue.append(.{
             .active_scope = this.active_scope,
             .callback = .init(this.bunTest().gpa, cb),
@@ -64,21 +64,21 @@ pub fn enqueueDescribeCallback(this: *Collection, callback: ?jsc.JSValue, cfg: d
     }
 }
 
-pub fn enqueueTestCallback(this: *Collection, cfg: describe2.ExecutionEntryCfg, base: describe2.BaseScopeCfg) bun.JSError!void {
+pub fn enqueueTestCallback(this: *Collection, name_not_owned: ?[]const u8, cfg: describe2.ExecutionEntryCfg, base: describe2.BaseScopeCfg) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
     bun.assert(!this.locked);
-    group.log("enqueueTestCallback / {s} / in scope: {s}", .{ base.name_not_owned orelse "undefined", this.active_scope.base.name orelse "undefined" });
+    group.log("enqueueTestCallback / {s} / in scope: {s}", .{ name_not_owned orelse "undefined", this.active_scope.base.name orelse "undefined" });
 
-    _ = try this.active_scope.appendTest(this.bunTest(), cfg, base);
+    _ = try this.active_scope.appendTest(this.bunTest(), name_not_owned, cfg, base);
 }
 pub fn enqueueHookCallback(this: *Collection, comptime tag: @Type(.enum_literal), cfg: describe2.ExecutionEntryCfg, base: describe2.BaseScopeCfg) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
     bun.assert(!this.locked);
-    group.log("enqueueHookCallback / {s} / in scope: {s}", .{ base.name_not_owned orelse "undefined", this.active_scope.base.name orelse "undefined" });
+    group.log("enqueueHookCallback / in scope: {s}", .{this.active_scope.base.name orelse "undefined"});
 
     _ = try this.active_scope.appendHook(this.bunTest(), tag, cfg, base);
 }

@@ -98,7 +98,7 @@ const UInt31WithReserved = packed struct(u32) {
     reserved: bool = false,
     uint31: u31 = 0,
 
-    const log = Output.scoped(.UInt31WithReserved, false);
+    const log = Output.scoped(.UInt31WithReserved, .visible);
 
     pub inline fn from(value: u32) UInt31WithReserved {
         return .{ .uint31 = @truncate(value & 0x7fffffff), .reserved = value & 0x80000000 != 0 };
@@ -206,7 +206,7 @@ const FullSettingsPayload = packed struct(u288) {
         result.put(globalObject, jsc.ZigString.static("maxHeaderSize"), jsc.JSValue.jsNumber(this.maxHeaderListSize));
         // TODO: we dont support this setting yet see https://nodejs.org/api/http2.html#settings-object
         // we should also support customSettings
-        result.put(globalObject, jsc.ZigString.static("enableConnectProtocol"), jsc.JSValue.jsBoolean(false));
+        result.put(globalObject, jsc.ZigString.static("enableConnectProtocol"), .false);
         return result;
     }
 
@@ -597,7 +597,7 @@ const Handlers = struct {
 pub const H2FrameParserConstructor = H2FrameParser.js.getConstructor;
 
 pub const H2FrameParser = struct {
-    pub const log = Output.scoped(.H2FrameParser, false);
+    pub const log = Output.scoped(.H2FrameParser, .visible);
     const Self = @This();
     pub const js = jsc.Codegen.JSH2FrameParser;
     pub const toJS = js.toJS;
@@ -3040,7 +3040,7 @@ pub const H2FrameParser = struct {
         };
 
         if (!stream.canSendData() and !stream.canReceiveData()) {
-            return jsc.JSValue.jsBoolean(false);
+            return .false;
         }
 
         if (!options.isObject()) {
@@ -3083,7 +3083,7 @@ pub const H2FrameParser = struct {
         }
         if (parent_id == stream.id) {
             this.sendGoAway(stream.id, ErrorCode.PROTOCOL_ERROR, "Stream with self dependency", this.lastStreamID, true);
-            return jsc.JSValue.jsBoolean(false);
+            return .false;
         }
 
         stream.streamDependency = parent_id;
@@ -3111,7 +3111,7 @@ pub const H2FrameParser = struct {
             _ = frame.write(@TypeOf(writer), writer);
             _ = priority.write(@TypeOf(writer), writer);
         }
-        return jsc.JSValue.jsBoolean(true);
+        return .true;
     }
     pub fn rstStream(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         log("rstStream", .{});
@@ -3143,7 +3143,7 @@ pub const H2FrameParser = struct {
 
         this.endStream(stream, @enumFromInt(error_code));
 
-        return jsc.JSValue.jsBoolean(true);
+        return .true;
     }
 
     const MemoryWriter = struct {
@@ -3542,7 +3542,7 @@ pub const H2FrameParser = struct {
         };
         if (!stream.canSendData()) {
             this.dispatchWriteCallback(callback_arg);
-            return jsc.JSValue.jsBoolean(false);
+            return .false;
         }
 
         const encoding: jsc.Node.Encoding = brk: {
@@ -3571,7 +3571,7 @@ pub const H2FrameParser = struct {
 
         this.sendData(stream, buffer.slice(), close, callback_arg);
 
-        return jsc.JSValue.jsBoolean(true);
+        return .true;
     }
 
     fn getNextStreamID(this: *H2FrameParser) u32 {

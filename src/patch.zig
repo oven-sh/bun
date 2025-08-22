@@ -3,7 +3,7 @@ const WHITESPACE: []const u8 = " \t\n\r";
 // TODO: calculate this for different systems
 const PAGE_SIZE = 16384;
 
-const debug = bun.Output.scoped(.patch, false);
+const debug = bun.Output.scoped(.patch, .visible);
 
 /// All strings point to the original patch file text
 pub const PatchFilePart = union(enum) {

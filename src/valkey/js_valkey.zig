@@ -850,7 +850,7 @@ const Options = struct {
     }
 };
 
-const debug = bun.Output.scoped(.RedisJS, false);
+const debug = bun.Output.scoped(.RedisJS, .visible);
 
 const Command = @import("./ValkeyCommand.zig");
 const std = @import("std");

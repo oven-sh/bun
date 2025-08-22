@@ -962,7 +962,7 @@ export fn Bun__resolveSyncWithPaths(
 }
 
 export fn Bun__resolveSyncWithStrings(global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, is_esm: bool) jsc.JSValue {
-    Output.scoped(.importMetaResolve, false)("source: {s}, specifier: {s}", .{ source.*, specifier.* });
+    Output.scoped(.importMetaResolve, .visible)("source: {s}, specifier: {s}", .{ source.*, specifier.* });
     return jsc.toJSHostCall(global, @src(), doResolveWithArgs, .{ global, specifier.*, source.*, is_esm, true, false });
 }
 
@@ -1246,13 +1246,13 @@ pub fn mmapFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
     var map_size: ?usize = null;
 
     if (args.nextEat()) |opts| {
-        flags.TYPE = if ((try opts.get(globalThis, "shared") orelse JSValue.true).toBoolean())
+        flags.TYPE = if ((try opts.getBooleanLoose(globalThis, "shared")) orelse true)
             .SHARED
         else
             .PRIVATE;
 
         if (@hasField(std.c.MAP, "SYNC")) {
-            if ((try opts.get(globalThis, "sync") orelse JSValue.false).toBoolean()) {
+            if ((try opts.getBooleanLoose(globalThis, "sync")) orelse false) {
                 flags.TYPE = .SHARED_VALIDATE;
                 flags.SYNC = true;
             }
@@ -1473,8 +1473,7 @@ pub const JSZlib = struct {
         reader.deinit();
     }
     export fn global_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
-        comptime assert(bun.use_mimalloc);
-        bun.mimalloc.mi_free(ctx);
+        bun.allocators.freeWithoutSize(ctx);
     }
     export fn compressor_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
         var compressor: *zlib.ZlibCompressorArrayList = bun.cast(*zlib.ZlibCompressorArrayList, ctx.?);
@@ -1758,8 +1757,7 @@ pub const JSZlib = struct {
 
 pub const JSZstd = struct {
     export fn deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
-        comptime assert(bun.use_mimalloc);
-        bun.mimalloc.mi_free(ctx);
+        bun.allocators.freeWithoutSize(ctx);
     }
 
     inline fn getOptions(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!struct { jsc.Node.StringOrBuffer, ?JSValue } {

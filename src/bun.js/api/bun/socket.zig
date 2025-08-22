@@ -281,7 +281,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn handleConnectError(this: *This, errno: c_int) void {
             const handlers = this.getHandlers();
-            log("onConnectError {s} ({d}, {d})", .{ if (handlers.is_server) "S" else "C", errno, this.ref_count.active_counts });
+            log("onConnectError {s} ({d}, {d})", .{ if (handlers.is_server) "S" else "C", errno, this.ref_count.get() });
             // Ensure the socket is still alive for any defer's we have
             this.ref();
             defer this.deref();
@@ -401,7 +401,7 @@ pub fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn onOpen(this: *This, socket: Socket) void {
-            log("onOpen {s} {*} {} {}", .{ if (this.isServer()) "S" else "C", this, this.socket.isDetached(), this.ref_count.active_counts });
+            log("onOpen {s} {*} {} {}", .{ if (this.isServer()) "S" else "C", this, this.socket.isDetached(), this.ref_count.get() });
             // Ensure the socket remains alive until this is finished
             this.ref();
             defer this.deref();
@@ -905,7 +905,7 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn endBuffered(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
                 this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                return JSValue.jsBoolean(false);
+                return .false;
             }
 
             const args = callframe.argumentsUndef(2);
@@ -1677,7 +1677,7 @@ const NativeCallbacks = union(enum) {
     }
 };
 
-const log = Output.scoped(.Socket, false);
+const log = Output.scoped(.Socket, .visible);
 
 const WriteResult = union(enum) {
     fail: void,
@@ -2044,7 +2044,7 @@ pub fn jsIsNamedPipeSocket(global: *jsc.JSGlobalObject, callframe: *jsc.CallFram
     } else if (socket.as(TLSSocket)) |this| {
         return jsc.JSValue.jsBoolean(this.socket.isNamedPipe());
     }
-    return jsc.JSValue.jsBoolean(false);
+    return .false;
 }
 
 pub fn jsGetBufferedAmount(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {

@@ -961,7 +961,7 @@ pub const ValkeyClient = struct {
 
 // Auto-pipelining
 
-const debug = bun.Output.scoped(.Redis, false);
+const debug = bun.Output.scoped(.Redis, .visible);
 
 const protocol = @import("./valkey_protocol.zig");
 const std = @import("std");

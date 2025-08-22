@@ -3059,7 +3059,7 @@ export fn ModuleLoader__isBuiltin(data: [*]const u8, len: usize) bool {
     return HardcodedModule.Alias.bun_aliases.get(str) != null;
 }
 
-const debug = Output.scoped(.ModuleLoader, true);
+const debug = Output.scoped(.ModuleLoader, .hidden);
 
 const string = []const u8;
 

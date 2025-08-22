@@ -318,7 +318,9 @@ pub fn generateChunksInParallel(
     var static_route_visitor = StaticRouteVisitor{ .c = c, .visited = bun.bit_set.AutoBitSet.initEmpty(bun.default_allocator, c.graph.files.len) catch bun.outOfMemory() };
     defer static_route_visitor.deinit();
 
-    if (root_path.len > 0) {
+    // Don't write to disk if compile mode is enabled - we need buffer values for compilation
+    const is_compile = bundler.transpiler.options.compile;
+    if (root_path.len > 0 and !is_compile) {
         try c.writeOutputFilesToDisk(root_path, chunks, &output_files);
     } else {
         // In-memory build
@@ -547,7 +549,7 @@ pub fn generateChunksInParallel(
 
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 
-const debugPartRanges = Output.scoped(.PartRanges, true);
+const debugPartRanges = Output.scoped(.PartRanges, .hidden);
 
 const std = @import("std");
 

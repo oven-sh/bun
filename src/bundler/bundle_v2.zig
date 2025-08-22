@@ -42,7 +42,7 @@
 //     make mimalloc-debug
 //
 
-pub const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
+pub const logPartDependencyTree = Output.scoped(.part_dep_tree, .visible);
 
 pub const MangledProps = std.AutoArrayHashMapUnmanaged(Ref, []const u8);
 pub const PathToSourceIndexMap = std.HashMapUnmanaged(u64, Index.Int, IdentityContext(u64), 80);
@@ -140,7 +140,7 @@ pub const BundleV2 = struct {
     /// You can find which callbacks are run by looking at the
     /// `finishFromBakeDevServer(...)` function here
     asynchronous: bool = false,
-    thread_lock: bun.DebugThreadLock,
+    thread_lock: bun.safety.ThreadLock,
 
     const BakeOptions = struct {
         framework: bake.Framework,
@@ -149,7 +149,7 @@ pub const BundleV2 = struct {
         plugins: ?*jsc.API.JSBundler.Plugin,
     };
 
-    const debug = Output.scoped(.Bundle, false);
+    const debug = Output.scoped(.Bundle, .visible);
 
     pub inline fn loop(this: *BundleV2) *EventLoop {
         return &this.linker.loop;
@@ -415,7 +415,7 @@ pub const BundleV2 = struct {
             },
         }
 
-        const DebugLog = bun.Output.Scoped(.ReachableFiles, false);
+        const DebugLog = bun.Output.Scoped(.ReachableFiles, .visible);
         if (DebugLog.isVisible()) {
             DebugLog.log("Reachable count: {d} / {d}", .{ visitor.reachable.items.len, this.graph.input_files.len });
             const sources: []Logger.Source = this.graph.input_files.items(.source);
@@ -817,7 +817,7 @@ pub const BundleV2 = struct {
             .plugins = null,
             .completion = null,
             .source_code_length = 0,
-            .thread_lock = bun.DebugThreadLock.initLocked(),
+            .thread_lock = .initLocked(),
         };
         if (bake_options) |bo| {
             this.client_transpiler = bo.client_transpiler;
@@ -883,7 +883,7 @@ pub const BundleV2 = struct {
         return this;
     }
 
-    const logScanCounter = bun.Output.scoped(.scan_counter, false);
+    const logScanCounter = bun.Output.scoped(.scan_counter, .visible);
 
     pub fn incrementScanCounter(this: *BundleV2) void {
         this.thread_lock.assertLocked();
@@ -1384,7 +1384,7 @@ pub const BundleV2 = struct {
             event_loop,
             enable_reloading,
             null,
-            try ThreadLocalArena.init(),
+            .init(),
         );
         this.unique_key = generateUniqueKey();
 
@@ -1448,7 +1448,7 @@ pub const BundleV2 = struct {
             event_loop,
             false,
             null,
-            try ThreadLocalArena.init(),
+            .init(),
         );
         this.unique_key = generateUniqueKey();
 
@@ -1738,6 +1738,7 @@ pub const BundleV2 = struct {
             transpiler.options.public_path = config.public_path.list.items;
             transpiler.options.output_format = config.format;
             transpiler.options.bytecode = config.bytecode;
+            transpiler.options.compile = config.compile != null;
 
             transpiler.options.output_dir = config.outdir.slice();
             transpiler.options.root_dir = config.rootdir.slice();
@@ -1782,6 +1783,114 @@ pub const BundleV2 = struct {
             bun.destroy(this);
         }
 
+        fn doCompilation(this: *JSBundleCompletionTask, output_files: *std.ArrayList(options.OutputFile)) bun.StandaloneModuleGraph.CompileResult {
+            const compile_options = &(this.config.compile orelse @panic("Unexpected: No compile options provided"));
+
+            const entry_point_index: usize = brk: {
+                for (output_files.items, 0..) |*output_file, i| {
+                    if (output_file.output_kind == .@"entry-point" and (output_file.side orelse .server) == .server) {
+                        break :brk i;
+                    }
+                }
+                return bun.StandaloneModuleGraph.CompileResult.fail("No entry point found for compilation");
+            };
+
+            const output_file = &output_files.items[entry_point_index];
+            const outbuf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(outbuf);
+            var full_outfile_path = if (this.config.outdir.slice().len > 0)
+                bun.path.joinAbsStringBuf(this.config.outdir.slice(), outbuf, &[_][]const u8{compile_options.outfile.slice()}, .loose)
+            else
+                compile_options.outfile.slice();
+
+            // Add .exe extension for Windows targets if not already present
+            if (compile_options.compile_target.os == .windows and !strings.hasSuffixComptime(full_outfile_path, ".exe")) {
+                full_outfile_path = std.fmt.allocPrint(bun.default_allocator, "{s}.exe", .{full_outfile_path}) catch bun.outOfMemory();
+            } else {
+                full_outfile_path = bun.default_allocator.dupe(u8, full_outfile_path) catch bun.outOfMemory();
+            }
+
+            const dirname = std.fs.path.dirname(full_outfile_path) orelse ".";
+            const basename = std.fs.path.basename(full_outfile_path);
+
+            var root_dir = bun.FD.cwd().stdDir();
+            defer {
+                if (bun.FD.fromStdDir(root_dir) != bun.FD.cwd()) {
+                    root_dir.close();
+                }
+            }
+
+            if (!(dirname.len == 0 or strings.eqlComptime(dirname, "."))) {
+                root_dir = root_dir.makeOpenPath(dirname, .{}) catch |err| {
+                    return bun.StandaloneModuleGraph.CompileResult.fail(std.fmt.allocPrint(bun.default_allocator, "Failed to open output directory {s}: {s}", .{ dirname, @errorName(err) }) catch bun.outOfMemory());
+                };
+            }
+
+            const result = bun.StandaloneModuleGraph.toExecutable(
+                &compile_options.compile_target,
+                bun.default_allocator,
+                output_files.items,
+                root_dir,
+                this.config.public_path.slice(),
+                basename,
+                this.env,
+                this.config.format,
+                compile_options.windows_hide_console,
+                if (compile_options.windows_icon_path.slice().len > 0)
+                    compile_options.windows_icon_path.slice()
+                else
+                    null,
+                compile_options.exec_argv.slice(),
+                if (compile_options.executable_path.slice().len > 0)
+                    compile_options.executable_path.slice()
+                else
+                    null,
+            ) catch |err| {
+                return bun.StandaloneModuleGraph.CompileResult.fail(std.fmt.allocPrint(bun.default_allocator, "{s}", .{@errorName(err)}) catch bun.outOfMemory());
+            };
+
+            if (result == .success) {
+                output_file.dest_path = full_outfile_path;
+                output_file.is_executable = true;
+            }
+
+            for (output_files.items, 0..) |*current, i| {
+                if (i != entry_point_index) {
+                    current.deinit();
+                }
+            }
+
+            const entry_point_output_file = output_files.swapRemove(entry_point_index);
+            output_files.items.len = 1;
+            output_files.items[0] = entry_point_output_file;
+
+            return result;
+        }
+
+        fn toJSError(this: *JSBundleCompletionTask, promise: *jsc.JSPromise, globalThis: *jsc.JSGlobalObject) void {
+            if (this.config.throw_on_error) {
+                promise.reject(globalThis, this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed")));
+                return;
+            }
+
+            const root_obj = jsc.JSValue.createEmptyObject(globalThis, 3);
+            root_obj.put(globalThis, jsc.ZigString.static("outputs"), jsc.JSValue.createEmptyArray(globalThis, 0) catch return promise.reject(globalThis, error.JSError));
+            root_obj.put(
+                globalThis,
+                jsc.ZigString.static("success"),
+                .false,
+            );
+            root_obj.put(
+                globalThis,
+                jsc.ZigString.static("logs"),
+                this.log.toJSArray(globalThis, bun.default_allocator) catch |err| {
+                    return promise.reject(globalThis, err);
+                },
+            );
+
+            promise.resolve(globalThis, root_obj);
+        }
+
         pub fn onComplete(this: *JSBundleCompletionTask) void {
             var globalThis = this.globalThis;
             defer this.deref();
@@ -1799,33 +1908,25 @@ pub const BundleV2 = struct {
 
             const promise = this.promise.swap();
 
+            if (this.result == .value) {
+                if (this.config.compile != null) {
+                    var compile_result = this.doCompilation(&this.result.value.output_files);
+                    defer compile_result.deinit();
+
+                    if (compile_result != .success) {
+                        this.log.addError(null, Logger.Loc.Empty, this.log.msgs.allocator.dupe(u8, compile_result.error_message) catch bun.outOfMemory()) catch bun.outOfMemory();
+                        this.result.value.deinit();
+                        this.result = .{ .err = error.CompilationFailed };
+                    }
+                }
+            }
+
             switch (this.result) {
                 .pending => unreachable,
-                .err => brk: {
-                    if (this.config.throw_on_error) {
-                        promise.reject(globalThis, this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed")));
-                        break :brk;
-                    }
-
-                    const root_obj = jsc.JSValue.createEmptyObject(globalThis, 3);
-                    root_obj.put(globalThis, jsc.ZigString.static("outputs"), jsc.JSValue.createEmptyArray(globalThis, 0) catch return promise.reject(globalThis, error.JSError));
-                    root_obj.put(
-                        globalThis,
-                        jsc.ZigString.static("success"),
-                        jsc.JSValue.jsBoolean(false),
-                    );
-                    root_obj.put(
-                        globalThis,
-                        jsc.ZigString.static("logs"),
-                        this.log.toJSArray(globalThis, bun.default_allocator) catch |err| {
-                            return promise.reject(globalThis, err);
-                        },
-                    );
-                    promise.resolve(globalThis, root_obj);
-                },
+                .err => this.toJSError(promise, globalThis),
                 .value => |*build| {
                     const root_obj = jsc.JSValue.createEmptyObject(globalThis, 3);
-                    const output_files: []options.OutputFile = build.output_files.items;
+                    const output_files = build.output_files.items;
                     const output_files_js = jsc.JSValue.createEmptyArray(globalThis, output_files.len) catch return promise.reject(globalThis, error.JSError);
                     if (output_files_js == .zero) {
                         @panic("Unexpected pending JavaScript exception in JSBundleCompletionTask.onComplete. This is a bug in Bun.");
@@ -1848,7 +1949,7 @@ pub const BundleV2 = struct {
                                     bun.default_allocator.dupe(
                                         u8,
                                         bun.path.joinAbsString(
-                                            Fs.FileSystem.instance.top_level_dir,
+                                            bun.fs.FileSystem.instance.top_level_dir,
                                             &[_]string{ this.config.dir.slice(), this.config.outdir.slice(), output_file.dest_path },
                                             .auto,
                                         ),
@@ -1876,11 +1977,7 @@ pub const BundleV2 = struct {
                     }
 
                     root_obj.put(globalThis, jsc.ZigString.static("outputs"), output_files_js);
-                    root_obj.put(
-                        globalThis,
-                        jsc.ZigString.static("success"),
-                        jsc.JSValue.jsBoolean(true),
-                    );
+                    root_obj.put(globalThis, jsc.ZigString.static("success"), .true);
                     root_obj.put(
                         globalThis,
                         jsc.ZigString.static("logs"),
@@ -2861,7 +2958,7 @@ pub const BundleV2 = struct {
                 if (err == error.ModuleNotFound) {
                     if (this.bun_watcher != null) {
                         if (!had_busted_dir_cache) {
-                            bun.Output.scoped(.watcher, false)("busting dir cache {s} -> {s}", .{ source.path.text, import_record.path.text });
+                            bun.Output.scoped(.watcher, .visible)("busting dir cache {s} -> {s}", .{ source.path.text, import_record.path.text });
                             // Only re-query if we previously had something cached.
                             if (transpiler.resolver.bustDirCacheFromSpecifier(
                                 source.path.text,
@@ -3972,7 +4069,7 @@ pub const ContentHasher = struct {
     // xxhash64 outperforms Wyhash if the file is > 1KB or so
     hasher: Hash = .init(0),
 
-    const log = bun.Output.scoped(.ContentHasher, true);
+    const log = bun.Output.scoped(.ContentHasher, .hidden);
 
     pub fn write(self: *ContentHasher, bytes: []const u8) void {
         log("HASH_UPDATE {d}:\n{s}\n----------\n", .{ bytes.len, std.mem.sliceAsBytes(bytes) });
@@ -4194,8 +4291,8 @@ pub const StableSymbolCount = renamer.StableSymbolCount;
 pub const MinifyRenamer = renamer.MinifyRenamer;
 pub const Scope = js_ast.Scope;
 pub const jsc = bun.jsc;
-pub const debugTreeShake = Output.scoped(.TreeShake, true);
-pub const debugPartRanges = Output.scoped(.PartRanges, true);
+pub const debugTreeShake = Output.scoped(.TreeShake, .hidden);
+pub const debugPartRanges = Output.scoped(.PartRanges, .hidden);
 pub const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 pub const Async = bun.Async;
 pub const Loc = Logger.Loc;

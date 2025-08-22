@@ -482,7 +482,7 @@ pub const TransformTask = struct {
         const name = this.loader.stdinName();
         const source = logger.Source.initPathString(name, this.input_code.slice());
 
-        var arena = MimallocArena.init() catch unreachable;
+        var arena = MimallocArena.init();
         defer arena.deinit();
 
         const allocator = arena.allocator();
@@ -788,7 +788,7 @@ pub fn scan(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callframe: *js
         return .zero;
     }
 
-    var arena = MimallocArena.init() catch unreachable;
+    var arena = MimallocArena.init();
     const prev_allocator = this.transpiler.allocator;
     const allocator = arena.allocator();
     this.transpiler.setAllocator(allocator);
@@ -888,7 +888,7 @@ pub fn transformSync(
         return globalThis.throwInvalidArgumentType("transformSync", "code", "string or Uint8Array");
     };
 
-    var arena = MimallocArena.init() catch unreachable;
+    var arena = MimallocArena.init();
     defer arena.deinit();
     const code_holder = try jsc.Node.StringOrBuffer.fromJS(globalThis, arena.allocator(), code_arg) orelse {
         return globalThis.throwInvalidArgumentType("transformSync", "code", "string or Uint8Array");
@@ -1066,7 +1066,7 @@ pub fn scanImports(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callfra
         return globalThis.throwInvalidArguments("Only JavaScript-like files support this fast path", .{});
     }
 
-    var arena = MimallocArena.init() catch unreachable;
+    var arena = MimallocArena.init();
     const prev_allocator = this.transpiler.allocator;
     const allocator = arena.allocator();
     var ast_memory_allocator = allocator.create(JSAst.ASTMemoryAllocator) catch bun.outOfMemory();

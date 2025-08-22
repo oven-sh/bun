@@ -203,7 +203,7 @@ pub const RunCommand = struct {
         }
     }
 
-    const log = Output.scoped(.RUN, false);
+    const log = Output.scoped(.RUN, .visible);
 
     pub fn runPackageScriptForeground(
         ctx: Command.Context,
@@ -1639,7 +1639,7 @@ pub const RunCommand = struct {
 
 pub const BunXFastPath = struct {
     const shim_impl = @import("../install/windows-shim/bun_shim_impl.zig");
-    const debug = Output.scoped(.BunXFastPath, false);
+    const debug = Output.scoped(.BunXFastPath, .visible);
 
     var direct_launch_buffer: bun.WPathBuffer = undefined;
     var environment_buffer: bun.WPathBuffer = undefined;

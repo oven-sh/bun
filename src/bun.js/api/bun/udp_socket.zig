@@ -1,4 +1,4 @@
-const log = Output.scoped(.UdpSocket, false);
+const log = Output.scoped(.UdpSocket, .visible);
 
 const INET6_ADDRSTRLEN = if (bun.Environment.isWindows) 65 else 46;
 

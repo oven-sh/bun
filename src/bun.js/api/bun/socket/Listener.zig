@@ -829,7 +829,7 @@ pub fn jsAddServerName(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     }
     return global.throw("Expected a Listener instance", .{});
 }
-pub const log = Output.scoped(.Listener, false);
+pub const log = Output.scoped(.Listener, .visible);
 
 fn isValidPipeName(pipe_name: []const u8) bool {
     if (!Environment.isWindows) {

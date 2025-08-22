@@ -1,4 +1,4 @@
-const debug = bun.Output.scoped(.Transpiler, false);
+const debug = bun.Output.scoped(.Transpiler, .visible);
 
 pub const JSBundler = struct {
     const OwnedString = bun.MutableString;
@@ -37,6 +37,119 @@ pub const JSBundler = struct {
         env_behavior: api.DotEnvBehavior = .disable,
         env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         tsconfig_override: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        compile: ?CompileOptions = null,
+
+        pub const CompileOptions = struct {
+            compile_target: CompileTarget = .{},
+            exec_argv: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            executable_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            windows_hide_console: bool = false,
+            windows_icon_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            windows_title: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            outfile: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+
+            pub fn fromJS(globalThis: *jsc.JSGlobalObject, config: jsc.JSValue, allocator: std.mem.Allocator, compile_target: ?CompileTarget) JSError!?CompileOptions {
+                var this = CompileOptions{
+                    .exec_argv = OwnedString.initEmpty(allocator),
+                    .executable_path = OwnedString.initEmpty(allocator),
+                    .windows_icon_path = OwnedString.initEmpty(allocator),
+                    .windows_title = OwnedString.initEmpty(allocator),
+                    .outfile = OwnedString.initEmpty(allocator),
+                    .compile_target = compile_target orelse .{},
+                };
+                errdefer this.deinit();
+
+                const object = brk: {
+                    const compile_value = try config.getTruthy(globalThis, "compile") orelse return null;
+
+                    if (compile_value.isBoolean()) {
+                        if (compile_value == .false) {
+                            return null;
+                        }
+                        return this;
+                    } else if (compile_value.isString()) {
+                        this.compile_target = try CompileTarget.fromJS(globalThis, compile_value);
+                        return this;
+                    } else if (compile_value.isObject()) {
+                        break :brk compile_value;
+                    } else {
+                        return globalThis.throwInvalidArguments("Expected compile to be a boolean or string or options object", .{});
+                    }
+                };
+
+                if (try object.getOwn(globalThis, "target")) |target| {
+                    this.compile_target = try CompileTarget.fromJS(globalThis, target);
+                }
+
+                if (try object.getOwnArray(globalThis, "execArgv")) |exec_argv| {
+                    var iter = try exec_argv.arrayIterator(globalThis);
+                    var is_first = true;
+                    while (try iter.next()) |arg| {
+                        var slice = try arg.toSlice(globalThis, bun.default_allocator);
+                        defer slice.deinit();
+                        if (is_first) {
+                            is_first = false;
+                            try this.exec_argv.appendSlice(slice.slice());
+                        } else {
+                            try this.exec_argv.appendChar(' ');
+                            try this.exec_argv.appendSlice(slice.slice());
+                        }
+                    }
+                }
+
+                if (try object.getOwn(globalThis, "executablePath")) |executable_path| {
+                    var slice = try executable_path.toSlice(globalThis, bun.default_allocator);
+                    defer slice.deinit();
+                    if (bun.sys.existsAtType(bun.FD.cwd(), slice.slice()).unwrapOr(.directory) != .file) {
+                        return globalThis.throwInvalidArguments("executablePath must be a valid path to a Bun executable", .{});
+                    }
+
+                    try this.executable_path.appendSliceExact(slice.slice());
+                }
+
+                if (try object.getOwnTruthy(globalThis, "windows")) |windows| {
+                    if (!windows.isObject()) {
+                        return globalThis.throwInvalidArguments("windows must be an object", .{});
+                    }
+
+                    if (try windows.getOwn(globalThis, "hideConsole")) |hide_console| {
+                        this.windows_hide_console = hide_console.toBoolean();
+                    }
+
+                    if (try windows.getOwn(globalThis, "icon")) |windows_icon_path| {
+                        var slice = try windows_icon_path.toSlice(globalThis, bun.default_allocator);
+                        defer slice.deinit();
+                        if (bun.sys.existsAtType(bun.FD.cwd(), slice.slice()).unwrapOr(.directory) != .file) {
+                            return globalThis.throwInvalidArguments("windows.icon must be a valid path to an ico file", .{});
+                        }
+
+                        try this.windows_icon_path.appendSliceExact(slice.slice());
+                    }
+
+                    if (try windows.getOwn(globalThis, "title")) |windows_title| {
+                        var slice = try windows_title.toSlice(globalThis, bun.default_allocator);
+                        defer slice.deinit();
+                        try this.windows_title.appendSliceExact(slice.slice());
+                    }
+                }
+
+                if (try object.getOwn(globalThis, "outfile")) |outfile| {
+                    var slice = try outfile.toSlice(globalThis, bun.default_allocator);
+                    defer slice.deinit();
+                    try this.outfile.appendSliceExact(slice.slice());
+                }
+
+                return this;
+            }
+
+            pub fn deinit(this: *CompileOptions) void {
+                this.exec_argv.deinit();
+                this.executable_path.deinit();
+                this.windows_icon_path.deinit();
+                this.windows_title.deinit();
+                this.outfile.deinit();
+            }
+        };
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -58,9 +171,20 @@ pub const JSBundler = struct {
             errdefer if (plugins.*) |plugin| plugin.deinit();
 
             var did_set_target = false;
-            if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
-                this.target = target;
-                did_set_target = true;
+            if (try config.getOptional(globalThis, "target", ZigString.Slice)) |slice| {
+                defer slice.deinit();
+                if (strings.hasPrefixComptime(slice.slice(), "bun-")) {
+                    this.compile = .{
+                        .compile_target = try CompileTarget.fromSlice(globalThis, slice.slice()),
+                    };
+                    this.target = .bun;
+                    did_set_target = true;
+                } else {
+                    this.target = options.Target.Map.get(slice.slice()) orelse {
+                        return globalThis.throwInvalidArguments("Expected target to be one of 'browser', 'node', 'bun', 'macro', or 'bun-<target>', got {s}", .{slice.slice()});
+                    };
+                    did_set_target = true;
+                }
             }
 
             // Plugins must be resolved first as they are allowed to mutate the config JSValue
@@ -450,6 +574,52 @@ pub const JSBundler = struct {
                 this.throw_on_error = flag;
             }
 
+            if (try CompileOptions.fromJS(
+                globalThis,
+                config,
+                bun.default_allocator,
+                if (this.compile) |*compile| compile.compile_target else null,
+            )) |compile| {
+                this.compile = compile;
+            }
+
+            if (this.compile) |*compile| {
+                this.target = .bun;
+
+                const define_keys = compile.compile_target.defineKeys();
+                const define_values = compile.compile_target.defineValues();
+                for (define_keys, define_values) |key, value| {
+                    try this.define.insert(key, value);
+                }
+
+                const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(this.compile.?.compile_target.os, "root/");
+                try this.public_path.append(base_public_path);
+
+                if (compile.outfile.isEmpty()) {
+                    const entry_point = this.entry_points.keys()[0];
+                    var outfile = std.fs.path.basename(entry_point);
+                    const ext = std.fs.path.extension(outfile);
+                    if (ext.len > 0) {
+                        outfile = outfile[0 .. outfile.len - ext.len];
+                    }
+
+                    if (strings.eqlComptime(outfile, "index")) {
+                        outfile = std.fs.path.basename(std.fs.path.dirname(entry_point) orelse "index");
+                    }
+
+                    if (strings.eqlComptime(outfile, "bun")) {
+                        outfile = std.fs.path.basename(std.fs.path.dirname(entry_point) orelse "bun");
+                    }
+
+                    // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
+                    if (strings.eqlComptime(outfile, "bun") or strings.eqlComptime(outfile, "bunx")) {
+                        return globalThis.throwInvalidArguments("cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile", .{});
+                    }
+
+                    try compile.outfile.appendSliceExact(outfile);
+                }
+            }
+
             return this;
         }
 
@@ -506,6 +676,9 @@ pub const JSBundler = struct {
             self.conditions.deinit();
             self.drop.deinit();
             self.banner.deinit();
+            if (self.compile) |*compile| {
+                compile.deinit();
+            }
             self.env_prefix.deinit();
             self.footer.deinit();
             self.tsconfig_override.deinit();
@@ -521,7 +694,7 @@ pub const JSBundler = struct {
         }
 
         var plugins: ?*Plugin = null;
-        const config = try Config.fromJS(globalThis, arguments[0], &plugins, globalThis.allocator());
+        const config = try Config.fromJS(globalThis, arguments[0], &plugins, bun.default_allocator);
 
         return bun.BundleV2.generateFromJavaScript(
             config,
@@ -682,7 +855,7 @@ pub const JSBundler = struct {
         /// Defer may only be called once
         called_defer: bool,
 
-        const debug_deferred = bun.Output.scoped(.BUNDLER_DEFERRED, true);
+        const debug_deferred = bun.Output.scoped(.BUNDLER_DEFERRED, .hidden);
 
         pub fn init(bv2: *bun.BundleV2, parse: *bun.bundle_v2.ParseTask) Load {
             return .{
@@ -1281,6 +1454,7 @@ pub const BuildArtifact = struct {
 
 const string = []const u8;
 
+const CompileTarget = @import("../../compile_target.zig");
 const Fs = @import("../../fs.zig");
 const resolve_path = @import("../../resolver/resolve_path.zig");
 const std = @import("std");

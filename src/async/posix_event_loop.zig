@@ -5,7 +5,7 @@ pub const Loop = uws.Loop;
 pub const KeepAlive = struct {
     status: Status = .inactive,
 
-    const log = Output.scoped(.KeepAlive, false);
+    const log = Output.scoped(.KeepAlive, .visible);
 
     const Status = enum { active, inactive, done };
 
@@ -541,7 +541,7 @@ pub const FilePoll = struct {
         pending_free_head: ?*FilePoll = null,
         pending_free_tail: ?*FilePoll = null,
 
-        const log = Output.scoped(.FilePoll, false);
+        const log = Output.scoped(.FilePoll, .visible);
 
         pub fn init() Store {
             return .{

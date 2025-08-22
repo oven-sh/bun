@@ -21,6 +21,7 @@ interface BundlerPlugin {
   generateDeferPromise(id: number): Promise<void>;
   promises: Array<Promise<any>> | undefined;
   onEndCallbacks: Array<(result: any) => void | Promise<void>> | undefined;
+  runOnEndPlugins?: (buildResult: any) => void;
 
   onBeforeParse: (filter: RegExp, namespace: string, addon: unknown, symbol: string, external?: unknown) => void;
   $napiDlopenHandle: number;
@@ -123,6 +124,75 @@ export function runSetupFunction(
   isBake: boolean,
 ): Promise<Promise<any>[]> | Promise<any>[] | undefined {
   this.promises = promises;
+  
+  // Register this plugin instance globally so C++ can find it for onEnd callbacks
+  globalThis.activePluginInstance = this;
+  
+  // Add the runOnEndPlugins method to this instance
+  if (!this.runOnEndPlugins) {
+    this.runOnEndPlugins = function(buildResult) {
+      const { onEndCallbacks } = this;
+      if (!onEndCallbacks || onEndCallbacks.length === 0) {
+        return;
+      }
+
+      // Convert logs to errors/warnings arrays for esbuild compatibility
+      const logs = buildResult.logs || [];
+      const errors = [];
+      const warnings = [];
+
+      for (const log of logs) {
+        if (log.level === "error") {
+          errors.push({
+            text: log.message || "",
+            location: log.position
+              ? {
+                  file: log.position.file || "",
+                  line: log.position.line || 0,
+                  column: log.position.column || 0,
+                }
+              : null,
+            notes: [],
+            detail: undefined,
+          });
+        } else if (log.level === "warning") {
+          warnings.push({
+            text: log.message || "",
+            location: log.position
+              ? {
+                  file: log.position.file || "",
+                  line: log.position.line || 0,
+                  column: log.position.column || 0,
+                }
+              : null,
+            notes: [],
+            detail: undefined,
+          });
+        }
+      }
+
+      // Create esbuild-compatible result object
+      const onEndResult = {
+        errors,
+        warnings,
+      };
+
+      // Execute onEnd callbacks serially as per esbuild specification
+      for (const callback of onEndCallbacks) {
+        try {
+          const result = callback(onEndResult);
+          if ($isPromise(result)) {
+            // For now, we can't easily await promises in the bundler completion
+            // We'll handle this synchronously
+            console.warn("onEnd callback returned a promise, but async onEnd is not fully supported yet");
+          }
+        } catch (error) {
+          // Log the error but don't fail the build
+          console.error("onEnd callback error:", error);
+        }
+      }
+    };
+  }
   var onLoadPlugins = new Map<string, [filter: RegExp, callback: OnLoadCallback][]>();
   var onResolvePlugins = new Map<string, [filter: RegExp, OnResolveCallback][]>();
   var onBeforeParsePlugins = new Map<
@@ -458,68 +528,6 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
   }
 }
 
-export function runOnEndPlugins(this: BundlerPlugin, buildResult) {
-  const { onEndCallbacks } = this;
-  if (!onEndCallbacks || onEndCallbacks.length === 0) {
-    return;
-  }
-
-  // Convert logs to errors/warnings arrays for esbuild compatibility
-  const logs = buildResult.logs || [];
-  const errors = [];
-  const warnings = [];
-
-  for (const log of logs) {
-    if (log.level === "error") {
-      errors.push({
-        text: log.message || "",
-        location: log.position
-          ? {
-              file: log.position.file || "",
-              line: log.position.line || 0,
-              column: log.position.column || 0,
-            }
-          : null,
-        notes: [],
-        detail: undefined,
-      });
-    } else if (log.level === "warning") {
-      warnings.push({
-        text: log.message || "",
-        location: log.position
-          ? {
-              file: log.position.file || "",
-              line: log.position.line || 0,
-              column: log.position.column || 0,
-            }
-          : null,
-        notes: [],
-        detail: undefined,
-      });
-    }
-  }
-
-  // Create esbuild-compatible result object
-  const onEndResult = {
-    errors,
-    warnings,
-  };
-
-  // Execute onEnd callbacks serially as per esbuild specification
-  for (const callback of onEndCallbacks) {
-    try {
-      const result = callback(onEndResult);
-      if ($isPromise(result)) {
-        // For now, we can't easily await promises in the bundler completion
-        // We'll handle this synchronously
-        console.warn("onEnd callback returned a promise, but async onEnd is not fully supported yet");
-      }
-    } catch (error) {
-      // Log the error but don't fail the build
-      console.error("onEnd callback error:", error);
-    }
-  }
-}
 
 export function runOnLoadPlugins(
   this: BundlerPlugin,

@@ -630,7 +630,79 @@ test("onEnd Plugin does not crash", async () => {
         ],
       });
     })(),
-  ).rejects.toThrow("On-end callbacks is not implemented yet. See https://github.com/oven-sh/bun/issues/2771");
+  ).rejects.toThrow("callback must be a function");
+});
+
+test("onEnd Plugin executes callback", async () => {
+  const dir = tempDirWithFiles("onEnd", {
+    "entry.js": `
+      console.log("Hello from onEnd test");
+      export default "test";
+    `,
+  });
+
+  let onEndCalled = false;
+  
+  await Bun.build({
+    entrypoints: [join(dir, "entry.js")],
+    plugins: [
+      {
+        name: "plugin",
+        setup(build) {
+          build.onEnd((result) => {
+            onEndCalled = true;
+            expect(result).toHaveProperty("errors");
+            expect(result).toHaveProperty("warnings");
+            expect(Array.isArray(result.errors)).toBe(true);
+            expect(Array.isArray(result.warnings)).toBe(true);
+          });
+        },
+      },
+    ],
+  });
+  
+  expect(onEndCalled).toBe(true);
+});
+
+test("onEnd Plugin handles multiple callbacks", async () => {
+  const dir = tempDirWithFiles("onEnd-multi", {
+    "entry.js": `
+      console.log("Multiple callbacks test");
+      export default "test";
+    `,
+  });
+
+  let firstCalled = false;
+  let secondCalled = false;
+  
+  await Bun.build({
+    entrypoints: [join(dir, "entry.js")],
+    plugins: [
+      {
+        name: "plugin1",
+        setup(build) {
+          build.onEnd((result) => {
+            firstCalled = true;
+            expect(result).toHaveProperty("errors");
+            expect(result).toHaveProperty("warnings");
+          });
+        },
+      },
+      {
+        name: "plugin2", 
+        setup(build) {
+          build.onEnd((result) => {
+            secondCalled = true;
+            expect(result).toHaveProperty("errors");
+            expect(result).toHaveProperty("warnings");
+          });
+        },
+      },
+    ],
+  });
+  
+  expect(firstCalled).toBe(true);
+  expect(secondCalled).toBe(true);
 });
 
 test("macro with nested object", async () => {

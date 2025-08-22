@@ -1890,7 +1890,7 @@ pub const BundleV2 = struct {
 
             // Run onEnd plugins before resolving - error case
             if (this.plugins) |plugins| {
-                plugins.runOnEndPlugins(root_obj);
+                _ = plugins.runOnEndPlugins(root_obj);
             }
 
             promise.resolve(globalThis, root_obj);
@@ -1993,7 +1993,7 @@ pub const BundleV2 = struct {
 
                     // Run onEnd plugins before resolving - success case
                     if (this.plugins) |plugins| {
-                        plugins.runOnEndPlugins(root_obj);
+                        _ = plugins.runOnEndPlugins(root_obj);
                     }
 
                     promise.resolve(globalThis, root_obj);

@@ -21,7 +21,7 @@ interface BundlerPlugin {
   generateDeferPromise(id: number): Promise<void>;
   promises: Array<Promise<any>> | undefined;
   onEndCallbacks: Array<(result: any) => void | Promise<void>> | undefined;
-  runOnEndPlugins?: (buildResult: any) => void;
+  runOnEndPlugins?: (buildResult: any) => void | Promise<void>;
 
   onBeforeParse: (filter: RegExp, namespace: string, addon: unknown, symbol: string, external?: unknown) => void;
   $napiDlopenHandle: number;
@@ -130,7 +130,7 @@ export function runSetupFunction(
 
   // Add the runOnEndPlugins method to this instance
   if (!this.runOnEndPlugins) {
-    this.runOnEndPlugins = function (buildResult) {
+    this.runOnEndPlugins = async function (buildResult) {
       const { onEndCallbacks } = this;
       if (!onEndCallbacks || onEndCallbacks.length === 0) {
         return;
@@ -182,9 +182,9 @@ export function runSetupFunction(
         try {
           const result = callback(onEndResult);
           if ($isPromise(result)) {
-            // For now, we can't easily await promises in the bundler completion
-            // We'll handle this synchronously
-            console.warn("onEnd callback returned a promise, but async onEnd is not fully supported yet");
+            // Await the promise so callbacks complete in order
+            // Note: build completion is not delayed for async onEnd callbacks
+            await result;
           }
         } catch (error) {
           // Log the error but don't fail the build

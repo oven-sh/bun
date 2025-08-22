@@ -495,7 +495,6 @@ src/bun.js/modules/NodeTTYModule.cpp
 src/bun.js/modules/NodeUtilTypesModule.cpp
 src/bun.js/modules/ObjectModule.cpp
 src/deps/libuwsockets.cpp
-src/deps/mimalloc.cpp
 src/io/io_darwin.cpp
 src/vm/Semaphore.cpp
 src/vm/SigintWatcher.cpp

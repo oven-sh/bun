@@ -403,12 +403,12 @@ pub const Jest = struct {
             ZigString.static("it"),
             test_fn,
         );
-        const describe = jsc.host_fn.NewFunction(globalObject, ZigString.static("describe"), 2, Describe2.js_fns.genericDescribe(.{ .concurrent = false, .only = false, .signature = "describe()" }).describeFn, false);
-        describe.put(globalObject, ZigString.static("concurrent"), jsc.host_fn.NewFunction(globalObject, ZigString.static("concurrent"), 2, Describe2.js_fns.genericDescribe(.{ .concurrent = true, .only = false, .signature = "describe.concurrent()" }).describeFn, false));
-        describe.put(globalObject, ZigString.static("only"), jsc.host_fn.NewFunction(globalObject, ZigString.static("only"), 2, Describe2.js_fns.genericDescribe(.{ .concurrent = false, .only = true, .signature = "describe.only()" }).describeFn, false));
+        const describe = jsc.host_fn.NewFunction(globalObject, ZigString.static("describe"), 2, Describe2.js_fns.genericDescribe(.{ .base = .{}, .signature = "describe()" }).describeFn, false);
+        describe.put(globalObject, ZigString.static("concurrent"), jsc.host_fn.NewFunction(globalObject, ZigString.static("concurrent"), 2, Describe2.js_fns.genericDescribe(.{ .base = .{ .self_concurrent = true }, .signature = "describe.concurrent()" }).describeFn, false));
+        describe.put(globalObject, ZigString.static("only"), jsc.host_fn.NewFunction(globalObject, ZigString.static("only"), 2, Describe2.js_fns.genericDescribe(.{ .base = .{ .self_only = true }, .signature = "describe.only()" }).describeFn, false));
+        describe.put(globalObject, ZigString.static("skip"), jsc.host_fn.NewFunction(globalObject, ZigString.static("skip"), 2, Describe2.js_fns.genericDescribe(.{ .base = .{ .self_mode = .skip }, .signature = "describe.skip()" }).describeFn, false));
+        describe.put(globalObject, ZigString.static("todo"), jsc.host_fn.NewFunction(globalObject, ZigString.static("todo"), 2, Describe2.js_fns.genericDescribe(.{ .base = .{ .self_mode = .todo }, .signature = "describe.todo()" }).describeFn, false));
         inline for (.{
-            "skip",
-            "todo",
             "skipIf",
             "todoIf",
             "each",

@@ -32,8 +32,7 @@ pub const js_fns = struct {
     }
 
     const DescribeConfig = struct {
-        concurrent: bool,
-        only: bool,
+        base: BaseScopeCfg,
         signature: []const u8,
     };
     pub fn genericDescribe(comptime cfg: DescribeConfig) type {
@@ -50,7 +49,7 @@ pub const js_fns = struct {
 
         const bunTest = try getActive(globalThis, .{ .signature = cfg.signature, .allow_in_preload = false });
 
-        if (cfg.only) try errorInCI(globalThis, cfg.signature);
+        if (cfg.base.self_only) try errorInCI(globalThis, cfg.signature);
 
         const description, var callback = callframe.argumentsAsArray(2);
         callback = callback.withAsyncContextIfNeeded(globalThis);
@@ -59,7 +58,7 @@ pub const js_fns = struct {
 
         switch (bunTest.phase) {
             .collection => {
-                try bunTest.collection.enqueueDescribeCallback(callback, description_str, .{ .self_concurrent = cfg.concurrent, .self_only = cfg.only });
+                try bunTest.collection.enqueueDescribeCallback(callback, description_str, cfg.base);
                 return .js_undefined; // vitest doesn't return a promise, even for `describe(async () => {})`
             },
             .execution => {

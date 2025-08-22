@@ -608,7 +608,6 @@ function parseOptions(
     }
   }
 
-
   return ret;
 }
 

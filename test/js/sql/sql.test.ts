@@ -151,66 +151,66 @@ if (isDockerEnabled()) {
   const fs = require("node:fs");
   const path = require("node:path");
   const os = require("node:os");
-  
+
   // Create a temporary unix domain socket path
   const socketPath = path.join(os.tmpdir(), `postgres_echo_${Date.now()}.sock`);
-  
+
   // Clean up any existing socket file
   try {
     fs.unlinkSync(socketPath);
   } catch {}
-  
+
   // Create a unix domain socket server that proxies to the PostgreSQL container
-  const socketServer = net.createServer((clientSocket) => {
+  const socketServer = net.createServer(clientSocket => {
     console.log("PostgreSQL connection received on unix socket");
-    
+
     // Create connection to the actual PostgreSQL container
     const containerSocket = net.createConnection({
       host: login.host,
-      port: login.port
+      port: login.port,
     });
-    
+
     // Handle container connection
     containerSocket.on("connect", () => {
       console.log("Connected to PostgreSQL container");
     });
-    
-    containerSocket.on("error", (err) => {
+
+    containerSocket.on("error", err => {
       console.error("Container connection error:", err);
       clientSocket.destroy();
     });
-    
+
     containerSocket.on("close", () => {
       console.log("Container connection closed");
       clientSocket.end();
     });
-    
+
     // Handle client socket
-    clientSocket.on("data", (data) => {
+    clientSocket.on("data", data => {
       // Forward client data to container
       containerSocket.write(data);
     });
-    
-    clientSocket.on("error", (err) => {
+
+    clientSocket.on("error", err => {
       console.error("Client socket error:", err);
       containerSocket.destroy();
     });
-    
+
     clientSocket.on("close", () => {
       console.log("Client connection closed");
       containerSocket.end();
     });
-    
+
     // Forward container responses back to client
-    containerSocket.on("data", (data) => {
+    containerSocket.on("data", data => {
       clientSocket.write(data);
     });
   });
-  
+
   socketServer.listen(socketPath, () => {
     console.log(`Unix domain socket server listening on ${socketPath}`);
   });
-  
+
   // Clean up the socket on exit
   afterAll(() => {
     socketServer.close();
@@ -219,7 +219,6 @@ if (isDockerEnabled()) {
     } catch {}
   });
 
-  
   const login: Bun.SQL.PostgresOrMySQLOptions = {
     username: "bun_sql_test",
     port: container.port,
@@ -231,7 +230,7 @@ if (isDockerEnabled()) {
     port: container.port,
     path: socketPath,
   };
- 
+
   const login_md5: Bun.SQL.PostgresOrMySQLOptions = {
     username: "bun_sql_test_md5",
     password: "bun_sql_test_md5",

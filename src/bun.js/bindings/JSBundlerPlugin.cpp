@@ -674,5 +674,4 @@ extern "C" JSC::JSGlobalObject* JSBundlerPlugin__globalObject(Bun::JSBundlerPlug
     return plugin->m_globalObject;
 }
 
-
 } // namespace Bun

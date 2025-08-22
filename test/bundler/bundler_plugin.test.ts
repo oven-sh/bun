@@ -950,17 +950,17 @@ describe("bundler", () => {
     },
     plugins(builder) {
       const callOrder: number[] = [];
-      
+
       builder.onEnd(result => {
         callOrder.push(1);
         expect(result.errors.length).toBe(0);
       });
-      
+
       builder.onEnd(result => {
         callOrder.push(2);
         expect(callOrder).toEqual([1, 2]);
       });
-      
+
       builder.onEnd(result => {
         callOrder.push(3);
         expect(callOrder).toEqual([1, 2, 3]);
@@ -1014,7 +1014,7 @@ describe("bundler", () => {
     plugins(builder) {
       let onLoadCalled = false;
       let onEndCalled = false;
-      
+
       builder.onLoad({ filter: /\.custom$/ }, async args => {
         onLoadCalled = true;
         const text = await Bun.file(args.path).text();
@@ -1023,7 +1023,7 @@ describe("bundler", () => {
           loader: "js",
         };
       });
-      
+
       builder.onEnd(result => {
         onEndCalled = true;
         expect(onLoadCalled).toBe(true);

@@ -458,10 +458,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
   }
 }
 
-export function runOnEndPlugins(
-  this: BundlerPlugin,
-  buildResult,
-) {
+export function runOnEndPlugins(this: BundlerPlugin, buildResult) {
   const { onEndCallbacks } = this;
   if (!onEndCallbacks || onEndCallbacks.length === 0) {
     return;
@@ -471,27 +468,31 @@ export function runOnEndPlugins(
   const logs = buildResult.logs || [];
   const errors = [];
   const warnings = [];
-  
+
   for (const log of logs) {
     if (log.level === "error") {
       errors.push({
         text: log.message || "",
-        location: log.position ? {
-          file: log.position.file || "",
-          line: log.position.line || 0,
-          column: log.position.column || 0,
-        } : null,
+        location: log.position
+          ? {
+              file: log.position.file || "",
+              line: log.position.line || 0,
+              column: log.position.column || 0,
+            }
+          : null,
         notes: [],
         detail: undefined,
       });
     } else if (log.level === "warning") {
       warnings.push({
         text: log.message || "",
-        location: log.position ? {
-          file: log.position.file || "",
-          line: log.position.line || 0,
-          column: log.position.column || 0,
-        } : null,
+        location: log.position
+          ? {
+              file: log.position.file || "",
+              line: log.position.line || 0,
+              column: log.position.column || 0,
+            }
+          : null,
         notes: [],
         detail: undefined,
       });

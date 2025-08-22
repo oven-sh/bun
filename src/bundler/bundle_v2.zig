@@ -1888,7 +1888,6 @@ pub const BundleV2 = struct {
                 },
             );
 
-            // Run onEnd plugins before resolving - error case
             if (this.plugins) |plugins| {
                 _ = plugins.runOnEndPlugins(root_obj);
             }

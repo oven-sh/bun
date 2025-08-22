@@ -715,14 +715,14 @@ test("onEnd Plugin with async callback", async () => {
 
   let onEndCalled = false;
   let asyncOperationCompleted = false;
-  
+
   await Bun.build({
     entrypoints: [join(dir, "entry.js")],
     plugins: [
       {
         name: "async-plugin",
         setup(build) {
-          build.onEnd(async (result) => {
+          build.onEnd(async result => {
             onEndCalled = true;
             // Simulate async operation
             await new Promise(resolve => setTimeout(resolve, 50));
@@ -734,7 +734,7 @@ test("onEnd Plugin with async callback", async () => {
       },
     ],
   });
-  
+
   expect(onEndCalled).toBe(true);
   // Currently, the build does NOT wait for async onEnd callbacks to complete
   // This is different from esbuild behavior but matches our current implementation

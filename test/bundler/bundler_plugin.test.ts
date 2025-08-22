@@ -905,9 +905,10 @@ describe("bundler", () => {
       `,
     },
     plugins(builder) {
-      let onEndCalled = false;
+      // Store onEndCalled in a scope accessible to onAfterBundle
+      this.onEndCalled = false;
       builder.onEnd(result => {
-        onEndCalled = true;
+        this.onEndCalled = true;
         console.log("onEnd called with result:", result);
         expect(result).toBeDefined();
         expect(result.errors).toBeDefined();
@@ -917,9 +918,8 @@ describe("bundler", () => {
       });
     },
     onAfterBundle(api) {
-      // This runs after the bundle is complete
-      // If onEnd was working, this should verify it was called
-      console.log("Bundle completed - onEnd should have been called by now");
+      // Verify that onEnd was actually called
+      expect(this.onEndCalled).toBe(true);
     },
   });
 

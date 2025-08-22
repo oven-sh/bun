@@ -360,9 +360,15 @@ function parseOptions(
   port ||= Number(options.port || env.PGPORT || 5432);
 
   path ||= (options as { path?: string }).path || "";
-  // add /.s.PGSQL.${port} if it doesn't exist
-  if (path && path?.indexOf("/.s.PGSQL.") === -1) {
-    path = `${path}/.s.PGSQL.${port}`;
+  // Follow porsager/postgres approach: if user provides explicit path, use it as-is
+  // Only auto-append socket name if path looks like a directory (ends with / or no extension)
+  if (path && path.indexOf("/.s.PGSQL.") === -1) {
+    // Check if this looks like a directory path vs a socket file path
+    if (path.endsWith("/") || (!path.includes(".") && !path.includes("sock"))) {
+      // Looks like a directory, append standard PostgreSQL socket name
+      path = `${path}/.s.PGSQL.${port}`;
+    }
+    // If it looks like a file (contains . or "sock"), use as-is
   }
 
   username ||=

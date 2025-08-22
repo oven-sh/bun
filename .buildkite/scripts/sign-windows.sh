@@ -47,7 +47,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 get_windows_temp_dir() {
     local temp_dir=""
     
-    # Method 1: Use PowerShell to get proper temp path
+    # Method 1: Use Windows TEMP environment variable directly
+    if [[ -n "${TEMP:-}" ]]; then
+        # Convert Windows path to Unix format for bash
+        temp_dir=$(cygpath -u "$TEMP" 2>/dev/null || echo "")
+        if [[ -n "$temp_dir" ]] && [[ -d "$temp_dir" ]] && [[ -w "$temp_dir" ]]; then
+            echo "$temp_dir/keylocker-tools"
+            return 0
+        fi
+    fi
+    
+    # Method 2: Use PowerShell to get proper temp path
     if command -v powershell >/dev/null 2>&1; then
         temp_dir=$(powershell -Command "[System.IO.Path]::GetTempPath()" 2>/dev/null | tr -d '\r\n' || echo "")
         if [[ -n "$temp_dir" ]]; then
@@ -62,15 +72,27 @@ get_windows_temp_dir() {
         fi
     fi
     
-    # Method 2: Standard temp directories  
-    for dir in "/tmp" "/var/tmp" "/c/temp" "/c/Windows/Temp" "$HOME"; do
+    # Method 3: Use cmd.exe to get Windows temp
+    if command -v cmd >/dev/null 2>&1; then
+        temp_dir=$(cmd //c "echo %TEMP%" 2>/dev/null | tr -d '\r\n' || echo "")
+        if [[ -n "$temp_dir" ]]; then
+            temp_dir=$(cygpath -u "$temp_dir" 2>/dev/null || echo "")
+            if [[ -n "$temp_dir" ]] && [[ -d "$temp_dir" ]] && [[ -w "$temp_dir" ]]; then
+                echo "$temp_dir/keylocker-tools"
+                return 0
+            fi
+        fi
+    fi
+    
+    # Method 4: Standard Windows temp directories (avoid /tmp which is Git Bash specific)
+    for dir in "/c/Users/$USER/AppData/Local/Temp" "/c/Windows/Temp" "/c/temp"; do
         if [[ -d "$dir" ]] && [[ -w "$dir" ]]; then
             echo "$dir/keylocker-tools"
             return 0
         fi
     done
     
-    # Last resort
+    # Last resort - use current directory
     echo "./keylocker-tools"
 }
 
@@ -171,6 +193,13 @@ install_keylocker() {
     
     log_info "Installing DigiCert KeyLocker tools..."
     log_info "Using tools directory: $TOOLS_DIR"
+    
+    # Debug: Show actual paths
+    log_info "Unix TOOLS_DIR: $TOOLS_DIR"
+    local win_tools_dir=$(cygpath -w "$TOOLS_DIR" 2>/dev/null || echo "$TOOLS_DIR")
+    log_info "Windows TOOLS_DIR: $win_tools_dir"
+    log_info "Environment TEMP: ${TEMP:-not set}"
+    log_info "Environment TMP: ${TMP:-not set}"
     
     # Create and verify tools directory
     if [[ ! -d "$TOOLS_DIR" ]]; then
@@ -305,16 +334,34 @@ install_keylocker() {
     # Convert path for Windows
     local win_msi_path="$(cygpath -w "$msi_path" 2>/dev/null || echo "$msi_path")"
     
-    # Install MSI with comprehensive automation and better error detection
-    log_info "Running MSI installer..."
-    log_info "MSI file path: $msi_path"
-    log_info "Windows MSI path: $win_msi_path"
-    
-    # Verify MSI file exists and is not empty
+    # Verify the file exists at the Unix path
     if [[ ! -f "$msi_path" ]] || [[ ! -s "$msi_path" ]]; then
-        log_error "MSI file is missing or empty: $msi_path"
+        log_error "MSI file is missing or empty at Unix path: $msi_path"
+        log_info "Directory contents:"
+        ls -la "$TOOLS_DIR" 2>/dev/null || true
         exit 1
     fi
+    
+    # Verify Windows can access the file
+    if ! cmd //c "if exist \"$win_msi_path\" (exit 0) else (exit 1)" 2>/dev/null; then
+        log_error "MSI file not accessible from Windows at: $win_msi_path"
+        log_info "Attempting to find correct Windows path..."
+        
+        # Try to get the actual Windows path
+        local actual_win_path=$(cmd //c "echo %TEMP%\\keylocker-tools\\Keylockertools-windows-x64.msi" 2>/dev/null | tr -d '\r\n')
+        if [[ -n "$actual_win_path" ]]; then
+            log_info "Trying Windows temp path: $actual_win_path"
+            if cmd //c "if exist \"$actual_win_path\" (exit 0) else (exit 1)" 2>/dev/null; then
+                win_msi_path="$actual_win_path"
+                log_info "Found MSI at: $win_msi_path"
+            fi
+        fi
+    fi
+    
+    # Install MSI with comprehensive automation and better error detection
+    log_info "Running MSI installer..."
+    log_info "MSI file Unix path: $msi_path"
+    log_info "MSI file Windows path: $win_msi_path"
     
     local file_size=$(wc -c < "$msi_path" | tr -d ' ')
     log_info "MSI file size: $file_size bytes"

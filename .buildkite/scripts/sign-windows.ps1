@@ -135,7 +135,22 @@ function Setup-Certificate {
 function Install-KeyLocker {
     Log-Info "Checking for DigiCert KeyLocker tools..."
     
-    # First, check if smctl.exe is already in PATH
+    # First, check if user has specified the location
+    if ($env:SMCTL_PATH) {
+        Log-Info "Using user-specified SMCTL_PATH: $env:SMCTL_PATH"
+        if (Test-Path $env:SMCTL_PATH) {
+            $smctlDir = Split-Path $env:SMCTL_PATH -Parent
+            if ($env:PATH -notlike "*$smctlDir*") {
+                $env:PATH = "$smctlDir;$env:PATH"
+                Log-Info "Added to PATH: $smctlDir"
+            }
+            return $env:SMCTL_PATH
+        } else {
+            Log-Error "SMCTL_PATH specified but file not found: $env:SMCTL_PATH"
+        }
+    }
+    
+    # Check if smctl.exe is already in PATH
     $smctlInPath = Get-Command smctl.exe -ErrorAction SilentlyContinue
     if ($smctlInPath) {
         Log-Success "smctl.exe found in PATH: $($smctlInPath.Path)"
@@ -308,17 +323,24 @@ function Install-KeyLocker {
                 }
             }
             
-            # Do another broader search
-            Log-Info "Searching entire system for smctl.exe..."
-            $found = Get-ChildItem -Path "C:\" -Filter "smctl.exe" -Recurse -ErrorAction SilentlyContinue | 
-                Select-Object -First 1
-            
-            if ($found) {
-                Log-Success "Found smctl.exe at: $($found.FullName)"
-                $smctlDir = $found.DirectoryName
-                $env:PATH = "$smctlDir;$env:PATH"
-                return $found.FullName
+            # Check if user has manually specified the location
+            if ($env:SMCTL_PATH) {
+                Log-Info "Checking user-specified SMCTL_PATH: $env:SMCTL_PATH"
+                if (Test-Path $env:SMCTL_PATH) {
+                    Log-Success "Found smctl.exe at user-specified location"
+                    $smctlDir = Split-Path $env:SMCTL_PATH -Parent
+                    $env:PATH = "$smctlDir;$env:PATH"
+                    return $env:SMCTL_PATH
+                }
             }
+            
+            Log-Error "DigiCert tools appear to be installed but cannot be found"
+            Log-Error "Please locate smctl.exe manually and set SMCTL_PATH environment variable"
+            Log-Error "Example: `$env:SMCTL_PATH = 'C:\Path\To\smctl.exe'"
+            Log-Error ""
+            Log-Error "You can find it by running in a new cmd prompt:"
+            Log-Error "  dir C:\Prog* /s /b | findstr smctl.exe"
+            throw "Cannot locate smctl.exe - please set SMCTL_PATH environment variable"
         }
         
         throw "MSI installation failed and tools not found"

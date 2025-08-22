@@ -47,13 +47,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 get_windows_temp_dir() {
     local temp_dir=""
     
-    # Method 1: Use Windows TEMP environment variable directly
-    if [[ -n "${TEMP:-}" ]]; then
-        # Convert Windows path to Unix format for bash
-        temp_dir=$(cygpath -u "$TEMP" 2>/dev/null || echo "")
-        if [[ -n "$temp_dir" ]] && [[ -d "$temp_dir" ]] && [[ -w "$temp_dir" ]]; then
-            echo "$temp_dir/keylocker-tools"
-            return 0
+    # CRITICAL: Git Bash sets TEMP=/tmp which is NOT the Windows temp directory
+    # We must get the actual Windows temp directory
+    
+    # Method 1: Use cmd.exe to get Windows temp (most reliable)
+    if command -v cmd >/dev/null 2>&1; then
+        temp_dir=$(cmd //c "echo %TEMP%" 2>/dev/null | tr -d '\r\n' || echo "")
+        if [[ -n "$temp_dir" ]]; then
+            temp_dir=$(cygpath -u "$temp_dir" 2>/dev/null || echo "")
+            if [[ -n "$temp_dir" ]] && [[ -d "$temp_dir" ]] && [[ -w "$temp_dir" ]]; then
+                echo "$temp_dir/keylocker-tools"
+                return 0
+            fi
         fi
     fi
     
@@ -72,25 +77,23 @@ get_windows_temp_dir() {
         fi
     fi
     
-    # Method 3: Use cmd.exe to get Windows temp
-    if command -v cmd >/dev/null 2>&1; then
-        temp_dir=$(cmd //c "echo %TEMP%" 2>/dev/null | tr -d '\r\n' || echo "")
-        if [[ -n "$temp_dir" ]]; then
-            temp_dir=$(cygpath -u "$temp_dir" 2>/dev/null || echo "")
-            if [[ -n "$temp_dir" ]] && [[ -d "$temp_dir" ]] && [[ -w "$temp_dir" ]]; then
-                echo "$temp_dir/keylocker-tools"
-                return 0
-            fi
-        fi
-    fi
-    
-    # Method 4: Standard Windows temp directories (avoid /tmp which is Git Bash specific)
-    for dir in "/c/Users/$USER/AppData/Local/Temp" "/c/Windows/Temp" "/c/temp"; do
+    # Method 3: Use known Windows temp directory paths
+    local current_user="${USER:-${USERNAME:-}}"
+    for dir in "/c/Users/$current_user/AppData/Local/Temp" "/c/Windows/Temp" "/c/temp"; do
         if [[ -d "$dir" ]] && [[ -w "$dir" ]]; then
             echo "$dir/keylocker-tools"
             return 0
         fi
     done
+    
+    # Method 4: Check if USERPROFILE is set and use it
+    if [[ -n "${USERPROFILE:-}" ]]; then
+        temp_dir=$(cygpath -u "$USERPROFILE/AppData/Local/Temp" 2>/dev/null || echo "")
+        if [[ -n "$temp_dir" ]] && [[ -d "$temp_dir" ]] && [[ -w "$temp_dir" ]]; then
+            echo "$temp_dir/keylocker-tools"
+            return 0
+        fi
+    fi
     
     # Last resort - use current directory
     echo "./keylocker-tools"
@@ -198,8 +201,9 @@ install_keylocker() {
     log_info "Unix TOOLS_DIR: $TOOLS_DIR"
     local win_tools_dir=$(cygpath -w "$TOOLS_DIR" 2>/dev/null || echo "$TOOLS_DIR")
     log_info "Windows TOOLS_DIR: $win_tools_dir"
-    log_info "Environment TEMP: ${TEMP:-not set}"
-    log_info "Environment TMP: ${TMP:-not set}"
+    log_info "Git Bash TEMP: ${TEMP:-not set}"
+    local actual_win_temp=$(cmd //c "echo %TEMP%" 2>/dev/null | tr -d '\r\n')
+    log_info "Actual Windows TEMP: $actual_win_temp"
     
     # Create and verify tools directory
     if [[ ! -d "$TOOLS_DIR" ]]; then

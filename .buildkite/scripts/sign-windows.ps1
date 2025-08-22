@@ -135,19 +135,52 @@ function Setup-Certificate {
 function Install-KeyLocker {
     Log-Info "Checking for DigiCert KeyLocker tools..."
     
-    # Check multiple possible installation paths
+    # First, check if smctl.exe is already in PATH
+    $smctlInPath = Get-Command smctl.exe -ErrorAction SilentlyContinue
+    if ($smctlInPath) {
+        Log-Success "smctl.exe found in PATH: $($smctlInPath.Path)"
+        return $smctlInPath.Path
+    }
+    
+    # Check for DigiCert directories and log what we find
+    Log-Debug "Searching for DigiCert installations..."
+    $digiCertSearchPaths = @(
+        "C:\Program Files\DigiCert",
+        "C:\Program Files (x86)\DigiCert",
+        "$env:LOCALAPPDATA\DigiCert",
+        "$env:APPDATA\DigiCert",
+        "$env:ProgramData\DigiCert"
+    )
+    
+    foreach ($searchPath in $digiCertSearchPaths) {
+        if (Test-Path $searchPath) {
+            Log-Debug "Found DigiCert directory: $searchPath"
+            $subDirs = Get-ChildItem -Path $searchPath -Directory -ErrorAction SilentlyContinue
+            foreach ($dir in $subDirs) {
+                Log-Debug "  - Subdirectory: $($dir.Name)"
+            }
+        }
+    }
+    
+    # Check multiple possible installation paths (with case variations)
     $smctlPaths = @(
         "C:\Program Files\DigiCert\DigiCert Keylocker Tools\smctl.exe",
+        "C:\Program Files\DigiCert\DigiCert KeyLocker Tools\smctl.exe",  # Different case
         "C:\Program Files (x86)\DigiCert\DigiCert Keylocker Tools\smctl.exe",
+        "C:\Program Files (x86)\DigiCert\DigiCert KeyLocker Tools\smctl.exe",
         "C:\Program Files\DigiCert\DigiCert One Signing Manager Tools\smctl.exe",
         "C:\Program Files (x86)\DigiCert\DigiCert One Signing Manager Tools\smctl.exe",
         "$env:LOCALAPPDATA\DigiCert\DigiCert Keylocker Tools\smctl.exe",
-        "$env:APPDATA\DigiCert\DigiCert Keylocker Tools\smctl.exe"
+        "$env:LOCALAPPDATA\DigiCert\DigiCert KeyLocker Tools\smctl.exe",
+        "$env:APPDATA\DigiCert\DigiCert Keylocker Tools\smctl.exe",
+        "$env:APPDATA\DigiCert\DigiCert KeyLocker Tools\smctl.exe",
+        "$env:ProgramData\DigiCert\DigiCert Keylocker Tools\smctl.exe",
+        "$env:ProgramData\DigiCert\DigiCert KeyLocker Tools\smctl.exe"
     )
     
     foreach ($path in $smctlPaths) {
         if (Test-Path $path) {
-            Log-Success "KeyLocker tools already installed at: $path"
+            Log-Success "KeyLocker tools found at: $path"
             $smctlDir = Split-Path $path -Parent
             
             # Add to PATH if not already there
@@ -160,7 +193,37 @@ function Install-KeyLocker {
         }
     }
     
-    Log-Info "KeyLocker tools not found, installing..."
+    # Do a broader search for smctl.exe
+    Log-Info "Performing broader search for smctl.exe..."
+    $searchLocations = @(
+        "C:\Program Files",
+        "C:\Program Files (x86)",
+        $env:LOCALAPPDATA,
+        $env:APPDATA,
+        $env:ProgramData
+    )
+    
+    foreach ($location in $searchLocations) {
+        if (Test-Path $location) {
+            Log-Debug "Searching in: $location"
+            $found = Get-ChildItem -Path $location -Filter "smctl.exe" -Recurse -ErrorAction SilentlyContinue | 
+                Select-Object -First 1
+            
+            if ($found) {
+                Log-Success "Found smctl.exe at: $($found.FullName)"
+                $smctlDir = $found.DirectoryName
+                $env:PATH = "$smctlDir;$env:PATH"
+                Log-Info "Added to PATH: $smctlDir"
+                return $found.FullName
+            }
+        }
+    }
+    
+    # Last resort - ask user to check manually
+    Log-Info "KeyLocker tools not found in standard locations"
+    Log-Info "Try running 'where smctl.exe' in a new command prompt to check if it's installed"
+    Log-Info ""
+    Log-Info "Attempting installation (this may fail if already installed)..."
     
     # Download MSI installer
     $msiUrl = "https://bun-ci-assets.bun.sh/Keylockertools-windows-x64.msi"
@@ -230,7 +293,35 @@ function Install-KeyLocker {
             Log-Debug "Could not retrieve MSI installation events"
         }
         
-        throw "MSI installation failed"
+        # Error 1625 means "This installation is forbidden by system policy"
+        # This could mean it's already installed but reconfiguration is blocked
+        if ($process.ExitCode -eq 1625) {
+            Log-Info "Installation blocked by policy (error 1625), checking if tools are already installed..."
+            
+            # Re-check for existing installations
+            foreach ($path in $smctlPaths) {
+                if (Test-Path $path) {
+                    Log-Success "Found existing installation at: $path"
+                    $smctlDir = Split-Path $path -Parent
+                    $env:PATH = "$smctlDir;$env:PATH"
+                    return $path
+                }
+            }
+            
+            # Do another broader search
+            Log-Info "Searching entire system for smctl.exe..."
+            $found = Get-ChildItem -Path "C:\" -Filter "smctl.exe" -Recurse -ErrorAction SilentlyContinue | 
+                Select-Object -First 1
+            
+            if ($found) {
+                Log-Success "Found smctl.exe at: $($found.FullName)"
+                $smctlDir = $found.DirectoryName
+                $env:PATH = "$smctlDir;$env:PATH"
+                return $found.FullName
+            }
+        }
+        
+        throw "MSI installation failed and tools not found"
     }
     
     Log-Success "MSI installation completed"

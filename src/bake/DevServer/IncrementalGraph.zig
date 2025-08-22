@@ -84,8 +84,8 @@ const ClientFile = struct {
     is_special_framework_file: bool = false,
 
     /// Packed version of `ClientFile`. Don't access fields directly; call `unpack`.
-    // Due to padding, using `packed struct` here wouldn't save any space.
     pub const Packed = struct {
+        // Due to padding, using `packed struct` here wouldn't save any space.
         unsafe_packed_data: struct {
             content: Content.Untagged,
             source_map: union {

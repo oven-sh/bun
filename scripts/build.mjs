@@ -227,7 +227,7 @@ async function spawn(command, args, options, label) {
   if (isBuildkite()) {
     if (process.env.BUN_LINK_ONLY && isWindows) {
       env ||= options?.env || { ...process.env };
-      
+
       // Pass signing secrets directly to the build process
       // The PowerShell signing script will handle certificate decoding
       env.SM_CLIENT_CERT_PASSWORD = getSecret("SM_CLIENT_CERT_PASSWORD", {

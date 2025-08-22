@@ -272,7 +272,6 @@ declare module "bun" {
        */
       ssl?: TLSOptions | boolean | undefined;
 
-
       /**
        * Unix domain socket path for connection
        * @default undefined

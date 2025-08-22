@@ -7,6 +7,7 @@ pub const S3StatResult = union(enum) {
         lastModified: []const u8 = "",
         /// format: text/plain, contentType is not owned and need to be copied if used after this callback
         contentType: []const u8 = "",
+        metadata: std.StringHashMap([]const u8) = undefined,
     },
     not_found: S3Error,
 
@@ -225,12 +226,33 @@ pub const S3HttpSimpleTask = struct {
             .stat => |callback| {
                 switch (response.status_code) {
                     200 => {
+                        var metadata = std.StringHashMap([]const u8).init(std.heap.page_allocator);
+
+                        for (response.headers.list) |entry| {
+                            if (std.mem.startsWith(u8, entry.name, "x-amz-meta-")) {
+                                const key_copy = std.heap.page_allocator.dupe(u8, entry.name) catch continue;
+                                const value_copy = std.heap.page_allocator.dupe(u8, entry.value) catch {
+                                    std.heap.page_allocator.free(key_copy);
+                                    continue;
+                                };
+                                // put consumes our owned slices
+                                _ = metadata.put(key_copy, value_copy) catch {
+                                    std.heap.page_allocator.free(key_copy);
+                                    std.heap.page_allocator.free(value_copy);
+                                };
+                            }
+                        }
+
                         callback(.{
                             .success = .{
                                 .etag = response.headers.get("etag") orelse "",
                                 .lastModified = response.headers.get("last-modified") orelse "",
                                 .contentType = response.headers.get("content-type") orelse "",
-                                .size = if (response.headers.get("content-length")) |content_len| (std.fmt.parseInt(usize, content_len, 10) catch 0) else 0,
+                                .size = if (response.headers.get("content-length")) |content_len|
+                                    (std.fmt.parseInt(usize, content_len, 10) catch 0)
+                                else
+                                    0,
+                                .metadata = metadata,
                             },
                         }, this.callback_context);
                     },

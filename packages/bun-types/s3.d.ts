@@ -358,6 +358,7 @@ declare module "bun" {
     lastModified: Date;
     etag: string;
     type: string;
+    metadata: object;
   }
 
   /**

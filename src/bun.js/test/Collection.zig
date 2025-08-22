@@ -109,17 +109,12 @@ pub fn runOne(this: *Collection, globalThis: *jsc.JSGlobalObject, callback_queue
     try callback_queue.append(.{ .callback = .init(this.bunTest().gpa, callback), .done_parameter = false, .data = @intFromPtr(previous_scope) });
     return .execute;
 }
-pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, result_is_error: bool, result_value: jsc.JSValue, data: u64) bun.JSError!void {
+pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, _: ?jsc.JSValue, data: u64) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
     defer formatter.deinit();
-
-    if (result_is_error) {
-        _ = result_value;
-        group.log("TODO: print error", .{});
-    }
 
     const prev_scope: *DescribeScope = @ptrFromInt(data);
     group.log("collection:runOneCompleted reset scope back from {s}", .{this.active_scope.base.name orelse "undefined"});

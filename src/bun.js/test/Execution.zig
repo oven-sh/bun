@@ -136,17 +136,12 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
         this.order_index += 1;
     }
 }
-pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, result_is_error: bool, result_value: jsc.JSValue, data: u64) bun.JSError!void {
+pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, result_value: ?jsc.JSValue, data: u64) bun.JSError!void {
     groupLog.begin(@src());
     defer groupLog.end();
 
     const sequence_index: usize = @intCast(data);
     groupLog.log("runOneCompleted sequence_index {d}", .{sequence_index});
-
-    if (result_is_error) {
-        _ = result_value;
-        groupLog.log("TODO: print error", .{});
-    }
 
     bun.assert(this.order_index < this.order.items.len);
     const group = &this.order.items[this.order_index];
@@ -160,7 +155,7 @@ pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, result_is_error
 
     sequence.executing = false;
     sequence.entry_index += 1;
-    if (result_is_error) {
+    if (result_value == null) {
         sequence.result = .fail;
         // TODO: if this is a beforeAll, maybe we skip running the test?
         groupLog.log("TODO: log error", .{});

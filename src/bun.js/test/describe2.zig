@@ -281,7 +281,11 @@ pub const BunTestFile = struct {
         defer refdata.deinit();
         const this = refdata.buntest;
 
-        try this.runOneCompleted(globalThis, is_catch, result, refdata.data);
+        if (is_catch) {
+            try this.onUncaughtException(globalThis, result, true, refdata.data);
+        }
+
+        try this.runOneCompleted(globalThis, if (is_catch) null else result, refdata.data);
         try this.run(globalThis);
         return .js_undefined;
     }
@@ -393,10 +397,10 @@ pub const BunTestFile = struct {
         }
     }
 
-    fn runOneCompleted(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, result_is_error: bool, result_value: jsc.JSValue, data: u64) bun.JSError!void {
+    fn runOneCompleted(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, result_value: ?jsc.JSValue, data: u64) bun.JSError!void {
         switch (this.phase) {
-            .collection => try this.collection.runOneCompleted(globalThis, result_is_error, result_value, data),
-            .execution => try this.execution.runOneCompleted(globalThis, result_is_error, result_value, data),
+            .collection => try this.collection.runOneCompleted(globalThis, result_value, data),
+            .execution => try this.execution.runOneCompleted(globalThis, result_value, data),
             .done => bun.debugAssert(false),
         }
     }
@@ -422,22 +426,29 @@ pub const BunTestFile = struct {
             }
         }
 
-        var is_error = false;
-        const result = cfg.callback.get().call(globalThis, .js_undefined, &.{}) catch |e| blk: {
+        const result: ?jsc.JSValue = cfg.callback.get().call(globalThis, .js_undefined, &.{}) catch |e| blk: {
+            try this.onUncaughtException(globalThis, globalThis.takeError(e), false, cfg.data);
             group.log("callTestCallback -> error", .{});
-            is_error = true;
-            break :blk globalThis.takeError(e);
+            break :blk null;
         };
 
-        if (!is_error and result.asPromise() != null) {
+        if (result != null and result.?.asPromise() != null) {
             group.log("callTestCallback -> promise", .{});
-            this.addThen(globalThis, result, cfg.data);
+            this.addThen(globalThis, result.?, cfg.data);
             return .continue_async;
         }
 
         group.log("callTestCallback -> sync", .{});
-        try this.runOneCompleted(globalThis, is_error, result, cfg.data);
+        try this.runOneCompleted(globalThis, result, cfg.data);
         return .continue_sync;
+    }
+
+    fn onUncaughtException(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, result: jsc.JSValue, is_rejection: bool, user_data: ?u64) bun.JSError!void {
+        _ = this;
+        _ = user_data;
+        _ = globalThis.bunVM().uncaughtException(globalThis, result, is_rejection); // TODO: this shouldn't call uncaught exception, instead it should be the uncaught exception handler
+        // if in execution, it asks if execution can handle the error. if it can, return. if it can't, print uncaught exception between tests.
+        // the main uncaughtException handler will call this with user_data null, and then execution can decide if it can route it based on how many sequences there are in the group (1 ? ok : fail)
     }
 };
 

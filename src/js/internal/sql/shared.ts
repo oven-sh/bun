@@ -1,5 +1,7 @@
 const PublicArray = globalThis.Array;
 
+let fs: typeof import("node:fs");
+
 declare global {
   interface NumberConstructor {
     isSafeInteger(number: unknown): number is number;
@@ -421,9 +423,23 @@ function parseOptions(
   port ||= Number(options.port || env.PGPORT || (adapter === "mysql" ? 3306 : 5432));
 
   path ||= (options as { path?: string }).path || "";
-  // add /.s.PGSQL.${port} if it doesn't exist
-  if (path && path?.indexOf("/.s.PGSQL.") === -1 && adapter === "postgres") {
-    path = `${path}/.s.PGSQL.${port}`;
+
+  if (adapter === "postgres") {
+    // add /.s.PGSQL.${port} if it doesn't exist
+    if (path && Number.isSafeInteger(port) && path?.indexOf("/.s.PGSQL.") === -1) {
+      const pathWithSocket = `${path}/.s.PGSQL.${port}`;
+      if (!fs) {
+        // lazily load node:fs.
+        fs = require("node:fs") as unknown as typeof import("node:fs");
+      }
+
+      // Only add the path if it actually exists. It would be better to just
+      // always respect whatever the user passes in, but that would technically
+      // be a breakpoint change at this point.
+      if (fs.existsSync(pathWithSocket)) {
+        path = pathWithSocket;
+      }
+    }
   }
 
   username ||=
@@ -578,6 +594,20 @@ function parseOptions(
   if (onclose !== undefined) {
     ret.onclose = onclose;
   }
+
+  if (path) {
+    if (!Array.isArray(path)) {
+      path = [path];
+    }
+
+    for (const p of path) {
+      if (fs.existsSync(p)) {
+        ret.path = p;
+        break;
+      }
+    }
+  }
+
 
   return ret;
 }

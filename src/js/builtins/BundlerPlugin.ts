@@ -234,6 +234,7 @@ export function runSetupFunction(
     // Store onEnd callbacks for later execution
     self.onEndCallbacks ??= [];
     self.onEndCallbacks.push(callback);
+    
     return this;
   }
 
@@ -518,6 +519,14 @@ export function runOnEndPlugins(
       console.error("onEnd callback error:", error);
     }
   }
+}
+
+export function runGlobalOnEndPlugins(buildResult) {
+  // This function will be called by C++ code to trigger onEnd callbacks
+  // For now, we'll return the buildResult as-is since we need a different approach
+  // to access the plugin instances
+  console.log("runGlobalOnEndPlugins called with:", buildResult);
+  return buildResult;
 }
 
 export function runOnLoadPlugins(

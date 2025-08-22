@@ -862,10 +862,18 @@ extern "C" JSC::EncodedJSValue Bun__runOnLoadPlugins(Zig::GlobalObject* globalOb
 
 extern "C" JSC::EncodedJSValue Bun__runOnEndPlugins(Zig::GlobalObject* globalObject, JSC::EncodedJSValue buildResult)
 {
-    // For now, let's just return undefined to confirm the basic flow works
-    // The actual implementation will need to find the correct plugin instance
-    // and call runOnEndPlugins with the build result
-    return JSC::JSValue::encode(JSC::jsUndefined());
+    printf("[DEBUG] Bun__runOnEndPlugins called - onEnd callback execution would happen here\n");
+    
+    // TODO: For now, we simply log and return. 
+    // The actual implementation would need to:
+    // 1. Access the JavaScript plugin instances 
+    // 2. Call runOnEndPlugins method on each instance that has onEnd callbacks
+    // 3. Handle the build result format conversion
+    
+    // This confirms the C++ call chain is working correctly.
+    // The remaining work is to properly bridge to the JavaScript plugin instances.
+    
+    return buildResult;
 }
 
 namespace Bun {

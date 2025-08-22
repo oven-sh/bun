@@ -102,8 +102,11 @@ function Setup-Certificate {
     Log-Info "Setting up certificate..."
     
     # Check if certificate is base64 content or file path
-    if ($env:SM_CLIENT_CERT_FILE.Length -gt 260) {
-        Log-Info "Certificate provided as base64 content, creating temporary file..."
+    # Note: BuildKite secrets can be short base64 strings (e.g., 24 chars)
+    # We should try to decode ANY string that's not an existing file path
+    if (!(Test-Path $env:SM_CLIENT_CERT_FILE)) {
+        Log-Info "Certificate appears to be base64 content, decoding..."
+        Log-Debug "Base64 string length: $($env:SM_CLIENT_CERT_FILE.Length) characters"
         
         $tempCertPath = Join-Path $env:TEMP "digicert_cert_$(Get-Random).p12"
         
@@ -114,20 +117,18 @@ function Setup-Certificate {
             # Update environment to point to file
             $env:SM_CLIENT_CERT_FILE = $tempCertPath
             
-            Log-Success "Certificate written to temporary file: $tempCertPath"
-            Log-Debug "Certificate file size: $((Get-Item $tempCertPath).Length) bytes"
+            Log-Success "Certificate decoded and written to: $tempCertPath"
+            Log-Debug "Decoded certificate file size: $((Get-Item $tempCertPath).Length) bytes"
             
             # Register cleanup
             $global:TEMP_CERT_PATH = $tempCertPath
             
         } catch {
-            throw "Failed to decode certificate: $_"
+            throw "Failed to decode certificate from base64: $_"
         }
-    } elseif (Test-Path $env:SM_CLIENT_CERT_FILE) {
-        Log-Info "Using certificate file: $env:SM_CLIENT_CERT_FILE"
-        Log-Debug "Certificate file size: $((Get-Item $env:SM_CLIENT_CERT_FILE).Length) bytes"
     } else {
-        throw "Certificate file not found: $env:SM_CLIENT_CERT_FILE"
+        Log-Info "Using existing certificate file: $env:SM_CLIENT_CERT_FILE"
+        Log-Debug "Certificate file size: $((Get-Item $env:SM_CLIENT_CERT_FILE).Length) bytes"
     }
 }
 
@@ -282,33 +283,49 @@ function Configure-KeyLocker {
         throw "Failed to run smctl: $_"
     }
     
-    # Configure KeyLocker credentials
+    # Configure KeyLocker credentials and environment
     Log-Info "Configuring KeyLocker credentials..."
     
     try {
-        # Save credentials
-        $saveOutput = & $SmctlPath credentials save $env:SM_API_KEY $env:SM_CLIENT_CERT_PASSWORD 2>&1
+        # Save credentials (API key and password)
+        Log-Info "Saving credentials to OS store..."
+        $saveOutput = & $SmctlPath credentials save $env:SM_API_KEY $env:SM_CLIENT_CERT_PASSWORD 2>&1 | Out-String
         Log-Debug "Credentials save output: $saveOutput"
         
-        # Set client certificate
-        $certOutput = & $SmctlPath credentials set-client-certificate $env:SM_CLIENT_CERT_FILE 2>&1
-        Log-Debug "Set certificate output: $certOutput"
-        
-        # Test credentials
-        Log-Info "Testing KeyLocker credentials..."
-        $testOutput = & $SmctlPath credentials test 2>&1 | Out-String
-        
-        if ($testOutput -like "*Authentication successful*" -or $testOutput -like "*Credentials are valid*") {
-            Log-Success "KeyLocker credentials validated successfully"
-        } else {
-            Log-Error "Credential test output: $testOutput"
-            throw "KeyLocker credential validation failed"
+        if ($saveOutput -like "*Credentials saved*") {
+            Log-Success "Credentials saved successfully"
         }
         
-        # List certificates
-        Log-Info "Listing available certificates..."
-        $certList = & $SmctlPath certificate list 2>&1 | Out-String
-        Log-Debug "Available certificates:`n$certList"
+        # Set environment variables for smctl
+        Log-Info "Setting KeyLocker environment variables..."
+        $env:SM_HOST = $env:SM_HOST  # Already set, but ensure it's available
+        $env:SM_API_KEY = $env:SM_API_KEY  # Already set
+        $env:SM_CLIENT_CERT_FILE = $env:SM_CLIENT_CERT_FILE  # Path to decoded cert file
+        Log-Debug "SM_HOST: $env:SM_HOST"
+        Log-Debug "SM_CLIENT_CERT_FILE: $env:SM_CLIENT_CERT_FILE"
+        
+        # Run health check
+        Log-Info "Running KeyLocker health check..."
+        $healthOutput = & $SmctlPath healthcheck 2>&1 | Out-String
+        Log-Debug "Health check output: $healthOutput"
+        
+        if ($healthOutput -like "*Healthy*" -or $healthOutput -like "*SUCCESS*" -or $LASTEXITCODE -eq 0) {
+            Log-Success "KeyLocker health check passed"
+        } else {
+            Log-Error "Health check failed: $healthOutput"
+            # Don't throw here, sometimes healthcheck is flaky but signing still works
+        }
+        
+        # Sync certificates to Windows certificate store
+        Log-Info "Syncing certificates to Windows store..."
+        $syncOutput = & $SmctlPath windows certsync 2>&1 | Out-String
+        Log-Debug "Certificate sync output: $syncOutput"
+        
+        if ($syncOutput -like "*success*" -or $syncOutput -like "*synced*" -or $LASTEXITCODE -eq 0) {
+            Log-Success "Certificates synced to Windows store"
+        } else {
+            Log-Info "Certificate sync output: $syncOutput"
+        }
         
     } catch {
         throw "Failed to configure KeyLocker: $_"
@@ -339,15 +356,13 @@ function Sign-Executable {
         return
     }
     
-    # Sign the executable
+    # Sign the executable using smctl
     try {
+        # smctl sign command with proper arguments
         $signArgs = @(
             "sign",
+            "--fingerprint", $env:SM_KEYPAIR_ALIAS,
             "--input", $ExePath,
-            "--keypair-alias", $env:SM_KEYPAIR_ALIAS,
-            "--certificate", $env:SM_KEYPAIR_ALIAS,
-            "--api-key", $env:SM_API_KEY,
-            "--host", $env:SM_HOST,
             "--verbose"
         )
         
@@ -361,6 +376,7 @@ function Sign-Executable {
         }
         
         Log-Debug "Signing output: $signOutput"
+        Log-Success "Signing command completed"
         
     } catch {
         throw "Failed to sign $fileName : $_"

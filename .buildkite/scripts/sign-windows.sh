@@ -5,6 +5,13 @@
 
 set -euo pipefail
 
+# Ensure Git Bash utilities are available when called from PowerShell/CMake
+# This fixes "command not found" errors for dirname, tr, cat, rm, etc.
+if ! command -v dirname >/dev/null 2>&1; then
+    # Add Git Bash utilities to PATH
+    export PATH="/c/Program Files/Git/usr/bin:$PATH"
+fi
+
 # CRITICAL SECURITY: Disable all debugging and verbose output that could leak secrets
 set +x  # Disable command echoing
 unset BASH_XTRACEFD 2>/dev/null || true  # Disable trace file descriptor
@@ -52,9 +59,16 @@ get_windows_temp_dir() {
     
     # Method 1: Use cmd.exe to get Windows temp (most reliable)
     if command -v cmd >/dev/null 2>&1; then
-        temp_dir=$(cmd //c "echo %TEMP%" 2>/dev/null | tr -d '\r\n' || echo "")
-        if [[ -n "$temp_dir" ]]; then
-            temp_dir=$(cygpath -u "$temp_dir" 2>/dev/null || echo "")
+        # Get Windows TEMP and convert to Unix path
+        local win_temp=$(cmd //c "echo %TEMP%" 2>/dev/null | tr -d '\r\n' || echo "")
+        if [[ -n "$win_temp" ]]; then
+            # Use cygpath if available, otherwise manual conversion
+            if command -v cygpath >/dev/null 2>&1; then
+                temp_dir=$(cygpath -u "$win_temp" 2>/dev/null || echo "")
+            else
+                # Manual conversion: C:\Users\... -> /c/Users/...
+                temp_dir=$(echo "$win_temp" | sed 's|\\|/|g' | sed 's|^\([A-Za-z]\):|/\L\1|')
+            fi
             if [[ -n "$temp_dir" ]] && [[ -d "$temp_dir" ]] && [[ -w "$temp_dir" ]]; then
                 echo "$temp_dir/keylocker-tools"
                 return 0

@@ -688,6 +688,9 @@ BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPRequest__onReject);
 BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onResolveStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onRejectStream);
 
+BUN_DECLARE_HOST_FUNCTION(BundleV2__onEndResolve);
+BUN_DECLARE_HOST_FUNCTION(BundleV2__onEndReject);
+
 #endif
 
 #ifdef __cplusplus

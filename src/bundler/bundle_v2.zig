@@ -102,6 +102,28 @@ fn fmtEscapedNamespace(slice: []const u8, comptime fmt: []const u8, _: std.fmt.F
     try w.writeAll(rest);
 }
 
+const OnEndContext = struct {
+    bundle_promise: *jsc.JSPromise,
+    build_result: jsc.JSValue,
+};
+
+fn onEndResolve(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const args = callframe.arguments();
+    const ctx = args[args.len - 1].asPromisePtr(OnEndContext);
+    defer bun.default_allocator.destroy(ctx);
+    ctx.bundle_promise.resolve(globalThis, ctx.build_result);
+    return .js_undefined;
+}
+
+fn onEndReject(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const args = callframe.arguments();
+    const ctx = args[args.len - 1].asPromisePtr(OnEndContext);
+    defer bun.default_allocator.destroy(ctx);
+    const err = if (args.len > 0) args[0] else .js_undefined;
+    ctx.bundle_promise.reject(globalThis, err);
+    return .js_undefined;
+}
+
 pub const BundleV2 = struct {
     transpiler: *Transpiler,
     /// When Server Component is enabled, this is used for the client bundles
@@ -719,6 +741,24 @@ pub const BundleV2 = struct {
     ) !?Index.Int {
         var result = resolve;
         var path = result.path() orelse return null;
+
+        if (is_entry_point and this.plugins != null) {
+            const import_record = ImportRecord{
+                .path = path.*,
+                .kind = .entry_point_build,
+                .range = Logger.Range.None,
+            };
+
+            if (this.enqueueOnResolvePluginIfNeeded(
+                std.math.maxInt(Index.Int),
+                &import_record,
+                "",
+                std.math.maxInt(u32),
+                target,
+            )) {
+                return null;
+            }
+        }
 
         const entry = try this.pathToSourceIndexMap(target).getOrPut(this.allocator(), hash orelse path.hashKey());
         if (entry.found_existing) {
@@ -1918,21 +1958,32 @@ pub const BundleV2 = struct {
                 const onEndResult = plugin.runOnEndCallbacks(root_obj);
 
                 if (onEndResult.asPromise()) |onEndPromise| {
-                    onEndPromise.setHandled(globalThis.vm());
-                    globalThis.bunVM().waitForPromise(.{ .normal = onEndPromise });
-
                     switch (onEndPromise.status(globalThis.vm())) {
+                        .pending => {
+                            const ctx = bun.default_allocator.create(OnEndContext) catch {
+                                promise.resolve(globalThis, root_obj);
+                                return;
+                            };
+                            ctx.* = .{
+                                .bundle_promise = promise,
+                                .build_result = root_obj,
+                            };
+
+                            onEndResult.then(globalThis, ctx, onEndResolve, onEndReject);
+                        },
+                        .fulfilled => {
+                            promise.resolve(globalThis, root_obj);
+                        },
                         .rejected => {
                             const err = onEndPromise.result(globalThis.vm());
                             promise.reject(globalThis, err);
-                            return;
                         },
-                        else => {},
                     }
                 }
+            } else {
+                // no plugins so we can just resolve immediately
+                promise.resolve(globalThis, root_obj);
             }
-
-            promise.resolve(globalThis, root_obj);
         }
 
         pub fn onComplete(this: *JSBundleCompletionTask) void {
@@ -2034,27 +2085,37 @@ pub const BundleV2 = struct {
                         const onEndResult = plugin.runOnEndCallbacks(root_obj);
 
                         if (onEndResult.asPromise()) |onEndPromise| {
-                            onEndPromise.setHandled(globalThis.vm());
-                            globalThis.bunVM().waitForPromise(.{ .normal = onEndPromise });
-
                             switch (onEndPromise.status(globalThis.vm())) {
+                                .pending => {
+                                    const ctx = bun.default_allocator.create(OnEndContext) catch {
+                                        promise.resolve(globalThis, root_obj);
+                                        return;
+                                    };
+                                    ctx.* = .{
+                                        .bundle_promise = promise,
+                                        .build_result = root_obj,
+                                    };
+
+                                    onEndResult.then(globalThis, ctx, onEndResolve, onEndReject);
+                                },
+                                .fulfilled => {
+                                    promise.resolve(globalThis, root_obj);
+                                },
                                 .rejected => {
                                     const err = onEndPromise.result(globalThis.vm());
                                     promise.reject(globalThis, err);
-                                    return;
                                 },
-                                else => {},
                             }
                         }
+                    } else {
+                        // no plugins so we can just resolve immediately
+                        promise.resolve(globalThis, root_obj);
                     }
-
-                    promise.resolve(globalThis, root_obj);
                 },
             }
 
-            if (Environment.isDebug) {
-                bun.assert(promise.status(globalThis.vm()) != .pending);
-            }
+            // The promise may still be pending if we scheduled a continuation task
+            // for async onEnd callbacks, which is expected behavior
         }
     };
 
@@ -2313,6 +2374,12 @@ pub const BundleV2 = struct {
                         task.io_task.node.next = null;
                         this.incrementScanCounter();
 
+                        // If this is an entry point, add it to the entry points list
+                        if (resolve.import_record.kind == .entry_point_build) {
+                            this.graph.entry_points.append(this.allocator(), source_index) catch unreachable;
+                            task.is_entry_point = true;
+                        }
+
                         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
                             if (loader.shouldCopyForBundling()) {
                                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
@@ -2334,25 +2401,28 @@ pub const BundleV2 = struct {
                 }
 
                 if (out_source_index) |source_index| {
-                    const source_import_records = &this.graph.ast.items(.import_records)[resolve.import_record.importer_source_index];
-                    if (source_import_records.len <= resolve.import_record.import_record_index) {
-                        const entry = this.resolve_tasks_waiting_for_import_source_index.getOrPut(
-                            this.allocator(),
-                            resolve.import_record.importer_source_index,
-                        ) catch bun.outOfMemory();
-                        if (!entry.found_existing) {
-                            entry.value_ptr.* = .{};
+                    // For entry points, there is no importer so we don't need to update import records
+                    if (resolve.import_record.kind != .entry_point_build) {
+                        const source_import_records = &this.graph.ast.items(.import_records)[resolve.import_record.importer_source_index];
+                        if (source_import_records.len <= resolve.import_record.import_record_index) {
+                            const entry = this.resolve_tasks_waiting_for_import_source_index.getOrPut(
+                                this.allocator(),
+                                resolve.import_record.importer_source_index,
+                            ) catch bun.outOfMemory();
+                            if (!entry.found_existing) {
+                                entry.value_ptr.* = .{};
+                            }
+                            entry.value_ptr.push(
+                                this.allocator(),
+                                .{
+                                    .to_source_index = source_index,
+                                    .import_record_index = resolve.import_record.import_record_index,
+                                },
+                            ) catch bun.outOfMemory();
+                        } else {
+                            const import_record: *ImportRecord = &source_import_records.slice()[resolve.import_record.import_record_index];
+                            import_record.source_index = source_index;
                         }
-                        entry.value_ptr.push(
-                            this.allocator(),
-                            .{
-                                .to_source_index = source_index,
-                                .import_record_index = resolve.import_record.import_record_index,
-                            },
-                        ) catch bun.outOfMemory();
-                    } else {
-                        const import_record: *ImportRecord = &source_import_records.slice()[resolve.import_record.import_record_index];
-                        import_record.source_index = source_index;
                     }
                 }
             },
@@ -4353,6 +4423,13 @@ pub const ParseTask = @import("./ParseTask.zig").ParseTask;
 pub const LinkerContext = @import("./LinkerContext.zig").LinkerContext;
 pub const LinkerGraph = @import("./LinkerGraph.zig").LinkerGraph;
 pub const Graph = @import("./Graph.zig");
+
+comptime {
+    if (bun.Environment.export_cpp_apis) {
+        @export(&jsc.toJSHostFn(onEndResolve), .{ .name = "BundleV2__onEndResolve" });
+        @export(&jsc.toJSHostFn(onEndReject), .{ .name = "BundleV2__onEndReject" });
+    }
+}
 
 const string = []const u8;
 

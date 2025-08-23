@@ -206,6 +206,11 @@ async function compileAndTest_inner(
     expect(res.text).toEqual({ default: code });
     delete res.text;
   }
+  if (Object.hasOwn(res, "yaml")) {
+    const yaml_res = res.yaml;
+    delete (yaml_res as any).__esModule;
+  }
+
   if (Object.hasOwn(res, "sqlite")) {
     const sqlite_res = res.sqlite;
     delete (sqlite_res as any).__esModule;
@@ -252,6 +257,9 @@ test("javascript", async () => {
     "a": "demo",
   },
   "json,jsonc,toml": "error",
+  "yaml": {
+    "default": "export const a = \"demo\";",
+  },
 }
 `);
 });
@@ -263,6 +271,9 @@ test("typescript", async () => {
   "ts": {
     "a": "() => {}",
   },
+  "yaml": {
+    "default": "export const a = (<T>() => {}).toString().replace(/\\n/g, '');",
+  },
 }
 `);
 });
@@ -271,7 +282,7 @@ test("json", async () => {
   expect(await compileAndTest(`{"key": "👩‍👧‍👧value"}`)).toMatchInlineSnapshot(`
 {
   "js,jsx,ts,tsx,toml": "error",
-  "json,jsonc": {
+  "json,jsonc,yaml": {
     "default": {
       "key": "👩‍👧‍👧value",
     },
@@ -294,6 +305,13 @@ test("jsonc", async () => {
     },
     "key": "👩‍👧‍👧value",
   },
+  "yaml": {
+    "key": "👩‍👧‍👧value",
+    "default": {
+      "key": "👩‍👧‍👧value",
+      "// my json ": null
+    }
+  }
 }
 `);
 });
@@ -303,8 +321,31 @@ test("toml", async () => {
     key = "👩‍👧‍👧value"`),
   ).toMatchInlineSnapshot(`
 {
-  "js,jsx,ts,tsx,json,jsonc": "error",
+  "js,jsx,ts,tsx,json,jsonc,yaml": "error",
   "toml": {
+    "default": {
+      "section": {
+        "key": "👩‍👧‍👧value",
+      },
+    },
+    "section": {
+      "key": "👩‍👧‍👧value",
+    },
+  },
+}
+`);
+});
+
+test("yaml", async () => {
+  expect(
+    await compileAndTest(`section:
+  key: "👩‍👧‍👧value"`),
+  ).toMatchInlineSnapshot(`
+{
+  "js,jsx,ts,tsx,json,jsonc,toml": "error",
+  "js,jsx,ts,tsx": {},
+  "json,jsonc,toml": "error",
+  "yaml": {
     "default": {
       "section": {
         "key": "👩‍👧‍👧value",

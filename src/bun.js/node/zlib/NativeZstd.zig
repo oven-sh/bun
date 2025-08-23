@@ -61,14 +61,15 @@ pub fn estimatedSize(this: *const @This()) usize {
 }
 
 pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.argumentsAsArray(4);
+    const arguments = callframe.argumentsAsArray(5);
     const this_value = callframe.this();
-    if (callframe.argumentsCount() != 4) return globalThis.ERR(.MISSING_ARGS, "init(initParamsArray, pledgedSrcSize, writeState, processCallback)", .{}).throw();
+    if (callframe.argumentsCount() < 4 or callframe.argumentsCount() > 5) return globalThis.ERR(.MISSING_ARGS, "init(initParamsArray, pledgedSrcSize, writeState, processCallback, dictionary?)", .{}).throw();
 
     const initParamsArray_value = arguments[0];
     const pledgedSrcSize_value = arguments[1];
     const writeState_value = arguments[2];
     const processCallback_value = arguments[3];
+    const dictionary_value = if (callframe.argumentsCount() >= 5) arguments[4] else jsc.JSValue.js_undefined;
 
     const writeState = writeState_value.asArrayBuffer(globalThis) orelse return globalThis.throwInvalidArgumentTypeValue("writeState", "Uint32Array", writeState_value);
     if (writeState.typed_array_type != .Uint32Array) return globalThis.throwInvalidArgumentTypeValue("writeState", "Uint32Array", writeState_value);
@@ -80,6 +81,16 @@ pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
     var pledged_src_size: u64 = std.math.maxInt(u64);
     if (pledgedSrcSize_value.isNumber()) {
         pledged_src_size = try validators.validateUint32(globalThis, pledgedSrcSize_value, "pledgedSrcSize", .{}, false);
+    }
+
+    // Handle dictionary if provided
+    if (!dictionary_value.isUndefined()) {
+        const dictionary_buffer = dictionary_value.asArrayBuffer(globalThis) orelse return globalThis.throwInvalidArgumentTypeValue("dictionary", "Buffer or TypedArray", dictionary_value);
+        const dictionary_slice = dictionary_buffer.slice();
+        const dict_err = this.stream.setDictionary(dictionary_slice);
+        if (dict_err.isError()) {
+            return globalThis.ERR(.ZLIB_INITIALIZATION_FAILED, "{s}", .{std.mem.sliceTo(dict_err.msg.?, 0)}).throw();
+        }
     }
 
     var err = this.stream.init(pledged_src_size);
@@ -126,6 +137,7 @@ const Context = struct {
     output: c.ZSTD_outBuffer = .{ .dst = null, .size = 0, .pos = 0 },
     pledged_src_size: u64 = std.math.maxInt(u64),
     remaining: u64 = 0,
+    dictionary: ?[]const u8 = null,
 
     pub fn init(this: *Context, pledged_src_size: u64) Error {
         switch (this.mode) {
@@ -136,16 +148,47 @@ const Context = struct {
                 this.state = state.?;
                 const result = c.ZSTD_CCtx_setPledgedSrcSize(state, pledged_src_size);
                 if (c.ZSTD_isError(result) > 0) return .init("Could not set pledged src size", -1, "ERR_ZLIB_INITIALIZATION_FAILED");
+
+                // Load dictionary if provided
+                if (this.dictionary) |dict| {
+                    const dict_result = c.ZSTD_CCtx_loadDictionary(@ptrCast(this.state), dict.ptr, dict.len);
+                    if (c.ZSTD_isError(dict_result) > 0) return .init("Could not load dictionary", -1, "ERR_ZLIB_INITIALIZATION_FAILED");
+                }
                 return .ok;
             },
             .ZSTD_DECOMPRESS => {
                 const state = c.ZSTD_createDCtx();
                 if (state == null) return .init("Could not initialize zstd instance", -1, "ERR_ZLIB_INITIALIZATION_FAILED");
                 this.state = state.?;
+
+                // Load dictionary if provided
+                if (this.dictionary) |dict| {
+                    const dict_result = c.ZSTD_DCtx_loadDictionary(@ptrCast(this.state), dict.ptr, dict.len);
+                    if (c.ZSTD_isError(dict_result) > 0) return .init("Could not load dictionary", -1, "ERR_ZLIB_INITIALIZATION_FAILED");
+                }
                 return .ok;
             },
             else => @panic("unreachable"),
         }
+    }
+
+    pub fn setDictionary(this: *Context, dictionary: []const u8) Error {
+        this.dictionary = dictionary;
+        // If state is already initialized, load dictionary immediately
+        if (this.state) |state| {
+            switch (this.mode) {
+                .ZSTD_COMPRESS => {
+                    const result = c.ZSTD_CCtx_loadDictionary(@ptrCast(state), dictionary.ptr, dictionary.len);
+                    if (c.ZSTD_isError(result) > 0) return .init("Could not load dictionary", -1, "ERR_ZLIB_INITIALIZATION_FAILED");
+                },
+                .ZSTD_DECOMPRESS => {
+                    const result = c.ZSTD_DCtx_loadDictionary(@ptrCast(state), dictionary.ptr, dictionary.len);
+                    if (c.ZSTD_isError(result) > 0) return .init("Could not load dictionary", -1, "ERR_ZLIB_INITIALIZATION_FAILED");
+                },
+                else => {},
+            }
+        }
+        return .ok;
     }
 
     pub fn setParams(this: *Context, key: c_uint, value: u32) Error {

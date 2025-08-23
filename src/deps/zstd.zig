@@ -33,6 +33,30 @@ pub fn decompress(dest: []u8, src: []const u8) Result {
     return .{ .success = result };
 }
 
+/// ZSTD_compress_usingDict() :
+///  Compression using a predefined Dictionary.
+///  Dictionary should be built by training on a dataset of representative samples.
+///  Compression with a dictionary is faster when used with the same content repeatedly.
+///  @return : compressed size written into `dst` (<= `dstCapacity),
+///            or an error code if it fails (which can be tested using ZSTD_isError()). */
+pub fn compressUsingDict(dest: []u8, src: []const u8, dict: []const u8, level: ?i32) Result {
+    const result = c.ZSTD_compress_usingDict(dest.ptr, dest.len, src.ptr, src.len, dict.ptr, dict.len, level orelse c.ZSTD_defaultCLevel());
+    if (c.ZSTD_isError(result) != 0) return .{ .err = bun.sliceTo(c.ZSTD_getErrorName(result), 0) };
+    return .{ .success = result };
+}
+
+/// ZSTD_decompress_usingDict() :
+///  Decompression using a predefined Dictionary.
+///  Dictionary should be built by training on a dataset of representative samples.
+///  Dictionary must be the same as the one used during compression.
+///  @return : the number of bytes decompressed into `dst` (<= `dstCapacity`),
+///            or an errorCode if it fails (which can be tested using ZSTD_isError()). */
+pub fn decompressUsingDict(dest: []u8, src: []const u8, dict: []const u8) Result {
+    const result = c.ZSTD_decompress_usingDict(dest.ptr, dest.len, src.ptr, src.len, dict.ptr, dict.len);
+    if (c.ZSTD_isError(result) != 0) return .{ .err = bun.sliceTo(c.ZSTD_getErrorName(result), 0) };
+    return .{ .success = result };
+}
+
 pub fn getDecompressedSize(src: []const u8) usize {
     return ZSTD_findDecompressedSize(src.ptr, src.len);
 }

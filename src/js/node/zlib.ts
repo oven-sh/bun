@@ -740,12 +740,26 @@ class Zstd extends ZlibBase {
       });
     }
 
+    // Handle dictionary option
+    let dictionary;
+    if (opts?.dictionary !== undefined) {
+      if (!isArrayBufferView(opts.dictionary)) {
+        if (isAnyArrayBuffer(opts.dictionary)) {
+          dictionary = Buffer.from(opts.dictionary);
+        } else {
+          throw $ERR_INVALID_ARG_TYPE("options.dictionary", "Buffer, TypedArray, DataView, or ArrayBuffer", opts.dictionary);
+        }
+      } else {
+        dictionary = opts.dictionary;
+      }
+    }
+
     const handle = new NativeZstd(mode);
 
     const pledgedSrcSize = opts?.pledgedSrcSize ?? undefined;
 
     const writeState = new Uint32Array(2);
-    handle.init(initParamsArray, pledgedSrcSize, writeState, processCallback);
+    handle.init(initParamsArray, pledgedSrcSize, writeState, processCallback, dictionary);
     super(opts, mode, handle, zstdDefaultOpts);
     this._writeState = writeState;
   }

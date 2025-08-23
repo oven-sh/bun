@@ -1781,6 +1781,9 @@ pub fn Parser(comptime enc: Encoding) type {
                             }
                             // return error.ScalarTypeMismatch;
                         },
+                        .str => {
+                            // always becomes string
+                        },
 
                         .verbatim,
                         .unknown,
@@ -1793,12 +1796,12 @@ pub fn Parser(comptime enc: Encoding) type {
                 pub fn tryResolveNumber(
                     ctx: *@This(),
                     parser: *Parser(enc),
-                    first: enum { positive, negative, dot, none },
+                    first_char: enum { positive, negative, dot, none },
                 ) ResolveError!void {
                     const nan = std.math.nan(f64);
                     const inf = std.math.inf(f64);
 
-                    switch (first) {
+                    switch (first_char) {
                         .dot => {
                             switch (parser.next()) {
                                 'n' => {
@@ -1868,7 +1871,7 @@ pub fn Parser(comptime enc: Encoding) type {
                                         parser.inc(1);
                                         if (parser.remainStartsWith("nf")) {
                                             try ctx.resolve(
-                                                .{ .number = if (first == .negative) -inf else inf },
+                                                .{ .number = if (first_char == .negative) -inf else inf },
                                                 i_start,
                                                 "inf",
                                             );
@@ -1883,7 +1886,7 @@ pub fn Parser(comptime enc: Encoding) type {
                                         parser.inc(1);
                                         if (parser.remainStartsWith("nf")) {
                                             try ctx.resolve(
-                                                .{ .number = if (first == .negative) -inf else inf },
+                                                .{ .number = if (first_char == .negative) -inf else inf },
                                                 i_start,
                                                 "Inf",
                                             );
@@ -1892,7 +1895,7 @@ pub fn Parser(comptime enc: Encoding) type {
                                         }
                                         if (parser.remainStartsWith("NF")) {
                                             try ctx.resolve(
-                                                .{ .number = if (first == .negative) -inf else inf },
+                                                .{ .number = if (first_char == .negative) -inf else inf },
                                                 i_start,
                                                 "INF",
                                             );
@@ -1916,8 +1919,12 @@ pub fn Parser(comptime enc: Encoding) type {
                     var decimal = parser.next() == '.';
                     var x = false;
                     var o = false;
+                    var @"+" = false;
+                    var @"-" = false;
 
                     parser.inc(1);
+
+                    var first = true;
 
                     const end, const valid = end: switch (parser.next()) {
 
@@ -1940,6 +1947,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         ']',
                         '}',
                         => {
+                            first = false;
                             switch (parser.context.get()) {
                                 // it's valid for ',' ']' '}' to end the scalar
                                 // in flow context
@@ -1953,15 +1961,42 @@ pub fn Parser(comptime enc: Encoding) type {
                             }
                         },
 
-                        '0'...'9',
+                        '0' => {
+                            defer first = false;
+                            parser.inc(1);
+                            if (first) {
+                                switch (parser.next()) {
+                                    'b',
+                                    'B',
+                                    => {
+                                        break :end .{ parser.pos, false };
+                                    },
+                                    else => |c| {
+                                        continue :end c;
+                                    },
+                                }
+                            }
+                            continue :end parser.next();
+                        },
+
+                        '1'...'9',
                         'a'...'f',
                         'A'...'F',
-                        => {
+                        => |c| {
+                            defer first = false;
+                            if (first) {
+                                if (c == 'b' or c == 'B') {
+                                    break :end .{ parser.pos, false };
+                                }
+                            }
+
                             parser.inc(1);
+
                             continue :end parser.next();
                         },
 
                         'x' => {
+                            first = false;
                             if (x) {
                                 break :end .{ parser.pos, false };
                             }
@@ -1972,6 +2007,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         },
 
                         'o' => {
+                            first = false;
                             if (o) {
                                 break :end .{ parser.pos, false };
                             }
@@ -1982,6 +2018,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         },
 
                         '.' => {
+                            first = false;
                             if (decimal) {
                                 break :end .{ parser.pos, false };
                             }
@@ -1990,7 +2027,27 @@ pub fn Parser(comptime enc: Encoding) type {
                             parser.inc(1);
                             continue :end parser.next();
                         },
+
+                        '+' => {
+                            first = false;
+                            if (x) {
+                                break :end .{ parser.pos, false };
+                            }
+                            @"+" = true;
+                            parser.inc(1);
+                            continue :end parser.next();
+                        },
+                        '-' => {
+                            first = false;
+                            if (@"-") {
+                                break :end .{ parser.pos, false };
+                            }
+                            @"-" = true;
+                            parser.inc(1);
+                            continue :end parser.next();
+                        },
                         else => {
+                            first = false;
                             break :end .{ parser.pos, false };
                         },
                     };
@@ -2002,6 +2059,12 @@ pub fn Parser(comptime enc: Encoding) type {
                     }
 
                     var scalar: NodeScalar = scalar: {
+                        if (x or o) {
+                            const unsigned = std.fmt.parseUnsigned(u64, parser.slice(start, end), 0) catch {
+                                return;
+                            };
+                            break :scalar .{ .number = @floatFromInt(unsigned) };
+                        }
                         const float = bun.jsc.wtf.parseDouble(parser.slice(start, end)) catch {
                             return;
                         };
@@ -2009,11 +2072,21 @@ pub fn Parser(comptime enc: Encoding) type {
                         break :scalar .{ .number = float };
                     };
 
-                    ctx.resolved_scalar_len = ctx.str_builder.len();
-                    if (first == .negative) {
-                        scalar.number = -scalar.number;
+                    ctx.resolved = true;
+
+                    switch (ctx.tag) {
+                        .none,
+                        .float,
+                        .int,
+                        => {
+                            ctx.resolved_scalar_len = ctx.str_builder.len();
+                            if (first_char == .negative) {
+                                scalar.number = -scalar.number;
+                            }
+                            ctx.scalar = scalar;
+                        },
+                        else => {},
                     }
-                    ctx.scalar = scalar;
                 }
             };
 
@@ -3165,6 +3238,9 @@ pub fn Parser(comptime enc: Encoding) type {
                         if (std.mem.eql(enc.unit(), s, "null")) {
                             break :tag .null;
                         }
+                        if (std.mem.eql(enc.unit(), s, "str")) {
+                            break :tag .str;
+                        }
 
                         break :tag .{ .unknown = shorthand };
                     };
@@ -3221,6 +3297,9 @@ pub fn Parser(comptime enc: Encoding) type {
                         }
                         if (std.mem.eql(enc.unit(), s, "null")) {
                             break :tag .null;
+                        }
+                        if (std.mem.eql(enc.unit(), s, "str")) {
+                            break :tag .str;
                         }
 
                         break :tag .{ .unknown = handle_or_shorthand };
@@ -4373,6 +4452,8 @@ pub fn Parser(comptime enc: Encoding) type {
             float,
             /// '!!null'
             null,
+            /// '!!str'
+            str,
 
             /// '!<...>'
             verbatim: String.Range,

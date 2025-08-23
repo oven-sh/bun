@@ -272,14 +272,11 @@ declare module "bun" {
        */
       ssl?: TLSOptions | boolean | undefined;
 
-      // `.path` is currently unsupported in Bun, the implementation is
-      // incomplete.
-      //
-      // /**
-      //  * Unix domain socket path for connection
-      //  * @default ""
-      //    */
-      // path?: string | undefined;
+      /**
+       * Unix domain socket path for connection
+       * @default undefined
+       */
+      path?: string | undefined;
 
       /**
        * Callback executed when a connection attempt completes

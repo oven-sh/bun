@@ -147,9 +147,88 @@ if (isDockerEnabled()) {
   // --- Expected pg_hba.conf ---
   process.env.DATABASE_URL = `postgres://bun_sql_test@localhost:${container.port}/bun_sql_test`;
 
+  const net = require("node:net");
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const os = require("node:os");
+
+  // Create a temporary unix domain socket path
+  const socketPath = path.join(os.tmpdir(), `postgres_echo_${Date.now()}.sock`);
+
+  // Clean up any existing socket file
+  try {
+    fs.unlinkSync(socketPath);
+  } catch {}
+
+  // Create a unix domain socket server that proxies to the PostgreSQL container
+  const socketServer = net.createServer(clientSocket => {
+    console.log("PostgreSQL connection received on unix socket");
+
+    // Create connection to the actual PostgreSQL container
+    const containerSocket = net.createConnection({
+      host: login.host,
+      port: login.port,
+    });
+
+    // Handle container connection
+    containerSocket.on("connect", () => {
+      console.log("Connected to PostgreSQL container");
+    });
+
+    containerSocket.on("error", err => {
+      console.error("Container connection error:", err);
+      clientSocket.destroy();
+    });
+
+    containerSocket.on("close", () => {
+      console.log("Container connection closed");
+      clientSocket.end();
+    });
+
+    // Handle client socket
+    clientSocket.on("data", data => {
+      // Forward client data to container
+      containerSocket.write(data);
+    });
+
+    clientSocket.on("error", err => {
+      console.error("Client socket error:", err);
+      containerSocket.destroy();
+    });
+
+    clientSocket.on("close", () => {
+      console.log("Client connection closed");
+      containerSocket.end();
+    });
+
+    // Forward container responses back to client
+    containerSocket.on("data", data => {
+      clientSocket.write(data);
+    });
+  });
+
+  socketServer.listen(socketPath, () => {
+    console.log(`Unix domain socket server listening on ${socketPath}`);
+  });
+
+  // Clean up the socket on exit
+  afterAll(() => {
+    socketServer.close();
+    try {
+      fs.unlinkSync(socketPath);
+    } catch {}
+  });
+
   const login: Bun.SQL.PostgresOrMySQLOptions = {
     username: "bun_sql_test",
     port: container.port,
+    path: socketPath,
+  };
+
+  const login_domain_socket: Bun.SQL.PostgresOrMySQLOptions = {
+    username: "bun_sql_test",
+    port: container.port,
+    path: socketPath,
   };
 
   const login_md5: Bun.SQL.PostgresOrMySQLOptions = {
@@ -1033,6 +1112,11 @@ if (isDockerEnabled()) {
 
   test("Login without password", async () => {
     await using sql = postgres({ ...options, ...login });
+    expect((await sql`select true as x`)[0].x).toBe(true);
+  });
+
+  test("unix domain socket can send query", async () => {
+    await using sql = postgres({ ...options, ...login_domain_socket });
     expect((await sql`select true as x`)[0].x).toBe(true);
   });
 
@@ -11066,6 +11150,27 @@ CREATE TABLE ${table_name} (
       expect(result[1].id).toBe(2);
       expect(result[1].name).toBe("Mary");
       expect(result[1].age).toBe(18);
+    });
+
+    test("update helper with IN for strings", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+      const users = [
+        { id: 1, name: "John", age: 30 },
+        { id: 2, name: "Jane", age: 25 },
+        { id: 3, name: "Bob", age: 35 },
+      ];
+      await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+      const result =
+        await sql`UPDATE ${sql(random_name)} SET ${sql({ age: 40 })} WHERE name IN ${sql(["John", "Jane"])} RETURNING *`;
+      expect(result[0].id).toBe(1);
+      expect(result[0].name).toBe("John");
+      expect(result[0].age).toBe(40);
+      expect(result[1].id).toBe(2);
+      expect(result[1].name).toBe("Jane");
+      expect(result[1].age).toBe(40);
     });
 
     test("update helper with IN and column name", async () => {

@@ -135,7 +135,7 @@ const ClientFile = struct {
         }
 
         comptime {
-            if (!Environment.ci_assert) {
+            if (!Environment.allow_assert) {
                 bun.assert_eql(@sizeOf(@This()), @sizeOf(u64) * 3);
                 bun.assert_eql(@alignOf(@This()), @alignOf([*]u8));
             }

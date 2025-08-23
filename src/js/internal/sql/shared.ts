@@ -82,7 +82,7 @@ class SQLHelper<T> {
   public readonly columns: (keyof T)[];
 
   constructor(value: T, keys?: (keyof T)[]) {
-    if (keys !== undefined && keys.length === 0) {
+    if (keys !== undefined && keys.length === 0 && ($isObject(value[0]) || $isArray(value[0]))) {
       keys = Object.keys(value[0]) as (keyof T)[];
     }
 
@@ -305,7 +305,7 @@ function parseOptions(
     onclose: ((client: Bun.SQL) => void) | undefined,
     max: number | null | undefined,
     bigint: boolean | undefined,
-    path: string | string[],
+    path: string,
     adapter: Bun.SQL.__internal.Adapter;
 
   let prepare = true;
@@ -421,9 +421,19 @@ function parseOptions(
   port ||= Number(options.port || env.PGPORT || (adapter === "mysql" ? 3306 : 5432));
 
   path ||= (options as { path?: string }).path || "";
-  // add /.s.PGSQL.${port} if it doesn't exist
-  if (path && path?.indexOf("/.s.PGSQL.") === -1 && adapter === "postgres") {
-    path = `${path}/.s.PGSQL.${port}`;
+
+  if (adapter === "postgres") {
+    // add /.s.PGSQL.${port} if the unix domain socket is listening on that path
+    if (path && Number.isSafeInteger(port) && path?.indexOf("/.s.PGSQL.") === -1) {
+      const pathWithSocket = `${path}/.s.PGSQL.${port}`;
+
+      // Only add the path if it actually exists. It would be better to just
+      // always respect whatever the user passes in, but that would technically
+      // be a breakpoint change at this point.
+      if (require("node:fs").existsSync(pathWithSocket)) {
+        path = pathWithSocket;
+      }
+    }
   }
 
   username ||=
@@ -577,6 +587,12 @@ function parseOptions(
 
   if (onclose !== undefined) {
     ret.onclose = onclose;
+  }
+
+  if (path) {
+    if (require("node:fs").existsSync(path)) {
+      ret.path = path;
+    }
   }
 
   return ret;

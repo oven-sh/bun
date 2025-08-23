@@ -1436,7 +1436,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         ${
           obj.instanceCallable
             ? `
-        static JSC::CallData getCallData(JSC::JSCell*);
         ${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr);
         `
             : `
@@ -1690,14 +1689,6 @@ void ${name}::finishCreation(VM& vm)
 ${
   obj.instanceCallable
     ? `
-JSC::CallData ${name}::getCallData(JSC::JSCell*)
-{
-    CallData callData;
-    callData.type = CallData::Type::Native;
-    callData.native.function = ${symbolName(typeName, "callAsFunction")};
-    return callData;
-}
-
 ${name}::${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
             : Base(vm, structure, ${symbolName(typeName, "callAsFunction")}, nullptr)
         {

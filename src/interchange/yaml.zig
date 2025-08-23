@@ -3098,7 +3098,7 @@ pub fn Parser(comptime enc: Encoding) type {
 
                     var range = self.stringRange();
                     try self.trySkipNsWordChars();
-                    const handle_or_shorthand = range.end();
+                    var handle_or_shorthand = range.end();
 
                     if (self.next() == '!') {
                         self.inc(1);
@@ -3118,6 +3118,10 @@ pub fn Parser(comptime enc: Encoding) type {
                             .tag = .{ .unknown = shorthand },
                         });
                     }
+
+                    // primary
+                    self.skipNsTagChars();
+                    handle_or_shorthand = range.end();
 
                     const tag: NodeTag = tag: {
                         const s = handle_or_shorthand.slice(self.input);
@@ -3793,6 +3797,12 @@ pub fn Parser(comptime enc: Encoding) type {
         fn isNsTagChar(self: *@This()) ?u8 {
             const r = self.remain();
             return chars.isNsTagChar(r);
+        }
+
+        fn skipNsTagChars(self: *@This()) void {
+            while (self.isNsTagChar()) |len| {
+                self.inc(len);
+            }
         }
 
         fn trySkipNsTagChars(self: *@This()) error{UnexpectedCharacter}!void {

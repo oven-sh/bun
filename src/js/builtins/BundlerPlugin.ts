@@ -111,30 +111,12 @@ export function runOnEndCallbacks(this: BundlerPlugin, callbacks: AnyFunction[],
     return;
   }
 
-  // Run all onEnd callbacks
-  for (let i = 0; i < callbacks.length; i++) {
-    const callback = callbacks[i];
+  for (const callback of callbacks) {
     if (!$isCallable(callback)) {
       continue;
     }
 
-    try {
-      const result = callback(buildResult);
-
-      // Handle async callbacks
-      if (result && $isPromise(result)) {
-        // Wait for the promise to resolve
-        // Note: In a real implementation, we might want to handle these differently
-        // For now, we'll just wait synchronously
-        if (($getPromiseInternalField(result, $promiseFieldFlags) & $promiseStateMask) !== $promiseStateFulfilled) {
-          // The promise is not yet fulfilled, we should wait for it
-          // This is a simplified implementation - in production we'd handle this better
-        }
-      }
-    } catch (e) {
-      // Log error but don't stop processing other callbacks
-      console.error("Error in onEnd callback:", e);
-    }
+    callback(buildResult);
   }
 }
 
@@ -264,7 +246,7 @@ export function runSetupFunction(
     if (!self.onEndCallbacks) {
       self.onEndCallbacks = [];
     }
-    
+
     // Store the callback in the onEndCallbacks array
     $arrayPush(self.onEndCallbacks, callback);
     return this;

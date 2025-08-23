@@ -1914,7 +1914,6 @@ pub const BundleV2 = struct {
                 },
             );
 
-            // Call onEnd callbacks even when build fails
             if (this.plugins) |plugin| {
                 plugin.runOnEndCallbacks(root_obj);
             }
@@ -2016,12 +2015,12 @@ pub const BundleV2 = struct {
                             return promise.reject(globalThis, err);
                         },
                     );
-                    
+
                     // Call onEnd callbacks for all plugins
                     if (this.plugins) |plugin| {
                         plugin.runOnEndCallbacks(root_obj);
                     }
-                    
+
                     promise.resolve(globalThis, root_obj);
                 },
             }

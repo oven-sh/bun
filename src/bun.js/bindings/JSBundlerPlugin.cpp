@@ -673,27 +673,25 @@ extern "C" void JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundlerPlugin* plugin,
     auto& vm = plugin->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = plugin->globalObject();
-    
-    // Get the onEndCallbacks array from the JavaScript property
+
     JSC::JSValue onEndCallbacksValue = plugin->getDirect(vm, Identifier::fromString(vm, String("onEndCallbacks"_s)));
-    
-    // If it's undefined or not an array, there are no callbacks to run
+
     if (!onEndCallbacksValue.isObject()) {
         return;
     }
-    
-    auto* runOnEndCallbacksFn = JSC::JSFunction::create(vm, globalObject, 
+
+    auto* runOnEndCallbacksFn = JSC::JSFunction::create(vm, globalObject,
         WebCore::bundlerPluginRunOnEndCallbacksCodeGenerator(vm), globalObject);
-    
+
     JSC::CallData callData = JSC::getCallData(runOnEndCallbacksFn);
     if (callData.type == JSC::CallData::Type::None) {
         return;
     }
-    
+
     MarkedArgumentBuffer arguments;
     arguments.append(onEndCallbacksValue);
     arguments.append(JSValue::decode(encodedBuildResult));
-    
+
     JSC::profiledCall(globalObject, ProfilingReason::API, runOnEndCallbacksFn, callData, plugin, arguments);
     RETURN_IF_EXCEPTION(scope, );
 }

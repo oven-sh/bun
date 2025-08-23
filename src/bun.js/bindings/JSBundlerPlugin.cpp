@@ -162,7 +162,6 @@ public:
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onLoadFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onResolveFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> setupFunction;
-    JSC::LazyProperty<JSBundlerPlugin, JSC::JSObject> onEndCallbacks;
 
     JSC::JSGlobalObject* m_globalObject;
 
@@ -187,7 +186,6 @@ void JSBundlerPlugin::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->onLoadFunction.visit(visitor);
     thisObject->onResolveFunction.visit(visitor);
     thisObject->setupFunction.visit(visitor);
-    thisObject->onEndCallbacks.visit(visitor);
 }
 DEFINE_VISIT_CHILDREN(JSBundlerPlugin);
 
@@ -473,17 +471,8 @@ void JSBundlerPlugin::finishCreation(JSC::VM& vm)
                 JSC::JSFunction::create(vm, globalObject, WebCore::bundlerPluginRunSetupFunctionCodeGenerator(vm), globalObject));
         });
 
-    this->onEndCallbacks.initLater(
-        [](const JSC::LazyProperty<JSBundlerPlugin, JSC::JSObject>::Initializer& init) {
-            auto* globalObject = init.owner->globalObject();
-
-            init.set(
-                JSC::constructEmptyArray(globalObject, nullptr, 0));
-        });
-
     this->putDirect(vm, Identifier::fromString(vm, String("onLoad"_s)), jsUndefined(), 0);
     this->putDirect(vm, Identifier::fromString(vm, String("onResolve"_s)), jsUndefined(), 0);
-    this->putDirect(vm, Identifier::fromString(vm, String("onEndCallbacks"_s)), jsUndefined(), 0);
     reifyStaticProperties(vm, JSBundlerPlugin::info(), JSBundlerPluginHashTable, *this);
 }
 

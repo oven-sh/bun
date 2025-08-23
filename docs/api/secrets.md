@@ -236,7 +236,7 @@ await Bun.secrets.set({
 
 - Credentials are stored in Windows Credential Manager
 - Visible in Control Panel → Credential Manager → Windows Credentials
-- Persist with `CRED_PERSIST_LOCAL_MACHINE` flag
+- Persist with `CRED_PERSIST_ENTERPRISE` flag so it's scoped per user
 - Encrypted using Windows Data Protection API
 
 ## Security Considerations

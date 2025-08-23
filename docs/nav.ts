@@ -383,6 +383,9 @@ export default {
     page("api/spawn", "Child processes", {
       description: `Spawn sync and async child processes with easily configurable input and output streams.`,
     }), // "`Bun.spawn`"),
+    page("api/yaml", "YAML", {
+      description: `Bun.YAML.parse(string) lets you parse YAML files in JavaScript`,
+    }), // "`Bun.spawn`"),
     page("api/html-rewriter", "HTMLRewriter", {
       description: `Parse and transform HTML with Bun's native HTMLRewriter API, inspired by Cloudflare Workers.`,
     }), // "`HTMLRewriter`"),

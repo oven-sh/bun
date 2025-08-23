@@ -1,5 +1,6 @@
 import { bench, group, run } from "../runner.mjs";
 import jsYaml from "js-yaml";
+import yaml from "yaml";
 
 // Small YAML document
 const smallYaml = `
@@ -223,6 +224,10 @@ group("parse small YAML", () => {
   bench("js-yaml.load", () => {
     globalThis.result = jsYaml.load(smallYaml);
   });
+
+  bench("yaml.parse", () => {
+    globalThis.result = yaml.parse(smallYaml);
+  });
 });
 
 group("parse medium YAML", () => {
@@ -234,6 +239,10 @@ group("parse medium YAML", () => {
 
   bench("js-yaml.load", () => {
     globalThis.result = jsYaml.load(mediumYaml);
+  });
+
+  bench("yaml.parse", () => {
+    globalThis.result = yaml.parse(mediumYaml);
   });
 });
 
@@ -247,6 +256,10 @@ group("parse large YAML", () => {
   bench("js-yaml.load", () => {
     globalThis.result = jsYaml.load(largeYaml);
   });
+
+  bench("yaml.parse", () => {
+    globalThis.result = yaml.parse(largeYaml);
+  });
 });
 
 group("parse YAML with anchors", () => {
@@ -258,6 +271,10 @@ group("parse YAML with anchors", () => {
 
   bench("js-yaml.load", () => {
     globalThis.result = jsYaml.load(yamlWithAnchors);
+  });
+
+  bench("yaml.parse", () => {
+    globalThis.result = yaml.parse(yamlWithAnchors);
   });
 });
 
@@ -271,6 +288,10 @@ group("parse YAML array", () => {
   bench("js-yaml.load", () => {
     globalThis.result = jsYaml.load(arrayYaml);
   });
+
+  bench("yaml.parse", () => {
+    globalThis.result = yaml.parse(arrayYaml);
+  });
 });
 
 group("parse YAML with multiline strings", () => {
@@ -282,6 +303,10 @@ group("parse YAML with multiline strings", () => {
 
   bench("js-yaml.load", () => {
     globalThis.result = jsYaml.load(multilineYaml);
+  });
+
+  bench("yaml.parse", () => {
+    globalThis.result = yaml.parse(multilineYaml);
   });
 });
 
@@ -295,6 +320,10 @@ group("parse YAML with numbers", () => {
   bench("js-yaml.load", () => {
     globalThis.result = jsYaml.load(numbersYaml);
   });
+
+  bench("yaml.parse", () => {
+    globalThis.result = yaml.parse(numbersYaml);
+  });
 });
 
 group("parse YAML with dates", () => {
@@ -306,6 +335,10 @@ group("parse YAML with dates", () => {
 
   bench("js-yaml.load", () => {
     globalThis.result = jsYaml.load(datesYaml);
+  });
+
+  bench("yaml.parse", () => {
+    globalThis.result = yaml.parse(datesYaml);
   });
 });
 

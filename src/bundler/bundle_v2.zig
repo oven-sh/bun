@@ -2285,6 +2285,81 @@ pub const BundleV2 = struct {
                 //
                 // The file could be on disk.
                 if (strings.eqlComptime(resolve.import_record.namespace, "file")) {
+                    // For entry points, we can't use runResolver because it expects valid import record indices
+                    if (resolve.import_record.kind == .entry_point_build or resolve.import_record.kind == .entry_point_run) {
+                        // Resolve the entry point path
+                        const transpiler = this.transpilerForTarget(resolve.import_record.original_target);
+                        var resolved = transpiler.resolveEntryPoint(resolve.import_record.specifier) catch {
+                            // Resolution failed, let normal error handling proceed
+                            const log = this.logForResolutionFailures(resolve.import_record.source_file, resolve.import_record.original_target.bakeGraph());
+                            log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Could not resolve entry point: {}", .{
+                                bun.fmt.quote(resolve.import_record.specifier),
+                            }) catch {};
+                            return;
+                        };
+
+                        // Follow the same pattern as the .success case but with the resolved path
+                        var path = resolved.path() orelse return;
+                        const existing = this.pathToSourceIndexMap(resolve.import_record.original_target).getOrPut(this.allocator(), path.hashKey()) catch unreachable;
+
+                        if (!existing.found_existing) {
+                            path.* = this.pathWithPrettyInitialized(path.*, resolve.import_record.original_target) catch bun.outOfMemory();
+
+                            // Create a new source index for this entry point
+                            const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
+                            existing.value_ptr.* = source_index.get();
+                            this.graph.ast.append(this.allocator(), JSAst.empty) catch unreachable;
+                            const loader = path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
+
+                            this.graph.input_files.append(this.allocator(), .{
+                                .source = .{
+                                    .path = path.*,
+                                    .contents = "",
+                                    .index = source_index,
+                                },
+                                .loader = loader,
+                                .side_effects = .has_side_effects,
+                            }) catch unreachable;
+
+                            var task = bun.default_allocator.create(ParseTask) catch unreachable;
+                            task.* = ParseTask{
+                                .ctx = this,
+                                .path = path.*,
+                                .contents_or_fd = .{
+                                    .fd = .{
+                                        .dir = bun.invalid_fd,
+                                        .file = bun.invalid_fd,
+                                    },
+                                },
+                                .side_effects = .has_side_effects,
+                                .jsx = this.transpilerForTarget(resolve.import_record.original_target).options.jsx,
+                                .source_index = source_index,
+                                .module_type = .unknown,
+                                .loader = loader,
+                                .tree_shaking = this.linker.options.tree_shaking,
+                                .known_target = resolve.import_record.original_target,
+                                .is_entry_point = true,
+                            };
+                            task.task.node.next = null;
+                            task.io_task.node.next = null;
+
+                            this.incrementScanCounter();
+
+                            this.graph.entry_points.append(this.allocator(), source_index) catch unreachable;
+
+                            if (!this.enqueueOnLoadPluginIfNeeded(task)) {
+                                if (loader.shouldCopyForBundling()) {
+                                    var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
+                                    additional_files.push(this.allocator(), .{ .source_index = task.source_index.get() }) catch unreachable;
+                                    this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
+                                    this.graph.estimated_file_loader_count += 1;
+                                }
+
+                                this.graph.pool.schedule(task);
+                            }
+                        }
+                        return;
+                    }
                     this.runResolver(resolve.import_record, resolve.import_record.original_target);
                     return;
                 }

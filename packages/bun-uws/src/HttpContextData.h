@@ -34,6 +34,7 @@ struct HttpFlags {
     bool requireHostHeader: 1 = true;
     bool isAuthorized: 1 = false;
     bool useStrictMethodValidation: 1 = false;
+    bool shouldCloseAfterParsingHttp: 1 = false;
 };
 
 template <bool SSL>
@@ -76,6 +77,14 @@ private:
     public:
     bool isAuthorized() const {
         return flags.isAuthorized;
+    }
+
+    bool isParsingHttp() const {
+        return flags.isParsingHttp;
+    }
+
+    void closeAfterParsingHttp() {
+        flags.shouldCloseAfterParsingHttp = true;
     }
 };
 

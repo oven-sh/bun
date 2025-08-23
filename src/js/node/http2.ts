@@ -51,7 +51,7 @@ type Http2ConnectOptions = {
 const TLSSocket = tls.TLSSocket;
 const Socket = net.Socket;
 const EventEmitter = require("node:events");
-const { Duplex } = require("node:stream");
+const { Duplex } = Stream;
 
 const { SafeArrayIterator, SafeSet } = require("internal/primordials");
 
@@ -884,7 +884,7 @@ class Http2ServerResponse extends Stream {
     stream.additionalHeaders({
       ...headers,
       [HTTP2_HEADER_STATUS]: HTTP_STATUS_EARLY_HINTS,
-      "Link": linkHeaderValue,
+      Link: linkHeaderValue,
     });
     return true;
   }

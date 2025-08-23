@@ -3663,7 +3663,6 @@ pub const rescle = struct {
         };
     }
 
-
     pub fn setWindowsMetadata(
         exe_path: [*:0]const u16,
         icon: ?[]const u8,
@@ -3674,14 +3673,14 @@ pub const rescle = struct {
         copyright: ?[]const u8,
     ) !void {
         comptime bun.assert(bun.Environment.isWindows);
-        
+
         // Validate version string format if provided
         if (version) |v| {
             // Empty version string is invalid
             if (v.len == 0) {
                 return error.InvalidVersionFormat;
             }
-            
+
             // Basic validation: check format and ranges
             var parts_count: u32 = 0;
             var iter = std.mem.tokenizeAny(u8, v, ".");
@@ -3699,10 +3698,10 @@ pub const rescle = struct {
                 return error.InvalidVersionFormat;
             }
         }
-        
+
         // Allocate UTF-16 strings
         const allocator = bun.default_allocator;
-        
+
         // Icon is a path, so use toWPathNormalized with proper buffer handling
         var icon_buf: bun.OSPathBuffer = undefined;
         const icon_w = if (icon) |i| brk: {
@@ -3712,22 +3711,22 @@ pub const rescle = struct {
             buf_u16[path_w.len] = 0;
             break :brk buf_u16[0..path_w.len :0];
         } else null;
-        
+
         const title_w = if (title) |t| try bun.strings.toUTF16AllocForReal(allocator, t, false, true) else null;
         defer if (title_w) |tw| allocator.free(tw);
-        
+
         const publisher_w = if (publisher) |p| try bun.strings.toUTF16AllocForReal(allocator, p, false, true) else null;
         defer if (publisher_w) |pw| allocator.free(pw);
-        
+
         const version_w = if (version) |v| try bun.strings.toUTF16AllocForReal(allocator, v, false, true) else null;
         defer if (version_w) |vw| allocator.free(vw);
-        
+
         const description_w = if (description) |d| try bun.strings.toUTF16AllocForReal(allocator, d, false, true) else null;
         defer if (description_w) |dw| allocator.free(dw);
-        
+
         const copyright_w = if (copyright) |cr| try bun.strings.toUTF16AllocForReal(allocator, cr, false, true) else null;
         defer if (copyright_w) |cw| allocator.free(cw);
-        
+
         const status = rescle__setWindowsMetadata(
             exe_path,
             if (icon_w) |iw| iw.ptr else null,

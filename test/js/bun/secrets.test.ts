@@ -1,8 +1,8 @@
 import { spawnSync } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "fs";
-import { setupMacOSKeychain } from "./secrets-helpers.ts";
 import { bunEnv, bunExe, isCI, isLinux, isMacOS } from "harness";
+import { setupMacOSKeychain } from "./secrets-helpers.ts";
 
 setupMacOSKeychain({ beforeAll, afterAll });
 

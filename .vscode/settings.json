@@ -35,8 +35,6 @@
   // "zig.zls.enableBuildOnSave": true,
   // "zig.buildOnSave": true,
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
-  "zig.path": "${workspaceFolder}/vendor/zig/zig.exe",
-  "zig.zls.path": "${workspaceFolder}/vendor/zig/zls.exe",
   "zig.formattingProvider": "zls",
   "zig.zls.enableInlayHints": false,
   "[zig]": {

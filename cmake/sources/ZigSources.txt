@@ -64,6 +64,7 @@ src/async/windows_event_loop.zig
 src/bake.zig
 src/bake/DevServer.zig
 src/bake/DevServer/Assets.zig
+src/bake/DevServer/DevAllocator.zig
 src/bake/DevServer/DirectoryWatchStore.zig
 src/bake/DevServer/ErrorReportRequest.zig
 src/bake/DevServer/HmrSocket.zig
@@ -795,6 +796,7 @@ src/ptr/CowSlice.zig
 src/ptr/meta.zig
 src/ptr/owned.zig
 src/ptr/owned/maybe.zig
+src/ptr/owned/scoped.zig
 src/ptr/ref_count.zig
 src/ptr/shared.zig
 src/ptr/tagged_pointer.zig

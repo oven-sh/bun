@@ -1844,6 +1844,10 @@ declare module "bun" {
       hideConsole?: boolean;
       icon?: string;
       title?: string;
+      publisher?: string;
+      version?: string;
+      description?: string;
+      copyright?: string;
     };
   }
 

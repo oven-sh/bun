@@ -7,7 +7,7 @@ pub noinline fn computeChunks(
 
     bun.assert(this.dev_server == null); // use
 
-    var stack_fallback = std.heap.stackFallback(4096, this.allocator);
+    var stack_fallback = std.heap.stackFallback(4096, this.allocator());
     const stack_all = stack_fallback.get();
     var arena = bun.ArenaAllocator.init(stack_all);
     defer arena.deinit();
@@ -63,7 +63,7 @@ pub noinline fn computeChunks(
                     },
                     .entry_bits = entry_bits.*,
                     .content = .html,
-                    .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                    .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
                     .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
                 };
             }
@@ -94,10 +94,10 @@ pub noinline fn computeChunks(
                     .content = .{
                         .css = .{
                             .imports_in_chunk_in_order = order,
-                            .asts = this.allocator.alloc(bun.css.BundlerStyleSheet, order.len) catch bun.outOfMemory(),
+                            .asts = this.allocator().alloc(bun.css.BundlerStyleSheet, order.len) catch bun.outOfMemory(),
                         },
                     },
-                    .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                    .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
                     .has_html_chunk = has_html_chunk,
                     .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
                 };
@@ -120,7 +120,7 @@ pub noinline fn computeChunks(
                 .javascript = .{},
             },
             .has_html_chunk = has_html_chunk,
-            .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+            .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
             .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
         };
 
@@ -147,7 +147,7 @@ pub noinline fn computeChunks(
 
                 const css_chunk_entry = try css_chunks.getOrPut(hash_to_use);
 
-                js_chunk_entry.value_ptr.content.javascript.css_chunks = try this.allocator.dupe(u32, &.{
+                js_chunk_entry.value_ptr.content.javascript.css_chunks = try this.allocator().dupe(u32, &.{
                     @intCast(css_chunk_entry.index),
                 });
                 js_chunks_with_css += 1;
@@ -156,7 +156,7 @@ pub noinline fn computeChunks(
                     var css_files_with_parts_in_chunk = std.AutoArrayHashMapUnmanaged(Index.Int, void){};
                     for (order.slice()) |entry| {
                         if (entry.kind == .source_index) {
-                            css_files_with_parts_in_chunk.put(this.allocator, entry.kind.source_index.get(), {}) catch bun.outOfMemory();
+                            css_files_with_parts_in_chunk.put(this.allocator(), entry.kind.source_index.get(), {}) catch bun.outOfMemory();
                         }
                     }
                     css_chunk_entry.value_ptr.* = .{
@@ -169,11 +169,11 @@ pub noinline fn computeChunks(
                         .content = .{
                             .css = .{
                                 .imports_in_chunk_in_order = order,
-                                .asts = this.allocator.alloc(bun.css.BundlerStyleSheet, order.len) catch bun.outOfMemory(),
+                                .asts = this.allocator().alloc(bun.css.BundlerStyleSheet, order.len) catch bun.outOfMemory(),
                             },
                         },
                         .files_with_parts_in_chunk = css_files_with_parts_in_chunk,
-                        .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                        .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
                         .has_html_chunk = has_html_chunk,
                         .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
                     };
@@ -217,16 +217,16 @@ pub noinline fn computeChunks(
                                 .content = .{
                                     .javascript = .{},
                                 },
-                                .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                                .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
                                 .is_browser_chunk_from_server_build = is_browser_chunk_from_server_build,
                             };
                         }
 
-                        _ = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator, @as(u32, @truncate(source_index.get()))) catch unreachable;
+                        _ = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator(), @as(u32, @truncate(source_index.get()))) catch unreachable;
                     } else {
                         var handler = Handler{
                             .chunks = js_chunks.values(),
-                            .allocator = this.allocator,
+                            .allocator = this.allocator(),
                             .source_id = source_index.get(),
                         };
                         entry_bits.forEach(Handler, &handler, Handler.next);
@@ -239,7 +239,7 @@ pub noinline fn computeChunks(
     // Sort the chunks for determinism. This matters because we use chunk indices
     // as sorting keys in a few places.
     const chunks: []Chunk = sort_chunks: {
-        var sorted_chunks = try BabyList(Chunk).initCapacity(this.allocator, js_chunks.count() + css_chunks.count() + html_chunks.count());
+        var sorted_chunks = try BabyList(Chunk).initCapacity(this.allocator(), js_chunks.count() + css_chunks.count() + html_chunks.count());
 
         var sorted_keys = try BabyList(string).initCapacity(temp_allocator, js_chunks.count());
 
@@ -286,7 +286,7 @@ pub noinline fn computeChunks(
         }
 
         // We don't care about the order of the HTML chunks that have no JS chunks.
-        try sorted_chunks.append(this.allocator, html_chunks.values());
+        try sorted_chunks.append(this.allocator(), html_chunks.values());
 
         break :sort_chunks sorted_chunks.slice();
     };
@@ -317,11 +317,11 @@ pub noinline fn computeChunks(
     }
 
     const unique_key_item_len = std.fmt.count("{any}C{d:0>8}", .{ bun.fmt.hexIntLower(unique_key), chunks.len });
-    var unique_key_builder = try bun.StringBuilder.initCapacity(this.allocator, unique_key_item_len * chunks.len);
+    var unique_key_builder = try bun.StringBuilder.initCapacity(this.allocator(), unique_key_item_len * chunks.len);
     this.unique_key_buf = unique_key_builder.allocatedSlice();
 
     errdefer {
-        unique_key_builder.deinit(this.allocator);
+        unique_key_builder.deinit(this.allocator());
         this.unique_key_buf = "";
     }
 
@@ -392,7 +392,7 @@ pub noinline fn computeChunks(
                 break :dir try dir.getFdPath(&real_path_buf);
             };
 
-            chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator, this.resolver.opts.root_dir, dir);
+            chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator(), this.resolver.opts.root_dir, dir);
         }
     }
 

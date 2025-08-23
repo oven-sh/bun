@@ -1070,9 +1070,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             const route_list_value = this.setRoutes();
             if (new_config.had_routes_object) {
-                const server_js_value = this.js_value.get();
-                if (server_js_value != .zero) {
-                    js.routeListSetCached(server_js_value, this.globalThis, route_list_value);
+                if (this.js_value.tryGet()) |server_js_value| {
+                    if (server_js_value != .zero) {
+                        js.gc.routeList.set(server_js_value, globalThis, route_list_value);
+                    }
                 }
             }
 
@@ -1094,9 +1095,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.app.?.clearRoutes();
             const route_list_value = this.setRoutes();
             if (route_list_value != .zero) {
-                const server_js_value = this.js_value.get();
-                if (server_js_value != .zero) {
-                    js.routeListSetCached(server_js_value, this.globalThis, route_list_value);
+                if (this.js_value.tryGet()) |server_js_value| {
+                    if (server_js_value != .zero) {
+                        js.gc.routeList.set(server_js_value, this.globalThis, route_list_value);
+                    }
                 }
             }
             return true;
@@ -1858,7 +1860,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             resp.timeout(this.config.idleTimeout);
 
             const globalThis = this.globalThis;
-            const thisObject: JSValue = this.js_value.get();
+            const thisObject: JSValue = this.js_value.tryGet() orelse .js_undefined;
             const vm = this.vm;
 
             var node_http_response: ?*NodeHTTPResponse = null;

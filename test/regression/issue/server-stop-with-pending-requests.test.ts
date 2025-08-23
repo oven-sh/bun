@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 // Regression test for server assertion failure when stopping with pending requests
 // This test ensures that calling server.stop() immediately after making requests
@@ -15,13 +15,13 @@ test("server.stop() with pending requests should not cause assertion failure", a
   try {
     // Make one awaited request
     await fetch(server.url).catch(() => {});
-    
-    // Make one non-awaited request 
+
+    // Make one non-awaited request
     fetch(server.url).catch(() => {});
 
     // Stop immediately - this should not cause an assertion failure
     server.stop();
-    
+
     // If we get here without crashing, the fix worked
     expect(true).toBe(true);
   } finally {

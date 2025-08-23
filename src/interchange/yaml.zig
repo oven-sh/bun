@@ -7,6 +7,7 @@ const E = ast.E;
 const G = ast.G;
 const OOM = bun.OOM;
 const BabyList = bun.BabyList;
+const Environment = bun.Environment;
 
 pub const YAML = struct {
     const ParseError = OOM || error{ SyntaxError, StackOverflow };
@@ -81,7 +82,7 @@ pub const Context = enum {
 
         pub fn unset(this: *@This(), context: Context) void {
             const prev_context = this.list.pop();
-            std.debug.assert(prev_context != null and prev_context.? == context);
+            bun.assert(prev_context != null and prev_context.? == context);
         }
 
         pub fn get(this: *const @This()) Context {
@@ -180,7 +181,7 @@ pub const Indent = enum(usize) {
         }
 
         pub fn pop(this: *@This()) void {
-            std.debug.assert(this.list.items.len != 0);
+            bun.assert(this.list.items.len != 0);
             _ = this.list.pop();
         }
 
@@ -262,12 +263,12 @@ pub const Line = enum(usize) {
 };
 
 comptime {
-    std.debug.assert(Pos != Indent);
-    std.debug.assert(Pos != Line);
-    std.debug.assert(Pos == Pos);
-    std.debug.assert(Indent != Line);
-    std.debug.assert(Indent == Indent);
-    std.debug.assert(Line == Line);
+    bun.assert(Pos != Indent);
+    bun.assert(Pos != Line);
+    bun.assert(Pos == Pos);
+    bun.assert(Indent != Line);
+    bun.assert(Indent == Indent);
+    bun.assert(Line == Line);
 }
 
 pub fn Parser(comptime enc: Encoding) type {
@@ -1104,7 +1105,7 @@ pub fn Parser(comptime enc: Encoding) type {
 
             pub fn implicitKeyAnchors(this: *NodeProperties, implicit_key_line: Line) ImplicitKeyAnchors {
                 if (this.has_mapping_anchor) |mapping_anchor| {
-                    std.debug.assert(this.has_anchor != null);
+                    bun.assert(this.has_anchor != null);
                     return .{
                         .key_anchor = if (this.has_anchor) |key_anchor| key_anchor.data.anchor else null,
                         .mapping_anchor = mapping_anchor.data.anchor,
@@ -1927,13 +1928,10 @@ pub fn Parser(comptime enc: Encoding) type {
                     }
 
                     var scalar: NodeScalar = scalar: {
-                        // TODO: don't parse twice
-                        const float = std.fmt.parseFloat(f64, parser.slice(start, end)) catch {
-                            const int = std.fmt.parseUnsigned(u64, parser.slice(start, end), 0) catch {
-                                return;
-                            };
-                            break :scalar .{ .number = @floatFromInt(int) };
+                        const float = bun.jsc.wtf.parseDouble(parser.slice(start, end)) catch {
+                            return;
                         };
+
                         break :scalar .{ .number = float };
                     };
 
@@ -4078,11 +4076,10 @@ pub fn Parser(comptime enc: Encoding) type {
                 pub fn appendSource(self: *@This(), unit: enc.unit(), pos: Pos) OOM!void {
                     try self.drainWhitespace();
 
-                    if (@import("builtin").mode == .Debug) {
+                    if (comptime Environment.ci_assert) {
                         const actual = self.parser.input[pos.cast()];
-                        std.debug.assert(actual == unit);
+                        bun.assert(actual == unit);
                     }
-
                     switch (self.str) {
                         .range => |*range| {
                             if (range.isEmpty()) {
@@ -4090,7 +4087,7 @@ pub fn Parser(comptime enc: Encoding) type {
                                 range.end = pos;
                             }
 
-                            std.debug.assert(range.end == pos);
+                            bun.assert(range.end == pos);
 
                             range.end = pos.add(1);
                         },
@@ -4102,9 +4099,9 @@ pub fn Parser(comptime enc: Encoding) type {
 
                 fn drainWhitespace(self: *@This()) OOM!void {
                     for (self.parser.whitespace_buf.items) |ws| {
-                        if (@import("builtin").mode == .Debug) {
+                        if (comptime Environment.ci_assert) {
                             const actual = self.parser.input[ws.pos.cast()];
-                            std.debug.assert(actual == ws.unit);
+                            bun.assert(actual == ws.unit);
                         }
 
                         switch (self.str) {
@@ -4114,7 +4111,7 @@ pub fn Parser(comptime enc: Encoding) type {
                                     range.end = ws.pos;
                                 }
 
-                                std.debug.assert(range.end == ws.pos);
+                                bun.assert(range.end == ws.pos);
 
                                 range.end = ws.pos.add(1);
                             },
@@ -4140,7 +4137,7 @@ pub fn Parser(comptime enc: Encoding) type {
                                 range.end = off;
                             }
 
-                            std.debug.assert(range.end == off);
+                            bun.assert(range.end == off);
 
                             range.end = end;
                         },
@@ -4153,9 +4150,9 @@ pub fn Parser(comptime enc: Encoding) type {
                 pub fn appendExpectedSourceSlice(self: *@This(), off: Pos, end: Pos, expected: []const enc.unit()) OOM!void {
                     try self.drainWhitespace();
 
-                    if (@import("builtin").mode == .Debug) {
+                    if (comptime Environment.ci_assert) {
                         const actual = self.parser.slice(off, end);
-                        std.debug.assert(std.mem.eql(enc.unit(), actual, expected));
+                        bun.assert(std.mem.eql(enc.unit(), actual, expected));
                     }
 
                     switch (self.str) {
@@ -4165,7 +4162,7 @@ pub fn Parser(comptime enc: Encoding) type {
                                 range.end = off;
                             }
 
-                            std.debug.assert(range.end == off);
+                            bun.assert(range.end == off);
 
                             range.end = end;
                         },

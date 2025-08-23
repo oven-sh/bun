@@ -52,7 +52,7 @@ pub fn parse(
 }
 
 const ParserCtx = struct {
-    seen_objects: std.AutoHashMap(usize, JSValue),
+    seen_objects: std.AutoHashMap(*const anyopaque, JSValue),
     stack_check: bun.StackCheck,
 
     global: *JSGlobalObject,
@@ -87,14 +87,14 @@ const ParserCtx = struct {
             .e_number => |number| return .jsNumber(number.value),
             .e_string => |str| return str.toJS(bun.default_allocator, ctx.global),
             .e_array => {
-                if (ctx.seen_objects.get(@intFromPtr(expr.data.e_array))) |arr| {
+                if (ctx.seen_objects.get(expr.data.e_array)) |arr| {
                     return arr;
                 }
 
                 var arr = try JSValue.createEmptyArray(ctx.global, expr.data.e_array.items.len);
 
                 args.append(arr);
-                try ctx.seen_objects.put(@intFromPtr(expr.data.e_array), arr);
+                try ctx.seen_objects.put(expr.data.e_array, arr);
 
                 for (expr.data.e_array.slice(), 0..) |item, _i| {
                     const i: u32 = @intCast(_i);
@@ -105,14 +105,14 @@ const ParserCtx = struct {
                 return arr;
             },
             .e_object => {
-                if (ctx.seen_objects.get(@intFromPtr(expr.data.e_object))) |obj| {
+                if (ctx.seen_objects.get(expr.data.e_object)) |obj| {
                     return obj;
                 }
 
                 var obj = JSValue.createEmptyObject(ctx.global, expr.data.e_object.properties.len);
 
                 args.append(obj);
-                try ctx.seen_objects.put(@intFromPtr(expr.data.e_object), obj);
+                try ctx.seen_objects.put(expr.data.e_object, obj);
 
                 for (expr.data.e_object.properties.slice()) |prop| {
                     const key_expr = prop.key.?;

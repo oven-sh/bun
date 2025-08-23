@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { isCI, isMacOS, isWindows } from "harness";
 
 describe.todoIf(isCI && !isWindows)("Bun.secrets error codes", () => {

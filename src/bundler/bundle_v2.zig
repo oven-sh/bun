@@ -1915,7 +1915,26 @@ pub const BundleV2 = struct {
             );
 
             if (this.plugins) |plugin| {
-                plugin.runOnEndCallbacks(root_obj);
+                const onEndResult = plugin.runOnEndCallbacks(root_obj);
+
+                // Check if runOnEndCallbacks returned a promise
+                if (onEndResult.asPromise()) |onEndPromise| {
+                    // Wait for the onEnd promise to complete
+                    onEndPromise.setHandled(globalThis.vm());
+                    globalThis.bunVM().waitForPromise(.{ .normal = onEndPromise });
+
+                    // Check if the promise was rejected
+                    switch (onEndPromise.status(globalThis.vm())) {
+                        .rejected => {
+                            const err = onEndPromise.result(globalThis.vm());
+                            promise.reject(globalThis, err);
+                            return;
+                        },
+                        else => {
+                            // Promise resolved successfully, continue
+                        },
+                    }
+                }
             }
 
             promise.resolve(globalThis, root_obj);
@@ -2018,7 +2037,26 @@ pub const BundleV2 = struct {
 
                     // Call onEnd callbacks for all plugins
                     if (this.plugins) |plugin| {
-                        plugin.runOnEndCallbacks(root_obj);
+                        const onEndResult = plugin.runOnEndCallbacks(root_obj);
+
+                        // Check if runOnEndCallbacks returned a promise
+                        if (onEndResult.asPromise()) |onEndPromise| {
+                            // Wait for the onEnd promise to complete
+                            onEndPromise.setHandled(globalThis.vm());
+                            globalThis.bunVM().waitForPromise(.{ .normal = onEndPromise });
+
+                            // Check if the promise was rejected
+                            switch (onEndPromise.status(globalThis.vm())) {
+                                .rejected => {
+                                    const err = onEndPromise.result(globalThis.vm());
+                                    promise.reject(globalThis, err);
+                                    return;
+                                },
+                                else => {
+                                    // Promise resolved successfully, continue
+                                },
+                            }
+                        }
                     }
 
                     promise.resolve(globalThis, root_obj);

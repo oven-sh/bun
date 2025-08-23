@@ -110,9 +110,9 @@ export async function runOnEndCallbacks(
   this: BundlerPlugin,
   callbacks: AnyFunction[],
   buildResult: Bun.BuildOutput,
-): Promise<Bun.BuildOutput> {
+): Promise<void> {
   if (!callbacks || !Array.isArray(callbacks)) {
-    return buildResult;
+    return;
   }
 
   const promises: PromiseLike<unknown>[] = [];
@@ -131,8 +131,6 @@ export async function runOnEndCallbacks(
   if (promises.length > 0) {
     await Promise.all(promises);
   }
-
-  return buildResult;
 }
 
 /**

@@ -65,7 +65,7 @@ describe("request cookies", () => {
   it("parses cookies before headers are accessed", async () => {
     const res = await fetch(`${server.url}before-headers`, {
       headers: {
-        "Cookie": "name=value; foo=bar",
+        Cookie: "name=value; foo=bar",
       },
     });
     expect(res.status).toBe(200);
@@ -75,7 +75,7 @@ describe("request cookies", () => {
   it("parses cookies after headers are accessed", async () => {
     const res = await fetch(`${server.url}after-headers`, {
       headers: {
-        "Cookie": "name=value; foo=bar",
+        Cookie: "name=value; foo=bar",
       },
     });
     expect(res.status).toBe(200);
@@ -132,7 +132,7 @@ describe("instanceof and type checks", () => {
   it("cookies is instance of Bun.CookieMap and has right prototype", async () => {
     const res = await fetch(`${server.url}instanceof-checks`, {
       headers: {
-        "Cookie": "name=value",
+        Cookie: "name=value",
       },
     });
     expect(res.status).toBe(200);
@@ -141,7 +141,7 @@ describe("instanceof and type checks", () => {
   it("constructors match expected types", async () => {
     const res = await fetch(`${server.url}constructor-identities`, {
       headers: {
-        "Cookie": "name=value",
+        Cookie: "name=value",
       },
     });
     expect(res.status).toBe(200);
@@ -211,7 +211,7 @@ describe("complex cookie parsing", () => {
   it("handles cookie values with spaces", async () => {
     const res = await fetch(`${server.url}special-chars`, {
       headers: {
-        "Cookie": "complex=value with spaces",
+        Cookie: "complex=value with spaces",
       },
     });
     expect(res.status).toBe(200);
@@ -220,7 +220,7 @@ describe("complex cookie parsing", () => {
   it("handles cookie values with equals signs", async () => {
     const res = await fetch(`${server.url}equals-in-value`, {
       headers: {
-        "Cookie": "equation=x=y+z",
+        Cookie: "equation=x=y+z",
       },
     });
     expect(res.status).toBe(200);
@@ -229,7 +229,7 @@ describe("complex cookie parsing", () => {
   it("handles duplicate cookie names", async () => {
     const res = await fetch(`${server.url}multiple-cookies`, {
       headers: {
-        "Cookie": "duplicate=first; duplicate=second; other=value",
+        Cookie: "duplicate=first; duplicate=second; other=value",
       },
     });
     expect(res.status).toBe(200);
@@ -238,7 +238,7 @@ describe("complex cookie parsing", () => {
   it("CookieMap methods work correctly", async () => {
     const res = await fetch(`${server.url}cookie-map-methods`, {
       headers: {
-        "Cookie": "name=value; foo=bar",
+        Cookie: "name=value; foo=bar",
       },
     });
     expect(res.status).toBe(200);
@@ -355,7 +355,7 @@ describe("CookieMap iterator", () => {
   it("implements entries() iterator", async () => {
     const res = await fetch(`${server.url}iterator-entries`, {
       headers: {
-        "Cookie": "a=1; b=2; c=3",
+        Cookie: "a=1; b=2; c=3",
       },
     });
     expect(res.status).toBe(200);
@@ -364,7 +364,7 @@ describe("CookieMap iterator", () => {
   it("implements for...of iteration", async () => {
     const res = await fetch(`${server.url}iterator-for-of`, {
       headers: {
-        "Cookie": "a=1; b=2; c=3",
+        Cookie: "a=1; b=2; c=3",
       },
     });
     expect(res.status).toBe(200);
@@ -373,7 +373,7 @@ describe("CookieMap iterator", () => {
   it("implements keys() and values() iterators", async () => {
     const res = await fetch(`${server.url}iterator-keys-values`, {
       headers: {
-        "Cookie": "a=1; b=2; c=3",
+        Cookie: "a=1; b=2; c=3",
       },
     });
     expect(res.status).toBe(200);
@@ -382,7 +382,7 @@ describe("CookieMap iterator", () => {
   it("implements forEach method", async () => {
     const res = await fetch(`${server.url}iterator-forEach`, {
       headers: {
-        "Cookie": "a=1; b=2; c=3",
+        Cookie: "a=1; b=2; c=3",
       },
     });
     expect(res.status).toBe(200);

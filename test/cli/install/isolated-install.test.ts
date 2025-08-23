@@ -622,7 +622,7 @@ test("many transitive dependencies", async () => {
     name: "alias-loop-1",
     version: "1.0.0",
     dependencies: {
-      "alias1": "npm:alias-loop-2@*",
+      alias1: "npm:alias-loop-2@*",
     },
   });
   expect(
@@ -633,7 +633,7 @@ test("many transitive dependencies", async () => {
     name: "alias-loop-2",
     version: "1.0.0",
     dependencies: {
-      "alias2": "npm:alias-loop-1@*",
+      alias2: "npm:alias-loop-1@*",
     },
   });
   expect(await readdirSorted(join(packageDir, "node_modules", ".bun", "alias-loop-1@1.0.0", "node_modules"))).toEqual([
@@ -693,7 +693,7 @@ test("dependency names are preserved", async () => {
     name: "alias-loop-1",
     version: "1.0.0",
     dependencies: {
-      "alias1": "npm:alias-loop-2@*",
+      alias1: "npm:alias-loop-2@*",
     },
   });
   expect(
@@ -704,7 +704,7 @@ test("dependency names are preserved", async () => {
     name: "alias-loop-2",
     version: "1.0.0",
     dependencies: {
-      "alias2": "npm:alias-loop-1@*",
+      alias2: "npm:alias-loop-1@*",
     },
   });
 });

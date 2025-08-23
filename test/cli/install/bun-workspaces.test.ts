@@ -347,7 +347,7 @@ describe("workspace aliases", async () => {
           name: "foo",
           workspaces: ["packages/*"],
           dependencies: {
-            "a0": "workspace:@org/a@latest",
+            a0: "workspace:@org/a@latest",
           },
         }),
       ),
@@ -356,8 +356,8 @@ describe("workspace aliases", async () => {
         JSON.stringify({
           name: "@org/a",
           dependencies: {
-            "a1": "workspace:@org/b@     ",
-            "a2": "workspace:c@*",
+            a1: "workspace:@org/b@     ",
+            a2: "workspace:c@*",
           },
         }),
       ),
@@ -366,8 +366,8 @@ describe("workspace aliases", async () => {
         JSON.stringify({
           name: "@org/b",
           dependencies: {
-            "a3": "workspace:c@    ",
-            "a4": "workspace:@org/a@latest",
+            a3: "workspace:c@    ",
+            a4: "workspace:@org/a@latest",
           },
         }),
       ),
@@ -376,7 +376,7 @@ describe("workspace aliases", async () => {
         JSON.stringify({
           name: "c",
           dependencies: {
-            "a5": "workspace:@org/a@*",
+            a5: "workspace:@org/a@*",
           },
         }),
       ),
@@ -419,7 +419,7 @@ describe("workspace aliases", async () => {
           JSON.stringify({
             name: "@org/a",
             dependencies: {
-              "a1": version,
+              a1: version,
             },
           }),
         ),
@@ -457,7 +457,7 @@ describe("workspace aliases", async () => {
           JSON.stringify({
             name: "@org/a",
             dependencies: {
-              "a1": version,
+              a1: version,
             },
           }),
         ),
@@ -553,7 +553,7 @@ describe("relative tarballs", async () => {
         JSON.stringify({
           name: "pkg1",
           dependencies: {
-            "qux": "../../qux-0.0.2.tgz",
+            qux: "../../qux-0.0.2.tgz",
           },
         }),
       ),
@@ -800,7 +800,7 @@ test("adding packages in workspaces", async () => {
       name: "foo",
       workspaces: ["packages/*"],
       dependencies: {
-        "bar": "workspace:*",
+        bar: "workspace:*",
       },
     }),
   );
@@ -812,7 +812,7 @@ test("adding packages in workspaces", async () => {
   await write(join(packageDir, "packages", "bar", "package.json"), JSON.stringify({ name: "bar" }));
   await write(
     join(packageDir, "packages", "boba", "package.json"),
-    JSON.stringify({ name: "boba", version: "1.0.0", dependencies: { "pkg5": "*" } }),
+    JSON.stringify({ name: "boba", version: "1.0.0", dependencies: { pkg5: "*" } }),
   );
   await write(
     join(packageDir, "packages", "pkg5", "package.json"),
@@ -820,7 +820,7 @@ test("adding packages in workspaces", async () => {
       name: "pkg5",
       version: "1.2.3",
       dependencies: {
-        "bar": "workspace:*",
+        bar: "workspace:*",
       },
     }),
   );
@@ -901,7 +901,7 @@ test("adding packages in workspaces", async () => {
     name: "boba",
     version: "1.0.0",
     dependencies: {
-      "pkg5": "*",
+      pkg5: "*",
       "two-range-deps": "^1.0.0",
     },
   });
@@ -938,9 +938,9 @@ test("adding packages in workspaces", async () => {
     name: "boba",
     version: "1.0.0",
     dependencies: {
-      "pkg5": "*",
+      pkg5: "*",
       "two-range-deps": "^1.0.0",
-      "bar": "0.0.7",
+      bar: "0.0.7",
     },
   });
   expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
@@ -1495,7 +1495,7 @@ describe("install --filter", () => {
         JSON.stringify({
           name: "pkg2",
           dependencies: {
-            "pkg1": "1.0.0",
+            pkg1: "1.0.0",
           },
         }),
       ),

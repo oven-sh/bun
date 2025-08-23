@@ -199,7 +199,7 @@ for (let withDelay of [true, false]) {
               ? {}
               : {
                   headers: {
-                    "Connection": "close",
+                    Connection: "close",
                   },
                   keepalive: false,
                 },
@@ -2091,7 +2091,7 @@ it("#6462", async () => {
       }
       return new Response(
         JSON.stringify({
-          "headers": headers,
+          headers: headers,
         }),
         { status: 200 },
       );

@@ -24,13 +24,13 @@ test("node-fetch", () => {
 });
 
 test("node-fetch Headers.raw()", () => {
-  const headers = new Headers({ "a": "1" });
+  const headers = new Headers({ a: "1" });
   headers.append("Set-Cookie", "b=1");
   headers.append("Set-Cookie", "c=1");
 
   expect(headers.raw()).toEqual({
     "set-cookie": ["b=1", "c=1"],
-    "a": ["1"],
+    a: ["1"],
   });
 });
 

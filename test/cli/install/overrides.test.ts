@@ -193,7 +193,7 @@ test("overrides do not apply to workspaces", async () => {
   await Promise.all([
     write(
       join(tmp, "package.json"),
-      JSON.stringify({ name: "monorepo-root", workspaces: ["packages/*"], overrides: { "pkg1": "file:pkg2" } }),
+      JSON.stringify({ name: "monorepo-root", workspaces: ["packages/*"], overrides: { pkg1: "file:pkg2" } }),
     ),
     write(
       join(tmp, "packages", "pkg1", "package.json"),

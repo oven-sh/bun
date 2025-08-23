@@ -5943,7 +5943,7 @@ CREATE TABLE ${table_name} (
     test("json[] - single value", async () => {
       await using sql = postgres({ ...options, max: 1 });
       const result = await sql`SELECT ARRAY['{"key": "value"}']::json[] as single_value`;
-      expect(result[0].single_value).toEqual([{ "key": "value" }]);
+      expect(result[0].single_value).toEqual([{ key: "value" }]);
     });
 
     test("json[] - multiple values", async () => {
@@ -5955,7 +5955,7 @@ CREATE TABLE ${table_name} (
           '{"c": 3}'
         ]::json[] as multiple_values
       `;
-      expect(result[0].multiple_values).toEqual([{ "a": 1 }, { "b": 2 }, { "c": 3 }]);
+      expect(result[0].multiple_values).toEqual([{ a: 1 }, { b: 2 }, { c: 3 }]);
     });
 
     test("json[] - null values", async () => {
@@ -5968,7 +5968,7 @@ CREATE TABLE ${table_name} (
           NULL
         ]::json[] as array_with_nulls
       `;
-      expect(result[0].array_with_nulls).toEqual([{ "a": 1 }, null, { "c": 3 }, null]);
+      expect(result[0].array_with_nulls).toEqual([{ a: 1 }, null, { c: 3 }, null]);
     });
 
     test("json[] - null array", async () => {
@@ -6025,10 +6025,7 @@ CREATE TABLE ${table_name} (
           '{"array": [1, 2, {"key": "value"}]}'::json
         ]::json[] as nested_json
       `;
-      expect(result[0].nested_json).toEqual([
-        { "outer": { "inner": "value" } },
-        { "array": [1, 2, { "key": "value" }] },
-      ]);
+      expect(result[0].nested_json).toEqual([{ outer: { inner: "value" } }, { array: [1, 2, { key: "value" }] }]);
     });
 
     test("json[] - array element access", async () => {
@@ -6040,9 +6037,9 @@ CREATE TABLE ${table_name} (
           (ARRAY['{"a": 1}', '{"b": 2}', '{"c": 3}']::json[])[3] as third_element
       `;
 
-      expect(result[0].first_element).toEqual({ "a": 1 });
-      expect(result[0].second_element).toEqual({ "b": 2 });
-      expect(result[0].third_element).toEqual({ "c": 3 });
+      expect(result[0].first_element).toEqual({ a: 1 });
+      expect(result[0].second_element).toEqual({ b: 2 });
+      expect(result[0].third_element).toEqual({ c: 3 });
     });
 
     test("json[] - array concatenation", async () => {
@@ -6053,7 +6050,7 @@ CREATE TABLE ${table_name} (
           ARRAY['{"c": 3}', '{"d": 4}']::json[] as concatenated
       `;
 
-      expect(result[0].concatenated).toEqual([{ "a": 1 }, { "b": 2 }, { "c": 3 }, { "d": 4 }]);
+      expect(result[0].concatenated).toEqual([{ a: 1 }, { b: 2 }, { c: 3 }, { d: 4 }]);
     });
 
     test("json[] - special characters in JSON", async () => {
@@ -6066,11 +6063,7 @@ CREATE TABLE ${table_name} (
         ]::json[] as special_chars
       `;
 
-      expect(result[0].special_chars).toEqual([
-        { "special\nline": "value" },
-        { 'quo"te': "value" },
-        { "unicodeA": "A" },
-      ]);
+      expect(result[0].special_chars).toEqual([{ "special\nline": "value" }, { 'quo"te': "value" }, { unicodeA: "A" }]);
     });
 
     test("json[] - large JSON objects", async () => {
@@ -10536,7 +10529,7 @@ CREATE TABLE ${table_name} (
     test("jsonb[] - single value", async () => {
       await using sql = postgres({ ...options, max: 1 });
       const result = await sql`SELECT ARRAY['{"key": "value"}']::jsonb[] as single_value`;
-      expect(result[0].single_value).toEqual([{ "key": "value" }]);
+      expect(result[0].single_value).toEqual([{ key: "value" }]);
     });
 
     test("jsonb[] - multiple values", async () => {
@@ -10548,7 +10541,7 @@ CREATE TABLE ${table_name} (
           '{"c": 3}'
         ]::jsonb[] as multiple_values
       `;
-      expect(result[0].multiple_values).toEqual([{ "a": 1 }, { "b": 2 }, { "c": 3 }]);
+      expect(result[0].multiple_values).toEqual([{ a: 1 }, { b: 2 }, { c: 3 }]);
     });
 
     test("jsonb[] - null values", async () => {
@@ -10561,7 +10554,7 @@ CREATE TABLE ${table_name} (
           NULL
         ]::jsonb[] as array_with_nulls
       `;
-      expect(result[0].array_with_nulls).toEqual([{ "a": 1 }, null, { "c": 3 }, null]);
+      expect(result[0].array_with_nulls).toEqual([{ a: 1 }, null, { c: 3 }, null]);
     });
 
     test("jsonb[] - null array", async () => {
@@ -10582,7 +10575,7 @@ CREATE TABLE ${table_name} (
           '[1, 2, 3]'::jsonb                      -- array
         ]::jsonb[] as json_types
       `;
-      expect(result[0].json_types).toEqual([null, true, 123, "string", { "key": "value" }, [1, 2, 3]]);
+      expect(result[0].json_types).toEqual([null, true, 123, "string", { key: "value" }, [1, 2, 3]]);
     });
 
     test("jsonb[] - nested structures", async () => {
@@ -10595,9 +10588,9 @@ CREATE TABLE ${table_name} (
         ]::jsonb[] as nested_structures
       `;
       expect(result[0].nested_structures).toEqual([
-        { "outer": { "inner": "value" } },
-        { "array": [1, { "nested": "object" }, [1, 2, 3]] },
-        { "mixed": { "array": [1, 2], "object": { "key": "value" } } },
+        { outer: { inner: "value" } },
+        { array: [1, { nested: "object" }, [1, 2, 3]] },
+        { mixed: { array: [1, 2], object: { key: "value" } } },
       ]);
     });
 
@@ -10623,7 +10616,7 @@ CREATE TABLE ${table_name} (
         ]::jsonb[] as whitespace_variants
       `;
       // JSONB normalizes whitespace
-      expect(result[0].whitespace_variants).toEqual([{ "key": "value" }, { "key": "value" }, { "key": "value" }]);
+      expect(result[0].whitespace_variants).toEqual([{ key: "value" }, { key: "value" }, { key: "value" }]);
     });
 
     test("jsonb[] - array operators", async () => {
@@ -10663,8 +10656,8 @@ CREATE TABLE ${table_name} (
           (ARRAY['{"a": 1}', '{"b": 2}']::jsonb[])[2] as second_element
       `;
 
-      expect(result[0].first_element).toEqual({ "a": 1 });
-      expect(result[0].second_element).toEqual({ "b": 2 });
+      expect(result[0].first_element).toEqual({ a: 1 });
+      expect(result[0].second_element).toEqual({ b: 2 });
     });
 
     test("jsonb[] - array contains operator", async () => {
@@ -10709,7 +10702,7 @@ CREATE TABLE ${table_name} (
           ARRAY['{"c": 3}']::jsonb[] as concatenated
       `;
 
-      expect(result[0].concatenated).toEqual([{ "a": 1 }, { "b": 2 }, { "c": 3 }]);
+      expect(result[0].concatenated).toEqual([{ a: 1 }, { b: 2 }, { c: 3 }]);
     });
 
     test("jsonb[] - array dimensions", async () => {
@@ -10741,11 +10734,11 @@ CREATE TABLE ${table_name} (
       `;
 
       expect(result[0].unicode_strings).toEqual([
-        { "text": "Hello 世界" },
-        { "text": "Привет мир" },
-        { "text": "안녕하세요" },
-        { "text": "مرحبا بالعالم" },
-        { "text": "👋 🌍 😊" },
+        { text: "Hello 世界" },
+        { text: "Привет мир" },
+        { text: "안녕하세요" },
+        { text: "مرحبا بالعالم" },
+        { text: "👋 🌍 😊" },
       ]);
     });
 
@@ -10761,10 +10754,10 @@ CREATE TABLE ${table_name} (
       `;
 
       expect(result[0].escaped_unicode).toEqual([
-        { "text": "ABC" },
-        { "text": "©®™" },
-        { "text": "Hello" },
-        { "text": "👋" },
+        { text: "ABC" },
+        { text: "©®™" },
+        { text: "Hello" },
+        { text: "👋" },
       ]);
     });
 
@@ -10779,9 +10772,9 @@ CREATE TABLE ${table_name} (
       `;
 
       expect(result[0].mixed_unicode).toEqual([
-        { "hello世界": "你好世界" },
-        { "text": "Hello 世界" },
-        { "ABC": "エービーシー" },
+        { hello世界: "你好世界" },
+        { text: "Hello 世界" },
+        { ABC: "エービーシー" },
       ]);
     });
 
@@ -10796,9 +10789,9 @@ CREATE TABLE ${table_name} (
       `;
 
       expect(result[0].nested_unicode).toEqual([
-        { "outer": { "世界": { "内部": "value" } } },
-        { "array": ["你好", { "키": "값" }, ["สวัสดี"]] },
-        { "mixed": { "配列": ["こんにちは", "안녕"], "オブジェクト": { "키": "값" } } },
+        { outer: { 世界: { 内部: "value" } } },
+        { array: ["你好", { 키: "값" }, ["สวัสดี"]] },
+        { mixed: { 配列: ["こんにちは", "안녕"], オブジェクト: { 키: "값" } } },
       ]);
     });
 

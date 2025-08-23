@@ -152,14 +152,14 @@ const failedJobs =
 
 // Platform emoji mapping
 const platformMap = {
-  "darwin": "🍎",
-  "macos": "🍎",
-  "ubuntu": "🐧",
-  "debian": "🐧",
-  "alpine": "🐧",
-  "linux": "🐧",
-  "windows": "🪟",
-  "win": "🪟",
+  darwin: "🍎",
+  macos: "🍎",
+  ubuntu: "🐧",
+  debian: "🐧",
+  alpine: "🐧",
+  linux: "🐧",
+  windows: "🪟",
+  win: "🪟",
 };
 
 // Fetch annotations by scraping the build page

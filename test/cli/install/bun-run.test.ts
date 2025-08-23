@@ -76,7 +76,7 @@ for (let withRun of [false, true]) {
             name: "test",
             version: "0.0.0",
             scripts: {
-              "boop": "echo hi",
+              boop: "echo hi",
             },
           }),
         );
@@ -585,7 +585,7 @@ it("should pass arguments correctly in scripts", async () => {
   const dir = tempDirWithFiles("test", {
     "package.json": JSON.stringify({
       workspaces: ["a", "b"],
-      scripts: { "root_script": "bun index.ts" },
+      scripts: { root_script: "bun index.ts" },
     }),
     "index.ts": `for(const arg of Bun.argv) console.log(arg);`,
     "a/package.json": JSON.stringify({ name: "a", scripts: { echo2: "echo" } }),
@@ -647,7 +647,7 @@ describe("should handle run case", () => {
       const dir = tempDirWithFiles("test", {
         "package.json": JSON.stringify({
           scripts: {
-            "root_script": `   ${ccase[0]} target_script%    `,
+            root_script: `   ${ccase[0]} target_script%    `,
             "target_script%": "   echo target_script    ",
           },
         }),
@@ -685,22 +685,22 @@ describe("'bun run' priority", async () => {
   // - 3: execute a node_modules/.bin/<X> command
   // - 4: ('run' only): execute a system command, like 'ls'
   const dir = tempDirWithFiles("test", {
-    "test": { "index.js": "console.log('test/index.js');" },
-    "build": { "script.js": "console.log('build/script.js');" },
-    "consume": { "index.js": "console.log('consume/index.js');" },
+    test: { "index.js": "console.log('test/index.js');" },
+    build: { "script.js": "console.log('build/script.js');" },
+    consume: { "index.js": "console.log('consume/index.js');" },
     "index.js": "console.log('index.js')",
     "main.js": "console.log('main.js')",
     "typescript.ts": "console.log('typescript.ts')",
     "sample.js": "console.log('sample.js')",
-    "noext": "console.log('noext')",
-    "folderandfile": { "index.js": "console.log('folderandfile/index.js')" },
+    noext: "console.log('noext')",
+    folderandfile: { "index.js": "console.log('folderandfile/index.js')" },
     "folderandfile.js": "console.log('folderandfile.js')",
     "shellscript.sh": "echo shellscript.sh",
     ".secretscript.js": "console.log('.secretscript.js')",
     "package.json": JSON.stringify({
       scripts: {
-        "build": "echo scripts/build",
-        "test": "echo scripts/test",
+        build: "echo scripts/build",
+        test: "echo scripts/test",
         "sample.js": "echo scripts/sample.js",
         "§'.js": 'echo "scripts/§\'.js"',
         "test.todo": "echo scripts/test.todo",
@@ -711,10 +711,10 @@ describe("'bun run' priority", async () => {
     }),
     "nx.json": JSON.stringify({}),
     "§'.js": 'console.log("§\'.js")',
-    "node_modules": {
+    node_modules: {
       ".bin": {
-        "confabulate": `#!${bunExe()}\nconsole.log("node_modules/.bin/confabulate")`,
-        "nx": `#!${bunExe()}\nconsole.log("node_modules/.bin/nx")`,
+        confabulate: `#!${bunExe()}\nconsole.log("node_modules/.bin/confabulate")`,
+        nx: `#!${bunExe()}\nconsole.log("node_modules/.bin/nx")`,
       },
     },
     "no_run_json.json": JSON.stringify({}),
@@ -901,12 +901,12 @@ describe.todo("run from stdin", async () => {
 
 describe("should run scripts from the project root (#16169)", async () => {
   const dir = tempDirWithFiles("test", {
-    "run_here": {
+    run_here: {
       "myscript.ts": "console.log('successful run')",
       "package.json": JSON.stringify({
-        scripts: { "sample": "pwd", "runscript": "bun myscript.ts" },
+        scripts: { sample: "pwd", runscript: "bun myscript.ts" },
       }),
-      "dont_run_in_here": {
+      dont_run_in_here: {
         "runme.ts": "console.log('do run this script')",
       },
     },
@@ -1000,12 +1000,12 @@ describe("run main within monorepo", async () => {
       workspaces: ["packages/*"],
     }),
     "monorepo_root.ts": "console.log('monorepo_root')",
-    "packages": {
-      "package_a": {
+    packages: {
+      package_a: {
         "package.json": JSON.stringify({ name: "package_a", main: "package_a.ts" }),
         "package_a.ts": "console.log('package_a')",
       },
-      "package_b": {
+      package_b: {
         "package.json": JSON.stringify({ name: "package_b" }),
       },
     },

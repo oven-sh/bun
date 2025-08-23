@@ -32,13 +32,13 @@ test("fetch(request subclass with headers)", async () => {
 test("fetch(RequestInit, headers)", async () => {
   const myRequest = {
     headers: {
-      "hello": "world",
+      hello: "world",
     },
     url: server!.url,
   };
   const { headers } = await fetch(myRequest, {
     headers: {
-      "hello": "world2",
+      hello: "world2",
     },
   });
 

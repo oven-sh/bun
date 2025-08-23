@@ -13,24 +13,24 @@ const COLORS_16m = 24;
 // distribution of this file, with or without modification, are permitted
 // provided the copyright notice and this notice are preserved.
 const TERM_ENVS = {
-  "eterm": COLORS_16,
-  "cons25": COLORS_16,
-  "console": COLORS_16,
-  "cygwin": COLORS_16,
-  "dtterm": COLORS_16,
-  "gnome": COLORS_16,
-  "hurd": COLORS_16,
-  "jfbterm": COLORS_16,
-  "konsole": COLORS_16,
-  "kterm": COLORS_16,
-  "mlterm": COLORS_16,
-  "mosh": COLORS_16m,
-  "putty": COLORS_16,
-  "st": COLORS_16,
+  eterm: COLORS_16,
+  cons25: COLORS_16,
+  console: COLORS_16,
+  cygwin: COLORS_16,
+  dtterm: COLORS_16,
+  gnome: COLORS_16,
+  hurd: COLORS_16,
+  jfbterm: COLORS_16,
+  konsole: COLORS_16,
+  kterm: COLORS_16,
+  mlterm: COLORS_16,
+  mosh: COLORS_16m,
+  putty: COLORS_16,
+  st: COLORS_16,
   // https://github.com/da-x/rxvt-unicode/tree/v9.22-with-24bit-color
   "rxvt-unicode-24bit": COLORS_16m,
   // https://gist.github.com/XVilka/8346728#gistcomment-2823421
-  "terminator": COLORS_16m,
+  terminator: COLORS_16m,
 };
 
 const TERM_ENVS_REG_EXP = [/ansi/, /color/, /linux/, /^con[0-9]*x[0-9]/, /^rxvt/, /^screen/, /^xterm/, /^vt100/];

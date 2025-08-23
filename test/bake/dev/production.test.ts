@@ -19,10 +19,10 @@ describe("production", () => {
   return <div>Hello World</div>;
 }`,
       "package.json": JSON.stringify({
-        "name": "test-app",
-        "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
+        name: "test-app",
+        version: "1.0.0",
+        devDependencies: {
+          react: "^18.0.0",
           "react-dom": "^18.0.0",
         },
       }),
@@ -306,10 +306,10 @@ export default function GettingStarted() {
     const dir = await tempDirWithBakeDeps("bake-production-no-pages", {
       "app.ts": `export default { app: { framework: "react" } };`,
       "package.json": JSON.stringify({
-        "name": "test-app",
-        "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
+        name: "test-app",
+        version: "1.0.0",
+        devDependencies: {
+          react: "^18.0.0",
           "react-dom": "^18.0.0",
         },
       }),
@@ -349,10 +349,10 @@ export default function Client() {
   return <div>Hello World</div>;
 }`,
       "package.json": JSON.stringify({
-        "name": "test-app",
-        "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
+        name: "test-app",
+        version: "1.0.0",
+        devDependencies: {
+          react: "^18.0.0",
           "react-dom": "^18.0.0",
         },
       }),
@@ -390,10 +390,10 @@ export default function IndexPage() {
   );
 }`,
       "package.json": JSON.stringify({
-        "name": "test-app",
-        "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
+        name: "test-app",
+        version: "1.0.0",
+        devDependencies: {
+          react: "^18.0.0",
           "react-dom": "^18.0.0",
         },
       }),
@@ -445,10 +445,10 @@ export default function Counter() {
   );
 }`,
       "package.json": JSON.stringify({
-        "name": "test-app",
-        "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
+        name: "test-app",
+        version: "1.0.0",
+        devDependencies: {
+          react: "^18.0.0",
           "react-dom": "^18.0.0",
         },
       }),
@@ -512,10 +512,10 @@ export default function IndexPage() {
   );
 }`,
       "package.json": JSON.stringify({
-        "name": "test-app",
-        "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
+        name: "test-app",
+        version: "1.0.0",
+        devDependencies: {
+          react: "^18.0.0",
           "react-dom": "^18.0.0",
         },
       }),

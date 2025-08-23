@@ -307,8 +307,8 @@ registry = http://localhost:${registry.port}/
         "no-deps": "1.0.0",
         "@needs-auth/test-pkg": "1.0.0",
       },
-      "publishConfig": {
-        "registry": `http://localhost:${registry.port}`,
+      publishConfig: {
+        registry: `http://localhost:${registry.port}`,
       },
     })} > package.json`.cwd(packageDir);
 
@@ -367,8 +367,8 @@ ${Object.keys(opts)
         dependencies: {
           "@needs-auth/test-pkg": "1.0.0",
         },
-        "publishConfig": {
-          "registry": `http://localhost:${registry.port}`,
+        publishConfig: {
+          registry: `http://localhost:${registry.port}`,
         },
       })} > package.json`.cwd(packageDir);
 
@@ -382,7 +382,7 @@ ${Object.keys(opts)
   }
 
   registryConfigOptionTest("_authToken", async () => ({
-    "_authToken": await registry.generateUser("bilbo_baggins", "verysecure"),
+    _authToken: await registry.generateUser("bilbo_baggins", "verysecure"),
   }));
   registryConfigOptionTest(
     "_authToken with env variable value",

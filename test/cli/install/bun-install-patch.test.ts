@@ -123,13 +123,13 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       test(version, async () => {
         const filedir = tempDirWithFiles("patch1", {
           "package.json": JSON.stringify({
-            "name": "bun-patch-test",
-            "module": "index.ts",
-            "type": "module",
-            "patchedDependencies": {
+            name: "bun-patch-test",
+            module: "index.ts",
+            type: "module",
+            patchedDependencies: {
               [`is-even@${patchVersion}`]: `patches/${patchFilename}`,
             },
-            "dependencies": {
+            dependencies: {
               "is-even": version,
               "is-odd": "3.0.1",
             },
@@ -151,13 +151,13 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
   test("should patch a non-hoisted dependency", async () => {
     const filedir = tempDirWithFiles("patch1", {
       "package.json": JSON.stringify({
-        "name": "bun-patch-test",
-        "module": "index.ts",
-        "type": "module",
-        "patchedDependencies": {
+        name: "bun-patch-test",
+        module: "index.ts",
+        type: "module",
+        patchedDependencies: {
           [`is-odd@0.1.2`]: `patches/is-odd@0.1.2.patch`,
         },
-        "dependencies": {
+        dependencies: {
           "is-even": "1.0.0",
           "is-odd": "3.0.1",
         },
@@ -181,13 +181,13 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       test(version, async () => {
         const filedir = tempDirWithFiles("patch1", {
           "package.json": JSON.stringify({
-            "name": "bun-patch-test",
-            "module": "index.ts",
-            "type": "module",
-            "patchedDependencies": {
+            name: "bun-patch-test",
+            module: "index.ts",
+            type: "module",
+            patchedDependencies: {
               [`is-even@${patchVersion}`]: `patches/${patchFilename}`,
             },
-            "dependencies": {
+            dependencies: {
               "is-even": version,
             },
           }),
@@ -210,13 +210,13 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
     const patchFilename = filepathEscape(`is-odd@${version}.patch`);
     const filedir = tempDirWithFiles("patch1", {
       "package.json": JSON.stringify({
-        "name": "bun-patch-test",
-        "module": "index.ts",
-        "type": "module",
-        "patchedDependencies": {
+        name: "bun-patch-test",
+        module: "index.ts",
+        type: "module",
+        patchedDependencies: {
           [`is-odd@${version}`]: `patches/${patchFilename}`,
         },
-        "dependencies": {
+        dependencies: {
           "is-even": "1.0.0",
         },
       }),
@@ -239,10 +239,10 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       test(version, async () => {
         const filedir = tempDirWithFiles("patch1", {
           "package.json": JSON.stringify({
-            "name": "bun-patch-test",
-            "module": "index.ts",
-            "type": "module",
-            "dependencies": {
+            name: "bun-patch-test",
+            module: "index.ts",
+            type: "module",
+            dependencies: {
               "is-even": version,
             },
           }),
@@ -257,13 +257,13 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
         await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
 
         await $`echo ${JSON.stringify({
-          "name": "bun-patch-test",
-          "module": "index.ts",
-          "type": "module",
-          "patchedDependencies": {
+          name: "bun-patch-test",
+          module: "index.ts",
+          type: "module",
+          patchedDependencies: {
             [`is-even@${patchVersion}`]: `patches/${patchfileName}`,
           },
-          "dependencies": {
+          dependencies: {
             "is-even": version,
           },
         })} > package.json`
@@ -282,10 +282,10 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
   it("should patch a transitive dependency after it was already installed", async () => {
     const filedir = tempDirWithFiles("patch1", {
       "package.json": JSON.stringify({
-        "name": "bun-patch-test",
-        "module": "index.ts",
-        "type": "module",
-        "dependencies": {
+        name: "bun-patch-test",
+        module: "index.ts",
+        type: "module",
+        dependencies: {
           "is-even": "1.0.0",
         },
       }),
@@ -300,13 +300,13 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
     await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
 
     await $`echo ${JSON.stringify({
-      "name": "bun-patch-test",
-      "module": "index.ts",
-      "type": "module",
-      "patchedDependencies": {
+      name: "bun-patch-test",
+      module: "index.ts",
+      type: "module",
+      patchedDependencies: {
         "is-odd@0.1.2": "patches/is-odd@0.1.2.patch",
       },
-      "dependencies": {
+      dependencies: {
         "is-even": "1.0.0",
       },
     })} > package.json`
@@ -328,13 +328,13 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       test(version, async () => {
         const filedir = tempDirWithFiles("patch1", {
           "package.json": JSON.stringify({
-            "name": "bun-patch-test",
-            "module": "index.ts",
-            "type": "module",
-            "patchedDependencies": {
+            name: "bun-patch-test",
+            module: "index.ts",
+            type: "module",
+            patchedDependencies: {
               [`is-even@${patchVersion}`]: `patches/${patchFilename}`,
             },
-            "dependencies": {
+            dependencies: {
               "is-even": version,
             },
           }),
@@ -362,13 +362,13 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       test(version, async () => {
         const filedir = tempDirWithFiles("patch1", {
           "package.json": JSON.stringify({
-            "name": "bun-patch-test",
-            "module": "index.ts",
-            "type": "module",
-            "patchedDependencies": {
+            name: "bun-patch-test",
+            module: "index.ts",
+            type: "module",
+            patchedDependencies: {
               [`is-even@${patchVersion}`]: `patches/${patchFilename}`,
             },
-            "dependencies": {
+            dependencies: {
               "is-even": version,
             },
           }),
@@ -383,13 +383,13 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
         await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
 
         await $`echo ${JSON.stringify({
-          "name": "bun-patch-test",
-          "module": "index.ts",
-          "type": "module",
-          "patchedDependencies": {
+          name: "bun-patch-test",
+          module: "index.ts",
+          type: "module",
+          patchedDependencies: {
             [`is-odd@0.1.2`]: `patches/is-odd@0.1.2.patch`,
           },
-          "dependencies": {
+          dependencies: {
             "is-even": version,
           },
         })} > package.json`
@@ -410,13 +410,13 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
     $.throws(true);
     const filedir = tempDirWithFiles("patch1", {
       "package.json": JSON.stringify({
-        "name": "bun-patch-test",
-        "module": "index.ts",
-        "type": "module",
-        "patchedDependencies": {
+        name: "bun-patch-test",
+        module: "index.ts",
+        type: "module",
+        patchedDependencies: {
           "is-odd@0.1.2": "patches/is-odd@0.1.2.patch",
         },
-        "dependencies": {
+        dependencies: {
           "is-even": "1.0.0",
         },
       }),
@@ -464,13 +464,13 @@ index aa7c7012cda790676032d1b01d78c0b69ec06360..6048e7cb462b3f9f6ac4dc21aacf9a09
     $.throws(true);
     const filedir = tempDirWithFiles("patch1", {
       "package.json": JSON.stringify({
-        "name": "bun-patch-test",
-        "module": "index.ts",
-        "type": "module",
-        "patchedDependencies": {
+        name: "bun-patch-test",
+        module: "index.ts",
+        type: "module",
+        patchedDependencies: {
           "@zackradisic/hls-dl@0.0.1": "patches/thepatch.patch",
         },
-        "dependencies": {
+        dependencies: {
           "@zackradisic/hls-dl": "0.0.1",
         },
       }),
@@ -503,10 +503,10 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
 
     const filedir = tempDirWithFiles("patch1", {
       "package.json": JSON.stringify({
-        "name": "bun-patch-test",
-        "module": "index.ts",
-        "type": "module",
-        "dependencies": {
+        name: "bun-patch-test",
+        module: "index.ts",
+        type: "module",
+        dependencies: {
           "is-even": "1.0.0",
         },
       }),
@@ -519,13 +519,13 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
 
     const pkgjsonWithPatch = {
-      "name": "bun-patch-test",
-      "module": "index.ts",
-      "type": "module",
-      "patchedDependencies": {
+      name: "bun-patch-test",
+      module: "index.ts",
+      type: "module",
+      patchedDependencies: {
         "is-even@1.0.0": "patches/is-even@1.0.0.patch",
       },
-      "dependencies": {
+      dependencies: {
         "is-even": "1.0.0",
       },
     };

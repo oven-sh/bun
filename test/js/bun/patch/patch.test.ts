@@ -148,7 +148,7 @@ describe("apply", () => {
   describe("creation", () => {
     test("simple", async () => {
       const files = {
-        "a": {},
+        a: {},
         "b/newfile.txt": "hey im new here!",
       };
       const tempdir = tempDirWithFiles("patch-test", files);
@@ -165,7 +165,7 @@ describe("apply", () => {
 
     test("multi-line", async () => {
       const files = {
-        "a": {},
+        a: {},
         "b/newfile.txt": "hey im new here!\nhello",
       };
       const tempdir = tempDirWithFiles("patch-test", files);
@@ -479,44 +479,44 @@ describe("apply", () => {
 describe("parse", () => {
   test("works for a simple case", () => {
     expect(removeCapacity(JSON.parse(parse(patch)))).toEqual({
-      "parts": {
-        "items": [
+      parts: {
+        items: [
           {
-            "file_patch": {
-              "path": "banana.ts",
-              "hunks": {
-                "items": [
+            file_patch: {
+              path: "banana.ts",
+              hunks: {
+                items: [
                   {
-                    "header": { "original": { "start": 1, "len": 5 }, "patched": { "start": 1, "len": 5 } },
-                    "parts": {
-                      "items": [
+                    header: { original: { start: 1, len: 5 }, patched: { start: 1, len: 5 } },
+                    parts: {
+                      items: [
                         {
-                          "type": "context",
-                          "lines": { "items": ["this", "is", ""] },
-                          "no_newline_at_end_of_file": false,
+                          type: "context",
+                          lines: { items: ["this", "is", ""] },
+                          no_newline_at_end_of_file: false,
                         },
                         {
-                          "type": "deletion",
-                          "lines": { "items": ["a"] },
-                          "no_newline_at_end_of_file": false,
+                          type: "deletion",
+                          lines: { items: ["a"] },
+                          no_newline_at_end_of_file: false,
                         },
                         {
-                          "type": "insertion",
-                          "lines": { "items": [""] },
-                          "no_newline_at_end_of_file": false,
+                          type: "insertion",
+                          lines: { items: [""] },
+                          no_newline_at_end_of_file: false,
                         },
                         {
-                          "type": "context",
-                          "lines": { "items": ["file"] },
-                          "no_newline_at_end_of_file": false,
+                          type: "context",
+                          lines: { items: ["file"] },
+                          no_newline_at_end_of_file: false,
                         },
                       ],
                     },
                   },
                 ],
               },
-              "before_hash": "2de83dd",
-              "after_hash": "842652c",
+              before_hash: "2de83dd",
+              after_hash: "842652c",
             },
           },
         ],
@@ -538,25 +538,25 @@ describe("parse", () => {
 
   test(`can handle files with CRLF line breaks`, () => {
     expect(removeCapacity(JSON.parse(parse(crlfLineBreaks)))).toEqual({
-      "parts": {
-        "items": [
+      parts: {
+        items: [
           {
-            "file_creation": {
-              "path": "banana.ts",
-              "mode": "non_executable",
-              "hunk": {
-                "header": { "original": { "start": 1, "len": 0 }, "patched": { "start": 1, "len": 1 } },
-                "parts": {
-                  "items": [
+            file_creation: {
+              path: "banana.ts",
+              mode: "non_executable",
+              hunk: {
+                header: { original: { start: 1, len: 0 }, patched: { start: 1, len: 1 } },
+                parts: {
+                  items: [
                     {
-                      "type": "insertion",
-                      "lines": { "items": ["this is a new file\r"] },
-                      "no_newline_at_end_of_file": false,
+                      type: "insertion",
+                      lines: { items: ["this is a new file\r"] },
+                      no_newline_at_end_of_file: false,
                     },
                   ],
                 },
               },
-              "hash": "3e1267f",
+              hash: "3e1267f",
             },
           },
         ],
@@ -566,41 +566,41 @@ describe("parse", () => {
 
   test("works", () => {
     expect(removeCapacity(JSON.parse(parse(modeChangeAndModifyAndRename)))).toEqual({
-      "parts": {
-        "items": [
-          { "file_rename": { "from_path": "numbers.txt", "to_path": "banana.txt" } },
-          { "file_mode_change": { "path": "banana.txt", "old_mode": "non_executable", "new_mode": "executable" } },
+      parts: {
+        items: [
+          { file_rename: { from_path: "numbers.txt", to_path: "banana.txt" } },
+          { file_mode_change: { path: "banana.txt", old_mode: "non_executable", new_mode: "executable" } },
           {
-            "file_patch": {
-              "path": "banana.txt",
-              "hunks": {
-                "items": [
+            file_patch: {
+              path: "banana.txt",
+              hunks: {
+                items: [
                   {
-                    "header": { "original": { "start": 1, "len": 4 }, "patched": { "start": 1, "len": 4 } },
-                    "parts": {
-                      "items": [
+                    header: { original: { start: 1, len: 4 }, patched: { start: 1, len: 4 } },
+                    parts: {
+                      items: [
                         {
-                          "type": "deletion",
-                          "lines": { "items": ["one"] },
-                          "no_newline_at_end_of_file": false,
+                          type: "deletion",
+                          lines: { items: ["one"] },
+                          no_newline_at_end_of_file: false,
                         },
                         {
-                          "type": "insertion",
-                          "lines": { "items": ["ne"] },
-                          "no_newline_at_end_of_file": false,
+                          type: "insertion",
+                          lines: { items: ["ne"] },
+                          no_newline_at_end_of_file: false,
                         },
                         {
-                          "type": "context",
-                          "lines": { "items": ["", "two", ""] },
-                          "no_newline_at_end_of_file": false,
+                          type: "context",
+                          lines: { items: ["", "two", ""] },
+                          no_newline_at_end_of_file: false,
                         },
                       ],
                     },
                   },
                 ],
               },
-              "before_hash": "fbf1785",
-              "after_hash": "92d2c5f",
+              before_hash: "fbf1785",
+              after_hash: "92d2c5f",
             },
           },
         ],
@@ -610,140 +610,140 @@ describe("parse", () => {
 
   test("parses old-style patches", () => {
     expect(removeCapacity(JSON.parse(parse(oldStylePatch)))).toEqual({
-      "parts": {
-        "items": [
+      parts: {
+        items: [
           {
-            "file_patch": {
-              "path": "node_modules/graphql/utilities/assertValidName.js",
-              "hunks": {
-                "items": [
+            file_patch: {
+              path: "node_modules/graphql/utilities/assertValidName.js",
+              hunks: {
+                items: [
                   {
-                    "header": { "original": { "start": 41, "len": 10 }, "patched": { "start": 41, "len": 11 } },
-                    "parts": {
-                      "items": [
+                    header: { original: { start: 41, len: 10 }, patched: { start: 41, len: 11 } },
+                    parts: {
+                      items: [
                         {
-                          "type": "context",
-                          "lines": {
-                            "items": [
+                          type: "context",
+                          lines: {
+                            items: [
                               " */",
                               "function isValidNameError(name, node) {",
                               "  !(typeof name === 'string') ? (0, _invariant2.default)(0, 'Expected string') : void 0;",
                             ],
                           },
-                          "no_newline_at_end_of_file": false,
+                          no_newline_at_end_of_file: false,
                         },
                         {
-                          "type": "deletion",
-                          "lines": {
-                            "items": [
+                          type: "deletion",
+                          lines: {
+                            items: [
                               "  if (name.length > 1 && name[0] === '_' && name[1] === '_') {",
                               "    return new _GraphQLError.GraphQLError('Name \"' + name + '\" must not begin with \"__\", which is reserved by ' + 'GraphQL introspection.', node);",
                               "  }",
                             ],
                           },
-                          "no_newline_at_end_of_file": false,
+                          no_newline_at_end_of_file: false,
                         },
                         {
-                          "type": "insertion",
-                          "lines": {
-                            "items": [
+                          type: "insertion",
+                          lines: {
+                            items: [
                               "  // if (name.length > 1 && name[0] === '_' && name[1] === '_') {",
                               "  //   return new _GraphQLError.GraphQLError('Name \"' + name + '\" must not begin with \"__\", which is reserved by ' + 'GraphQL introspection.', node);",
                               "  // }",
                             ],
                           },
-                          "no_newline_at_end_of_file": false,
+                          no_newline_at_end_of_file: false,
                         },
                         {
-                          "type": "context",
-                          "lines": {
-                            "items": [
+                          type: "context",
+                          lines: {
+                            items: [
                               "  if (!NAME_RX.test(name)) {",
                               "    return new _GraphQLError.GraphQLError('Names must match /^[_a-zA-Z][_a-zA-Z0-9]*$/ but \"' + name + '\" does not.', node);",
                               "  }",
                             ],
                           },
-                          "no_newline_at_end_of_file": false,
+                          no_newline_at_end_of_file: false,
                         },
                         {
-                          "type": "insertion",
-                          "lines": { "items": [""] },
-                          "no_newline_at_end_of_file": false,
+                          type: "insertion",
+                          lines: { items: [""] },
+                          no_newline_at_end_of_file: false,
                         },
                         {
-                          "type": "context",
-                          "lines": { "items": ["}"] },
-                          "no_newline_at_end_of_file": true,
+                          type: "context",
+                          lines: { items: ["}"] },
+                          no_newline_at_end_of_file: true,
                         },
                       ],
                     },
                   },
                 ],
               },
-              "before_hash": null,
-              "after_hash": null,
+              before_hash: null,
+              after_hash: null,
             },
           },
           {
-            "file_patch": {
-              "path": "node_modules/graphql/utilities/assertValidName.mjs",
-              "hunks": {
-                "items": [
+            file_patch: {
+              path: "node_modules/graphql/utilities/assertValidName.mjs",
+              hunks: {
+                items: [
                   {
-                    "header": { "original": { "start": 29, "len": 9 }, "patched": { "start": 29, "len": 9 } },
-                    "parts": {
-                      "items": [
+                    header: { original: { start: 29, len: 9 }, patched: { start: 29, len: 9 } },
+                    parts: {
+                      items: [
                         {
-                          "type": "context",
-                          "lines": {
-                            "items": [
+                          type: "context",
+                          lines: {
+                            items: [
                               " */",
                               "export function isValidNameError(name, node) {",
                               "  !(typeof name === 'string') ? invariant(0, 'Expected string') : void 0;",
                             ],
                           },
-                          "no_newline_at_end_of_file": false,
+                          no_newline_at_end_of_file: false,
                         },
                         {
-                          "type": "deletion",
-                          "lines": {
-                            "items": [
+                          type: "deletion",
+                          lines: {
+                            items: [
                               "  if (name.length > 1 && name[0] === '_' && name[1] === '_') {",
                               "    return new GraphQLError('Name \"' + name + '\" must not begin with \"__\", which is reserved by ' + 'GraphQL introspection.', node);",
                               "  }",
                             ],
                           },
-                          "no_newline_at_end_of_file": false,
+                          no_newline_at_end_of_file: false,
                         },
                         {
-                          "type": "insertion",
-                          "lines": {
-                            "items": [
+                          type: "insertion",
+                          lines: {
+                            items: [
                               "  // if (name.length > 1 && name[0] === '_' && name[1] === '_') {",
                               "  //   return new GraphQLError('Name \"' + name + '\" must not begin with \"__\", which is reserved by ' + 'GraphQL introspection.', node);",
                               "  // }",
                             ],
                           },
-                          "no_newline_at_end_of_file": false,
+                          no_newline_at_end_of_file: false,
                         },
                         {
-                          "type": "context",
-                          "lines": {
-                            "items": [
+                          type: "context",
+                          lines: {
+                            items: [
                               "  if (!NAME_RX.test(name)) {",
                               "    return new GraphQLError('Names must match /^[_a-zA-Z][_a-zA-Z0-9]*$/ but \"' + name + '\" does not.', node);",
                               "  }",
                             ],
                           },
-                          "no_newline_at_end_of_file": false,
+                          no_newline_at_end_of_file: false,
                         },
                       ],
                     },
                   },
                 ],
               },
-              "before_hash": null,
-              "after_hash": null,
+              before_hash: null,
+              after_hash: null,
             },
           },
         ],

@@ -232,18 +232,18 @@ test-package@1.0.0-alpha.beta.gamma.delta.epsilon.zeta.eta.theta.iota.kappa.lamb
           name: "complex-test",
           version: "1.0.0",
           dependencies: {
-            "express": "^4.18.2",
-            "lodash": "^4.17.21",
+            express: "^4.18.2",
+            lodash: "^4.17.21",
           },
           devDependencies: {
-            "jest": "^29.0.0",
-            "typescript": "^5.0.0",
+            jest: "^29.0.0",
+            typescript: "^5.0.0",
           },
           optionalDependencies: {
-            "fsevents": "^2.3.2",
+            fsevents: "^2.3.2",
           },
           peerDependencies: {
-            "react": "^18.0.0",
+            react: "^18.0.0",
           },
         },
         null,
@@ -817,10 +817,10 @@ undici-types@~5.26.4:
           name: "resolutions-test",
           version: "1.0.0",
           dependencies: {
-            "webpack": "^5.89.0",
+            webpack: "^5.89.0",
           },
           resolutions: {
-            "acorn": "8.11.3",
+            acorn: "8.11.3",
             "webpack/acorn": "8.11.2",
           },
         },
@@ -908,7 +908,7 @@ webpack@^5.89.0:
           private: true,
           workspaces: ["packages/*"],
           dependencies: {
-            "lodash": "^4.17.21",
+            lodash: "^4.17.21",
           },
         },
         null,
@@ -1130,21 +1130,21 @@ babel-loader/chalk@^2.4.2:
           name: "complex-app",
           version: "1.0.0",
           dependencies: {
-            "react": "^18.2.0",
+            react: "^18.2.0",
             "react-dom": "^18.2.0",
             "@babel/core": "^7.20.0",
-            "webpack": "^5.75.0",
+            webpack: "^5.75.0",
           },
           devDependencies: {
             "@types/react": "^18.0.0",
-            "typescript": "^4.9.0",
-            "eslint": "^8.0.0",
+            typescript: "^4.9.0",
+            eslint: "^8.0.0",
           },
           peerDependencies: {
-            "react": ">=16.8.0",
+            react: ">=16.8.0",
           },
           optionalDependencies: {
-            "fsevents": "^2.3.2",
+            fsevents: "^2.3.2",
           },
         },
         null,

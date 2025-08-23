@@ -18,15 +18,15 @@ test("CryptoHasher update should throw when no parameter/null/undefined is passe
 
 describe("HMAC", () => {
   const hashes = {
-    "sha1": "e2e1f7f597941d9b0021978618218a9e08731426",
-    "sha256": "c7a7c96c73af32ea6e5b1ca6768b1d822249eb88f85160433d7b09bb2b21e170",
-    "sha384": "2483522dcb7cb65fa13f0a3c1efe867abbd79ecb19a6ba4bac45d4f4bac31de2e2463b11838b8055601fad73d0b5af4c",
-    "sha512":
+    sha1: "e2e1f7f597941d9b0021978618218a9e08731426",
+    sha256: "c7a7c96c73af32ea6e5b1ca6768b1d822249eb88f85160433d7b09bb2b21e170",
+    sha384: "2483522dcb7cb65fa13f0a3c1efe867abbd79ecb19a6ba4bac45d4f4bac31de2e2463b11838b8055601fad73d0b5af4c",
+    sha512:
       "f82266c950db24eba03f899466fdf905494709f09f98f4b7d7db31f1443a33b4fe5ca82f74fb360609d8a05a87fb065dd77bee912c27de89cbba7897061ac735",
-    "blake2b512":
+    blake2b512:
       "9e66ba10f4d7e80abc2584150fc5f9a246634118280fd9ae086794d37cb9919d681ee285b68f9cec2eda9f878d157125cc465c8b0e3c023a7040ed0be7f25023",
-    "md5": "4e7eb9f9332e4eb1dc5a2d7d065ba1bf",
-    "sha224": "d34c3a2647d4f82a4e6baeaa7d94379eafd931e0c16cbc44b4ba4d1e",
+    md5: "4e7eb9f9332e4eb1dc5a2d7d065ba1bf",
+    sha224: "d34c3a2647d4f82a4e6baeaa7d94379eafd931e0c16cbc44b4ba4d1e",
     "sha512-224": "af398c7f21f58e1377580227a89590d3ab8be52b31182fad9ec4d667",
     "sha512-256": "0ed15b2750a2a7281e96af006ab79e82ed54a7a2081bdb49e70a70d8c6bfeff0",
   };

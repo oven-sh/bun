@@ -1789,7 +1789,7 @@ describe("bundler", () => {
       "/es6-ns-export-abstract-class.ts": `namespace ns { export abstract class Foo {} } console.log("es6-ns-export-abstract-class.ts:",JSON.stringify(this))`,
     },
     run: {
-      "stdout": `
+      stdout: `
         cjs.js: {}
         es6-import-stmt.js: {}
         es6-import-assign.ts: {}
@@ -6254,16 +6254,16 @@ describe("bundler", () => {
       "/node_modules/@scope/prefix-foo/index.js": `console.log(11)`,
     },
     alias: {
-      "pkg1": "alias1",
-      "pkg2": "alias2",
-      "pkg3": "alias3",
+      pkg1: "alias1",
+      pkg2: "alias2",
+      pkg3: "alias3",
       "@scope/pkg4": "alias4",
       "@scope/pkg5": "alias5",
       "@abs-path/pkg6": `/alias6/dir`,
       "@abs-path/pkg7": `/alias7/dir`,
       "@scope-only": "/alias8/dir",
-      "slash": "/alias9/some/file.js",
-      "prefix": "alias10",
+      slash: "/alias9/some/file.js",
+      prefix: "alias10",
       "@scope/prefix": "alias11",
     },
   });

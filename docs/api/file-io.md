@@ -212,6 +212,21 @@ const response = await fetch("https://bun.com");
 await Bun.write("index.html", response);
 ```
 
+## Renaming files (`Bun.rename()`)
+
+Atomically rename or move files and directories. Similar to Node.js `fs.promises.rename()` but with an optional third parameter for conflict resolution.
+
+```ts
+// Basic rename (replaces destination if exists)
+await Bun.rename("old.txt", "new.txt");
+
+// Atomic swap (Linux/macOS only, falls back to replace on Windows)
+await Bun.rename("file1.txt", "file2.txt", "swap");
+
+// Fail if destination exists  
+await Bun.rename("source.txt", "dest.txt", "no-replace");
+```
+
 ## Incremental writing with `FileSink`
 
 Bun provides a native incremental file writing API called `FileSink`. To retrieve a `FileSink` instance from a `BunFile`:

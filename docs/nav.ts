@@ -356,9 +356,6 @@ export default {
     page("api/file-io", "File I/O", {
       description: `Read and write files fast with Bun's heavily optimized file system API.`,
     }), // "`Bun.write`"),
-    page("api/rename", "`Bun.rename`", {
-      description: `Atomically rename files and directories with advanced conflict resolution options.`,
-    }),
     page("api/redis", "Redis client", {
       description: `Bun provides a fast, native Redis client with automatic command pipelining for better performance.`,
     }),

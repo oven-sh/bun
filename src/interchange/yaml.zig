@@ -2,6 +2,8 @@ pub const YAML = struct {
     const ParseError = OOM || error{ SyntaxError, StackOverflow };
 
     pub fn parse(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) ParseError!Expr {
+        bun.analytics.Features.yaml_parse += 1;
+
         var parser: Parser(.utf8) = .init(allocator, source.contents);
 
         const stream = parser.parse() catch |e| {

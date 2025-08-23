@@ -1,5 +1,16 @@
+const Signature = union(enum) {
+    scope_functions: *const ScopeFunctions,
+    str: []const u8,
+    pub fn format(this: Signature, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (this) {
+            .scope_functions => try writer.print("{}", .{this.scope_functions.*}),
+            .str => try writer.print("{s}", .{this.str}),
+        }
+    }
+};
+
 pub const js_fns = struct {
-    fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, description: jsc.JSValue, signature: []const u8) bun.JSError![]const u8 {
+    fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, description: jsc.JSValue, signature: Signature) bun.JSError![]const u8 {
         const is_valid_description =
             description.isClass(globalThis) or
             (description.isFunction() and !description.getName(globalThis).isEmpty()) or
@@ -33,7 +44,7 @@ pub const js_fns = struct {
 
     const DescribeConfig = struct {
         base: BaseScopeCfg,
-        signature: []const u8,
+        signature: Signature,
     };
     pub fn genericDescribe(comptime cfg: DescribeConfig) type {
         return struct {
@@ -54,7 +65,7 @@ pub const js_fns = struct {
             if (this.description) |str| gpa.free(str);
         }
     };
-    fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: []const u8, bunTest: *BunTestFile) bun.JSError!ParseArgumentsResult {
+    fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, bunTest: *BunTestFile) bun.JSError!ParseArgumentsResult {
         var a1, var a2, var a3 = callframe.argumentsAsArray(3);
 
         if (a1.isFunction()) {
@@ -110,7 +121,7 @@ pub const js_fns = struct {
 
         return result;
     }
-    fn describeFn(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, cfg: DescribeConfig) bun.JSError!jsc.JSValue {
+    pub fn describeFn(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, cfg: DescribeConfig) bun.JSError!jsc.JSValue {
         group.begin(@src());
         defer group.end();
         errdefer group.log("ended in error", .{});
@@ -134,7 +145,7 @@ pub const js_fns = struct {
         }
     }
 
-    const GetActiveCfg = struct { signature: []const u8, allow_in_preload: bool };
+    const GetActiveCfg = struct { signature: Signature, allow_in_preload: bool };
     fn getActiveTestRoot(globalThis: *jsc.JSGlobalObject, cfg: GetActiveCfg) bun.JSError!*BunTest {
         if (bun.jsc.Jest.Jest.runner == null) {
             return globalThis.throw("Cannot use {s} outside of the test runner. Run \"bun test\" to run tests.", .{cfg.signature});
@@ -157,7 +168,7 @@ pub const js_fns = struct {
         return bunTest;
     }
 
-    fn errorInCI(globalThis: *jsc.JSGlobalObject, signature: []const u8) bun.JSError!void {
+    fn errorInCI(globalThis: *jsc.JSGlobalObject, signature: Signature) bun.JSError!void {
         if (!bun.FeatureFlags.breaking_changes_1_3) return; // this is a breaking change for version 1.3
         if (ci_info.detectCI()) |_| {
             return globalThis.throwPretty("{s} is not allowed in CI environments.\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{signature});
@@ -166,16 +177,9 @@ pub const js_fns = struct {
 
     const TestConfig = struct {
         base: BaseScopeCfg,
-        signature: []const u8,
+        signature: Signature,
     };
-    pub fn genericTest(comptime cfg: TestConfig) type {
-        return struct {
-            pub fn testFn(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-                return js_fns.testFn(globalThis, callFrame, cfg);
-            }
-        };
-    }
-    fn testFn(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, cfg: TestConfig) bun.JSError!jsc.JSValue {
+    pub fn testFn(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, cfg: TestConfig) bun.JSError!jsc.JSValue {
         group.begin(@src());
         defer group.end();
         errdefer group.log("ended in error", .{});
@@ -211,7 +215,7 @@ pub const js_fns = struct {
                 defer group.end();
                 errdefer group.log("ended in error", .{});
 
-                const bunTestRoot = try getActiveTestRoot(globalThis, .{ .signature = @tagName(tag) ++ "()", .allow_in_preload = true });
+                const bunTestRoot = try getActiveTestRoot(globalThis, .{ .signature = .{ .str = @tagName(tag) ++ "()" }, .allow_in_preload = true });
                 const bunTest = bunTestRoot.active_file orelse {
                     @panic("TODO implement genericHook in preload");
                 };

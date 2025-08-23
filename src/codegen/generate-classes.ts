@@ -2065,9 +2065,7 @@ const JavaScriptCoreBindings = struct {
       output += `
         pub fn ${symbolName(typeName, "callAsFunction")}(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
           if (comptime Environment.enable_logs) log_zig_call("${typeName} (instance call)", callFrame);
-          const this = callFrame.this();
-          const instance = ${typeName}.fromJS(this);
-          return jsc.toJSHostFnResult(globalObject, ${typeName}.callAsFunction(instance, globalObject, callFrame));
+          return jsc.toJSHostFnResult(globalObject, ${typeName}.callAsFunction(globalObject, callFrame));
         }
       `;
     }

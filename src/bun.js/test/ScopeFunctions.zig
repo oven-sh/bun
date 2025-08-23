@@ -38,8 +38,17 @@ pub fn fnEach(_: *ScopeFunctions, _: *JSGlobalObject, _: *CallFrame) bun.JSError
     @panic("TODO: implement .each()");
 }
 
-pub fn callAsFunction(_: ?*ScopeFunctions, _: *JSGlobalObject, _: *CallFrame) bun.JSError!JSValue {
-    @panic("TODO: call ScopeFunctions");
+pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
+    groupLog.begin(@src());
+    defer groupLog.end();
+
+    const this = ScopeFunctions.fromJS(callFrame.callee()) orelse return globalThis.throw("Expected callee to be ScopeFunctions", .{});
+
+    if (this.each != .zero) @panic("TODO: implement .each()");
+    return switch (this.mode) {
+        .describe => describe2.js_fns.describeFn(globalThis, callFrame, .{ .base = this.cfg, .signature = .{ .scope_functions = this } }),
+        .@"test" => describe2.js_fns.testFn(globalThis, callFrame, .{ .base = this.cfg, .signature = .{ .scope_functions = this } }),
+    };
 }
 
 fn genericIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *CallFrame, cfg: describe2.BaseScopeCfg, name: []const u8, invert: bool) bun.JSError!JSValue {

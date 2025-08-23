@@ -459,11 +459,7 @@ declare module "bun:test" {
      * @param fn the test function
      * @param options the test timeout or options
      */
-    concurrent(
-      label: string,
-      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
-      options?: number | TestOptions,
-    ): void;
+    concurrent: Test;
     /**
      * Runs this test, if `condition` is true.
      *

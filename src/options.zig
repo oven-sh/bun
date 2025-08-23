@@ -601,6 +601,16 @@ pub const Format = enum {
 };
 
 
+pub const WindowsOptions = struct {
+    hide_console: bool = false,
+    icon: ?[]const u8 = null,
+    title: ?[]const u8 = null,
+    publisher: ?[]const u8 = null,
+    version: ?[]const u8 = null,
+    description: ?[]const u8 = null,
+    copyright: ?[]const u8 = null,
+};
+
 // The max integer value in this enum can only be appended to.
 // It has dependencies in several places:
 // - bun-native-bundler-plugin-api/bundler_plugin.h

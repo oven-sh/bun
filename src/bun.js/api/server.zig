@@ -2590,7 +2590,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         .html => |html_bundle_route| {
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *HTMLBundle.Route, html_bundle_route.data, entry.path, entry.method);
                             if (dev_server) |dev| {
-                                dev.html_router.put(dev.allocator, entry.path, html_bundle_route.data) catch bun.outOfMemory();
+                                dev.html_router.put(dev.allocator(), entry.path, html_bundle_route.data) catch bun.outOfMemory();
                             }
                             needs_plugins = true;
                         },

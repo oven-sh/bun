@@ -1,23 +1,14 @@
-/// Packed source mapping data for a single file.
-/// Owned by one IncrementalGraph file and/or multiple SourceMapStore entries.
-pub const PackedMap = @This();
+//! Packed source mapping data for a single file.
+//! Owned by one IncrementalGraph file and/or multiple SourceMapStore entries.
+const Self = @This();
 
-const RefCount = bun.ptr.RefCount(@This(), "ref_count", destroy, .{
-    .destructor_ctx = *DevServer,
-});
-
-ref_count: RefCount,
-/// Allocated by `dev.allocator`. Access with `.vlq()`
+/// Allocated by `dev.allocator()`. Access with `.vlq()`
 /// This is stored to allow lazy construction of source map files.
-vlq_ptr: [*]u8,
-vlq_len: u32,
-vlq_allocator: std.mem.Allocator,
+vlq_: ScopedOwned([]u8),
 /// The bundler runs quoting on multiple threads, so it only makes
 /// sense to preserve that effort for concatenation and
 /// re-concatenation.
-// TODO: rename to `escaped_source_*`
-quoted_contents_ptr: [*]u8,
-quoted_contents_len: u32,
+escaped_source: Owned([]u8),
 /// Used to track the last state of the source map chunk. This
 /// is used when concatenating chunks. The generated column is
 /// not tracked because it is always zero (all chunks end in a
@@ -27,22 +18,13 @@ end_state: struct {
     original_line: i32,
     original_column: i32,
 },
-/// There is 32 bits of extra padding in this struct. These are used while
-/// implementing `DevServer.memoryCost` to check which PackedMap entries are
-/// already counted for.
-bits_used_for_memory_cost_dedupe: u32 = 0,
 
-pub fn newNonEmpty(chunk: SourceMap.Chunk, quoted_contents: []u8) bun.ptr.RefPtr(PackedMap) {
-    assert(chunk.buffer.list.items.len > 0);
+pub fn newNonEmpty(chunk: SourceMap.Chunk, escaped_source: Owned([]u8)) bun.ptr.Shared(*Self) {
     var buffer = chunk.buffer;
-    const slice = buffer.toOwnedSlice();
+    assert(!buffer.isEmpty());
     return .new(.{
-        .ref_count = .init(),
-        .vlq_ptr = slice.ptr,
-        .vlq_len = @intCast(slice.len),
-        .vlq_allocator = buffer.allocator,
-        .quoted_contents_ptr = quoted_contents.ptr,
-        .quoted_contents_len = @intCast(quoted_contents.len),
+        .vlq_ = .fromDynamic(buffer.toDynamicOwned()),
+        .escaped_source = escaped_source,
         .end_state = .{
             .original_line = chunk.end_state.original_line,
             .original_column = chunk.end_state.original_column,
@@ -50,126 +32,90 @@ pub fn newNonEmpty(chunk: SourceMap.Chunk, quoted_contents: []u8) bun.ptr.RefPtr
     });
 }
 
-fn destroy(self: *@This(), _: *DevServer) void {
-    self.vlq_allocator.free(self.vlq());
-    bun.destroy(self);
+pub fn deinit(self: *Self) void {
+    self.vlq_.deinit();
+    self.escaped_source.deinit();
 }
 
-pub fn memoryCost(self: *const @This()) usize {
-    return self.vlq_len + self.quoted_contents_len + @sizeOf(@This());
+pub fn memoryCost(self: *const Self) usize {
+    return self.vlq().len + self.quotedContents().len + @sizeOf(Self);
 }
 
-/// When DevServer iterates everything to calculate memory usage, it passes
-/// a generation number along which is different on each sweep, but
-/// consistent within one. It is used to avoid counting memory twice.
-pub fn memoryCostWithDedupe(self: *@This(), new_dedupe_bits: u32) usize {
-    if (self.bits_used_for_memory_cost_dedupe == new_dedupe_bits) {
-        return 0; // already counted.
-    }
-    self.bits_used_for_memory_cost_dedupe = new_dedupe_bits;
-    return self.memoryCost();
-}
-
-pub fn vlq(self: *const @This()) []u8 {
-    return self.vlq_ptr[0..self.vlq_len];
+pub fn vlq(self: *const Self) []const u8 {
+    return self.vlq_.getConst();
 }
 
 // TODO: rename to `escapedSource`
-pub fn quotedContents(self: *const @This()) []u8 {
-    return self.quoted_contents_ptr[0..self.quoted_contents_len];
+pub fn quotedContents(self: *const Self) []const u8 {
+    return self.escaped_source.getConst();
 }
 
 comptime {
     // `ci_assert` builds add a `safety.ThreadLock`
     if (!Environment.ci_assert) {
-        assert_eql(@sizeOf(@This()), @sizeOf(usize) * 7);
-        assert_eql(@alignOf(@This()), @alignOf(usize));
+        assert_eql(@sizeOf(Self), @sizeOf(usize) * 5);
+        assert_eql(@alignOf(Self), @alignOf(usize));
     }
 }
 
+const PackedMap = Self;
+
+pub const LineCount = bun.GenericIndex(u32, u8);
+
 /// HTML, CSS, Assets, and failed files do not have source maps. These cases
 /// should never allocate an object. There is still relevant state for these
-/// files to encode, so those fields fit within the same 64 bits the pointer
-/// would have used.
-///
-/// The tag is stored out of line with `Untagged`
-/// - `IncrementalGraph(.client).File` offloads this bit into `File.Flags`
-/// - `SourceMapStore.Entry` uses `MultiArrayList`
-pub const RefOrEmpty = union(enum(u1)) {
-    ref: bun.ptr.RefPtr(PackedMap),
-    empty: Empty,
+/// files to encode, so a tagged union is used.
+pub const Shared = union(enum) {
+    some: bun.ptr.Shared(*PackedMap),
+    none: void,
+    line_count: LineCount,
 
-    pub const Empty = struct {
-        /// Number of lines to skip when there is an associated JS chunk.
-        line_count: bun.GenericIndex(u32, u8).Optional,
-        /// This technically is not source-map related, but
-        /// all HTML files have no source map, so this can
-        /// fit in this space.
-        html_bundle_route_index: RouteBundle.Index.Optional,
-    };
+    pub fn get(self: Shared) ?*PackedMap {
+        return switch (self) {
+            .some => |ptr| ptr.get(),
+            else => null,
+        };
+    }
 
-    pub const blank_empty: @This() = .{ .empty = .{
-        .line_count = .none,
-        .html_bundle_route_index = .none,
-    } };
-
-    pub fn deref(map: *const @This(), dev: *DevServer) void {
-        switch (map.*) {
-            .ref => |ptr| ptr.derefWithContext(dev),
-            .empty => {},
+    pub fn take(self: *Shared) ?bun.ptr.Shared(*PackedMap) {
+        switch (self.*) {
+            .some => |ptr| {
+                self.* = .none;
+                return ptr;
+            },
+            else => return null,
         }
     }
 
-    pub fn dupeRef(map: *const @This()) @This() {
-        return switch (map.*) {
-            .ref => |ptr| .{ .ref = ptr.dupeRef() },
-            .empty => map.*,
+    pub fn clone(self: Shared) Shared {
+        return switch (self) {
+            .some => |ptr| .{ .some = ptr.clone() },
+            else => self,
         };
     }
 
-    pub fn untag(map: @This()) Untagged {
-        return switch (map) {
-            .ref => |ptr| .{ .ref = ptr },
-            .empty => |empty| .{ .empty = empty },
-        };
+    pub fn deinit(self: Shared) void {
+        switch (self) {
+            .some => |ptr| ptr.deinit(),
+            else => {},
+        }
     }
 
-    pub const Tag = @typeInfo(@This()).@"union".tag_type.?;
-    pub const Untagged = brk: {
-        @setRuntimeSafety(Environment.isDebug); // do not store a union tag in windows release
-        break :brk union {
-            ref: bun.ptr.RefPtr(PackedMap),
-            empty: Empty,
-
-            pub const blank_empty = RefOrEmpty.blank_empty.untag();
-
-            pub fn decode(untagged: @This(), tag: Tag) RefOrEmpty {
-                return switch (tag) {
-                    .ref => .{ .ref = untagged.ref },
-                    .empty => .{ .empty = untagged.empty },
-                };
-            }
-
-            comptime {
-                if (!Environment.isDebug) {
-                    assert_eql(@sizeOf(@This()), @sizeOf(usize));
-                    assert_eql(@alignOf(@This()), @alignOf(usize));
-                }
-            }
+    /// Amortized memory cost across all references to the same `PackedMap`
+    pub fn memoryCost(self: Shared) usize {
+        return switch (self) {
+            .some => |ptr| ptr.get().memoryCost() / ptr.strongCount(),
+            else => 0,
         };
-    };
+    }
 };
-
-const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const SourceMap = bun.sourcemap;
 const assert = bun.assert;
 const assert_eql = bun.assert_eql;
-const bake = bun.bake;
 const Chunk = bun.bundle_v2.Chunk;
-const RefPtr = bun.ptr.RefPtr;
 
-const DevServer = bake.DevServer;
-const RouteBundle = DevServer.RouteBundle;
+const Owned = bun.ptr.Owned;
+const ScopedOwned = bun.ptr.ScopedOwned;

@@ -581,30 +581,6 @@ pub fn memoryCost(this: *const Subprocess) usize {
         this.stderr.memoryCost();
 }
 
-fn consumeExitedPromise(this_jsvalue: JSValue, globalThis: *jsc.JSGlobalObject) ?JSValue {
-    if (jsc.Codegen.JSSubprocess.exitedPromiseGetCached(this_jsvalue)) |promise| {
-        jsc.Codegen.JSSubprocess.exitedPromiseSetCached(this_jsvalue, globalThis, .zero);
-        return promise;
-    }
-    return null;
-}
-
-fn consumeOnExitCallback(this_jsvalue: JSValue, globalThis: *jsc.JSGlobalObject) ?JSValue {
-    if (jsc.Codegen.JSSubprocess.onExitCallbackGetCached(this_jsvalue)) |callback| {
-        jsc.Codegen.JSSubprocess.onExitCallbackSetCached(this_jsvalue, globalThis, .zero);
-        return callback;
-    }
-    return null;
-}
-
-fn consumeOnDisconnectCallback(this_jsvalue: JSValue, globalThis: *jsc.JSGlobalObject) ?JSValue {
-    if (jsc.Codegen.JSSubprocess.onDisconnectCallbackGetCached(this_jsvalue)) |callback| {
-        jsc.Codegen.JSSubprocess.onDisconnectCallbackSetCached(this_jsvalue, globalThis, .zero);
-        return callback;
-    }
-    return null;
-}
-
 pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Status, rusage: *const Rusage) void {
     log("onProcessExit()", .{});
     const this_jsvalue = this.this_jsvalue;
@@ -687,7 +663,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
 
     if (!is_sync) {
         if (this_jsvalue != .zero) {
-            if (consumeExitedPromise(this_jsvalue, globalThis)) |promise| {
+            if (js.gc.exitedPromise.take(this_jsvalue, globalThis)) |promise| {
                 loop.enter();
                 defer loop.exit();
 
@@ -708,7 +684,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
                 }
             }
 
-            if (consumeOnExitCallback(this_jsvalue, globalThis)) |callback| {
+            if (js.gc.onExitCallback.take(this_jsvalue, globalThis)) |callback| {
                 const waitpid_value: JSValue =
                     if (status == .err)
                         status.err.toJS(globalThis)
@@ -1801,7 +1777,7 @@ pub fn handleIPCClose(this: *Subprocess) void {
         jsc.Codegen.JSSubprocess.ipcCallbackSetCached(this_jsvalue, globalThis, .zero);
 
         // Call the onDisconnectCallback if it exists and prevent it from being kept alive longer than necessary
-        if (consumeOnDisconnectCallback(this_jsvalue, globalThis)) |callback| {
+        if (js.gc.onDisconnectCallback.take(this_jsvalue, globalThis)) |callback| {
             globalThis.bunVM().eventLoop().runCallback(callback, globalThis, this_jsvalue, &.{.true});
         }
     }

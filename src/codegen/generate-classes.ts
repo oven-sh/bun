@@ -1897,6 +1897,22 @@ function generateZig(
           field.set(thisValue, globalObject, .zero);
         }
 
+        pub fn take(comptime field: gc, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject) ?jsc.JSValue {
+          switch (field) {
+            ${gc_fields
+              .map(
+                ([name]) =>
+                  `    .${name} => {
+                          const value = ${protoSymbolName(typeName, name)}getCachedValue(thisValue, globalObject);
+                          if (value == .zero) return null;
+                          ${protoSymbolName(typeName, name)}SetCachedValue(thisValue, globalObject, .zero);
+                          return value;
+                      },`,
+              )
+              .join("\n")}
+          }
+        }
+
         pub fn set(comptime field: gc, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) void {
           switch (field) {
             ${gc_fields

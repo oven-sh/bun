@@ -224,7 +224,7 @@ pub fn parseJSON(
             }
             ptr.sources_content = content_slice;
         }
-        
+
         break :map ptr;
     } else null;
     errdefer if (map) |m| m.deref();

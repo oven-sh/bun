@@ -2079,7 +2079,7 @@ pub const BundleV2 = struct {
                 this.graph.input_files.items(.loader)[load.source_index.get()] = code.loader;
                 this.graph.input_files.items(.source)[load.source_index.get()].contents = code.source_code;
                 this.graph.input_files.items(.is_plugin_file)[load.source_index.get()] = true;
-                
+
                 // Parse and store the sourcemap if provided
                 if (code.sourcemap) |sourcemap_str| {
                     if (bun.sourcemap.parseJSON(
@@ -2090,14 +2090,14 @@ pub const BundleV2 = struct {
                     )) |parsed| {
                         if (parsed.map) |map| {
                             this.graph.input_files.items(.sourcemap)[load.source_index.get()] = map;
-                            
+
                             // If we have sources_content, create a new InputFile for the original source
                             if (map.sources_content.len > 0 and map.sources_content[0].len > 0) {
                                 const original_source_index = @as(u32, @intCast(this.graph.input_files.len));
-                                
+
                                 // Copy the current source but with the original content
                                 const current_source = &this.graph.input_files.items(.source)[load.source_index.get()];
-                                
+
                                 // Create a new InputFile for the original source
                                 this.graph.input_files.append(this.graph.allocator, .{
                                     .source = Logger.Source{
@@ -2110,10 +2110,10 @@ pub const BundleV2 = struct {
                                     .allocator = this.graph.allocator,
                                     .is_plugin_file = true,
                                 }) catch bun.outOfMemory();
-                                
+
                                 // Also append an empty AST for this input file
                                 this.graph.ast.append(this.graph.allocator, JSAst.empty) catch bun.outOfMemory();
-                                
+
                                 // Set the original_source_index on the current file
                                 this.graph.input_files.items(.original_source_index)[load.source_index.get()] = original_source_index;
                             }
@@ -2125,7 +2125,7 @@ pub const BundleV2 = struct {
                     // Free the sourcemap string since we've parsed it
                     if (!should_copy_for_bundling) this.free_list.append(sourcemap_str) catch unreachable;
                 }
-                
+
                 var parse_task = load.parse_task;
                 parse_task.loader = code.loader;
                 if (!should_copy_for_bundling) this.free_list.append(code.source_code) catch unreachable;

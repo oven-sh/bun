@@ -999,7 +999,7 @@ pub const JSBundler = struct {
 
                     @panic("Unexpected: source_code is not a string");
                 };
-                
+
                 const sourcemap = if (!sourcemap_value.isEmptyOrUndefinedOrNull())
                     bun.JSC.Node.StringOrBuffer.fromJSToOwnedSlice(global, sourcemap_value, bun.default_allocator) catch |err| {
                         switch (err) {
@@ -1013,7 +1013,7 @@ pub const JSBundler = struct {
                     }
                 else
                     null;
-                    
+
                 this.value = .{
                     .success = .{
                         .loader = options.Loader.fromAPI(loader),

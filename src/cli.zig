@@ -1482,7 +1482,7 @@ pub const Command = struct {
                         'z' => FirstLetter.z,
                         else => break :outer,
                     };
-                    AddCompletions.init(bun.default_allocator) catch bun.outOfMemory();
+                    bun.handleOom(AddCompletions.init(bun.default_allocator));
                     const results = AddCompletions.getPackages(first_letter);
 
                     var prefilled_i: usize = 0;

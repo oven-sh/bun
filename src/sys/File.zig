@@ -277,7 +277,7 @@ pub fn readFillBuf(this: File, buf: []u8) Maybe([]u8) {
 
 pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8), probably_small: bool) Maybe(usize) {
     if (probably_small) {
-        list.ensureUnusedCapacity(64) catch bun.outOfMemory();
+        bun.handleOom(list.ensureUnusedCapacity(64));
     } else {
         list.ensureTotalCapacityPrecise(
             switch (this.getEndPos()) {
@@ -286,13 +286,13 @@ pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8), probably_sma
                 },
                 .result => |s| s,
             } + 16,
-        ) catch bun.outOfMemory();
+        ) catch |err| bun.handleOom(err);
     }
 
     var total: i64 = 0;
     while (true) {
         if (list.unusedCapacitySlice().len == 0) {
-            list.ensureUnusedCapacity(16) catch bun.outOfMemory();
+            bun.handleOom(list.ensureUnusedCapacity(16));
         }
 
         switch (if (comptime Environment.isPosix)
@@ -421,7 +421,7 @@ pub fn toSourceAt(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator, 
 
     if (opts.convert_bom) {
         if (bun.strings.BOM.detect(bytes)) |bom| {
-            bytes = bom.removeAndConvertToUTF8AndFree(allocator, bytes) catch bun.outOfMemory();
+            bytes = bun.handleOom(bom.removeAndConvertToUTF8AndFree(allocator, bytes));
         }
     }
 

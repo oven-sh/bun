@@ -1242,7 +1242,13 @@ pub const JSBundler = struct {
                             plugin.globalObject(),
                             resolve.import_record.source_file,
                             exception,
-                        ) catch bun.outOfMemory(),
+                        ) catch |err| switch (err) {
+                            error.OutOfMemory => bun.outOfMemory(),
+                            error.JSError => {
+                                plugin.globalObject().reportActiveExceptionAsUnhandled(err);
+                                return;
+                            },
+                        },
                     };
                     resolve.bv2.onResolveAsync(resolve);
                 },
@@ -1254,7 +1260,13 @@ pub const JSBundler = struct {
                             plugin.globalObject(),
                             load.path,
                             exception,
-                        ) catch bun.outOfMemory(),
+                        ) catch |err| switch (err) {
+                            error.OutOfMemory => bun.outOfMemory(),
+                            error.JSError => {
+                                plugin.globalObject().reportActiveExceptionAsUnhandled(err);
+                                return;
+                            },
+                        },
                     };
                     load.bv2.onLoadAsync(load);
                 },

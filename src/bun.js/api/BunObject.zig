@@ -394,7 +394,7 @@ pub fn inspectTable(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
     }
 
     // very stable memory address
-    var array = MutableString.init(bun.default_allocator, 0) catch bun.outOfMemory();
+    var array = bun.handleOom(MutableString.init(bun.default_allocator, 0));
     defer array.deinit();
     var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
     var buffered_writer = &buffered_writer_;
@@ -1133,7 +1133,7 @@ pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
                         );
                         debugger.http_server_agent.notifyServerRoutesUpdated(
                             jsc.API.AnyServer.from(server),
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     }
 
                     return obj;
@@ -1347,7 +1347,7 @@ pub fn getEmbeddedFiles(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) bun.J
     const graph = vm.standalone_module_graph orelse return try jsc.JSValue.createEmptyArray(globalThis, 0);
 
     const unsorted_files = graph.files.values();
-    var sort_indices = std.ArrayList(u32).initCapacity(bun.default_allocator, unsorted_files.len) catch bun.outOfMemory();
+    var sort_indices = bun.handleOom(std.ArrayList(u32).initCapacity(bun.default_allocator, unsorted_files.len));
     defer sort_indices.deinit();
     for (0..unsorted_files.len) |index| {
         // Some % of people using `bun build --compile` want to obscure the source code
@@ -1720,7 +1720,7 @@ pub const JSZlib = struct {
                     defer reader.deinit();
                     return globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
                 };
-                reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch bun.outOfMemory() };
+                reader.list = .{ .items = bun.handleOom(reader.list.toOwnedSlice(allocator)) };
                 reader.list.capacity = reader.list.items.len;
                 reader.list_ptr = &reader.list;
 

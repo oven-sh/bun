@@ -1711,7 +1711,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
             source_utf8.slice(),
             error.NameTooLong,
             if (is_esm) .stmt else if (is_user_require_resolve) .require_resolve else .require,
-        ) catch bun.outOfMemory();
+        ) catch |err| bun.handleOom(err);
         const msg = logger.Msg{
             .data = logger.rangeData(
                 null,

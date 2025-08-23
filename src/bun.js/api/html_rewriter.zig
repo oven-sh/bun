@@ -41,7 +41,7 @@ pub const HTMLRewriter = struct {
     pub const fromJSDirect = js.fromJSDirect;
 
     pub fn constructor(_: *JSGlobalObject, _: *jsc.CallFrame) bun.JSError!*HTMLRewriter {
-        const rewriter = bun.default_allocator.create(HTMLRewriter) catch bun.outOfMemory();
+        const rewriter = bun.handleOom(bun.default_allocator.create(HTMLRewriter));
         rewriter.* = HTMLRewriter{
             .builder = LOLHTML.HTMLRewriter.Builder.init(),
             .context = bun.new(LOLHTMLContext, .{
@@ -59,7 +59,7 @@ pub const HTMLRewriter = struct {
         callFrame: *jsc.CallFrame,
         listener: JSValue,
     ) bun.JSError!JSValue {
-        const selector_slice = std.fmt.allocPrint(bun.default_allocator, "{}", .{selector_name}) catch bun.outOfMemory();
+        const selector_slice = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{}", .{selector_name}));
         defer bun.default_allocator.free(selector_slice);
 
         var selector = LOLHTML.HTMLSelector.parse(selector_slice) catch
@@ -67,7 +67,7 @@ pub const HTMLRewriter = struct {
         errdefer selector.deinit();
 
         const handler_ = try ElementHandler.init(global, listener);
-        const handler = bun.default_allocator.create(ElementHandler) catch bun.outOfMemory();
+        const handler = bun.handleOom(bun.default_allocator.create(ElementHandler));
         handler.* = handler_;
         errdefer {
             handler.deinit();
@@ -101,8 +101,8 @@ pub const HTMLRewriter = struct {
             return global.throwValue(createLOLHTMLError(global));
         };
 
-        this.context.selectors.append(bun.default_allocator, selector) catch bun.outOfMemory();
-        this.context.element_handlers.append(bun.default_allocator, handler) catch bun.outOfMemory();
+        bun.handleOom(this.context.selectors.append(bun.default_allocator, selector));
+        bun.handleOom(this.context.element_handlers.append(bun.default_allocator, handler));
         return callFrame.this();
     }
 
@@ -114,7 +114,7 @@ pub const HTMLRewriter = struct {
     ) bun.JSError!JSValue {
         const handler_ = try DocumentHandler.init(global, listener);
 
-        const handler = bun.default_allocator.create(DocumentHandler) catch bun.outOfMemory();
+        const handler = bun.handleOom(bun.default_allocator.create(DocumentHandler));
         handler.* = handler_;
         errdefer {
             handler.deinit();
@@ -152,7 +152,7 @@ pub const HTMLRewriter = struct {
                 null,
         );
 
-        this.context.document_handlers.append(bun.default_allocator, handler) catch bun.outOfMemory();
+        bun.handleOom(this.context.document_handlers.append(bun.default_allocator, handler));
         return callFrame.this();
     }
 
@@ -336,7 +336,7 @@ pub const HTMLRewriter = struct {
                 return bun.sys.Error{
                     .errno = 1,
                     // TODO: make this a union
-                    .path = bun.default_allocator.dupe(u8, LOLHTML.HTMLString.lastError().slice()) catch bun.outOfMemory(),
+                    .path = bun.handleOom(bun.default_allocator.dupe(u8, LOLHTML.HTMLString.lastError().slice())),
                 };
             };
             if (comptime deinit_) bytes.listManaged(bun.default_allocator).deinit();
@@ -553,7 +553,7 @@ pub const HTMLRewriter = struct {
             bytes: []const u8,
             is_async: bool,
         ) ?JSValue {
-            sink.bytes.growBy(bytes.len) catch bun.outOfMemory();
+            bun.handleOom(sink.bytes.growBy(bytes.len));
             const global = sink.global;
             var response = sink.response;
 
@@ -606,7 +606,7 @@ pub const HTMLRewriter = struct {
         }
 
         pub fn write(this: *BufferOutputSink, bytes: []const u8) void {
-            this.bytes.append(bytes) catch bun.outOfMemory();
+            bun.handleOom(this.bytes.append(bytes));
         }
 
         fn deinit(this: *BufferOutputSink) void {
@@ -1708,7 +1708,7 @@ pub const Element = struct {
             return ZigString.init("Expected a function").withEncoding().toJS(globalObject);
         }
 
-        const end_tag_handler = bun.default_allocator.create(EndTag.Handler) catch bun.outOfMemory();
+        const end_tag_handler = bun.handleOom(bun.default_allocator.create(EndTag.Handler));
         end_tag_handler.* = .{ .global = globalObject, .callback = function };
 
         this.element.?.onEndTag(EndTag.Handler.onEndTagHandler, end_tag_handler) catch {

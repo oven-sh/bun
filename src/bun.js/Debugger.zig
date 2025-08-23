@@ -56,7 +56,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
         // TODO: remove this when tickWithTimeout actually works properly on Windows.
         if (debugger.wait_for_connection == .shortly) {
             uv.uv_update_time(this.uvLoop());
-            var timer = bun.default_allocator.create(uv.Timer) catch bun.outOfMemory();
+            var timer = bun.handleOom(bun.default_allocator.create(uv.Timer));
             timer.* = std.mem.zeroes(uv.Timer);
             timer.init(this.uvLoop());
             const onDebuggerTimer = struct {

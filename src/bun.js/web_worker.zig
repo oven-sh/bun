@@ -447,7 +447,7 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         bun.outOfMemory();
     };
     jsc.markBinding(@src());
-    WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.createUTF8(array.slice()), error_instance);
+    WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.slice()), error_instance);
     if (vm.worker) |worker_| {
         // During unhandled rejection, we're already holding the API lock - now
         // is the right time to set exit_called to true so that

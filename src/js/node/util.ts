@@ -197,9 +197,8 @@ var toUSVString = input => {
 
 function styleText(format, text) {
   validateString(text, "text");
-  if (!$isJSArray(format)) format = [format];
 
-  {
+  if ($isJSArray(format)) {
     let left = "";
     let right = "";
     for (const key of format) {
@@ -213,6 +212,10 @@ function styleText(format, text) {
     }
 
     return `${left}${text}${right}`;
+  }
+
+  if (format === "none") {
+    return text;
   }
 
   let formatCodes = inspect.colors[format];

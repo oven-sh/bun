@@ -316,6 +316,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             if (file.source_map.take()) |ptr| {
                 ptr.deinit();
             }
+            defer file.content = .unknown;
             switch (file.content) {
                 .js, .asset => |code| {
                     g.allocator().free(code);

@@ -28,6 +28,7 @@ pub fn parse(
     defer input.deinit();
 
     var log = logger.Log.init(bun.default_allocator);
+    defer log.deinit();
 
     const source = &logger.Source.initPathString("input.yaml", input.slice());
 

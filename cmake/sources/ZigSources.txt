@@ -189,6 +189,7 @@ src/bun.js/bindings/JSString.zig
 src/bun.js/bindings/JSType.zig
 src/bun.js/bindings/JSUint8Array.zig
 src/bun.js/bindings/JSValue.zig
+src/bun.js/bindings/MarkedArgumentBuffer.zig
 src/bun.js/bindings/NodeModuleModule.zig
 src/bun.js/bindings/RegularExpression.zig
 src/bun.js/bindings/ResolvedSource.zig

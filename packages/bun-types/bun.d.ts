@@ -2125,6 +2125,287 @@ declare module "bun" {
   };
 
   /**
+   * Securely store and retrieve sensitive credentials using the operating system's native credential storage.
+   *
+   * Uses platform-specific secure storage:
+   * - **macOS**: Keychain Services
+   * - **Linux**: libsecret (GNOME Keyring, KWallet, etc.)
+   * - **Windows**: Windows Credential Manager
+   *
+   * @category Security
+   *
+   * @example
+   * ```ts
+   * import { secrets } from "bun";
+   *
+   * // Store a credential
+   * await secrets.set({
+   *   service: "my-cli-tool",
+   *   name: "github-token",
+   *   value: "ghp_xxxxxxxxxxxxxxxxxxxx"
+   * });
+   *
+   * // Retrieve a credential
+   * const token = await secrets.get({
+   *   service: "my-cli-tool",
+   *   name: "github-token"
+   * });
+   *
+   * if (token) {
+   *   console.log("Token found:", token);
+   * } else {
+   *   console.log("Token not found");
+   * }
+   *
+   * // Delete a credential
+   * const deleted = await secrets.delete({
+   *   service: "my-cli-tool",
+   *   name: "github-token"
+   * });
+   * console.log("Deleted:", deleted); // true if deleted, false if not found
+   * ```
+   *
+   * @example
+   * ```ts
+   * // Replace plaintext config files
+   * import { secrets } from "bun";
+   *
+   * // Instead of storing in ~/.npmrc
+   * await secrets.set({
+   *   service: "npm-registry",
+   *   name: "https://registry.npmjs.org",
+   *   value: "npm_xxxxxxxxxxxxxxxxxxxx"
+   * });
+   *
+   * // Instead of storing in ~/.aws/credentials
+   * await secrets.set({
+   *   service: "aws-cli",
+   *   name: "default",
+   *   value: process.env.AWS_SECRET_ACCESS_KEY
+   * });
+   *
+   * // Load at runtime with fallback
+   * const apiKey = await secrets.get({
+   *   service: "my-app",
+   *   name: "api-key"
+   * }) || process.env.API_KEY;
+   * ```
+   */
+  const secrets: {
+    /**
+     * Retrieve a stored credential from the operating system's secure storage.
+     *
+     * @param options - The service and name identifying the credential
+     * @returns The stored credential value, or null if not found
+     *
+     * @example
+     * ```ts
+     * const password = await Bun.secrets.get({
+     *   service: "my-database",
+     *   name: "admin"
+     * });
+     *
+     * if (password) {
+     *   await connectToDatabase(password);
+     * }
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Check multiple possible locations
+     * const token =
+     *   await Bun.secrets.get({ service: "github", name: "token" }) ||
+     *   await Bun.secrets.get({ service: "gh-cli", name: "github.com" }) ||
+     *   process.env.GITHUB_TOKEN;
+     * ```
+     */
+    get(options: {
+      /**
+       * The service or application name.
+       *
+       * Use a unique identifier for your application to avoid conflicts.
+       * Consider using reverse domain notation for production apps (e.g., "com.example.myapp").
+       */
+      service: string;
+
+      /**
+       * The account name, username, or resource identifier.
+       *
+       * This identifies the specific credential within the service.
+       * Common patterns include usernames, email addresses, or resource URLs.
+       */
+      name: string;
+    }): Promise<string | null>;
+
+    /**
+     * Store or update a credential in the operating system's secure storage.
+     *
+     * If a credential already exists for the given service/name combination, it will be replaced.
+     * The credential is encrypted by the operating system and only accessible to the current user.
+     *
+     * @param options - The service and name identifying the credential
+     * @param value - The secret value to store (e.g., password, API key, token)
+     *
+     * @example
+     * ```ts
+     * // Store an API key
+     * await Bun.secrets.set({
+     *   service: "openai-api",
+     *   name: "production",
+     *   value: "sk-proj-xxxxxxxxxxxxxxxxxxxx"
+     * });
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Update an existing credential
+     * const newPassword = generateSecurePassword();
+     * await Bun.secrets.set({
+     *   service: "email-server",
+     *   name: "admin@example.com",
+     *   value: newPassword
+     * });
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Store credentials from environment variables
+     * if (process.env.DATABASE_PASSWORD) {
+     *   await Bun.secrets.set({
+     *     service: "postgres",
+     *     name: "production",
+     *     value: process.env.DATABASE_PASSWORD
+     *   });
+     *   delete process.env.DATABASE_PASSWORD; // Remove from memory
+     * }
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Delete a credential using empty string (equivalent to delete())
+     * await Bun.secrets.set({
+     *   service: "my-service",
+     *   name: "api-key",
+     *   value: "" // Empty string deletes the credential
+     * });
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Store credential with unrestricted access for CI environments
+     * await Bun.secrets.set({
+     *   service: "github-actions",
+     *   name: "deploy-token",
+     *   value: process.env.DEPLOY_TOKEN,
+     *   allowUnrestrictedAccess: true // Allows access without user interaction on macOS
+     * });
+     * ```
+     */
+    set(options: {
+      /**
+       * The service or application name.
+       *
+       * Use a unique identifier for your application to avoid conflicts.
+       * Consider using reverse domain notation for production apps (e.g., "com.example.myapp").
+       */
+      service: string;
+
+      /**
+       * The account name, username, or resource identifier.
+       *
+       * This identifies the specific credential within the service.
+       * Common patterns include usernames, email addresses, or resource URLs.
+       */
+      name: string;
+
+      /**
+       * The secret value to store.
+       *
+       * This should be a sensitive credential like a password, API key, or token.
+       * The value is encrypted by the operating system before storage.
+       *
+       * Note: To delete a credential, use the delete() method or pass an empty string.
+       * An empty string value will delete the credential if it exists.
+       */
+      value: string;
+
+      /**
+       * Allow unrestricted access to stored credentials on macOS.
+       *
+       * When true, allows all applications to access this keychain item without user interaction.
+       * This is useful for CI environments but reduces security.
+       *
+       * @default false
+       * @platform macOS - Only affects macOS keychain behavior. Ignored on other platforms.
+       */
+      allowUnrestrictedAccess?: boolean;
+    }): Promise<void>;
+
+    /**
+     * Delete a stored credential from the operating system's secure storage.
+     *
+     * @param options - The service and name identifying the credential
+     * @returns true if a credential was deleted, false if not found
+     *
+     * @example
+     * ```ts
+     * // Delete a single credential
+     * const deleted = await Bun.secrets.delete({
+     *   service: "my-app",
+     *   name: "api-key"
+     * });
+     *
+     * if (deleted) {
+     *   console.log("Credential removed successfully");
+     * } else {
+     *   console.log("Credential was not found");
+     * }
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Clean up multiple credentials
+     * const services = ["github", "npm", "docker"];
+     * for (const service of services) {
+     *   await Bun.secrets.delete({
+     *     service,
+     *     name: "token"
+     *   });
+     * }
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Clean up on uninstall
+     * if (process.argv.includes("--uninstall")) {
+     *   const deleted = await Bun.secrets.delete({
+     *     service: "my-cli-tool",
+     *     name: "config"
+     *   });
+     *   process.exit(deleted ? 0 : 1);
+     * }
+     * ```
+     */
+    delete(options: {
+      /**
+       * The service or application name.
+       *
+       * Use a unique identifier for your application to avoid conflicts.
+       * Consider using reverse domain notation for production apps (e.g., "com.example.myapp").
+       */
+      service: string;
+
+      /**
+       * The account name, username, or resource identifier.
+       *
+       * This identifies the specific credential within the service.
+       * Common patterns include usernames, email addresses, or resource URLs.
+       */
+      name: string;
+    }): Promise<boolean>;
+  };
+
+  /**
    * A build artifact represents a file that was generated by the bundler @see {@link Bun.build}
    *
    * @category Bundler

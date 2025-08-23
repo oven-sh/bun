@@ -600,7 +600,6 @@ pub const Format = enum {
     }
 };
 
-
 pub const WindowsOptions = struct {
     hide_console: bool = false,
     icon: ?[]const u8 = null,

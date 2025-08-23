@@ -416,11 +416,11 @@ You can also generate standalone executables using the `Bun.build()` JavaScript 
 
 ```js
 await Bun.build({
-  entrypoints: ['./app.ts'],
-  outdir: './dist',
+  entrypoints: ["./app.ts"],
+  outdir: "./dist",
   compile: {
-    target: 'bun-windows-x64',
-    outfile: 'myapp.exe',
+    target: "bun-windows-x64",
+    outfile: "myapp.exe",
   },
 });
 ```
@@ -431,19 +431,19 @@ When targeting Windows, you can specify metadata through the `windows` object:
 
 ```js
 await Bun.build({
-  entrypoints: ['./app.ts'],
-  outdir: './dist',
+  entrypoints: ["./app.ts"],
+  outdir: "./dist",
   compile: {
-    target: 'bun-windows-x64',
-    outfile: 'myapp.exe',
+    target: "bun-windows-x64",
+    outfile: "myapp.exe",
     windows: {
-      title: 'My Application',
-      publisher: 'My Company Inc',
-      version: '1.2.3.4',
-      description: 'A powerful application built with Bun',
-      copyright: '© 2024 My Company Inc',
-      hideConsole: false,  // Set to true for GUI applications
-      icon: './icon.ico',  // Path to icon file
+      title: "My Application",
+      publisher: "My Company Inc",
+      version: "1.2.3.4",
+      description: "A powerful application built with Bun",
+      copyright: "© 2024 My Company Inc",
+      hideConsole: false, // Set to true for GUI applications
+      icon: "./icon.ico", // Path to icon file
     },
   },
 });
@@ -456,15 +456,15 @@ You can cross-compile for different platforms:
 ```js
 // Build for multiple platforms
 const platforms = [
-  { target: 'bun-windows-x64', outfile: 'app-windows.exe' },
-  { target: 'bun-linux-x64', outfile: 'app-linux' },
-  { target: 'bun-darwin-arm64', outfile: 'app-macos' },
+  { target: "bun-windows-x64", outfile: "app-windows.exe" },
+  { target: "bun-linux-x64", outfile: "app-linux" },
+  { target: "bun-darwin-arm64", outfile: "app-macos" },
 ];
 
 for (const platform of platforms) {
   await Bun.build({
-    entrypoints: ['./app.ts'],
-    outdir: './dist',
+    entrypoints: ["./app.ts"],
+    outdir: "./dist",
     compile: platform,
   });
 }
@@ -510,6 +510,7 @@ This metadata will be visible in Windows Explorer when viewing the file properti
 #### Version string format
 
 The `--windows-version` flag accepts version strings in the following formats:
+
 - `"1"` - Will be normalized to "1.0.0.0"
 - `"1.2"` - Will be normalized to "1.2.0.0"
 - `"1.2.3"` - Will be normalized to "1.2.3.0"

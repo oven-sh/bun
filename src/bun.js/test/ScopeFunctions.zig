@@ -38,11 +38,14 @@ pub fn fnEach(_: *ScopeFunctions, _: *JSGlobalObject, _: *CallFrame) bun.JSError
     @panic("TODO: implement .each()");
 }
 
-pub fn callAsFunction(_: *ScopeFunctions, _: *JSGlobalObject, _: *CallFrame) bun.JSError!JSValue {
+pub fn callAsFunction(_: ?*ScopeFunctions, _: *JSGlobalObject, _: *CallFrame) bun.JSError!JSValue {
     @panic("TODO: call ScopeFunctions");
 }
 
 fn genericIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *CallFrame, cfg: describe2.BaseScopeCfg, name: []const u8, invert: bool) bun.JSError!JSValue {
+    groupLog.begin(@src());
+    defer groupLog.end();
+
     const args = callFrame.arguments();
     if (args.len != 1) return globalThis.throw("Expected 1 argument to {s}, got {d}", .{ name, args.len });
     const condition = args[0];
@@ -54,6 +57,9 @@ fn genericIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *Cal
     }
 }
 fn genericExtend(this: *ScopeFunctions, globalThis: *JSGlobalObject, cfg: describe2.BaseScopeCfg, name: []const u8) bun.JSError!JSValue {
+    groupLog.begin(@src());
+    defer groupLog.end();
+
     if (cfg.self_concurrent and this.mode == .describe) return globalThis.throw("Cannot {s} on {f}", .{ name, this });
     const extended = this.cfg.extend(cfg) orelse return globalThis.throw("Cannot {s} on {f}", .{ name, this });
     return create(globalThis, this.mode, this.each, extended);
@@ -76,10 +82,16 @@ pub fn format(this: ScopeFunctions, comptime _: []const u8, _: std.fmt.FormatOpt
 pub fn finalize(
     this: *ScopeFunctions,
 ) callconv(.C) void {
+    groupLog.begin(@src());
+    defer groupLog.end();
+
     VirtualMachine.get().allocator.destroy(this);
 }
 
 pub fn create(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue, cfg: describe2.BaseScopeCfg) JSValue {
+    groupLog.begin(@src());
+    defer groupLog.end();
+
     var scope_functions = globalThis.bunVM().allocator.create(ScopeFunctions) catch bun.outOfMemory();
     scope_functions.* = .{ .mode = mode, .cfg = cfg, .each = each };
 

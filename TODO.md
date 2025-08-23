@@ -1,6 +1,8 @@
 Complete before merge:
 
-- [ ] make sure ScopeFunctions class can finalize
+- [ ] make sure ScopeFunctions class can finalize (see napi_handle_scope NapiHandleScopeImpl as an example)
+  - currently, it never calls its finalize method because it no longer extends from finalize
+- [ ] see about caching ScopeFunctions by value maybe?
 - [ ] add back bailing after nth failure
 - [ ] add back repeating failure/skip messages at the end of the test print
 - [ ] make sure failure exits with code 1

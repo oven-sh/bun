@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { tempDirWithFiles } from "harness";
 
 it("can bundle yaml files", async () => {
   const dir = tempDirWithFiles("yaml-bundle", {
@@ -28,7 +28,7 @@ it("can bundle yaml files", async () => {
 
   expect(result.success).toBe(true);
   expect(result.logs.length).toBe(0);
-  
+
   // Check that the output file was created
   const output = result.outputs[0];
   expect(output).toBeDefined();
@@ -53,7 +53,7 @@ it("yaml files work with Bun.build API", async () => {
 
   expect(result.success).toBe(true);
   expect(result.logs.length).toBe(0);
-  
+
   // For now, we expect the build to succeed even though our mock parser returns empty objects
   const output = result.outputs[0];
   expect(output).toBeDefined();

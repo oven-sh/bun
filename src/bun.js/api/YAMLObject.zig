@@ -137,18 +137,19 @@ const ParserCtx = struct {
     }
 };
 
-const bun = @import("bun");
 const std = @import("std");
+
+const bun = @import("bun");
+const JSError = bun.JSError;
 const default_allocator = bun.default_allocator;
-const js_printer = bun.js_printer;
 const logger = bun.logger;
 const YAML = bun.interchange.yaml.YAML;
+
 const ast = bun.ast;
 const Expr = ast.Expr;
-const JSError = bun.JSError;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
 const MarkedArgumentBuffer = jsc.MarkedArgumentBuffer;
+const ZigString = jsc.ZigString;

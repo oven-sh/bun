@@ -11,6 +11,6 @@ pub const MarkedArgumentBuffer = opaque {
 };
 
 const bun = @import("bun");
+
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
-const JSError = bun.JSError;

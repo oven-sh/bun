@@ -2092,8 +2092,8 @@ const api = bun.api;
 const FFIObject = bun.api.FFIObject;
 const HashObject = bun.api.HashObject;
 const TOMLObject = bun.api.TOMLObject;
-const YAMLObject = bun.api.YAMLObject;
 const UnsafeObject = bun.api.UnsafeObject;
+const YAMLObject = bun.api.YAMLObject;
 const node = bun.api.node;
 
 const jsc = bun.jsc;

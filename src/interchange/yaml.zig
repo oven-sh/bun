@@ -1,14 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const logger = bun.logger;
-const ast = bun.ast;
-const Expr = ast.Expr;
-const E = ast.E;
-const G = ast.G;
-const OOM = bun.OOM;
-const BabyList = bun.BabyList;
-const Environment = bun.Environment;
-
 pub const YAML = struct {
     const ParseError = OOM || error{ SyntaxError, StackOverflow };
 
@@ -5287,3 +5276,15 @@ pub fn Token(comptime encoding: Encoding) type {
         };
     };
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const OOM = bun.OOM;
+const logger = bun.logger;
+
+const ast = bun.ast;
+const E = ast.E;
+const Expr = ast.Expr;
+const G = ast.G;

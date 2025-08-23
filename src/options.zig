@@ -1518,7 +1518,8 @@ const default_loader_ext = [_]string{
     ".ts",    ".tsx",
     ".mts",   ".cts",
 
-    ".toml",  ".yaml", ".yml", ".wasm",
+    ".toml",  ".yaml",
+    ".yml",   ".wasm",
     ".txt",   ".text",
 
     ".jsonc",

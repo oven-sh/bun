@@ -1,7 +1,10 @@
 import { spawnSync } from "bun";
-import { beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "fs";
+import { setupMacOSKeychain } from "./secrets-helpers.ts";
 import { bunEnv, bunExe, isCI, isLinux, isMacOS } from "harness";
+
+setupMacOSKeychain({ beforeAll, afterAll });
 
 // Helper to determine if we should use unrestricted keychain access
 // This is needed for macOS CI environments where user interaction is not available

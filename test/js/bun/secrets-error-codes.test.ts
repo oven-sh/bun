@@ -1,5 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { isMacOS } from "harness";
+import { setupMacOSKeychain } from "./secrets-helpers.ts";
+
+setupMacOSKeychain({ beforeAll, afterAll });
 
 describe("Bun.secrets error codes", () => {
   test("non-existent secret returns null without error", async () => {

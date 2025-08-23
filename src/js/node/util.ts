@@ -202,7 +202,7 @@ function styleText(format, text) {
     let left = "";
     let right = "";
     for (const key of format) {
-      if (key === 'none') continue;
+      if (key === "none") continue;
       const formatCodes = inspect.colors[key];
       if (formatCodes == null) {
         validateOneOf(key, "format", ObjectKeys(inspect.colors));
@@ -214,7 +214,7 @@ function styleText(format, text) {
     return `${left}${text}${right}`;
   }
 
-  if (format === 'none') {
+  if (format === "none") {
     return text;
   }
 

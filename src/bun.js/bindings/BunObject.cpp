@@ -774,6 +774,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     readableStreamToJSON                           JSBuiltin                                                           Builtin|Function 1
     readableStreamToText                           JSBuiltin                                                           Builtin|Function 1
     registerMacro                                  BunObject_callback_registerMacro                                    DontEnum|DontDelete|Function 1
+    rename                                         BunObject_callback_rename                                           DontDelete|Function 1
     resolve                                        BunObject_callback_resolve                                          DontDelete|Function 1
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback

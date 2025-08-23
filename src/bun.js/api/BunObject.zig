@@ -28,6 +28,7 @@ pub const BunObject = struct {
     pub const nanoseconds = toJSCallback(Bun.nanoseconds);
     pub const openInEditor = toJSCallback(Bun.openInEditor);
     pub const registerMacro = toJSCallback(Bun.registerMacro);
+    pub const rename = toJSCallback(Bun.rename);
     pub const resolve = toJSCallback(Bun.resolve);
     pub const resolveSync = toJSCallback(Bun.resolveSync);
     pub const serve = toJSCallback(Bun.serve);
@@ -168,6 +169,7 @@ pub const BunObject = struct {
         @export(&BunObject.nanoseconds, .{ .name = callbackName("nanoseconds") });
         @export(&BunObject.openInEditor, .{ .name = callbackName("openInEditor") });
         @export(&BunObject.registerMacro, .{ .name = callbackName("registerMacro") });
+        @export(&BunObject.rename, .{ .name = callbackName("rename") });
         @export(&BunObject.resolve, .{ .name = callbackName("resolve") });
         @export(&BunObject.resolveSync, .{ .name = callbackName("resolveSync") });
         @export(&BunObject.serve, .{ .name = callbackName("serve") });
@@ -793,6 +795,208 @@ pub fn sleepSync(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 
     std.time.sleep(@as(u64, @intCast(milliseconds)) * std.time.ns_per_ms);
     return .js_undefined;
+}
+
+const RenameConflict = enum {
+    replace,
+    swap,
+    no_replace,
+
+    pub fn fromJS(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!?RenameConflict {
+        if (value.isEmptyOrUndefinedOrNull()) return null;
+        if (!value.isString()) {
+            return globalThis.throwInvalidArgumentType("rename", "conflict", "string");
+        }
+        const str = try value.toSlice(globalThis, bun.default_allocator);
+        defer str.deinit();
+        
+        if (strings.eqlComptime(str.slice(), "replace")) {
+            return .replace;
+        } else if (strings.eqlComptime(str.slice(), "swap")) {
+            return .swap;
+        } else if (strings.eqlComptime(str.slice(), "no-replace")) {
+            return .no_replace;
+        } else {
+            return globalThis.throwInvalidArguments("conflict must be 'replace', 'swap', or 'no-replace'", .{});
+        }
+    }
+};
+
+const RenameResultType = bun.sys.Maybe(void);
+
+const RenameJob = struct {
+    from_path: [:0]u8,
+    to_path: [:0]u8,
+    conflict: RenameConflict,
+    task: jsc.WorkPoolTask = .{ .callback = &runRenameTask },
+    promise: jsc.JSPromise.Strong = .{},
+    vm: *jsc.VirtualMachine,
+    result: RenameResultType = .{ .result = {} },
+    any_task: jsc.AnyTask = undefined,
+
+    pub fn create(globalThis: *JSGlobalObject, from_path: [:0]u8, to_path: [:0]u8, conflict: RenameConflict) *RenameJob {
+        const job = bun.new(RenameJob, .{
+            .from_path = from_path,
+            .to_path = to_path,
+            .conflict = conflict,
+            .vm = globalThis.bunVM(),
+        });
+        job.any_task = jsc.AnyTask.New(RenameJob, finalize).init(job);
+        return job;
+    }
+
+    pub fn runRenameTask(task: *jsc.WorkPoolTask) void {
+        const job: *RenameJob = @fieldParentPtr("task", task);
+        defer job.vm.enqueueTaskConcurrent(jsc.ConcurrentTask.create(job.any_task.task()));
+        
+        job.result = performRename(job.from_path, job.to_path, job.conflict);
+        
+        bun.default_allocator.free(job.from_path);
+        bun.default_allocator.free(job.to_path);
+    }
+
+    pub fn finalize(job: *RenameJob) void {
+        var promise = job.promise.swap();
+        const globalThis = job.vm.global;
+        
+        switch (job.result) {
+            .err => |err| {
+                const error_instance = globalThis.createErrorInstance("rename failed: errno {d}", .{err.errno});
+                promise.reject(globalThis, error_instance);
+            },
+            .result => {
+                promise.resolve(globalThis, jsc.JSValue.js_undefined);
+            },
+        }
+        
+        bun.destroy(job);
+    }
+
+    fn performRename(from_path: [:0]const u8, to_path: [:0]const u8, conflict: RenameConflict) RenameResultType {
+        switch (conflict) {
+            .replace => {
+                return bun.sys.renameat(
+                    bun.FD.cwd(),
+                    from_path,
+                    bun.FD.cwd(),
+                    to_path,
+                );
+            },
+            .swap => {
+                if (comptime Environment.isWindows) {
+                    // Windows doesn't support atomic swap, fall back to replace
+                    return bun.sys.renameat(
+                        bun.FD.cwd(),
+                        from_path,
+                        bun.FD.cwd(),
+                        to_path,
+                    );
+                } else {
+                    // Try atomic exchange first
+                    const result = bun.sys.renameat2(
+                        bun.FD.cwd(),
+                        from_path,
+                        bun.FD.cwd(),
+                        to_path,
+                        .{ .exchange = true },
+                    );
+                    
+                    // If exchange fails because destination doesn't exist, fall back to regular rename
+                    switch (result) {
+                        .err => |err| {
+                            if (err.getErrno() == .NOENT) {
+                                return bun.sys.renameat(
+                                    bun.FD.cwd(),
+                                    from_path,
+                                    bun.FD.cwd(),
+                                    to_path,
+                                );
+                            }
+                            return result;
+                        },
+                        .result => return result,
+                    }
+                }
+            },
+            .no_replace => {
+                if (comptime Environment.isWindows) {
+                    // Windows doesn't have RENAME_NOREPLACE equivalent, so we check first
+                    switch (bun.sys.exists(to_path)) {
+                        .result => |exists| {
+                            if (exists) {
+                                return .{ .err = bun.sys.Error.fromCode(.EXIST, .rename) };
+                            }
+                        },
+                        .err => {},
+                    }
+                    return bun.sys.renameat(
+                        bun.FD.cwd(),
+                        from_path,
+                        bun.FD.cwd(),
+                        to_path,
+                    );
+                } else {
+                    return bun.sys.renameat2(
+                        bun.FD.cwd(),
+                        from_path,
+                        bun.FD.cwd(),
+                        to_path,
+                        .{ .exclude = true },
+                    );
+                }
+            },
+        }
+    }
+};
+
+pub fn rename(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const arguments = callframe.arguments();
+    var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
+    defer args.deinit();
+
+    // Parse from path
+    var from_path_like = try jsc.Node.PathOrFileDescriptor.fromJS(globalThis, &args, bun.default_allocator) orelse {
+        return globalThis.throwInvalidArgumentType("rename", "from", "string or Buffer");
+    };
+    defer from_path_like.deinit();
+
+    // Parse to path
+    var to_path_like = try jsc.Node.PathOrFileDescriptor.fromJS(globalThis, &args, bun.default_allocator) orelse {
+        return globalThis.throwInvalidArgumentType("rename", "to", "string or Buffer");
+    };
+    defer to_path_like.deinit();
+
+    // Parse optional conflict parameter
+    const conflict_value = args.nextEat();
+    const conflict = try RenameConflict.fromJS(globalThis, conflict_value orelse jsc.JSValue.js_undefined) orelse .replace;
+
+    // Only support path-based operations for now
+    if (from_path_like != .path or to_path_like != .path) {
+        return globalThis.throwInvalidArguments("rename only supports string paths currently", .{});
+    }
+
+    // Convert paths to null-terminated strings
+    var from_buf: bun.PathBuffer = undefined;
+    var to_buf: bun.PathBuffer = undefined;
+    
+    const from_slice = from_path_like.path.sliceZ(&from_buf);
+    const to_slice = to_path_like.path.sliceZ(&to_buf);
+    
+    // Duplicate the paths for the async task
+    const from_owned = try bun.default_allocator.dupeZ(u8, from_slice);
+    const to_owned = try bun.default_allocator.dupeZ(u8, to_slice);
+
+    // Create and schedule the rename job
+    const job = RenameJob.create(globalThis, from_owned, to_owned, conflict);
+    
+    var promise = JSPromise.create(globalThis);
+    const promise_value = promise.asValue(globalThis);
+    promise_value.ensureStillAlive();
+    job.promise.strong.set(globalThis, promise_value);
+    
+    jsc.WorkPool.schedule(&job.task);
+    
+    return promise_value;
 }
 
 pub fn gc(vm: *jsc.VirtualMachine, sync: bool) usize {

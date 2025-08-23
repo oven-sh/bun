@@ -786,6 +786,43 @@ declare module "bun" {
     },
   ): Promise<number>;
 
+  /**
+   * Atomically rename a file or directory from `from` to `to`.
+   *
+   * Similar to Node.js's `fs.promises.rename()`, but with an additional optional `conflict` parameter
+   * to control what happens when the destination already exists.
+   *
+   * On Windows, the `conflict` parameter behaves differently due to platform limitations:
+   * - `"swap"` falls back to `"replace"` (atomic swap is not supported)
+   * - `"no-replace"` may not be fully atomic (checks existence then renames)
+   *
+   * @param from - The current file or directory path
+   * @param to - The new file or directory path  
+   * @param conflict - How to handle conflicts when destination exists:
+   *   - `"replace"` (default) - Replace the destination if it exists
+   *   - `"swap"` - Atomically swap the files (Linux/macOS only, falls back to replace on Windows)  
+   *   - `"no-replace"` - Fail if destination already exists
+   *
+   * @returns A promise that resolves when the rename is complete
+   *
+   * @example
+   * ```ts
+   * // Basic rename (replaces destination if it exists)
+   * await Bun.rename("old.txt", "new.txt");
+   *
+   * // Atomically swap two files (Linux/macOS only)
+   * await Bun.rename("file1.txt", "file2.txt", "swap");
+   *
+   * // Fail if destination exists
+   * await Bun.rename("source.txt", "dest.txt", "no-replace");
+   * ```
+   */
+  function rename(
+    from: PathLike,
+    to: PathLike,
+    conflict?: "replace" | "swap" | "no-replace"
+  ): Promise<void>;
+
   interface SystemError extends Error {
     errno?: number | undefined;
     code?: string | undefined;

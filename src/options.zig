@@ -600,6 +600,11 @@ pub const Format = enum {
     }
 };
 
+
+// The max integer value in this enum can only be appended to.
+// It has dependencies in several places:
+// - bun-native-bundler-plugin-api/bundler_plugin.h
+// - src/bun.js/bindings/headers-handwritten.h
 pub const Loader = enum(u8) {
     jsx = 0,
     js = 1,

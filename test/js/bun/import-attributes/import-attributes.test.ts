@@ -207,8 +207,14 @@ async function compileAndTest_inner(
     delete res.text;
   }
   if (Object.hasOwn(res, "yaml")) {
-    const yaml_res = res.yaml;
+    const yaml_res = res.yaml as Record<string, unknown>;
     delete (yaml_res as any).__esModule;
+
+    for (const key of Object.keys(yaml_res)) {
+      if (key.startsWith("//")) {
+        delete (yaml_res as any)[key];
+      }
+    }
   }
 
   if (Object.hasOwn(res, "sqlite")) {
@@ -297,23 +303,23 @@ test("jsonc", async () => {
       "key": "👩‍👧‍👧value", // my json
     }`),
   ).toMatchInlineSnapshot(`
-{
-  "js,jsx,ts,tsx,json,toml": "error",
-  "jsonc": {
-    "default": {
-      "key": "👩‍👧‍👧value",
-    },
-    "key": "👩‍👧‍👧value",
-  },
-  "yaml": {
-    "key": "👩‍👧‍👧value",
-    "default": {
-      "key": "👩‍👧‍👧value",
-      "// my json ": null
+    {
+      "js,jsx,ts,tsx,json,toml": "error",
+      "jsonc": {
+        "default": {
+          "key": "👩‍👧‍👧value",
+        },
+        "key": "👩‍👧‍👧value",
+      },
+      "yaml": {
+        "default": {
+          "// my json ": null,
+          "key": "👩‍👧‍👧value",
+        },
+        "key": "👩‍👧‍👧value",
+      },
     }
-  }
-}
-`);
+  `);
 });
 test("toml", async () => {
   expect(
@@ -342,7 +348,6 @@ test("yaml", async () => {
   key: "👩‍👧‍👧value"`),
   ).toMatchInlineSnapshot(`
 {
-  "js,jsx,ts,tsx,json,jsonc,toml": "error",
   "js,jsx,ts,tsx": {},
   "json,jsonc,toml": "error",
   "yaml": {

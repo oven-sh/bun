@@ -255,11 +255,13 @@ describe("bundler", () => {
       },
       plugins(builder) {
         // this was being called when it shouldnt
-        builder.onResolve({ filter: /.*/, namespace: "magic" }, args => {
+        builder.onResolve({ filter: /.*/, namespace: "magic" }, () => {
           onResolveCountBad++;
+          return null as never;
         });
-        builder.onResolve({ filter: /magic:some_string/, namespace: "magic" }, args => {
+        builder.onResolve({ filter: /magic:some_string/, namespace: "magic" }, () => {
           onResolveCountBad++;
+          return null as never;
         });
         builder.onResolve({ filter: /magic:some_string/ }, args => {
           return {
@@ -895,5 +897,209 @@ describe("bundler", () => {
       expect(js).toContain('.png"');
       expect(js).toContain('.wasm"');
     },
+  });
+
+  itBundled("plugin/OnEndBasic", ({ root }) => {
+    let onEndCalled = false;
+
+    return {
+      files: {
+        "index.ts": `
+          console.log("Hello from main");
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onEnd(() => {
+          onEndCalled = true;
+        });
+      },
+      onAfterBundle(api) {
+        expect(onEndCalled).toBe(true);
+        expect(api.readFile("out/index.js")).toContain("Hello from main");
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndMultipleCallbacks", ({ root }) => {
+    const callOrder = [];
+
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          export const value = 42;
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onEnd(() => {
+          callOrder.push("first");
+        });
+
+        builder.onEnd(() => {
+          callOrder.push("second");
+        });
+
+        builder.onEnd(() => {
+          callOrder.push("third");
+        });
+      },
+      onAfterBundle(api) {
+        expect(callOrder).toEqual(["first", "second", "third"]);
+        expect(api.readFile("out/index.js")).toContain("42");
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndWithAsyncCallback", ({ root }) => {
+    let asyncCompleted = false;
+
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          export default "async test";
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onEnd(async () => {
+          await new Promise(resolve => setTimeout(resolve, 10));
+          asyncCompleted = true;
+        });
+      },
+      onAfterBundle(api) {
+        expect(asyncCompleted).toBe(true);
+        expect(api.readFile("out/index.js")).toContain("async test");
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndWithMultiplePlugins", ({ root }) => {
+    const events: string[] = [];
+
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import "./module.js";
+          console.log("main");
+        `,
+        "module.js": /* js */ `
+          console.log("module");
+        `,
+      },
+      outdir: "/out",
+      plugins: [
+        {
+          name: "plugin1",
+          setup(builder) {
+            builder.onEnd(() => {
+              events.push("plugin1-end");
+            });
+          },
+        },
+        {
+          name: "plugin2",
+          setup(builder) {
+            builder.onEnd(() => {
+              events.push("plugin2-end");
+            });
+          },
+        },
+      ],
+      onAfterBundle(api) {
+        expect(events).toContain("plugin1-end");
+        expect(events).toContain("plugin2-end");
+        expect(api.readFile("out/index.js")).toContain("main");
+        expect(api.readFile("out/index.js")).toContain("module");
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndWithBuildResult", ({ root }) => {
+    let buildResult: Bun.BuildOutput | null = null;
+    let callbackExecuted = false;
+
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          export const result = "success";
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onEnd(result => {
+          callbackExecuted = true;
+          buildResult = result;
+        });
+      },
+      onAfterBundle(api) {
+        expect(callbackExecuted).toBe(true);
+        expect(buildResult).toBeDefined();
+        expect(buildResult!.outputs).toBeDefined();
+        expect(Array.isArray(buildResult!.outputs)).toBe(true);
+        expect(api.readFile("out/index.js")).toContain("success");
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndErrorHandling", ({ root }) => {
+    let errorCaught = false;
+    let callbackExecuted = false;
+
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          export const test = "error handling";
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onEnd(() => {
+          callbackExecuted = true;
+          try {
+            throw new Error("Test error in onEnd");
+          } catch (e) {
+            errorCaught = true;
+          }
+        });
+      },
+      onAfterBundle(api) {
+        expect(callbackExecuted).toBe(true);
+        expect(errorCaught).toBe(true);
+        expect(api.readFile("out/index.js")).toContain("error handling");
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndWithFileWrite", ({ root }) => {
+    let fileWritten = false;
+
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          export const data = { version: "1.0.0" };
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onEnd(async () => {
+          const metadata = {
+            buildTime: new Date().toISOString(),
+            files: ["index.js"],
+          };
+          await Bun.write(join(root, "out", "build-metadata.json"), JSON.stringify(metadata, null, 2));
+          fileWritten = true;
+        });
+      },
+      onAfterBundle(api) {
+        expect(fileWritten).toBe(true);
+        expect(api.readFile("out/index.js")).toContain("1.0.0");
+        // Check if metadata file was created
+        api.assertFileExists("out/build-metadata.json");
+        const metadata = JSON.parse(api.readFile("out/build-metadata.json"));
+        expect(metadata.files).toEqual(["index.js"]);
+        expect(metadata.buildTime).toBeDefined();
+      },
+    };
   });
 });

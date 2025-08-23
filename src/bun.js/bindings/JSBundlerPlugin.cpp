@@ -162,6 +162,8 @@ public:
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onLoadFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onResolveFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> setupFunction;
+    JSC::LazyProperty<JSBundlerPlugin, JSC::JSObject> onEndCallbacks;
+
     JSC::JSGlobalObject* m_globalObject;
 
 private:
@@ -185,6 +187,7 @@ void JSBundlerPlugin::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->onLoadFunction.visit(visitor);
     thisObject->onResolveFunction.visit(visitor);
     thisObject->setupFunction.visit(visitor);
+    thisObject->onEndCallbacks.visit(visitor);
 }
 DEFINE_VISIT_CHILDREN(JSBundlerPlugin);
 
@@ -470,8 +473,17 @@ void JSBundlerPlugin::finishCreation(JSC::VM& vm)
                 JSC::JSFunction::create(vm, globalObject, WebCore::bundlerPluginRunSetupFunctionCodeGenerator(vm), globalObject));
         });
 
+    this->onEndCallbacks.initLater(
+        [](const JSC::LazyProperty<JSBundlerPlugin, JSC::JSObject>::Initializer& init) {
+            auto* globalObject = init.owner->globalObject();
+
+            init.set(
+                JSC::constructEmptyArray(globalObject, nullptr, 0));
+        });
+
     this->putDirect(vm, Identifier::fromString(vm, String("onLoad"_s)), jsUndefined(), 0);
     this->putDirect(vm, Identifier::fromString(vm, String("onResolve"_s)), jsUndefined(), 0);
+    this->putDirect(vm, Identifier::fromString(vm, String("onEndCallbacks"_s)), jsUndefined(), 0);
     reifyStaticProperties(vm, JSBundlerPlugin::info(), JSBundlerPluginHashTable, *this);
 }
 
@@ -626,6 +638,10 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
 
     auto result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, setupFunction, callData, plugin, arguments);
     RETURN_IF_EXCEPTION(scope, {}); // should be able to use RELEASE_AND_RETURN, no? observed it returning undefined with exception active
+
+    // Note: onEnd callbacks are stored but not executed here.
+    // They should be called after the build completes, not during plugin setup.
+
     return JSValue::encode(result);
 }
 
@@ -650,6 +666,36 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
 extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)
 {
     plugin->plugin.tombstone();
+}
+
+extern "C" void JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedBuildResult)
+{
+    auto& vm = plugin->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = plugin->globalObject();
+    
+    // Get the onEndCallbacks array from the JavaScript property
+    JSC::JSValue onEndCallbacksValue = plugin->getDirect(vm, Identifier::fromString(vm, String("onEndCallbacks"_s)));
+    
+    // If it's undefined or not an array, there are no callbacks to run
+    if (!onEndCallbacksValue.isObject()) {
+        return;
+    }
+    
+    auto* runOnEndCallbacksFn = JSC::JSFunction::create(vm, globalObject, 
+        WebCore::bundlerPluginRunOnEndCallbacksCodeGenerator(vm), globalObject);
+    
+    JSC::CallData callData = JSC::getCallData(runOnEndCallbacksFn);
+    if (callData.type == JSC::CallData::Type::None) {
+        return;
+    }
+    
+    MarkedArgumentBuffer arguments;
+    arguments.append(onEndCallbacksValue);
+    arguments.append(JSValue::decode(encodedBuildResult));
+    
+    JSC::profiledCall(globalObject, ProfilingReason::API, runOnEndCallbacksFn, callData, plugin, arguments);
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 extern "C" int JSBundlerPlugin__callOnBeforeParsePlugins(

@@ -1,10 +1,11 @@
 /**
  * See `./expectBundled.md` for how this works.
  */
-import { BuildConfig, BuildOutput, BunPlugin, fileURLToPath, PluginBuilder, Loader, CompileBuildOptions } from "bun";
+import { BuildConfig, BuildOutput, BunPlugin, CompileBuildOptions, fileURLToPath, Loader, PluginBuilder } from "bun";
 import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
+import filenamify from "filenamify";
 import {
   existsSync,
   mkdirSync,
@@ -20,7 +21,6 @@ import { bunEnv, bunExe, isCI, isDebug } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 import { SourceMapConsumer } from "source-map";
-import filenamify from "filenamify";
 
 /** Dedent module does a bit too much with their stuff. we will be much simpler */
 export function dedent(str: string | TemplateStringsArray, ...args: any[]) {
@@ -1100,11 +1100,16 @@ for (const [key, blob] of build.outputs) {
         try {
           build = await Bun.build(buildConfig);
         } catch (e) {
-          const err = e as AggregateError;
+          if (!(e instanceof AggregateError)) {
+            throw e;
+          }
+
+          console.error("Bun.build threw error:", e);
+
           build = {
             outputs: [],
             success: false,
-            logs: err.errors,
+            logs: e.errors,
           };
         }
         if (onAfterApiBundle) await onAfterApiBundle(build);

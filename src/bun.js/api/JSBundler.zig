@@ -1084,6 +1084,13 @@ pub const JSBundler = struct {
         }
 
         extern fn JSBundlerPlugin__tombstone(*Plugin) void;
+        extern fn JSBundlerPlugin__runOnEndCallbacks(*Plugin, jsc.JSValue) void;
+        
+        pub fn runOnEndCallbacks(this: *Plugin, build_result: jsc.JSValue) void {
+            jsc.markBinding(@src());
+            JSBundlerPlugin__runOnEndCallbacks(this, build_result);
+        }
+        
         pub fn deinit(this: *Plugin) void {
             jsc.markBinding(@src());
             JSBundlerPlugin__tombstone(this);

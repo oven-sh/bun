@@ -27,6 +27,7 @@ Follow-up:
 - [ ] console.log headers saying which test it is for
 - [ ] 'dot' test reporter like vitest?
 - [ ] `.concurrent.test.ts` to make all items concurrent. consider adding a concurrent directory for bunfig.toml?
+- [] `test.failing.if(false)` errors because it can't replace mode 'failing' with mode 'skip' (maybe failing should be a bool?)
 
 If this doesn't land:
 

@@ -1839,13 +1839,12 @@ pub const BundleV2 = struct {
             const output_file = &output_files.items[entry_point_index];
             const outbuf = bun.path_buffer_pool.get();
             defer bun.path_buffer_pool.put(outbuf);
-            
+
             var full_outfile_path = if (this.config.outdir.slice().len > 0) brk: {
                 const outdir_slice = this.config.outdir.slice();
                 const top_level_dir = bun.fs.FileSystem.instance.top_level_dir;
                 break :brk bun.path.joinAbsStringBuf(top_level_dir, outbuf, &[_][]const u8{ outdir_slice, compile_options.outfile.slice() }, .auto);
-            } else
-                compile_options.outfile.slice();
+            } else compile_options.outfile.slice();
 
             // Add .exe extension for Windows targets if not already present
             if (compile_options.compile_target.os == .windows and !strings.hasSuffixComptime(full_outfile_path, ".exe")) {

@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "sources": ["typescript:virtual.ts"],
+  "sourcesContent": [
+    "function greet(name) {\n  console.log(\"Hello, \" + name);\n}\ngreet(\"World\");"
+  ],
+  "mappings": ";AAAA,SAAS,KAAK,CAAC,MAAM;AAAA,EACnB,QAAQ,IAAI,YAAY,IAAI;AAAA;AAE9B,MAAM,OAAO;",
+  "debugId": "B97F05C3D0F8C55F64756E2164756E21",
+  "names": []
+}

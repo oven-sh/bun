@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "sources": ["transform:code.ts"],
+  "sourcesContent": [
+    "// Original comment\nfunction add(a, b) {\n  return a + b;\n}\nconsole.log(add(1, 2));"
+  ],
+  "mappings": ";AACA,SAAS,GAAG,CAAC,GAAG,GAAG;AAAA,EACjB,OAAO,IAAI;AAAA;AAEb,QAAQ,IAAI,IAAI,GAAG,CAAC,CAAC;",
+  "debugId": "4A5094082FDFF2A764756E2164756E21",
+  "names": []
+}

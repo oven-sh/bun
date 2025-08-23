@@ -174,6 +174,10 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
         updateError(err, GetLastError());
     }
 
+    // Best-effort scrub of plaintext from memory.
+    if (password.length())
+        SecureZeroMemory(const_cast<char*>(password.data()), password.length());
+
     return err;
 }
 

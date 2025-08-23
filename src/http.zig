@@ -4,8 +4,6 @@ const HTTPClient = @This();
 pub var default_allocator: std.mem.Allocator = undefined;
 pub var default_arena: Arena = undefined;
 pub var http_thread: HTTPThread = undefined;
-const DeadSocket = opaque {};
-var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
 //TODO: this needs to be freed when Worker Threads are implemented
 pub var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.InternalSocket).init(bun.default_allocator);
 pub var async_http_id_monotonic: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);

@@ -11152,6 +11152,27 @@ CREATE TABLE ${table_name} (
       expect(result[1].age).toBe(18);
     });
 
+    test("update helper with IN for strings", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+      const users = [
+        { id: 1, name: "John", age: 30 },
+        { id: 2, name: "Jane", age: 25 },
+        { id: 3, name: "Bob", age: 35 },
+      ];
+      await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+      const result =
+        await sql`UPDATE ${sql(random_name)} SET ${sql({ age: 40 })} WHERE name IN ${sql(["John", "Jane"])} RETURNING *`;
+      expect(result[0].id).toBe(1);
+      expect(result[0].name).toBe("John");
+      expect(result[0].age).toBe(40);
+      expect(result[1].id).toBe(2);
+      expect(result[1].name).toBe("Jane");
+      expect(result[1].age).toBe(40);
+    });
+
     test("update helper with IN and column name", async () => {
       await using sql = postgres({ ...options, max: 1 });
       const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");

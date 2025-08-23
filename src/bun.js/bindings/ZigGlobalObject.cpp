@@ -3,7 +3,7 @@
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "JavaScriptCore/ArgList.h"
-#include "JavaScriptCore/JSImmutableButterfly.h"
+#include "JavaScriptCore/JSCellButterfly.h"
 #include "wtf/text/Base64.h"
 #include "JavaScriptCore/BuiltinNames.h"
 #include "JavaScriptCore/CallData.h"

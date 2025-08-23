@@ -4,7 +4,6 @@ import { itBundled } from "../../bundler/expectBundled";
 
 describe("bundler plugin onResolve entry point", () => {
   itBundled("onResolve-entrypoint-modification", {
-    todo: true,
     files: {
       "entry.js": `console.log("original entry");`,
     },
@@ -80,18 +79,18 @@ describe("bundler plugin onResolve entry point", () => {
   });
 
   itBundled("onResolve-multiple-entrypoints", {
-    todo: true,
-    entryPoints: ["entry1.js", "entry2.js"],
     files: {
       "entry1.js": `console.log("entry1");`,
       "entry2.js": `console.log("entry2");`,
+      "entry3.js": `console.log("entry3");`,
     },
+    entryPoints: ["entry1.js", "entry2.js", "entry3.js"],
     plugins(build) {
       const entryModifications = new Map();
 
       build.onResolve({ filter: /.*/ }, args => {
         if (args.kind?.includes("entry-point")) {
-          const modified = args.path + ".virtual";
+          const modified = args.path + ".modified";
           entryModifications.set(args.path, modified);
           console.log(`onResolve: ${args.path} -> ${modified} (${args.kind})`);
           return { path: modified };
@@ -101,16 +100,15 @@ describe("bundler plugin onResolve entry point", () => {
       build.onLoad({ filter: /.*/ }, args => {
         console.log(`onLoad: ${args.path}`);
 
-        if (args.path.endsWith(".virtual")) {
-          const originalPath = args.path.replace(".virtual", "");
-          const entryName = path.basename(originalPath, ".js");
+        if (args.path.endsWith(".modified")) {
+          const baseName = path.basename(args.path, ".js.modified");
           return {
-            contents: `console.log("SUCCESS: ${entryName} virtual loaded");`,
+            contents: `console.log("SUCCESS: ${baseName} modified");`,
             loader: "js",
           };
         }
 
-        for (const [original, modified] of entryModifications) {
+        for (const [original] of entryModifications) {
           if (args.path === original) {
             const entryName = path.basename(args.path, ".js");
             return {
@@ -121,8 +119,11 @@ describe("bundler plugin onResolve entry point", () => {
         }
       });
     },
-    run: {
-      stdout: "SUCCESS: entry1 virtual loaded\nSUCCESS: entry2 virtual loaded",
-    },
+    outputPaths: ["out/entry1.js.js", "out/entry2.js.js", "out/entry3.js.js"],
+    run: [
+      { file: "out/entry1.js.js", stdout: "SUCCESS: entry1 modified" },
+      { file: "out/entry2.js.js", stdout: "SUCCESS: entry2 modified" },
+      { file: "out/entry3.js.js", stdout: "SUCCESS: entry3 modified" },
+    ],
   });
 });

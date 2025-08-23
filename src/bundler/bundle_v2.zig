@@ -1970,20 +1970,19 @@ pub const BundleV2 = struct {
                             };
 
                             onEndResult.then(globalThis, ctx, onEndResolve, onEndReject);
+                            return;
                         },
-                        .fulfilled => {
-                            promise.resolve(globalThis, root_obj);
-                        },
+                        .fulfilled => {},
                         .rejected => {
                             const err = onEndPromise.result(globalThis.vm());
                             promise.reject(globalThis, err);
+                            return;
                         },
                     }
                 }
-            } else {
-                // no plugins so we can just resolve immediately
-                promise.resolve(globalThis, root_obj);
             }
+
+            promise.resolve(globalThis, root_obj);
         }
 
         pub fn onComplete(this: *JSBundleCompletionTask) void {
@@ -2097,20 +2096,19 @@ pub const BundleV2 = struct {
                                     };
 
                                     onEndResult.then(globalThis, ctx, onEndResolve, onEndReject);
+                                    return;
                                 },
-                                .fulfilled => {
-                                    promise.resolve(globalThis, root_obj);
-                                },
+                                .fulfilled => {},
                                 .rejected => {
                                     const err = onEndPromise.result(globalThis.vm());
                                     promise.reject(globalThis, err);
+                                    return;
                                 },
                             }
                         }
-                    } else {
-                        // no plugins so we can just resolve immediately
-                        promise.resolve(globalThis, root_obj);
                     }
+
+                    promise.resolve(globalThis, root_obj);
                 },
             }
 

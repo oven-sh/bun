@@ -326,7 +326,7 @@ var access = function access(path, mode, callback) {
 
       const remove = async () => {
         return new Promise((resolve, reject) => {
-          rm(fullPath, { maxRetries: 0, recursive: true, force: true, retryDelay: 0 }, (err) => {
+          rm(fullPath, { maxRetries: 0, recursive: true, force: true, retryDelay: 0 }, err => {
             if (err) reject(err);
             else resolve(undefined);
           });
@@ -593,7 +593,7 @@ var access = function access(path, mode, callback) {
     const pathModule = require("node:path");
     // Stash the full path in case of process.chdir()
     const fullPath = pathModule.resolve(process.cwd(), path);
-    
+
     const remove = () => {
       rmSync(fullPath, { maxRetries: 0, recursive: true, force: true, retryDelay: 100 });
     };

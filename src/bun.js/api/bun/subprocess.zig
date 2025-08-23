@@ -984,8 +984,7 @@ pub fn spawnMaybeSync(
         if (comptime !Environment.isWindows) {
             // Since the event loop is recursively called, we need to check if it's safe to recurse.
             if (!bun.StackCheck.init().isSafeToRecurse()) {
-                globalThis.throwStackOverflow();
-                return error.JSError;
+                return globalThis.throwStackOverflow();
             }
         }
     }

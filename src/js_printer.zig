@@ -4469,6 +4469,7 @@ fn NewPrinter(
                         .json => p.printWhitespacer(ws(" with { type: \"json\" }")),
                         .jsonc => p.printWhitespacer(ws(" with { type: \"jsonc\" }")),
                         .toml => p.printWhitespacer(ws(" with { type: \"toml\" }")),
+                        .yaml => p.printWhitespacer(ws(" with { type: \"yaml\" }")),
                         .wasm => p.printWhitespacer(ws(" with { type: \"wasm\" }")),
                         .napi => p.printWhitespacer(ws(" with { type: \"napi\" }")),
                         .base64 => p.printWhitespacer(ws(" with { type: \"base64\" }")),

@@ -71,7 +71,7 @@ struct StringPtr {
     {
         auto& vm = globalObject->vm();
         if (m_size != 0) {
-            return JSC::jsString(vm, WTF::String::fromUTF8({ m_str, m_size }));
+            return JSC::jsString(vm, WTF::String({ m_str, m_size }));
         }
         return jsEmptyString(vm);
     }

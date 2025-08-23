@@ -1190,7 +1190,9 @@ ServerResponse.prototype[kRejectNonStandardBodyWrites] = undefined;
 
 Object.defineProperty(ServerResponse.prototype, "headersSent", {
   get() {
-    return this[headerStateSymbol] === NodeHTTPHeaderState.sent;
+    return (
+      this[headerStateSymbol] === NodeHTTPHeaderState.sent || this[headerStateSymbol] === NodeHTTPHeaderState.assigned
+    );
   },
   set(value) {
     this[headerStateSymbol] = value ? NodeHTTPHeaderState.sent : NodeHTTPHeaderState.none;
@@ -1236,6 +1238,7 @@ ServerResponse.prototype.writeProcessing = function (cb) {
 ServerResponse.prototype.writeContinue = function (cb) {
   this.socket[kHandle]?.response?.writeContinue();
   cb?.();
+  this._sent100 = true;
 };
 
 // This end method is actually on the OutgoingMessage prototype in Node.js
@@ -1579,7 +1582,8 @@ ServerResponse.prototype.emit = function (event) {
 };
 
 ServerResponse.prototype.flushHeaders = function () {
-  this._implicitHeader();
+  if (this[headerStateSymbol] === NodeHTTPHeaderState.sent) return; // Should be idempotent.
+  if (this[headerStateSymbol] !== NodeHTTPHeaderState.assigned) this._implicitHeader();
 
   const handle = this[kHandle];
   if (handle) {

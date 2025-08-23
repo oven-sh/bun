@@ -3737,7 +3737,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 .flow_key,
                 => {
                     if (self.block_indents.get()) |block_indent| {
-                        if (self.token.line != previous_token_line and self.token.indent.isLessThanOrEqual(block_indent)) {
+                        if (self.token.line != previous_token_line and self.token.indent.isLessThan(block_indent)) {
                             return error.UnexpectedToken;
                         }
                     }

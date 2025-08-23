@@ -85,7 +85,9 @@ const ParserCtx = struct {
             .e_null => return .null,
             .e_boolean => |boolean| return .jsBoolean(boolean.value),
             .e_number => |number| return .jsNumber(number.value),
-            .e_string => |str| return str.toJS(bun.default_allocator, ctx.global),
+            .e_string => |str| {
+                return str.toJS(bun.default_allocator, ctx.global);
+            },
             .e_array => {
                 if (ctx.seen_objects.get(expr.data.e_array)) |arr| {
                     return arr;
@@ -124,7 +126,7 @@ const ParserCtx = struct {
                     const key_str = try key.toBunString(ctx.global);
                     defer key_str.deref();
 
-                    obj.put(ctx.global, key_str, value);
+                    obj.putMayBeIndex(ctx.global, &key_str, value);
                 }
 
                 return obj;

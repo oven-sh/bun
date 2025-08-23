@@ -548,6 +548,24 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         cached_hostname: bun.String = bun.String.empty,
 
+        /// Whether new accepts are currently blocked for this server instance.
+        accept_blocked: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+        /// If true, we skip future hook lookups after one failure to reduce noise.
+        accept_hook_missing: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+        /// Epoch millis when we should retry hook lookup again (0 means allow immediately)
+        accept_hook_retry_at_ms: std.atomic.Value(i64) = std.atomic.Value(i64).init(0),
+
+        /// Coalesces accept state notifications to JS to avoid spamming on rapid flips
+        accept_notify_pending: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+        /// True while a reuse-port rebind is in progress; cleared in onListen/onListenFailed
+        accept_rebind_pending: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+        /// Set true during teardown to prevent queued tasks from touching freed memory
+        is_closing: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
         flags: packed struct(u4) {
             deinit_scheduled: bool = false,
             terminated: bool = false,
@@ -576,6 +594,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub const doFetch = onFetch;
         pub const doRequestIP = host_fn.wrapInstanceMethod(ThisServer, "requestIP", false);
         pub const doTimeout = timeout;
+        pub const doBlockAccept = host_fn.wrapInstanceMethod(ThisServer, "blockAcceptFromJS", false);
+        pub const doAllowAccept = host_fn.wrapInstanceMethod(ThisServer, "allowAcceptFromJS", false);
 
         pub const UserRoute = struct {
             id: u32,
@@ -1071,9 +1091,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const route_list_value = this.setRoutes();
             if (new_config.had_routes_object) {
                 if (this.js_value.tryGet()) |server_js_value| {
-                    if (server_js_value != .zero) {
-                        js.gc.routeList.set(server_js_value, globalThis, route_list_value);
-                    }
+                    js.gc.routeList.set(server_js_value, globalThis, route_list_value);
                 }
             }
 
@@ -1096,9 +1114,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const route_list_value = this.setRoutes();
             if (route_list_value != .zero) {
                 if (this.js_value.tryGet()) |server_js_value| {
-                    if (server_js_value != .zero) {
-                        js.gc.routeList.set(server_js_value, this.globalThis, route_list_value);
-                    }
+                    js.gc.routeList.set(server_js_value, this.globalThis, route_list_value);
                 }
             }
             return true;
@@ -1270,7 +1286,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn disposeFromJS(this: *ThisServer) jsc.JSValue {
-            if (this.listener != null) {
+            if (!this.is_closing.swap(true, .acq_rel)) {
                 this.stop(true);
             }
 
@@ -1300,6 +1316,208 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         pub fn getPendingWebSockets(this: *ThisServer, _: *jsc.JSGlobalObject) jsc.JSValue {
             return jsc.JSValue.jsNumber(@as(i32, @intCast(@as(u31, @truncate(this.activeSocketsCount())))));
+        }
+
+        /// Returns the previous accept-blocked state as a JS boolean.
+        pub fn blockAcceptFromJS(this: *ThisServer, _: ?jsc.JSValue) jsc.JSValue {
+            const was = this.accept_blocked.swap(true, .acq_rel);
+            if (!was) {
+                switch (this.config.address) {
+                    .tcp => {
+                        if (this.config.reuse_port) {
+                            this.closeReusePortListener();
+                        } else {
+                            // pauseStream() affects the shared listen fd; only safe when not using SO_REUSEPORT
+                            this.pauseListener();
+                        }
+                    },
+                    .unix => this.pauseListener(),
+                }
+                scheduleAcceptStateChange(this);
+            }
+            return jsc.JSValue.jsBoolean(was);
+        }
+
+        /// Returns the previous accept-blocked state as a JS boolean.
+        /// For SO_REUSEPORT, notifications are emitted in onListen/onListenFailed when rebind completes.
+        pub fn allowAcceptFromJS(this: *ThisServer, _: ?jsc.JSValue) jsc.JSValue {
+            const was = this.accept_blocked.swap(false, .acq_rel);
+            if (was) {
+                if (this.config.reuse_port and this.config.address == .tcp) {
+                    this.accept_rebind_pending.store(true, .release);
+                    if (!this.rebindReusePortListener()) {
+                        _ = this.accept_blocked.swap(true, .acq_rel);
+                        this.accept_rebind_pending.store(false, .release);
+                        httplog("reusePort: rebind failed; keeping accepts blocked port={}", .{this.config.address.tcp.port});
+                        return jsc.JSValue.jsBoolean(was);
+                    }
+                    // onListen/onListenFailed will clear accept_rebind_pending and schedule notification
+                } else {
+                    // resumeStream() only when not using SO_REUSEPORT; reusePort path rebinds per worker
+                    this.resumeListener();
+                    scheduleAcceptStateChange(this);
+                }
+            }
+            return jsc.JSValue.jsBoolean(was);
+        }
+
+        // Returns the current accept-blocked state as a JS boolean.
+        // Note: this is the single source of truth; event emissions always
+        // read this flag at emit-time to avoid stale notifications.
+        pub fn getIsAcceptBlocked(this: *ThisServer, _: *jsc.JSGlobalObject) jsc.JSValue {
+            // Acquire pairs with .acq_rel swaps in block/allow to ensure readers
+            // observe the most recent state.
+            return jsc.JSValue.jsBoolean(this.accept_blocked.load(.acquire));
+        }
+
+        // Pause accepts on the current listener by disabling readable events.
+        // Used only when not using SO_REUSEPORT; with reuse-port we close/rebind instead.
+        fn pauseListener(this: *ThisServer) void {
+            if (this.listener) |ls| {
+                _ = ls.socket().pauseStream();
+            }
+        }
+
+        // Resume accepts on the current listener by enabling readable events.
+        // Used only when not using SO_REUSEPORT; with reuse-port we close/rebind instead.
+        fn resumeListener(this: *ThisServer) void {
+            if (this.listener) |ls| {
+                _ = ls.socket().resumeStream();
+            }
+        }
+
+        /// Convert an optional hostname to a host pointer, stripping IPv6 brackets if present.
+        /// Returns null if `existing` is null or formatting fails.
+        fn hostnameToHost(existing: ?[*:0]const u8, host_buff: anytype) ?[*:0]const u8 {
+            if (existing) |ex| {
+                const h = bun.span(ex);
+                if (h.len >= 2 and h[0] == '[' and h[h.len - 1] == ']') {
+                    return std.fmt.bufPrintZ(host_buff, "{s}", .{h[1 .. h.len - 1]}) catch null;
+                } else {
+                    return existing;
+                }
+            }
+            return null;
+        }
+
+        // Close the per-worker listen socket for reuse-port mode.
+        // Captures fd first for watch-mode removal and logging (TCP non-SSL only).
+        // Assumes listener access is synchronized by the event loop / calling context.
+        fn closeReusePortListener(this: *ThisServer) void {
+            if (this.listener) |listener| {
+                // ssl_enabled is a per-class comptime flag derived from protocol_enum
+                if (this.config.address == .tcp and !ssl_enabled) {
+                    const fd = listener.socket().fd();
+                    const port = this.config.address.tcp.port;
+                    this.vm.removeListeningSocketForWatchMode(fd);
+                    listener.close();
+                    this.listener = null;
+                    httplog("reusePort: closed listen socket for this worker port={} fd={}", .{ port, fd });
+                } else {
+                    // Non-TCP or SSL sockets: close and log with context (port or path)
+                    listener.close();
+                    this.listener = null;
+                    switch (this.config.address) {
+                        .tcp => |tcp| {
+                            httplog("reusePort: closed listen socket for this worker (TLS) port={}", .{tcp.port});
+                        },
+                        .unix => |unix| {
+                            httplog("reusePort: closed listen socket for this worker (unix) path={s}", .{unix});
+                        },
+                    }
+                }
+            }
+        }
+
+        // Recreate the per-worker listen socket (SO_REUSEPORT TCP).
+        // Async contract: returns true if the attempt was started; onListen/onListenFailed
+        // will clear accept_rebind_pending and emit state.
+        fn rebindReusePortListener(this: *ThisServer) bool {
+            const app = this.app orelse return false;
+            switch (this.config.address) {
+                .tcp => |tcp| {
+                    var host: ?[*:0]const u8 = null;
+                    var host_buff: [1024:0]u8 = undefined;
+                    host = hostnameToHost(tcp.hostname, &host_buff);
+                    app.listenWithConfig(*ThisServer, this, onListen, .{
+                        .port = tcp.port,
+                        .host = host,
+                        .options = this.config.getUsocketsOptions(),
+                    });
+                    return true; // attempt started; completion handled asynchronously
+                },
+                .unix => return false,
+            }
+        }
+
+        // Queue a single coalesced task to notify JS of the latest accept state.
+        // Multiple rapid flips are collapsed; the task reads the current value
+        // when it runs and emits one "block" or "allow" accordingly.
+        fn scheduleAcceptStateChange(this: *ThisServer) void {
+            if (this.vm.isShuttingDown() or this.is_closing.load(.acquire)) return;
+            if (!this.accept_notify_pending.swap(true, .acq_rel)) {
+                const Payload = struct { server: *ThisServer };
+                const Runner = struct {
+                    pub fn run(p: *Payload) void {
+                        defer bun.default_allocator.destroy(p);
+                        p.server.accept_notify_pending.store(false, .release);
+                        if (p.server.vm.isShuttingDown()) return;
+                        if (p.server.is_closing.load(.acquire)) return;
+                        if (p.server.accept_hook_missing.load(.acquire)) {
+                            const now_ms: i64 = std.time.milliTimestamp();
+                            const retry_at = p.server.accept_hook_retry_at_ms.load(.acquire);
+                            if (retry_at != 0 and now_ms < retry_at) return; // skip until retry window
+                            // else fall through to retry lookup immediately when retry_at == 0
+                        }
+
+                        const global = p.server.globalThis;
+                        const hook_opt = p.server.vm.global.toJSValue()
+                            .get(global, "__bun_acceptStateChanged") catch {
+                            // One-time: mark missing and log for visibility
+                            p.server.accept_hook_missing.store(true, .release);
+                            p.server.accept_hook_retry_at_ms.store(std.time.milliTimestamp() + 5000, .release);
+                            httplog("accept:state hook lookup error", .{});
+                            return;
+                        };
+                        const hook = hook_opt orelse {
+                            p.server.accept_hook_missing.store(true, .release);
+                            p.server.accept_hook_retry_at_ms.store(std.time.milliTimestamp() + 5000, .release);
+                            httplog("accept:state hook missing", .{});
+                            return;
+                        };
+                        if (!hook.isCallable()) {
+                            p.server.accept_hook_missing.store(true, .release);
+                            p.server.accept_hook_retry_at_ms.store(std.time.milliTimestamp() + 5000, .release);
+                            httplog("accept:state hook not callable", .{});
+                            return;
+                        }
+
+                        const now_blocked = p.server.accept_blocked.load(.acquire);
+                        const arg = if (now_blocked)
+                            jsc.ZigString.static("block").toJS(global)
+                        else
+                            jsc.ZigString.static("allow").toJS(global);
+                        _ = hook.call(global, .js_undefined, &.{arg}) catch {
+                            // Do not mark missing; this could be a transient JS error
+                            httplog("accept:state hook call threw", .{});
+                            return;
+                        };
+                        // Successful emit: clear missing state so future flips emit immediately
+                        p.server.accept_hook_missing.store(false, .release);
+                        p.server.accept_hook_retry_at_ms.store(0, .release);
+                    }
+                };
+                const Any = jsc.AnyTask.New(Payload, Runner.run);
+                const payload = bun.default_allocator.create(Payload) catch return;
+                payload.* = .{ .server = this };
+                const any_task = bun.default_allocator.create(jsc.AnyTask) catch {
+                    bun.default_allocator.destroy(payload);
+                    this.accept_notify_pending.store(false, .release);
+                    return;
+                };
+                any_task.* = Any.init(payload);
+                this.vm.enqueueTask(jsc.Task.init(any_task));
+            }
         }
 
         pub fn getAddress(this: *ThisServer, globalThis: *JSGlobalObject) jsc.JSValue {
@@ -1545,6 +1763,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub fn stop(this: *ThisServer, abrupt: bool) void {
             const current_value = this.js_value.get();
             this.js_value.setWeak(current_value);
+            this.is_closing.store(true, .release);
 
             if (this.config.allow_hot and this.config.id.len > 0) {
                 if (this.globalThis.bunVM().hotMap()) |hot| {
@@ -1672,6 +1891,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         noinline fn onListenFailed(this: *ThisServer) void {
             httplog("onListenFailed", .{});
+            if (this.accept_rebind_pending.swap(false, .acq_rel)) {
+                // Rebind failed: ensure we reflect blocked state and notify
+                _ = this.accept_blocked.swap(true, .acq_rel);
+                scheduleAcceptStateChange(this);
+            }
 
             const globalThis = this.globalThis;
 
@@ -1786,6 +2010,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.vm.event_loop_handle = Async.Loop.get();
             if (!ssl_enabled)
                 this.vm.addListeningSocketForWatchMode(socket.?.socket().fd());
+            if (this.accept_rebind_pending.swap(false, .acq_rel)) {
+                // Rebind succeeded: emit allow
+                scheduleAcceptStateChange(this);
+            }
         }
 
         pub fn ref(this: *ThisServer) void {
@@ -2798,25 +3026,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .tcp => |tcp| {
                     var host: ?[*:0]const u8 = null;
                     var host_buff: [1024:0]u8 = undefined;
-
-                    if (tcp.hostname) |existing| {
-                        const hostname = bun.span(existing);
-
-                        if (hostname.len > 2 and hostname[0] == '[') {
-                            // remove "[" and "]" from hostname
-                            host = std.fmt.bufPrintZ(&host_buff, "{s}", .{hostname[1 .. hostname.len - 1]}) catch unreachable;
-                        } else {
-                            host = tcp.hostname;
-                        }
-                    }
-
+                    host = hostnameToHost(tcp.hostname, &host_buff);
                     app.listenWithConfig(*ThisServer, this, onListen, .{
                         .port = tcp.port,
                         .host = host,
                         .options = this.config.getUsocketsOptions(),
                     });
                 },
-
                 .unix => |unix| {
                     app.listenOnUnixSocket(
                         *ThisServer,

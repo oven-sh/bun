@@ -106,16 +106,10 @@ export function loadAndResolvePluginsForServe(
   return promiseResult;
 }
 
-export async function runOnEndCallbacks(
-  this: BundlerPlugin,
-  callbacks: AnyFunction[],
-  buildResult: Bun.BuildOutput,
-): Promise<void> {
+export async function runOnEndCallbacks(this: BundlerPlugin, buildResult: Bun.BuildOutput): Promise<void> {
   const promises: PromiseLike<unknown>[] = [];
 
-  for (const callback of callbacks) {
-    if (!$isCallable(callback)) continue;
-
+  for (const callback of this.onEndCallbacks) {
     const result = callback(buildResult);
 
     if (result && $isPromise(result)) {
@@ -253,6 +247,7 @@ export function runSetupFunction(
     }
 
     $arrayPush(self.onEndCallbacks, callback);
+
     return this;
   }
 

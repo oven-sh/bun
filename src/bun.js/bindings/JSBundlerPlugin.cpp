@@ -671,12 +671,6 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundler
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = plugin->globalObject();
 
-    JSC::JSValue onEndCallbacksValue = plugin->onEndCallbacks.get(plugin);
-
-    if (!onEndCallbacksValue.isObject()) [[unlikely]] {
-        return JSValue::encode(jsUndefined());
-    }
-
     // TODO: have a prototype for JSBundlerPlugin that this is put on instead of re-creating the function on each usage
     auto* runOnEndCallbacksFn = JSC::JSFunction::create(vm, globalObject,
         WebCore::bundlerPluginRunOnEndCallbacksCodeGenerator(vm), globalObject);
@@ -687,7 +681,6 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundler
     }
 
     MarkedArgumentBuffer arguments;
-    arguments.append(onEndCallbacksValue);
     arguments.append(JSValue::decode(encodedBuildResult));
 
     // TODO: use AsyncContextFrame?

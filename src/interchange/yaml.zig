@@ -817,10 +817,39 @@ pub fn Parser(comptime enc: Encoding) type {
                         });
                     } else {
                         const value = try self.parseNode(.{});
-                        try props.append(.{
-                            .key = key,
-                            .value = value,
-                        });
+
+                        append: {
+                            switch (key.data) {
+                                .e_string => |key_string| {
+                                    if (key_string.eqlComptime("<<")) {
+                                        switch (value.data) {
+                                            .e_object => |value_obj| {
+                                                try props.appendSlice(value_obj.properties.slice());
+                                                break :append;
+                                            },
+                                            .e_array => |value_arr| {
+                                                for (value_arr.slice()) |item| {
+                                                    switch (item.data) {
+                                                        .e_object => |item_obj| {
+                                                            try props.appendSlice(item_obj.properties.slice());
+                                                        },
+                                                        else => {},
+                                                    }
+                                                }
+                                                break :append;
+                                            },
+                                            else => {},
+                                        }
+                                    }
+                                },
+                                else => {},
+                            }
+
+                            try props.append(.{
+                                .key = key,
+                                .value = value,
+                            });
+                        }
                     }
 
                     if (self.token.data == .collect_entry) {
@@ -956,10 +985,38 @@ pub fn Parser(comptime enc: Encoding) type {
                     },
                 };
 
-                try props.append(.{
-                    .key = first_key,
-                    .value = value,
-                });
+                append: {
+                    switch (first_key.data) {
+                        .e_string => |key_string| {
+                            if (key_string.eqlComptime("<<")) {
+                                switch (value.data) {
+                                    .e_object => |value_obj| {
+                                        try props.appendSlice(value_obj.properties.slice());
+                                        break :append;
+                                    },
+                                    .e_array => |value_arr| {
+                                        for (value_arr.slice()) |item| {
+                                            switch (item.data) {
+                                                .e_object => |item_obj| {
+                                                    try props.appendSlice(item_obj.properties.slice());
+                                                },
+                                                else => {},
+                                            }
+                                        }
+                                        break :append;
+                                    },
+                                    else => {},
+                                }
+                            }
+                        },
+                        else => {},
+                    }
+
+                    try props.append(.{
+                        .key = first_key,
+                        .value = value,
+                    });
+                }
             }
 
             if (self.context.get() == .flow_in) {
@@ -1033,10 +1090,38 @@ pub fn Parser(comptime enc: Encoding) type {
                     },
                 };
 
-                try props.append(.{
-                    .key = key,
-                    .value = value,
-                });
+                append: {
+                    switch (key.data) {
+                        .e_string => |key_string| {
+                            if (key_string.eqlComptime("<<")) {
+                                switch (value.data) {
+                                    .e_object => |value_obj| {
+                                        try props.appendSlice(value_obj.properties.slice());
+                                        break :append;
+                                    },
+                                    .e_array => |value_arr| {
+                                        for (value_arr.slice()) |item| {
+                                            switch (item.data) {
+                                                .e_object => |item_obj| {
+                                                    try props.appendSlice(item_obj.properties.slice());
+                                                },
+                                                else => {},
+                                            }
+                                        }
+                                        break :append;
+                                    },
+                                    else => {},
+                                }
+                            }
+                        },
+                        else => {},
+                    }
+
+                    try props.append(.{
+                        .key = key,
+                        .value = value,
+                    });
+                }
             }
 
             return .init(E.Object, .{ .properties = .fromList(props) }, mapping_start.loc());

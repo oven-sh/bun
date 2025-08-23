@@ -639,9 +639,6 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     auto result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, setupFunction, callData, plugin, arguments);
     RETURN_IF_EXCEPTION(scope, {}); // should be able to use RELEASE_AND_RETURN, no? observed it returning undefined with exception active
 
-    // Note: onEnd callbacks are stored but not executed here.
-    // They should be called after the build completes, not during plugin setup.
-
     return JSValue::encode(result);
 }
 
@@ -674,17 +671,18 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundler
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = plugin->globalObject();
 
-    JSC::JSValue onEndCallbacksValue = plugin->getDirect(vm, Identifier::fromString(vm, String("onEndCallbacks"_s)));
+    JSC::JSValue onEndCallbacksValue = plugin->onEndCallbacks.get(plugin);
 
-    if (!onEndCallbacksValue.isObject()) {
+    if (!onEndCallbacksValue.isObject()) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
 
+    // TODO: have a prototype for JSBundlerPlugin that this is put on instead of re-creating the function on each usage
     auto* runOnEndCallbacksFn = JSC::JSFunction::create(vm, globalObject,
         WebCore::bundlerPluginRunOnEndCallbacksCodeGenerator(vm), globalObject);
 
     JSC::CallData callData = JSC::getCallData(runOnEndCallbacksFn);
-    if (callData.type == JSC::CallData::Type::None) {
+    if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
 
@@ -692,6 +690,7 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundler
     arguments.append(onEndCallbacksValue);
     arguments.append(JSValue::decode(encodedBuildResult));
 
+    // TODO: use AsyncContextFrame?
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, runOnEndCallbacksFn, callData, plugin, arguments);
     RETURN_IF_EXCEPTION(scope, {});
 

@@ -111,20 +111,15 @@ export async function runOnEndCallbacks(
   callbacks: AnyFunction[],
   buildResult: Bun.BuildOutput,
 ): Promise<void> {
-  if (!callbacks || !Array.isArray(callbacks)) {
-    return;
-  }
-
   const promises: PromiseLike<unknown>[] = [];
 
   for (const callback of callbacks) {
-    if (!$isCallable(callback)) {
-      continue;
-    }
+    if (!$isCallable(callback)) continue;
 
     const result = callback(buildResult);
+
     if (result && $isPromise(result)) {
-      promises.push(result);
+      $arrayPush(promises, result);
     }
   }
 
@@ -250,17 +245,13 @@ export function runSetupFunction(
     return this;
   }
 
-  function onEnd(this: PluginBuilder, callback): PluginBuilder {
-    if (!$isCallable(callback)) {
-      throw new TypeError("callback must be a function");
-    }
+  function onEnd(this: PluginBuilder, callback: Function): PluginBuilder {
+    if (!$isCallable(callback)) throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
 
-    // Initialize the onEndCallbacks array if it doesn't exist
     if (!self.onEndCallbacks) {
       self.onEndCallbacks = [];
     }
 
-    // Store the callback in the onEndCallbacks array
     $arrayPush(self.onEndCallbacks, callback);
     return this;
   }

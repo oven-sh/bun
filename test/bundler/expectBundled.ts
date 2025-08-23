@@ -1104,8 +1104,6 @@ for (const [key, blob] of build.outputs) {
             throw e;
           }
 
-          console.error("Bun.build threw error:", e);
-
           build = {
             outputs: [],
             success: false,

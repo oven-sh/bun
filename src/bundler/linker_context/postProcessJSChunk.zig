@@ -203,7 +203,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
     if (cross_chunk_prefix.result.code.len > 0) {
         newline_before_comment = true;
         line_offset.advance(cross_chunk_prefix.result.code);
-        j.push(cross_chunk_prefix.result.code, cross_chunk_prefix.result.code_allocator);
+        j.push(cross_chunk_prefix.result.code, worker.allocator);
     }
 
     // Concatenate the generated JavaScript chunks together
@@ -323,7 +323,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
         // Stick the entry point tail at the end of the file. Deliberately don't
         // include any source mapping information for this because it's automatically
         // generated and doesn't correspond to a location in the input file.
-        j.push(tail_code, entry_point_tail.allocator());
+        j.push(tail_code, worker.allocator);
     }
 
     // Put the cross-chunk suffix inside the IIFE
@@ -332,7 +332,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             j.pushStatic("\n");
         }
 
-        j.push(cross_chunk_suffix.result.code, cross_chunk_suffix.result.code_allocator);
+        j.push(cross_chunk_suffix.result.code, worker.allocator);
     }
 
     switch (output_format) {
@@ -814,10 +814,9 @@ pub fn generateEntryPointTailJS(
         return .{
             .javascript = .{
                 .source_index = source_index,
-                .result = .{ .result = .{
-                    .code = "",
-                    .code_allocator = bun.default_allocator,
-                } },
+                .result = .{
+                    .result = .{ .code = "" },
+                },
             },
         };
     }

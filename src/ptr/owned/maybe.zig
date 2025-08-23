@@ -43,9 +43,9 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
 
         const Owned = owned.WithOptions(Pointer, options.toOwned());
 
-        /// Create a `MaybeOwned(Pointer)` from an `Owned(Pointer)`.
+        /// Creates a `MaybeOwned(Pointer)` from an `Owned(Pointer)`.
         ///
-        /// This method invalidates `owned`.
+        /// This method invalidates `owned_ptr`.
         pub fn fromOwned(owned_ptr: Owned) Self {
             const data, const allocator = if (comptime info.isOptional())
                 owned_ptr.intoRawOwned() orelse return .initNull()
@@ -57,7 +57,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
             };
         }
 
-        /// Create a `MaybeOwned(Pointer)` from a raw owned pointer or slice.
+        /// Creates a `MaybeOwned(Pointer)` from a raw owned pointer or slice.
         ///
         /// Requirements:
         ///
@@ -67,7 +67,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
             return .fromOwned(.fromRawOwned(data, allocator));
         }
 
-        /// Create a `MaybeOwned(Pointer)` from borrowed slice or pointer.
+        /// Creates a `MaybeOwned(Pointer)` from borrowed slice or pointer.
         ///
         /// `data` must not be freed for the life of the `MaybeOwned`.
         pub fn fromBorrowed(data: NonOptionalPointer) Self {
@@ -77,7 +77,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
             };
         }
 
-        /// Deinitialize the pointer or slice, freeing its memory if owned.
+        /// Deinitializes the pointer or slice, freeing its memory if owned.
         ///
         /// By default, if the data is owned, `deinit` will first be called on the data itself.
         /// See `Owned.deinit` for more information.
@@ -134,7 +134,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
             return !self.unsafe_allocator.isNull();
         }
 
-        /// Return a null `MaybeOwned(Pointer)`. This method is provided only if `Pointer` is an
+        /// Returns a null `MaybeOwned(Pointer)`. This method is provided only if `Pointer` is an
         /// optional type.
         ///
         /// It is permitted, but not required, to call `deinit` on the returned value.

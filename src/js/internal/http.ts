@@ -199,14 +199,6 @@ function validateMsecs(numberlike: any, field: string) {
   return numberlike;
 }
 
-class ConnResetException extends Error {
-  constructor(msg) {
-    super(msg);
-    this.code = "ECONNRESET";
-    this.name = "ConnResetException";
-  }
-}
-
 const METHODS = [
   "ACL",
   "BIND",
@@ -374,9 +366,9 @@ const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTT
 const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
 const kOutHeaders = Symbol("kOutHeaders");
 const kNeedDrain = Symbol("kNeedDrain");
+const kBunServer = Symbol("kBunServer");
 
 export {
-  ConnResetException,
   Headers,
   METHODS,
   STATUS_CODES,
@@ -408,6 +400,7 @@ export {
   kAbortController,
   kAgent,
   kBodyChunks,
+  kBunServer,
   kClearTimeout,
   kCloseCallback,
   kDeferredTimeouts,

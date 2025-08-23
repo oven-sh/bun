@@ -22,6 +22,7 @@ const {
   statusMessageSymbol,
   NodeHTTPResponseAbortEvent,
   webRequestOrResponseHasBodyValue,
+  kBunServer,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 
@@ -33,7 +34,6 @@ const kHeadersCount = Symbol("kHeadersCount");
 const kTrailers = Symbol("kTrailers");
 const kTrailersDistinct = Symbol("kTrailersDistinct");
 const kTrailersCount = Symbol("kTrailersCount");
-const kBunServer = Symbol("kBunServer");
 
 const nop = () => {};
 

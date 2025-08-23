@@ -26,7 +26,6 @@ const {
   setIsNextIncomingMessageHTTPS,
   callCloseCallback,
   emitCloseNT,
-  ConnResetException,
   NodeHTTPResponseAbortEvent,
   STATUS_CODES,
   isTlsSymbol,
@@ -42,26 +41,27 @@ const {
   setServerIdleTimeout,
   setServerCustomOptions,
   getMaxHTTPHeaderSize,
+  kBunServer,
 } = require("internal/http");
-const NumberIsNaN = Number.isNaN;
 
 const { format } = require("internal/util/inspect");
+const { ConnResetException } = require("internal/shared");
 
 const { IncomingMessage } = require("node:_http_incoming");
-const { OutgoingMessage } = require("internal/http/server/_http_outgoing");
-const { OutgoingMessage: OutgoingMessage2 } = require("node:_http_outgoing");
+const { OutgoingMessage } = require("node:_http_outgoing");
 const { kIncomingMessage, chunkExpression } = require("node:_http_common");
-const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 
 const getBunServerAllClosedPromise = $newZigFunction("node_http_binding.zig", "getBunServerAllClosedPromise", 1);
 const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
 
 const kServerResponse = Symbol("ServerResponse");
 const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
+const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const GlobalPromise = globalThis.Promise;
 const kEmptyBuffer = Buffer.alloc(0);
 const ObjectKeys = Object.keys;
 const MathMin = Math.min;
+const NumberIsNaN = Number.isNaN;
 
 let cluster;
 
@@ -536,6 +536,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_req.httpVersion = "1.0";
         }
         const http_res = new ResponseClass(http_req, {
+          [kBunServer]: true,
           [kHandle]: handle,
           [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
         });
@@ -1160,7 +1161,7 @@ Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
 
 function ServerResponse(req, options): void {
   this[Symbol.for("meghan.kind")] = "_http_server";
-  OutgoingMessage.$call(this, options);
+  OutgoingMessage.$call(this, { ...options, [kBunServer]: true });
 
   // if (req.method === "HEAD") this._hasBody = false;
   // this.req = req;
@@ -1202,55 +1203,6 @@ function ServerResponse(req, options): void {
   this.statusMessage = undefined;
 }
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
-// ServerResponse.prototype.__proto__ = OutgoingMessage.prototype;
-
-// OutgoingMessage.prototype.errored
-// OutgoingMessage.prototype.writableObjectMode
-// OutgoingMessage.prototype.writableCorked
-// OutgoingMessage.prototype._headers
-// OutgoingMessage.prototype.connection
-// OutgoingMessage.prototype.socket
-// OutgoingMessage.prototype._headerNames
-// ServerResponse.prototype._renderHeaders = OutgoingMessage.prototype._renderHeaders;
-// ServerResponse.prototype.cork = OutgoingMessage.prototype.cork;
-// ServerResponse.prototype.uncork = OutgoingMessage.prototype.uncork;
-// ServerResponse.prototype.setTimeout = OutgoingMessage.prototype.setTimeout;
-// ServerResponse.prototype.destroy = OutgoingMessage.prototype.destroy;
-// ServerResponse.prototype._storeHeader = OutgoingMessage.prototype._storeHeader;
-// ServerResponse.prototype.setHeader = OutgoingMessage.prototype.setHeader;
-// ServerResponse.prototype.setHeaders = OutgoingMessage.prototype.setHeaders;
-// ServerResponse.prototype.appendHeader = OutgoingMessage.prototype.appendHeader;
-// ServerResponse.prototype.getHeader = OutgoingMessage.prototype.getHeader;
-// ServerResponse.prototype.getHeaderNames = OutgoingMessage.prototype.getHeaderNames;
-// ServerResponse.prototype.getRawHeaderNames = OutgoingMessage.prototype.getRawHeaderNames;
-// ServerResponse.prototype.getHeaders = OutgoingMessage.prototype.getHeaders;
-// ServerResponse.prototype.hasHeader = OutgoingMessage.prototype.hasHeader;
-// ServerResponse.prototype.removeHeader = OutgoingMessage.prototype.removeHeader;
-// ServerResponse.prototype._implicitHeader = OutgoingMessage.prototype._implicitHeader;
-// OutgoingMessage.prototype.writableEnded
-// ServerResponse.prototype.addTrailers = OutgoingMessage.prototype.addTrailers;
-// ServerResponse.prototype._flush = OutgoingMessage.prototype._flush;
-// ServerResponse.prototype._flushOutput = OutgoingMessage.prototype._flushOutput;
-// ServerResponse.prototype.pipe = OutgoingMessage.prototype.pipe;
-// OutgoingMessage.prototype[EE.captureRejectionSymbol]
-
-const reqsym = Symbol("req");
-Object.defineProperty(ServerResponse.prototype, "req", {
-  get() {
-    $assert(!(this[reqsym] instanceof IncomingMessage2));
-    $assert(this[reqsym] instanceof IncomingMessage || this[reqsym] === undefined);
-    return this[reqsym];
-  },
-  set(value) {
-    $assert(!(value instanceof IncomingMessage2));
-    $assert(value instanceof IncomingMessage);
-    this[reqsym] = value;
-  },
-});
-
-//
-//
-//
 
 // FIXME:
 ServerResponse.prototype._removedConnection = false;

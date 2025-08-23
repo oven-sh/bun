@@ -1,7 +1,25 @@
 // Hardcoded module "node:_http_outgoing"
 const EE = require("node:events");
 const Stream = require("node:stream");
-const { kOutHeaders, utcDate, kNeedDrain, kEmptyObject } = require("internal/http");
+const {
+  kOutHeaders,
+  utcDate,
+  kNeedDrain,
+  kEmptyObject,
+  kBunServer,
+  headerStateSymbol,
+  NodeHTTPHeaderState,
+  kAbortController,
+  headersSymbol,
+  getHeader,
+  setHeader,
+  fakeSocketSymbol,
+  kHandle,
+  getRawKeys,
+  kBodyChunks,
+  kEmitState,
+  ClientRequestEmitState,
+} = require("internal/http");
 const {
   _checkIsHttpToken: checkIsHttpToken,
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
@@ -10,6 +28,7 @@ const {
 const { validateString } = require("internal/validators");
 const { isUint8Array } = require("node:util/types");
 const { SafeSet } = require("internal/primordials");
+const { FakeSocket } = require("internal/http/FakeSocket");
 
 const ArrayIsArray = Array.isArray;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -46,6 +65,46 @@ function isContentDispositionField(s) {
 }
 
 function OutgoingMessage(options) {
+  this[Symbol.for("meghan.kind")] = "_http_outgoing";
+
+  if (options?.[kBunServer]) {
+    this[kBunServer] = true;
+    Stream.$call(this);
+
+    this.sendDate = true;
+    this.finished = false;
+    this[headerStateSymbol] = NodeHTTPHeaderState.none;
+    this[kAbortController] = null;
+    this[kBytesWritten] = 0;
+    this.writable = true;
+    this.destroyed = false;
+    this._hasBody = true;
+    this._trailer = "";
+    this._contentLength = null;
+    this._closed = false;
+    this._header = null;
+    this._headerSent = false;
+    this[kHighWaterMark] = options?.highWaterMark ?? (process.platform === "win32" ? 16 * 1024 : 64 * 1024);
+
+    this._keepAliveTimeout = 0;
+    this._defaultKeepAlive = true;
+    this.shouldKeepAlive = true;
+    this._onPendingData = nop;
+    this.outputSize = 0;
+    this.outputData = [];
+    this.strictContentLength = false;
+    this._removedTE = false;
+    this._removedContLen = false;
+    this._removedConnection = false;
+    this.usesChunkedEncodingByDefault = true;
+    this._closed = false;
+    // this._headerNames = undefined;
+
+    this.chunkedEncoding = false;
+    return;
+  }
+
+  this[kBunServer] = false;
   Stream.$call(this);
 
   this.outputData = [];
@@ -96,6 +155,7 @@ $toClass(OutgoingMessage, "OutgoingMessage", Stream);
 ObjectDefineProperty(OutgoingMessage.prototype, "errored", {
   __proto__: null,
   get() {
+    if (this[kBunServer]) $assert(false, "oops!");
     return this[kErrored];
   },
 });
@@ -110,6 +170,7 @@ ObjectDefineProperty(OutgoingMessage.prototype, "closed", {
 ObjectDefineProperty(OutgoingMessage.prototype, "writableFinished", {
   __proto__: null,
   get() {
+    if (this[kBunServer]) return this.finished && !!(this[kEmitState] & (1 << ClientRequestEmitState.finish));
     return this.finished && this.outputSize === 0 && (!this[kSocket] || this[kSocket].writableLength === 0);
   },
 });
@@ -124,6 +185,7 @@ ObjectDefineProperty(OutgoingMessage.prototype, "writableObjectMode", {
 ObjectDefineProperty(OutgoingMessage.prototype, "writableLength", {
   __proto__: null,
   get() {
+    if (this[kBunServer]) return this.finished ? 0 : this[kBytesWritten] || 0;
     return this.outputSize + this[kChunkedLength] + (this[kSocket] ? this[kSocket].writableLength : 0);
   },
 });
@@ -131,6 +193,7 @@ ObjectDefineProperty(OutgoingMessage.prototype, "writableLength", {
 ObjectDefineProperty(OutgoingMessage.prototype, "writableHighWaterMark", {
   __proto__: null,
   get() {
+    if (this[kBunServer]) return 16 * 1024;
     return this[kSocket] ? this[kSocket].writableHighWaterMark : this[kHighWaterMark];
   },
 });
@@ -138,6 +201,7 @@ ObjectDefineProperty(OutgoingMessage.prototype, "writableHighWaterMark", {
 ObjectDefineProperty(OutgoingMessage.prototype, "writableCorked", {
   __proto__: null,
   get() {
+    if (this[kBunServer]) return this.socket.writableCorked;
     return this[kCorked];
   },
 });
@@ -165,6 +229,9 @@ ObjectDefineProperty(OutgoingMessage.prototype, "_headers", {
 ObjectDefineProperty(OutgoingMessage.prototype, "connection", {
   __proto__: null,
   get: function () {
+    if (this[kBunServer]) {
+      return this.socket;
+    }
     return this[kSocket];
   },
   set: function (val) {
@@ -175,9 +242,16 @@ ObjectDefineProperty(OutgoingMessage.prototype, "connection", {
 ObjectDefineProperty(OutgoingMessage.prototype, "socket", {
   __proto__: null,
   get: function () {
+    if (this[kBunServer]) {
+      return (this[fakeSocketSymbol] ??= new FakeSocket(this));
+    }
     return this[kSocket];
   },
   set: function (val) {
+    if (this[kBunServer]) {
+      this[fakeSocketSymbol] = val;
+      return;
+    }
     for (let n = 0; n < this[kCorked]; n++) {
       val?.cork();
       this[kSocket]?.uncork();
@@ -189,6 +263,7 @@ ObjectDefineProperty(OutgoingMessage.prototype, "socket", {
 ObjectDefineProperty(OutgoingMessage.prototype, "_headerNames", {
   __proto__: null,
   get: function () {
+    if (this[kBunServer]) $assert(false, "oops!");
     const headers = this[kOutHeaders];
     if (headers !== null) {
       const out = { __proto__: null };
@@ -205,6 +280,7 @@ ObjectDefineProperty(OutgoingMessage.prototype, "_headerNames", {
     return null;
   },
   set: function (val) {
+    if (this[kBunServer]) $assert(false, "oops!");
     if (typeof val === "object" && val !== null) {
       const headers = this[kOutHeaders];
       if (!headers) return;
@@ -220,6 +296,10 @@ ObjectDefineProperty(OutgoingMessage.prototype, "_headerNames", {
 });
 
 OutgoingMessage.prototype._renderHeaders = function () {
+  if (this[kBunServer]) {
+    $assert(false, "oops!");
+  }
+
   if (this._header) {
     throw $ERR_HTTP_HEADERS_SENT("render");
   }
@@ -240,6 +320,11 @@ OutgoingMessage.prototype._renderHeaders = function () {
 };
 
 OutgoingMessage.prototype.cork = function () {
+  if (this[kBunServer]) {
+    this.socket.cork();
+    return;
+  }
+
   this[kCorked]++;
   if (this[kSocket]) {
     this[kSocket].cork();
@@ -247,6 +332,11 @@ OutgoingMessage.prototype.cork = function () {
 };
 
 OutgoingMessage.prototype.uncork = function () {
+  if (this[kBunServer]) {
+    this.socket.uncork();
+    return;
+  }
+
   this[kCorked]--;
   if (this[kSocket]) {
     this[kSocket].uncork();
@@ -288,16 +378,22 @@ OutgoingMessage.prototype.uncork = function () {
 };
 
 OutgoingMessage.prototype.setTimeout = function (msecs, callback) {
-  if (callback) {
-    this.on("timeout", callback);
+  if (this[kBunServer]) {
+    if (this.callback) {
+      this.emit("timeout", callback);
+    }
+  } else {
+    if (callback) {
+      this.on("timeout", callback);
+    }
   }
 
-  if (!this[kSocket]) {
+  if (!this.socket) {
     this.once("socket", function socketSetTimeoutOnConnect(socket) {
-      socket.setTimeout(msecs);
+      socket.setTimeout(msecs, callback);
     });
   } else {
-    this[kSocket].setTimeout(msecs);
+    this.socket.setTimeout(msecs);
   }
   return this;
 };
@@ -306,6 +402,14 @@ OutgoingMessage.prototype.setTimeout = function (msecs, callback) {
 // any messages, before ever calling this.  In that case, just skip
 // it, since something else is destroying this connection anyway.
 OutgoingMessage.prototype.destroy = function (error) {
+  if (this[kBunServer]) {
+    if (this.destroyed) return this;
+    const handle = this[kHandle];
+    this.destroyed = true;
+    if (handle) handle.abort();
+    return this;
+  }
+
   if (this.destroyed) {
     return this;
   }
@@ -350,7 +454,7 @@ OutgoingMessage.prototype._send = function (data, encoding, callback, byteLength
 };
 
 OutgoingMessage.prototype._writeRaw = function (data, encoding, callback, size) {
-  const conn = this[kSocket];
+  const conn = this[kBunServer] ? this[kHandle] : this[kSocket];
   if (conn?.destroyed) {
     // The socket was destroyed. If we're still trying to write to it,
     // then we haven't gotten the 'close' event yet.
@@ -378,6 +482,10 @@ OutgoingMessage.prototype._writeRaw = function (data, encoding, callback, size) 
 };
 
 OutgoingMessage.prototype._storeHeader = function (firstLine, headers) {
+  if (this[kBunServer]) {
+    $assert(false, "oops!");
+  }
+
   // firstLine in the case of request is: 'GET /index.html HTTP/1.1\r\n'
   // in the case of response it is: 'HTTP/1.1 200 OK\r\n'
   const state = {
@@ -616,6 +724,17 @@ function parseUniqueHeadersOption(headers) {
 }
 
 OutgoingMessage.prototype.setHeader = function (name, value) {
+  if (this[kBunServer]) {
+    if ((this._header !== undefined && this._header !== null) || this[headerStateSymbol] == NodeHTTPHeaderState.sent) {
+      throw $ERR_HTTP_HEADERS_SENT("set");
+    }
+    validateHeaderName(name);
+    validateHeaderValue(name, value);
+    const headers = (this[headersSymbol] ??= new Headers());
+    setHeader(headers, name, value);
+    return this;
+  }
+
   if (this._header) {
     throw $ERR_HTTP_HEADERS_SENT("set");
   }
@@ -630,6 +749,32 @@ OutgoingMessage.prototype.setHeader = function (name, value) {
 };
 
 OutgoingMessage.prototype.setHeaders = function (headers) {
+  if (this[kBunServer]) {
+    if (this._header || this[headerStateSymbol] !== NodeHTTPHeaderState.none) {
+      throw $ERR_HTTP_HEADERS_SENT("set");
+    }
+    if (!headers || $isArray(headers) || typeof headers.keys !== "function" || typeof headers.get !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("headers", ["Headers", "Map"], headers);
+    }
+    // Headers object joins multiple cookies with a comma when using
+    // the getter to retrieve the value,
+    // unless iterating over the headers directly.
+    // We also cannot safely split by comma.
+    // To avoid setHeader overwriting the previous value we push
+    // set-cookie values in array and set them all at once.
+    const cookies: any[] = [];
+    for (const { 0: key, 1: value } of headers) {
+      if (key === "set-cookie") {
+        if ($isArray(value)) cookies.push(...value);
+        else cookies.push(value);
+        continue;
+      }
+      this.setHeader(key, value);
+    }
+    if (cookies.length) this.setHeader("set-cookie", cookies);
+    return this;
+  }
+
   if (this._header) {
     throw $ERR_HTTP_HEADERS_SENT("set");
   }
@@ -665,6 +810,13 @@ OutgoingMessage.prototype.setHeaders = function (headers) {
 };
 
 OutgoingMessage.prototype.appendHeader = function (name, value) {
+  if (this[kBunServer]) {
+    validateString(name, "name");
+    let headers = (this[headersSymbol] ??= new Headers());
+    headers.append(name, value);
+    return this;
+  }
+
   if (this._header) {
     throw $ERR_HTTP_HEADERS_SENT("append");
   }
@@ -695,6 +847,11 @@ OutgoingMessage.prototype.appendHeader = function (name, value) {
 };
 
 OutgoingMessage.prototype.getHeader = function (name) {
+  if (this[kBunServer]) {
+    validateString(name, "name");
+    return getHeader(this[headersSymbol], name);
+  }
+
   validateString(name, "name");
 
   const headers = this[kOutHeaders];
@@ -706,11 +863,23 @@ OutgoingMessage.prototype.getHeader = function (name) {
 
 // Returns an array of the names of the current outgoing headers.
 OutgoingMessage.prototype.getHeaderNames = function () {
+  if (this[kBunServer]) {
+    let headers = this[headersSymbol];
+    if (!headers) return [];
+    return Array.from(headers.keys());
+  }
+
   return this[kOutHeaders] !== null ? ObjectKeys(this[kOutHeaders]) : [];
 };
 
 // Returns an array of the names of the current outgoing raw headers.
 OutgoingMessage.prototype.getRawHeaderNames = function () {
+  if (this[kBunServer]) {
+    let headers = this[headersSymbol];
+    if (!headers) return [];
+    return getRawKeys(headers);
+  }
+
   const headersMap = this[kOutHeaders];
   if (headersMap === null) return [];
 
@@ -727,6 +896,12 @@ OutgoingMessage.prototype.getRawHeaderNames = function () {
 
 // Returns a shallow copy of the current outgoing headers.
 OutgoingMessage.prototype.getHeaders = function () {
+  if (this[kBunServer]) {
+    const headers = this[headersSymbol];
+    if (!headers) return kEmptyObject;
+    return headers.toJSON();
+  }
+
   const headers = this[kOutHeaders];
   const ret = { __proto__: null };
   if (headers) {
@@ -743,11 +918,30 @@ OutgoingMessage.prototype.getHeaders = function () {
 };
 
 OutgoingMessage.prototype.hasHeader = function (name) {
+  console.log("OutgoingMessage.prototype.hasHeader", this[kBunServer]);
+  if (this[kBunServer]) {
+    validateString(name, "name");
+    const headers = this[headersSymbol];
+    if (!headers) return false;
+    return headers.has(name);
+  }
+
   validateString(name, "name");
   return this[kOutHeaders] !== null && !!this[kOutHeaders][name.toLowerCase()];
 };
 
 OutgoingMessage.prototype.removeHeader = function (name) {
+  if (this[kBunServer]) {
+    validateString(name, "name");
+    if ((this._header !== undefined && this._header !== null) || this[headerStateSymbol] === NodeHTTPHeaderState.sent) {
+      throw $ERR_HTTP_HEADERS_SENT("remove");
+    }
+    const headers = this[headersSymbol];
+    if (!headers) return;
+    headers.delete(name);
+    return;
+  }
+
   validateString(name, "name");
 
   if (this._header) {
@@ -799,12 +993,23 @@ ObjectDefineProperty(OutgoingMessage.prototype, "writableEnded", {
 ObjectDefineProperty(OutgoingMessage.prototype, "writableNeedDrain", {
   __proto__: null,
   get: function () {
+    if (this[kBunServer]) {
+      return !this.destroyed && !this.finished && this[kBodyChunks] && this[kBodyChunks].length > 0;
+    }
     return !this.destroyed && !this.finished && this[kNeedDrain];
   },
 });
 
 const crlf_buf = Buffer.from("\r\n");
 OutgoingMessage.prototype.write = function (chunk, encoding, callback) {
+  if (this[kBunServer]) {
+    if (typeof encoding === "function") {
+      callback = encoding;
+      encoding = null;
+    }
+    return write_(this, chunk, encoding, callback, false);
+  }
+
   if (typeof encoding === "function") {
     callback = encoding;
     encoding = null;
@@ -977,6 +1182,10 @@ function onFinish(outmsg) {
 }
 
 OutgoingMessage.prototype.end = function (chunk, encoding, callback) {
+  if (this[kBunServer]) {
+    return this;
+  }
+
   if (typeof chunk === "function") {
     callback = chunk;
     chunk = null;
@@ -1050,11 +1259,19 @@ OutgoingMessage.prototype.end = function (chunk, encoding, callback) {
 };
 
 OutgoingMessage.prototype._finish = function () {
+  if (this[kBunServer]) {
+    $assert(false, "oops!");
+  }
+
   $assert(this[kSocket]);
   this.emit("prefinish");
 };
 
 OutgoingMessage.prototype._flush = function () {
+  if (this[kBunServer]) {
+    $assert(false, "oops!");
+  }
+
   const socket = this[kSocket];
 
   if (socket?.writable) {
@@ -1072,6 +1289,10 @@ OutgoingMessage.prototype._flush = function () {
 };
 
 OutgoingMessage.prototype._flushOutput = function (socket) {
+  if (this[kBunServer]) {
+    $assert(false, "oops!");
+  }
+
   const outputLength = this.outputData.length;
   if (outputLength <= 0) return undefined;
 
@@ -1094,6 +1315,10 @@ OutgoingMessage.prototype._flushOutput = function (socket) {
 };
 
 OutgoingMessage.prototype.flushHeaders = function () {
+  if (this[kBunServer]) {
+    return;
+  }
+
   if (!this._header) {
     this._implicitHeader();
   }
@@ -1108,6 +1333,10 @@ OutgoingMessage.prototype.pipe = function () {
 };
 
 OutgoingMessage.prototype[EE.captureRejectionSymbol] = function (err, event) {
+  if (this[kBunServer]) {
+    $assert(false, "oops!");
+  }
+
   this.destroy(err);
 };
 

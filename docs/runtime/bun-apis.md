@@ -200,7 +200,7 @@ Click the link in the right column to jump to the associated documentation.
 ---
 
 - Low-level / Internals
-- `Bun.mmap`, `Bun.gc`, `Bun.generateHeapSnapshot`, [`bun:jsc`](https://bun.com/docs/api/bun-jsc)
+- `Bun.mmap`, `Bun.gc`, `Bun.generateHeapSnapshot`, [`bun:jsc`](https://bun.com/reference/bun/jsc)
 
 ---
 

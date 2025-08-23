@@ -47,8 +47,7 @@ const NumberIsNaN = Number.isNaN;
 
 const { format } = require("internal/util/inspect");
 
-const { IncomingMessage } = require("internal/http/server/_http_incoming");
-const { IncomingMessage: IncomingMessage2 } = require("node:_http_incoming");
+const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("internal/http/server/_http_outgoing");
 const { OutgoingMessage: OutgoingMessage2 } = require("node:_http_outgoing");
 const { kIncomingMessage, chunkExpression } = require("node:_http_common");

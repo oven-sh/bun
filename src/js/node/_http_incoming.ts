@@ -1,5 +1,29 @@
 // Hardcoded module "node:_http_incoming"
 const { Readable, finished } = require("node:stream");
+const {
+  kHandle,
+  kEmptyObject,
+  STATUS_CODES,
+  abortedSymbol,
+  eofInProgress,
+  typeSymbol,
+  NodeHTTPIncomingRequestType,
+  noBodySymbol,
+  fakeSocketSymbol,
+  webRequestOrResponse,
+  setRequestTimeout,
+  emitEOFIncomingMessage,
+  NodeHTTPBodyReadState,
+  bodyStreamSymbol,
+  getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
+  isAbortError,
+  emitErrorNextTickIfErrorListenerNT,
+  statusCodeSymbol,
+  statusMessageSymbol,
+  NodeHTTPResponseAbortEvent,
+  webRequestOrResponseHasBodyValue,
+} = require("internal/http");
+const { FakeSocket } = require("internal/http/FakeSocket");
 
 const ObjectDefineProperty = Object.defineProperty;
 
@@ -9,6 +33,9 @@ const kHeadersCount = Symbol("kHeadersCount");
 const kTrailers = Symbol("kTrailers");
 const kTrailersDistinct = Symbol("kTrailersDistinct");
 const kTrailersCount = Symbol("kTrailersCount");
+const kBunServer = Symbol("kBunServer");
+
+const nop = () => {};
 
 function readStart(socket) {
   if (socket && !socket._paused && socket.readable) socket.resume();
@@ -20,6 +47,42 @@ function readStop(socket) {
 
 /* Abstract base class for ServerRequest and ClientResponse. */
 function IncomingMessage(socket) {
+  this[Symbol.for("meghan.kind")] = "_http_incoming";
+
+  // BUN: server
+  // (symbol, url, method, headers, rawHeaders, handle, hasBody)
+  if (socket === kHandle) {
+    this[kBunServer] = true;
+    this[abortedSymbol] = false;
+    this[eofInProgress] = false;
+    this._consuming = false;
+    this._dumped = false;
+    this.complete = false;
+    this._closed = false;
+    this[typeSymbol] = NodeHTTPIncomingRequestType.NodeHTTPResponse;
+    this.url = arguments[1];
+    this.method = arguments[2];
+    this.headers = arguments[3];
+    this.rawHeaders = arguments[4];
+    this[kHandle] = arguments[5];
+    this[noBodySymbol] = !arguments[6];
+    this[fakeSocketSymbol] = arguments[7];
+    Readable.$call(this);
+
+    if (arguments[6]) {
+      this.on("pause", onIncomingMessagePauseNodeHTTPResponse);
+      this.on("resume", onIncomingMessageResumeNodeHTTPResponse);
+    }
+
+    this._readableState.readingMore = true;
+
+    this.httpVersion = "1.1";
+    this.httpVersionMajor = 1;
+    this.httpVersionMinor = 1;
+    return;
+  }
+
+  this[kBunServer] = false;
   let streamOptions;
 
   if (socket) {
@@ -68,9 +131,16 @@ $toClass(IncomingMessage, "IncomingMessage", Readable);
 ObjectDefineProperty(IncomingMessage.prototype, "connection", {
   __proto__: null,
   get: function () {
+    if (this[kBunServer]) {
+      return (this[fakeSocketSymbol] ??= new FakeSocket(this));
+    }
     return this.socket;
   },
   set: function (val) {
+    if (this[kBunServer]) {
+      this[fakeSocketSymbol] = val;
+      return;
+    }
     this.socket = val;
   },
 });
@@ -118,6 +188,9 @@ ObjectDefineProperty(IncomingMessage.prototype, "headersDistinct", {
 ObjectDefineProperty(IncomingMessage.prototype, "trailers", {
   __proto__: null,
   get: function () {
+    if (this[kBunServer]) {
+      return kEmptyObject;
+    }
     if (!this[kTrailers]) {
       this[kTrailers] = {};
 
@@ -131,6 +204,9 @@ ObjectDefineProperty(IncomingMessage.prototype, "trailers", {
     return this[kTrailers];
   },
   set: function (val) {
+    if (this[kBunServer]) {
+      return;
+    }
     this[kTrailers] = val;
   },
 });
@@ -156,6 +232,18 @@ ObjectDefineProperty(IncomingMessage.prototype, "trailersDistinct", {
 });
 
 IncomingMessage.prototype.setTimeout = function setTimeout(msecs, callback) {
+  if (this[kBunServer]) {
+    this.take;
+    const req = this[kHandle] || this[webRequestOrResponse];
+
+    if (req) {
+      setRequestTimeout(req, Math.ceil(msecs / 1000));
+      typeof callback === "function" && this.once("timeout", callback);
+    }
+    return this;
+    return;
+  }
+
   if (callback) this.on("timeout", callback);
   this.socket.setTimeout(msecs);
   return this;
@@ -170,6 +258,78 @@ IncomingMessage.prototype.setTimeout = function setTimeout(msecs, callback) {
 // version.
 // Ref: https://v8.dev/blog/v8-release-89
 IncomingMessage.prototype._read = function _read(n) {
+  if (kHandle) {
+    if (!this._consuming) {
+      this._readableState.readingMore = false;
+      this._consuming = true;
+    }
+
+    const socket = this.socket;
+    if (socket && socket.readable) {
+      //https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/_http_incoming.js#L211-L213
+      socket.resume();
+    }
+
+    if (this[eofInProgress]) {
+      // There is a nextTick pending that will emit EOF
+      return;
+    }
+
+    let internalRequest;
+    if (this[noBodySymbol]) {
+      emitEOFIncomingMessage(this);
+      return;
+    } else if ((internalRequest = this[kHandle])) {
+      const bodyReadState = internalRequest.hasBody;
+
+      if (
+        (bodyReadState & NodeHTTPBodyReadState.done) !== 0 ||
+        bodyReadState === NodeHTTPBodyReadState.none ||
+        this._dumped
+      ) {
+        emitEOFIncomingMessage(this);
+      }
+
+      if ((bodyReadState & NodeHTTPBodyReadState.hasBufferedDataDuringPause) !== 0) {
+        const drained = internalRequest.drainRequestBody();
+        if (drained && !this._dumped) {
+          this.push(drained);
+        }
+      }
+
+      if (!internalRequest.ondata) {
+        internalRequest.ondata = onDataIncomingMessage.bind(this);
+        internalRequest.hasCustomOnData = false;
+      }
+
+      return true;
+    } else if (this[bodyStreamSymbol] == null) {
+      // If it's all available right now, we skip going through ReadableStream.
+      let completeBody = getCompleteWebRequestOrResponseBodyValueAsArrayBuffer(this[webRequestOrResponse]);
+      if (completeBody) {
+        $assert(completeBody instanceof ArrayBuffer, "completeBody is not an ArrayBuffer");
+        $assert(completeBody.byteLength > 0, "completeBody should not be empty");
+
+        // They're ignoring the data. Let's not do anything with it.
+        if (!this._dumped) {
+          this.push(new Buffer(completeBody));
+        }
+        emitEOFIncomingMessage(this);
+        return;
+      }
+
+      const reader = this[webRequestOrResponse].body?.getReader?.() as ReadableStreamDefaultReader;
+      if (!reader) {
+        emitEOFIncomingMessage(this);
+        return;
+      }
+
+      this[bodyStreamSymbol] = reader;
+      consumeStream(this, reader);
+    }
+    return;
+  }
+
   if (!this._consuming) {
     this._readableState.readingMore = false;
     this._consuming = true;
@@ -185,6 +345,53 @@ IncomingMessage.prototype._read = function _read(n) {
 // any messages, before ever calling this.  In that case, just skip
 // it, since something else is destroying this connection anyway.
 IncomingMessage.prototype._destroy = function _destroy(err, cb) {
+  if (this[kBunServer]) {
+    const shouldEmitAborted = !this.readableEnded || !this.complete;
+
+    if (shouldEmitAborted) {
+      this[abortedSymbol] = true;
+      // IncomingMessage emits 'aborted'.
+      // Client emits 'abort'.
+      this.emit("aborted");
+    }
+
+    // Suppress "AbortError" from fetch() because we emit this in the 'aborted' event
+    if (isAbortError(err)) {
+      err = undefined;
+    }
+
+    var nodeHTTPResponse = this[kHandle];
+    if (nodeHTTPResponse) {
+      this[kHandle] = undefined;
+      nodeHTTPResponse.onabort = nodeHTTPResponse.ondata = undefined;
+      if (!nodeHTTPResponse.finished && shouldEmitAborted) {
+        nodeHTTPResponse.abort();
+      }
+      const socket = this.socket;
+      if (socket && !socket.destroyed && shouldEmitAborted) {
+        socket.destroy(err);
+      }
+    } else {
+      const stream = this[bodyStreamSymbol];
+      this[bodyStreamSymbol] = undefined;
+      const streamState = stream?.$state;
+
+      if (streamState === $streamReadable || streamState === $streamWaiting || streamState === $streamWritable) {
+        stream?.cancel?.().catch(nop);
+      }
+
+      const socket = this.socket;
+      if (socket && !socket.destroyed && shouldEmitAborted) {
+        socket.destroy(err);
+      }
+    }
+
+    if ($isCallable(cb)) {
+      emitErrorNextTickIfErrorListenerNT(this, err, cb);
+    }
+    return;
+  }
+
   if (!this.readableEnded || !this.complete) {
     this.aborted = true;
     this.emit("aborted");
@@ -369,6 +576,21 @@ IncomingMessage.prototype._addHeaderLineDistinct = function (field, value, dest)
 // Call this instead of resume() if we want to just
 // dump all the data to /dev/null
 IncomingMessage.prototype._dump = function _dump() {
+  if (this[kBunServer]) {
+    if (!this._dumped) {
+      this._dumped = true;
+      // If there is buffered data, it may trigger 'data' events.
+      // Remove 'data' event listeners explicitly.
+      this.removeAllListeners("data");
+      const handle = this[kHandle];
+      if (handle) {
+        handle.ondata = undefined;
+      }
+      this.resume();
+    }
+    return;
+  }
+
   if (!this._dumped) {
     this._dumped = true;
     // If there is buffered data, it may trigger 'data' events.
@@ -385,6 +607,165 @@ function onError(self, error, cb) {
     cb();
   } else {
     cb(error);
+  }
+}
+
+// BUN: server extras
+ObjectDefineProperty(IncomingMessage.prototype, "socket", {
+  get() {
+    if (this[kBunServer]) {
+      return (this[fakeSocketSymbol] ??= new FakeSocket(this));
+    }
+    return this.__socket;
+  },
+  set(value) {
+    if (this[kBunServer]) {
+      this[fakeSocketSymbol] = value;
+      return;
+    }
+    this.__socket = value;
+    return;
+  },
+});
+
+ObjectDefineProperty(IncomingMessage.prototype, "rawTrailers", {
+  get() {
+    if (this[kBunServer]) {
+      return [];
+    }
+    return this.__rawTrailers;
+  },
+  set(value) {
+    if (this[kBunServer]) {
+      return;
+    }
+    this.__rawTrailers = value;
+    return;
+  },
+});
+
+ObjectDefineProperty(IncomingMessage.prototype, "aborted", {
+  get() {
+    if (this[kBunServer]) {
+      return this[abortedSymbol];
+    }
+    return this.__aborted;
+  },
+  set(value) {
+    if (this[kBunServer]) {
+      this[abortedSymbol] = value;
+      return;
+    }
+    this.__aborted = value;
+    return;
+  },
+});
+
+ObjectDefineProperty(IncomingMessage.prototype, "statusCode", {
+  get() {
+    if (this[kBunServer]) {
+      return this[statusCodeSymbol];
+    }
+    return this.__statusCode;
+  },
+  set(value) {
+    if (this[kBunServer]) {
+      if (!(value in STATUS_CODES)) return;
+      this[statusCodeSymbol] = value;
+      return;
+    }
+    this.__statusCode = value;
+    return;
+  },
+});
+
+ObjectDefineProperty(IncomingMessage.prototype, "statusMessage", {
+  get() {
+    if (this[kBunServer]) {
+      return this[statusMessageSymbol];
+    }
+    return this.__statusMessage;
+  },
+  set(value) {
+    if (this[kBunServer]) {
+      this[statusMessageSymbol] = value;
+      return;
+    }
+    this.__statusMessage = value;
+    return;
+  },
+});
+
+IncomingMessage.prototype._construct = function (callback) {
+  if (this[kBunServer]) {
+    // TODO: streaming
+    const type = this[typeSymbol];
+    if (type === NodeHTTPIncomingRequestType.FetchResponse) {
+      if (!webRequestOrResponseHasBodyValue(this[webRequestOrResponse])) {
+        this.complete = true;
+        this.push(null);
+      }
+    }
+    callback();
+    return;
+  }
+  Readable.prototype._construct?.$call(this, callback);
+};
+
+function onIncomingMessagePauseNodeHTTPResponse(this: import("node:http").IncomingMessage) {
+  const handle = this[kHandle];
+  if (handle && !this.destroyed) {
+    handle.pause();
+  }
+}
+
+function onIncomingMessageResumeNodeHTTPResponse(this: import("node:http").IncomingMessage) {
+  const handle = this[kHandle];
+  if (handle && !this.destroyed) {
+    const resumed = handle.resume();
+    if (resumed && resumed !== true) {
+      const bodyReadState = handle.hasBody;
+      if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
+        emitEOFIncomingMessage(this);
+      }
+      this.push(resumed);
+    }
+  }
+}
+
+function onDataIncomingMessage(this: import("node:http").IncomingMessage, chunk, isLast, aborted) {
+  if (aborted === NodeHTTPResponseAbortEvent.abort) {
+    this.destroy();
+    return;
+  }
+  if (chunk && !this._dumped) this.push(chunk);
+  if (isLast) emitEOFIncomingMessage(this);
+}
+
+async function consumeStream(self, reader: ReadableStreamDefaultReader) {
+  var done = false;
+  var value;
+  var aborted = false;
+  try {
+    while (true) {
+      const result = reader.readMany();
+      if ($isPromise(result)) {
+        ({ done, value } = await result);
+      } else {
+        ({ done, value } = result);
+      }
+      if (self.destroyed || (aborted = self[abortedSymbol])) break;
+      if (!self._dumped) for (var v of value) self.push(v);
+      if (self.destroyed || (aborted = self[abortedSymbol]) || done) break;
+    }
+  } catch (err) {
+    if (aborted || self.destroyed) return;
+    self.destroy(err);
+  } finally {
+    reader?.cancel?.().catch?.(nop);
+  }
+  if (!self.complete) {
+    emitEOFIncomingMessage(self);
   }
 }
 

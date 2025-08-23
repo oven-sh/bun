@@ -1798,9 +1798,12 @@ pub const BundleV2 = struct {
             const output_file = &output_files.items[entry_point_index];
             const outbuf = bun.path_buffer_pool.get();
             defer bun.path_buffer_pool.put(outbuf);
-            var full_outfile_path = if (this.config.outdir.slice().len > 0)
-                bun.path.joinAbsStringBuf(this.config.outdir.slice(), outbuf, &[_][]const u8{compile_options.outfile.slice()}, .loose)
-            else
+            
+            var full_outfile_path = if (this.config.outdir.slice().len > 0) brk: {
+                const outdir_slice = this.config.outdir.slice();
+                const top_level_dir = bun.fs.FileSystem.instance.top_level_dir;
+                break :brk bun.path.joinAbsStringBuf(top_level_dir, outbuf, &[_][]const u8{ outdir_slice, compile_options.outfile.slice() }, .auto);
+            } else
                 compile_options.outfile.slice();
 
             // Add .exe extension for Windows targets if not already present
@@ -1835,11 +1838,33 @@ pub const BundleV2 = struct {
                 basename,
                 this.env,
                 this.config.format,
-                compile_options.windows_hide_console,
-                if (compile_options.windows_icon_path.slice().len > 0)
-                    compile_options.windows_icon_path.slice()
-                else
-                    null,
+                .{
+                    .hide_console = compile_options.windows_hide_console,
+                    .icon = if (compile_options.windows_icon_path.slice().len > 0)
+                        compile_options.windows_icon_path.slice()
+                    else
+                        null,
+                    .title = if (compile_options.windows_title.slice().len > 0)
+                        compile_options.windows_title.slice()
+                    else
+                        null,
+                    .publisher = if (compile_options.windows_publisher.slice().len > 0)
+                        compile_options.windows_publisher.slice()
+                    else
+                        null,
+                    .version = if (compile_options.windows_version.slice().len > 0)
+                        compile_options.windows_version.slice()
+                    else
+                        null,
+                    .description = if (compile_options.windows_description.slice().len > 0)
+                        compile_options.windows_description.slice()
+                    else
+                        null,
+                    .copyright = if (compile_options.windows_copyright.slice().len > 0)
+                        compile_options.windows_copyright.slice()
+                    else
+                        null,
+                },
                 compile_options.exec_argv.slice(),
                 if (compile_options.executable_path.slice().len > 0)
                     compile_options.executable_path.slice()

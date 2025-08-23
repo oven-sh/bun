@@ -33,7 +33,6 @@ pub fn decompress(dest: []u8, src: []const u8) Result {
     return .{ .success = result };
 }
 
-
 pub fn getDecompressedSize(src: []const u8) usize {
     return ZSTD_findDecompressedSize(src.ptr, src.len);
 }

@@ -1,5 +1,7 @@
 Store and retrieve sensitive credentials securely using the operating system's native credential storage APIs.
 
+**Experimental:** This API is new and experimental. It may change in the future.
+
 ```typescript
 import { secrets } from "bun";
 

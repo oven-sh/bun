@@ -1,7 +1,5 @@
-import { spawnSync } from "bun";
-import { beforeAll, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isCI, isLinux, isMacOS, isWindows } from "harness";
+import { expect, test } from "bun:test";
+import { isCI, isMacOS, isWindows } from "harness";
 
 // Helper to determine if we should use unrestricted keychain access
 // This is needed for macOS CI environments where user interaction is not available

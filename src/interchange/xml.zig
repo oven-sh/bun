@@ -2,9 +2,9 @@
 // Converts XML documents to JavaScript AST expressions following the same pattern as YAML/TOML parsers
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const logger = bun.logger;
-const js_ast = bun.JSAst;
+const js_ast = bun.ast;
 const E = js_ast.E;
 const Expr = js_ast.Expr;
 const OOM = bun.OOM;
@@ -151,9 +151,7 @@ pub const Line = enum(usize) {
 };
 
 // XML Token types
-pub fn Token(comptime enc: Encoding) type {
-    const chars = enc.chars();
-
+pub fn Token(comptime _: Encoding) type {
     return union(enum) {
         eof: Pos,
         text: TextRange,
@@ -240,7 +238,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 .allocator = allocator,
                 .pos = .from(0),
                 .line = .from(1),
-                .token = .eof(.from(0)),
+                .token = .{ .eof = .from(0) },
                 .stack_check = .init(),
                 .element_stack = .init(allocator),
                 .namespace_stack = .init(allocator),
@@ -318,7 +316,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 return .{ .err = switch (err) {
                     error.OutOfMemory => .oom,
                     error.StackOverflow => .stack_overflow,
-                    else => .unexpected_token(.{ .pos = parser.pos }),
+                    else => .{ .unexpected_token = .{ .pos = parser.pos } },
                 } };
             }
         };
@@ -399,7 +397,7 @@ pub fn Parser(comptime enc: Encoding) type {
             switch (c) {
                 chars.less_than => {
                     self.advance(1);
-                    const next_c = self.current() orelse return Error.unexpected_eof{ .pos = self.pos };
+                    const next_c = self.current() orelse return error.UnexpectedEof;
 
                     switch (next_c) {
                         chars.slash => {
@@ -434,8 +432,8 @@ pub fn Parser(comptime enc: Encoding) type {
             const name_start = self.pos;
             
             // Parse element name
-            if (!isNameStartChar(self.current() orelse return Error.malformed_element{ .pos = self.pos })) {
-                return Error.malformed_element{ .pos = self.pos };
+            if (!isNameStartChar(self.current() orelse return error.MalformedElement)) {
+                return error.MalformedElement;
             }
 
             while (self.current()) |c| {
@@ -456,7 +454,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         // Self-closing tag
                         self.advance(1);
                         if (self.current() != chars.greater_than) {
-                            return Error.malformed_element{ .pos = self.pos };
+                            return error.MalformedElement;
                         }
                         self.advance(1);
                         return .{ .element_self_closing = .{
@@ -483,7 +481,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         
                         // Check for duplicate attributes
                         if (self.current_attributes.contains(attr_name)) {
-                            return Error.duplicate_attribute{ .pos = attr.attribute.pos };
+                            return error.DuplicateAttribute;
                         }
                         
                         try self.current_attributes.put(attr_name, decoded_value);
@@ -492,15 +490,15 @@ pub fn Parser(comptime enc: Encoding) type {
                 }
             }
 
-            return Error.malformed_element{ .pos = self.pos };
+            return error.MalformedElement;
         }
 
         fn parseAttribute(self: *Self) !Token(enc) {
             const name_start = self.pos;
             
             // Parse attribute name
-            if (!isNameStartChar(self.current() orelse return Error.malformed_attribute{ .pos = self.pos })) {
-                return Error.malformed_attribute{ .pos = self.pos };
+            if (!isNameStartChar(self.current() orelse return error.MalformedAttribute)) {
+                return error.MalformedAttribute;
             }
 
             while (self.current()) |c| {
@@ -513,15 +511,15 @@ pub fn Parser(comptime enc: Encoding) type {
 
             // Expect '='
             if (self.current() != chars.equals) {
-                return Error.malformed_attribute{ .pos = self.pos };
+                return error.MalformedAttribute;
             }
             self.advance(1);
             self.skipWhitespace();
 
             // Parse attribute value
-            const quote_char = self.current() orelse return Error.malformed_attribute{ .pos = self.pos };
+            const quote_char = self.current() orelse return error.MalformedAttribute;
             if (quote_char != chars.quote and quote_char != chars.apostrophe) {
-                return Error.malformed_attribute{ .pos = self.pos };
+                return error.MalformedAttribute;
             }
             self.advance(1);
             const value_start = self.pos;
@@ -537,7 +535,7 @@ pub fn Parser(comptime enc: Encoding) type {
 
             const value_end = self.pos;
             if (self.current() != quote_char) {
-                return Error.malformed_attribute{ .pos = self.pos };
+                return error.MalformedAttribute;
             }
             self.advance(1);
 
@@ -550,11 +548,11 @@ pub fn Parser(comptime enc: Encoding) type {
             } };
         }
 
-        fn parseEndTag(self: *Self, start_pos: Pos) !Token(enc) {
+        fn parseEndTag(self: *Self, _: Pos) !Token(enc) {
             const name_start = self.pos;
             
-            if (!isNameStartChar(self.current() orelse return Error.malformed_element{ .pos = self.pos })) {
-                return Error.malformed_element{ .pos = self.pos };
+            if (!isNameStartChar(self.current() orelse return error.MalformedElement)) {
+                return error.MalformedElement;
             }
 
             while (self.current()) |c| {
@@ -566,14 +564,14 @@ pub fn Parser(comptime enc: Encoding) type {
             self.skipWhitespace();
 
             if (self.current() != chars.greater_than) {
-                return Error.malformed_element{ .pos = self.pos };
+                return error.MalformedElement;
             }
             self.advance(1);
 
             return .{ .element_end = .{
                 .name_start = name_start,
                 .name_end = name_end,
-                .pos = start_pos,
+                .pos = .zero,
             } };
         }
 
@@ -581,8 +579,8 @@ pub fn Parser(comptime enc: Encoding) type {
             const target_start = self.pos;
             
             // Parse target name
-            if (!isNameStartChar(self.current() orelse return Error.invalid_processing_instruction{ .pos = self.pos })) {
-                return Error.invalid_processing_instruction{ .pos = self.pos };
+            if (!isNameStartChar(self.current() orelse return error.InvalidProcessingInstruction)) {
+                return error.InvalidProcessingInstruction;
             }
 
             while (self.current()) |c| {
@@ -618,7 +616,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 self.advance(1);
             }
 
-            return Error.invalid_processing_instruction{ .pos = self.pos };
+            return error.InvalidProcessingInstruction;
         }
 
         fn parseXmlDeclaration(self: *Self, start_pos: Pos) !Token(enc) {
@@ -657,15 +655,15 @@ pub fn Parser(comptime enc: Encoding) type {
 
                 self.skipWhitespace();
                 if (self.current() != chars.equals) {
-                    return Error.invalid_xml_declaration{ .pos = self.pos };
+                    return error.InvalidXmlDeclaration;
                 }
                 self.advance(1);
                 self.skipWhitespace();
 
                 // Parse attribute value
-                const quote_char = self.current() orelse return Error.invalid_xml_declaration{ .pos = self.pos };
+                const quote_char = self.current() orelse return error.InvalidXmlDeclaration;
                 if (quote_char != chars.quote and quote_char != chars.apostrophe) {
-                    return Error.invalid_xml_declaration{ .pos = self.pos };
+                    return error.InvalidXmlDeclaration;
                 }
                 self.advance(1);
                 const attr_value_start = self.pos;
@@ -692,17 +690,17 @@ pub fn Parser(comptime enc: Encoding) type {
                 self.skipWhitespace();
             }
 
-            return Error.invalid_xml_declaration{ .pos = self.pos };
+            return error.InvalidXmlDeclaration;
         }
 
         fn parseExclamationToken(self: *Self, start_pos: Pos) !Token(enc) {
-            const next_c = self.current() orelse return Error.unexpected_eof{ .pos = self.pos };
+            const next_c = self.current() orelse return error.UnexpectedEof;
 
             switch (next_c) {
                 chars.hyphen => {
                     // Comment: <!--...-->
                     if (self.peek(1) != chars.hyphen) {
-                        return Error.invalid_comment{ .pos = self.pos };
+                        return error.InvalidComment;
                     }
                     self.advance(2);
                     return try self.parseComment(start_pos);
@@ -713,7 +711,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         self.advance(6);
                         return try self.parseCData(start_pos);
                     }
-                    return Error.invalid_cdata_section{ .pos = self.pos };
+                    return error.InvalidCdataSection;
                 },
                 else => {
                     // DTD declaration
@@ -722,7 +720,7 @@ pub fn Parser(comptime enc: Encoding) type {
             }
         }
 
-        fn parseComment(self: *Self, start_pos: Pos) !Token(enc) {
+        fn parseComment(self: *Self, _: Pos) !Token(enc) {
             const content_start = self.pos;
 
             while (self.current()) |c| {
@@ -739,10 +737,10 @@ pub fn Parser(comptime enc: Encoding) type {
                 self.advance(1);
             }
 
-            return Error.invalid_comment{ .pos = self.pos };
+            return error.InvalidComment;
         }
 
-        fn parseCData(self: *Self, start_pos: Pos) !Token(enc) {
+        fn parseCData(self: *Self, _: Pos) !Token(enc) {
             const content_start = self.pos;
 
             while (self.current()) |c| {
@@ -759,10 +757,10 @@ pub fn Parser(comptime enc: Encoding) type {
                 self.advance(1);
             }
 
-            return Error.invalid_cdata_section{ .pos = self.pos };
+            return error.InvalidCdataSection;
         }
 
-        fn parseDTD(self: *Self, start_pos: Pos) !Token(enc) {
+        fn parseDTD(self: *Self, _: Pos) !Token(enc) {
             const content_start = self.pos;
 
             // Simple DTD parsing - just find the closing >
@@ -786,10 +784,10 @@ pub fn Parser(comptime enc: Encoding) type {
                 self.advance(1);
             }
 
-            return Error.unexpected_eof{ .pos = self.pos };
+            return error.UnexpectedEof;
         }
 
-        fn parseText(self: *Self, start_pos: Pos) !Token(enc) {
+        fn parseText(self: *Self, _: Pos) !Token(enc) {
             const content_start = self.pos;
 
             while (self.current()) |c| {
@@ -820,7 +818,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 self.advance(1);
             }
 
-            return Error.invalid_entity_reference{ .pos = self.pos };
+            return error.InvalidEntityReference;
         }
 
         fn checkString(self: *const Self, str: []const u8) bool {
@@ -834,7 +832,9 @@ pub fn Parser(comptime enc: Encoding) type {
 
         // Main parsing logic
         pub fn parse(self: *Self) !Document {
-            try self.stack_check.check();
+            if (!self.stack_check.isSafeToRecurse()) {
+                try bun.throwStackOverflow();
+            }
 
             var xml_declaration: ?Document.XmlDeclaration = null;
             var dtd_declaration: ?[]const enc.unit() = null;
@@ -862,7 +862,7 @@ pub fn Parser(comptime enc: Encoding) type {
                     },
                     .element_start, .element_self_closing => {
                         if (root_expr != null) {
-                            return Error.malformed_element{ .pos = self.pos };
+                            return error.MalformedElement;
                         }
                         root_expr = try self.parseElement(token);
                     },
@@ -871,7 +871,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         continue;
                     },
                     else => {
-                        return Error.unexpected_token{ .pos = self.pos };
+                        return error.UnexpectedToken;
                     },
                 }
             }
@@ -884,13 +884,13 @@ pub fn Parser(comptime enc: Encoding) type {
         }
 
         fn parseElement(self: *Self, start_token: Token(enc)) !Expr {
-            const element_info = switch (start_token) {
-                .element_start => |info| info,
-                .element_self_closing => |info| info,
-                else => return Error.unexpected_token{ .pos = self.pos },
+            const name_start, const name_end, const is_self_closing = switch (start_token) {
+                .element_start => |info| .{ info.name_start, info.name_end, false },
+                .element_self_closing => |info| .{ info.name_start, info.name_end, true },
+                else => return error.UnexpectedToken,
             };
 
-            const element_name = self.input[element_info.name_start.cast()..element_info.name_end.cast()];
+            const element_name = self.input[name_start.cast()..name_end.cast()];
             
             // Create object for element
             var properties = std.ArrayList(js_ast.G.Property).init(self.allocator);
@@ -906,7 +906,7 @@ pub fn Parser(comptime enc: Encoding) type {
             }
             
             // Parse content for non-self-closing elements
-            if (start_token == .element_start) {
+            if (!is_self_closing) {
                 try self.element_stack.append(element_name);
                 defer _ = self.element_stack.pop();
 
@@ -915,11 +915,11 @@ pub fn Parser(comptime enc: Encoding) type {
                     const token = try self.nextToken();
                     
                     switch (token) {
-                        .eof => return Error.unmatched_element{ .pos = element_info.pos },
+                        .eof => return error.UnmatchedElement,
                         .element_end => |end_info| {
                             const end_name = self.input[end_info.name_start.cast()..end_info.name_end.cast()];
                             if (!std.mem.eql(enc.unit(), element_name, end_name)) {
-                                return Error.unmatched_element{ .pos = end_info.pos };
+                                return error.UnmatchedElement;
                             }
                             break;
                         },
@@ -933,13 +933,13 @@ pub fn Parser(comptime enc: Encoding) type {
                             const decoded_text = try self.decodeEntities(text_content);
                             // Skip whitespace-only text nodes
                             if (!isWhitespaceOnly(decoded_text)) {
-                                const text_expr = Expr.init(E.String, .{ .data = decoded_text }, element_info.pos.loc());
+                                const text_expr = Expr.init(E.String, .{ .data = decoded_text }, name_start.loc());
                                 try children.append(text_expr);
                             }
                         },
                         .cdata => |cdata| {
                             const cdata_content = self.input[cdata.start.cast()..cdata.end.cast()];
-                            const cdata_expr = Expr.init(E.String, .{ .data = cdata_content }, element_info.pos.loc());
+                            const cdata_expr = Expr.init(E.String, .{ .data = cdata_content }, name_start.loc());
                             try children.append(cdata_expr);
                         },
                         .comment => {
@@ -947,24 +947,21 @@ pub fn Parser(comptime enc: Encoding) type {
                             continue;
                         },
                         else => {
-                            return Error.unexpected_token{ .pos = self.pos };
+                            return error.UnexpectedToken;
                         },
                     }
                 }
             }
 
             // Add attributes to properties with @ prefix
-            var attr_iterator = attributes_map.iterator();
-            while (attr_iterator.next()) |entry| {
+            var attr_props_iterator = attributes_map.iterator();
+            while (attr_props_iterator.next()) |entry| {
                 const attr_key = try std.fmt.allocPrint(self.allocator, "@{s}", .{entry.key_ptr.*});
                 const attr_prop = js_ast.G.Property{
-                    .key = .init(E.String, .{ .data = attr_key }, element_info.pos.loc()),
-                    .value = .init(E.String, .{ .data = entry.value_ptr.* }, element_info.pos.loc()),
+                    .key = Expr.init(E.String, .{ .data = attr_key }, name_start.loc()),
+                    .value = Expr.init(E.String, .{ .data = entry.value_ptr.* }, name_start.loc()),
                     .kind = .normal,
-                    .is_computed = false,
-                    .is_method = false,
-                    .is_class_static = false,
-                    .method_and_prop_data = .{},
+                    .initializer = null,
                 };
                 try properties.append(attr_prop);
             }
@@ -974,10 +971,10 @@ pub fn Parser(comptime enc: Encoding) type {
             if (children.items.len == 0) {
                 // Empty element
                 if (attributes_map.count() == 0) {
-                    return .init(E.Null, .{}, element_info.pos.loc());
+                    return .init(E.Null, .{}, name_start.loc());
                 }
                 // Just attributes, no content
-                return .init(E.Object, .{ .properties = .fromList(properties) }, element_info.pos.loc());
+                return .init(E.Object, .{ .properties = .fromList(properties) }, name_start.loc());
             } else if (children.items.len == 1 and attributes_map.count() == 0) {
                 // Single text child with no attributes - return the text directly
                 if (children.items[0].data == .e_string) {
@@ -989,31 +986,25 @@ pub fn Parser(comptime enc: Encoding) type {
             if (children.items.len == 1) {
                 // Single child - add as __text property
                 const text_prop = js_ast.G.Property{
-                    .key = .init(E.String, .{ .data = "__text" }, element_info.pos.loc()),
+                    .key = Expr.init(E.String, .{ .data = "__text" }, name_start.loc()),
                     .value = children.items[0],
                     .kind = .normal,
-                    .is_computed = false,
-                    .is_method = false,
-                    .is_class_static = false,
-                    .method_and_prop_data = .{},
+                    .initializer = null,
                 };
                 try properties.append(text_prop);
             } else if (children.items.len > 1) {
                 // Multiple children - group by element name or create array
-                const children_array = Expr.init(E.Array, .{ .items = .fromList(children) }, element_info.pos.loc());
+                const children_array = Expr.init(E.Array, .{ .items = .fromList(children) }, name_start.loc());
                 const children_prop = js_ast.G.Property{
-                    .key = .init(E.String, .{ .data = "__children" }, element_info.pos.loc()),
+                    .key = Expr.init(E.String, .{ .data = "__children" }, name_start.loc()),
                     .value = children_array,
                     .kind = .normal,
-                    .is_computed = false,
-                    .is_method = false,
-                    .is_class_static = false,
-                    .method_and_prop_data = .{},
+                    .initializer = null,
                 };
                 try properties.append(children_prop);
             }
 
-            return .init(E.Object, .{ .properties = .fromList(properties) }, element_info.pos.loc());
+            return .init(E.Object, .{ .properties = .fromList(properties) }, name_start.loc());
         }
 
         fn decodeEntities(self: *Self, text: []const enc.unit()) ![]const enc.unit() {

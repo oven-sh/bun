@@ -8,6 +8,7 @@ pub const PerfEvent = enum(i32) {
     @"Bundler.ParseJS",
     @"Bundler.ParseJSON",
     @"Bundler.ParseTOML",
+    @"Bundler.ParseXML",
     @"Bundler.ParseYAML",
     @"Bundler.ResolveExportStarStatements",
     @"Bundler.Worker.create",

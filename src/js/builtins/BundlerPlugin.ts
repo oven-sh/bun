@@ -411,8 +411,8 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
           throw new TypeError("onResolve plugins 'path' field must be a string if provided");
         }
 
-        if (typeof userNamespace !== "string") {
-          throw new TypeError("onResolve plugins 'namespace' field must be a string");
+        if (userNamespace !== undefined && typeof userNamespace !== "string") {
+          throw new TypeError("onResolve plugins 'namespace' field must be a string if provided");
         }
 
         if (!path) {

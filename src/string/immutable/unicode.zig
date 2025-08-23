@@ -866,8 +866,9 @@ pub fn copyCP1252IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: t
 }
 
 pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: type, latin1_: Type) EncodeIntoResult {
-    for (buf_, latin1_) |*out, in| out.* = in;
-    return .{ .read = @as(u32, @truncate(latin1_.len)), .written = @as(u32, @truncate(latin1_.len)) };
+    const len = @min(buf_.len, latin1_.len);
+    for (buf_[0..len], latin1_[0..len]) |*out, in| out.* = in;
+    return .{ .read = @as(u32, @truncate(len)), .written = @as(u32, @truncate(len)) };
 }
 
 pub fn elementLengthCP1252IntoUTF16(comptime Type: type, cp1252_: Type) usize {

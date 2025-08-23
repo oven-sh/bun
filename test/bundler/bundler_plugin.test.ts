@@ -146,6 +146,46 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("plugin/ResolveEntryPointReturnsNull", {
+    files: {
+      "index.ts": /* ts */ `
+        console.log("hello world");
+      `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, args => {
+        return null;
+      });
+    },
+    run: {
+      stdout: "hello world",
+    },
+  });
+
+  itBundled("plugin/ResolveEntryPoint", {
+    files: {
+      "index.ts": /* ts */ `
+        console.log("original");
+      `,
+      "modified-entry.ts": /* ts */ `
+        console.log("modified");
+      `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, args => {
+        if ((args.kind === "entry-point-build" || args.kind === "entry-point-run") && args.path.endsWith("index.ts")) {
+          return {
+            path: path.resolve(dirname(args.path), "modified-entry.ts"),
+          };
+        }
+        return null;
+      });
+    },
+    run: {
+      stdout: "modified",
+    },
+  });
+
   // Load Plugin Errors
   itBundled("plugin/ResolveThrow", {
     files: resolveFixture,

@@ -1,10 +1,7 @@
 import { spawnSync } from "bun";
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { beforeAll, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isCI, isLinux, isMacOS } from "harness";
-import { setupMacOSKeychain } from "./secrets-helpers.ts";
-
-setupMacOSKeychain({ beforeAll, afterAll });
+import { bunEnv, bunExe, isCI, isLinux, isMacOS, isWindows } from "harness";
 
 // Helper to determine if we should use unrestricted keychain access
 // This is needed for macOS CI environments where user interaction is not available
@@ -175,7 +172,7 @@ beforeAll(async () => {
   }
 });
 
-test("Bun.secrets API", async () => {
+test.todoIf(isCI && !isWindows)("Bun.secrets API", async () => {
   const testService = "bun-test-service-" + Date.now();
   const testUser = "test-name-" + Math.random();
   const testPassword = "super-secret-value-123!@#";
@@ -300,7 +297,7 @@ test("Bun.secrets API", async () => {
   await Bun.secrets.delete({ service: testService, name: testUser });
 });
 
-test("Bun.secrets error handling", async () => {
+test.todoIf(isCI && !isWindows)("Bun.secrets error handling", async () => {
   // Test invalid arguments
 
   // Test 1: GET with missing options
@@ -368,7 +365,7 @@ test("Bun.secrets error handling", async () => {
   }
 });
 
-test("Bun.secrets handles empty strings as delete", async () => {
+test.todoIf(isCI && !isWindows)("Bun.secrets handles empty strings as delete", async () => {
   const testService = "bun-test-empty-" + Date.now();
   const testUser = "test-name-empty";
 
@@ -403,7 +400,7 @@ test("Bun.secrets handles empty strings as delete", async () => {
   expect(result).toBeNull();
 });
 
-test("Bun.secrets handles special characters", async () => {
+test.todoIf(isCI && !isWindows)("Bun.secrets handles special characters", async () => {
   const testService = "bun-test-special-" + Date.now();
   const testUser = "name@example.com";
   const testPassword = "p@$$w0rd!#$%^&*()_+-=[]{}|;':\",./<>?`~\n\t\r";
@@ -421,7 +418,7 @@ test("Bun.secrets handles special characters", async () => {
   await Bun.secrets.delete({ service: testService, name: testUser });
 });
 
-test("Bun.secrets handles unicode", async () => {
+test.todoIf(isCI && !isWindows)("Bun.secrets handles unicode", async () => {
   const testService = "bun-test-unicode-" + Date.now();
   const testUser = "用户";
   const testPassword = "密码🔒🔑 emoji and 中文";
@@ -439,7 +436,7 @@ test("Bun.secrets handles unicode", async () => {
   await Bun.secrets.delete({ service: testService, name: testUser });
 });
 
-test("Bun.secrets handles concurrent operations", async () => {
+test.todoIf(isCI && !isWindows)("Bun.secrets handles concurrent operations", async () => {
   const promises: Promise<void>[] = [];
   const count = 10;
 

@@ -14,53 +14,65 @@ type float32 = number;
 type uint16 = number;
 type uint32 = number;
 export const enum Loader {
-  jsx = 1,
-  js = 2,
-  ts = 3,
-  tsx = 4,
-  css = 5,
-  file = 6,
-  json = 7,
+  jsx = 0,
+  js = 1,
+  ts = 2,
+  tsx = 3,
+  css = 4,
+  file = 5,
+  json = 6,
+  jsonc = 7,
   toml = 8,
   wasm = 9,
   napi = 10,
   base64 = 11,
   dataurl = 12,
   text = 13,
-  sqlite = 14,
-  html = 15,
+  bunsh = 14,
+  sqlite = 15,
+  sqlite_embedded = 16,
+  html = 17,
+  yaml = 18,
 }
 export const LoaderKeys: {
-  1: "jsx";
-  jsx: "jsx";
-  2: "js";
-  js: "js";
-  3: "ts";
-  ts: "ts";
-  4: "tsx";
-  tsx: "tsx";
-  5: "css";
-  css: "css";
-  6: "file";
-  file: "file";
-  7: "json";
-  json: "json";
+  0: "jsx";
+  1: "js";
+  2: "ts";
+  3: "tsx";
+  4: "css";
+  5: "file";
+  6: "json";
+  7: "jsonc";
   8: "toml";
-  toml: "toml";
   9: "wasm";
-  wasm: "wasm";
   10: "napi";
-  napi: "napi";
   11: "base64";
-  base64: "base64";
   12: "dataurl";
-  dataurl: "dataurl";
   13: "text";
-  text: "text";
-  14: "sqlite";
-  sqlite: "sqlite";
-  15: "html";
-  "html": "html";
+  14: "bunsh";
+  15: "sqlite";
+  16: "sqlite_embedded";
+  17: "html";
+  18: "yaml";
+  jsx: 0;
+  js: 1;
+  ts: 2;
+  tsx: 3;
+  css: 4;
+  file: 5;
+  json: 6;
+  jsonc: 7;
+  toml: 8;
+  wasm: 9;
+  napi: 10;
+  base64: 11;
+  dataurl: 12;
+  text: 13;
+  bunsh: 14;
+  sqlite: 15;
+  sqlite_embedded: 16;
+  html: 17;
+  yaml: 18;
 };
 export const enum FrameworkEntryPointType {
   client = 1,

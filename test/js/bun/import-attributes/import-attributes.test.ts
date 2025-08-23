@@ -1,7 +1,7 @@
 import { bunExe, tempDirWithFiles } from "harness";
 import * as path from "path";
 
-const loaders = ["js", "jsx", "ts", "tsx", "json", "jsonc", "toml", "text", "sqlite", "file"];
+const loaders = ["js", "jsx", "ts", "tsx", "json", "jsonc", "toml", "yaml", "text", "sqlite", "file"];
 const other_loaders_do_not_crash = ["webassembly", "does_not_exist"];
 
 async function testBunRunRequire(dir: string, loader: string | null, filename: string): Promise<unknown> {

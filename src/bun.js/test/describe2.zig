@@ -558,6 +558,27 @@ pub const BaseScopeCfg = struct {
     self_mode: ScopeMode = .normal,
     self_only: bool = false,
     self_filter: bool = false,
+    /// returns null if the other already has the value
+    pub fn extend(this: BaseScopeCfg, other: BaseScopeCfg) ?BaseScopeCfg {
+        var result = this;
+        if (other.self_concurrent) {
+            if (result.self_concurrent) return null;
+            result.self_concurrent = true;
+        }
+        if (other.self_mode != .normal) {
+            if (result.self_mode != .normal) return null;
+            result.self_mode = other.self_mode;
+        }
+        if (other.self_only) {
+            if (result.self_only) return null;
+            result.self_only = true;
+        }
+        if (other.self_filter) {
+            if (result.self_filter) return null;
+            result.self_filter = true;
+        }
+        return result;
+    }
 };
 pub const ScopeMode = enum {
     normal,
@@ -758,6 +779,8 @@ pub const group = struct {
         last_was_start = false;
     }
 };
+
+pub const ScopeFunctions = @import("./ScopeFunctions.zig");
 
 const ci_info = @import("../../ci_info.zig");
 const std = @import("std");

@@ -1,5 +1,6 @@
 Complete before merge:
 
+- [ ] make sure ScopeFunctions class can finalize
 - [ ] add back bailing after nth failure
 - [ ] add back repeating failure/skip messages at the end of the test print
 - [ ] make sure failure exits with code 1

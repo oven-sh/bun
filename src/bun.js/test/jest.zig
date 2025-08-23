@@ -107,7 +107,7 @@ pub const TestRunner = struct {
     unhandled_errors_between_tests: u32 = 0,
     summary: Summary = Summary{},
 
-    describe2Root: Describe2.BunTest,
+    describe2Root: describe2.BunTest,
 
     pub const Drainer = jsc.AnyTask.New(TestRunner, drain);
 
@@ -359,102 +359,26 @@ pub const Jest = struct {
     }
 
     pub fn Bun__Jest__createTestModuleObject(globalObject: *JSGlobalObject) callconv(.C) JSValue {
-        return createTestModule(globalObject, false);
+        return createTestModule(globalObject);
     }
 
-    pub fn Bun__Jest__createTestPreloadObject(globalObject: *JSGlobalObject) callconv(.C) JSValue {
-        return createTestModule(globalObject, true);
-    }
-
-    pub fn createTestModule(globalObject: *JSGlobalObject, comptime outside_of_test: bool) JSValue {
-        const ThisTestScope, const ThisDescribeScope = if (outside_of_test)
-            .{ WrappedTestScope, WrappedDescribeScope }
-        else
-            .{ TestScope, DescribeScope };
-
+    pub fn createTestModule(globalObject: *JSGlobalObject) JSValue {
         const module = JSValue.createEmptyObject(globalObject, 14);
 
-        const test_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("test"), 2, Describe2.js_fns.genericTest(.{ .base = .{}, .signature = "test()" }).testFn, false);
-        module.put(globalObject, ZigString.static("test"), test_fn);
+        const test_scope_functions = describe2.ScopeFunctions.create(globalObject, .@"test", .zero, .{});
+        module.put(globalObject, ZigString.static("test"), test_scope_functions);
+        module.put(globalObject, ZigString.static("it"), test_scope_functions);
 
-        test_fn.put(globalObject, ZigString.static("concurrent"), jsc.host_fn.NewFunction(globalObject, ZigString.static("concurrent"), 2, Describe2.js_fns.genericTest(.{ .base = .{ .self_concurrent = true }, .signature = "test.concurrent()" }).testFn, false));
-        test_fn.put(globalObject, ZigString.static("only"), jsc.host_fn.NewFunction(globalObject, ZigString.static("only"), 2, Describe2.js_fns.genericTest(.{ .base = .{ .self_only = true }, .signature = "test.only()" }).testFn, false));
-        test_fn.put(globalObject, ZigString.static("skip"), jsc.host_fn.NewFunction(globalObject, ZigString.static("skip"), 2, Describe2.js_fns.genericTest(.{ .base = .{ .self_mode = .skip }, .signature = "test.skip()" }).testFn, false));
-        test_fn.put(globalObject, ZigString.static("todo"), jsc.host_fn.NewFunction(globalObject, ZigString.static("todo"), 2, Describe2.js_fns.genericTest(.{ .base = .{ .self_mode = .todo }, .signature = "test.todo()" }).testFn, false));
-        test_fn.put(globalObject, ZigString.static("failing"), jsc.host_fn.NewFunction(globalObject, ZigString.static("failing"), 2, Describe2.js_fns.genericTest(.{ .base = .{ .self_mode = .failing }, .signature = "test.failing()" }).testFn, false));
+        const describe_scope_functions = describe2.ScopeFunctions.create(globalObject, .describe, .zero, .{});
+        module.put(globalObject, ZigString.static("describe"), describe_scope_functions);
 
-        inline for (.{ "skipIf", "todoIf", "each" }) |method_name| {
-            const name = ZigString.static(method_name);
-            test_fn.put(
-                globalObject,
-                name,
-                jsc.host_fn.NewFunction(globalObject, name, 2, @field(ThisTestScope, method_name), false),
-            );
-        }
-
-        test_fn.put(
-            globalObject,
-            ZigString.static("if"),
-            jsc.host_fn.NewFunction(globalObject, ZigString.static("if"), 2, ThisTestScope.callIf, false),
-        );
-
-        module.put(
-            globalObject,
-            ZigString.static("it"),
-            test_fn,
-        );
-        const describe = jsc.host_fn.NewFunction(globalObject, ZigString.static("describe"), 2, Describe2.js_fns.genericDescribe(.{ .base = .{}, .signature = "describe()" }).describeFn, false);
-        describe.put(globalObject, ZigString.static("concurrent"), jsc.host_fn.NewFunction(globalObject, ZigString.static("concurrent"), 2, Describe2.js_fns.genericDescribe(.{ .base = .{ .self_concurrent = true }, .signature = "describe.concurrent()" }).describeFn, false));
-        describe.put(globalObject, ZigString.static("only"), jsc.host_fn.NewFunction(globalObject, ZigString.static("only"), 2, Describe2.js_fns.genericDescribe(.{ .base = .{ .self_only = true }, .signature = "describe.only()" }).describeFn, false));
-        describe.put(globalObject, ZigString.static("skip"), jsc.host_fn.NewFunction(globalObject, ZigString.static("skip"), 2, Describe2.js_fns.genericDescribe(.{ .base = .{ .self_mode = .skip }, .signature = "describe.skip()" }).describeFn, false));
-        describe.put(globalObject, ZigString.static("todo"), jsc.host_fn.NewFunction(globalObject, ZigString.static("todo"), 2, Describe2.js_fns.genericDescribe(.{ .base = .{ .self_mode = .todo }, .signature = "describe.todo()" }).describeFn, false));
-        inline for (.{
-            "skipIf",
-            "todoIf",
-            "each",
-        }) |method_name| {
-            const name = ZigString.static(method_name);
-            describe.put(
-                globalObject,
-                name,
-                jsc.host_fn.NewFunction(globalObject, name, 2, @field(ThisDescribeScope, method_name), false),
-            );
-        }
-        describe.put(
-            globalObject,
-            ZigString.static("if"),
-            jsc.host_fn.NewFunction(globalObject, ZigString.static("if"), 2, ThisDescribeScope.callIf, false),
-        );
-
-        module.put(
-            globalObject,
-            ZigString.static("describe"),
-            describe,
-        );
-
-        module.put(globalObject, ZigString.static("beforeEach"), jsc.host_fn.NewFunction(globalObject, ZigString.static("beforeEach"), 1, Describe2.js_fns.genericHook(.beforeEach).hookFn, false));
-        module.put(globalObject, ZigString.static("beforeAll"), jsc.host_fn.NewFunction(globalObject, ZigString.static("beforeAll"), 1, Describe2.js_fns.genericHook(.beforeAll).hookFn, false));
-        module.put(globalObject, ZigString.static("afterAll"), jsc.host_fn.NewFunction(globalObject, ZigString.static("afterAll"), 1, Describe2.js_fns.genericHook(.afterAll).hookFn, false));
-        module.put(globalObject, ZigString.static("afterEach"), jsc.host_fn.NewFunction(globalObject, ZigString.static("afterEach"), 1, Describe2.js_fns.genericHook(.afterEach).hookFn, false));
-
-        module.put(
-            globalObject,
-            ZigString.static("setDefaultTimeout"),
-            jsc.host_fn.NewFunction(globalObject, ZigString.static("setDefaultTimeout"), 1, jsSetDefaultTimeout, false),
-        );
-
-        module.put(
-            globalObject,
-            ZigString.static("expect"),
-            Expect.js.getConstructor(globalObject),
-        );
-
-        // Add expectTypeOf function
-        module.put(
-            globalObject,
-            ZigString.static("expectTypeOf"),
-            ExpectTypeOf.js.getConstructor(globalObject),
-        );
+        module.put(globalObject, ZigString.static("beforeEach"), jsc.host_fn.NewFunction(globalObject, ZigString.static("beforeEach"), 1, describe2.js_fns.genericHook(.beforeEach).hookFn, false));
+        module.put(globalObject, ZigString.static("beforeAll"), jsc.host_fn.NewFunction(globalObject, ZigString.static("beforeAll"), 1, describe2.js_fns.genericHook(.beforeAll).hookFn, false));
+        module.put(globalObject, ZigString.static("afterAll"), jsc.host_fn.NewFunction(globalObject, ZigString.static("afterAll"), 1, describe2.js_fns.genericHook(.afterAll).hookFn, false));
+        module.put(globalObject, ZigString.static("afterEach"), jsc.host_fn.NewFunction(globalObject, ZigString.static("afterEach"), 1, describe2.js_fns.genericHook(.afterEach).hookFn, false));
+        module.put(globalObject, ZigString.static("setDefaultTimeout"), jsc.host_fn.NewFunction(globalObject, ZigString.static("setDefaultTimeout"), 1, jsSetDefaultTimeout, false));
+        module.put(globalObject, ZigString.static("expect"), Expect.js.getConstructor(globalObject));
+        module.put(globalObject, ZigString.static("expectTypeOf"), ExpectTypeOf.js.getConstructor(globalObject));
 
         createMockObjects(globalObject, module);
 
@@ -521,7 +445,6 @@ pub const Jest = struct {
         module.put(globalObject, ZigString.static("vi"), vi);
     }
 
-    extern fn Bun__Jest__testPreloadObject(*JSGlobalObject) JSValue;
     extern fn Bun__Jest__testModuleObject(*JSGlobalObject) JSValue;
     extern fn JSMock__jsMockFn(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn JSMock__jsModuleMock(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
@@ -538,26 +461,23 @@ pub const Jest = struct {
         callframe: *CallFrame,
     ) bun.JSError!JSValue {
         const vm = globalObject.bunVM();
+
         if (vm.is_in_preload or runner == null) {
-            return Bun__Jest__testPreloadObject(globalObject);
+            // in preload, no arguments needed
+        } else {
+            const arguments = callframe.arguments_old(2).slice();
+
+            if (arguments.len < 1 or !arguments[0].isString()) {
+                return globalObject.throw("Bun.jest() expects a string filename", .{});
+            }
+            var str = try arguments[0].toSlice(globalObject, bun.default_allocator);
+            defer str.deinit();
+            const slice = str.slice();
+
+            if (!std.fs.path.isAbsolute(slice)) {
+                return globalObject.throw("Bun.jest() expects an absolute file path, got '{s}'", .{slice});
+            }
         }
-
-        const arguments = callframe.arguments_old(2).slice();
-
-        if (arguments.len < 1 or !arguments[0].isString()) {
-            return globalObject.throw("Bun.jest() expects a string filename", .{});
-        }
-        var str = try arguments[0].toSlice(globalObject, bun.default_allocator);
-        defer str.deinit();
-        const slice = str.slice();
-
-        if (!std.fs.path.isAbsolute(slice)) {
-            return globalObject.throw("Bun.jest() expects an absolute file path, got '{s}'", .{slice});
-        }
-
-        const filepath = Fs.FileSystem.instance.filename_store.append([]const u8, slice) catch unreachable;
-        var scope = runner.?.getOrPutFile(filepath);
-        scope.push();
 
         return Bun__Jest__testModuleObject(globalObject);
     }
@@ -579,7 +499,6 @@ pub const Jest = struct {
 
     comptime {
         @export(&Bun__Jest__createTestModuleObject, .{ .name = "Bun__Jest__createTestModuleObject" });
-        @export(&Bun__Jest__createTestPreloadObject, .{ .name = "Bun__Jest__createTestPreloadObject" });
     }
 };
 
@@ -2493,7 +2412,7 @@ pub fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObj
 
 const string = []const u8;
 
-const Describe2 = @import("./describe2.zig");
+pub const describe2 = @import("./describe2.zig");
 const std = @import("std");
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const Snapshots = @import("./snapshot.zig").Snapshots;

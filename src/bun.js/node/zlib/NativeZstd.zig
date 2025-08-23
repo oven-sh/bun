@@ -148,24 +148,12 @@ const Context = struct {
                 this.state = state.?;
                 const result = c.ZSTD_CCtx_setPledgedSrcSize(state, pledged_src_size);
                 if (c.ZSTD_isError(result) > 0) return .init("Could not set pledged src size", -1, "ERR_ZLIB_INITIALIZATION_FAILED");
-
-                // Load dictionary if provided
-                if (this.dictionary) |dict| {
-                    const dict_err = this.setDictionary(dict);
-                    if (dict_err.isError()) return dict_err;
-                }
                 return .ok;
             },
             .ZSTD_DECOMPRESS => {
                 const state = c.ZSTD_createDCtx();
                 if (state == null) return .init("Could not initialize zstd instance", -1, "ERR_ZLIB_INITIALIZATION_FAILED");
                 this.state = state.?;
-
-                // Load dictionary if provided
-                if (this.dictionary) |dict| {
-                    const dict_err = this.setDictionary(dict);
-                    if (dict_err.isError()) return dict_err;
-                }
                 return .ok;
             },
             else => @panic("unreachable"),

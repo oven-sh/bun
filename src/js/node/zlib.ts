@@ -741,18 +741,7 @@ class Zstd extends ZlibBase {
     }
 
     // Handle dictionary option
-    let dictionary;
-    if (opts?.dictionary !== undefined) {
-      if (!isArrayBufferView(opts.dictionary)) {
-        if (isAnyArrayBuffer(opts.dictionary)) {
-          dictionary = Buffer.from(opts.dictionary);
-        } else {
-          throw $ERR_INVALID_ARG_TYPE("options.dictionary", "Buffer, TypedArray, DataView, or ArrayBuffer", opts.dictionary);
-        }
-      } else {
-        dictionary = opts.dictionary;
-      }
-    }
+    const dictionary = opts?.dictionary && isArrayBufferView(opts.dictionary) ? opts.dictionary : undefined;
 
     const handle = new NativeZstd(mode);
 

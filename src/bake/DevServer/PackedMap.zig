@@ -80,6 +80,7 @@ pub fn quotedContents(self: *const @This()) []u8 {
 }
 
 comptime {
+    // `ci_assert` builds add a `safety.ThreadLock`
     if (!Environment.ci_assert) {
         assert_eql(@sizeOf(@This()), @sizeOf(usize) * 7);
         assert_eql(@alignOf(@This()), @alignOf(usize));

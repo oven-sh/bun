@@ -182,14 +182,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 };
 
                 comptime {
-                    if (!Environment.ci_assert) {
-                        // On Windows, struct padding can cause size to be larger than expected
-                        // Allow for platform-specific padding while ensuring reasonable bounds
-                        const expected_size = @sizeOf(u64) * 5; // 40 bytes
-                        const actual_size = @sizeOf(@This());
-                        if (actual_size < expected_size or actual_size > expected_size + 16) {
-                            @compileError(std.fmt.comptimePrint("Struct size {} is outside expected range [{}, {}]", .{ actual_size, expected_size, expected_size + 16 }));
-                        }
+                    // Debug and ReleaseSafe builds add a tag to untagged unions
+                    if (!Environment.allow_assert) {
+                        bun.assert_eql(@sizeOf(@This()), @sizeOf(u64) * 5);
                         bun.assert_eql(@alignOf(@This()), @alignOf([*]u8));
                     }
                 }

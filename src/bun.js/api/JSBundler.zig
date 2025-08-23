@@ -1001,7 +1001,7 @@ pub const JSBundler = struct {
                 };
                 
                 const sourcemap = if (!sourcemap_value.isEmptyOrUndefinedOrNull())
-                    JSC.Node.StringOrBuffer.fromJSToOwnedSlice(global, sourcemap_value, bun.default_allocator) catch |err| {
+                    bun.JSC.Node.StringOrBuffer.fromJSToOwnedSlice(global, sourcemap_value, bun.default_allocator) catch |err| {
                         switch (err) {
                             error.OutOfMemory => {
                                 bun.outOfMemory();

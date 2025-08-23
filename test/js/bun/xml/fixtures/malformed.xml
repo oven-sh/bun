@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <proper>This is properly formed</proper>
+  
+  <!-- This element is not properly closed -->
+  <unclosed>This element doesn't have a closing tag
+  
+  <another>Another element</another>
+  
+  <!-- Missing closing quote in attribute -->
+  <badattr value="missing quote>Content</badattr>
+  
+  <!-- Invalid entity reference -->
+  <invalid_entity>&unknownentity;</invalid_entity>
+  
+  <!-- Nested tags with wrong closing order -->
+  <outer>
+    <inner>Content</outer>
+  </inner>
+  
+</root>

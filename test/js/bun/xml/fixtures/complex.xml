@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<library>
+  <metadata>
+    <name>Digital Library System</name>
+    <version>2.1.0</version>
+    <created>2024-01-15T10:30:00Z</created>
+  </metadata>
+  
+  <books>
+    <book id="book001" isbn="978-0123456789" available="true">
+      <title>Advanced JavaScript Patterns</title>
+      <author>
+        <firstName>Jane</firstName>
+        <lastName>Smith</lastName>
+        <bio><![CDATA[Jane Smith is a senior software engineer with over 10 years of experience in JavaScript development. She has contributed to several open-source projects and is known for her expertise in design patterns.]]></bio>
+      </author>
+      <publisher>
+        <name>Tech Books Inc.</name>
+        <location>San Francisco, CA</location>
+        <website>https://techbooks.com</website>
+      </publisher>
+      <details>
+        <pages>456</pages>
+        <language>English</language>
+        <format>Hardcover</format>
+        <price currency="USD">49.99</price>
+      </details>
+      <categories>
+        <category primary="true">Programming</category>
+        <category>JavaScript</category>
+        <category>Software Engineering</category>
+      </categories>
+      <reviews>
+        <review rating="5" reviewer="dev_expert">
+          <title>Excellent Resource</title>
+          <content>This book covers advanced JavaScript patterns in great detail.</content>
+          <date>2024-01-10</date>
+        </review>
+        <review rating="4" reviewer="code_ninja">
+          <title>Very Good</title>
+          <content>Comprehensive coverage but could use more examples.</content>
+          <date>2024-01-12</date>
+        </review>
+      </reviews>
+    </book>
+    
+    <book id="book002" isbn="978-9876543210" available="false">
+      <title>Modern Web Development</title>
+      <author>
+        <firstName>John</firstName>
+        <lastName>Doe</lastName>
+        <bio><![CDATA[John Doe is a full-stack developer and technical writer. He specializes in modern web technologies and has written extensively about React, Node.js, and cloud computing.]]></bio>
+      </author>
+      <publisher>
+        <name>Web Press</name>
+        <location>New York, NY</location>
+        <website>https://webpress.com</website>
+      </publisher>
+      <details>
+        <pages>312</pages>
+        <language>English</language>
+        <format>Paperback</format>
+        <price currency="USD">34.95</price>
+      </details>
+      <categories>
+        <category primary="true">Web Development</category>
+        <category>Frontend</category>
+        <category>Backend</category>
+      </categories>
+    </book>
+  </books>
+  
+  <configuration>
+    <database>
+      <host>localhost</host>
+      <port>5432</port>
+      <name>library_db</name>
+      <ssl enabled="true"/>
+    </database>
+    <cache>
+      <provider>redis</provider>
+      <ttl unit="seconds">3600</ttl>
+    </cache>
+    <features>
+      <search enabled="true" provider="elasticsearch"/>
+      <recommendations enabled="true" algorithm="collaborative"/>
+      <notifications enabled="false"/>
+    </features>
+  </configuration>
+</library>

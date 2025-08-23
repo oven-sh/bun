@@ -611,7 +611,7 @@ pub const Transpiler = struct {
         };
 
         switch (loader) {
-            .jsx, .tsx, .js, .ts, .json, .jsonc, .toml, .yaml, .text => {
+            .jsx, .tsx, .js, .ts, .json, .jsonc, .toml, .yaml, .xml, .text => {
                 var result = transpiler.parse(
                     ParseOptions{
                         .allocator = transpiler.allocator,
@@ -1170,7 +1170,7 @@ pub const Transpiler = struct {
                 };
             },
             // TODO: use lazy export AST
-            inline .toml, .yaml, .json, .jsonc => |kind| {
+            inline .toml, .yaml, .xml, .json, .jsonc => |kind| {
                 var expr = if (kind == .jsonc)
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
@@ -1181,6 +1181,8 @@ pub const Transpiler = struct {
                     TOML.parse(source, transpiler.log, allocator, false) catch return null
                 else if (kind == .yaml)
                     YAML.parse(source, transpiler.log, allocator) catch return null
+                else if (kind == .xml)
+                    XML.parse(source, transpiler.log, allocator) catch return null
                 else
                     @compileError("unreachable");
 
@@ -1593,6 +1595,7 @@ const strings = bun.strings;
 const api = bun.schema.api;
 const TOML = bun.interchange.toml.TOML;
 const YAML = bun.interchange.yaml.YAML;
+const XML = bun.interchange.xml.XML;
 const default_macro_js_value = jsc.JSValue.zero;
 
 const js_ast = bun.ast;

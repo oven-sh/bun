@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <message>Hello, World!</message>
+  <number>42</number>
+  <flag>true</flag>
+</root>

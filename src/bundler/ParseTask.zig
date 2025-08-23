@@ -360,6 +360,17 @@ fn getAST(
             const root = try YAML.parse(source, &temp_log, allocator);
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
         },
+        .xml => {
+            const trace = bun.perf.trace("Bundler.ParseXML");
+            defer trace.end();
+            var temp_log = bun.logger.Log.init(allocator);
+            defer {
+                temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
+                temp_log.msgs.clearAndFree();
+            }
+            const root = try XML.parse(source, &temp_log, allocator);
+            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
+        },
         .text => {
             const root = Expr.init(E.String, E.String{
                 .data = source.contents,
@@ -1420,6 +1431,7 @@ const strings = bun.strings;
 const BabyList = bun.collections.BabyList;
 const TOML = bun.interchange.toml.TOML;
 const YAML = bun.interchange.yaml.YAML;
+const XML = bun.interchange.xml.XML;
 
 const js_ast = bun.ast;
 const E = js_ast.E;

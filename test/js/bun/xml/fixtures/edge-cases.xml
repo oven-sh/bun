@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Test various edge cases -->
+<root>
+  <!-- Empty elements -->
+  <empty/>
+  <empty-with-attr id="test"/>
+  <empty-with-space> </empty-with-space>
+  
+  <!-- Whitespace handling -->
+  <whitespace>    </whitespace>
+  <mixed-whitespace>  text  with  spaces  </mixed-whitespace>
+  <newlines>
+    
+    content with newlines
+    
+  </newlines>
+  
+  <!-- Special attribute cases -->
+  <special-attrs 
+    empty-attr=""
+    single-quote-attr='value'
+    mixed-quotes="He said 'hello'"
+    numeric-attr="123"
+    boolean-like="true"
+    hyphenated-attr="value"
+    underscore_attr="value"
+    dots.attr="value"
+    />
+  
+  <!-- Nested empty elements -->
+  <outer>
+    <inner/>
+    <another>
+      <deep/>
+    </another>
+  </outer>
+  
+  <!-- Multiple similar elements -->
+  <list>
+    <item>First</item>
+    <item>Second</item>
+    <item>Third</item>
+  </list>
+  
+  <!-- Mixed content with whitespace -->
+  <paragraph>This is <emphasis>mixed</emphasis> content with <link>nested</link> elements.</paragraph>
+  
+  <!-- Self-closing tags with different spacing -->
+  <self-close1/>
+  <self-close2 />
+  <self-close3 attr="value"/>
+  <self-close4 attr="value" />
+  
+  <!-- Comments in various positions -->
+  <!-- Comment at start -->
+  <element-with-comment>
+    <!-- Comment in middle -->
+    Content
+    <!-- Comment at end -->
+  </element-with-comment>
+  
+  <!-- Processing instructions -->
+  <?target instruction?>
+  <element>Content after PI</element>
+  
+  <!-- CDATA with edge cases -->
+  <cdata-simple><![CDATA[Simple CDATA]]></cdata-simple>
+  <cdata-with-xml><![CDATA[<xml>content</xml>]]></cdata-with-xml>
+  <cdata-with-brackets><![CDATA[Contains ]]> in content but it's ok]]></cdata-with-brackets>
+  <cdata-empty><![CDATA[]]></cdata-empty>
+  
+  <!-- Unicode and special characters -->
+  <unicode>Ñoño café 世界 🌍</unicode>
+  <symbols>© ® ™ § ¶ † ‡ • …</symbols>
+  
+</root>

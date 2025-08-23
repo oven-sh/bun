@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document>
+  <title>XML Entity Reference Examples</title>
+  
+  <basic_entities>
+    <text>Less than: &lt;</text>
+    <text>Greater than: &gt;</text>
+    <text>Ampersand: &amp;</text>
+    <text>Quotation mark: &quot;</text>
+    <text>Apostrophe: &apos;</text>
+  </basic_entities>
+  
+  <numeric_entities>
+    <text>Capital A: &#65;</text>
+    <text>Hex Capital A: &#x41;</text>
+    <text>Euro symbol: &#8364;</text>
+    <text>Hex Euro: &#x20AC;</text>
+    <text>Copyright: &#169;</text>
+    <text>Trademark: &#8482;</text>
+  </numeric_entities>
+  
+  <mixed_content>
+    <html_like>&lt;div class=&quot;container&quot;&gt;
+      &lt;h1&gt;Title with &amp; symbol&lt;/h1&gt;
+      &lt;p&gt;Paragraph with &#8220;smart quotes&#8221; &amp; entities&lt;/p&gt;
+    &lt;/div&gt;</html_like>
+  </mixed_content>
+  
+  <code_examples>
+    <javascript><![CDATA[
+function compare(a, b) {
+  return a < b && b > 0;
+}
+
+const message = "Hello & goodbye";
+const html = '<div class="test">Content</div>';
+    ]]></javascript>
+    
+    <xml_content><![CDATA[
+<root attribute="value">
+  <child>Content with <nested>tags</nested></child>
+  <!-- Comment with special chars: < > & " ' -->
+</root>
+    ]]></xml_content>
+  </code_examples>
+  
+  <special_chars>
+    <unicode>Unicode: ☺ ♠ ♥ ♦ ♣ → ← ↑ ↓</unicode>
+    <accented>Accented: café naïve résumé</accented>
+    <currencies>Currencies: $ € £ ¥ ₹ ₿</currencies>
+    <math>Math: ∑ ∏ ∞ ∂ ∇ ∆ π α β γ</math>
+  </special_chars>
+  
+  <attributes>
+    <element attr1="Value with &lt; and &gt;" 
+             attr2="Quote: &quot;Hello&quot;" 
+             attr3="Mixed: &amp; symbols &apos;here&apos;">
+      Content
+    </element>
+  </attributes>
+  
+</document>

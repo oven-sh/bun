@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Tech Blog RSS Feed</title>
+    <link>https://techblog.example.com</link>
+    <description>Latest articles from our technology blog</description>
+    <language>en-us</language>
+    <lastBuildDate>Mon, 15 Jan 2024 10:30:00 GMT</lastBuildDate>
+    <generator>Custom RSS Generator 1.0</generator>
+    <atom:link href="https://techblog.example.com/rss" rel="self" type="application/rss+xml" />
+    
+    <item>
+      <title>Introduction to Modern JavaScript</title>
+      <link>https://techblog.example.com/articles/modern-javascript</link>
+      <description><![CDATA[
+        <p>Learn about the latest features in JavaScript including ES2024 features, async/await patterns, and modern development practices.</p>
+        <p>This article covers:</p>
+        <ul>
+          <li>New syntax features</li>
+          <li>Performance improvements</li>
+          <li>Best practices</li>
+        </ul>
+      ]]></description>
+      <pubDate>Mon, 15 Jan 2024 09:00:00 GMT</pubDate>
+      <guid isPermaLink="true">https://techblog.example.com/articles/modern-javascript</guid>
+      <category>JavaScript</category>
+      <category>Programming</category>
+      <author>editor@techblog.example.com (Jane Smith)</author>
+    </item>
+    
+    <item>
+      <title>Building Scalable APIs with Node.js</title>
+      <link>https://techblog.example.com/articles/scalable-apis-nodejs</link>
+      <description><![CDATA[
+        <p>A comprehensive guide to building scalable and maintainable APIs using Node.js and modern frameworks.</p>
+        <p>Topics include:</p>
+        <ul>
+          <li>API design principles</li>
+          <li>Error handling strategies</li>
+          <li>Performance optimization</li>
+          <li>Testing approaches</li>
+        </ul>
+      ]]></description>
+      <pubDate>Fri, 12 Jan 2024 14:30:00 GMT</pubDate>
+      <guid isPermaLink="true">https://techblog.example.com/articles/scalable-apis-nodejs</guid>
+      <category>Node.js</category>
+      <category>Backend</category>
+      <category>API</category>
+      <author>editor@techblog.example.com (John Doe)</author>
+    </item>
+    
+    <item>
+      <title>Frontend Performance Optimization</title>
+      <link>https://techblog.example.com/articles/frontend-performance</link>
+      <description><![CDATA[
+        <p>Learn how to optimize your frontend applications for better performance and user experience.</p>
+        <p>Key strategies covered:</p>
+        <ul>
+          <li>Bundle optimization</li>
+          <li>Image and asset optimization</li>
+          <li>Caching strategies</li>
+          <li>Performance monitoring</li>
+        </ul>
+      ]]></description>
+      <pubDate>Wed, 10 Jan 2024 11:15:00 GMT</pubDate>
+      <guid isPermaLink="true">https://techblog.example.com/articles/frontend-performance</guid>
+      <category>Frontend</category>
+      <category>Performance</category>
+      <category>Optimization</category>
+      <author>editor@techblog.example.com (Alice Johnson)</author>
+      <enclosure url="https://techblog.example.com/media/frontend-performance.mp3" 
+                length="15360000" 
+                type="audio/mpeg" />
+    </item>
+    
+    <item>
+      <title>Database Design Best Practices</title>
+      <link>https://techblog.example.com/articles/database-design</link>
+      <description><![CDATA[
+        <p>Essential principles for designing efficient and maintainable database schemas.</p>
+        <blockquote>
+          "Good database design is the foundation of any successful application"
+        </blockquote>
+      ]]></description>
+      <pubDate>Mon, 08 Jan 2024 08:45:00 GMT</pubDate>
+      <guid isPermaLink="true">https://techblog.example.com/articles/database-design</guid>
+      <category>Database</category>
+      <category>Design</category>
+      <category>SQL</category>
+      <author>editor@techblog.example.com (Bob Wilson)</author>
+    </item>
+  </channel>
+</rss>

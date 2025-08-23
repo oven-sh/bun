@@ -113,6 +113,7 @@ pub const Features = struct {
     pub var exited: usize = 0;
     pub var yarn_migration: usize = 0;
     pub var yaml_parse: usize = 0;
+    pub var xml_parse: usize = 0;
 
     comptime {
         @export(&napi_module_register, .{ .name = "Bun__napi_module_register_count" });

@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="300" height="200" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <title>Sample SVG Graphic</title>
+  <desc>A sample SVG demonstrating various elements and attributes</desc>
+  
+  <!-- Definitions for reusable elements -->
+  <defs>
+    <linearGradient id="gradient1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:rgb(255,255,0);stop-opacity:1" />
+      <stop offset="100%" style="stop-color:rgb(255,0,0);stop-opacity:1" />
+    </linearGradient>
+    
+    <pattern id="pattern1" patternUnits="userSpaceOnUse" width="10" height="10">
+      <rect x="0" y="0" width="5" height="5" fill="blue"/>
+      <rect x="5" y="5" width="5" height="5" fill="blue"/>
+    </pattern>
+    
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="3" dy="3" stdDeviation="2" flood-color="black" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="100%" height="100%" fill="lightgray" stroke="black" stroke-width="2"/>
+  
+  <!-- Basic shapes -->
+  <circle cx="50" cy="50" r="25" fill="url(#gradient1)" stroke="darkred" stroke-width="2"/>
+  
+  <rect x="100" y="25" width="50" height="50" fill="url(#pattern1)" stroke="blue" stroke-width="1"/>
+  
+  <ellipse cx="200" cy="50" rx="40" ry="25" fill="green" opacity="0.7" transform="rotate(15 200 50)"/>
+  
+  <!-- Polygon and polyline -->
+  <polygon points="50,125 75,100 100,125 100,150 50,150" 
+           fill="purple" 
+           stroke="black" 
+           stroke-width="1"/>
+  
+  <polyline points="120,125 140,100 160,110 180,90 200,125" 
+            fill="none" 
+            stroke="orange" 
+            stroke-width="3"/>
+  
+  <!-- Path with curves -->
+  <path d="M220,125 Q240,100 260,125 T300,125" 
+        fill="none" 
+        stroke="red" 
+        stroke-width="2" 
+        stroke-dasharray="5,5"/>
+  
+  <!-- Text elements -->
+  <text x="50" y="185" font-family="Arial, sans-serif" font-size="16" fill="black">
+    Sample Text
+  </text>
+  
+  <text x="150" y="185" font-family="Times, serif" font-size="14" fill="blue" transform="rotate(-10 150 185)">
+    Rotated Text
+  </text>
+  
+  <!-- Text with styling -->
+  <text x="230" y="185" font-weight="bold" font-style="italic" font-size="12" fill="darkgreen">
+    Styled Text
+  </text>
+  
+  <!-- Group with transformation -->
+  <g transform="translate(20, 160) scale(0.8)" filter="url(#shadow)">
+    <rect width="30" height="20" fill="yellow" stroke="orange"/>
+    <circle cx="15" cy="10" r="8" fill="red"/>
+    <text x="15" y="35" text-anchor="middle" font-size="10">Group</text>
+  </g>
+  
+  <!-- Use element referencing defined shapes -->
+  <use xlink:href="#gradient1" x="250" y="160" width="30" height="20"/>
+  
+  <!-- Image (placeholder) -->
+  <image xlink:href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='20' height='20' fill='pink'/%3E%3C/svg%3E" 
+         x="270" y="160" width="20" height="20"/>
+  
+  <!-- Animation (SMIL) -->
+  <circle cx="150" cy="150" r="5" fill="hotpink">
+    <animate attributeName="r" values="5;15;5" dur="2s" repeatCount="indefinite"/>
+    <animateTransform attributeName="transform" 
+                      type="rotate" 
+                      values="0 150 150;360 150 150" 
+                      dur="4s" 
+                      repeatCount="indefinite"/>
+  </circle>
+  
+</svg>

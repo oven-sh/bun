@@ -18,6 +18,7 @@ const Loader = {
   "17": "sqlite_embedded",
   "18": "html",
   "19": "yaml",
+  "20": "xml",
   jsx: 1,
   js: 2,
   ts: 3,
@@ -37,6 +38,7 @@ const Loader = {
   sqlite_embedded: 17,
   html: 18,
   yaml: 19,
+  xml: 20,
 };
 const LoaderKeys = {
   "1": "jsx",
@@ -58,6 +60,7 @@ const LoaderKeys = {
   "17": "sqlite_embedded",
   "18": "html",
   "19": "yaml",
+  "20": "xml",
   jsx: "jsx",
   js: "js",
   ts: "ts",
@@ -77,6 +80,7 @@ const LoaderKeys = {
   sqlite_embedded: "sqlite_embedded",
   html: "html",
   yaml: "yaml",
+  xml: "xml",
 };
 const FrameworkEntryPointType = {
   "1": 1,

@@ -634,6 +634,7 @@ pub const Loader = enum(u8) {
     sqlite_embedded = 16,
     html = 17,
     yaml = 18,
+    xml = 19,
 
     pub const Optional = enum(u8) {
         none = 254,
@@ -767,7 +768,7 @@ pub const Loader = enum(u8) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, or json", .{});
+            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, xml, wasm, bunsh, or json", .{});
         };
     }
 
@@ -786,6 +787,7 @@ pub const Loader = enum(u8) {
         .{ "jsonc", .jsonc },
         .{ "toml", .toml },
         .{ "yaml", .yaml },
+        .{ "xml", .xml },
         .{ "wasm", .wasm },
         .{ "napi", .napi },
         .{ "node", .napi },
@@ -814,6 +816,7 @@ pub const Loader = enum(u8) {
         .{ "jsonc", .json },
         .{ "toml", .toml },
         .{ "yaml", .yaml },
+        .{ "xml", .xml },
         .{ "wasm", .wasm },
         .{ "node", .napi },
         .{ "dataurl", .dataurl },
@@ -854,6 +857,7 @@ pub const Loader = enum(u8) {
             .jsonc => .json,
             .toml => .toml,
             .yaml => .yaml,
+            .xml => .xml,
             .wasm => .wasm,
             .napi => .napi,
             .base64 => .base64,
@@ -876,6 +880,7 @@ pub const Loader = enum(u8) {
             .jsonc => .jsonc,
             .toml => .toml,
             .yaml => .yaml,
+            .xml => .xml,
             .wasm => .wasm,
             .napi => .napi,
             .base64 => .base64,

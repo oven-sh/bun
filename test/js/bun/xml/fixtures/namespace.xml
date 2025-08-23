@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root xmlns:app="http://example.com/app"
+      xmlns:config="http://example.com/config"
+      xmlns:user="http://example.com/user"
+      xmlns="http://example.com/default">
+  
+  <app:application name="MyApp" version="1.0.0">
+    <app:description>Sample application with XML namespaces</app:description>
+    <app:metadata>
+      <app:created>2024-01-15</app:created>
+      <app:author>Development Team</app:author>
+    </app:metadata>
+  </app:application>
+  
+  <config:configuration>
+    <config:database>
+      <config:host>db.example.com</config:host>
+      <config:port>5432</config:port>
+      <config:credentials>
+        <config:username>app_user</config:username>
+        <config:password encrypted="true">c2VjcmV0</config:password>
+      </config:credentials>
+    </config:database>
+    
+    <config:services>
+      <config:service name="auth" enabled="true">
+        <config:endpoint>https://auth.example.com</config:endpoint>
+        <config:timeout>30</config:timeout>
+      </config:service>
+      <config:service name="logging" enabled="false">
+        <config:endpoint>https://logs.example.com</config:endpoint>
+        <config:level>DEBUG</config:level>
+      </config:service>
+    </config:services>
+  </config:configuration>
+  
+  <user:users>
+    <user:user id="usr001" type="admin">
+      <user:profile>
+        <user:name>Alice Johnson</user:name>
+        <user:email>alice@example.com</user:email>
+        <user:role>Administrator</user:role>
+      </user:profile>
+      <user:preferences>
+        <user:theme>dark</user:theme>
+        <user:language>en-US</user:language>
+        <user:notifications>
+          <user:email enabled="true"/>
+          <user:push enabled="false"/>
+        </user:notifications>
+      </user:preferences>
+    </user:user>
+    
+    <user:user id="usr002" type="regular">
+      <user:profile>
+        <user:name>Bob Smith</user:name>
+        <user:email>bob@example.com</user:email>
+        <user:role>User</user:role>
+      </user:profile>
+      <user:preferences>
+        <user:theme>light</user:theme>
+        <user:language>en-US</user:language>
+      </user:preferences>
+    </user:user>
+  </user:users>
+  
+  <!-- Default namespace elements -->
+  <settings>
+    <general>
+      <timeout>300</timeout>
+      <retries>3</retries>
+    </general>
+    <ui>
+      <theme>auto</theme>
+      <animations enabled="true"/>
+    </ui>
+  </settings>
+  
+</root>

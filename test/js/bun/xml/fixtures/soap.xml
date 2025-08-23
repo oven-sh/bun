@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+               xmlns:web="http://example.com/webservice"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+               xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  
+  <soap:Header>
+    <web:Authentication>
+      <web:Username>admin</web:Username>
+      <web:Password>secretpassword</web:Password>
+      <web:Token>abc123def456</web:Token>
+    </web:Authentication>
+    
+    <web:RequestInfo>
+      <web:RequestId>req-12345</web:RequestId>
+      <web:Timestamp>2024-01-15T10:30:00Z</web:Timestamp>
+      <web:ClientVersion>1.2.3</web:ClientVersion>
+    </web:RequestInfo>
+  </soap:Header>
+  
+  <soap:Body>
+    <web:GetUserInfoRequest>
+      <web:UserId>user123</web:UserId>
+      <web:IncludeProfile>true</web:IncludeProfile>
+      <web:IncludePreferences>true</web:IncludePreferences>
+      <web:Fields>
+        <web:Field>firstName</web:Field>
+        <web:Field>lastName</web:Field>
+        <web:Field>email</web:Field>
+        <web:Field>phone</web:Field>
+      </web:Fields>
+    </web:GetUserInfoRequest>
+    
+    <web:CreateOrderRequest>
+      <web:Customer>
+        <web:CustomerId>cust456</web:CustomerId>
+        <web:Name>John Doe</web:Name>
+        <web:Email>john.doe@example.com</web:Email>
+        <web:Address>
+          <web:Street>123 Main St</web:Street>
+          <web:City>Springfield</web:City>
+          <web:State>IL</web:State>
+          <web:ZipCode>62701</web:ZipCode>
+          <web:Country>USA</web:Country>
+        </web:Address>
+      </web:Customer>
+      
+      <web:Items>
+        <web:Item>
+          <web:ProductId>prod001</web:ProductId>
+          <web:ProductName>Widget A</web:ProductName>
+          <web:Quantity>2</web:Quantity>
+          <web:UnitPrice currency="USD">19.99</web:UnitPrice>
+          <web:Discount type="percentage">10</web:Discount>
+        </web:Item>
+        <web:Item>
+          <web:ProductId>prod002</web:ProductId>
+          <web:ProductName>Gadget B</web:ProductName>
+          <web:Quantity>1</web:Quantity>
+          <web:UnitPrice currency="USD">45.50</web:UnitPrice>
+          <web:Discount type="fixed">5.00</web:Discount>
+        </web:Item>
+      </web:Items>
+      
+      <web:ShippingOptions>
+        <web:Method>standard</web:Method>
+        <web:ExpectedDelivery>2024-01-20</web:ExpectedDelivery>
+        <web:Cost currency="USD">8.99</web:Cost>
+      </web:ShippingOptions>
+      
+      <web:PaymentInfo>
+        <web:Method>credit_card</web:Method>
+        <web:BillingAddress same-as-shipping="false">
+          <web:Street>456 Oak Ave</web:Street>
+          <web:City>Chicago</web:City>
+          <web:State>IL</web:State>
+          <web:ZipCode>60601</web:ZipCode>
+          <web:Country>USA</web:Country>
+        </web:BillingAddress>
+      </web:PaymentInfo>
+    </web:CreateOrderRequest>
+  </soap:Body>
+  
+</soap:Envelope>

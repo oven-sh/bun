@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Large XML document for performance testing -->
+<catalog>
+  <metadata>
+    <generated>2024-01-15T10:30:00Z</generated>
+    <total-products>1000</total-products>
+    <version>1.0</version>
+  </metadata>
+  
+  <categories>
+    <category id="electronics" name="Electronics">
+      <subcategory id="computers" name="Computers"/>
+      <subcategory id="phones" name="Mobile Phones"/>
+      <subcategory id="audio" name="Audio Equipment"/>
+    </category>
+    <category id="books" name="Books">
+      <subcategory id="fiction" name="Fiction"/>
+      <subcategory id="non-fiction" name="Non-Fiction"/>
+      <subcategory id="technical" name="Technical"/>
+    </category>
+    <category id="home" name="Home & Garden">
+      <subcategory id="furniture" name="Furniture"/>
+      <subcategory id="tools" name="Tools"/>
+      <subcategory id="decor" name="Home Decor"/>
+    </category>
+  </categories>
+  
+  <products>
+    <!-- This will be a large repeating structure -->
+    <product id="prod001" category="electronics" subcategory="computers" featured="true" active="true">
+      <name>High-Performance Laptop</name>
+      <description><![CDATA[A powerful laptop designed for professional use with advanced features and excellent performance capabilities.]]></description>
+      <price currency="USD" discount="10">1299.99</price>
+      <specifications>
+        <spec name="CPU">Intel Core i7</spec>
+        <spec name="RAM">16GB DDR4</spec>
+        <spec name="Storage">512GB SSD</spec>
+        <spec name="Display">15.6" Full HD</spec>
+        <spec name="Graphics">Integrated</spec>
+        <spec name="Weight">2.1 kg</spec>
+      </specifications>
+      <inventory>
+        <quantity>45</quantity>
+        <warehouse>WH-001</warehouse>
+        <reserved>3</reserved>
+        <available>42</available>
+      </inventory>
+      <ratings>
+        <average>4.5</average>
+        <count>127</count>
+        <distribution>
+          <rating stars="5" count="78"/>
+          <rating stars="4" count="32"/>
+          <rating stars="3" count="12"/>
+          <rating stars="2" count="3"/>
+          <rating stars="1" count="2"/>
+        </distribution>
+      </ratings>
+      <tags>
+        <tag>laptop</tag>
+        <tag>computer</tag>
+        <tag>professional</tag>
+        <tag>high-performance</tag>
+      </tags>
+    </product>
+    
+    <product id="prod002" category="books" subcategory="technical" featured="false" active="true">
+      <name>Advanced Programming Concepts</name>
+      <description><![CDATA[Comprehensive guide to advanced programming concepts including design patterns, algorithms, and software architecture principles.]]></description>
+      <price currency="USD" discount="0">49.99</price>
+      <specifications>
+        <spec name="Pages">456</spec>
+        <spec name="Format">Hardcover</spec>
+        <spec name="Publisher">Tech Publications</spec>
+        <spec name="Language">English</spec>
+        <spec name="ISBN">978-1234567890</spec>
+        <spec name="Edition">2nd</spec>
+      </specifications>
+      <inventory>
+        <quantity>23</quantity>
+        <warehouse>WH-002</warehouse>
+        <reserved>1</reserved>
+        <available>22</available>
+      </inventory>
+      <ratings>
+        <average>4.8</average>
+        <count>89</count>
+        <distribution>
+          <rating stars="5" count="71"/>
+          <rating stars="4" count="15"/>
+          <rating stars="3" count="2"/>
+          <rating stars="2" count="1"/>
+          <rating stars="1" count="0"/>
+        </distribution>
+      </ratings>
+      <tags>
+        <tag>programming</tag>
+        <tag>advanced</tag>
+        <tag>technical</tag>
+        <tag>reference</tag>
+      </tags>
+    </product>
+    
+    <product id="prod003" category="home" subcategory="tools" featured="true" active="true">
+      <name>Professional Tool Set</name>
+      <description><![CDATA[Complete tool set for home improvement and professional use. Includes all essential tools in a durable carrying case.]]></description>
+      <price currency="USD" discount="15">89.99</price>
+      <specifications>
+        <spec name="Tools">42 pieces</spec>
+        <spec name="Material">Chrome Vanadium Steel</spec>
+        <spec name="Case">Hard Plastic</spec>
+        <spec name="Warranty">5 years</spec>
+        <spec name="Weight">3.2 kg</spec>
+      </specifications>
+      <inventory>
+        <quantity>67</quantity>
+        <warehouse>WH-003</warehouse>
+        <reserved>5</reserved>
+        <available>62</available>
+      </inventory>
+      <ratings>
+        <average>4.3</average>
+        <count>156</count>
+        <distribution>
+          <rating stars="5" count="89"/>
+          <rating stars="4" count="45"/>
+          <rating stars="3" count="15"/>
+          <rating stars="2" count="5"/>
+          <rating stars="1" count="2"/>
+        </distribution>
+      </ratings>
+      <tags>
+        <tag>tools</tag>
+        <tag>professional</tag>
+        <tag>home-improvement</tag>
+        <tag>complete-set</tag>
+      </tags>
+    </product>
+  </products>
+  
+  <suppliers>
+    <supplier id="supp001" active="true">
+      <name>TechCorp Solutions</name>
+      <contact>
+        <email>sales@techcorp.com</email>
+        <phone>+1-555-0123</phone>
+        <address>
+          <street>123 Tech Boulevard</street>
+          <city>San Francisco</city>
+          <state>CA</state>
+          <zip>94105</zip>
+          <country>USA</country>
+        </address>
+      </contact>
+      <terms>
+        <payment-days>30</payment-days>
+        <discount-rate>5</discount-rate>
+        <minimum-order>1000</minimum-order>
+      </terms>
+    </supplier>
+    
+    <supplier id="supp002" active="true">
+      <name>Global Books Distribution</name>
+      <contact>
+        <email>orders@globalbooks.com</email>
+        <phone>+1-555-0456</phone>
+        <address>
+          <street>456 Publishing Lane</street>
+          <city>New York</city>
+          <state>NY</state>
+          <zip>10001</zip>
+          <country>USA</country>
+        </address>
+      </contact>
+      <terms>
+        <payment-days>45</payment-days>
+        <discount-rate>8</discount-rate>
+        <minimum-order>500</minimum-order>
+      </terms>
+    </supplier>
+  </suppliers>
+  
+</catalog>

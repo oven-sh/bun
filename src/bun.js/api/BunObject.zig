@@ -1067,22 +1067,22 @@ pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
                     @field(@TypeOf(entry.tag()), @typeName(jsc.API.HTTPServer)) => {
                         var server: *jsc.API.HTTPServer = entry.as(jsc.API.HTTPServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.js_value.get() orelse .js_undefined;
+                        return server.js_value.get();
                     },
                     @field(@TypeOf(entry.tag()), @typeName(jsc.API.DebugHTTPServer)) => {
                         var server: *jsc.API.DebugHTTPServer = entry.as(jsc.API.DebugHTTPServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.js_value.get() orelse .js_undefined;
+                        return server.js_value.get();
                     },
                     @field(@TypeOf(entry.tag()), @typeName(jsc.API.DebugHTTPSServer)) => {
                         var server: *jsc.API.DebugHTTPSServer = entry.as(jsc.API.DebugHTTPSServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.js_value.get() orelse .js_undefined;
+                        return server.js_value.get();
                     },
                     @field(@TypeOf(entry.tag()), @typeName(jsc.API.HTTPSServer)) => {
                         var server: *jsc.API.HTTPSServer = entry.as(jsc.API.HTTPSServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.js_value.get() orelse .js_undefined;
+                        return server.js_value.get();
                     },
                     else => {},
                 }
@@ -1117,7 +1117,7 @@ pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
                     if (route_list_object != .zero) {
                         ServerType.js.routeListSetCached(obj, globalObject, route_list_object);
                     }
-                    server.js_value.set(globalObject, obj);
+                    server.js_value.setStrong(obj, globalObject);
 
                     if (config.allow_hot) {
                         if (globalObject.bunVM().hotMap()) |hot| {

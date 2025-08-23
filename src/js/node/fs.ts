@@ -309,6 +309,40 @@ var access = function access(path, mode, callback) {
       callback(null, folder);
     }, callback);
   },
+  mkdtempDisposable = function mkdtempDisposable(prefix, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+
+    const pathModule = require("node:path");
+    const cwd = process.cwd();
+
+    fs.mkdtemp(prefix, options).then(function (path) {
+      // Stash the full path in case of process.chdir()
+      const fullPath = pathModule.resolve(cwd, path);
+
+      const remove = async () => {
+        return new Promise((resolve, reject) => {
+          rm(fullPath, { maxRetries: 0, recursive: true, force: true, retryDelay: 0 }, (err) => {
+            if (err) reject(err);
+            else resolve(undefined);
+          });
+        });
+      };
+      const result = {
+        __proto__: null,
+        path,
+        remove,
+        async [Symbol.asyncDispose]() {
+          await remove();
+        },
+      };
+      callback(null, result);
+    }, callback);
+  },
   open = function open(path, flags, mode, callback) {
     if (arguments.length < 3) {
       callback = flags;
@@ -554,6 +588,23 @@ var access = function access(path, mode, callback) {
   lstatSync = fs.lstatSync.bind(fs) as unknown as typeof import("node:fs").lstatSync,
   mkdirSync = fs.mkdirSync.bind(fs) as unknown as typeof import("node:fs").mkdirSync,
   mkdtempSync = fs.mkdtempSync.bind(fs) as unknown as typeof import("node:fs").mkdtempSync,
+  mkdtempDisposableSync = function mkdtempDisposableSync(prefix, options) {
+    const path = fs.mkdtempSync(prefix, options);
+    const pathModule = require("node:path");
+    // Stash the full path in case of process.chdir()
+    const fullPath = pathModule.resolve(process.cwd(), path);
+    
+    const remove = () => {
+      rmSync(fullPath, { maxRetries: 0, recursive: true, force: true, retryDelay: 100 });
+    };
+    return {
+      path,
+      remove,
+      [Symbol.dispose]() {
+        remove();
+      },
+    };
+  },
   openSync = fs.openSync.bind(fs) as unknown as typeof import("node:fs").openSync,
   readSync = function readSync(fd, buffer, offsetOrOptions, length, position) {
     let offset = offsetOrOptions;
@@ -1190,7 +1241,9 @@ var exports = {
   mkdir,
   mkdirSync,
   mkdtemp,
+  mkdtempDisposable,
   mkdtempSync,
+  mkdtempDisposableSync,
   open,
   openSync,
   read,
@@ -1340,7 +1393,9 @@ setName(lutimesSync, "lutimesSync");
 setName(mkdir, "mkdir");
 setName(mkdirSync, "mkdirSync");
 setName(mkdtemp, "mkdtemp");
+setName(mkdtempDisposable, "mkdtempDisposable");
 setName(mkdtempSync, "mkdtempSync");
+setName(mkdtempDisposableSync, "mkdtempDisposableSync");
 setName(open, "open");
 setName(openSync, "openSync");
 setName(read, "read");

@@ -442,6 +442,11 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
     externs += `extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(${classSymbolName(typeName, "call")}) SYSV_ABI;` + "\n";
   }
 
+  if (obj.instanceCallable) {
+    externs +=
+      `extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(${symbolName(typeName, "callAsFunction")}) SYSV_ABI;` + "\n";
+  }
+
   for (const name in protoFields) {
     if ("value" in protoFields[name]) {
       const { value } = protoFields[name];
@@ -1366,12 +1371,16 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
   }
 
   const final = obj.final ?? true;
+  const baseClass = obj.instanceCallable ? "JSC::InternalFunction" : "JSC::JSDestructibleObject";
+  const structureFlags = obj.instanceCallable
+    ? `Base::StructureFlags${obj.hasOwnProperties() ? ` | HasStaticPropertyTable` : ""}`
+    : `Base::StructureFlags${obj.hasOwnProperties() ? ` | HasStaticPropertyTable` : ""}`;
 
   return `
-  class ${name}${final ? " final" : ""} : public JSC::JSDestructibleObject {
+  class ${name}${final ? " final" : ""} : public ${baseClass} {
     public:
-        using Base = JSC::JSDestructibleObject;
-        static constexpr unsigned StructureFlags = Base::StructureFlags${obj.hasOwnProperties() ? ` | HasStaticPropertyTable` : ""};
+        using Base = ${baseClass};
+        static constexpr unsigned StructureFlags = ${structureFlags};
         static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
 
         DECLARE_EXPORT_INFO;
@@ -1390,7 +1399,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         static void destroy(JSC::JSCell*);
         static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
         {
-            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(${JSType}), StructureFlags), info());
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(${obj.instanceCallable ? "JSC::InternalFunctionType" : `static_cast<JSC::JSType>(${JSType})`}, StructureFlags), info());
         }
 
         static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
@@ -1424,12 +1433,19 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 
         void* m_ctx { nullptr };
 
-
+        ${
+          obj.instanceCallable
+            ? `
+        static JSC::CallData getCallData(JSC::JSCell*);
+        ${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr);
+        `
+            : `
         ${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
             ${weakInit.trim()}
+        }`
         }
 
         void finishCreation(JSC::VM&);
@@ -1671,6 +1687,26 @@ void ${name}::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
+${
+  obj.instanceCallable
+    ? `
+JSC::CallData ${name}::getCallData(JSC::JSCell*)
+{
+    CallData callData;
+    callData.type = CallData::Type::Native;
+    callData.native.function = ${symbolName(typeName, "callAsFunction")};
+    return callData;
+}
+
+${name}::${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+            : Base(vm, structure, ${symbolName(typeName, "callAsFunction")}, nullptr)
+        {
+            m_ctx = sinkPtr;
+        }
+`
+    : ""
+}
+
 
 ${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
   ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx);
@@ -1840,6 +1876,7 @@ function generateZig(
     hasPendingActivity = false,
     structuredClone = false,
     getInternalProperties = false,
+    instanceCallable = false,
     callbacks = {},
   } = {} as ClassDefinition,
 ) {
@@ -2029,6 +2066,19 @@ const JavaScriptCoreBindings = struct {
         pub fn ${classSymbolName(typeName, "call")}(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
           if (comptime Environment.enable_logs) log_zig_call("${typeName}", callFrame);
           return @call(.always_inline, jsc.toJSHostFn(${typeName}.call), .{globalObject, callFrame});
+        }
+      `;
+    }
+    if (instanceCallable) {
+      exports.set("callAsFunction", symbolName(typeName, "callAsFunction"));
+      output += `
+        pub fn ${symbolName(typeName, "callAsFunction")}(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
+          if (comptime Environment.enable_logs) log_zig_call("${typeName} (instance call)", callFrame);
+          const this = callFrame.this();
+          const instance = ${typeName}.fromJS(this) orelse {
+            return jsc.JSValue.js_undefined;
+          };
+          return @call(.always_inline, jsc.toJSHostFnWithContext(${typeName}, ${typeName}.callAsFunction), .{instance, globalObject, callFrame});
         }
       `;
     }

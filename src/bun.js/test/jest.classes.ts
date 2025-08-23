@@ -788,7 +788,7 @@ export default [
     name: "ScopeFunctions",
     construct: false,
     noConstructor: true,
-    call: true,
+    instanceCallable: true,
     finalize: true,
     JSType: "0b11101110",
     values: ["each"],

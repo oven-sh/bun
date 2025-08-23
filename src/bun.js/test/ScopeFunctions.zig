@@ -38,6 +38,10 @@ pub fn fnEach(_: *ScopeFunctions, _: *JSGlobalObject, _: *CallFrame) bun.JSError
     @panic("TODO: implement .each()");
 }
 
+pub fn callAsFunction(_: *ScopeFunctions, _: *JSGlobalObject, _: *CallFrame) bun.JSError!JSValue {
+    @panic("TODO: call ScopeFunctions");
+}
+
 fn genericIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *CallFrame, cfg: describe2.BaseScopeCfg, name: []const u8, invert: bool) bun.JSError!JSValue {
     const args = callFrame.arguments();
     if (args.len != 1) return globalThis.throw("Expected 1 argument to {s}, got {d}", .{ name, args.len });
@@ -82,10 +86,6 @@ pub fn create(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue, cfg: d
     const value = scope_functions.toJS(globalThis);
     value.ensureStillAlive();
     return value;
-}
-
-pub fn call(_: *JSGlobalObject, _: *CallFrame) bun.JSError!JSValue {
-    @panic("TODO: call ScopeFunctions");
 }
 
 const std = @import("std");

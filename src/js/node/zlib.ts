@@ -759,7 +759,7 @@ class Zstd extends ZlibBase {
     const pledgedSrcSize = opts?.pledgedSrcSize ?? undefined;
 
     const writeState = new Uint32Array(2);
-    handle.init(initParamsArray, pledgedSrcSize, writeState, processCallback, dictionary);
+    handle.init(initParamsArray, pledgedSrcSize, writeState, processCallback, dictionary || undefined);
     super(opts, mode, handle, zstdDefaultOpts);
     this._writeState = writeState;
   }

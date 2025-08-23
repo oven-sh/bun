@@ -63,13 +63,13 @@ pub fn estimatedSize(this: *const @This()) usize {
 pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.argumentsAsArray(5);
     const this_value = callframe.this();
-    if (callframe.argumentsCount() < 4 or callframe.argumentsCount() > 5) return globalThis.ERR(.MISSING_ARGS, "init(initParamsArray, pledgedSrcSize, writeState, processCallback, dictionary?)", .{}).throw();
+    if (callframe.argumentsCount() != 5) return globalThis.ERR(.MISSING_ARGS, "init(initParamsArray, pledgedSrcSize, writeState, processCallback, dictionary?)", .{}).throw();
 
     const initParamsArray_value = arguments[0];
     const pledgedSrcSize_value = arguments[1];
     const writeState_value = arguments[2];
     const processCallback_value = arguments[3];
-    const dictionary_value = if (callframe.argumentsCount() >= 5) arguments[4] else jsc.JSValue.js_undefined;
+    const dictionary_value = arguments[4];
 
     const writeState = writeState_value.asArrayBuffer(globalThis) orelse return globalThis.throwInvalidArgumentTypeValue("writeState", "Uint32Array", writeState_value);
     if (writeState.typed_array_type != .Uint32Array) return globalThis.throwInvalidArgumentTypeValue("writeState", "Uint32Array", writeState_value);
@@ -151,8 +151,8 @@ const Context = struct {
 
                 // Load dictionary if provided
                 if (this.dictionary) |dict| {
-                    const dict_result = c.ZSTD_CCtx_loadDictionary(@ptrCast(this.state), dict.ptr, dict.len);
-                    if (c.ZSTD_isError(dict_result) > 0) return .init("Could not load dictionary", -1, "ERR_ZLIB_INITIALIZATION_FAILED");
+                    const dict_err = this.setDictionary(dict);
+                    if (dict_err.isError()) return dict_err;
                 }
                 return .ok;
             },
@@ -163,8 +163,8 @@ const Context = struct {
 
                 // Load dictionary if provided
                 if (this.dictionary) |dict| {
-                    const dict_result = c.ZSTD_DCtx_loadDictionary(@ptrCast(this.state), dict.ptr, dict.len);
-                    if (c.ZSTD_isError(dict_result) > 0) return .init("Could not load dictionary", -1, "ERR_ZLIB_INITIALIZATION_FAILED");
+                    const dict_err = this.setDictionary(dict);
+                    if (dict_err.isError()) return dict_err;
                 }
                 return .ok;
             },

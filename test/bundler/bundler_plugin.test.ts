@@ -147,7 +147,7 @@ describe("bundler", () => {
   });
 
   for (const value of [null, undefined, true, 1, "string", {} as never]) {
-    const str = JSON.stringify(value);
+    const str = JSON.stringify(value) ?? "undefined";
     itBundled(`plugin/ResolveEntryPointReturns${str.charAt(0).toUpperCase() + str.slice(1)}`, {
       files: {
         "index.ts": /* ts */ `

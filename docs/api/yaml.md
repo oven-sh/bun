@@ -186,7 +186,7 @@ console.log(database.port); // 5432
 
 ## Hot Reloading with YAML
 
-One of the most powerful features of Bun's YAML support is hot reloading. When you run your application with `bun --hot`, changes to YAML files are automatically detected and reloaded without restarting your application.
+One of the most powerful features of Bun's YAML support is hot reloading. When you run your application with `bun --hot`, changes to YAML files are automatically detected and reloaded without closing connections
 
 ### Configuration Hot Reloading
 
@@ -200,8 +200,7 @@ features:
   verbose: false
 ```
 
-```ts
-// server.ts
+```ts#server.ts
 import { server, features } from "./config.yaml";
 
 console.log(`Starting server on ${server.host}:${server.port}`);
@@ -400,8 +399,7 @@ seeds:
   directory: ./seeds
 ```
 
-```ts
-// db.ts
+```ts#db.ts
 import { connections, migrations } from "./database.yaml";
 import { createConnection } from "./database-driver";
 
@@ -446,8 +444,7 @@ This means:
 
 YAML files can be dynamically imported, useful for loading configuration on demand:
 
-```ts
-// Load configuration based on environment
+```ts#Load configuration based on environment
 const env = process.env.NODE_ENV || "development";
 const config = await import(`./configs/${env}.yaml`);
 

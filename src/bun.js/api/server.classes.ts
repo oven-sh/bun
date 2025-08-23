@@ -33,6 +33,17 @@ function generate(name) {
         fn: "doStop",
         length: 1,
       },
+      blockAccept: {
+        fn: "doBlockAccept",
+        length: 0,
+      },
+      allowAccept: {
+        fn: "doAllowAccept",
+        length: 0,
+      },
+      isAcceptBlocked: {
+        getter: "getIsAcceptBlocked",
+      },
       requestIP: {
         fn: "doRequestIP",
         length: 1,

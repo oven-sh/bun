@@ -3684,6 +3684,24 @@ declare module "bun" {
     unref(): void;
 
     /**
+     * Temporarily block accepting new connections on the listening socket.
+     * Existing connections, keep-alive requests, and HTTP/2 streams are unaffected.
+     * Idempotent.
+     */
+    blockAccept(): boolean;
+
+    /**
+     * Resume accepting new connections after a prior {@link Server.blockAccept}.
+     * Idempotent.
+     */
+    allowAccept(): boolean;
+
+    /**
+     * True when new accepts are currently blocked via {@link Server.blockAccept}.
+     */
+    readonly isAcceptBlocked: boolean;
+
+    /**
      * How many requests are in-flight right now?
      */
     readonly pendingRequests: number;

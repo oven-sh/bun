@@ -146,21 +146,24 @@ describe("bundler", () => {
     },
   });
 
-  itBundled("plugin/ResolveEntryPointReturnsNull", {
-    files: {
-      "index.ts": /* ts */ `
-        console.log("hello world");
-      `,
-    },
-    plugins(builder) {
-      builder.onResolve({ filter: /.*/ }, args => {
-        return null;
-      });
-    },
-    run: {
-      stdout: "hello world",
-    },
-  });
+  for (const value of [null, undefined, true, 1, "string", {} as never]) {
+    const str = JSON.stringify(value);
+    itBundled(`plugin/ResolveEntryPointReturns${str.charAt(0).toUpperCase() + str.slice(1)}`, {
+      files: {
+        "index.ts": /* ts */ `
+          console.log("hello world");
+        `,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /.*/ }, () => {
+          return value as never;
+        });
+      },
+      run: {
+        stdout: "hello world",
+      },
+    });
+  }
 
   itBundled("plugin/ResolveEntryPoint", {
     files: {

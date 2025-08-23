@@ -357,7 +357,7 @@ fn getAST(
                 temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
                 temp_log.msgs.clearAndFree();
             }
-            const root = try YAML.parse(source, &temp_log, allocator, false);
+            const root = try YAML.parse(source, &temp_log, allocator);
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
         },
         .text => {

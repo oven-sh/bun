@@ -1,24 +1,43 @@
 const std = @import("std");
 const bun = @import("bun");
 const logger = bun.logger;
-const js_ast = bun.ast;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
+const ast = bun.ast;
+const Expr = ast.Expr;
+const E = ast.E;
+const G = ast.G;
+const OOM = bun.OOM;
+const BabyList = bun.BabyList;
 
 pub const YAML = struct {
-    // Mock implementation - just returns an empty object for now
-    pub fn parse(source_: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator, redact_logs: bool) !Expr {
-        _ = source_;
-        _ = log;
-        _ = allocator;
-        _ = redact_logs;
+    const ParseError = OOM || error{ SyntaxError, StackOverflow };
 
-        // Return an empty object, similar to how TOML handles empty files
-        return Expr{ .loc = logger.Loc{ .start = 0 }, .data = Expr.init(E.Object, E.Object{}, logger.Loc.Empty).data };
+    pub fn parse(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) ParseError!Expr {
+        var parser: Parser(.utf8) = .init(allocator, source.contents);
+
+        const stream = parser.parse() catch |e| {
+            const err: Parser(.utf8).ParseResult = .fail(e, &parser);
+            try err.err.addToLog(source, log);
+            return error.SyntaxError;
+        };
+
+        return switch (stream.docs.items.len) {
+            0 => .init(E.Null, .{}, .Empty),
+            1 => stream.docs.items[0].root,
+            else => {
+
+                // multi-document yaml streams are converted into arrays
+
+                var items: std.ArrayList(Expr) = try .initCapacity(allocator, stream.docs.items.len);
+
+                for (stream.docs.items) |doc| {
+                    items.appendAssumeCapacity(doc.root);
+                }
+
+                return .init(E.Array, .{ .items = .fromList(items) }, .Empty);
+            },
+        };
     }
 };
-
-const OOM = std.mem.Allocator.Error;
 
 pub fn parse(comptime encoding: Encoding, allocator: std.mem.Allocator, input: []const encoding.unit()) Parser(encoding).ParseResult {
     var parser: Parser(encoding) = .init(allocator, input);
@@ -42,23 +61,12 @@ pub fn print(comptime encoding: Encoding, allocator: std.mem.Allocator, stream: 
     try printer.print();
 }
 
-// pub fn parseDocument(allocator: std.mem.Allocator, input: []const u8) Parser(.utf8).Document {
-//     const stream = parse(allocator, input);
-
-//     if (stream.docs.items.len > 1) {
-//         @panic("expected one document!!!");
-//     }
-
-//     return stream.docs.items[0];
-// }
-
 pub const Context = enum {
     block_out,
     block_in,
     // block_key,
-    // flow_out,
     flow_in,
-    // flow_key,
+    flow_key,
 
     pub const Stack = struct {
         list: std.ArrayList(Context),
@@ -84,10 +92,13 @@ pub const Context = enum {
 };
 
 pub const Chomp = enum {
+    /// '-'
     /// remove all trailing newlines
     strip,
+    /// ''
     /// exclude the last trailing newline (default)
     clip,
+    /// '+'
     /// include all trailing newlines
     keep,
 
@@ -106,20 +117,28 @@ pub const Indent = enum(usize) {
         return @intFromEnum(indent);
     }
 
-    pub fn inc(indent: *Indent, num: usize) void {
-        indent.* = @enumFromInt(@intFromEnum(indent.*) + num);
+    pub fn inc(indent: *Indent, n: usize) void {
+        indent.* = @enumFromInt(@intFromEnum(indent.*) + n);
     }
 
-    pub fn dec(indent: *Indent, num: usize) void {
-        indent.* = @enumFromInt(@intFromEnum(indent.*) - num);
+    pub fn dec(indent: *Indent, n: usize) void {
+        indent.* = @enumFromInt(@intFromEnum(indent.*) - n);
     }
 
-    pub fn add(indent: Indent, num: usize) Indent {
-        return @enumFromInt(@intFromEnum(indent) + num);
+    pub fn add(indent: Indent, n: usize) Indent {
+        return @enumFromInt(@intFromEnum(indent) + n);
     }
 
-    pub fn sub(indent: Indent, num: usize) Indent {
-        return @enumFromInt(@intFromEnum(indent) - num);
+    pub fn sub(indent: Indent, n: usize) Indent {
+        return @enumFromInt(@intFromEnum(indent) - n);
+    }
+
+    pub fn isLessThan(indent: Indent, other: Indent) bool {
+        return @intFromEnum(indent) < @intFromEnum(other);
+    }
+
+    pub fn isLessThanOrEqual(indent: Indent, other: Indent) bool {
+        return @intFromEnum(indent) <= @intFromEnum(other);
     }
 
     pub fn cmp(l: Indent, r: Indent) std.math.Order {
@@ -130,7 +149,8 @@ pub const Indent = enum(usize) {
 
     pub const Indicator = enum(u8) {
         /// trim leading indentation (spaces) (default)
-        none = 0,
+        auto = 0,
+
         @"1",
         @"2",
         @"3",
@@ -140,6 +160,8 @@ pub const Indent = enum(usize) {
         @"7",
         @"8",
         @"9",
+
+        pub const default: Indicator = .auto;
 
         pub fn get(indicator: Indicator) u8 {
             return @intFromEnum(indicator);
@@ -158,13 +180,57 @@ pub const Indent = enum(usize) {
         }
 
         pub fn pop(this: *@This()) void {
+            std.debug.assert(this.list.items.len != 0);
             _ = this.list.pop();
         }
 
-        pub fn get(this: *@This()) Indent {
-            return this.list.getLastOrNull() orelse .none;
+        pub fn get(this: *@This()) ?Indent {
+            return this.list.getLastOrNull();
         }
     };
+};
+
+pub const Pos = enum(usize) {
+    zero = 0,
+    _,
+
+    pub fn from(pos: usize) Pos {
+        return @enumFromInt(pos);
+    }
+
+    pub fn cast(pos: Pos) usize {
+        return @intFromEnum(pos);
+    }
+
+    pub fn loc(pos: Pos) logger.Loc {
+        return .{ .start = @intCast(@intFromEnum(pos)) };
+    }
+
+    pub fn inc(pos: *Pos, n: usize) void {
+        pos.* = @enumFromInt(@intFromEnum(pos.*) + n);
+    }
+
+    pub fn dec(pos: *Pos, n: usize) void {
+        pos.* = @enumFromInt(@intFromEnum(pos.*) - n);
+    }
+
+    pub fn add(pos: Pos, n: usize) Pos {
+        return @enumFromInt(@intFromEnum(pos) + n);
+    }
+
+    pub fn sub(pos: Pos, n: usize) Pos {
+        return @enumFromInt(@intFromEnum(pos) - n);
+    }
+
+    pub fn isLessThan(pos: Pos, other: usize) bool {
+        return pos.cast() < other;
+    }
+
+    pub fn cmp(l: Pos, r: usize) std.math.Order {
+        if (l.cast() < r) return .lt;
+        if (l.cast() > r) return .gt;
+        return .eq;
+    }
 };
 
 pub const Line = enum(usize) {
@@ -178,22 +244,31 @@ pub const Line = enum(usize) {
         return @intFromEnum(line);
     }
 
-    pub fn inc(line: *Line, num: usize) void {
-        line.* = @enumFromInt(@intFromEnum(line.*) + num);
+    pub fn inc(line: *Line, n: usize) void {
+        line.* = @enumFromInt(@intFromEnum(line.*) + n);
     }
 
-    pub fn dec(line: *Line, num: usize) void {
-        line.* = @enumFromInt(@intFromEnum(line.*) - num);
+    pub fn dec(line: *Line, n: usize) void {
+        line.* = @enumFromInt(@intFromEnum(line.*) - n);
     }
 
-    pub fn add(line: Line, num: usize) Line {
-        return @enumFromInt(@intFromEnum(line) + num);
+    pub fn add(line: Line, n: usize) Line {
+        return @enumFromInt(@intFromEnum(line) + n);
     }
 
-    pub fn sub(line: Line, num: usize) Line {
-        return @enumFromInt(@intFromEnum(line) - num);
+    pub fn sub(line: Line, n: usize) Line {
+        return @enumFromInt(@intFromEnum(line) - n);
     }
 };
+
+comptime {
+    std.debug.assert(Pos != Indent);
+    std.debug.assert(Pos != Line);
+    std.debug.assert(Pos == Pos);
+    std.debug.assert(Indent != Line);
+    std.debug.assert(Indent == Indent);
+    std.debug.assert(Line == Line);
+}
 
 pub fn Parser(comptime enc: Encoding) type {
     const chars = enc.chars();
@@ -201,55 +276,81 @@ pub fn Parser(comptime enc: Encoding) type {
     return struct {
         input: []const enc.unit(),
 
-        pos: usize,
-        indent: Indent,
+        pos: Pos,
+        line_indent: Indent,
         line: Line,
-        at_line_start: bool,
         token: Token(enc),
 
         allocator: std.mem.Allocator,
 
         context: Context.Stack,
-        indents: Indent.Stack,
+        block_indents: Indent.Stack,
 
-        future: ?State,
+        // anchors: Anchors,
+        anchors: std.StringHashMap(Expr),
+        // aliases: PendingAliases,
 
-        const State = struct {
-            pos: usize,
-            indent: Indent,
-            line: Line,
-            token: Token(enc),
+        tag_handles: std.StringHashMap(void),
 
-            pub fn apply(this: *const @This(), parser: *Parser(enc)) void {
-                parser.pos = this.pos;
-                parser.indent = this.indent;
-                parser.line = this.line;
-                parser.token = this.token;
-            }
+        // const PendingAliases = struct {
+        //     list: std.ArrayList(State),
+
+        //     const State = struct {
+        //         name: String.Range,
+        //         index: usize,
+        //         prop: enum { key, value },
+        //         collection_node: *Node,
+        //     };
+        // };
+
+        whitespace_buf: std.ArrayList(Whitespace),
+
+        stack_check: bun.StackCheck,
+
+        const Whitespace = struct {
+            pos: Pos,
+            unit: enc.unit(),
+
+            pub const space: Whitespace = .{ .unit = ' ', .pos = .zero };
+            pub const tab: Whitespace = .{ .unit = '\t', .pos = .zero };
+            pub const newline: Whitespace = .{ .unit = '\n', .pos = .zero };
         };
 
         pub fn init(allocator: std.mem.Allocator, input: []const enc.unit()) @This() {
             return .{
                 .input = input,
                 .allocator = allocator,
-                .pos = 0,
-                .indent = .none,
+                .pos = .from(0),
+                .line_indent = .none,
                 .line = .from(1),
-                .at_line_start = true,
-                .token = .eof(.{ .start = 0, .indent = .none, .line = .from(1) }),
+                .token = .eof(.{ .start = .from(0), .indent = .none, .line = .from(1) }),
                 // .key = null,
                 // .literal = null,
                 .context = .init(allocator),
-                .indents = .init(allocator),
-                .future = null,
+                .block_indents = .init(allocator),
+                // .anchors = .{ .map = .init(allocator) },
+                .anchors = .init(allocator),
+                // .aliases = .{ .list = .init(allocator) },
+                .tag_handles = .init(allocator),
+                .whitespace_buf = .init(allocator),
+                .stack_check = .init(),
             };
         }
 
-        const ParseResult = union(enum) {
+        pub fn deinit(self: *@This()) void {
+            self.context.list.deinit();
+            self.block_indents.list.deinit();
+            self.anchors.deinit();
+            self.tag_handles.deinit();
+            self.whitespace_buf.deinit();
+            // std.debug.assert(self.future == null);
+        }
+
+        pub const ParseResult = union(enum) {
             result: Result,
             err: Error,
 
-            const Result = struct {
+            pub const Result = struct {
                 stream: Stream,
                 allocator: std.mem.Allocator,
 
@@ -260,23 +361,97 @@ pub fn Parser(comptime enc: Encoding) type {
                 }
             };
 
-            const Error = union(enum) {
+            pub const Error = union(enum) {
                 oom,
+                stack_overflow,
                 unexpected_eof: struct {
-                    pos: usize,
+                    pos: Pos,
                 },
                 unexpected_token: struct {
-                    pos: usize,
+                    pos: Pos,
                 },
                 unexpected_character: struct {
-                    pos: usize,
+                    pos: Pos,
                 },
                 invalid_directive: struct {
-                    pos: usize,
+                    pos: Pos,
                 },
-                expected_whitespace: struct {
-                    pos: usize,
+                unresolved_tag_handle: struct {
+                    pos: Pos,
                 },
+                unresolved_alias: struct {
+                    pos: Pos,
+                },
+                // scalar_type_mismatch: struct {
+                //     pos: Pos,
+                // },
+                multiline_implicit_key: struct {
+                    pos: Pos,
+                },
+                multiple_anchors: struct {
+                    pos: Pos,
+                },
+                multiple_tags: struct {
+                    pos: Pos,
+                },
+                unexpected_document_start: struct {
+                    pos: Pos,
+                },
+                unexpected_document_end: struct {
+                    pos: Pos,
+                },
+                multiple_yaml_directives: struct {
+                    pos: Pos,
+                },
+                invalid_indentation: struct {
+                    pos: Pos,
+                },
+
+                pub fn addToLog(this: *const Error, source: *const logger.Source, log: *logger.Log) OOM!void {
+                    switch (this.*) {
+                        .oom => return error.OutOfMemory,
+                        .stack_overflow => {},
+                        .unexpected_eof => |e| {
+                            try log.addError(source, e.pos.loc(), "Unexpected EOF");
+                        },
+                        .unexpected_token => |e| {
+                            try log.addError(source, e.pos.loc(), "Expected token");
+                        },
+                        .unexpected_character => |e| {
+                            try log.addError(source, e.pos.loc(), "Expected character");
+                        },
+                        .invalid_directive => |e| {
+                            try log.addError(source, e.pos.loc(), "Invalid directive");
+                        },
+                        .unresolved_tag_handle => |e| {
+                            try log.addError(source, e.pos.loc(), "Unresolved tag handle");
+                        },
+                        .unresolved_alias => |e| {
+                            try log.addError(source, e.pos.loc(), "Unresolved alias");
+                        },
+                        .multiline_implicit_key => |e| {
+                            try log.addError(source, e.pos.loc(), "Multiline implicit key");
+                        },
+                        .multiple_anchors => |e| {
+                            try log.addError(source, e.pos.loc(), "Multiple anchors");
+                        },
+                        .multiple_tags => |e| {
+                            try log.addError(source, e.pos.loc(), "Multiple tags");
+                        },
+                        .unexpected_document_start => |e| {
+                            try log.addError(source, e.pos.loc(), "Unexpected document start");
+                        },
+                        .unexpected_document_end => |e| {
+                            try log.addError(source, e.pos.loc(), "Unexpected document end");
+                        },
+                        .multiple_yaml_directives => |e| {
+                            try log.addError(source, e.pos.loc(), "Multiple YAML directives");
+                        },
+                        .invalid_indentation => |e| {
+                            try log.addError(source, e.pos.loc(), "Invalid indentation");
+                        },
+                    }
+                }
             };
 
             pub fn success(stream: Stream, parser: *const Parser(enc)) ParseResult {
@@ -292,23 +467,35 @@ pub fn Parser(comptime enc: Encoding) type {
                 return .{
                     .err = switch (err) {
                         error.OutOfMemory => .oom,
-                        error.UnexpectedToken => if (parser.token.data == .eof)
-                            .{ .unexpected_eof = .{ .pos = parser.token.start } }
-                        else
-                            .{ .unexpected_token = .{ .pos = parser.token.start } },
+                        error.StackOverflow => .stack_overflow,
+                        // error.UnexpectedToken => if (parser.token.data == .eof)
+                        //     .{ .unexpected_eof = .{ .pos = parser.token.start } }
+                        // else
+                        //     .{ .unexpected_token = .{ .pos = parser.token.start } },
+                        error.UnexpectedToken => .{ .unexpected_token = .{ .pos = parser.token.start } },
                         error.UnexpectedEof => .{ .unexpected_eof = .{ .pos = parser.token.start } },
                         error.InvalidDirective => .{ .invalid_directive = .{ .pos = parser.token.start } },
-                        error.UnexpectedCharacter => if (parser.pos >= parser.input.len)
+                        error.UnexpectedCharacter => if (!parser.pos.isLessThan(parser.input.len))
                             .{ .unexpected_eof = .{ .pos = parser.pos } }
                         else
                             .{ .unexpected_character = .{ .pos = parser.pos } },
+                        error.UnresolvedTagHandle => .{ .unresolved_tag_handle = .{ .pos = parser.pos } },
+                        error.UnresolvedAlias => .{ .unresolved_alias = .{ .pos = parser.token.start } },
+                        // error.ScalarTypeMismatch => .{ .scalar_type_mismatch = .{ .pos = parser.token.start } },
+                        error.MultilineImplicitKey => .{ .multiline_implicit_key = .{ .pos = parser.token.start } },
+                        error.MultipleAnchors => .{ .multiple_anchors = .{ .pos = parser.token.start } },
+                        error.MultipleTags => .{ .multiple_tags = .{ .pos = parser.token.start } },
+                        error.UnexpectedDocumentStart => .{ .unexpected_document_start = .{ .pos = parser.pos } },
+                        error.UnexpectedDocumentEnd => .{ .unexpected_document_end = .{ .pos = parser.pos } },
+                        error.MultipleYamlDirectives => .{ .multiple_yaml_directives = .{ .pos = parser.token.start } },
+                        error.InvalidIndentation => .{ .invalid_indentation = .{ .pos = parser.pos } },
                     },
                 };
             }
         };
 
         pub fn parse(self: *@This()) ParseError!Stream {
-            try self.scan();
+            try self.scan(.{ .first_scan = true });
 
             return try self.parseStream();
         }
@@ -318,73 +505,62 @@ pub fn Parser(comptime enc: Encoding) type {
             UnexpectedEof,
             InvalidDirective,
             UnexpectedCharacter,
+            UnresolvedTagHandle,
+            UnresolvedAlias,
+            MultilineImplicitKey,
+            MultipleAnchors,
+            MultipleTags,
+            UnexpectedDocumentStart,
+            UnexpectedDocumentEnd,
+            MultipleYamlDirectives,
+            InvalidIndentation,
+            StackOverflow,
+            // ScalarTypeMismatch,
 
             // InvalidSyntax,
             // UnexpectedDirective,
-            // UnexpectedDocumentStart,
-            // UnexpectedDocumentEnd,
         };
 
         pub fn parseStream(self: *@This()) ParseError!Stream {
             var docs: std.ArrayList(Document) = .init(self.allocator);
 
-            if (self.token.data == .eof) {
-                try docs.append(.{
-                    .directives = .init(self.allocator),
-                    .root = .{
-                        .indent = .none,
-                        // TODO: this doesn't make sense
-                        .line = .from(0),
-                        .data = .{ .scalar = .null },
-                    },
-                });
-                return .{ .docs = docs, .input = self.input };
-            }
+            // we want one null document if eof, not zero documents.
+            var first = true;
+            while (first or self.token.data != .eof) {
+                first = false;
 
-            while (self.token.data != .eof) {
                 const doc = try self.parseDocument();
 
                 try docs.append(doc);
-
-                try self.scan();
             }
 
             return .{ .docs = docs, .input = self.input };
         }
 
         fn peek(self: *const @This(), comptime n: usize) enc.unit() {
-            const pos = self.pos + n;
-            if (pos < self.input.len) {
-                return self.input[pos];
+            const pos = self.pos.add(n);
+            if (pos.isLessThan(self.input.len)) {
+                return self.input[pos.cast()];
             }
 
             return 0;
         }
 
-        fn inc(self: *@This(), comptime n: usize) void {
-            self.pos = @min(self.pos + n, self.input.len);
-        }
-
-        fn tryInc(self: *@This()) error{UnexpectedEof}!void {
-            if (self.pos < self.input.len - 1) {
-                self.pos += 1;
-                return;
-            }
-            return error.UnexpectedEof;
+        fn inc(self: *@This(), n: usize) void {
+            self.pos = .from(@min(self.pos.cast() + n, self.input.len));
         }
 
         fn newline(self: *@This()) void {
-            self.indent = .none;
-            self.at_line_start = true;
+            self.line_indent = .none;
             self.line.inc(1);
         }
 
-        // fn skip(self: *@This(), n: usize) void {
-        //     self.pos = @min(self.pos + n, self.input.len);
-        // }
+        fn slice(self: *const @This(), off: Pos, end: Pos) []const enc.unit() {
+            return self.input[off.cast()..end.cast()];
+        }
 
         fn remain(self: *const @This()) []const enc.unit() {
-            return self.input[self.pos..];
+            return self.input[self.pos.cast()..];
         }
 
         fn remainStartsWith(self: *const @This(), cs: []const enc.unit()) bool {
@@ -408,13 +584,15 @@ pub fn Parser(comptime enc: Encoding) type {
         // this looks different from node parsing code because directives
         // exist mostly outside of the normal token scanning logic. they are
         // not part of the root expression.
+
+        // TODO: move most of this into `scan()`
         fn parseDirective(self: *@This()) ParseError!Directive {
-            if (self.indent != .none) {
+            if (self.token.indent != .none) {
                 return error.InvalidDirective;
             }
 
             // yaml directive
-            if (self.remainStartsWith(enc.literal("YAML"))) {
+            if (self.remainStartsWith(enc.literal("YAML")) and self.isSWhiteAt(4)) {
                 self.inc(4);
 
                 try self.trySkipSWhite();
@@ -429,7 +607,7 @@ pub fn Parser(comptime enc: Encoding) type {
             }
 
             // tag directive
-            if (self.remainStartsWith(enc.literal("TAG"))) {
+            if (self.remainStartsWith(enc.literal("TAG")) and self.isSWhiteAt(3)) {
                 self.inc(3);
 
                 try self.trySkipSWhite();
@@ -453,12 +631,13 @@ pub fn Parser(comptime enc: Encoding) type {
                 }
 
                 // named tag handle
-                self.inc(1);
-                var builder = self.stringBuilder();
+                var range = self.stringRange();
                 try self.trySkipNsWordChars();
-                const handle = builder.end();
+                const handle = range.end();
                 try self.trySkipChar('!');
                 try self.trySkipSWhite();
+
+                try self.tag_handles.put(handle.slice(self.input), {});
 
                 const prefix = try self.parseDirectiveTagPrefix();
                 try self.trySkipToNewLine();
@@ -466,9 +645,9 @@ pub fn Parser(comptime enc: Encoding) type {
             }
 
             // reserved directive
-            var builder = self.stringBuilder();
+            var range = self.stringRange();
             try self.trySkipNsChars();
-            const reserved = builder.end();
+            const reserved = range.end();
 
             self.skipSWhite();
 
@@ -486,17 +665,17 @@ pub fn Parser(comptime enc: Encoding) type {
             // local tag prefix
             if (self.isChar('!')) {
                 self.inc(1);
-                var builder = self.stringBuilder();
+                var range = self.stringRange();
                 self.skipNsUriChars();
-                return .{ .local = builder.end() };
+                return .{ .local = range.end() };
             }
 
             // global tag prefix
-            if (self.isNsTagChar()) {
-                var builder = self.stringBuilder();
-                self.inc(1);
+            if (self.isNsTagChar()) |char_len| {
+                var range = self.stringRange();
+                self.inc(char_len);
                 self.skipNsUriChars();
-                return .{ .global = builder.end() };
+                return .{ .global = range.end() };
             }
 
             return error.InvalidDirective;
@@ -505,229 +684,819 @@ pub fn Parser(comptime enc: Encoding) type {
         pub fn parseDocument(self: *@This()) ParseError!Document {
             var directives: std.ArrayList(Directive) = .init(self.allocator);
 
+            self.anchors.clearRetainingCapacity();
+            self.tag_handles.clearRetainingCapacity();
+
+            var has_yaml_directive = false;
+
             while (self.token.data == .directive) {
                 const directive = try self.parseDirective();
+                if (directive == .yaml) {
+                    if (has_yaml_directive) {
+                        return error.MultipleYamlDirectives;
+                    }
+                    has_yaml_directive = true;
+                }
                 try directives.append(directive);
-                try self.scan();
+                try self.scan(.{});
             }
 
             if (self.token.data == .document_start) {
-                try self.scan();
+                try self.scan(.{});
             } else if (directives.items.len > 0) {
                 // if there's directives they must end with '---'
                 return error.UnexpectedToken;
             }
 
-            const root = try self.parseNode();
+            const root = try self.parseNode(.{});
 
-            // If a document end marker follows, consume it
-            if (self.token.data == .document_end) {
-                try self.scan();
-            } else {
-                // TODO: uncomment (it's useful commented for debugging)
-                // return error.UnexpectedToken;
+            // If document_start or document_end follows, consume it
+            switch (self.token.data) {
+                .eof => {},
+                .document_start => {
+                    try self.scan(.{});
+                },
+                .document_end => {
+                    const document_end_line = self.token.line;
+                    try self.scan(.{});
+
+                    if (self.token.line == document_end_line) {
+                        return error.UnexpectedToken;
+                    }
+                },
+                else => {
+                    return error.UnexpectedToken;
+                },
             }
 
             return .{ .root = root, .directives = directives };
         }
 
-        fn parseFlowSequence(self: *@This()) ParseError!Node {
-            const sequence_indent = self.indent;
-            const sequence_line = self.line;
-
-            var seq: std.ArrayList(Node) = .init(self.allocator);
-
-            while (self.token.data != .sequence_end) {
-                const item = try self.parseNode();
-                try seq.append(item);
-            }
-
-            return .sequence(sequence_indent, sequence_line, seq);
-        }
-
-        fn parseBlockSequence(self: *@This()) ParseError!Node {
+        fn parseFlowSequence(self: *@This()) ParseError!Expr {
+            const sequence_start = self.token.start;
             const sequence_indent = self.token.indent;
-            const sequence_line = self.token.line;
+            _ = sequence_indent;
+            const sequence_line = self.line;
+            _ = sequence_line;
 
-            try self.context.set(.block_in);
-            defer self.context.unset(.block_in);
+            var seq: std.ArrayList(Expr) = .init(self.allocator);
 
-            try self.indents.push(sequence_indent.add(1));
-            defer self.indents.pop();
+            {
+                try self.context.set(.flow_in);
+                defer self.context.unset(.flow_in);
 
-            var seq: std.ArrayList(Node) = .init(self.allocator);
+                try self.scan(.{});
+                while (self.token.data != .sequence_end) {
+                    const item = try self.parseNode(.{});
+                    try seq.append(item);
 
-            while (self.token.data == .sequence_entry and self.token.indent == sequence_indent) {
-                try self.scan();
-
-                if (self.token.data == .eof or (self.token.data == .sequence_entry and self.token.indent == sequence_indent and self.token.line != sequence_line)) {
-                    try seq.append(.null(self.indent, self.line));
-                    continue;
-                }
-
-                const item = try self.parseNode();
-                try seq.append(item);
-            }
-
-            return .sequence(sequence_indent, sequence_line, seq);
-        }
-
-        fn parseImplicitMapping(self: *@This(), first_key: Node) ParseError!Node {
-            const mapping_indent = self.token.indent;
-            const mapping_line = self.token.line;
-
-            try self.context.set(.block_in);
-            defer self.context.unset(.block_in);
-
-            var map: Node.Data.Mapping = .{
-                .keys = .init(self.allocator),
-                .values = .init(self.allocator),
-            };
-
-            if (first_key.data == .scalar and first_key.data.scalar == .string) {
-                if (first_key.data.scalar.string.multiline) {
-                    return error.UnexpectedToken;
-                }
-            }
-
-            try map.keys.append(first_key);
-
-            try self.indents.push(mapping_indent.add(1));
-
-            try self.scan();
-
-            if (self.token.data == .eof or (self.token.line != mapping_line and self.token.indent == mapping_indent)) {
-                try map.values.append(.null(mapping_indent, mapping_line));
-            } else {
-                const value = try self.parseNode();
-                try map.values.append(value);
-            }
-
-            self.indents.pop();
-
-            try self.scan();
-
-            while (self.token.data != .eof and self.token.indent == mapping_indent) {
-                try self.indents.push(mapping_indent.add(1));
-
-                const key = try self.parseNode();
-                try map.keys.append(key);
-
-                self.indents.pop();
-
-                try self.scan();
-
-                try self.indents.push(key.indent);
-
-                if (self.token.data == .eof or (self.token.line != mapping_line and self.token.indent == mapping_indent)) {
-                    try map.values.append(.null(mapping_indent, key.line));
-                } else {
-                    const value = try self.parseNode();
-                    try map.values.append(value);
-                }
-
-                self.indents.pop();
-
-                try self.scan();
-            }
-
-            return .mapping(mapping_indent, mapping_line, map);
-        }
-
-        pub fn parseExplicitMapping(self: *@This()) ParseError!Node {
-            const mapping_indent = self.token.indent;
-            const mapping_line = self.token.line;
-
-            const map: Node.Data.Mapping = .{
-                .keys = .init(self.allocator),
-                .values = .init(self.allocator),
-            };
-
-            return .mapping(mapping_indent, mapping_line, map);
-        }
-
-        fn parseNode(self: *@This()) ParseError!Node {
-            return switch (self.token.data) {
-                .eof => .null(self.indent, self.line),
-                .sequence_start => self.parseFlowSequence(),
-                .sequence_end => error.UnexpectedToken,
-                .sequence_entry => self.parseBlockSequence(),
-                .mapping_start => error.UnexpectedToken,
-                .mapping_end => error.UnexpectedToken,
-                .mapping_key => self.parseExplicitMapping(),
-                .mapping_value => self.parseImplicitMapping(.null(self.indent, self.line)),
-                .scalar => |scalar| {
-                    const scalar_indent = self.indent;
-                    const scalar_line = self.line;
-
-                    const save: State = .{
-                        .pos = self.pos,
-                        .indent = self.indent,
-                        .line = self.line,
-                        .token = self.token,
-                    };
-
-                    try self.scan();
-
-                    // implicit key
-                    if (self.token.data == .mapping_value) {
-                        return self.parseImplicitMapping(.scalar(scalar_indent, scalar_line, scalar));
+                    if (self.token.data == .sequence_end) {
+                        break;
                     }
 
-                    self.future = .{
-                        .pos = self.pos,
-                        .indent = self.token.indent,
-                        .line = self.token.line,
-                        .token = self.token,
+                    if (self.token.data != .collect_entry) {
+                        return error.UnexpectedToken;
+                    }
+
+                    try self.scan(.{});
+                }
+            }
+
+            try self.scan(.{});
+
+            return .init(E.Array, .{ .items = .fromList(seq) }, sequence_start.loc());
+        }
+
+        fn parseFlowMapping(self: *@This()) ParseError!Expr {
+            const mapping_start = self.token.start;
+            const mapping_indent = self.token.indent;
+            _ = mapping_indent;
+            const mapping_line = self.token.line;
+            _ = mapping_line;
+
+            var props: std.ArrayList(G.Property) = .init(self.allocator);
+
+            {
+                try self.context.set(.flow_in);
+
+                try self.context.set(.flow_key);
+                try self.scan(.{});
+                self.context.unset(.flow_key);
+
+                while (self.token.data != .mapping_end) {
+                    try self.context.set(.flow_key);
+                    const key = try self.parseNode(.{});
+                    self.context.unset(.flow_key);
+
+                    switch (self.token.data) {
+                        .collect_entry => {
+                            const value: Expr = .init(E.Null, .{}, self.token.start.loc());
+                            try props.append(.{
+                                .key = key,
+                                .value = value,
+                            });
+
+                            try self.context.set(.flow_key);
+                            try self.scan(.{});
+                            self.context.unset(.flow_key);
+                            continue;
+                        },
+                        .mapping_end => {
+                            const value: Expr = .init(E.Null, .{}, self.token.start.loc());
+                            try props.append(.{
+                                .key = key,
+                                .value = value,
+                            });
+                            continue;
+                        },
+                        .mapping_value => {},
+                        else => {
+                            return error.UnexpectedToken;
+                        },
+                    }
+
+                    try self.scan(.{});
+
+                    if (self.token.data == .mapping_end or
+                        self.token.data == .collect_entry)
+                    {
+                        const value: Expr = .init(E.Null, .{}, self.token.start.loc());
+                        try props.append(.{
+                            .key = key,
+                            .value = value,
+                        });
+                    } else {
+                        const value = try self.parseNode(.{});
+                        try props.append(.{
+                            .key = key,
+                            .value = value,
+                        });
+                    }
+
+                    if (self.token.data == .collect_entry) {
+                        try self.context.set(.flow_key);
+                        try self.scan(.{});
+                        self.context.unset(.flow_key);
+                    }
+                }
+
+                self.context.unset(.flow_in);
+            }
+
+            try self.scan(.{});
+
+            return .init(E.Object, .{ .properties = .fromList(props) }, mapping_start.loc());
+        }
+
+        fn parseBlockSequence(self: *@This()) ParseError!Expr {
+            const sequence_start = self.token.start;
+            const sequence_indent = self.token.indent;
+            // const sequence_line = self.token.line;
+
+            // try self.context.set(.block_in);
+            // defer self.context.unset(.block_in);
+
+            try self.block_indents.push(sequence_indent);
+            defer self.block_indents.pop();
+
+            var seq: std.ArrayList(Expr) = .init(self.allocator);
+
+            var prev_line: Line = .from(0);
+
+            while (self.token.data == .sequence_entry and self.token.indent == sequence_indent) {
+                const entry_line = self.token.line;
+                _ = entry_line;
+                const entry_start = self.token.start;
+                const entry_indent = self.token.indent;
+
+                if (seq.items.len != 0 and prev_line == self.token.line) {
+                    // only the first entry can be another sequence entry on the
+                    // same line
+                    break;
+                }
+
+                prev_line = self.token.line;
+
+                try self.scan(.{ .additional_parent_indent = entry_indent.add(1) });
+
+                {
+                    // check if the sequence entry is a null value
+                    //
+                    // 1: eof.
+                    // ```
+                    // - item
+                    // - # becomes null
+                    // ```
+                    //
+                    // 2: another entry afterwards.
+                    // ```
+                    // - # becomes null
+                    // - item
+                    // ```
+                    //
+                    // 3: indent must be < base indent to be excluded from this sequence
+                    // ```
+                    // - - # becomes null
+                    // - item
+                    // ```
+                    //
+                    // 4: check line for compact sequences. the first entry is a sequence, not null!
+                    // ```
+                    // - - item
+                    // ```
+                    const item: Expr = switch (self.token.data) {
+                        .eof => .init(E.Null, .{}, entry_start.add(2).loc()),
+                        .sequence_entry => item: {
+                            if (self.token.indent.isLessThanOrEqual(sequence_indent)) {
+                                break :item .init(E.Null, .{}, entry_start.add(2).loc());
+                            }
+
+                            break :item try self.parseNode(.{});
+                        },
+                        else => try self.parseNode(.{}),
                     };
 
-                    save.apply(self);
+                    try seq.append(item);
+                }
+            }
 
-                    return .scalar(scalar_indent, scalar_line, scalar);
-                },
-                else => error.UnexpectedToken,
+            return .init(E.Array, .{ .items = .fromList(seq) }, sequence_start.loc());
+        }
+
+        fn parseBlockMapping(
+            self: *@This(),
+            first_key: Expr,
+            mapping_start: Pos,
+            mapping_indent: Indent,
+            mapping_line: Line,
+        ) ParseError!Expr {
+            var props: std.ArrayList(G.Property) = .init(self.allocator);
+
+            {
+                // try self.context.set(.block_in);
+                // defer self.context.unset(.block_in);
+
+                // get the first value
+                try self.block_indents.push(mapping_indent);
+                defer self.block_indents.pop();
+
+                const mapping_value_start = self.token.start;
+                const mapping_value_line = self.token.line;
+
+                try self.scan(.{});
+
+                const value: Expr = switch (self.token.data) {
+                    .sequence_entry => value: {
+                        if (self.token.line == mapping_value_line) {
+                            return error.UnexpectedToken;
+                        }
+
+                        if (self.token.indent.isLessThan(mapping_indent)) {
+                            break :value .init(E.Null, .{}, mapping_value_start.loc());
+                        }
+
+                        break :value try self.parseNode(.{ .current_mapping_indent = mapping_indent });
+                    },
+                    else => value: {
+                        if (self.token.line != mapping_value_line and self.token.indent.isLessThanOrEqual(mapping_indent)) {
+                            break :value .init(E.Null, .{}, mapping_value_start.loc());
+                        }
+
+                        break :value try self.parseNode(.{ .current_mapping_indent = mapping_indent });
+                    },
+                };
+
+                try props.append(.{
+                    .key = first_key,
+                    .value = value,
+                });
+            }
+
+            if (self.context.get() == .flow_in) {
+                return .init(E.Object, .{ .properties = .fromList(props) }, mapping_start.loc());
+            }
+
+            try self.context.set(.block_in);
+            defer self.context.unset(.block_in);
+
+            while (switch (self.token.data) {
+                .eof,
+                .document_start,
+                .document_end,
+                => false,
+                else => true,
+            } and self.token.indent == mapping_indent and self.token.line != mapping_line) {
+                const key_line = self.token.line;
+                const explicit_key = self.token.data == .mapping_key;
+
+                const key = try self.parseNode(.{ .current_mapping_indent = mapping_indent });
+
+                switch (self.token.data) {
+                    .eof,
+                    => {
+                        if (explicit_key) {
+                            const value: Expr = .init(E.Null, .{}, self.pos.loc());
+                            try props.append(.{
+                                .key = key,
+                                .value = value,
+                            });
+                            continue;
+                        }
+                        return error.UnexpectedToken;
+                    },
+                    .mapping_value => {
+                        if (key_line != self.token.line) {
+                            return error.MultilineImplicitKey;
+                        }
+                    },
+                    else => {
+                        return error.UnexpectedToken;
+                    },
+                }
+
+                try self.block_indents.push(mapping_indent);
+                defer self.block_indents.pop();
+
+                const mapping_value_line = self.token.line;
+                const mapping_value_start = self.token.start;
+
+                try self.scan(.{});
+
+                const value: Expr = switch (self.token.data) {
+                    .sequence_entry => value: {
+                        if (self.token.line == key_line) {
+                            return error.UnexpectedToken;
+                        }
+
+                        if (self.token.indent.isLessThan(mapping_indent)) {
+                            break :value .init(E.Null, .{}, mapping_value_start.loc());
+                        }
+
+                        break :value try self.parseNode(.{ .current_mapping_indent = mapping_indent });
+                    },
+                    else => value: {
+                        if (self.token.line != mapping_value_line and self.token.indent.isLessThanOrEqual(mapping_indent)) {
+                            break :value .init(E.Null, .{}, mapping_value_start.loc());
+                        }
+
+                        break :value try self.parseNode(.{ .current_mapping_indent = mapping_indent });
+                    },
+                };
+
+                try props.append(.{
+                    .key = key,
+                    .value = value,
+                });
+            }
+
+            return .init(E.Object, .{ .properties = .fromList(props) }, mapping_start.loc());
+        }
+
+        const NodeProperties = struct {
+            // c-ns-properties
+            has_anchor: ?Token(enc) = null,
+            has_tag: ?Token(enc) = null,
+
+            // when properties for mapping and first key
+            // are right next to eachother
+            // ```
+            // &mapanchor !!map
+            // &keyanchor !!bool true: false
+            // ```
+            has_mapping_anchor: ?Token(enc) = null,
+            has_mapping_tag: ?Token(enc) = null,
+
+            pub fn hasAnchorOrTag(this: *const NodeProperties) bool {
+                return this.has_anchor != null or this.has_tag != null;
+            }
+
+            pub fn setAnchor(this: *NodeProperties, anchor_token: Token(enc)) error{MultipleAnchors}!void {
+                if (this.has_anchor) |previous_anchor| {
+                    if (previous_anchor.line == anchor_token.line) {
+                        return error.MultipleAnchors;
+                    }
+
+                    this.has_mapping_anchor = previous_anchor;
+                }
+                this.has_anchor = anchor_token;
+            }
+
+            pub fn anchor(this: *NodeProperties) ?String.Range {
+                return if (this.has_anchor) |anchor_token| anchor_token.data.anchor else null;
+            }
+
+            pub fn anchorLine(this: *NodeProperties) ?Line {
+                return if (this.has_anchor) |anchor_token| anchor_token.line else null;
+            }
+
+            pub fn anchorIndent(this: *NodeProperties) ?Indent {
+                return if (this.has_anchor) |anchor_token| anchor_token.indent else null;
+            }
+
+            pub fn mappingAnchor(this: *NodeProperties) ?String.Range {
+                return if (this.has_mapping_anchor) |mapping_anchor_token| mapping_anchor_token.data.anchor else null;
+            }
+
+            const ImplicitKeyAnchors = struct {
+                key_anchor: ?String.Range,
+                mapping_anchor: ?String.Range,
             };
+
+            pub fn implicitKeyAnchors(this: *NodeProperties, implicit_key_line: Line) ImplicitKeyAnchors {
+                if (this.has_mapping_anchor) |mapping_anchor| {
+                    std.debug.assert(this.has_anchor != null);
+                    return .{
+                        .key_anchor = if (this.has_anchor) |key_anchor| key_anchor.data.anchor else null,
+                        .mapping_anchor = mapping_anchor.data.anchor,
+                    };
+                }
+
+                if (this.has_anchor) |mystery_anchor| {
+                    // might be the anchor for the key, or anchor for the mapping
+                    if (mystery_anchor.line == implicit_key_line) {
+                        return .{
+                            .key_anchor = mystery_anchor.data.anchor,
+                            .mapping_anchor = null,
+                        };
+                    }
+
+                    return .{
+                        .key_anchor = null,
+                        .mapping_anchor = mystery_anchor.data.anchor,
+                    };
+                }
+
+                return .{
+                    .key_anchor = null,
+                    .mapping_anchor = null,
+                };
+            }
+
+            pub fn setTag(this: *NodeProperties, tag_token: Token(enc)) error{MultipleTags}!void {
+                if (this.has_tag) |previous_tag| {
+                    if (previous_tag.line == tag_token.line) {
+                        return error.MultipleTags;
+                    }
+
+                    this.has_mapping_tag = previous_tag;
+                }
+
+                this.has_tag = tag_token;
+            }
+
+            pub fn tag(this: *NodeProperties) NodeTag {
+                return if (this.has_tag) |tag_token| tag_token.data.tag else .none;
+            }
+
+            pub fn tagLine(this: *NodeProperties) ?Line {
+                return if (this.has_tag) |tag_token| tag_token.line else null;
+            }
+
+            pub fn tagIndent(this: *NodeProperties) ?Indent {
+                return if (this.has_tag) |tag_token| tag_token.indent else null;
+            }
+        };
+
+        const ParseNodeOptions = struct {
+            current_mapping_indent: ?Indent = null,
+            explicit_mapping_key: bool = false,
+        };
+
+        fn parseNode(self: *@This(), opts: ParseNodeOptions) ParseError!Expr {
+            if (!self.stack_check.isSafeToRecurse()) {
+                try bun.throwStackOverflow();
+            }
+
+            // c-ns-properties
+            var node_props: NodeProperties = .{};
+
+            const node: Expr = node: switch (self.token.data) {
+                .eof,
+                .document_start,
+                .document_end,
+                => {
+                    break :node .init(E.Null, .{}, self.token.start.loc());
+                },
+
+                .anchor => |anchor| {
+                    _ = anchor;
+                    try node_props.setAnchor(self.token);
+
+                    try self.scan(.{ .tag = node_props.tag() });
+
+                    continue :node self.token.data;
+                },
+
+                .tag => |tag| {
+                    try node_props.setTag(self.token);
+
+                    try self.scan(.{ .tag = tag });
+
+                    continue :node self.token.data;
+                },
+
+                .alias => |alias| {
+                    if (node_props.hasAnchorOrTag()) {
+                        return error.UnexpectedToken;
+                    }
+
+                    var copy = self.anchors.get(alias.slice(self.input)) orelse {
+                        // we failed to find the alias, but it might be cyclic and
+                        // and available later. to resolve this we need to check
+                        // nodes for parent collection types. this alias is added
+                        // to a list with a pointer to *Mapping or *Sequence, an
+                        // index (and whether is key/value), and the alias name.
+                        // then, when we actually have Node for the parent we
+                        // fill in the data pointer at the index with the node.
+                        return error.UnresolvedAlias;
+                    };
+
+                    // update position from the anchor node to the alias node.
+                    copy.loc = self.token.start.loc();
+
+                    try self.scan(.{});
+
+                    break :node copy;
+                },
+
+                .sequence_start => {
+                    const sequence_start = self.token.start;
+                    const sequence_indent = self.token.indent;
+                    const sequence_line = self.token.line;
+                    const seq = try self.parseFlowSequence();
+
+                    if (self.token.data == .mapping_value) {
+                        if (sequence_line != self.token.line and !opts.explicit_mapping_key) {
+                            return error.MultilineImplicitKey;
+                        }
+
+                        if (self.context.get() == .flow_key) {
+                            break :node seq;
+                        }
+
+                        if (opts.current_mapping_indent) |current_mapping_indent| {
+                            if (current_mapping_indent == sequence_indent) {
+                                break :node seq;
+                            }
+                        }
+
+                        const implicit_key_anchors = node_props.implicitKeyAnchors(sequence_line);
+
+                        if (implicit_key_anchors.key_anchor) |key_anchor| {
+                            try self.anchors.put(key_anchor.slice(self.input), seq);
+                        }
+
+                        const map = try self.parseBlockMapping(
+                            seq,
+                            sequence_start,
+                            sequence_indent,
+                            sequence_line,
+                        );
+
+                        if (implicit_key_anchors.mapping_anchor) |mapping_anchor| {
+                            try self.anchors.put(mapping_anchor.slice(self.input), map);
+                        }
+
+                        return map;
+                    }
+
+                    break :node seq;
+                },
+                .collect_entry,
+                .sequence_end,
+                .mapping_end,
+                => {
+                    if (node_props.hasAnchorOrTag()) {
+                        break :node .init(E.Null, .{}, self.pos.loc());
+                    }
+                    return error.UnexpectedToken;
+                },
+                .sequence_entry => {
+                    if (node_props.anchorLine()) |anchor_line| {
+                        if (anchor_line == self.token.line) {
+                            return error.UnexpectedToken;
+                        }
+                    }
+                    if (node_props.tagLine()) |tag_line| {
+                        if (tag_line == self.token.line) {
+                            return error.UnexpectedToken;
+                        }
+                    }
+
+                    break :node try self.parseBlockSequence();
+                },
+                .mapping_start => {
+                    const mapping_start = self.token.start;
+                    const mapping_indent = self.token.indent;
+                    const mapping_line = self.token.line;
+
+                    const map = try self.parseFlowMapping();
+
+                    if (self.token.data == .mapping_value) {
+                        if (mapping_line != self.token.line and !opts.explicit_mapping_key) {
+                            return error.MultilineImplicitKey;
+                        }
+
+                        if (self.context.get() == .flow_key) {
+                            break :node map;
+                        }
+
+                        if (opts.current_mapping_indent) |current_mapping_indent| {
+                            if (current_mapping_indent == mapping_indent) {
+                                break :node map;
+                            }
+                        }
+
+                        const implicit_key_anchors = node_props.implicitKeyAnchors(mapping_line);
+
+                        if (implicit_key_anchors.key_anchor) |key_anchor| {
+                            try self.anchors.put(key_anchor.slice(self.input), map);
+                        }
+
+                        const parent_map = try self.parseBlockMapping(
+                            map,
+                            mapping_start,
+                            mapping_indent,
+                            mapping_line,
+                        );
+
+                        if (implicit_key_anchors.mapping_anchor) |mapping_anchor| {
+                            try self.anchors.put(mapping_anchor.slice(self.input), parent_map);
+                        }
+                    }
+                    break :node map;
+                },
+
+                .mapping_key => {
+                    const mapping_start = self.token.start;
+                    const mapping_indent = self.token.indent;
+                    const mapping_line = self.token.line;
+
+                    // if (node_props.anchorLine()) |anchor_line| {
+                    //     if (anchor_line == self.token.line) {
+                    //         return error.UnexpectedToken;
+                    //     }
+                    // }
+
+                    try self.block_indents.push(mapping_indent);
+
+                    try self.scan(.{});
+
+                    const key = try self.parseNode(.{
+                        .explicit_mapping_key = true,
+                        .current_mapping_indent = opts.current_mapping_indent orelse mapping_indent,
+                    });
+
+                    self.block_indents.pop();
+
+                    if (opts.current_mapping_indent) |current_mapping_indent| {
+                        if (current_mapping_indent == mapping_indent) {
+                            return key;
+                        }
+                    }
+
+                    break :node try self.parseBlockMapping(
+                        key,
+                        mapping_start,
+                        mapping_indent,
+                        mapping_line,
+                    );
+                },
+                .mapping_value => {
+                    if (self.context.get() == .flow_key) {
+                        return .init(E.Null, .{}, self.token.start.loc());
+                    }
+                    if (opts.current_mapping_indent) |current_mapping_indent| {
+                        if (current_mapping_indent == self.token.indent) {
+                            return .init(E.Null, .{}, self.token.start.loc());
+                        }
+                    }
+                    const first_key: Expr = .init(E.Null, .{}, self.token.start.loc());
+                    break :node try self.parseBlockMapping(
+                        first_key,
+                        self.token.start,
+                        self.token.indent,
+                        self.token.line,
+                    );
+                },
+                .scalar => |scalar| {
+                    const scalar_start = self.token.start;
+                    const scalar_indent = self.token.indent;
+                    const scalar_line = self.token.line;
+
+                    try self.scan(.{ .tag = node_props.tag() });
+
+                    if (self.token.data == .mapping_value) {
+                        // this might be the start of a new object with an implicit key
+                        //
+                        // ```
+                        // foo: bar        # yes
+                        // ---
+                        // {foo: bar}      # no (1)
+                        // ---
+                        // [foo: bar]      # yes (but can't have more than one prop) (2)
+                        // ---
+                        // - foo: bar      # yes
+                        // ---
+                        // [hi]: 123       # yes
+                        // ---
+                        // one: two        # first property is
+                        // three: four     # no, this is another prop in the same object (3)
+                        // ---
+                        // one:            # yes
+                        //   two: three    # and yes (nested object)
+                        // ```
+                        if (opts.current_mapping_indent) |current_mapping_indent| {
+                            if (current_mapping_indent == scalar_indent) {
+                                // 3
+                                break :node scalar.data.toExpr(scalar_start, self.input);
+                            }
+                        }
+
+                        switch (self.context.get()) {
+                            .flow_key => {
+                                // 1
+                                break :node scalar.data.toExpr(scalar_start, self.input);
+                            },
+                            // => {
+                            //     // 2
+                            //     // can be multiline
+                            // },
+                            .flow_in,
+                            .block_out,
+                            .block_in,
+                            => {
+                                if (scalar_line != self.token.line and !opts.explicit_mapping_key) {
+                                    return error.MultilineImplicitKey;
+                                }
+                                // if (scalar.multiline) {
+                                //     // TODO: maybe get rid of multiline and just check
+                                //     // `scalar_line != self.token.line`. this will depend
+                                //     // on how we decide scalar_line. if that's including
+                                //     // whitespace for plain scalars it might not work
+                                //     return error.MultilineImplicitKey;
+                                // }
+                            },
+                        }
+
+                        const implicit_key = scalar.data.toExpr(scalar_start, self.input);
+
+                        const implicit_key_anchors = node_props.implicitKeyAnchors(scalar_line);
+
+                        if (implicit_key_anchors.key_anchor) |key_anchor| {
+                            try self.anchors.put(key_anchor.slice(self.input), implicit_key);
+                        }
+
+                        const mapping = try self.parseBlockMapping(
+                            implicit_key,
+                            scalar_start,
+                            scalar_indent,
+                            scalar_line,
+                        );
+
+                        if (implicit_key_anchors.mapping_anchor) |mapping_anchor| {
+                            try self.anchors.put(mapping_anchor.slice(self.input), mapping);
+                        }
+
+                        return mapping;
+                    }
+
+                    break :node scalar.data.toExpr(scalar_start, self.input);
+                },
+                .directive => {
+                    return error.UnexpectedToken;
+                },
+                .reserved => {
+                    return error.UnexpectedToken;
+                },
+            };
+
+            if (node_props.has_mapping_anchor) |mapping_anchor| {
+                self.token = mapping_anchor;
+                return error.MultipleAnchors;
+            }
+
+            if (node_props.has_mapping_tag) |mapping_tag| {
+                self.token = mapping_tag;
+                return error.MultipleTags;
+            }
+
+            if (node_props.anchor()) |anchor| {
+                try self.anchors.put(anchor.slice(self.input), node);
+            }
+
+            return node;
         }
 
         fn next(self: *const @This()) enc.unit() {
             const pos = self.pos;
-            if (pos < self.input.len) {
-                return self.input[pos];
+            if (pos.isLessThan(self.input.len)) {
+                return self.input[pos.cast()];
             }
             return 0;
         }
 
-        /// returns total number of folded lines. considers \r\n as one
         fn foldLines(self: *@This()) usize {
-            var total: usize = 0;
-            return next: switch (self.next()) {
-                '\r' => {
-                    total += 1;
-                    self.newline();
-                    self.inc(1);
-                    // consume \n if it exists
-                    const nc = self.next();
-                    if (nc == '\n') {
-                        self.inc(1);
-                        continue :next self.next();
-                    }
-                    continue :next nc;
-                },
-                '\n' => {
-                    total += 1;
-                    self.newline();
-                    self.inc(1);
-                    continue :next self.next();
-                },
-                ' ', '\t' => {
-                    self.inc(1);
-                    continue :next self.next();
-                },
-                else => total,
-            };
-        }
-
-        fn foldIndentedLines(self: *@This()) usize {
             var total: usize = 0;
             return next: switch (self.next()) {
                 '\r' => {
@@ -744,14 +1513,14 @@ pub fn Parser(comptime enc: Encoding) type {
                     continue :next self.next();
                 },
                 ' ' => {
-                    var indent: usize = 1;
+                    var indent: Indent = .from(1);
                     self.inc(1);
                     while (self.next() == ' ') {
                         self.inc(1);
-                        indent += 1;
+                        indent.inc(1);
                     }
 
-                    self.indent = .from(indent);
+                    self.line_indent = indent;
 
                     self.skipSWhite();
                     continue :next self.next();
@@ -767,46 +1536,97 @@ pub fn Parser(comptime enc: Encoding) type {
             };
         }
 
-        const ScanPlainScalarError = OOM || error{UnexpectedCharacter};
+        const ScanPlainScalarError = OOM || error{
+            UnexpectedCharacter,
+            // ScalarTypeMismatch,
+        };
 
-        fn scanPlainScalar(self: *@This()) ScanPlainScalarError!Token(enc) {
+        fn scanPlainScalar(self: *@This(), opts: ScanOptions) ScanPlainScalarError!Token(enc) {
             const ScalarResolverCtx = struct {
-                text: std.ArrayList(enc.unit()),
-                scalar: ?Token(enc).Scalar,
+                str_builder: String.Builder,
+
+                resolved: bool = false,
+                scalar: ?NodeScalar,
+                tag: NodeTag,
+
+                parser: *Parser(enc),
 
                 resolved_scalar_len: usize = 0,
 
-                start: usize,
-                scalar_line: Line,
-                scalar_indent: Indent,
+                start: Pos,
+                line: Line,
+                line_indent: Indent,
+                multiline: bool = false,
 
-                base_indent: Indent,
+                pub fn done(ctx: *const @This()) Token(enc) {
+                    const scalar: Token(enc).Scalar = scalar: {
+                        const scalar_str = ctx.str_builder.done();
 
-                pub fn done(ctx: *const @This(), parser: *const Parser(enc)) Token(enc) {
-                    if (ctx.scalar) |scalar| {
-                        if (ctx.text.items.len == ctx.resolved_scalar_len) {
-                            ctx.text.deinit();
-
-                            return .scalar(.{
-                                .start = ctx.start,
-                                .indent = ctx.scalar_indent,
-                                .line = ctx.scalar_line,
-                                .resolved = scalar,
-                            });
+                        if (ctx.scalar) |scalar| {
+                            if (scalar_str.len() == ctx.resolved_scalar_len) {
+                                scalar_str.deinit();
+                                break :scalar .{
+                                    .multiline = ctx.multiline,
+                                    .data = scalar,
+                                };
+                            }
+                            // the first characters resolved to something
+                            // but there were more characters afterwards
                         }
 
-                        // the first characters resolved to something
-                        // but there were more characters afterwards
-                    }
+                        break :scalar .{
+                            .multiline = ctx.multiline,
+                            .data = .{ .string = scalar_str },
+                        };
+                    };
 
                     return .scalar(.{
                         .start = ctx.start,
-                        .indent = ctx.scalar_indent,
-                        .line = ctx.scalar_line,
-                        .resolved = .{
-                            .string = .{ .text = .{ .list = ctx.text }, .multiline = ctx.scalar_line != parser.line },
-                        },
+                        .indent = ctx.line_indent,
+                        .line = ctx.line,
+                        .resolved = scalar,
                     });
+                }
+
+                pub fn checkAppend(ctx: *@This()) void {
+                    if (ctx.str_builder.len() == 0) {
+                        ctx.line_indent = ctx.parser.line_indent;
+                        ctx.line = ctx.parser.line;
+                    } else if (ctx.line != ctx.parser.line) {
+                        ctx.multiline = true;
+                    }
+                }
+
+                pub fn appendSource(ctx: *@This(), unit: enc.unit(), pos: Pos) OOM!void {
+                    ctx.checkAppend();
+                    try ctx.str_builder.appendSource(unit, pos);
+                }
+
+                pub fn appendSourceWhitespace(ctx: *@This(), unit: enc.unit(), pos: Pos) OOM!void {
+                    try ctx.str_builder.appendSourceWhitespace(unit, pos);
+                }
+
+                pub fn appendSourceSlice(ctx: *@This(), off: Pos, end: Pos) OOM!void {
+                    ctx.checkAppend();
+                    try ctx.str_builder.appendSourceSlice(off, end);
+                }
+
+                pub fn append(ctx: *@This(), unit: enc.unit()) OOM!void {
+                    ctx.checkAppend();
+                    try ctx.str_builder.append(unit);
+                }
+
+                pub fn appendSlice(ctx: *@This(), str: []const enc.unit()) OOM!void {
+                    ctx.checkAppend();
+                    try ctx.str_builder.appendSlice(str);
+                }
+
+                pub fn appendNTimes(ctx: *@This(), unit: enc.unit(), n: usize) OOM!void {
+                    if (n == 0) {
+                        return;
+                    }
+                    ctx.checkAppend();
+                    try ctx.str_builder.appendNTimes(unit, n);
                 }
 
                 const Keywords = enum {
@@ -836,23 +1656,70 @@ pub fn Parser(comptime enc: Encoding) type {
                     OFF,
                 };
 
+                const ResolveError = OOM || error{
+                    // ScalarTypeMismatch,
+                    };
+
                 pub fn resolve(
                     ctx: *@This(),
-                    scalar: Token(enc).Scalar,
+                    scalar: NodeScalar,
+                    off: Pos,
                     text: []const enc.unit(),
-                ) OOM!void {
-                    try ctx.text.appendSlice(text);
-                    ctx.resolved_scalar_len = ctx.text.items.len;
-                    ctx.scalar = scalar;
+                ) ResolveError!void {
+                    try ctx.str_builder.appendExpectedSourceSlice(off, off.add(text.len), text);
+
+                    ctx.resolved = true;
+
+                    switch (ctx.tag) {
+                        .none => {
+                            ctx.resolved_scalar_len = ctx.str_builder.len();
+                            ctx.scalar = scalar;
+                        },
+                        .non_specific => {
+                            // always becomes string
+                        },
+                        .bool => {
+                            if (scalar == .boolean) {
+                                ctx.resolved_scalar_len = ctx.str_builder.len();
+                                ctx.scalar = scalar;
+                            }
+                            // return error.ScalarTypeMismatch;
+                        },
+                        .int => {
+                            if (scalar == .number) {
+                                ctx.resolved_scalar_len = ctx.str_builder.len();
+                                ctx.scalar = scalar;
+                            }
+                            // return error.ScalarTypeMismatch;
+                        },
+                        .float => {
+                            if (scalar == .number) {
+                                ctx.resolved_scalar_len = ctx.str_builder.len();
+                                ctx.scalar = scalar;
+                            }
+                            // return error.ScalarTypeMismatch;
+                        },
+                        .null => {
+                            if (scalar == .null) {
+                                ctx.resolved_scalar_len = ctx.str_builder.len();
+                                ctx.scalar = scalar;
+                            }
+                            // return error.ScalarTypeMismatch;
+                        },
+
+                        .verbatim,
+                        .unknown,
+                        => {
+                            // also always becomes a string
+                        },
+                    }
                 }
 
                 pub fn tryResolveNumber(
                     ctx: *@This(),
                     parser: *Parser(enc),
                     first: enum { positive, negative, dot, none },
-                ) OOM!void {
-                    const start = parser.pos;
-
+                ) ResolveError!void {
                     const nan = std.math.nan(f64);
                     const inf = std.math.inf(f64);
 
@@ -860,53 +1727,57 @@ pub fn Parser(comptime enc: Encoding) type {
                         .dot => {
                             switch (parser.next()) {
                                 'n' => {
+                                    const n_start = parser.pos;
                                     parser.inc(1);
                                     if (parser.remainStartsWith("an")) {
-                                        try ctx.resolve(.{ .number = nan }, "nan");
+                                        try ctx.resolve(.{ .number = nan }, n_start, "nan");
                                         parser.inc(2);
                                         return;
                                     }
-                                    try ctx.text.append('n');
+                                    try ctx.appendSource('n', n_start);
                                     return;
                                 },
                                 'N' => {
+                                    const n_start = parser.pos;
                                     parser.inc(1);
                                     if (parser.remainStartsWith("aN")) {
-                                        try ctx.resolve(.{ .number = nan }, "NaN");
+                                        try ctx.resolve(.{ .number = nan }, n_start, "NaN");
                                         parser.inc(2);
                                         return;
                                     }
                                     if (parser.remainStartsWith("AN")) {
-                                        try ctx.resolve(.{ .number = nan }, "NAN");
+                                        try ctx.resolve(.{ .number = nan }, n_start, "NAN");
                                         parser.inc(2);
                                         return;
                                     }
-                                    try ctx.text.append('N');
+                                    try ctx.appendSource('N', n_start);
                                     return;
                                 },
                                 'i' => {
+                                    const i_start = parser.pos;
                                     parser.inc(1);
                                     if (parser.remainStartsWith("nf")) {
-                                        try ctx.resolve(.{ .number = inf }, "inf");
+                                        try ctx.resolve(.{ .number = inf }, i_start, "inf");
                                         parser.inc(2);
                                         return;
                                     }
-                                    try ctx.text.append('i');
+                                    try ctx.appendSource('i', i_start);
                                     return;
                                 },
                                 'I' => {
+                                    const i_start = parser.pos;
                                     parser.inc(1);
                                     if (parser.remainStartsWith("nf")) {
-                                        try ctx.resolve(.{ .number = inf }, "Inf");
+                                        try ctx.resolve(.{ .number = inf }, i_start, "Inf");
                                         parser.inc(2);
                                         return;
                                     }
                                     if (parser.remainStartsWith("NF")) {
-                                        try ctx.resolve(.{ .number = inf }, "INF");
+                                        try ctx.resolve(.{ .number = inf }, i_start, "INF");
                                         parser.inc(2);
                                         return;
                                     }
-                                    try ctx.text.append('I');
+                                    try ctx.appendSource('I', i_start);
                                     return;
                                 },
                                 else => {},
@@ -914,32 +1785,46 @@ pub fn Parser(comptime enc: Encoding) type {
                         },
                         .negative, .positive => {
                             if (parser.next() == '.' and parser.peek(1) == 'i' or parser.peek(1) == 'I') {
+                                try ctx.appendSource('.', parser.pos);
                                 parser.inc(1);
-                                try ctx.text.append('.');
                                 switch (parser.next()) {
                                     'i' => {
+                                        const i_start = parser.pos;
                                         parser.inc(1);
                                         if (parser.remainStartsWith("nf")) {
-                                            try ctx.resolve(.{ .number = if (first == .negative) -inf else inf }, "inf");
+                                            try ctx.resolve(
+                                                .{ .number = if (first == .negative) -inf else inf },
+                                                i_start,
+                                                "inf",
+                                            );
                                             parser.inc(2);
                                             return;
                                         }
-                                        try ctx.text.append('i');
+                                        try ctx.appendSource('i', i_start);
                                         return;
                                     },
                                     'I' => {
+                                        const i_start = parser.pos;
                                         parser.inc(1);
                                         if (parser.remainStartsWith("nf")) {
-                                            try ctx.resolve(.{ .number = if (first == .negative) -inf else inf }, "Inf");
+                                            try ctx.resolve(
+                                                .{ .number = if (first == .negative) -inf else inf },
+                                                i_start,
+                                                "Inf",
+                                            );
                                             parser.inc(2);
                                             return;
                                         }
                                         if (parser.remainStartsWith("NF")) {
-                                            try ctx.resolve(.{ .number = if (first == .negative) -inf else inf }, "INF");
+                                            try ctx.resolve(
+                                                .{ .number = if (first == .negative) -inf else inf },
+                                                i_start,
+                                                "INF",
+                                            );
                                             parser.inc(2);
                                             return;
                                         }
-                                        try ctx.text.append('I');
+                                        try ctx.appendSource('I', i_start);
                                         return;
                                     },
                                     else => {
@@ -950,6 +1835,8 @@ pub fn Parser(comptime enc: Encoding) type {
                         },
                         .none => {},
                     }
+
+                    const start = parser.pos;
 
                     var decimal = parser.next() == '.';
                     var x = false;
@@ -965,12 +1852,31 @@ pub fn Parser(comptime enc: Encoding) type {
                         // - eof
                         // - '\n'
                         // - '\r'
+                        // - ':'
                         ' ',
                         '\t',
                         0,
                         '\n',
                         '\r',
+                        ':',
                         => break :end .{ parser.pos, true },
+
+                        ',',
+                        ']',
+                        '}',
+                        => {
+                            switch (parser.context.get()) {
+                                // it's valid for ',' ']' '}' to end the scalar
+                                // in flow context
+                                .flow_in,
+                                .flow_key,
+                                => break :end .{ parser.pos, true },
+
+                                .block_in,
+                                .block_out,
+                                => break :end .{ parser.pos, false },
+                            }
+                        },
 
                         '0'...'9',
                         'a'...'f',
@@ -1014,16 +1920,16 @@ pub fn Parser(comptime enc: Encoding) type {
                         },
                     };
 
-                    try ctx.text.appendSlice(parser.input[start..end]);
+                    try ctx.appendSourceSlice(start, end);
 
                     if (!valid) {
                         return;
                     }
 
-                    var scalar: Token(enc).Scalar = scalar: {
+                    var scalar: NodeScalar = scalar: {
                         // TODO: don't parse twice
-                        const float = std.fmt.parseFloat(f64, parser.input[start..end]) catch {
-                            const int = std.fmt.parseUnsigned(u64, parser.input[start..end], 0) catch {
+                        const float = std.fmt.parseFloat(f64, parser.slice(start, end)) catch {
+                            const int = std.fmt.parseUnsigned(u64, parser.slice(start, end), 0) catch {
                                 return;
                             };
                             break :scalar .{ .number = @floatFromInt(int) };
@@ -1031,7 +1937,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         break :scalar .{ .number = float };
                     };
 
-                    ctx.resolved_scalar_len = ctx.text.items.len;
+                    ctx.resolved_scalar_len = ctx.str_builder.len();
                     if (first == .negative) {
                         scalar.number = -scalar.number;
                     }
@@ -1040,35 +1946,83 @@ pub fn Parser(comptime enc: Encoding) type {
             };
 
             var ctx: ScalarResolverCtx = .{
-                .text = .init(self.allocator),
+                .str_builder = self.stringBuilder(),
+                .parser = self,
                 .scalar = null,
+                .tag = opts.tag,
                 .start = self.pos,
-                .scalar_line = self.line,
-                .scalar_indent = self.indent,
-                .base_indent = self.indents.get(),
+                .line = self.line,
+                .line_indent = self.line_indent,
             };
 
             next: switch (self.next()) {
                 0 => {
-                    return ctx.done(self);
+                    return ctx.done();
+                },
+
+                '-' => {
+                    if (self.line_indent == .none and self.remainStartsWith("---") and self.isAnyOrEofAt(" \t\n\r", 3)) {
+                        return ctx.done();
+                    }
+
+                    if (!ctx.resolved and ctx.str_builder.len() == 0) {
+                        try ctx.appendSource('-', self.pos);
+                        self.inc(1);
+                        try ctx.tryResolveNumber(self, .negative);
+                        continue :next self.next();
+                    }
+
+                    try ctx.appendSource('-', self.pos);
+                    self.inc(1);
+                    continue :next self.next();
+                },
+
+                '.' => {
+                    if (self.line_indent == .none and self.remainStartsWith("...") and self.isAnyOrEofAt(" \t\n\r", 3)) {
+                        return ctx.done();
+                    }
+
+                    if (!ctx.resolved and ctx.str_builder.len() == 0) {
+                        switch (self.peek(1)) {
+                            'n',
+                            'N',
+                            'i',
+                            'I',
+                            => {
+                                try ctx.appendSource('.', self.pos);
+                                self.inc(1);
+                                try ctx.tryResolveNumber(self, .dot);
+                                continue :next self.next();
+                            },
+
+                            else => {
+                                try ctx.tryResolveNumber(self, .none);
+                                continue :next self.next();
+                            },
+                        }
+                    }
+
+                    try ctx.appendSource('.', self.pos);
+                    self.inc(1);
+                    continue :next self.next();
                 },
 
                 ':' => {
-                    if (self.isWhiteSpaceOrNewLineOrEofAt(1)) {
-                        return ctx.done(self);
+                    if (self.isSWhiteOrBCharOrEofAt(1)) {
+                        return ctx.done();
                     }
 
-                    try ctx.text.append(':');
+                    try ctx.appendSource(':', self.pos);
                     self.inc(1);
                     continue :next self.next();
                 },
 
                 '#' => {
-                    if (self.pos == 0 or self.input[self.pos - 1] == ' ') {
-                        return ctx.done(self);
+                    if (self.pos == .zero or self.input[self.pos.sub(1).cast()] == ' ') {
+                        return ctx.done();
                     }
 
-                    try ctx.text.append('#');
+                    try ctx.appendSource('#', self.pos);
                     self.inc(1);
                     continue :next self.next();
                 },
@@ -1084,12 +2038,22 @@ pub fn Parser(comptime enc: Encoding) type {
                         .block_out,
                         => {},
 
-                        .flow_in => {
-                            return ctx.done(self);
+                        .flow_in,
+                        .flow_key,
+                        => {
+                            return ctx.done();
                         },
                     }
 
-                    try ctx.text.append(c);
+                    try ctx.appendSource(c, self.pos);
+                    self.inc(1);
+                    continue :next self.next();
+                },
+
+                ' ',
+                '\t',
+                => |c| {
+                    try ctx.appendSourceWhitespace(c, self.pos);
                     self.inc(1);
                     continue :next self.next();
                 },
@@ -1106,33 +2070,34 @@ pub fn Parser(comptime enc: Encoding) type {
                     self.newline();
                     self.inc(1);
 
-                    const lines = self.foldIndentedLines();
+                    const lines = self.foldLines();
 
-                    if (ctx.base_indent != .none) {
-                        switch (self.indent.cmp(ctx.base_indent)) {
-                            .gt, .eq => {
+                    if (self.block_indents.get()) |block_indent| {
+                        switch (self.line_indent.cmp(block_indent)) {
+                            .gt => {
                                 // continue (whitespace already stripped)
                             },
-                            .lt => {
-                                // end here. this is the start of a new value.
-                                return ctx.done(self);
+                            .lt, .eq => {
+                                // end here. this it the start of a new value.
+                                return ctx.done();
                             },
                         }
                     }
 
                     if (lines == 0 and !self.isEof()) {
-                        try ctx.text.append(' ');
+                        try ctx.append(' ');
                     }
 
-                    try ctx.text.appendNTimes('\n', lines);
+                    try ctx.appendNTimes('\n', lines);
 
                     continue :next self.next();
                 },
 
                 else => |c| {
-                    if (ctx.text.items.len != 0 or ctx.scalar != null) {
+                    if (ctx.resolved or ctx.str_builder.len() != 0) {
+                        const start = self.pos;
                         self.inc(1);
-                        try ctx.text.append(c);
+                        try ctx.appendSource(c, start);
                         continue :next self.next();
                     }
 
@@ -1141,175 +2106,186 @@ pub fn Parser(comptime enc: Encoding) type {
                     // TODO: make more better
                     switch (c) {
                         'n' => {
+                            const n_start = self.pos;
                             self.inc(1);
                             if (self.remainStartsWith("ull")) {
-                                try ctx.resolve(.null, "null");
+                                try ctx.resolve(.null, n_start, "null");
                                 self.inc(3);
                                 continue :next self.next();
                             }
                             if (self.remainStartsWithChar('o')) {
-                                try ctx.resolve(.{ .boolean = false }, "no");
+                                try ctx.resolve(.{ .boolean = false }, n_start, "no");
                                 self.inc(1);
                                 continue :next self.next();
                             }
-                            try ctx.text.append(c);
+                            try ctx.appendSource(c, n_start);
                             continue :next self.next();
                         },
                         'N' => {
+                            const n_start = self.pos;
                             self.inc(1);
                             if (self.remainStartsWith("ull")) {
-                                try ctx.resolve(.null, "Null");
+                                try ctx.resolve(.null, n_start, "Null");
                                 self.inc(3);
                                 continue :next self.next();
                             }
                             if (self.remainStartsWith("ULL")) {
-                                try ctx.resolve(.null, "NULL");
+                                try ctx.resolve(.null, n_start, "NULL");
                                 self.inc(3);
                                 continue :next self.next();
                             }
                             if (self.remainStartsWithChar('o')) {
-                                try ctx.resolve(.{ .boolean = false }, "No");
+                                try ctx.resolve(.{ .boolean = false }, n_start, "No");
                                 self.inc(1);
                                 continue :next self.next();
                             }
                             if (self.remainStartsWithChar('O')) {
-                                try ctx.resolve(.{ .boolean = false }, "NO");
+                                try ctx.resolve(.{ .boolean = false }, n_start, "NO");
                                 self.inc(1);
                                 continue :next self.next();
                             }
-                            try ctx.text.append(c);
+                            try ctx.appendSource(c, n_start);
                             continue :next self.next();
                         },
                         '~' => {
+                            const start = self.pos;
                             self.inc(1);
-                            try ctx.resolve(.null, "~");
+                            try ctx.resolve(.null, start, "~");
                             continue :next self.next();
                         },
                         't' => {
+                            const t_start = self.pos;
                             self.inc(1);
                             if (self.remainStartsWith("rue")) {
-                                try ctx.resolve(.{ .boolean = true }, "true");
+                                try ctx.resolve(.{ .boolean = true }, t_start, "true");
                                 self.inc(3);
                                 continue :next self.next();
                             }
-                            try ctx.text.append(c);
+                            try ctx.appendSource(c, t_start);
                             continue :next self.next();
                         },
                         'T' => {
+                            const t_start = self.pos;
                             self.inc(1);
                             if (self.remainStartsWith("rue")) {
-                                try ctx.resolve(.{ .boolean = true }, "True");
+                                try ctx.resolve(.{ .boolean = true }, t_start, "True");
                                 self.inc(3);
                                 continue :next self.next();
                             }
                             if (self.remainStartsWith("RUE")) {
-                                try ctx.resolve(.{ .boolean = true }, "TRUE");
+                                try ctx.resolve(.{ .boolean = true }, t_start, "TRUE");
                                 self.inc(3);
                                 continue :next self.next();
                             }
-                            try ctx.text.append(c);
+                            try ctx.appendSource(c, t_start);
                             continue :next self.next();
                         },
                         'y' => {
+                            const y_start = self.pos;
                             self.inc(1);
                             if (self.remainStartsWith("es")) {
-                                try ctx.resolve(.{ .boolean = true }, "yes");
+                                try ctx.resolve(.{ .boolean = true }, y_start, "yes");
                                 self.inc(2);
                                 continue :next self.next();
                             }
-                            try ctx.text.append(c);
+                            try ctx.appendSource(c, y_start);
                             continue :next self.next();
                         },
                         'Y' => {
+                            const y_start = self.pos;
                             self.inc(1);
                             if (self.remainStartsWith("es")) {
-                                try ctx.resolve(.{ .boolean = true }, "Yes");
+                                try ctx.resolve(.{ .boolean = true }, y_start, "Yes");
                                 self.inc(2);
                                 continue :next self.next();
                             }
                             if (self.remainStartsWith("ES")) {
-                                try ctx.resolve(.{ .boolean = true }, "YES");
+                                try ctx.resolve(.{ .boolean = true }, y_start, "YES");
                                 self.inc(2);
                                 continue :next self.next();
                             }
-                            try ctx.text.append(c);
+                            try ctx.appendSource(c, y_start);
                             continue :next self.next();
                         },
                         'o' => {
+                            const o_start = self.pos;
                             self.inc(1);
                             if (self.remainStartsWithChar('n')) {
-                                try ctx.resolve(.{ .boolean = true }, "on");
+                                try ctx.resolve(.{ .boolean = true }, o_start, "on");
                                 self.inc(1);
                                 continue :next self.next();
                             }
                             if (self.remainStartsWith("ff")) {
-                                try ctx.resolve(.{ .boolean = false }, "off");
+                                try ctx.resolve(.{ .boolean = false }, o_start, "off");
                                 self.inc(2);
                                 continue :next self.next();
                             }
-                            try ctx.text.append(c);
+                            try ctx.appendSource(c, o_start);
                             continue :next self.next();
                         },
                         'O' => {
+                            const o_start = self.pos;
                             self.inc(1);
                             if (self.remainStartsWithChar('n')) {
-                                try ctx.resolve(.{ .boolean = true }, "On");
+                                try ctx.resolve(.{ .boolean = true }, o_start, "On");
                                 self.inc(1);
                                 continue :next self.next();
                             }
                             if (self.remainStartsWithChar('N')) {
-                                try ctx.resolve(.{ .boolean = true }, "ON");
+                                try ctx.resolve(.{ .boolean = true }, o_start, "ON");
                                 self.inc(1);
                                 continue :next self.next();
                             }
                             if (self.remainStartsWith("ff")) {
-                                try ctx.resolve(.{ .boolean = false }, "Off");
+                                try ctx.resolve(.{ .boolean = false }, o_start, "Off");
                                 self.inc(2);
                                 continue :next self.next();
                             }
                             if (self.remainStartsWith("FF")) {
-                                try ctx.resolve(.{ .boolean = false }, "OFF");
+                                try ctx.resolve(.{ .boolean = false }, o_start, "OFF");
                                 self.inc(2);
                                 continue :next self.next();
                             }
-                            try ctx.text.append(c);
+                            try ctx.appendSource(c, o_start);
                             continue :next self.next();
                         },
                         'f' => {
+                            const f_start = self.pos;
                             self.inc(1);
                             if (self.remainStartsWith("alse")) {
-                                try ctx.resolve(.{ .boolean = false }, "false");
+                                try ctx.resolve(.{ .boolean = false }, f_start, "false");
                                 self.inc(4);
                                 continue :next self.next();
                             }
-                            try ctx.text.append(c);
+                            try ctx.appendSource(c, f_start);
                             continue :next self.next();
                         },
                         'F' => {
+                            const f_start = self.pos;
                             self.inc(1);
                             if (self.remainStartsWith("alse")) {
-                                try ctx.resolve(.{ .boolean = false }, "False");
+                                try ctx.resolve(.{ .boolean = false }, f_start, "False");
                                 self.inc(4);
                                 continue :next self.next();
                             }
                             if (self.remainStartsWith("ALSE")) {
-                                try ctx.resolve(.{ .boolean = false }, "FALSE");
+                                try ctx.resolve(.{ .boolean = false }, f_start, "FALSE");
                                 self.inc(4);
                                 continue :next self.next();
                             }
-                            try ctx.text.append(c);
+                            try ctx.appendSource(c, f_start);
                             continue :next self.next();
                         },
 
                         '-' => {
-                            try ctx.text.append('-');
+                            try ctx.appendSource('-', self.pos);
                             self.inc(1);
                             try ctx.tryResolveNumber(self, .negative);
                             continue :next self.next();
                         },
 
                         '+' => {
-                            try ctx.text.append('+');
+                            try ctx.appendSource('+', self.pos);
                             self.inc(1);
                             try ctx.tryResolveNumber(self, .positive);
                             continue :next self.next();
@@ -1327,7 +2303,7 @@ pub fn Parser(comptime enc: Encoding) type {
                                 'i',
                                 'I',
                                 => {
-                                    try ctx.text.append('.');
+                                    try ctx.appendSource('.', self.pos);
                                     self.inc(1);
                                     try ctx.tryResolveNumber(self, .dot);
                                     continue :next self.next();
@@ -1341,8 +2317,9 @@ pub fn Parser(comptime enc: Encoding) type {
                         },
 
                         else => {
+                            const start = self.pos;
                             self.inc(1);
-                            try ctx.text.append(c);
+                            try ctx.appendSource(c, start);
                             continue :next self.next();
                         },
                     }
@@ -1350,26 +2327,396 @@ pub fn Parser(comptime enc: Encoding) type {
             }
         }
 
-        const ScanSingleQuotedScalarError = OOM || error{UnexpectedCharacter};
+        const ScanBlockHeaderError = error{UnexpectedCharacter};
+        const ScanBlockHeaderResult = struct { Indent.Indicator, Chomp };
+
+        // positions parser at the first line break, or eof
+        fn scanBlockHeader(self: *@This()) ScanBlockHeaderError!ScanBlockHeaderResult {
+            // consume c-b-block-header
+
+            var indent_indicator: ?Indent.Indicator = null;
+            var chomp: ?Chomp = null;
+
+            next: switch (self.next()) {
+                '1'...'9' => |digit| {
+                    if (indent_indicator != null) {
+                        return error.UnexpectedCharacter;
+                    }
+
+                    indent_indicator = @enumFromInt(digit - '0');
+                    self.inc(1);
+                    continue :next self.next();
+                },
+                '-' => {
+                    if (chomp != null) {
+                        return error.UnexpectedCharacter;
+                    }
+
+                    chomp = .strip;
+                    self.inc(1);
+                    continue :next self.next();
+                },
+                '+' => {
+                    if (chomp != null) {
+                        return error.UnexpectedCharacter;
+                    }
+
+                    chomp = .keep;
+                    self.inc(1);
+                    continue :next self.next();
+                },
+
+                ' ',
+                '\t',
+                => {
+                    self.inc(1);
+
+                    self.skipSWhite();
+
+                    if (self.next() == '#') {
+                        self.inc(1);
+                        while (!self.isBCharOrEof()) {
+                            self.inc(1);
+                        }
+                    }
+
+                    continue :next self.next();
+                },
+
+                '\r' => {
+                    if (self.peek(1) == '\n') {
+                        self.inc(1);
+                    }
+                    continue :next '\n';
+                },
+
+                '\n' => {
+
+                    // the first newline is always excluded from a literal
+                    self.inc(1);
+
+                    return .{
+                        indent_indicator orelse .default,
+                        chomp orelse .default,
+                    };
+                },
+
+                else => {
+                    return error.UnexpectedCharacter;
+                },
+            }
+        }
+
+        const ScanLiteralScalarError = OOM || error{
+            UnexpectedCharacter,
+            InvalidIndentation,
+        };
+
+        fn scanAutoIndentedLiteralScalar(self: *@This(), chomp: Chomp, folded: bool, start: Pos, line: Line) ScanLiteralScalarError!Token(enc) {
+            var leading_newlines: usize = 0;
+            var text: std.ArrayList(enc.unit()) = .init(self.allocator);
+
+            const content_indent: Indent, const first = next: switch (self.next()) {
+                0 => {
+                    return .scalar(.{
+                        .start = start,
+                        .indent = self.line_indent,
+                        .line = line,
+                        .resolved = .{
+                            .data = .{ .string = .{ .list = .init(self.allocator) } },
+                            .multiline = true,
+                        },
+                    });
+                },
+
+                '\r' => {
+                    if (self.peek(1) == '\n') {
+                        self.inc(1);
+                    }
+                    continue :next '\n';
+                },
+                '\n' => {
+                    self.newline();
+                    self.inc(1);
+                    leading_newlines += 1;
+                    continue :next self.next();
+                },
+
+                ' ' => {
+                    var indent: Indent = .from(1);
+                    self.inc(1);
+                    while (self.next() == ' ') {
+                        indent.inc(1);
+                        self.inc(1);
+                    }
+
+                    self.line_indent = indent;
+
+                    continue :next self.next();
+                },
+
+                else => |c| {
+                    break :next .{ self.line_indent, c };
+                },
+            };
+
+            var previous_indent = content_indent;
+
+            next: switch (first) {
+                0 => {
+                    switch (chomp) {
+                        .keep => {
+                            try text.appendNTimes('\n', leading_newlines + 1);
+                        },
+                        .clip => {
+                            try text.append('\n');
+                        },
+                        .strip => {
+                            // no trailing newlines
+                        },
+                    }
+                    return .scalar(.{
+                        .start = start,
+                        .indent = content_indent,
+                        .line = line,
+                        .resolved = .{
+                            .data = .{ .string = .{ .list = text } },
+                            .multiline = true,
+                        },
+                    });
+                },
+
+                '\r' => {
+                    if (self.peek(1) == '\n') {
+                        self.inc(1);
+                    }
+                    continue :next '\n';
+                },
+                '\n' => {
+                    leading_newlines += 1;
+                    self.newline();
+                    self.inc(1);
+                    newlines: switch (self.next()) {
+                        '\r' => {
+                            if (self.peek(1) == '\n') {
+                                self.inc(1);
+                            }
+                            continue :newlines '\n';
+                        },
+                        '\n' => {
+                            leading_newlines += 1;
+                            self.newline();
+                            self.inc(1);
+                            continue :newlines self.next();
+                        },
+                        ' ' => {
+                            var indent: Indent = .from(1);
+                            self.inc(1);
+                            while (self.next() == ' ') {
+                                indent.inc(1);
+                                if (content_indent.isLessThan(indent)) {
+                                    switch (folded) {
+                                        true => {
+                                            switch (leading_newlines) {
+                                                0 => {
+                                                    try text.append(' ');
+                                                },
+                                                else => {
+                                                    try text.ensureUnusedCapacity(leading_newlines + 1);
+                                                    text.appendNTimesAssumeCapacity('\n', leading_newlines);
+                                                    text.appendAssumeCapacity(' ');
+                                                    leading_newlines = 0;
+                                                },
+                                            }
+                                        },
+                                        else => {
+                                            try text.ensureUnusedCapacity(leading_newlines + 1);
+                                            text.appendNTimesAssumeCapacity('\n', leading_newlines);
+                                            leading_newlines = 0;
+                                            text.appendAssumeCapacity(' ');
+                                        },
+                                    }
+                                }
+                                self.inc(1);
+                            }
+
+                            if (content_indent.isLessThan(indent)) {
+                                previous_indent = self.line_indent;
+                            }
+                            self.line_indent = indent;
+
+                            continue :next self.next();
+                        },
+                        else => |c| continue :next c,
+                    }
+                },
+
+                else => |c| {
+                    if (self.block_indents.get()) |block_indent| {
+                        if (self.line_indent.isLessThanOrEqual(block_indent)) {
+                            switch (chomp) {
+                                .keep => {
+                                    if (text.items.len != 0) {
+                                        try text.appendNTimes('\n', leading_newlines);
+                                    }
+                                },
+                                .clip => {
+                                    if (text.items.len != 0) {
+                                        try text.append('\n');
+                                    }
+                                },
+                                .strip => {
+                                    // no trailing newlines
+                                },
+                            }
+                            return .scalar(.{
+                                .start = start,
+                                .indent = content_indent,
+                                .line = line,
+                                .resolved = .{
+                                    .data = .{ .string = .{ .list = text } },
+                                    .multiline = true,
+                                },
+                            });
+                        } else if (self.line_indent.isLessThan(content_indent)) {
+                            switch (chomp) {
+                                .keep => {
+                                    if (text.items.len != 0) {
+                                        try text.appendNTimes('\n', leading_newlines);
+                                    }
+                                },
+                                .clip => {
+                                    if (text.items.len != 0) {
+                                        try text.append('\n');
+                                    }
+                                },
+                                .strip => {
+                                    // no trailing newlines
+                                },
+                            }
+                            return .scalar(.{
+                                .start = start,
+                                .indent = content_indent,
+                                .line = line,
+                                .resolved = .{
+                                    .data = .{ .string = .{ .list = text } },
+                                    .multiline = true,
+                                },
+                            });
+                        }
+                    }
+
+                    switch (folded) {
+                        true => {
+                            switch (leading_newlines) {
+                                0 => {
+                                    try text.append(c);
+                                },
+                                1 => {
+                                    if (previous_indent == content_indent) {
+                                        try text.appendSlice(&.{ ' ', c });
+                                    } else {
+                                        try text.appendSlice(&.{ '\n', c });
+                                    }
+                                    leading_newlines = 0;
+                                },
+                                else => {
+                                    // leading_newlines because -1 for '\n\n' and +1 for c
+                                    try text.ensureUnusedCapacity(leading_newlines);
+                                    text.appendNTimesAssumeCapacity('\n', leading_newlines - 1);
+                                    text.appendAssumeCapacity(c);
+                                    leading_newlines = 0;
+                                },
+                            }
+                        },
+                        false => {
+                            try text.ensureUnusedCapacity(leading_newlines + 1);
+                            text.appendNTimesAssumeCapacity('\n', leading_newlines);
+                            text.appendAssumeCapacity(c);
+                            leading_newlines = 0;
+                        },
+                    }
+
+                    self.inc(1);
+                    continue :next self.next();
+                },
+            }
+        }
+
+        fn scanLiteralScalar(self: *@This()) ScanLiteralScalarError!Token(enc) {
+            defer self.whitespace_buf.clearRetainingCapacity();
+
+            const start = self.pos;
+            const line = self.line;
+
+            const indent_indicator, const chomp = try self.scanBlockHeader();
+            _ = indent_indicator;
+
+            return self.scanAutoIndentedLiteralScalar(chomp, false, start, line);
+        }
+
+        fn scanFoldedScalar(self: *@This()) ScanLiteralScalarError!Token(enc) {
+            const start = self.pos;
+            const line = self.line;
+
+            const indent_indicator, const chomp = try self.scanBlockHeader();
+            _ = indent_indicator;
+
+            return self.scanAutoIndentedLiteralScalar(chomp, true, start, line);
+        }
+
+        const ScanSingleQuotedScalarError = OOM || error{
+            UnexpectedCharacter,
+            UnexpectedDocumentStart,
+            UnexpectedDocumentEnd,
+        };
 
         fn scanSingleQuotedScalar(self: *@This()) ScanSingleQuotedScalarError!Token(enc) {
             const start = self.pos;
             const scalar_line = self.line;
-            const scalar_indent = self.indent;
+            const scalar_indent = self.line_indent;
 
             var text: std.ArrayList(enc.unit()) = .init(self.allocator);
+
+            var nl = false;
 
             next: switch (self.next()) {
                 0 => return error.UnexpectedCharacter,
 
+                '.' => {
+                    if (nl and self.remainStartsWith("...") and self.isSWhiteOrBCharAt(3)) {
+                        return error.UnexpectedDocumentEnd;
+                    }
+                    nl = false;
+                    try text.append('.');
+                    self.inc(1);
+                    continue :next self.next();
+                },
+
+                '-' => {
+                    if (nl and self.remainStartsWith("---") and self.isSWhiteOrBCharAt(3)) {
+                        return error.UnexpectedDocumentStart;
+                    }
+                    nl = false;
+                    try text.append('-');
+                    self.inc(1);
+                    continue :next self.next();
+                },
+
                 '\r',
                 '\n',
                 => {
+                    nl = true;
                     self.newline();
                     self.inc(1);
                     switch (self.foldLines()) {
                         0 => try text.append(' '),
                         else => |lines| try text.appendNTimes('\n', lines),
+                    }
+                    if (self.block_indents.get()) |block_indent| {
+                        if (self.line_indent.isLessThanOrEqual(block_indent)) {
+                            return error.UnexpectedCharacter;
+                        }
                     }
                     continue :next self.next();
                 },
@@ -1377,16 +2724,18 @@ pub fn Parser(comptime enc: Encoding) type {
                 ' ',
                 '\t',
                 => {
+                    nl = false;
                     const off = self.pos;
                     self.inc(1);
                     self.skipSWhite();
                     if (!self.isBChar()) {
-                        try text.appendSlice(self.input[off..self.pos]);
+                        try text.appendSlice(self.slice(off, self.pos));
                     }
                     continue :next self.next();
                 },
 
                 '\'' => {
+                    nl = false;
                     self.inc(1);
                     if (self.next() == '\'') {
                         try text.append('\'');
@@ -1399,14 +2748,18 @@ pub fn Parser(comptime enc: Encoding) type {
                         .indent = scalar_indent,
                         .line = scalar_line,
                         .resolved = .{
-                            .string = .{
-                                .text = .{ .list = text },
-                                .multiline = self.line != scalar_line,
+                            // TODO: wrong!
+                            .multiline = self.line != scalar_line,
+                            .data = .{
+                                .string = .{
+                                    .list = text,
+                                },
                             },
                         },
                     });
                 },
                 else => |c| {
+                    nl = false;
                     try text.append(c);
                     self.inc(1);
                     continue :next self.next();
@@ -1414,16 +2767,42 @@ pub fn Parser(comptime enc: Encoding) type {
             }
         }
 
-        const ScanDoubleQuotedScalarError = OOM || error{UnexpectedCharacter};
+        const ScanDoubleQuotedScalarError = OOM || error{
+            UnexpectedCharacter,
+            UnexpectedDocumentStart,
+            UnexpectedDocumentEnd,
+        };
 
         fn scanDoubleQuotedScalar(self: *@This()) ScanDoubleQuotedScalarError!Token(enc) {
             const start = self.pos;
             const scalar_line = self.line;
-            const scalar_indent = self.indent;
+            const scalar_indent = self.line_indent;
             var text: std.ArrayList(enc.unit()) = .init(self.allocator);
+
+            var nl = false;
 
             next: switch (self.next()) {
                 0 => return error.UnexpectedCharacter,
+
+                '.' => {
+                    if (nl and self.remainStartsWith("...") and self.isSWhiteOrBCharAt(3)) {
+                        return error.UnexpectedDocumentEnd;
+                    }
+                    nl = false;
+                    try text.append('.');
+                    self.inc(1);
+                    continue :next self.next();
+                },
+
+                '-' => {
+                    if (nl and self.remainStartsWith("---") and self.isSWhiteOrBCharAt(3)) {
+                        return error.UnexpectedDocumentStart;
+                    }
+                    nl = false;
+                    try text.append('-');
+                    self.inc(1);
+                    continue :next self.next();
+                },
 
                 '\r',
                 '\n',
@@ -1434,37 +2813,48 @@ pub fn Parser(comptime enc: Encoding) type {
                         0 => try text.append(' '),
                         else => |lines| try text.appendNTimes('\n', lines),
                     }
+
+                    if (self.block_indents.get()) |block_indent| {
+                        if (self.line_indent.isLessThanOrEqual(block_indent)) {
+                            return error.UnexpectedCharacter;
+                        }
+                    }
+                    nl = true;
                     continue :next self.next();
                 },
 
                 ' ',
                 '\t',
                 => {
+                    nl = false;
                     const off = self.pos;
                     self.inc(1);
                     self.skipSWhite();
                     if (!self.isBChar()) {
-                        try text.appendSlice(self.input[off..self.pos]);
+                        try text.appendSlice(self.slice(off, self.pos));
                     }
                     continue :next self.next();
                 },
 
                 '"' => {
+                    nl = false;
                     self.inc(1);
                     return .scalar(.{
                         .start = start,
                         .indent = scalar_indent,
                         .line = scalar_line,
                         .resolved = .{
-                            .string = .{
-                                .text = .{ .list = text },
-                                .multiline = self.line != scalar_line,
+                            // TODO: wrong!
+                            .multiline = self.line != scalar_line,
+                            .data = .{
+                                .string = .{ .list = text },
                             },
                         },
                     });
                 },
 
                 '\\' => {
+                    nl = false;
                     self.inc(1);
                     switch (self.next()) {
                         '\r',
@@ -1473,6 +2863,13 @@ pub fn Parser(comptime enc: Encoding) type {
                             self.newline();
                             self.inc(1);
                             const lines = self.foldLines();
+
+                            if (self.block_indents.get()) |block_indent| {
+                                if (self.line_indent.isLessThanOrEqual(block_indent)) {
+                                    return error.UnexpectedCharacter;
+                                }
+                            }
+
                             try text.appendNTimes('\n', lines);
                             self.skipSWhite();
                             continue :next self.next();
@@ -1528,6 +2925,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 else => |c| {
+                    nl = false;
                     try text.append(c);
                     self.inc(1);
                     continue :next self.next();
@@ -1612,230 +3010,541 @@ pub fn Parser(comptime enc: Encoding) type {
             }
         }
 
-        const ScanError = OOM || error{ UnexpectedToken, UnexpectedCharacter };
+        const ScanTagPropertyError = error{ UnresolvedTagHandle, UnexpectedCharacter };
 
-        fn scan(self: *@This()) ScanError!void {
-            if (self.future) |future| {
-                self.future = null;
-                future.apply(self);
-                return;
+        // c-ns-tag-property
+        fn scanTagProperty(self: *@This()) ScanTagPropertyError!Token(enc) {
+            const start = self.pos;
+
+            // already at '!'
+            self.inc(1);
+
+            switch (self.next()) {
+                0,
+                ' ',
+                '\t',
+                '\n',
+                '\r',
+                => {
+                    // c-non-specific-tag
+                    // primary tag handle
+
+                    return .tag(.{
+                        .start = start,
+                        .indent = self.line_indent,
+                        .line = self.line,
+                        .tag = .non_specific,
+                    });
+                },
+
+                '<' => {
+                    // c-verbatim-tag
+
+                    self.inc(1);
+
+                    const prefix = prefix: {
+                        if (self.next() == '!') {
+                            self.inc(1);
+                            var range = self.stringRange();
+                            self.skipNsUriChars();
+                            break :prefix range.end();
+                        }
+
+                        if (self.isNsTagChar()) |len| {
+                            var range = self.stringRange();
+                            self.inc(len);
+                            self.skipNsUriChars();
+                            break :prefix range.end();
+                        }
+
+                        return error.UnexpectedCharacter;
+                    };
+
+                    try self.trySkipChar('>');
+
+                    return .tag(.{
+                        .start = start,
+                        .indent = self.line_indent,
+                        .line = self.line,
+                        .tag = .{ .verbatim = prefix },
+                    });
+                },
+
+                '!' => {
+                    // c-ns-shorthand-tag
+                    // secondary tag handle
+
+                    self.inc(1);
+                    var range = self.stringRange();
+                    try self.trySkipNsTagChars();
+                    const shorthand = range.end();
+
+                    const tag: NodeTag = tag: {
+                        const s = shorthand.slice(self.input);
+                        if (std.mem.eql(enc.unit(), s, "bool")) {
+                            break :tag .bool;
+                        }
+                        if (std.mem.eql(enc.unit(), s, "int")) {
+                            break :tag .int;
+                        }
+                        if (std.mem.eql(enc.unit(), s, "float")) {
+                            break :tag .float;
+                        }
+                        if (std.mem.eql(enc.unit(), s, "null")) {
+                            break :tag .null;
+                        }
+
+                        break :tag .{ .unknown = shorthand };
+                    };
+
+                    return .tag(.{
+                        .start = start,
+                        .indent = self.line_indent,
+                        .line = self.line,
+                        .tag = tag,
+                    });
+                },
+
+                else => {
+                    // c-ns-shorthand-tag
+                    // named tag handle
+
+                    var range = self.stringRange();
+                    try self.trySkipNsWordChars();
+                    const handle_or_shorthand = range.end();
+
+                    if (self.next() == '!') {
+                        self.inc(1);
+                        if (!self.tag_handles.contains(handle_or_shorthand.slice(self.input))) {
+                            self.pos = range.off;
+                            return error.UnresolvedTagHandle;
+                        }
+
+                        range = self.stringRange();
+                        try self.trySkipNsTagChars();
+                        const shorthand = range.end();
+
+                        return .tag(.{
+                            .start = start,
+                            .indent = self.line_indent,
+                            .line = self.line,
+                            .tag = .{ .unknown = shorthand },
+                        });
+                    }
+
+                    const tag: NodeTag = tag: {
+                        const s = handle_or_shorthand.slice(self.input);
+                        if (std.mem.eql(enc.unit(), s, "bool")) {
+                            break :tag .bool;
+                        }
+                        if (std.mem.eql(enc.unit(), s, "int")) {
+                            break :tag .int;
+                        }
+                        if (std.mem.eql(enc.unit(), s, "float")) {
+                            break :tag .float;
+                        }
+                        if (std.mem.eql(enc.unit(), s, "null")) {
+                            break :tag .null;
+                        }
+
+                        break :tag .{ .unknown = handle_or_shorthand };
+                    };
+
+                    return .tag(.{
+                        .start = start,
+                        .indent = self.line_indent,
+                        .line = self.line,
+                        .tag = tag,
+                    });
+                },
             }
+        }
 
-            defer {
-                self.at_line_start = false;
-            }
+        // fn scanIndentation(self: *@This()) void {}
 
-            next: switch (self.next()) {
+        const ScanError = OOM || error{
+            UnexpectedToken,
+            UnexpectedCharacter,
+            UnresolvedTagHandle,
+            UnexpectedDocumentStart,
+            UnexpectedDocumentEnd,
+            InvalidIndentation,
+            // ScalarTypeMismatch,
+        };
+
+        const ScanOptions = struct {
+            /// Used by compact sequences. We need to add
+            /// the parent indentation
+            /// ```
+            /// - - - - one # indent = 4 + 2
+            ///       - two
+            /// ```
+            additional_parent_indent: ?Indent = null,
+
+            /// If a scalar is scanned, this tag might be used.
+            tag: NodeTag = .none,
+
+            /// The scanner only counts indentation after a newline
+            /// (or in compact collections). First scan needs to
+            /// count indentation.
+            first_scan: bool = false,
+        };
+
+        fn scan(self: *@This(), opts: ScanOptions) ScanError!void {
+            const ScanCtx = struct {
+                parser: *Parser(enc),
+
+                count_indentation: bool,
+                additional_parent_indent: ?Indent,
+
+                pub fn scanWhitespace(ctx: *@This(), comptime ws: enc.unit()) ScanError!enc.unit() {
+                    const parser = ctx.parser;
+
+                    switch (ws) {
+                        '\r' => {
+                            if (parser.peek(1) == '\n') {
+                                parser.inc(1);
+                            }
+
+                            return '\n';
+                        },
+                        '\n' => {
+                            ctx.count_indentation = true;
+                            ctx.additional_parent_indent = null;
+
+                            parser.newline();
+                            parser.inc(1);
+                            return parser.next();
+                        },
+                        ' ' => {
+                            var total: usize = 1;
+                            parser.inc(1);
+
+                            while (parser.next() == ' ') {
+                                parser.inc(1);
+                                total += 1;
+                            }
+
+                            if (ctx.count_indentation) {
+                                const parent_indent = if (ctx.additional_parent_indent) |additional| additional.cast() else 0;
+                                parser.line_indent = .from(total + parent_indent);
+                            }
+
+                            ctx.count_indentation = false;
+
+                            return parser.next();
+                        },
+                        '\t' => {
+                            if (ctx.count_indentation and ctx.parser.context.get() == .block_in) {
+                                return error.UnexpectedCharacter;
+                            }
+                            ctx.count_indentation = false;
+                            parser.inc(1);
+                            return parser.next();
+                        },
+                        else => @compileError("unexpected character"),
+                    }
+                }
+            };
+
+            var ctx: ScanCtx = .{
+                .parser = self,
+
+                .count_indentation = opts.first_scan or opts.additional_parent_indent != null,
+                .additional_parent_indent = opts.additional_parent_indent,
+            };
+
+            const previous_token_line = self.token.line;
+
+            self.token = next: switch (self.next()) {
                 0 => {
                     const start = self.pos;
-                    self.token = .eof(.{
+                    break :next .eof(.{
                         .start = start,
-                        .indent = self.indent,
+                        .indent = self.line_indent,
                         .line = self.line,
                     });
-                    return;
                 },
                 '-' => {
                     const start = self.pos;
 
-                    if (self.indent == .none and self.remainStartsWith(enc.literal("---")) and self.isWhiteSpaceOrNewLineOrEofAt(3)) {
+                    if (self.line_indent == .none and self.remainStartsWith(enc.literal("---")) and self.isSWhiteOrBCharOrEofAt(3)) {
                         self.inc(3);
-                        self.token = .documentStart(.{
+                        break :next .documentStart(.{
                             .start = start,
-                            .indent = self.indent,
+                            .indent = self.line_indent,
                             .line = self.line,
                         });
-                        return;
                     }
 
-                    if (self.isWhiteSpaceOrNewLineOrEofAt(1)) {
-                        const indent: Indent = if (start == 0) self.indent else indent: {
-                            var pos: usize = start - 1;
-                            var found = false;
+                    switch (self.peek(1)) {
 
-                            // detect compact nested sequence indentation
-                            prev: switch (self.input[pos]) {
-                                '-' => {
-                                    found = true;
-                                    pos = std.math.sub(usize, pos, 1) catch break :prev;
-                                    continue :prev self.input[pos];
+                        // eof
+                        // b-char
+                        // s-white
+                        0,
+                        '\n',
+                        '\r',
+                        ' ',
+                        '\t',
+                        => {
+                            self.inc(1);
+
+                            switch (self.context.get()) {
+                                .block_out,
+                                .block_in,
+                                => {},
+                                .flow_in,
+                                .flow_key,
+                                => {
+                                    self.token.start = start;
+                                    return error.UnexpectedToken;
                                 },
-
-                                ' ', '\t' => {
-                                    pos = std.math.sub(usize, pos, 1) catch break :prev;
-                                    continue :prev self.input[pos];
-                                },
-
-                                '\r', '\n' => {
-                                    // +1 because we want line start (last position of ' ' or '\t')
-                                    pos += 1;
-                                    break :prev;
-                                },
-
-                                else => break :indent self.indent,
                             }
 
-                            if (!found) {
-                                break :indent self.indent;
+                            break :next .sequenceEntry(.{
+                                .start = start,
+                                .indent = self.line_indent,
+                                .line = self.line,
+                            });
+                        },
+
+                        // c-flow-indicator
+                        ',',
+                        ']',
+                        '[',
+                        '}',
+                        '{',
+                        => {
+                            switch (self.context.get()) {
+                                .flow_in,
+                                .flow_key,
+                                => {
+                                    self.inc(1);
+
+                                    self.token = .sequenceEntry(.{
+                                        .start = start,
+                                        .indent = self.line_indent,
+                                        .line = self.line,
+                                    });
+
+                                    return error.UnexpectedToken;
+                                },
+                                .block_in,
+                                .block_out,
+                                => {
+                                    //  scanPlainScalar
+                                },
                             }
+                        },
 
-                            break :indent .from(start - pos);
-                        };
-
-                        self.inc(1);
-                        self.token = .sequenceEntry(.{
-                            .start = start,
-                            .indent = indent,
-                            .line = self.line,
-                        });
-
-                        switch (self.context.get()) {
-                            .block_out,
-                            .block_in,
-                            => {},
-                            .flow_in => {
-                                return error.UnexpectedToken;
-                            },
-                        }
-                        return;
+                        else => {
+                            //  scanPlainScalar
+                        },
                     }
 
-                    self.token = try self.scanPlainScalar();
-                    return;
+                    break :next try self.scanPlainScalar(opts);
                 },
                 '.' => {
                     const start = self.pos;
 
-                    if (self.indent == .none and self.remainStartsWith(enc.literal("...")) and self.isWhiteSpaceOrNewLineOrEofAt(3)) {
+                    if (self.line_indent == .none and self.remainStartsWith(enc.literal("...")) and self.isSWhiteOrBCharOrEofAt(3)) {
                         self.inc(3);
-                        self.token = .documentEnd(.{
+                        break :next .documentEnd(.{
                             .start = start,
-                            .indent = self.indent,
+                            .indent = self.line_indent,
                             .line = self.line,
                         });
-                        return;
                     }
 
-                    self.token = try self.scanPlainScalar();
-                    return;
+                    break :next try self.scanPlainScalar(opts);
                 },
                 '?' => {
                     const start = self.pos;
 
-                    if (self.isWhiteSpaceOrNewLineOrEofAt(1)) {
-                        self.inc(1);
-                        self.token = .mappingKey(.{
-                            .start = start,
-                            .indent = self.indent,
-                            .line = self.line,
-                        });
-                        return;
+                    switch (self.peek(1)) {
+                        // eof
+                        // s-white
+                        // b-char
+                        0,
+                        ' ',
+                        '\t',
+                        '\n',
+                        '\r',
+                        => {
+                            self.inc(1);
+                            break :next .mappingKey(.{
+                                .start = start,
+                                .indent = self.line_indent,
+                                .line = self.line,
+                            });
+                        },
+
+                        // c-flow-indicator
+                        ',',
+                        ']',
+                        '[',
+                        '}',
+                        '{',
+                        => {
+                            switch (self.context.get()) {
+                                .block_in,
+                                .block_out,
+                                => {
+                                    // scanPlainScalar
+                                },
+                                .flow_in,
+                                .flow_key,
+                                => {
+                                    self.inc(1);
+                                    break :next .mappingKey(.{
+                                        .start = start,
+                                        .indent = self.line_indent,
+                                        .line = self.line,
+                                    });
+                                },
+                            }
+                        },
+
+                        else => {
+                            // scanPlainScalar
+                        },
                     }
 
-                    self.token = try self.scanPlainScalar();
-                    return;
+                    break :next try self.scanPlainScalar(opts);
                 },
                 ':' => {
                     const start = self.pos;
 
-                    switch (self.context.get()) {
-                        .flow_in => {
-                            // inside flow context ':' does not need to be followed by whitespace.
+                    switch (self.peek(1)) {
+                        0,
+                        ' ',
+                        '\t',
+                        '\n',
+                        '\r',
+                        => {
                             self.inc(1);
-                            self.token = .mappingValue(.{
+                            break :next .mappingValue(.{
                                 .start = start,
-                                .indent = self.indent,
+                                .indent = self.line_indent,
                                 .line = self.line,
                             });
-                            return;
                         },
-                        .block_out,
-                        .block_in,
+
+                        // c-flow-indicator
+                        ',',
+                        ']',
+                        '[',
+                        '}',
+                        '{',
                         => {
-                            if (self.isWhiteSpaceOrNewLineOrEofAt(1)) {
-                                self.inc(1);
-                                self.token = .mappingValue(.{
-                                    .start = start,
-                                    .indent = self.indent,
-                                    .line = self.line,
-                                });
-                                return;
+                            // scanPlainScalar
+                            switch (self.context.get()) {
+                                .block_in,
+                                .block_out,
+                                => {
+                                    // scanPlainScalar
+                                },
+                                .flow_in,
+                                .flow_key,
+                                => {
+                                    self.inc(1);
+                                    break :next .mappingValue(.{
+                                        .start = start,
+                                        .indent = self.line_indent,
+                                        .line = self.line,
+                                    });
+                                },
                             }
+                        },
+
+                        else => {
+                            switch (self.context.get()) {
+                                .block_in,
+                                .block_out,
+                                => {
+                                    // scanPlainScalar
+                                },
+                                .flow_in, .flow_key => {
+                                    self.inc(1);
+                                    break :next .mappingValue(.{
+                                        .start = start,
+                                        .indent = self.line_indent,
+                                        .line = self.line,
+                                    });
+                                },
+                            }
+                            // scanPlainScalar
                         },
                     }
 
-                    self.token = try self.scanPlainScalar();
-                    return;
+                    break :next try self.scanPlainScalar(opts);
                 },
                 ',' => {
                     const start = self.pos;
 
                     switch (self.context.get()) {
-                        .flow_in => {
+                        .flow_in,
+                        .flow_key,
+                        => {
                             self.inc(1);
-                            self.token = .collectEntry(.{
+                            break :next .collectEntry(.{
                                 .start = start,
-                                .indent = self.indent,
+                                .indent = self.line_indent,
                                 .line = self.line,
                             });
-                            return;
                         },
                         .block_in,
                         .block_out,
-                        => {
-                            self.token = try self.scanPlainScalar();
-                            return;
-                        },
+                        => {},
                     }
+
+                    break :next try self.scanPlainScalar(opts);
                 },
                 '[' => {
                     const start = self.pos;
 
                     self.inc(1);
-                    self.token = .sequenceStart(.{
+                    break :next .sequenceStart(.{
                         .start = start,
-                        .indent = self.indent,
+                        .indent = self.line_indent,
                         .line = self.line,
                     });
-                    return;
                 },
                 ']' => {
                     const start = self.pos;
 
                     self.inc(1);
-                    self.token = .sequenceEnd(.{
+                    break :next .sequenceEnd(.{
                         .start = start,
-                        .indent = self.indent,
+                        .indent = self.line_indent,
                         .line = self.line,
                     });
-                    return;
                 },
                 '{' => {
                     const start = self.pos;
 
                     self.inc(1);
-                    self.token = .mappingStart(.{
+                    break :next .mappingStart(.{
                         .start = start,
-                        .indent = self.indent,
+                        .indent = self.line_indent,
                         .line = self.line,
                     });
-                    return;
                 },
                 '}' => {
                     const start = self.pos;
 
                     self.inc(1);
-                    self.token = .mappingEnd(.{
+                    break :next .mappingEnd(.{
                         .start = start,
-                        .indent = self.indent,
+                        .indent = self.line_indent,
                         .line = self.line,
                     });
-                    return;
                 },
                 '#' => {
                     const start = self.pos;
 
-                    const prev = if (start == 0) 0 else self.input[start - 1];
+                    const prev = if (start == .zero) 0 else self.input[start.cast() - 1];
                     switch (prev) {
                         0,
                         ' ',
@@ -1844,6 +3553,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         '\r',
                         => {},
                         else => {
+                            // TODO: prove this is unreachable
                             return error.UnexpectedCharacter;
                         },
                     }
@@ -1858,98 +3568,156 @@ pub fn Parser(comptime enc: Encoding) type {
                     const start = self.pos;
 
                     self.inc(1);
-                    self.token = .anchor(.{
+
+                    var range = self.stringRange();
+                    try self.trySkipNsAnchorChars();
+
+                    const anchor: Token(enc) = .anchor(.{
                         .start = start,
-                        .indent = self.indent,
+                        .indent = self.line_indent,
                         .line = self.line,
+                        .name = range.end(),
                     });
-                    return;
+
+                    switch (self.next()) {
+                        0,
+                        ' ',
+                        '\t',
+                        '\n',
+                        '\r',
+                        => {
+                            break :next anchor;
+                        },
+
+                        ',',
+                        ']',
+                        '[',
+                        '}',
+                        '{',
+                        => {
+                            switch (self.context.get()) {
+                                .block_in,
+                                .block_out,
+                                => {
+                                    // error.UnexpectedCharacter
+                                },
+                                .flow_key,
+                                .flow_in,
+                                => {
+                                    break :next anchor;
+                                },
+                            }
+                        },
+
+                        else => {},
+                    }
+
+                    return error.UnexpectedCharacter;
                 },
                 '*' => {
                     const start = self.pos;
 
                     self.inc(1);
-                    self.token = .alias(.{
+
+                    var range = self.stringRange();
+                    try self.trySkipNsAnchorChars();
+
+                    const alias: Token(enc) = .alias(.{
                         .start = start,
-                        .indent = self.indent,
+                        .indent = self.line_indent,
                         .line = self.line,
+                        .name = range.end(),
                     });
-                    return;
+
+                    switch (self.next()) {
+                        0,
+                        ' ',
+                        '\t',
+                        '\n',
+                        '\r',
+                        => {
+                            break :next alias;
+                        },
+
+                        ',',
+                        ']',
+                        '[',
+                        '}',
+                        '{',
+                        => {
+                            switch (self.context.get()) {
+                                .block_in,
+                                .block_out,
+                                => {
+                                    // error.UnexpectedCharacter
+                                },
+                                .flow_key,
+                                .flow_in,
+                                => {
+                                    break :next alias;
+                                },
+                            }
+                        },
+
+                        else => {},
+                    }
+
+                    return error.UnexpectedCharacter;
                 },
                 '!' => {
-                    const start = self.pos;
-
-                    self.inc(1);
-                    self.token = .ttag(.{
-                        .start = start,
-                        .indent = self.indent,
-                        .line = self.line,
-                    });
-                    return;
+                    break :next try self.scanTagProperty();
                 },
                 '|' => {
                     const start = self.pos;
 
-                    self.inc(1);
-                    self.token = .literal(.{
-                        .start = start,
-                        .indent = self.indent,
-                        .line = self.line,
-                        .indent_indicator = .none,
-                        .chomp = .default,
-                    });
-
                     switch (self.context.get()) {
                         .block_out,
                         .block_in,
-                        => {},
-                        .flow_in => {
-                            return error.UnexpectedToken;
+                        => {
+                            self.inc(1);
+                            break :next try self.scanLiteralScalar();
                         },
+                        .flow_in,
+                        .flow_key,
+                        => {},
                     }
-                    return;
+                    self.token.start = start;
+                    return error.UnexpectedToken;
                 },
                 '>' => {
                     const start = self.pos;
 
-                    self.inc(1);
-                    self.token = .folded(.{
-                        .start = start,
-                        .indent = self.indent,
-                        .line = self.line,
-                        .indent_indicator = .none,
-                        .chomp = .default,
-                    });
                     switch (self.context.get()) {
                         .block_out,
                         .block_in,
-                        => {},
-                        .flow_in => {
-                            return error.UnexpectedToken;
+                        => {
+                            self.inc(1);
+                            break :next try self.scanFoldedScalar();
                         },
+                        .flow_in,
+                        .flow_key,
+                        => {},
                     }
-                    return;
+                    self.token.start = start;
+                    return error.UnexpectedToken;
                 },
                 '\'' => {
                     self.inc(1);
-                    self.token = try self.scanSingleQuotedScalar();
-                    return;
+                    break :next try self.scanSingleQuotedScalar();
                 },
                 '"' => {
                     self.inc(1);
-                    self.token = try self.scanDoubleQuotedScalar();
-                    return;
+                    break :next try self.scanDoubleQuotedScalar();
                 },
                 '%' => {
                     const start = self.pos;
 
                     self.inc(1);
-                    self.token = .directive(.{
+                    break :next .directive(.{
                         .start = start,
-                        .indent = self.indent,
+                        .indent = self.line_indent,
                         .line = self.line,
                     });
-                    return;
                 },
                 '@', '`' => {
                     const start = self.pos;
@@ -1957,69 +3725,43 @@ pub fn Parser(comptime enc: Encoding) type {
                     self.inc(1);
                     self.token = .reserved(.{
                         .start = start,
-                        .indent = self.indent,
+                        .indent = self.line_indent,
                         .line = self.line,
                     });
                     return error.UnexpectedToken;
                 },
-                '\n' => {
-                    const start = self.pos;
-                    _ = start;
 
-                    self.newline();
-
-                    self.inc(1);
-
-                    continue :next self.next();
-                },
-                '\r' => {
-                    const start = self.pos;
-                    _ = start;
-
-                    self.newline();
-
-                    self.inc(1);
-                    // consume `\r\n` as one newline
-                    if (self.isChar('\n')) {
-                        self.inc(1);
-                    }
-
-                    continue :next self.next();
-                },
-                ' ' => {
-                    const start = self.pos;
-                    _ = start;
-
-                    var total: usize = 1;
-                    self.inc(1);
-
-                    while (self.isChar(' ')) {
-                        self.inc(1);
-                        total += 1;
-                    }
-
-                    if (self.at_line_start) {
-                        self.indent = .from(total);
-                    }
-
-                    continue :next self.next();
-                },
-                '\t' => {
-                    self.inc(1);
-                    continue :next self.next();
-                },
+                inline '\r',
+                '\n',
+                ' ',
+                '\t',
+                => |ws| continue :next try ctx.scanWhitespace(ws),
 
                 else => {
-                    self.token = try self.scanPlainScalar();
-                    return;
+                    break :next try self.scanPlainScalar(opts);
+                },
+            };
+
+            switch (self.context.get()) {
+                .block_out,
+                .block_in,
+                => {},
+                .flow_in,
+                .flow_key,
+                => {
+                    if (self.block_indents.get()) |block_indent| {
+                        if (self.token.line != previous_token_line and self.token.indent.isLessThanOrEqual(block_indent)) {
+                            return error.UnexpectedToken;
+                        }
+                    }
                 },
             }
         }
 
         fn isChar(self: *@This(), char: enc.unit()) bool {
             const pos = self.pos;
-            if (pos < self.input.len) {
-                return self.input[pos] == char;
+            if (pos.isLessThan(self.input.len)) {
+                return self.input[pos.cast()] == char;
             }
             return false;
         }
@@ -2033,8 +3775,8 @@ pub fn Parser(comptime enc: Encoding) type {
 
         fn isNsWordChar(self: *@This()) bool {
             const pos = self.pos;
-            if (pos < self.input.len) {
-                return chars.isNsWordChar(self.input[pos]);
+            if (pos.isLessThan(self.input.len)) {
+                return chars.isNsWordChar(self.input[pos.cast()]);
             }
             return false;
         }
@@ -2042,8 +3784,8 @@ pub fn Parser(comptime enc: Encoding) type {
         /// ns-char
         fn isNsChar(self: *@This()) bool {
             const pos = self.pos;
-            if (pos < self.input.len) {
-                return chars.isNsChar(self.input[pos]);
+            if (pos.isLessThan(self.input.len)) {
+                return chars.isNsChar(self.input[pos.cast()]);
             }
             return false;
         }
@@ -2054,22 +3796,50 @@ pub fn Parser(comptime enc: Encoding) type {
             }
         }
 
-        fn trySkipNsChars(self: *@This()) ParseError!void {
+        fn trySkipNsChars(self: *@This()) error{UnexpectedCharacter}!void {
             if (!self.isNsChar()) {
                 return error.UnexpectedCharacter;
             }
             self.skipNsChars();
         }
 
-        fn isNsTagChar(self: *@This()) bool {
+        fn isNsTagChar(self: *@This()) ?u8 {
             const r = self.remain();
             return chars.isNsTagChar(r);
+        }
+
+        fn trySkipNsTagChars(self: *@This()) error{UnexpectedCharacter}!void {
+            const first_len = self.isNsTagChar() orelse {
+                return error.UnexpectedCharacter;
+            };
+            self.inc(first_len);
+            while (self.isNsTagChar()) |len| {
+                self.inc(len);
+            }
+        }
+
+        fn isNsAnchorChar(self: *@This()) bool {
+            const pos = self.pos;
+            if (pos.isLessThan(self.input.len)) {
+                return chars.isNsAnchorChar(self.input[pos.cast()]);
+            }
+            return false;
+        }
+
+        fn trySkipNsAnchorChars(self: *@This()) error{UnexpectedCharacter}!void {
+            if (!self.isNsAnchorChar()) {
+                return error.UnexpectedCharacter;
+            }
+            self.inc(1);
+            while (self.isNsAnchorChar()) {
+                self.inc(1);
+            }
         }
 
         /// s-l-comments
         ///
         /// positions `pos` on the next newline, or eof. Errors
-        fn trySkipToNewLine(self: *@This()) ParseError!void {
+        fn trySkipToNewLine(self: *@This()) error{UnexpectedCharacter}!void {
             self.skipSWhite();
 
             if (self.isChar('#')) {
@@ -2079,73 +3849,90 @@ pub fn Parser(comptime enc: Encoding) type {
                 }
             }
 
-            if (self.pos != self.input.len and !self.isChar('\n') and !self.isChar('\r')) {
+            if (self.pos.isLessThan(self.input.len) and !self.isChar('\n') and !self.isChar('\r')) {
                 return error.UnexpectedCharacter;
             }
         }
 
-        fn isWhiteSpaceOrNewLineAt(self: *@This(), n: usize) bool {
-            const pos = self.pos + n;
-            if (pos < self.input.len) {
-                const c = self.input[pos];
-                return c == ' ' or c == '\t' or c == '\n' or c == '\r';
-            }
-            return false;
-        }
-
-        fn isWhiteSpaceOrNewLineOrEofAt(self: *@This(), n: usize) bool {
-            const pos = self.pos + n;
-            if (pos < self.input.len) {
-                const c = self.input[pos];
+        fn isSWhiteOrBCharOrEofAt(self: *@This(), n: usize) bool {
+            const pos = self.pos.add(n);
+            if (pos.isLessThan(self.input.len)) {
+                const c = self.input[pos.cast()];
                 return c == ' ' or c == '\t' or c == '\n' or c == '\r';
             }
             return true;
         }
 
+        fn isSWhiteOrBCharAt(self: *@This(), n: usize) bool {
+            const pos = self.pos.add(n);
+            if (pos.isLessThan(self.input.len)) {
+                const c = self.input[pos.cast()];
+                return c == ' ' or c == '\t' or c == '\n' or c == '\r';
+            }
+            return false;
+        }
+
         fn isAnyAt(self: *const @This(), values: []const enc.unit(), n: usize) bool {
-            const pos = self.pos + n;
-            if (pos < self.input.len) {
-                return std.mem.indexOfScalar(enc.unit(), values, self.input[pos]) != null;
+            const pos = self.pos.add(n);
+            if (pos.isLessThan(self.input.len)) {
+                return std.mem.indexOfScalar(enc.unit(), values, self.input[pos.cast()]) != null;
             }
             return false;
         }
 
         fn isAnyOrEofAt(self: *const @This(), values: []const enc.unit(), n: usize) bool {
-            const pos = self.pos + n;
-            if (pos < self.input.len) {
-                return std.mem.indexOfScalar(enc.unit(), values, self.input[pos]) != null;
+            const pos = self.pos.add(n);
+            if (pos.isLessThan(self.input.len)) {
+                return std.mem.indexOfScalar(enc.unit(), values, self.input[pos.cast()]) != null;
             }
             return false;
         }
 
         fn isEof(self: *const @This()) bool {
-            return self.pos >= self.input.len;
+            return !self.pos.isLessThan(self.input.len);
         }
 
         fn isEofAt(self: *const @This(), n: usize) bool {
-            return self.pos + n >= self.input.len;
+            return !self.pos.add(n).isLessThan(self.input.len);
         }
 
         fn isBChar(self: *@This()) bool {
             const pos = self.pos;
-            if (pos < self.input.len) {
-                return chars.isBChar(self.input[pos]);
+            if (pos.isLessThan(self.input.len)) {
+                return chars.isBChar(self.input[pos.cast()]);
             }
             return false;
         }
 
         fn isBCharOrEof(self: *@This()) bool {
             const pos = self.pos;
-            if (pos < self.input.len) {
-                return chars.isBChar(self.input[pos]);
+            if (pos.isLessThan(self.input.len)) {
+                return chars.isBChar(self.input[pos.cast()]);
+            }
+            return true;
+        }
+
+        fn isSWhiteOrBCharOrEof(self: *@This()) bool {
+            const pos = self.pos;
+            if (pos.isLessThan(self.input.len)) {
+                const c = self.input[pos.cast()];
+                return chars.isSWhite(c) or chars.isBChar(c);
             }
             return true;
         }
 
         fn isSWhite(self: *@This()) bool {
             const pos = self.pos;
-            if (pos < self.input.len) {
-                return chars.isSWhite(self.input[pos]);
+            if (pos.isLessThan(self.input.len)) {
+                return chars.isSWhite(self.input[pos.cast()]);
+            }
+            return false;
+        }
+
+        fn isSWhiteAt(self: *@This(), n: usize) bool {
+            const pos = self.pos.add(n);
+            if (pos.isLessThan(self.input.len)) {
+                return chars.isSWhite(self.input[pos.cast()]);
             }
             return false;
         }
@@ -2156,7 +3943,7 @@ pub fn Parser(comptime enc: Encoding) type {
             }
         }
 
-        fn trySkipSWhite(self: *@This()) ParseError!void {
+        fn trySkipSWhite(self: *@This()) error{UnexpectedCharacter}!void {
             if (!self.isSWhite()) {
                 return error.UnexpectedCharacter;
             }
@@ -2167,16 +3954,16 @@ pub fn Parser(comptime enc: Encoding) type {
 
         fn isNsHexDigit(self: *@This()) bool {
             const pos = self.pos;
-            if (pos < self.input.len) {
-                return chars.isNsHexDigit(self.input[pos]);
+            if (pos.isLessThan(self.input.len)) {
+                return chars.isNsHexDigit(self.input[pos.cast()]);
             }
             return false;
         }
 
         fn isNsDecDigit(self: *@This()) bool {
             const pos = self.pos;
-            if (pos < self.input.len) {
-                return chars.isNsDecDigit(self.input[pos]);
+            if (pos.isLessThan(self.input.len)) {
+                return chars.isNsDecDigit(self.input[pos.cast()]);
             }
             return false;
         }
@@ -2187,7 +3974,7 @@ pub fn Parser(comptime enc: Encoding) type {
             }
         }
 
-        fn trySkipNsDecDigits(self: *@This()) ParseError!void {
+        fn trySkipNsDecDigits(self: *@This()) error{UnexpectedCharacter}!void {
             if (!self.isNsDecDigit()) {
                 return error.UnexpectedCharacter;
             }
@@ -2200,7 +3987,7 @@ pub fn Parser(comptime enc: Encoding) type {
             }
         }
 
-        fn trySkipNsWordChars(self: *@This()) ParseError!void {
+        fn trySkipNsWordChars(self: *@This()) error{UnexpectedCharacter}!void {
             if (!self.isNsWordChar()) {
                 return error.UnexpectedCharacter;
             }
@@ -2218,31 +4005,64 @@ pub fn Parser(comptime enc: Encoding) type {
             }
         }
 
-        fn trySkipNsUriChars(self: *@This()) ParseError!void {
+        fn trySkipNsUriChars(self: *@This()) error{UnexpectedCharacter}!void {
             if (!self.isNsUriChar()) {
                 return error.UnexpectedCharacter;
             }
             self.skipNsUriChars();
         }
 
-        fn stringBuilder(self: *@This()) String.Builder {
+        fn stringRange(self: *const @This()) String.Range.Start {
             return .{
-                .start = self.pos,
+                .off = self.pos,
                 .parser = self,
             };
         }
 
+        fn stringBuilder(self: *@This()) String.Builder {
+            return .{
+                .parser = self,
+                .str = .{ .range = .{ .off = .zero, .end = .zero } },
+            };
+        }
+
         pub const String = union(enum) {
-            literal: struct {
-                off: usize,
-                len: usize,
-            },
+            range: Range,
             list: std.ArrayList(enc.unit()),
+
+            pub fn init(data: anytype) String {
+                return switch (@TypeOf(data)) {
+                    Range => .{ .range = data },
+                    std.ArrayList(enc.unit()) => .{ .list = data },
+                    else => @compileError("unexpected type"),
+                };
+            }
+
+            pub fn deinit(self: *const @This()) void {
+                switch (self.*) {
+                    .range => {},
+                    .list => |*list| list.deinit(),
+                }
+            }
 
             pub fn slice(self: *const @This(), input: []const enc.unit()) []const enc.unit() {
                 return switch (self.*) {
-                    .literal => |literal| input[literal.off..][0..literal.len],
+                    .range => |range| range.slice(input),
                     .list => |list| list.items,
+                };
+            }
+
+            pub fn len(self: *const @This()) usize {
+                return switch (self.*) {
+                    .range => |*range| range.len(),
+                    .list => |*list| list.items.len,
+                };
+            }
+
+            pub fn isEmpty(self: *const @This()) bool {
+                return switch (self.*) {
+                    .range => |*range| range.isEmpty(),
+                    .list => |*list| list.items.len == 0,
                 };
             }
 
@@ -2252,125 +4072,408 @@ pub fn Parser(comptime enc: Encoding) type {
             }
 
             pub const Builder = struct {
-                start: usize,
                 parser: *Parser(enc),
+                str: String,
 
-                pub fn end(this: *const @This()) String {
-                    return .{
-                        .literal = .{
-                            .off = this.start,
-                            .len = this.parser.pos - this.start,
+                pub fn appendSource(self: *@This(), unit: enc.unit(), pos: Pos) OOM!void {
+                    try self.drainWhitespace();
+
+                    if (@import("builtin").mode == .Debug) {
+                        const actual = self.parser.input[pos.cast()];
+                        std.debug.assert(actual == unit);
+                    }
+
+                    switch (self.str) {
+                        .range => |*range| {
+                            if (range.isEmpty()) {
+                                range.off = pos;
+                                range.end = pos;
+                            }
+
+                            std.debug.assert(range.end == pos);
+
+                            range.end = pos.add(1);
                         },
-                    };
+                        .list => |*list| {
+                            try list.append(unit);
+                        },
+                    }
+                }
+
+                fn drainWhitespace(self: *@This()) OOM!void {
+                    for (self.parser.whitespace_buf.items) |ws| {
+                        if (@import("builtin").mode == .Debug) {
+                            const actual = self.parser.input[ws.pos.cast()];
+                            std.debug.assert(actual == ws.unit);
+                        }
+
+                        switch (self.str) {
+                            .range => |*range| {
+                                if (range.isEmpty()) {
+                                    range.off = ws.pos;
+                                    range.end = ws.pos;
+                                }
+
+                                std.debug.assert(range.end == ws.pos);
+
+                                range.end = ws.pos.add(1);
+                            },
+                            .list => |*list| {
+                                try list.append(ws.unit);
+                            },
+                        }
+                    }
+
+                    self.parser.whitespace_buf.clearRetainingCapacity();
+                }
+
+                pub fn appendSourceWhitespace(self: *@This(), unit: enc.unit(), pos: Pos) OOM!void {
+                    try self.parser.whitespace_buf.append(.{ .unit = unit, .pos = pos });
+                }
+
+                pub fn appendSourceSlice(self: *@This(), off: Pos, end: Pos) OOM!void {
+                    try self.drainWhitespace();
+                    switch (self.str) {
+                        .range => |*range| {
+                            if (range.isEmpty()) {
+                                range.off = off;
+                                range.end = off;
+                            }
+
+                            std.debug.assert(range.end == off);
+
+                            range.end = end;
+                        },
+                        .list => |*list| {
+                            try list.appendSlice(self.parser.slice(off, end));
+                        },
+                    }
+                }
+
+                pub fn appendExpectedSourceSlice(self: *@This(), off: Pos, end: Pos, expected: []const enc.unit()) OOM!void {
+                    try self.drainWhitespace();
+
+                    if (@import("builtin").mode == .Debug) {
+                        const actual = self.parser.slice(off, end);
+                        std.debug.assert(std.mem.eql(enc.unit(), actual, expected));
+                    }
+
+                    switch (self.str) {
+                        .range => |*range| {
+                            if (range.isEmpty()) {
+                                range.off = off;
+                                range.end = off;
+                            }
+
+                            std.debug.assert(range.end == off);
+
+                            range.end = end;
+                        },
+                        .list => |*list| {
+                            try list.appendSlice(self.parser.slice(off, end));
+                        },
+                    }
+                }
+
+                pub fn append(self: *@This(), unit: enc.unit()) OOM!void {
+                    try self.drainWhitespace();
+
+                    const parser = self.parser;
+
+                    switch (self.str) {
+                        .range => |range| {
+                            var list: std.ArrayList(enc.unit()) = try .initCapacity(parser.allocator, range.len() + 1);
+                            list.appendSliceAssumeCapacity(range.slice(parser.input));
+                            list.appendAssumeCapacity(unit);
+                            self.str = .{ .list = list };
+                        },
+                        .list => |*list| {
+                            try list.append(unit);
+                        },
+                    }
+                }
+
+                pub fn appendSlice(self: *@This(), str: []const enc.unit()) OOM!void {
+                    if (str.len == 0) {
+                        return;
+                    }
+
+                    try self.drainWhitespace();
+
+                    const parser = self.parser;
+
+                    switch (self.str) {
+                        .range => |range| {
+                            var list: std.ArrayList(enc.unit()) = try .initCapacity(parser.allocator, range.len() + str.len);
+                            list.appendSliceAssumeCapacity(self.str.range.slice(parser.input));
+                            list.appendSliceAssumeCapacity(str);
+                            self.str = .{ .list = list };
+                        },
+                        .list => |*list| {
+                            try list.appendSlice(str);
+                        },
+                    }
+                }
+
+                pub fn appendNTimes(self: *@This(), unit: enc.unit(), n: usize) OOM!void {
+                    if (n == 0) {
+                        return;
+                    }
+
+                    try self.drainWhitespace();
+
+                    const parser = self.parser;
+
+                    switch (self.str) {
+                        .range => |range| {
+                            var list: std.ArrayList(enc.unit()) = try .initCapacity(parser.allocator, range.len() + n);
+                            list.appendSliceAssumeCapacity(self.str.range.slice(parser.input));
+                            list.appendNTimesAssumeCapacity(unit, n);
+                            self.str = .{ .list = list };
+                        },
+                        .list => |*list| {
+                            try list.appendNTimes(unit, n);
+                        },
+                    }
+                }
+
+                pub fn len(this: *const @This()) usize {
+                    return this.str.len();
+                }
+
+                pub fn done(self: *const @This()) String {
+                    self.parser.whitespace_buf.clearRetainingCapacity();
+                    return self.str;
+                }
+            };
+
+            pub const Range = struct {
+                off: Pos,
+                end: Pos,
+
+                pub const Start = struct {
+                    off: Pos,
+                    parser: *const Parser(enc),
+
+                    pub fn end(this: *const @This()) Range {
+                        return .{
+                            .off = this.off,
+                            .end = this.parser.pos,
+                        };
+                    }
+                };
+
+                pub fn isEmpty(this: *const @This()) bool {
+                    return this.off == this.end;
+                }
+
+                pub fn len(this: *const @This()) usize {
+                    return this.end.cast() - this.off.cast();
+                }
+
+                pub fn slice(this: *const Range, input: []const enc.unit()) []const enc.unit() {
+                    return input[this.off.cast()..this.end.cast()];
                 }
             };
         };
 
-        pub const Node = struct {
-            indent: Indent,
-            line: Line,
-            data: Data,
+        pub const NodeTag = union(enum) {
+            /// ''
+            none,
 
-            pub const Data = union(enum) {
-                scalar: Token(enc).Scalar,
-                sequence: std.ArrayList(Node),
-                mapping: Mapping,
+            /// '!'
+            non_specific,
 
-                pub const Mapping = struct {
-                    keys: std.ArrayList(Node),
-                    values: std.ArrayList(Node),
-                };
-            };
+            /// '!!bool'
+            bool,
+            /// '!!int'
+            int,
+            /// '!!float'
+            float,
+            /// '!!null'
+            null,
 
-            pub fn isNull(this: *const Node) bool {
-                return switch (this.data) {
-                    .scalar => |s| s == .null,
-                    else => false,
-                };
-            }
+            /// '!<...>'
+            verbatim: String.Range,
 
-            pub fn scalar(indent: Indent, line: Line, s: Token(enc).Scalar) Node {
-                return .{
-                    .indent = indent,
-                    .line = line,
-                    .data = .{ .scalar = s },
-                };
-            }
+            /// '!!unknown'
+            unknown: String.Range,
+        };
 
-            pub fn @"null"(indent: Indent, line: Line) Node {
-                return .{
-                    .indent = indent,
-                    .line = line,
-                    .data = .{ .scalar = .null },
-                };
-            }
+        pub const NodeScalar = union(enum) {
+            null,
+            boolean: bool,
+            number: f64,
+            string: String,
 
-            pub fn boolean(indent: Indent, line: Line, value: bool) Node {
-                return .{
-                    .indent = indent,
-                    .line = line,
-                    .data = .{ .scalar = .{ .boolean = value } },
-                };
-            }
-
-            pub fn number(indent: Indent, line: Line, value: f64) Node {
-                return .{
-                    .indent = indent,
-                    .line = line,
-                    .data = .{ .scalar = .{ .number = value } },
-                };
-            }
-
-            pub fn string(indent: Indent, line: Line, str: String, multiline: bool) Node {
-                return .{
-                    .indent = indent,
-                    .line = line,
-                    .data = .{ .scalar = .{ .string = .{ .text = str, .multiline = multiline } } },
-                };
-            }
-
-            pub fn mapping(indent: Indent, line: Line, map: Data.Mapping) Node {
-                return .{
-                    .indent = indent,
-                    .line = line,
-                    .data = .{ .mapping = map },
-                };
-            }
-
-            pub fn sequence(indent: Indent, line: Line, seq: std.ArrayList(Node)) Node {
-                return .{
-                    .indent = indent,
-                    .line = line,
-                    .data = .{ .sequence = seq },
+            pub fn toExpr(this: *const NodeScalar, pos: Pos, input: []const enc.unit()) Expr {
+                return switch (this.*) {
+                    .null => .init(E.Null, .{}, pos.loc()),
+                    .boolean => |value| .init(E.Boolean, .{ .value = value }, pos.loc()),
+                    .number => |value| .init(E.Number, .{ .value = value }, pos.loc()),
+                    .string => |value| .init(E.String, .{ .data = value.slice(input) }, pos.loc()),
                 };
             }
         };
 
+        // pub const Node = struct {
+        //     start: Pos,
+        //     data: Data,
+
+        //     pub const Data = union(enum) {
+        //         scalar: Scalar,
+        //         sequence: *Sequence,
+        //         mapping: *Mapping,
+
+        //         // TODO: we will probably need an alias
+        //         // node that is resolved later. problem:
+        //         // ```
+        //         // &map
+        //         // hi:
+        //         //  hello: *map
+        //         // ```
+        //         // map needs to be put in the map before
+        //         // we finish parsing the map node, because
+        //         // 'hello' value needs to be able to find it.
+        //         //
+        //         // alias: Alias,
+        //     };
+
+        //     pub const Sequence = struct {
+        //         list: std.ArrayList(Node),
+
+        //         pub fn init(allocator: std.mem.Allocator) Sequence {
+        //             return .{ .list = .init(allocator) };
+        //         }
+
+        //         pub fn count(this: *const Sequence) usize {
+        //             return this.list.items.len;
+        //         }
+
+        //         pub fn slice(this: *const Sequence) []const Node {
+        //             return this.list.items;
+        //         }
+        //     };
+
+        //     pub const Mapping = struct {
+        //         keys: std.ArrayList(Node),
+        //         values: std.ArrayList(Node),
+
+        //         pub fn init(allocator: std.mem.Allocator) Mapping {
+        //             return .{ .keys = .init(allocator), .values = .init(allocator) };
+        //         }
+
+        //         pub fn append(this: *Mapping, key: Node, value: Node) OOM!void {
+        //             try this.keys.append(key);
+        //             try this.values.append(value);
+        //         }
+
+        //         pub fn count(this: *const Mapping) usize {
+        //             return this.keys.items.len;
+        //         }
+        //     };
+
+        //     // pub const Alias = struct {
+        //     //     anchor_id: Anchors.Id,
+        //     // };
+
+        //     pub fn isNull(this: *const Node) bool {
+        //         return switch (this.data) {
+        //             .scalar => |s| s == .null,
+        //             else => false,
+        //         };
+        //     }
+
+        //     pub fn @"null"(start: Pos) Node {
+        //         return .{
+        //             .start = start,
+        //             .data = .{ .scalar = .null },
+        //         };
+        //     }
+
+        //     pub fn boolean(start: Pos, value: bool) Node {
+        //         return .{
+        //             .start = start,
+        //             .data = .{ .scalar = .{ .boolean = value } },
+        //         };
+        //     }
+
+        //     pub fn number(start: Pos, value: f64) Node {
+        //         return .{
+        //             .start = start,
+        //             .data = .{ .scalar = .{ .number = value } },
+        //         };
+        //     }
+
+        //     pub fn string(start: Pos, str: String) Node {
+        //         return .{
+        //             .start = start,
+        //             .data = .{ .scalar = .{ .string = .{ .text = str } } },
+        //         };
+        //     }
+
+        //     // pub fn alias(start: Pos, anchor_id: Anchors.Id) Node {
+        //     //     return .{
+        //     //         .start = start,
+        //     //         .data = .{ .alias = .{ .anchor_id = anchor_id } },
+        //     //     };
+        //     // }
+
+        //     pub fn init(allocator: std.mem.Allocator, start: Pos, data: anytype) OOM!Node {
+        //         return .{
+        //             .start = start,
+        //             .data = switch (@TypeOf(data)) {
+        //                 Scalar => .{ .scalar = data },
+        //                 Sequence => sequence: {
+        //                     const seq = try allocator.create(Sequence);
+        //                     seq.* = data;
+        //                     break :sequence .{ .sequence = seq };
+        //                 },
+        //                 Mapping => mapping: {
+        //                     const map = try allocator.create(Mapping);
+        //                     map.* = data;
+        //                     break :mapping .{ .mapping = map };
+        //                 },
+        //                 // Alias => .{ .alias = data },
+        //                 else => @compileError("unexpected data type"),
+        //             },
+        //         };
+        //     }
+        // };
+
         const Directive = union(enum) {
             yaml,
-            tag: Tag,
-            reserved: String,
+            tag: Directive.Tag,
+            reserved: String.Range,
 
+            /// '%TAG <handle> <prefix>'
             pub const Tag = struct {
                 handle: Handle,
                 prefix: Prefix,
 
                 pub const Handle = union(enum) {
-                    named: String,
+                    /// '!name!'
+                    named: String.Range,
+                    /// '!!'
                     secondary,
+                    /// '!'
                     primary,
                 };
 
                 pub const Prefix = union(enum) {
-                    local: String,
-                    global: String,
+                    /// c-ns-local-tag-prefix
+                    /// '!my-prefix'
+                    local: String.Range,
+                    /// ns-global-tag-prefix
+                    /// 'tag:example.com,2000:app/'
+                    global: String.Range,
                 };
             };
         };
 
         pub const Document = struct {
             directives: std.ArrayList(Directive),
-            root: Node,
+            root: Expr,
 
             pub fn deinit(this: *Document) void {
                 this.directives.deinit();
@@ -2382,325 +4485,328 @@ pub fn Parser(comptime enc: Encoding) type {
             input: []const enc.unit(),
         };
 
-        fn Printer(comptime Writer: type) type {
-            return struct {
-                input: []const enc.unit(),
-                stream: Stream,
-                indent: Indent,
-                writer: Writer,
+        // fn Printer(comptime Writer: type) type {
+        //     return struct {
+        //         input: []const enc.unit(),
+        //         stream: Stream,
+        //         indent: Indent,
+        //         writer: Writer,
 
-                allocator: std.mem.Allocator,
+        //         allocator: std.mem.Allocator,
 
-                pub fn print(this: *@This()) Writer.Error!void {
-                    if (this.stream.docs.items.len == 0) {
-                        return;
-                    }
+        //         pub fn print(this: *@This()) Writer.Error!void {
+        //             if (this.stream.docs.items.len == 0) {
+        //                 return;
+        //             }
 
-                    var first = true;
+        //             var first = true;
 
-                    for (this.stream.docs.items) |doc| {
-                        try this.printDocument(&doc, first);
-                        try this.writer.writeByte('\n');
-                        first = false;
+        //             for (this.stream.docs.items) |doc| {
+        //                 try this.printDocument(&doc, first);
+        //                 try this.writer.writeByte('\n');
+        //                 first = false;
 
-                        if (this.stream.docs.items.len != 1) {
-                            try this.writer.writeAll("...\n");
-                        }
-                    }
-                }
+        //                 if (this.stream.docs.items.len != 1) {
+        //                     try this.writer.writeAll("...\n");
+        //                 }
+        //             }
+        //         }
 
-                pub fn printDocument(this: *@This(), doc: *const Document, first: bool) Writer.Error!void {
-                    for (doc.directives.items) |directive| {
-                        switch (directive) {
-                            .yaml => {
-                                try this.writer.writeAll("%YAML X.X\n");
-                            },
-                            .tag => |tag| {
-                                try this.writer.print("%TAG {s} {s}{s}\n", .{
-                                    switch (tag.handle) {
-                                        .named => |name| name.slice(this.input),
-                                        .secondary => "!!",
-                                        .primary => "!",
-                                    },
-                                    if (tag.prefix == .local) "!" else "",
-                                    switch (tag.prefix) {
-                                        .local => |local| local.slice(this.input),
-                                        .global => |global| global.slice(this.input),
-                                    },
-                                });
-                            },
-                            .reserved => |reserved| {
-                                try this.writer.print("%{s}\n", .{reserved.slice(this.input)});
-                            },
-                        }
-                    }
+        //         pub fn printDocument(this: *@This(), doc: *const Document, first: bool) Writer.Error!void {
+        //             for (doc.directives.items) |directive| {
+        //                 switch (directive) {
+        //                     .yaml => {
+        //                         try this.writer.writeAll("%YAML X.X\n");
+        //                     },
+        //                     .tag => |tag| {
+        //                         try this.writer.print("%TAG {s} {s}{s}\n", .{
+        //                             switch (tag.handle) {
+        //                                 .named => |name| name.slice(this.input),
+        //                                 .secondary => "!!",
+        //                                 .primary => "!",
+        //                             },
+        //                             if (tag.prefix == .local) "!" else "",
+        //                             switch (tag.prefix) {
+        //                                 .local => |local| local.slice(this.input),
+        //                                 .global => |global| global.slice(this.input),
+        //                             },
+        //                         });
+        //                     },
+        //                     .reserved => |reserved| {
+        //                         try this.writer.print("%{s}\n", .{reserved.slice(this.input)});
+        //                     },
+        //                 }
+        //             }
 
-                    if (!first or doc.directives.items.len != 0) {
-                        try this.writer.writeAll("---\n");
-                    }
+        //             if (!first or doc.directives.items.len != 0) {
+        //                 try this.writer.writeAll("---\n");
+        //             }
 
-                    try this.printNode(&doc.root);
-                }
+        //             try this.printNode(doc.root);
+        //         }
 
-                pub fn printString(this: *@This(), str: []const enc.unit()) Writer.Error!void {
-                    const quote = quote: {
-                        if (str.len == 0) {
-                            break :quote true;
-                        }
+        //         pub fn printString(this: *@This(), str: []const enc.unit()) Writer.Error!void {
+        //             const quote = quote: {
+        //                 if (true) {
+        //                     break :quote true;
+        //                 }
+        //                 if (str.len == 0) {
+        //                     break :quote true;
+        //                 }
 
-                        if (str[str.len - 1] == ' ') {
-                            break :quote true;
-                        }
+        //                 if (str[str.len - 1] == ' ') {
+        //                     break :quote true;
+        //                 }
 
-                        for (str, 0..) |c, i| {
-                            if (i == 0) {
-                                switch (c) {
-                                    '&',
-                                    '*',
-                                    '?',
-                                    '|',
-                                    '-',
-                                    '<',
-                                    '>',
-                                    '=',
-                                    '!',
-                                    '%',
-                                    '@',
+        //                 for (str, 0..) |c, i| {
+        //                     if (i == 0) {
+        //                         switch (c) {
+        //                             '&',
+        //                             '*',
+        //                             '?',
+        //                             '|',
+        //                             '-',
+        //                             '<',
+        //                             '>',
+        //                             '=',
+        //                             '!',
+        //                             '%',
+        //                             '@',
 
-                                    ' ',
-                                    => break :quote true,
-                                    else => {},
-                                }
-                                continue;
-                            }
+        //                             ' ',
+        //                             => break :quote true,
+        //                             else => {},
+        //                         }
+        //                         continue;
+        //                     }
 
-                            switch (c) {
-                                '{',
-                                '}',
-                                '[',
-                                ']',
-                                ',',
-                                '#',
-                                '`',
-                                '"',
-                                '\'',
-                                '\\',
-                                '\t',
-                                '\n',
-                                '\r',
-                                => break :quote true,
+        //                     switch (c) {
+        //                         '{',
+        //                         '}',
+        //                         '[',
+        //                         ']',
+        //                         ',',
+        //                         '#',
+        //                         '`',
+        //                         '"',
+        //                         '\'',
+        //                         '\\',
+        //                         '\t',
+        //                         '\n',
+        //                         '\r',
+        //                         => break :quote true,
 
-                                0x00...0x06,
-                                0x0e...0x1a,
-                                0x1c...0x1f,
-                                => break :quote true,
+        //                         0x00...0x06,
+        //                         0x0e...0x1a,
+        //                         0x1c...0x1f,
+        //                         => break :quote true,
 
-                                't', 'T' => {
-                                    const r = str[i + 1 ..];
-                                    if (std.mem.startsWith(enc.unit(), r, "rue")) {
-                                        break :quote true;
-                                    }
-                                    if (std.mem.startsWith(enc.unit(), r, "RUE")) {
-                                        break :quote true;
-                                    }
-                                },
+        //                         't', 'T' => {
+        //                             const r = str[i + 1 ..];
+        //                             if (std.mem.startsWith(enc.unit(), r, "rue")) {
+        //                                 break :quote true;
+        //                             }
+        //                             if (std.mem.startsWith(enc.unit(), r, "RUE")) {
+        //                                 break :quote true;
+        //                             }
+        //                         },
 
-                                'f', 'F' => {
-                                    const r = str[i + 1 ..];
-                                    if (std.mem.startsWith(enc.unit(), r, "alse")) {
-                                        break :quote true;
-                                    }
-                                    if (std.mem.startsWith(enc.unit(), r, "ALSE")) {
-                                        break :quote true;
-                                    }
-                                },
+        //                         'f', 'F' => {
+        //                             const r = str[i + 1 ..];
+        //                             if (std.mem.startsWith(enc.unit(), r, "alse")) {
+        //                                 break :quote true;
+        //                             }
+        //                             if (std.mem.startsWith(enc.unit(), r, "ALSE")) {
+        //                                 break :quote true;
+        //                             }
+        //                         },
 
-                                '~' => break :quote true,
-                                'n', 'N' => break :quote true,
-                                'y', 'Y' => break :quote true,
+        //                         '~' => break :quote true,
+        //                         // 'n', 'N' => break :quote true,
+        //                         // 'y', 'Y' => break :quote true,
 
-                                'o', 'O' => {
-                                    const r = str[i + 1 ..];
-                                    if (std.mem.startsWith(enc.unit(), r, "ff")) {
-                                        break :quote true;
-                                    }
-                                    if (std.mem.startsWith(enc.unit(), r, "FF")) {
-                                        break :quote true;
-                                    }
-                                },
+        //                         'o', 'O' => {
+        //                             const r = str[i + 1 ..];
+        //                             if (std.mem.startsWith(enc.unit(), r, "ff")) {
+        //                                 break :quote true;
+        //                             }
+        //                             if (std.mem.startsWith(enc.unit(), r, "FF")) {
+        //                                 break :quote true;
+        //                             }
+        //                         },
 
-                                // TODO: is this one needed
-                                '.' => break :quote true,
+        //                         // TODO: is this one needed
+        //                         '.' => break :quote true,
 
-                                '0'...'9' => break :quote true,
+        //                         // '0'...'9' => break :quote true,
 
-                                else => {},
-                            }
-                        }
+        //                         else => {},
+        //                     }
+        //                 }
 
-                        break :quote false;
-                    };
+        //                 break :quote false;
+        //             };
 
-                    if (!quote) {
-                        try this.writer.writeAll(str);
-                        return;
-                    }
+        //             if (!quote) {
+        //                 try this.writer.writeAll(str);
+        //                 return;
+        //             }
 
-                    try this.writer.writeByte('"');
+        //             try this.writer.writeByte('"');
 
-                    var i: usize = 0;
-                    while (i < str.len) : (i += 1) {
-                        const c = str[i];
+        //             var i: usize = 0;
+        //             while (i < str.len) : (i += 1) {
+        //                 const c = str[i];
 
-                        // Check for UTF-8 multi-byte sequences for line/paragraph separators
-                        if (enc == .utf8 and c == 0xe2 and i + 2 < str.len) {
-                            if (str[i + 1] == 0x80) {
-                                if (str[i + 2] == 0xa8) {
-                                    // U+2028 Line separator
-                                    try this.writer.writeAll("\\L");
-                                    i += 2;
-                                    continue;
-                                } else if (str[i + 2] == 0xa9) {
-                                    // U+2029 Paragraph separator
-                                    try this.writer.writeAll("\\P");
-                                    i += 2;
-                                    continue;
-                                }
-                            }
-                        }
+        //                 // Check for UTF-8 multi-byte sequences for line/paragraph separators
+        //                 if (enc == .utf8 and c == 0xe2 and i + 2 < str.len) {
+        //                     if (str[i + 1] == 0x80) {
+        //                         if (str[i + 2] == 0xa8) {
+        //                             // U+2028 Line separator
+        //                             try this.writer.writeAll("\\L");
+        //                             i += 2;
+        //                             continue;
+        //                         } else if (str[i + 2] == 0xa9) {
+        //                             // U+2029 Paragraph separator
+        //                             try this.writer.writeAll("\\P");
+        //                             i += 2;
+        //                             continue;
+        //                         }
+        //                     }
+        //                 }
 
-                        // Check for UTF-8 sequences for NEL (U+0085) and NBSP (U+00A0)
-                        if (enc == .utf8 and c == 0xc2 and i + 1 < str.len) {
-                            if (str[i + 1] == 0x85) {
-                                // U+0085 Next line
-                                try this.writer.writeAll("\\N");
-                                i += 1;
-                                continue;
-                            } else if (str[i + 1] == 0xa0) {
-                                // U+00A0 Non-breaking space
-                                try this.writer.writeAll("\\_");
-                                i += 1;
-                                continue;
-                            }
-                        }
+        //                 // Check for UTF-8 sequences for NEL (U+0085) and NBSP (U+00A0)
+        //                 if (enc == .utf8 and c == 0xc2 and i + 1 < str.len) {
+        //                     if (str[i + 1] == 0x85) {
+        //                         // U+0085 Next line
+        //                         try this.writer.writeAll("\\N");
+        //                         i += 1;
+        //                         continue;
+        //                     } else if (str[i + 1] == 0xa0) {
+        //                         // U+00A0 Non-breaking space
+        //                         try this.writer.writeAll("\\_");
+        //                         i += 1;
+        //                         continue;
+        //                     }
+        //                 }
 
-                        const escaped = switch (c) {
-                            // Standard escape sequences
-                            '\\' => "\\\\",
-                            '"' => "\\\"",
-                            '\n' => "\\n",
+        //                 const escaped = switch (c) {
+        //                     // Standard escape sequences
+        //                     '\\' => "\\\\",
+        //                     '"' => "\\\"",
+        //                     '\n' => "\\n",
 
-                            // Control characters that need hex escaping
-                            0x00 => "\\0",
-                            0x01 => "\\x01",
-                            0x02 => "\\x02",
-                            0x03 => "\\x03",
-                            0x04 => "\\x04",
-                            0x05 => "\\x05",
-                            0x06 => "\\x06",
-                            0x07 => "\\a", // Bell
-                            0x08 => "\\b", // Backspace
-                            0x09 => "\\t", // Tab
-                            0x0b => "\\v", // Vertical tab
-                            0x0c => "\\f", // Form feed
-                            0x0d => "\\r", // Carriage return
-                            0x0e => "\\x0e",
-                            0x0f => "\\x0f",
-                            0x10 => "\\x10",
-                            0x11 => "\\x11",
-                            0x12 => "\\x12",
-                            0x13 => "\\x13",
-                            0x14 => "\\x14",
-                            0x15 => "\\x15",
-                            0x16 => "\\x16",
-                            0x17 => "\\x17",
-                            0x18 => "\\x18",
-                            0x19 => "\\x19",
-                            0x1a => "\\x1a",
-                            0x1b => "\\e", // Escape
-                            0x1c => "\\x1c",
-                            0x1d => "\\x1d",
-                            0x1e => "\\x1e",
-                            0x1f => "\\x1f",
-                            0x7f => "\\x7f", // Delete
+        //                     // Control characters that need hex escaping
+        //                     0x00 => "\\0",
+        //                     0x01 => "\\x01",
+        //                     0x02 => "\\x02",
+        //                     0x03 => "\\x03",
+        //                     0x04 => "\\x04",
+        //                     0x05 => "\\x05",
+        //                     0x06 => "\\x06",
+        //                     0x07 => "\\a", // Bell
+        //                     0x08 => "\\b", // Backspace
+        //                     0x09 => "\\t", // Tab
+        //                     0x0b => "\\v", // Vertical tab
+        //                     0x0c => "\\f", // Form feed
+        //                     0x0d => "\\r", // Carriage return
+        //                     0x0e => "\\x0e",
+        //                     0x0f => "\\x0f",
+        //                     0x10 => "\\x10",
+        //                     0x11 => "\\x11",
+        //                     0x12 => "\\x12",
+        //                     0x13 => "\\x13",
+        //                     0x14 => "\\x14",
+        //                     0x15 => "\\x15",
+        //                     0x16 => "\\x16",
+        //                     0x17 => "\\x17",
+        //                     0x18 => "\\x18",
+        //                     0x19 => "\\x19",
+        //                     0x1a => "\\x1a",
+        //                     0x1b => "\\e", // Escape
+        //                     0x1c => "\\x1c",
+        //                     0x1d => "\\x1d",
+        //                     0x1e => "\\x1e",
+        //                     0x1f => "\\x1f",
+        //                     0x7f => "\\x7f", // Delete
 
-                            0x20...0x21,
-                            0x23...0x5b,
-                            0x5d...0x7e,
-                            => &.{c},
+        //                     0x20...0x21,
+        //                     0x23...0x5b,
+        //                     0x5d...0x7e,
+        //                     => &.{c},
 
-                            0x80...std.math.maxInt(enc.unit()) => &.{c},
-                        };
+        //                     0x80...std.math.maxInt(enc.unit()) => &.{c},
+        //                 };
 
-                        try this.writer.writeAll(escaped);
-                    }
+        //                 try this.writer.writeAll(escaped);
+        //             }
 
-                    try this.writer.writeByte('"');
-                }
+        //             try this.writer.writeByte('"');
+        //         }
 
-                pub fn printNode(this: *@This(), node: *const Node) Writer.Error!void {
-                    switch (node.data) {
-                        .scalar => |scalar| {
-                            switch (scalar) {
-                                .null => {
-                                    try this.writer.writeAll("null");
-                                },
-                                .boolean => |boolean| {
-                                    try this.writer.print("{}", .{boolean});
-                                },
-                                .number => |number| {
-                                    try this.writer.print("{d}", .{number});
-                                },
-                                .string => |string| {
-                                    try this.printString(string.text.slice(this.input));
-                                },
-                            }
-                        },
-                        .sequence => |sequence| {
-                            for (sequence.items, 0..) |item, i| {
-                                try this.writer.writeAll("- ");
-                                this.indent.inc(2);
-                                try this.printNode(&item);
-                                this.indent.dec(2);
+        //         pub fn printNode(this: *@This(), node: Node) Writer.Error!void {
+        //             switch (node.data) {
+        //                 .scalar => |scalar| {
+        //                     switch (scalar) {
+        //                         .null => {
+        //                             try this.writer.writeAll("null");
+        //                         },
+        //                         .boolean => |boolean| {
+        //                             try this.writer.print("{}", .{boolean});
+        //                         },
+        //                         .number => |number| {
+        //                             try this.writer.print("{d}", .{number});
+        //                         },
+        //                         .string => |string| {
+        //                             try this.printString(string.slice(this.input));
+        //                         },
+        //                     }
+        //                 },
+        //                 .sequence => |sequence| {
+        //                     for (sequence.list.items, 0..) |item, i| {
+        //                         try this.writer.writeAll("- ");
+        //                         this.indent.inc(2);
+        //                         try this.printNode(item);
+        //                         this.indent.dec(2);
 
-                                if (i + 1 != sequence.items.len) {
-                                    try this.writer.writeByte('\n');
-                                    try this.printIndent();
-                                }
-                            }
-                        },
-                        .mapping => |mapping| {
-                            for (mapping.keys.items, mapping.values.items, 0..) |*key, *value, i| {
-                                try this.printNode(key);
-                                try this.writer.writeAll(": ");
+        //                         if (i + 1 != sequence.list.items.len) {
+        //                             try this.writer.writeByte('\n');
+        //                             try this.printIndent();
+        //                         }
+        //                     }
+        //                 },
+        //                 .mapping => |mapping| {
+        //                     for (mapping.keys.items, mapping.values.items, 0..) |key, value, i| {
+        //                         try this.printNode(key);
+        //                         try this.writer.writeAll(": ");
 
-                                this.indent.inc(1);
+        //                         this.indent.inc(1);
 
-                                if (value.data == .mapping) {
-                                    try this.writer.writeByte('\n');
-                                    try this.printIndent();
-                                }
+        //                         if (value.data == .mapping) {
+        //                             try this.writer.writeByte('\n');
+        //                             try this.printIndent();
+        //                         }
 
-                                try this.printNode(value);
+        //                         try this.printNode(value);
 
-                                this.indent.dec(1);
+        //                         this.indent.dec(1);
 
-                                if (i + 1 != mapping.keys.items.len) {
-                                    try this.writer.writeByte('\n');
-                                    try this.printIndent();
-                                }
-                            }
-                        },
-                    }
-                }
+        //                         if (i + 1 != mapping.keys.items.len) {
+        //                             try this.writer.writeByte('\n');
+        //                             try this.printIndent();
+        //                         }
+        //                     }
+        //                 },
+        //             }
+        //         }
 
-                pub fn printIndent(this: *@This()) Writer.Error!void {
-                    for (0..this.indent.cast()) |_| {
-                        try this.writer.writeByte(' ');
-                    }
-                }
-            };
-        }
+        //         pub fn printIndent(this: *@This()) Writer.Error!void {
+        //             for (0..this.indent.cast()) |_| {
+        //                 try this.writer.writeByte(' ');
+        //             }
+        //         }
+        //     };
+        // }
     };
 }
 
@@ -2716,6 +4822,13 @@ pub const Encoding = enum {
             .utf16 => u16,
         };
     }
+
+    // fn Unit(comptime T: type) type {
+    //     return enum(T) {
+
+    //         _,
+    //     };
+    // }
 
     pub fn literal(comptime encoding: Encoding, comptime str: []const u8) []const encoding.unit() {
         return switch (encoding) {
@@ -2762,6 +4875,8 @@ pub const Encoding = enum {
 
                         ' ' + 1...0x7e => true,
 
+                        0x80...0xff => true,
+
                         // TODO: include 0x85, [0xa0 - 0xd7ff], [0xe000 - 0xfffd], [0x010000 - 0x10ffff]
                         else => false,
                     },
@@ -2772,18 +4887,29 @@ pub const Encoding = enum {
 
                         ' ' + 1...0x7e => true,
 
+                        0x85 => true,
+
+                        0xa0...0xd7ff => true,
+                        0xe000...0xfffd => true,
+
                         // TODO: include 0x85, [0xa0 - 0xd7ff], [0xe000 - 0xfffd], [0x010000 - 0x10ffff]
                         else => false,
                     },
                     .latin1 => switch (c) {
+                        ' ', '\t' => false,
+                        '\n', '\r' => false,
+
                         // TODO: !!!!
-                        else => false,
+                        else => true,
                     },
                 };
             }
-            pub fn isNsTagChar(cs: []const encoding.unit()) bool {
+
+            // null if false
+            // length if true
+            pub fn isNsTagChar(cs: []const encoding.unit()) ?u8 {
                 if (cs.len == 0) {
-                    return false;
+                    return null;
                 }
 
                 return switch (cs[0]) {
@@ -2804,7 +4930,7 @@ pub const Encoding = enum {
                     '\'',
                     '(',
                     ')',
-                    => true,
+                    => 1,
 
                     '!',
                     ',',
@@ -2812,16 +4938,16 @@ pub const Encoding = enum {
                     ']',
                     '{',
                     '}',
-                    => false,
+                    => null,
 
                     else => |c| {
                         if (c == '%') {
                             if (cs.len > 2 and isNsHexDigit(cs[1]) and isNsHexDigit(cs[2])) {
-                                return true;
+                                return 3;
                             }
                         }
 
-                        return isNsWordChar(c);
+                        return if (isNsWordChar(c)) 1 else null;
                     },
                 };
             }
@@ -2831,47 +4957,6 @@ pub const Encoding = enum {
             pub fn isSWhite(c: encoding.unit()) bool {
                 return c == ' ' or c == '\t';
             }
-            pub fn isSWhiteOrNewLine(c: encoding.unit()) bool {
-                return c == ' ' or c == '\t' or c == '\n' or c == '\r';
-            }
-            // pub fn isNsPlainFirst(cs: encoding.unit(), context: ParseContext) bool {
-            //     if (cs.len == 0) {
-            //         return false;
-            //     }
-
-            //     const c1 = cs[0];
-
-            //     if (isNsChar(c1) and !isCIndicator(c1)) {
-            //         return false;
-            //     }
-
-            //     switch (c1) {
-            //         '?',
-            //         ':',
-            //         '-',
-            //         => {
-            //             if (cs.len == 1) {
-            //                 return false;
-            //             }
-
-            //             const c2 = cs[1];
-            //             return isNsPlainSafe(c2, context);
-            //         },
-            //         else => return false,
-            //     }
-            // }
-            // pub fn isNsPlainSafe(c: encoding.unit(), context: ParseContext) bool {
-            //     return switch (context) {
-            //         .block_out,
-            //         .flow_out,
-            //         .block_key,
-            //         => isNsPlainSafeOut(c),
-            //         .block_in,
-            //         .flow_in,
-            //         .flow_key,
-            //         => isNsPlainSafeIn(c),
-            //     };
-            // }
             pub fn isNsPlainSafeOut(c: encoding.unit()) bool {
                 return isNsChar(c);
             }
@@ -2963,15 +5048,18 @@ pub const Encoding = enum {
 };
 
 pub fn Token(comptime encoding: Encoding) type {
+    const NodeTag = Parser(encoding).NodeTag;
+    const NodeScalar = Parser(encoding).NodeScalar;
+    const String = Parser(encoding).String;
+
     return struct {
-        start: usize,
+        start: Pos,
         indent: Indent,
         line: Line,
-        // tag: Tag,
         data: Data,
 
         const TokenInit = struct {
-            start: usize,
+            start: Pos,
             indent: Indent,
             line: Line,
         };
@@ -2981,7 +5069,6 @@ pub fn Token(comptime encoding: Encoding) type {
                 .start = init.start,
                 .indent = init.indent,
                 .line = init.line,
-                // .tag = .eof,
                 .data = .eof,
             };
         }
@@ -2991,7 +5078,6 @@ pub fn Token(comptime encoding: Encoding) type {
                 .start = init.start,
                 .indent = init.indent,
                 .line = init.line,
-                // .tag = .sequence_entry,
                 .data = .sequence_entry,
             };
         }
@@ -3001,7 +5087,6 @@ pub fn Token(comptime encoding: Encoding) type {
                 .start = init.start,
                 .indent = init.indent,
                 .line = init.line,
-                // .tag = .mapping_key,
                 .data = .mapping_key,
             };
         }
@@ -3011,7 +5096,6 @@ pub fn Token(comptime encoding: Encoding) type {
                 .start = init.start,
                 .indent = init.indent,
                 .line = init.line,
-                // .tag = .mapping_value,
                 .data = .mapping_value,
             };
         }
@@ -3021,7 +5105,6 @@ pub fn Token(comptime encoding: Encoding) type {
                 .start = init.start,
                 .indent = init.indent,
                 .line = init.line,
-                // .tag = .collect_entry,
                 .data = .collect_entry,
             };
         }
@@ -3031,7 +5114,6 @@ pub fn Token(comptime encoding: Encoding) type {
                 .start = init.start,
                 .indent = init.indent,
                 .line = init.line,
-                // .tag = .sequence_start,
                 .data = .sequence_start,
             };
         }
@@ -3041,7 +5123,6 @@ pub fn Token(comptime encoding: Encoding) type {
                 .start = init.start,
                 .indent = init.indent,
                 .line = init.line,
-                // .tag = .sequence_end,
                 .data = .sequence_end,
             };
         }
@@ -3051,7 +5132,6 @@ pub fn Token(comptime encoding: Encoding) type {
                 .start = init.start,
                 .indent = init.indent,
                 .line = init.line,
-                // .tag = .mapping_start,
                 .data = .mapping_start,
             };
         }
@@ -3061,105 +5141,63 @@ pub fn Token(comptime encoding: Encoding) type {
                 .start = init.start,
                 .indent = init.indent,
                 .line = init.line,
-                // .tag = .mapping_end,
                 .data = .mapping_end,
             };
         }
 
-        // pub fn comment(init: TokenInit) @This() {
-        //     return .{
-        //         .start = init.start,
-        //         .indent = init.indent,
-        //         .line = init.line,
-        //         // .tag = .comment,
-        //         .data = .comment,
-        //     };
-        // }
-
-        pub fn anchor(init: TokenInit) @This() {
-            return .{
-                .start = init.start,
-                .indent = init.indent,
-                .line = init.line,
-                // .tag = .anchor,
-                .data = .anchor,
-            };
-        }
-
-        pub fn alias(init: TokenInit) @This() {
-            return .{
-                .start = init.start,
-                .indent = init.indent,
-                .line = init.line,
-                // .tag = .alias,
-                .data = .alias,
-            };
-        }
-
-        pub fn ttag(init: TokenInit) @This() {
-            return .{
-                .start = init.start,
-                .indent = init.indent,
-                .line = init.line,
-                // .tag = .ttag,
-                .data = .ttag,
-            };
-        }
-
-        const LiteralInit = struct {
-            start: usize,
+        const AnchorInit = struct {
+            start: Pos,
             indent: Indent,
             line: Line,
-            indent_indicator: Indent.Indicator,
-            chomp: Chomp,
+            name: String.Range,
         };
 
-        pub fn literal(init: LiteralInit) @This() {
+        pub fn anchor(init: AnchorInit) @This() {
             return .{
                 .start = init.start,
                 .indent = init.indent,
                 .line = init.line,
-                // .tag = .literal,
-                .data = .{ .literal = .{ .kind = .normal, .indent_indicator = init.indent_indicator, .chomp = init.chomp } },
+                .data = .{ .anchor = init.name },
             };
         }
 
-        pub fn folded(init: LiteralInit) @This() {
+        const AliasInit = struct {
+            start: Pos,
+            indent: Indent,
+            line: Line,
+            name: String.Range,
+        };
+
+        pub fn alias(init: AliasInit) @This() {
             return .{
                 .start = init.start,
                 .indent = init.indent,
                 .line = init.line,
-                // .tag = .folded,
-                .data = .{ .folded = .{ .kind = .folded, .indent_indicator = init.indent_indicator, .chomp = init.chomp } },
+                .data = .{ .alias = init.name },
             };
         }
 
-        // pub fn singleQuote(init: TokenInit) @This() {
-        //     return .{
-        //         .start = init.start,
-        //         .indent = init.indent,
-        //         .line = init.line,
-        //         // .tag = .single_quote,
-        //         .data = .single_quote,
-        //     };
-        // }
+        const TagInit = struct {
+            start: Pos,
+            indent: Indent,
+            line: Line,
+            tag: NodeTag,
+        };
 
-        // pub fn doubleQuote(init: TokenInit) @This() {
-        //     return .{
-        //         .start = init.start,
-        //         .indent = init.indent,
-        //         .line = init.line,
-        //         // .tag = .double_quote,
-        //         .data = .double_quote,
-        //     };
-        // }
+        pub fn tag(init: TagInit) @This() {
+            return .{
+                .start = init.start,
+                .indent = init.indent,
+                .line = init.line,
+                .data = .{ .tag = init.tag },
+            };
+        }
 
         pub fn directive(init: TokenInit) @This() {
             return .{
                 .start = init.start,
                 .indent = init.indent,
                 .line = init.line,
-                // .tag = .directive,
                 .data = .directive,
             };
         }
@@ -3169,7 +5207,6 @@ pub fn Token(comptime encoding: Encoding) type {
                 .start = init.start,
                 .indent = init.indent,
                 .line = init.line,
-                // .tag = .reserved,
                 .data = .reserved,
             };
         }
@@ -3179,7 +5216,6 @@ pub fn Token(comptime encoding: Encoding) type {
                 .start = init.start,
                 .indent = init.indent,
                 .line = init.line,
-                // .tag = .document_start,
                 .data = .document_start,
             };
         }
@@ -3189,49 +5225,16 @@ pub fn Token(comptime encoding: Encoding) type {
                 .start = init.start,
                 .indent = init.indent,
                 .line = init.line,
-                // .tag = .document_end,
                 .data = .document_end,
             };
         }
 
-        // pub fn whitespace(init: TokenInit) @This() {
-        //     return .{
-        //         .start = init.start,
-        //         .indent = init.indent,
-        //         .line = init.line,
-        //         // .tag = .whitespace,
-        //         .data = .whitespace,
-        //     };
-        // }
-
-        // const PlainScalarInit = struct {
-        //     start: usize,
-        //     indent: Indent,
-        //     line: Line,
-        //     end: usize,
-
-        //     text: Parser.String,
-        // };
-
-        // pub fn plainScalar(init: PlainScalarInit) @This() {
-        //     return .{
-        //         .start = init.start,
-        //         .indent = init.indent,
-        //         .line = init.line,
-
-        //         // .tag = .plain_scalar,
-        //         .data = .plain_scalar,
-        //     };
-        // }
-
         const ScalarInit = struct {
-            start: usize,
+            start: Pos,
             indent: Indent,
             line: Line,
 
             resolved: Scalar,
-
-            // text: std.ArrayList(encoding.unit()),
         };
 
         pub fn scalar(init: ScalarInit) @This() {
@@ -3243,7 +5246,7 @@ pub fn Token(comptime encoding: Encoding) type {
             };
         }
 
-        const Tag = enum {
+        pub const Data = union(enum) {
             eof,
             /// `-`
             sequence_entry,
@@ -3261,75 +5264,12 @@ pub fn Token(comptime encoding: Encoding) type {
             mapping_start,
             /// `}`
             mapping_end,
-            // /// `#`
-            // comment,
             /// `&`
-            anchor,
+            anchor: String.Range,
             /// `*`
-            alias,
+            alias: String.Range,
             /// `!`
-            ttag,
-            /// `|`
-            literal,
-            /// `>`
-            folded,
-            // /// `'`
-            // single_quote,
-            // /// `"`
-            // double_quote,
-            /// `%`
-            directive,
-            /// `@` or `\``
-            reserved,
-
-            /// `---`
-            document_start,
-            /// `...`
-            document_end,
-
-            // /// space or tab only
-            // whitespace,
-
-            // /// unquoted value
-            // plain_scalar,
-
-            scalar,
-        };
-
-        pub const Data = union(Tag) {
-            eof,
-            /// `-`
-            sequence_entry,
-            /// `?`
-            mapping_key,
-            /// `:`
-            mapping_value,
-            /// `,`
-            collect_entry,
-            /// `[`
-            sequence_start,
-            /// `]`
-            sequence_end,
-            /// `{`
-            mapping_start,
-            /// `}`
-            mapping_end,
-            // /// `#`
-            // comment,
-            /// `&`
-            anchor,
-            /// `*`
-            alias,
-            /// `!`
-            ttag,
-            /// `|`
-            literal: Literal,
-            /// `>`
-            folded: Literal,
-            // /// `'`
-            // single_quote,
-            // /// `"`
-            // double_quote,
+            tag: NodeTag,
             /// `%`
             directive,
             /// `@` or `\``
@@ -3338,33 +5278,15 @@ pub fn Token(comptime encoding: Encoding) type {
             document_start,
             /// `...`
             document_end,
-            // /// space or tab only
-            // whitespace,
-            // /// unquoted value
-            // plain_scalar,
 
+            // might be single or double quoted, or unquoted.
+            // might be a literal or folded literal ('|' or '>')
             scalar: Scalar,
         };
 
-        pub const Literal = struct {
-            kind: Kind,
-            indent_indicator: Indent.Indicator,
-            chomp: Chomp,
-
-            pub const Kind = enum {
-                normal,
-                folded,
-            };
-        };
-
-        pub const Scalar = union(enum) {
-            null,
-            boolean: bool,
-            number: f64,
-            string: struct {
-                text: Parser(encoding).String,
-                multiline: bool,
-            },
+        pub const Scalar = struct {
+            data: NodeScalar,
+            multiline: bool,
         };
     };
 }

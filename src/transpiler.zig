@@ -1180,7 +1180,7 @@ pub const Transpiler = struct {
                 else if (kind == .toml)
                     TOML.parse(source, transpiler.log, allocator, false) catch return null
                 else if (kind == .yaml)
-                    YAML.parse(source, transpiler.log, allocator, false) catch return null
+                    YAML.parse(source, transpiler.log, allocator) catch return null
                 else
                     @compileError("unreachable");
 

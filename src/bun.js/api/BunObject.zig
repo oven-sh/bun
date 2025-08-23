@@ -62,6 +62,7 @@ pub const BunObject = struct {
     pub const SHA512 = toJSLazyPropertyCallback(Crypto.SHA512.getter);
     pub const SHA512_256 = toJSLazyPropertyCallback(Crypto.SHA512_256.getter);
     pub const TOML = toJSLazyPropertyCallback(Bun.getTOMLObject);
+    pub const YAML = toJSLazyPropertyCallback(Bun.getYAMLObject);
     pub const Transpiler = toJSLazyPropertyCallback(Bun.getTranspilerConstructor);
     pub const argv = toJSLazyPropertyCallback(Bun.getArgv);
     pub const cwd = toJSLazyPropertyCallback(Bun.getCWD);
@@ -129,6 +130,7 @@ pub const BunObject = struct {
         @export(&BunObject.SHA512_256, .{ .name = lazyPropertyCallbackName("SHA512_256") });
 
         @export(&BunObject.TOML, .{ .name = lazyPropertyCallbackName("TOML") });
+        @export(&BunObject.YAML, .{ .name = lazyPropertyCallbackName("YAML") });
         @export(&BunObject.Glob, .{ .name = lazyPropertyCallbackName("Glob") });
         @export(&BunObject.Transpiler, .{ .name = lazyPropertyCallbackName("Transpiler") });
         @export(&BunObject.argv, .{ .name = lazyPropertyCallbackName("argv") });
@@ -1300,6 +1302,10 @@ pub fn getTOMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVa
     return TOMLObject.create(globalThis);
 }
 
+pub fn getYAMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return YAMLObject.create(globalThis);
+}
+
 pub fn getGlobConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.API.Glob.js.getConstructor(globalThis);
 }
@@ -2086,6 +2092,7 @@ const api = bun.api;
 const FFIObject = bun.api.FFIObject;
 const HashObject = bun.api.HashObject;
 const TOMLObject = bun.api.TOMLObject;
+const YAMLObject = bun.api.YAMLObject;
 const UnsafeObject = bun.api.UnsafeObject;
 const node = bun.api.node;
 

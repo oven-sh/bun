@@ -143,6 +143,7 @@ src/bun.js/api/Timer/TimerObjectInternals.zig
 src/bun.js/api/Timer/WTFTimer.zig
 src/bun.js/api/TOMLObject.zig
 src/bun.js/api/UnsafeObject.zig
+src/bun.js/api/YAMLObject.zig
 src/bun.js/bindgen_test.zig
 src/bun.js/bindings/AbortSignal.zig
 src/bun.js/bindings/AnyPromise.zig

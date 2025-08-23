@@ -12,7 +12,7 @@ referenced_source_maps: std.AutoHashMapUnmanaged(SourceMapStore.Key, void),
 inspector_connection_id: i32 = -1,
 
 pub fn new(dev: *DevServer, res: anytype) *HmrSocket {
-    return bun.create(dev.allocator, HmrSocket, .{
+    return bun.create(dev.allocator(), HmrSocket, .{
         .dev = dev,
         .is_from_localhost = if (res.getRemoteSocketInfo()) |addr|
             if (addr.is_ipv6)
@@ -54,7 +54,7 @@ pub fn onMessage(s: *HmrSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.O
                 return ws.close();
             const source_map_id = SourceMapStore.Key.init(@as(u64, generation) << 32);
             if (s.dev.source_maps.removeOrUpgradeWeakRef(source_map_id, .upgrade)) {
-                s.referenced_source_maps.put(s.dev.allocator, source_map_id, {}) catch
+                s.referenced_source_maps.put(s.dev.allocator(), source_map_id, {}) catch
                     bun.outOfMemory();
             }
         },
@@ -166,7 +166,7 @@ pub fn onMessage(s: *HmrSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.O
                     std.time.Timer.start() catch @panic("timers unsupported"),
                 ) catch bun.outOfMemory();
 
-                event.entry_points.deinit(s.dev.allocator);
+                event.entry_points.deinit(s.dev.allocator());
             },
         },
         .console_log => {
@@ -256,9 +256,9 @@ pub fn onClose(s: *HmrSocket, ws: AnyWebSocket, exit_code: i32, message: []const
     while (it.next()) |key| {
         s.dev.source_maps.unref(key.*);
     }
-    s.referenced_source_maps.deinit(s.dev.allocator);
+    s.referenced_source_maps.deinit(s.dev.allocator());
     bun.debugAssert(s.dev.active_websocket_connections.remove(s));
-    s.dev.allocator.destroy(s);
+    s.dev.allocator().destroy(s);
 }
 
 fn notifyInspectorClientNavigation(s: *const HmrSocket, pattern: []const u8, rbi: RouteBundle.Index.Optional) void {

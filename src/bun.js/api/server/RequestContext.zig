@@ -1980,7 +1980,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     this.flags.has_called_error_handler = true;
                     const result = server.config.onError.call(
                         server.globalThis,
-                        server.js_value.get() orelse .js_undefined,
+                        server.js_value.get(),
                         &.{value},
                     ) catch |err| server.globalThis.takeException(err);
                     defer result.ensureStillAlive();

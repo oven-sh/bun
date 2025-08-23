@@ -1737,8 +1737,8 @@ pub fn spawnMaybeSync(
     sync_value.put(globalThis, jsc.ZigString.static("stderr"), stderr);
     sync_value.put(globalThis, jsc.ZigString.static("success"), JSValue.jsBoolean(exitCode.isInt32() and exitCode.asInt32() == 0));
     sync_value.put(globalThis, jsc.ZigString.static("resourceUsage"), resource_usage);
-    if (timeout != null) sync_value.put(globalThis, jsc.ZigString.static("exitedDueToTimeout"), if (exitedDueToTimeout) jsc.JSValue.true else jsc.JSValue.false);
-    if (maxBuffer != null) sync_value.put(globalThis, jsc.ZigString.static("exitedDueToMaxBuffer"), if (exitedDueToMaxBuffer != null) jsc.JSValue.true else jsc.JSValue.false);
+    if (timeout != null) sync_value.put(globalThis, jsc.ZigString.static("exitedDueToTimeout"), if (exitedDueToTimeout) .true else .false);
+    if (maxBuffer != null) sync_value.put(globalThis, jsc.ZigString.static("exitedDueToMaxBuffer"), if (exitedDueToMaxBuffer != null) .true else .false);
     sync_value.put(globalThis, jsc.ZigString.static("pid"), resultPid);
 
     return sync_value;
@@ -1802,7 +1802,7 @@ pub fn handleIPCClose(this: *Subprocess) void {
 
         // Call the onDisconnectCallback if it exists and prevent it from being kept alive longer than necessary
         if (consumeOnDisconnectCallback(this_jsvalue, globalThis)) |callback| {
-            globalThis.bunVM().eventLoop().runCallback(callback, globalThis, this_jsvalue, &.{JSValue.jsBoolean(true)});
+            globalThis.bunVM().eventLoop().runCallback(callback, globalThis, this_jsvalue, &.{.true});
         }
     }
 }

@@ -1236,6 +1236,9 @@ var _Interface = class Interface extends InterfaceConstructor {
   constructor(input, output, completer, terminal) {
     super(input, output, completer, terminal);
   }
+  [Symbol.dispose]() {
+    this.close();
+  }
   get columns() {
     var output = this.output;
     if (output && output.columns) return output.columns;
@@ -2532,6 +2535,7 @@ Interface.prototype._getDisplayPos = _Interface.prototype[kGetDisplayPos];
 Interface.prototype._getCursorPos = _Interface.prototype.getCursorPos;
 Interface.prototype._moveCursor = _Interface.prototype[kMoveCursor];
 Interface.prototype._ttyWrite = _Interface.prototype[kTtyWrite];
+Interface.prototype[Symbol.dispose] = _Interface.prototype[Symbol.dispose];
 
 function _ttyWriteDumb(s, key) {
   key = key || kEmptyObject;

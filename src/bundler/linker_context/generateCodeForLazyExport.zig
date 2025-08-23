@@ -44,9 +44,9 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                 break :size size + 1;
             };
 
-            var inner_visited = try BitSet.initEmpty(this.allocator, size);
-            defer inner_visited.deinit(this.allocator);
-            var composes_visited = std.AutoArrayHashMap(bun.bundle_v2.Ref, void).init(this.allocator);
+            var inner_visited = try BitSet.initEmpty(this.allocator(), size);
+            defer inner_visited.deinit(this.allocator());
+            var composes_visited = std.AutoArrayHashMap(bun.bundle_v2.Ref, void).init(this.allocator());
             defer composes_visited.deinit();
 
             const Visitor = struct {
@@ -219,7 +219,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                 .loc = stmt.loc,
                 .log = this.log,
                 .all_sources = all_sources,
-                .allocator = this.allocator,
+                .allocator = this.allocator(),
                 .all_symbols = this.graph.ast.items(.symbols),
             };
 
@@ -227,7 +227,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                 const ref = entry.ref;
                 bun.assert(ref.inner_index < symbols.len);
 
-                var template_parts = std.ArrayList(E.TemplatePart).init(this.allocator);
+                var template_parts = std.ArrayList(E.TemplatePart).init(this.allocator());
                 var value = Expr.init(E.NameOfSymbol, E.NameOfSymbol{ .ref = ref.toRealRef(source_index) }, stmt.loc);
 
                 visitor.parts = &template_parts;
@@ -254,7 +254,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                 }
 
                 const key = symbols.at(ref.innerIndex()).original_name;
-                try exports.put(this.allocator, key, value);
+                try exports.put(this.allocator(), key, value);
             }
 
             part.stmts[0].data.s_lazy_export.* = Expr.init(E.Object, exports, stmt.loc).data;
@@ -315,7 +315,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                         continue;
                     }
 
-                    const name = property.key.?.data.e_string.slice(this.allocator);
+                    const name = property.key.?.data.e_string.slice(this.allocator());
 
                     // TODO: support non-identifier names
                     if (!bun.js_lexer.isIdentifier(name))
@@ -333,17 +333,17 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                     // end up actually being used at this point (since import binding hasn't
                     // happened yet). So we need to wait until after tree shaking happens.
                     const generated = try this.generateNamedExportInFile(source_index, module_ref, name, name);
-                    parts.ptr[generated[1]].stmts = this.allocator.alloc(Stmt, 1) catch unreachable;
+                    parts.ptr[generated[1]].stmts = this.allocator().alloc(Stmt, 1) catch unreachable;
                     parts.ptr[generated[1]].stmts[0] = Stmt.alloc(
                         S.Local,
                         S.Local{
                             .is_export = true,
                             .decls = js_ast.G.Decl.List.fromSlice(
-                                this.allocator,
+                                this.allocator(),
                                 &.{
                                     .{
                                         .binding = Binding.alloc(
-                                            this.allocator,
+                                            this.allocator(),
                                             B.Identifier{
                                                 .ref = generated[0],
                                             },
@@ -364,13 +364,13 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                     source_index,
                     module_ref,
                     std.fmt.allocPrint(
-                        this.allocator,
+                        this.allocator(),
                         "{}_default",
                         .{this.parse_graph.input_files.items(.source)[source_index].fmtIdentifier()},
                     ) catch unreachable,
                     "default",
                 );
-                parts.ptr[generated[1]].stmts = this.allocator.alloc(Stmt, 1) catch unreachable;
+                parts.ptr[generated[1]].stmts = this.allocator().alloc(Stmt, 1) catch unreachable;
                 parts.ptr[generated[1]].stmts[0] = Stmt.alloc(
                     S.ExportDefault,
                     S.ExportDefault{

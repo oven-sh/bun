@@ -421,8 +421,7 @@ pub const Command = struct {
             compile: bool = false,
             compile_target: Cli.CompileTarget = .{},
             compile_exec_argv: ?[]const u8 = null,
-            windows_hide_console: bool = false,
-            windows_icon: ?[]const u8 = null,
+            windows: options.WindowsOptions = .{},
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {

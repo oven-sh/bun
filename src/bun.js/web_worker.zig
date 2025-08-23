@@ -555,7 +555,7 @@ pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
 
     if (this.vm) |vm| {
         vm.eventLoop().wakeup();
-        vm.global.requestTermination();
+        // TODO(@190n) notifyNeedTermination
     }
 
     // TODO(@190n) delete

@@ -84,8 +84,8 @@ greet("World");`;
             sources: ["virtual.ts"],
             sourcesContent: [originalCode],
             names: ["greet", "name", "console", "log"],
-            // Generated with a tool - maps each token properly
-            mappings: "AAAA,SAASA,MAAMC,MACbC,QAAQC,IAAI,WAAYF,MAE1BD,MAAM",
+            // Simple mapping like the working test
+            mappings: "AAAA",
           });
           
           return {

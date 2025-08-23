@@ -797,10 +797,10 @@ declare module "bun" {
    * - `"no-replace"` may not be fully atomic (checks existence then renames)
    *
    * @param from - The current file or directory path
-   * @param to - The new file or directory path  
+   * @param to - The new file or directory path
    * @param conflict - How to handle conflicts when destination exists:
    *   - `"replace"` (default) - Replace the destination if it exists
-   *   - `"swap"` - Atomically swap the files (Linux/macOS only, falls back to replace on Windows)  
+   *   - `"swap"` - Atomically swap the files (Linux/macOS only, falls back to replace on Windows)
    *   - `"no-replace"` - Fail if destination already exists
    *
    * @returns A promise that resolves when the rename is complete
@@ -817,11 +817,7 @@ declare module "bun" {
    * await Bun.rename("source.txt", "dest.txt", "no-replace");
    * ```
    */
-  function rename(
-    from: PathLike,
-    to: PathLike,
-    conflict?: "replace" | "swap" | "no-replace"
-  ): Promise<void>;
+  function rename(from: PathLike, to: PathLike, conflict?: "replace" | "swap" | "no-replace"): Promise<void>;
 
   interface SystemError extends Error {
     errno?: number | undefined;

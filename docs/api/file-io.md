@@ -223,7 +223,7 @@ await Bun.rename("old.txt", "new.txt");
 // Atomic swap (Linux/macOS only, falls back to replace on Windows)
 await Bun.rename("file1.txt", "file2.txt", "swap");
 
-// Fail if destination exists  
+// Fail if destination exists
 await Bun.rename("source.txt", "dest.txt", "no-replace");
 ```
 

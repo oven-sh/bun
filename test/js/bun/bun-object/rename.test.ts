@@ -19,31 +19,25 @@ describe("Bun.rename()", () => {
     await expect(() => Bun.rename("from.txt")).toThrowWithCodeAsync(Error, "ERR_INVALID_ARG_TYPE");
   });
 
-  it.each([undefined, null, 1, true, Symbol("foo"), {}])(
-    "throws when `from` is not a path (%p)",
-    async (from: any) => {
-      // @ts-expect-error
-      await expect(() => Bun.rename(from, "to.txt")).toThrowWithCodeAsync(Error, "ERR_INVALID_ARG_TYPE");
-    },
-  );
+  it.each([undefined, null, 1, true, Symbol("foo"), {}])("throws when `from` is not a path (%p)", async (from: any) => {
+    // @ts-expect-error
+    await expect(() => Bun.rename(from, "to.txt")).toThrowWithCodeAsync(Error, "ERR_INVALID_ARG_TYPE");
+  });
 
-  it.each([undefined, null, 1, true, Symbol("foo"), {}])(
-    "throws when `to` is not a path (%p)",
-    async (to: any) => {
-      // @ts-expect-error
-      await expect(() => Bun.rename("from.txt", to)).toThrowWithCodeAsync(Error, "ERR_INVALID_ARG_TYPE");
-    },
-  );
+  it.each([undefined, null, 1, true, Symbol("foo"), {}])("throws when `to` is not a path (%p)", async (to: any) => {
+    // @ts-expect-error
+    await expect(() => Bun.rename("from.txt", to)).toThrowWithCodeAsync(Error, "ERR_INVALID_ARG_TYPE");
+  });
 
   it("throws when conflict parameter is invalid", async () => {
     const from = path.join(tmpdir, "from.txt");
     const to = path.join(tmpdir, "to.txt");
-    
+
     await fs.writeFile(from, "content");
-    
+
     // @ts-expect-error
     expect(() => Bun.rename(from, to, "invalid")).toThrow("conflict must be 'replace', 'swap', or 'no-replace'");
-    
+
     // Clean up
     await fs.unlink(from).catch(() => {});
   });
@@ -55,13 +49,13 @@ describe("Bun.rename()", () => {
       const content = "Hello, rename!";
 
       await fs.writeFile(from, content);
-      
+
       await expect(Bun.rename(from, to)).resolves.toBeUndefined();
-      
+
       // Verify the file was moved
       await expect(fs.access(from)).rejects.toThrow();
       await expect(fs.readFile(to, "utf8")).resolves.toBe(content);
-      
+
       // Clean up
       await fs.unlink(to).catch(() => {});
     });
@@ -74,13 +68,13 @@ describe("Bun.rename()", () => {
 
       await fs.mkdir(from);
       await fs.writeFile(path.join(from, fileName), content);
-      
+
       await expect(Bun.rename(from, to)).resolves.toBeUndefined();
-      
+
       // Verify the directory was moved
       await expect(fs.access(from)).rejects.toThrow();
       await expect(fs.readFile(path.join(to, fileName), "utf8")).resolves.toBe(content);
-      
+
       // Clean up
       await fs.rm(to, { recursive: true }).catch(() => {});
     });
@@ -91,13 +85,13 @@ describe("Bun.rename()", () => {
       const content = "Buffer path test";
 
       await fs.writeFile(from, content);
-      
+
       await expect(Bun.rename(Buffer.from(from), Buffer.from(to))).resolves.toBeUndefined();
-      
+
       // Verify the file was moved
       await expect(fs.access(from)).rejects.toThrow();
       await expect(fs.readFile(to, "utf8")).resolves.toBe(content);
-      
+
       // Clean up
       await fs.unlink(to).catch(() => {});
     });
@@ -105,7 +99,7 @@ describe("Bun.rename()", () => {
     it("throws when source file doesn't exist", async () => {
       const from = path.join(tmpdir, "nonexistent.txt");
       const to = path.join(tmpdir, "destination.txt");
-      
+
       await expect(Bun.rename(from, to)).rejects.toThrow();
     });
   });
@@ -120,13 +114,13 @@ describe("Bun.rename()", () => {
 
         await fs.writeFile(from, sourceContent);
         await fs.writeFile(to, destContent);
-        
+
         await expect(Bun.rename(from, to)).resolves.toBeUndefined();
-        
+
         // Verify the destination has the source content
         await expect(fs.access(from)).rejects.toThrow();
         await expect(fs.readFile(to, "utf8")).resolves.toBe(sourceContent);
-        
+
         // Clean up
         await fs.unlink(to).catch(() => {});
       });
@@ -139,13 +133,13 @@ describe("Bun.rename()", () => {
 
         await fs.writeFile(from, sourceContent);
         await fs.writeFile(to, destContent);
-        
+
         await expect(Bun.rename(from, to, "replace")).resolves.toBeUndefined();
-        
+
         // Verify the destination has the source content
         await expect(fs.access(from)).rejects.toThrow();
         await expect(fs.readFile(to, "utf8")).resolves.toBe(sourceContent);
-        
+
         // Clean up
         await fs.unlink(to).catch(() => {});
       });
@@ -160,13 +154,13 @@ describe("Bun.rename()", () => {
 
         await fs.writeFile(from, sourceContent);
         await fs.writeFile(to, destContent);
-        
+
         await expect(Bun.rename(from, to, "no-replace")).rejects.toThrow();
-        
+
         // Verify both files still exist with original content
         await expect(fs.readFile(from, "utf8")).resolves.toBe(sourceContent);
         await expect(fs.readFile(to, "utf8")).resolves.toBe(destContent);
-        
+
         // Clean up
         await fs.unlink(from).catch(() => {});
         await fs.unlink(to).catch(() => {});
@@ -178,13 +172,13 @@ describe("Bun.rename()", () => {
         const content = "Source content";
 
         await fs.writeFile(from, content);
-        
+
         await expect(Bun.rename(from, to, "no-replace")).resolves.toBeUndefined();
-        
+
         // Verify the file was moved
         await expect(fs.access(from)).rejects.toThrow();
         await expect(fs.readFile(to, "utf8")).resolves.toBe(content);
-        
+
         // Clean up
         await fs.unlink(to).catch(() => {});
       });
@@ -199,13 +193,13 @@ describe("Bun.rename()", () => {
 
         await fs.writeFile(file1, content1);
         await fs.writeFile(file2, content2);
-        
+
         await expect(Bun.rename(file1, file2, "swap")).resolves.toBeUndefined();
-        
+
         // Verify the files were swapped
         await expect(fs.readFile(file1, "utf8")).resolves.toBe(content2);
         await expect(fs.readFile(file2, "utf8")).resolves.toBe(content1);
-        
+
         // Clean up
         await fs.unlink(file1).catch(() => {});
         await fs.unlink(file2).catch(() => {});
@@ -217,13 +211,13 @@ describe("Bun.rename()", () => {
         const content = "Source content";
 
         await fs.writeFile(from, content);
-        
+
         await expect(Bun.rename(from, to, "swap")).resolves.toBeUndefined();
-        
+
         // Verify the file was moved (not swapped since destination didn't exist)
         await expect(fs.access(from)).rejects.toThrow();
         await expect(fs.readFile(to, "utf8")).resolves.toBe(content);
-        
+
         // Clean up
         await fs.unlink(to).catch(() => {});
       });
@@ -242,13 +236,13 @@ describe("Bun.rename()", () => {
         await fs.mkdir(dir2);
         await fs.writeFile(path.join(dir1, "file.txt"), file1Content);
         await fs.writeFile(path.join(dir2, "file.txt"), file2Content);
-        
+
         await expect(Bun.rename(dir1, dir2, "swap")).resolves.toBeUndefined();
-        
+
         // Verify the directories were swapped
         await expect(fs.readFile(path.join(dir1, "file.txt"), "utf8")).resolves.toBe(file2Content);
         await expect(fs.readFile(path.join(dir2, "file.txt"), "utf8")).resolves.toBe(file1Content);
-        
+
         // Clean up
         await fs.rm(dir1, { recursive: true }).catch(() => {});
         await fs.rm(dir2, { recursive: true }).catch(() => {});
@@ -262,11 +256,11 @@ describe("Bun.rename()", () => {
 
         await fs.writeFile(from, sourceContent);
         await fs.writeFile(to, destContent);
-        
+
         // On Windows, swap should fall back to replace behavior
         // On Unix, it should actually swap the files
         await expect(Bun.rename(from, to, "swap")).resolves.toBeUndefined();
-        
+
         if (process.platform === "win32") {
           // Verify destination has source content (replace behavior on Windows)
           await expect(fs.access(from)).rejects.toThrow();
@@ -278,7 +272,7 @@ describe("Bun.rename()", () => {
           // Clean up both files
           await fs.unlink(from).catch(() => {});
         }
-        
+
         // Clean up
         await fs.unlink(to).catch(() => {});
       });
@@ -289,20 +283,20 @@ describe("Bun.rename()", () => {
     it("handles relative paths", async () => {
       const originalCwd = process.cwd();
       process.chdir(tmpdir);
-      
+
       try {
         const from = "relative-from.txt";
         const to = "relative-to.txt";
         const content = "Relative path test";
 
         await fs.writeFile(from, content);
-        
+
         await expect(Bun.rename(from, to)).resolves.toBeUndefined();
-        
+
         // Verify the file was moved
         await expect(fs.access(from)).rejects.toThrow();
         await expect(fs.readFile(to, "utf8")).resolves.toBe(content);
-        
+
         // Clean up
         await fs.unlink(to).catch(() => {});
       } finally {
@@ -316,13 +310,13 @@ describe("Bun.rename()", () => {
       const content = "Special chars test";
 
       await fs.writeFile(from, content);
-      
+
       await expect(Bun.rename(from, to)).resolves.toBeUndefined();
-      
+
       // Verify the file was moved
       await expect(fs.access(from)).rejects.toThrow();
       await expect(fs.readFile(to, "utf8")).resolves.toBe(content);
-      
+
       // Clean up
       await fs.unlink(to).catch(() => {});
     });
@@ -332,13 +326,13 @@ describe("Bun.rename()", () => {
       const to = path.join(tmpdir, "empty-to.txt");
 
       await fs.writeFile(from, "");
-      
+
       await expect(Bun.rename(from, to)).resolves.toBeUndefined();
-      
+
       // Verify the file was moved
       await expect(fs.access(from)).rejects.toThrow();
       await expect(fs.readFile(to, "utf8")).resolves.toBe("");
-      
+
       // Clean up
       await fs.unlink(to).catch(() => {});
     });
@@ -349,13 +343,13 @@ describe("Bun.rename()", () => {
       const largeContent = "x".repeat(1024 * 1024); // 1MB
 
       await fs.writeFile(from, largeContent);
-      
+
       await expect(Bun.rename(from, to)).resolves.toBeUndefined();
-      
+
       // Verify the file was moved
       await expect(fs.access(from)).rejects.toThrow();
       await expect(fs.readFile(to, "utf8")).resolves.toBe(largeContent);
-      
+
       // Clean up
       await fs.unlink(to).catch(() => {});
     });
@@ -370,14 +364,14 @@ describe("Bun.rename()", () => {
       const content = "Cross filesystem test";
 
       await fs.writeFile(from, content);
-      
+
       try {
         await Bun.rename(from, to);
-        
+
         // If it succeeds, verify the file was moved
         await expect(fs.access(from)).rejects.toThrow();
         await expect(fs.readFile(to, "utf8")).resolves.toBe(content);
-        
+
         // Clean up
         await fs.unlink(to).catch(() => {});
       } catch (error) {

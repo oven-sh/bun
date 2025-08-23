@@ -809,7 +809,7 @@ const RenameConflict = enum {
         }
         const str = try value.toSlice(globalThis, bun.default_allocator);
         defer str.deinit();
-        
+
         if (strings.eqlComptime(str.slice(), "replace")) {
             return .replace;
         } else if (strings.eqlComptime(str.slice(), "swap")) {
@@ -847,9 +847,9 @@ const RenameJob = struct {
 
     pub fn runRenameTask(task: *jsc.WorkPoolTask) void {
         const job: *RenameJob = @fieldParentPtr("task", task);
-        
+
         job.result = performRename(job.from_path, job.to_path, job.conflict);
-        
+
         // Clone the error to avoid UAF when path buffers are freed
         switch (job.result) {
             .err => |*err| {
@@ -857,10 +857,10 @@ const RenameJob = struct {
             },
             .result => {},
         }
-        
+
         bun.default_allocator.free(job.from_path);
         bun.default_allocator.free(job.to_path);
-        
+
         // Schedule completion on main thread
         job.vm.enqueueTask(jsc.Task.init(&job.completion_task));
     }
@@ -868,7 +868,7 @@ const RenameJob = struct {
     pub fn finalize(job: *RenameJob) void {
         var promise = job.promise.swap();
         const globalThis = job.vm.global;
-        
+
         switch (job.result) {
             .err => |*err| {
                 defer err.deinit();
@@ -879,7 +879,7 @@ const RenameJob = struct {
                 promise.resolve(globalThis, jsc.JSValue.js_undefined);
             },
         }
-        
+
         bun.destroy(job);
     }
 
@@ -911,7 +911,7 @@ const RenameJob = struct {
                         to_path,
                         .{ .exchange = true },
                     );
-                    
+
                     // If exchange fails because destination doesn't exist, fall back to regular rename
                     switch (result) {
                         .err => |err| {
@@ -989,24 +989,24 @@ pub fn rename(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     // Convert paths to null-terminated strings
     var from_buf: bun.PathBuffer = undefined;
     var to_buf: bun.PathBuffer = undefined;
-    
+
     const from_slice = from_path_like.path.sliceZ(&from_buf);
     const to_slice = to_path_like.path.sliceZ(&to_buf);
-    
+
     // Duplicate the paths for the async task
     const from_owned = try bun.default_allocator.dupeZ(u8, from_slice);
     const to_owned = try bun.default_allocator.dupeZ(u8, to_slice);
 
     // Create and schedule the rename job
     const job = RenameJob.create(globalThis, from_owned, to_owned, conflict);
-    
+
     var promise = JSPromise.create(globalThis);
     const promise_value = promise.asValue(globalThis);
     promise_value.ensureStillAlive();
     job.promise.strong.set(globalThis, promise_value);
-    
+
     jsc.WorkPool.schedule(&job.task);
-    
+
     return promise_value;
 }
 

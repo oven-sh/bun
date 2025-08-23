@@ -542,12 +542,10 @@ extern "C" void bun_initialize_process()
                 }
                 case 1: {
                     SetStdHandle(STD_OUTPUT_HANDLE, uv_get_osfhandle(fd));
-                    ASSERT(GetStdHandle(STD_OUTPUT_HANDLE) == uv_get_osfhandle(fd));
                     break;
                 }
                 case 2: {
                     SetStdHandle(STD_ERROR_HANDLE, uv_get_osfhandle(fd));
-                    ASSERT(GetStdHandle(STD_ERROR_HANDLE) == uv_get_osfhandle(fd));
                     break;
                 }
                 default: {

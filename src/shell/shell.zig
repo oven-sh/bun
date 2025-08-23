@@ -4278,7 +4278,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
 /// Used in JS tests, see `internal-for-testing.ts` and shell tests.
 pub const TestingAPIs = struct {
     pub fn disabledOnThisPlatform(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        if (comptime bun.Environment.isWindows) return JSValue.false;
+        if (comptime bun.Environment.isWindows) return .false;
 
         const arguments_ = callframe.arguments_old(1);
         var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
@@ -4293,10 +4293,10 @@ pub const TestingAPIs = struct {
 
         inline for (Interpreter.Builtin.Kind.DISABLED_ON_POSIX) |disabled| {
             if (bun.strings.eqlComptime(utf8str.byteSlice(), @tagName(disabled))) {
-                return JSValue.true;
+                return .true;
             }
         }
-        return JSValue.false;
+        return .false;
     }
 
     pub fn shellLex(

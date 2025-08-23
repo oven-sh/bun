@@ -709,7 +709,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 return globalThis.throw("publish requires a non-empty topic", .{});
             }
 
-            const compress = (compress_value orelse JSValue.jsBoolean(true)).toBoolean();
+            // https://github.com/ziglang/zig/issues/24563
+            const compress_js = compress_value orelse .true;
+            const compress = compress_js.toBoolean();
 
             if (message_value.asArrayBuffer(globalThis)) |buffer| {
                 return JSValue.jsNumber(
@@ -750,12 +752,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             if (this.flags.terminated) {
-                return JSValue.jsBoolean(false);
+                return .false;
             }
 
             if (object.as(NodeHTTPResponse)) |nodeHttpResponse| {
                 if (nodeHttpResponse.flags.ended or nodeHttpResponse.flags.socket_closed) {
-                    return .jsBoolean(false);
+                    return .false;
                 }
 
                 var data_value = jsc.JSValue.zero;
@@ -839,14 +841,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 return globalThis.throwInvalidArguments("upgrade requires a Request object", .{});
             };
 
-            var upgrader = request.request_context.get(RequestContext) orelse return .jsBoolean(false);
+            var upgrader = request.request_context.get(RequestContext) orelse return .false;
 
             if (upgrader.isAbortedOrEnded()) {
-                return .jsBoolean(false);
+                return .false;
             }
 
             if (upgrader.upgrade_context == null or @intFromPtr(upgrader.upgrade_context) == std.math.maxInt(usize)) {
-                return .jsBoolean(false);
+                return .false;
             }
 
             const resp = upgrader.resp.?;
@@ -878,7 +880,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             if (sec_websocket_key_str.len == 0) {
-                return .jsBoolean(false);
+                return .false;
             }
 
             if (sec_websocket_protocol.len > 0) {
@@ -1002,7 +1004,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 ctx,
             );
 
-            return .jsBoolean(true);
+            return .true;
         }
 
         pub fn onReloadFromZig(this: *ThisServer, new_config: *ServerConfig, globalThis: *jsc.JSGlobalObject) void {

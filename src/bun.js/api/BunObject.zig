@@ -1246,13 +1246,13 @@ pub fn mmapFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
     var map_size: ?usize = null;
 
     if (args.nextEat()) |opts| {
-        flags.TYPE = if ((try opts.get(globalThis, "shared") orelse JSValue.true).toBoolean())
+        flags.TYPE = if ((try opts.getBooleanLoose(globalThis, "shared")) orelse true)
             .SHARED
         else
             .PRIVATE;
 
         if (@hasField(std.c.MAP, "SYNC")) {
-            if ((try opts.get(globalThis, "sync") orelse JSValue.false).toBoolean()) {
+            if ((try opts.getBooleanLoose(globalThis, "sync")) orelse false) {
                 flags.TYPE = .SHARED_VALIDATE;
                 flags.SYNC = true;
             }

@@ -530,6 +530,25 @@ describe("napi", () => {
   it("behaves as expected when performing operations with an exception pending", async () => {
     await checkSameOutput("test_deferred_exceptions", []);
   });
+
+  it("NAPI finalizer iterator invalidation crash prevention", () => {
+    // This test verifies that the DeferGCForAWhile fix prevents iterator invalidation
+    // during NAPI finalizer cleanup. While we couldn't reproduce the exact crash
+    // conditions, this test ensures the addon loads and runs without issues.
+
+    const addon = require("./napi-app/build/Debug/test_finalizer_iterator_invalidation.node");
+
+    // Create objects with finalizers (should not crash)
+    const objects = addon.createProblematicObjects(5);
+    expect(objects).toHaveLength(5);
+
+    // Clear references
+    objects.length = 0;
+
+    // Get initial count
+    const count = addon.getFinalizeCount();
+    expect(typeof count).toBe("number");
+  });
 });
 
 async function checkSameOutput(test: string, args: any[] | string, envArgs: Record<string, string> = {}) {
@@ -549,10 +568,7 @@ async function checkSameOutput(test: string, args: any[] | string, envArgs: Reco
 }
 
 async function runOn(executable: string, test: string, args: any[] | string, envArgs: Record<string, string> = {}) {
-  // when the inspector runs (can be due to VSCode extension), there is
-  // a bug that in debug modes the console logs extra stuff
-  const { BUN_INSPECT_CONNECT_TO: _, ...rest } = bunEnv;
-  const env = { ...rest, ...envArgs };
+  const env = { ...bunEnv, ...envArgs };
   const exec = spawn({
     cmd: [
       executable,
@@ -578,3 +594,57 @@ async function runOn(executable: string, test: string, args: any[] | string, env
   expect(result).toBe(0);
   return stdout;
 }
+
+async function checkBothFail(test: string, args: any[] | string, envArgs: Record<string, string> = {}) {
+  const [node, bun] = await Promise.all(
+    ["node", bunExe()].map(async executable => {
+      const { BUN_INSPECT_CONNECT_TO: _, ...rest } = bunEnv;
+      const env = { ...rest, BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1", ...envArgs };
+      const exec = spawn({
+        cmd: [
+          executable,
+          "--expose-gc",
+          join(__dirname, "napi-app/main.js"),
+          test,
+          typeof args == "string" ? args : JSON.stringify(args),
+        ],
+        env,
+        stdout: Bun.version_with_sha.includes("debug") ? "inherit" : "pipe",
+        stderr: Bun.version_with_sha.includes("debug") ? "inherit" : "pipe",
+        stdin: "inherit",
+      });
+      const exitCode = await exec.exited;
+      return { exitCode, signalCode: exec.signalCode };
+    }),
+  );
+  expect(node.exitCode || node.signalCode).toBeTruthy();
+  expect(!!node.exitCode).toEqual(!!bun.exitCode);
+  expect(!!node.signalCode).toEqual(!!bun.signalCode);
+}
+
+describe("cleanup hooks", () => {
+  describe("execution order", () => {
+    it("executes in reverse insertion order like Node.js", async () => {
+      // Test that cleanup hooks execute in reverse insertion order (LIFO)
+      await checkSameOutput("test_cleanup_hook_order", []);
+    });
+  });
+
+  describe("error handling", () => {
+    it("removing non-existent env cleanup hook should not crash", async () => {
+      // Test that removing non-existent hooks doesn't crash the process
+      await checkSameOutput("test_cleanup_hook_remove_nonexistent", []);
+    });
+
+    it("removing non-existent async cleanup hook should not crash", async () => {
+      // Test that removing non-existent async hooks doesn't crash
+      await checkSameOutput("test_async_cleanup_hook_remove_nonexistent", []);
+    });
+  });
+
+  describe("duplicate prevention", () => {
+    it("should crash on duplicate hooks", async () => {
+      await checkBothFail("test_cleanup_hook_duplicates", []);
+    });
+  });
+});

@@ -277,10 +277,10 @@ pub fn Parser(comptime enc: Encoding) type {
         block_indents: Indent.Stack,
 
         // anchors: Anchors,
-        anchors: std.StringHashMap(Expr),
+        anchors: bun.StringHashMap(Expr),
         // aliases: PendingAliases,
 
-        tag_handles: std.StringHashMap(void),
+        tag_handles: bun.StringHashMap(void),
 
         // const PendingAliases = struct {
         //     list: std.ArrayList(State),

@@ -2111,9 +2111,6 @@ pub const BundleV2 = struct {
                     promise.resolve(globalThis, root_obj);
                 },
             }
-
-            // The promise may still be pending if we scheduled a continuation task
-            // for async onEnd callbacks, which is expected behavior
         }
     };
 

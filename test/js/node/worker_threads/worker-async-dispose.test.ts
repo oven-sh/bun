@@ -1,15 +1,18 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { Worker } from "worker_threads";
 
 test("Worker implements Symbol.asyncDispose", async () => {
-  const worker = new Worker(`
+  const worker = new Worker(
+    `
     const { parentPort } = require("worker_threads");
     parentPort?.postMessage("ready");
-  `, { eval: true });
+  `,
+    { eval: true },
+  );
 
   // Wait for the worker to be ready
   await new Promise(resolve => {
-    worker.on("message", (msg) => {
+    worker.on("message", msg => {
       if (msg === "ready") {
         resolve(msg);
       }
@@ -26,12 +29,15 @@ test("Worker implements Symbol.asyncDispose", async () => {
 
 test("Worker can be used with await using", async () => {
   let workerTerminated = false;
-  
+
   {
-    await using worker = new Worker(`
+    await using worker = new Worker(
+      `
       const { parentPort } = require("worker_threads");
       parentPort?.postMessage("hello from worker");
-    `, { eval: true });
+    `,
+      { eval: true },
+    );
 
     // Listen for worker exit to confirm termination
     worker.on("exit", () => {
@@ -42,7 +48,7 @@ test("Worker can be used with await using", async () => {
     await new Promise(resolve => {
       worker.on("message", resolve);
     });
-    
+
     // Worker should automatically terminate when leaving this block via Symbol.asyncDispose
   }
 

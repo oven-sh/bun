@@ -106,18 +106,33 @@ export function loadAndResolvePluginsForServe(
   return promiseResult;
 }
 
-export function runOnEndCallbacks(this: BundlerPlugin, callbacks: AnyFunction[], buildResult: any) {
+export async function runOnEndCallbacks(
+  this: BundlerPlugin,
+  callbacks: AnyFunction[],
+  buildResult: Bun.BuildOutput,
+): Promise<Bun.BuildOutput> {
   if (!callbacks || !Array.isArray(callbacks)) {
-    return;
+    return buildResult;
   }
+
+  const promises: PromiseLike<unknown>[] = [];
 
   for (const callback of callbacks) {
     if (!$isCallable(callback)) {
       continue;
     }
 
-    callback(buildResult);
+    const result = callback(buildResult);
+    if (result && $isPromise(result)) {
+      promises.push(result);
+    }
   }
+
+  if (promises.length > 0) {
+    await Promise.all(promises);
+  }
+
+  return buildResult;
 }
 
 /**

@@ -668,7 +668,7 @@ extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)
     plugin->plugin.tombstone();
 }
 
-extern "C" void JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedBuildResult)
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedBuildResult)
 {
     auto& vm = plugin->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -677,7 +677,7 @@ extern "C" void JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundlerPlugin* plugin,
     JSC::JSValue onEndCallbacksValue = plugin->getDirect(vm, Identifier::fromString(vm, String("onEndCallbacks"_s)));
 
     if (!onEndCallbacksValue.isObject()) {
-        return;
+        return JSValue::encode(jsUndefined());
     }
 
     auto* runOnEndCallbacksFn = JSC::JSFunction::create(vm, globalObject,
@@ -685,15 +685,17 @@ extern "C" void JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundlerPlugin* plugin,
 
     JSC::CallData callData = JSC::getCallData(runOnEndCallbacksFn);
     if (callData.type == JSC::CallData::Type::None) {
-        return;
+        return JSValue::encode(jsUndefined());
     }
 
     MarkedArgumentBuffer arguments;
     arguments.append(onEndCallbacksValue);
     arguments.append(JSValue::decode(encodedBuildResult));
 
-    JSC::profiledCall(globalObject, ProfilingReason::API, runOnEndCallbacksFn, callData, plugin, arguments);
-    RETURN_IF_EXCEPTION(scope, );
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, runOnEndCallbacksFn, callData, plugin, arguments);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return JSValue::encode(result);
 }
 
 extern "C" int JSBundlerPlugin__callOnBeforeParsePlugins(

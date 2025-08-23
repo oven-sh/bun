@@ -832,7 +832,7 @@ const RenameJob = struct {
     promise: jsc.JSPromise.Strong = .{},
     vm: *jsc.VirtualMachine,
     result: RenameResultType = .{ .result = {} },
-    any_task: jsc.AnyTask = undefined,
+    completion_task: jsc.AnyTask = undefined,
 
     pub fn create(globalThis: *JSGlobalObject, from_path: [:0]u8, to_path: [:0]u8, conflict: RenameConflict) *RenameJob {
         const job = bun.new(RenameJob, .{
@@ -841,18 +841,28 @@ const RenameJob = struct {
             .conflict = conflict,
             .vm = globalThis.bunVM(),
         });
-        job.any_task = jsc.AnyTask.New(RenameJob, finalize).init(job);
+        job.completion_task = jsc.AnyTask.New(RenameJob, finalize).init(job);
         return job;
     }
 
     pub fn runRenameTask(task: *jsc.WorkPoolTask) void {
         const job: *RenameJob = @fieldParentPtr("task", task);
-        defer job.vm.enqueueTaskConcurrent(jsc.ConcurrentTask.create(job.any_task.task()));
         
         job.result = performRename(job.from_path, job.to_path, job.conflict);
         
+        // Clone the error to avoid UAF when path buffers are freed
+        switch (job.result) {
+            .err => |*err| {
+                job.result = .{ .err = err.clone(bun.default_allocator) };
+            },
+            .result => {},
+        }
+        
         bun.default_allocator.free(job.from_path);
         bun.default_allocator.free(job.to_path);
+        
+        // Schedule completion on main thread
+        job.vm.enqueueTask(jsc.Task.init(&job.completion_task));
     }
 
     pub fn finalize(job: *RenameJob) void {
@@ -860,7 +870,8 @@ const RenameJob = struct {
         const globalThis = job.vm.global;
         
         switch (job.result) {
-            .err => |err| {
+            .err => |*err| {
+                defer err.deinit();
                 const error_instance = globalThis.createErrorInstance("rename failed: errno {d}", .{err.errno});
                 promise.reject(globalThis, error_instance);
             },

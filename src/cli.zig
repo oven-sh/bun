@@ -380,6 +380,7 @@ pub const Command = struct {
         runtime_options: RuntimeOptions = .{},
 
         filters: []const []const u8 = &.{},
+        workspaces: []const []const u8 = &.{},
 
         preloads: []const string = &.{},
         has_loaded_global_config: bool = false,
@@ -815,7 +816,7 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .RunCommand);
                 ctx.args.target = .bun;
 
-                if (ctx.filters.len > 0) {
+                if (ctx.filters.len > 0 or ctx.workspaces.len > 0) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
                         Global.exit(1);

@@ -129,6 +129,7 @@ pub fn couldBeTestFile(this: *Scanner, name: []const u8, comptime needs_test_suf
     const extname = std.fs.path.extension(name);
     if (extname.len == 0 or !this.options.loader(extname).isJavaScriptLike()) return false;
     if (comptime !needs_test_suffix) return true;
+
     const name_without_extension = name[0 .. name.len - extname.len];
     inline for (test_name_suffixes) |suffix| {
         if (strings.endsWithComptime(name_without_extension, suffix)) return true;
@@ -208,6 +209,73 @@ pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.StoredFileDescript
 
 inline fn allocator(self: *const Scanner) Allocator {
     return self.dirs_to_scan.allocator;
+}
+
+const GlobWalker = bun.glob.GlobWalker(null, bun.glob.walk.SyscallAccessor, false);
+
+/// Scan files using a glob pattern
+pub fn scanGlob(this: *Scanner, pattern: []const u8) Error!void {
+    var arena = std.heap.ArenaAllocator.init(this.allocator());
+    defer arena.deinit();
+
+    var walker: GlobWalker = .{};
+    const cwd = this.fs.top_level_dir;
+
+    switch (GlobWalker.initWithCwd(&walker, &arena, pattern, cwd, false, false, false, false, true) catch return error.OutOfMemory) {
+        .result => {},
+        .err => |err| {
+            log("GlobWalker.initWithCwd failed: {}", .{err});
+            return error.DoesNotExist;
+        },
+    }
+    defer walker.deinit(false);
+
+    var iter = GlobWalker.Iterator{ .walker = &walker };
+    defer iter.deinit();
+
+    switch (iter.init() catch return error.OutOfMemory) {
+        .result => {},
+        .err => |err| {
+            log("GlobWalker.Iterator.init failed: {}", .{err});
+            return error.DoesNotExist;
+        },
+    }
+
+    var found_any = false;
+    while (true) {
+        const result = iter.next() catch return error.OutOfMemory;
+        switch (result) {
+            .result => |maybe_path| {
+                if (maybe_path) |entry_path| {
+                    found_any = true;
+
+                    // Check if this file could be a test file based on extension
+                    const extname = std.fs.path.extension(entry_path);
+                    if (extname.len == 0 or !this.options.loader(extname).isJavaScriptLike()) continue;
+
+                    // Convert to absolute path if needed
+                    const abs_path = if (std.fs.path.isAbsolute(entry_path))
+                        entry_path
+                    else
+                        this.fs.absBuf(&[_][]const u8{ cwd, entry_path }, &this.scan_dir_buf);
+
+                    const stored_path = bun.PathString.init(this.fs.filename_store.append([]const u8, abs_path) catch bun.outOfMemory());
+                    this.test_files.append(this.allocator(), stored_path) catch bun.outOfMemory();
+                } else {
+                    // No more entries
+                    break;
+                }
+            },
+            .err => |err| {
+                log("GlobWalker.Iterator.next failed: {}", .{err});
+                return error.DoesNotExist;
+            },
+        }
+    }
+
+    if (!found_any) {
+        return error.DoesNotExist;
+    }
 }
 
 const std = @import("std");

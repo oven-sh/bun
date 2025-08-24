@@ -1,4 +1,4 @@
-Bun provides native bindings for working with SQL databases through a unified Promise-based API that supports both PostgreSQL and SQLite. The interface is designed to be simple and performant, using tagged template literals for queries and offering features like connection pooling, transactions, and prepared statements.
+Bun provides native bindings for working with SQL databases through a unified Promise-based API that supports PostgreSQL, MySQL, and SQLite. The interface is designed to be simple and performant, using tagged template literals for queries and offering features like connection pooling, transactions, and prepared statements.
 
 ```ts
 import { sql, SQL } from "bun";
@@ -10,9 +10,16 @@ const users = await sql`
   LIMIT ${10}
 `;
 
-// With a a SQLite db
+// With MySQL
+const mysql = new SQL("mysql://user:pass@localhost:3306/mydb");
+const mysqlResults = await mysql`
+  SELECT * FROM users 
+  WHERE active = ${true}
+`;
+
+// With SQLite
 const sqlite = new SQL("sqlite://myapp.db");
-const results = await sqlite`
+const sqliteResults = await sqlite`
   SELECT * FROM users 
   WHERE active = ${1}
 `;
@@ -52,7 +59,7 @@ Bun.SQL provides a unified API for multiple database systems:
 
 PostgreSQL is used when:
 
-- The connection string doesn't match SQLite patterns (it's the fallback adapter)
+- The connection string doesn't match SQLite or MySQL patterns (it's the fallback adapter)
 - The connection string explicitly uses `postgres://` or `postgresql://` protocols
 - No connection string is provided and environment variables point to PostgreSQL
 
@@ -66,9 +73,82 @@ const pg = new SQL("postgres://user:pass@localhost:5432/mydb");
 await pg`SELECT ...`;
 ```
 
+### MySQL
+
+MySQL support is built into Bun.SQL, providing the same tagged template literal interface with full compatibility for MySQL 5.7+ and MySQL 8.0+:
+
+```ts
+import { SQL } from "bun";
+
+// MySQL connection
+const mysql = new SQL("mysql://user:password@localhost:3306/database");
+const mysql2 = new SQL("mysql2://user:password@localhost:3306/database"); // mysql2 protocol also works
+
+// Using options object
+const mysql3 = new SQL({
+  adapter: "mysql",
+  hostname: "localhost",
+  port: 3306,
+  database: "myapp",
+  username: "dbuser",
+  password: "secretpass",
+});
+
+// Works with parameters - automatically uses prepared statements
+const users = await mysql`SELECT * FROM users WHERE id = ${userId}`;
+
+// Transactions work the same as PostgreSQL
+await mysql.begin(async tx => {
+  await tx`INSERT INTO users (name) VALUES (${'Alice'})`;
+  await tx`UPDATE accounts SET balance = balance - 100 WHERE user_id = ${userId}`;
+});
+
+// Bulk inserts
+const newUsers = [
+  { name: "Alice", email: "alice@example.com" },
+  { name: "Bob", email: "bob@example.com" },
+];
+await mysql`INSERT INTO users ${mysql(newUsers)}`;
+```
+
+{% details summary="MySQL Connection String Formats" %}
+
+MySQL accepts various URL formats for connection strings:
+
+```ts
+// Standard mysql:// protocol
+new SQL("mysql://user:pass@localhost:3306/database");
+new SQL("mysql://user:pass@localhost/database"); // Default port 3306
+
+// mysql2:// protocol (compatibility with mysql2 npm package)
+new SQL("mysql2://user:pass@localhost:3306/database");
+
+// With query parameters
+new SQL("mysql://user:pass@localhost/db?ssl=true");
+
+// Unix socket connection
+new SQL("mysql://user:pass@/database?socket=/var/run/mysqld/mysqld.sock");
+```
+
+{% /details %}
+
+{% details summary="MySQL-Specific Features" %}
+
+MySQL databases support:
+
+- **Prepared statements**: Automatically created for parameterized queries with statement caching
+- **Binary protocol**: For better performance with prepared statements and accurate type handling
+- **Multiple result sets**: Support for stored procedures returning multiple result sets
+- **Authentication plugins**: Support for mysql_native_password, caching_sha2_password (MySQL 8.0 default), and sha256_password
+- **SSL/TLS connections**: Configurable SSL modes similar to PostgreSQL
+- **Connection attributes**: Client information sent to server for monitoring
+- **Query pipelining**: Execute multiple prepared statements without waiting for responses
+
+{% /details %}
+
 ### SQLite
 
-SQLite support is now built into Bun.SQL, providing the same tagged template literal interface as PostgreSQL:
+SQLite support is built into Bun.SQL, providing the same tagged template literal interface:
 
 ```ts
 import { SQL } from "bun";
@@ -90,8 +170,7 @@ const db2 = new SQL({
 const db3 = new SQL("myapp.db", { adapter: "sqlite" });
 ```
 
-<details>
-<summary>SQLite Connection String Formats</summary>
+{% details summary="SQLite Connection String Formats" %}
 
 SQLite accepts various URL formats for connection strings:
 
@@ -122,10 +201,9 @@ new SQL("sqlite://data.db?mode=rwc"); // Read-write-create mode (default)
 
 **Note:** Simple filenames without a protocol (like `"myapp.db"`) require explicitly specifying `{ adapter: "sqlite" }` to avoid ambiguity with PostgreSQL.
 
-</details>
+{% /details %}
 
-<details>
-<summary>SQLite-Specific Options</summary>
+{% details summary="SQLite-Specific Options" %}
 
 SQLite databases support additional configuration options:
 
@@ -151,7 +229,7 @@ Query parameters in the URL are parsed to set these options:
 - `?mode=rw` → `readonly: false, create: false`
 - `?mode=rwc` → `readonly: false, create: true` (default)
 
-</details>
+{% /details %}
 
 ### Inserting data
 
@@ -364,7 +442,24 @@ await query;
 
 ### Automatic Database Detection
 
-When using `Bun.sql()` without arguments or `new SQL()` with a connection string, the adapter is automatically detected based on the URL format. SQLite becomes the default adapter in these cases:
+When using `Bun.sql()` without arguments or `new SQL()` with a connection string, the adapter is automatically detected based on the URL format:
+
+#### MySQL Auto-Detection
+
+MySQL is automatically selected when the connection string matches these patterns:
+
+- `mysql://...` - MySQL protocol URLs
+- `mysql2://...` - MySQL2 protocol URLs (compatibility alias)
+
+```ts
+// These all use MySQL automatically (no adapter needed)
+const sql1 = new SQL("mysql://user:pass@localhost/mydb");
+const sql2 = new SQL("mysql2://user:pass@localhost:3306/mydb");
+
+// Works with DATABASE_URL environment variable
+DATABASE_URL="mysql://user:pass@localhost/mydb" bun run app.js
+DATABASE_URL="mysql2://user:pass@localhost:3306/mydb" bun run app.js
+```
 
 #### SQLite Auto-Detection
 
@@ -390,16 +485,41 @@ DATABASE_URL="file://./data/app.db" bun run app.js
 
 #### PostgreSQL Auto-Detection
 
-PostgreSQL is the default for all other connection strings:
+PostgreSQL is the default for connection strings that don't match MySQL or SQLite patterns:
 
 ```bash
 # PostgreSQL is detected for these patterns
 DATABASE_URL="postgres://user:pass@localhost:5432/mydb" bun run app.js
 DATABASE_URL="postgresql://user:pass@localhost:5432/mydb" bun run app.js
 
-# Or any URL that doesn't match SQLite patterns
+# Or any URL that doesn't match MySQL or SQLite patterns
 DATABASE_URL="localhost:5432/mydb" bun run app.js
 ```
+
+### MySQL Environment Variables
+
+MySQL connections can be configured via environment variables:
+
+```bash
+# Primary connection URL (checked first)
+MYSQL_URL="mysql://user:pass@localhost:3306/mydb"
+
+# Alternative: DATABASE_URL with MySQL protocol
+DATABASE_URL="mysql://user:pass@localhost:3306/mydb"
+DATABASE_URL="mysql2://user:pass@localhost:3306/mydb"
+```
+
+If no connection URL is provided, MySQL checks these individual parameters:
+
+| Environment Variable | Default Value | Description       |
+| -------------------- | ------------- | ----------------- |
+| `MYSQL_HOST`         | `localhost`   | Database host     |
+| `MYSQL_PORT`         | `3306`        | Database port     |
+| `MYSQL_USER`         | (empty)       | Database user     |
+| `MYSQL_PASSWORD`     | (empty)       | Database password |
+| `MYSQL_DATABASE`     | (empty)       | Database name     |
+| `MYSQL_SOCKET`       | (empty)       | Unix socket path  |
+| `MYSQL_SSL_MODE`     | `prefer`      | SSL mode setting  |
 
 ### PostgreSQL Environment Variables
 
@@ -457,6 +577,58 @@ The `--sql-preconnect` flag will automatically establish a PostgreSQL connection
 ## Connection Options
 
 You can configure your database connection manually by passing options to the SQL constructor. Options vary depending on the database adapter:
+
+### MySQL Options
+
+```ts
+import { SQL } from "bun";
+
+const db = new SQL({
+  // Required for MySQL when using options object
+  adapter: "mysql",
+  
+  // Connection details
+  hostname: "localhost",
+  port: 3306,
+  database: "myapp",
+  username: "dbuser",
+  password: "secretpass",
+  
+  // Unix socket connection (alternative to hostname/port)
+  // socket: "/var/run/mysqld/mysqld.sock",
+  
+  // Connection pool settings
+  max: 20, // Maximum connections in pool (default: 10)
+  idleTimeout: 30, // Close idle connections after 30s
+  maxLifetime: 0, // Connection lifetime in seconds (0 = forever)
+  connectionTimeout: 30, // Timeout when establishing new connections
+  
+  // SSL/TLS options
+  ssl: "prefer", // or "disable", "require", "verify-ca", "verify-full"
+  // tls: {
+  //   rejectUnauthorized: true,
+  //   ca: "path/to/ca.pem",
+  //   key: "path/to/key.pem",
+  //   cert: "path/to/cert.pem",
+  // },
+  
+  // MySQL-specific options
+  charset: "utf8mb4", // Character set (default: utf8mb4)
+  prepare: true, // Use prepared statements (default: true)
+  
+  // Callbacks
+  onconnect: client => {
+    console.log("Connected to MySQL");
+  },
+  onclose: (client, err) => {
+    if (err) {
+      console.error("MySQL connection error:", err);
+    } else {
+      console.log("MySQL connection closed");
+    }
+  },
+});
+```
 
 ### PostgreSQL Options
 
@@ -540,7 +712,7 @@ const db = new SQL({
 - **Concurrent Access**: SQLite handles concurrent access through file locking. Use WAL mode for better concurrency.
 - **Memory Databases**: Using `:memory:` creates a temporary database that exists only for the connection lifetime.
 
-</details>
+{% /details %}
 
 ## Dynamic passwords
 
@@ -945,7 +1117,7 @@ try {
 }
 ```
 
-</details>
+{% /details %}
 
 ## Numbers and BigInt
 
@@ -979,11 +1151,112 @@ console.log(typeof x, x); // "bigint" 9223372036854777n
 There's still some things we haven't finished yet.
 
 - Connection preloading via `--db-preconnect` Bun CLI flag
-- MySQL support: [we're working on it](https://github.com/oven-sh/bun/pull/15274)
 - Column name transforms (e.g. `snake_case` to `camelCase`). This is mostly blocked on a unicode-aware implementation of changing the case in C++ using WebKit's `WTF::String`.
 - Column type transforms
 
-### Postgres-specific features
+
+## Database-Specific Features
+
+### MySQL-Specific Features
+
+MySQL has some unique characteristics and optimizations:
+
+#### Authentication Methods
+
+MySQL supports multiple authentication plugins that are automatically negotiated:
+- **`mysql_native_password`** - Traditional MySQL authentication, widely compatible
+- **`caching_sha2_password`** - Default in MySQL 8.0+, more secure with RSA key exchange
+- **`sha256_password`** - SHA-256 based authentication
+
+The client automatically handles authentication plugin switching when requested by the server, including secure password exchange over non-SSL connections.
+
+#### Prepared Statements & Performance
+
+MySQL uses server-side prepared statements for all parameterized queries:
+
+```ts
+// This automatically creates a prepared statement on the server
+const user = await mysql`SELECT * FROM users WHERE id = ${userId}`;
+
+// Prepared statements are cached and reused for identical queries
+for (const id of userIds) {
+  // Same prepared statement is reused
+  await mysql`SELECT * FROM users WHERE id = ${id}`;
+}
+
+// Query pipelining - multiple statements sent without waiting
+const [users, orders, products] = await Promise.all([
+  mysql`SELECT * FROM users WHERE active = ${true}`,
+  mysql`SELECT * FROM orders WHERE status = ${'pending'}`,
+  mysql`SELECT * FROM products WHERE in_stock = ${true}`,
+]);
+```
+
+#### Multiple Result Sets
+
+MySQL can return multiple result sets from stored procedures and multi-statement queries:
+
+```ts
+const mysql = new SQL("mysql://user:pass@localhost/mydb");
+
+// Stored procedure that returns multiple result sets
+const results = await mysql`CALL GetUserAndOrders(${userId})`;
+// results will contain all result sets from the procedure
+
+// Multi-statement queries with simple() method
+const multiResults = await mysql`
+  SELECT * FROM users WHERE id = 1;
+  SELECT * FROM orders WHERE user_id = 1;
+`.simple();
+```
+
+#### Character Sets & Collations
+
+Bun.SQL automatically uses `utf8mb4` character set for MySQL connections, ensuring full Unicode support including emojis. This is the recommended character set for modern MySQL applications.
+
+#### Connection Attributes
+
+Bun automatically sends client information to MySQL for better monitoring:
+
+```ts
+// These attributes are sent automatically:
+// _client_name: "Bun"
+// _client_version: <bun version>
+// You can see these in MySQL's performance_schema.session_connect_attrs
+```
+
+#### Type Handling
+
+MySQL types are automatically converted to JavaScript types:
+
+| MySQL Type | JavaScript Type | Notes |
+|------------|----------------|--------|
+| INT, SMALLINT, MEDIUMINT | number | Within safe integer range |
+| BIGINT | string or BigInt | Based on `bigint` option |
+| DECIMAL, NUMERIC | string | To preserve precision |
+| FLOAT, DOUBLE | number | |
+| DATE | Date | JavaScript Date object |
+| DATETIME, TIMESTAMP | Date | With timezone handling |
+| TIME | string | "HH:MM:SS" format |
+| YEAR | number | |
+| CHAR, VARCHAR, TEXT | string | |
+| BINARY, VARBINARY, BLOB | Buffer | Node.js Buffer |
+| JSON | object/array | Automatically parsed |
+| BOOLEAN, BOOL | boolean | TINYINT(1) in MySQL |
+| BIT | Buffer | |
+| GEOMETRY | Buffer | Raw geometry data |
+
+#### Differences from PostgreSQL
+
+While the API is unified, there are some behavioral differences:
+
+1. **Parameter placeholders**: MySQL uses `?` internally but Bun converts `$1, $2` style automatically
+2. **RETURNING clause**: MySQL doesn't support RETURNING; use `LAST_INSERT_ID()` or a separate SELECT
+3. **Boolean type**: MySQL uses TINYINT(1) for booleans
+4. **Array types**: MySQL doesn't have native array types like PostgreSQL
+5. **COPY command**: Use `LOAD DATA INFILE` for bulk imports in MySQL
+
+### PostgreSQL-Specific Features
 
 We haven't implemented these yet:
 
@@ -998,11 +1271,85 @@ We also haven't implemented some of the more uncommon features like:
 - Point & PostGIS types
 - All the multi-dimensional integer array types (only a couple of the types are supported)
 
+## Common Patterns & Best Practices
+
+### Working with MySQL Result Sets
+
+```ts
+// Getting insert ID after INSERT
+const result = await mysql`INSERT INTO users (name) VALUES (${'Alice'})`;
+console.log(result.insertId); // MySQL's LAST_INSERT_ID()
+
+// Handling affected rows
+const updated = await mysql`UPDATE users SET active = ${false} WHERE age < ${18}`;
+console.log(updated.affectedRows); // Number of rows updated
+
+// Using MySQL-specific functions
+const now = await mysql`SELECT NOW() as current_time`;
+const uuid = await mysql`SELECT UUID() as id`;
+```
+
+### MySQL Error Handling
+
+```ts
+try {
+  await mysql`INSERT INTO users (email) VALUES (${'duplicate@email.com'})`;
+} catch (error) {
+  if (error.code === 'ER_DUP_ENTRY') {
+    console.log('Duplicate entry detected');
+  } else if (error.code === 'ER_ACCESS_DENIED_ERROR') {
+    console.log('Access denied');
+  } else if (error.code === 'ER_BAD_DB_ERROR') {
+    console.log('Database does not exist');
+  }
+  // MySQL error codes are compatible with mysql/mysql2 packages
+}
+```
+
+### Performance Tips for MySQL
+
+1. **Use connection pooling**: Set appropriate `max` pool size based on your workload
+2. **Enable prepared statements**: They're enabled by default and improve performance
+3. **Use transactions for bulk operations**: Group related queries in transactions
+4. **Index properly**: MySQL relies heavily on indexes for query performance
+5. **Use `utf8mb4` charset**: It's set by default and handles all Unicode characters
+
 ## Frequently Asked Questions
 
 > Why is this `Bun.sql` and not `Bun.postgres`?
 
-The plan is to add more database drivers in the future.
+The plan was to add more database drivers in the future. Now with MySQL support added, this unified API supports PostgreSQL, MySQL, and SQLite.
+
+> How do I know which database adapter is being used?
+
+The adapter is automatically detected from the connection string:
+- URLs starting with `mysql://` or `mysql2://` use MySQL
+- URLs matching SQLite patterns (`:memory:`, `sqlite://`, `file://`) use SQLite  
+- Everything else defaults to PostgreSQL
+
+> Are MySQL stored procedures supported?
+
+Yes, stored procedures are fully supported including OUT parameters and multiple result sets:
+
+```ts
+// Call stored procedure
+const results = await mysql`CALL GetUserStats(${userId}, @total_orders)`;
+
+// Get OUT parameter
+const outParam = await mysql`SELECT @total_orders as total`;
+```
+
+> Can I use MySQL-specific SQL syntax?
+
+Yes, you can use any MySQL-specific syntax:
+
+```ts
+// MySQL-specific syntax works fine
+await mysql`SET @user_id = ${userId}`;
+await mysql`SHOW TABLES`;
+await mysql`DESCRIBE users`;
+await mysql`EXPLAIN SELECT * FROM users WHERE id = ${id}`;
+```
 
 > Why not just use an existing library?
 

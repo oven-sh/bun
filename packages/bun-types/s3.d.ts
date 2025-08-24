@@ -304,6 +304,33 @@ declare module "bun" {
       | "STANDARD_IA";
 
     /**
+     * Arbitrary metadata key-value pairs to store with the object.
+     * Keys will be normalized on the backend if necessary. Capitalization will be removed on S3.
+     *
+     * @example
+     *     const file = s3.file("test.txt", {
+     *       metadata: {
+     *         post: "847694",
+     *         bestframeWork: "bun",
+     *       }
+     *     });
+     */
+    metadata?: { [key: string]: string };
+
+    /**
+     * Extra headers to include in the upload request.
+     * These are applied after Bun's defaults, so they can override them. (This can be VERY dangerous!)
+     *
+     * @example
+     *     const file = s3.file("test.txt", {
+     *       headers: {
+     *         "content-type": "application/json"
+     *       }
+     *     });
+     */
+    headers?: { [key: string]: string };
+
+    /**
      * @deprecated The size of the internal buffer in bytes. Defaults to 5 MiB. use `partSize` and `queueSize` instead.
      */
     highWaterMark?: number;
@@ -358,7 +385,7 @@ declare module "bun" {
     lastModified: Date;
     etag: string;
     type: string;
-    metadata: object;
+    metadata: { [key: string]: string };
   }
 
   /**

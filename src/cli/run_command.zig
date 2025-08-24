@@ -405,11 +405,6 @@ pub const RunCommand = struct {
             
             if (!silent) {
                 Output.prettyln("<d>Restarting script '{s}' (attempt {d})...<r>", .{ name, restart_count + 1 });
-                
-                // Add small delay for frequent restarts to prevent overwhelming the system
-                if (restart_count > 5) {
-                    std.time.sleep(1000 * 1000 * 1000); // 1 second delay after 5 rapid restarts
-                }
             }
         }
     }

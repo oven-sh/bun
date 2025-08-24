@@ -144,10 +144,6 @@ pub fn exit(code: u32) noreturn {
                 }
                 bun.Output.flush();
                 
-                // Add small delay for frequent restarts to prevent overwhelming
-                if (restart_count > 5) {
-                    std.time.sleep(1000 * 1000 * 1000); // 1 second delay after 5 rapid restarts
-                }
                 
                 // Use bun.reloadProcess to restart the process
                 bun.reloadProcess(bun.default_allocator, false, true);

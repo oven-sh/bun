@@ -1893,8 +1893,8 @@ pub const BundleV2 = struct {
         }
 
         /// Returns true if the promises were handled and resolved from BundlePlugin.ts, returns false if the caller should imediately resolve
-        fn runOnEndCallbacks(promise: *jsc.JSPromise, root_obj: jsc.JSValue, plugin: *bun.jsc.API.JSBundler.Plugin) bool {
-            const value = plugin.runOnEndCallbacks(root_obj, promise);
+        fn runOnEndCallbacks(globalThis: *jsc.JSGlobalObject, plugin: *bun.jsc.API.JSBundler.Plugin, root_obj: jsc.JSValue, promise: *jsc.JSPromise) bool {
+            const value = plugin.runOnEndCallbacks(globalThis, root_obj, promise);
             return value != .js_undefined;
         }
 
@@ -1919,7 +1919,7 @@ pub const BundleV2 = struct {
                 },
             );
 
-            const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(promise, root_obj, plugin) else false;
+            const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(globalThis, plugin, root_obj, plugin) else false;
 
             if (!didHandleCallbacks) {
                 promise.resolve(globalThis, root_obj);
@@ -2021,7 +2021,7 @@ pub const BundleV2 = struct {
                         },
                     );
 
-                    const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(promise, root_obj, plugin) else false;
+                    const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(globalThis, plugin, root_obj, plugin) else false;
 
                     if (!didHandleCallbacks) {
                         promise.resolve(globalThis, root_obj);

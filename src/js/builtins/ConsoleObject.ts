@@ -590,7 +590,11 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
     assert(expression, ...args) {
       if (!expression) {
-        args[0] = `Assertion failed${args.length === 0 ? "" : `: ${args[0]}`}`;
+        if (args.length && typeof args[0] === "string") {
+            args[0] = `Assertion failed: ${args[0]}`;
+        } else {
+            args.unshift("Assertion failed");
+        }
         // The arguments will be formatted in warn() again
         this.warn.$apply(this, args);
       }

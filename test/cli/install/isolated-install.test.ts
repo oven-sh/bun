@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readlinkSync } from "fs";
-import { mkdir, readlink, rm, symlink } from "fs/promises";
+import { exists, mkdir, readlink, rm, symlink } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall } from "harness";
 import { join } from "path";
 
@@ -269,9 +269,7 @@ test("can install folder dependencies", async () => {
 });
 
 describe("isolated workspaces", () => {
-  test("basic", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
-
+  async function createWorkspace(packageJson, packageDir) {
     await Promise.all([
       write(
         packageJson,
@@ -308,6 +306,11 @@ describe("isolated workspaces", () => {
         }),
       ),
     ]);
+  }
+  test("basic", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+
+    await createWorkspace(packageJson, packageDir);
 
     await runBunInstall(bunEnv, packageDir);
 
@@ -340,6 +343,86 @@ describe("isolated workspaces", () => {
       name: "no-deps",
       version: "1.0.0",
     });
+  });
+
+  test("--filter only includes matched workspaces and transitively workspaces", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+
+    await createWorkspace(packageJson, packageDir);
+
+    let { exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "test-pkg-workspaces"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "ignore",
+      env: bunEnv,
+    });
+
+    expect(await exited).toBe(0);
+
+    // only the root workspace should have installed node_modules
+    expect(
+      await Promise.all([
+        readdirSorted(join(packageDir, "node_modules")),
+        readdirSorted(join(packageDir, "node_modules", ".bun")),
+        exists(join(packageDir, "pkg-1", "node_modules")),
+        exists(join(packageDir, "pkg-2", "node_modules")),
+      ]),
+    ).toEqual([[".bun", "no-deps"], ["no-deps@1.0.0", "node_modules"], false, false]);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true });
+
+    // Should install pkg-1, and also pkg-2 because pkg-1
+    // depends on pkg-2.
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "pkg-1"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    }));
+
+    expect(await exited).toBe(0);
+
+    expect(
+      await Promise.all([
+        readdirSorted(join(packageDir, "node_modules")),
+        readdirSorted(join(packageDir, "node_modules", ".bun")),
+        readdirSorted(join(packageDir, "pkg-1", "node_modules")),
+        readdirSorted(join(packageDir, "pkg-2", "node_modules")),
+      ]),
+    ).toEqual([
+      [".bun"],
+      ["@types+is-number@1.0.0", "a-dep-b@1.0.0", "a-dep@1.0.1", "b-dep-a@1.0.0", "node_modules"],
+      ["@types", "a-dep", "pkg-2"],
+      ["b-dep-a"],
+    ]);
+
+    await Promise.all([
+      rm(join(packageDir, "node_modules"), { recursive: true }),
+      rm(join(packageDir, "pkg-1", "node_modules"), { recursive: true }),
+      rm(join(packageDir, "pkg-2", "node_modules"), { recursive: true }),
+    ]);
+
+    // only pkg-2 should be installed
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "pkg-2"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    }));
+
+    expect(await exited).toBe(0);
+
+    expect(
+      await Promise.all([
+        readdirSorted(join(packageDir, "node_modules")),
+        readdirSorted(join(packageDir, "node_modules", ".bun")),
+        exists(join(packageDir, "pkg-1", "node_modules")),
+        readdirSorted(join(packageDir, "pkg-2", "node_modules")),
+      ]),
+    ).toEqual([[".bun"], ["a-dep-b@1.0.0", "b-dep-a@1.0.0", "node_modules"], false, ["b-dep-a"]]);
   });
 });
 

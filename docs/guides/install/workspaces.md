@@ -4,7 +4,7 @@ name: Configuring a monorepo using workspaces
 
 Bun's package manager supports npm `"workspaces"`. This allows you to split a codebase into multiple distinct "packages" that live in the same repository, can depend on each other, and (when possible) share a `node_modules` directory.
 
-Clone [this sample project](https://github.com/colinhacks/bun-workspaces) to experiment with workspaces.
+Clone [this sample project](https://github.com/ssahillppatell/bun-workspaces) to experiment with workspaces.
 
 ---
 

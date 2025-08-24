@@ -135,8 +135,7 @@ fn handleOnEndCallbacks(
 ) bool {
     const onEndResult = plugin.runOnEndCallbacks(root_obj);
 
-    if (globalThis.hasException()) {
-        const err = globalThis.takeException();
+    if (globalThis.tryTakeException()) |err| {
         promise.reject(globalThis, err);
         return true;
     }

@@ -198,6 +198,37 @@ pub const AnyRoute = union(enum) {
             }
         }
 
+        if (argument.as(jsc.WebCore.Response)) |response| {
+            if (response.body.value == .HTMLBundle) {
+                const html_bundle = response.body.value.HTMLBundle;
+                const needs_custom = response.init.headers != null or response.statusCode() != 200;
+
+                if (needs_custom) {
+                    var route = HTMLBundle.Route.init(html_bundle);
+
+                    if (response.init.headers) |headers| {
+                        route.data.custom_headers = bun.http.Headers.from(headers, bun.default_allocator, .{}) catch bun.outOfMemory();
+                    }
+
+                    const status = response.statusCode();
+                    if (status != 200) {
+                        route.data.custom_status = status;
+                    }
+
+                    return .{ .html = route };
+                } else {
+                    const entry = init_ctx.dedupe_html_bundle_map.getOrPut(html_bundle) catch bun.outOfMemory();
+
+                    if (!entry.found_existing) {
+                        entry.value_ptr.* = HTMLBundle.Route.init(html_bundle);
+                        return .{ .html = entry.value_ptr.* };
+                    } else {
+                        return .{ .html = entry.value_ptr.dupeRef() };
+                    }
+                }
+            }
+        }
+
         if (try bundledHTMLManifestFromJS(argument, init_ctx)) |html_route| {
             return html_route;
         }

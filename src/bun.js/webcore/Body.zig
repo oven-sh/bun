@@ -268,6 +268,7 @@ pub const Value = union(Tag) {
     Empty,
     Error: ValueError,
     Null,
+    HTMLBundle: *bun.jsc.API.HTMLBundle,
 
     // We may not have all the data yet
     // So we can't know for sure if it's empty or not
@@ -280,6 +281,7 @@ pub const Value = union(Tag) {
             .Blob => this.Blob.size == 0,
             .WTFStringImpl => this.WTFStringImpl.length() == 0,
             .Error, .Locked => false,
+            .HTMLBundle => false,
         };
     }
 
@@ -440,6 +442,7 @@ pub const Value = union(Tag) {
         Empty,
         Error,
         Null,
+        HTMLBundle,
     };
 
     // pub const empty = Value{ .Empty = {} };
@@ -523,6 +526,9 @@ pub const Value = union(Tag) {
                 // TODO: handle error properly
                 return jsc.WebCore.ReadableStream.empty(globalThis);
             },
+            .HTMLBundle => {
+                return globalThis.throwInvalidArguments("HTMLBundle cannot be used as a Response body", .{});
+            },
         }
     }
 
@@ -596,6 +602,13 @@ pub const Value = union(Tag) {
                     .Blob = blob.dupeWithContentType(true),
                 };
             }
+        }
+
+        if (value.as(bun.jsc.API.HTMLBundle)) |html_bundle| {
+            html_bundle.ref();
+            return Body.Value{
+                .HTMLBundle = html_bundle,
+            };
         }
 
         value.ensureStillAlive();
@@ -858,6 +871,7 @@ pub const Value = union(Tag) {
             },
             // .InlineBlob => .{ .InlineBlob = this.InlineBlob },
             .Locked => this.Locked.toAnyBlobAllowPromise() orelse AnyBlob{ .Blob = .{} },
+            .HTMLBundle => .{ .Blob = Blob.initEmpty(undefined) },
             else => .{ .Blob = Blob.initEmpty(undefined) },
         };
 
@@ -875,6 +889,7 @@ pub const Value = union(Tag) {
             .WTFStringImpl => .{ .WTFStringImpl = this.WTFStringImpl },
             // .InlineBlob => .{ .InlineBlob = this.InlineBlob },
             .Locked => this.Locked.toAnyBlobAllowPromise() orelse AnyBlob{ .Blob = .{} },
+            .HTMLBundle => .{ .Blob = Blob.initEmpty(undefined) },
             else => .{ .Blob = Blob.initEmpty(undefined) },
         };
 
@@ -962,6 +977,11 @@ pub const Value = union(Tag) {
 
         if (tag == .Error) {
             this.Error.deinit();
+        }
+
+        if (tag == .HTMLBundle) {
+            this.HTMLBundle.deref();
+            this.* = Value{ .Null = {} };
         }
     }
 
@@ -1093,6 +1113,10 @@ pub fn Mixin(comptime Type: type) type {
                 return handleBodyAlreadyUsed(globalObject);
             }
 
+            if (value.* == .HTMLBundle) {
+                return globalObject.throwInvalidArguments("HTMLBundle cannot be used as a Response body", .{});
+            }
+
             if (value.* == .Locked) {
                 if (value.Locked.action != .none or value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
@@ -1149,6 +1173,10 @@ pub fn Mixin(comptime Type: type) type {
                 return handleBodyAlreadyUsed(globalObject);
             }
 
+            if (value.* == .HTMLBundle) {
+                return globalObject.throwInvalidArguments("HTMLBundle cannot be used as a Response body", .{});
+            }
+
             if (value.* == .Locked) {
                 if (value.Locked.action != .none or value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
@@ -1176,6 +1204,10 @@ pub fn Mixin(comptime Type: type) type {
                 return handleBodyAlreadyUsed(globalObject);
             }
 
+            if (value.* == .HTMLBundle) {
+                return globalObject.throwInvalidArguments("HTMLBundle cannot be used as a Response body", .{});
+            }
+
             if (value.* == .Locked) {
                 if (value.Locked.action != .none or value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
@@ -1200,6 +1232,10 @@ pub fn Mixin(comptime Type: type) type {
                 return handleBodyAlreadyUsed(globalObject);
             }
 
+            if (value.* == .HTMLBundle) {
+                return globalObject.throwInvalidArguments("HTMLBundle cannot be used as a Response body", .{});
+            }
+
             if (value.* == .Locked) {
                 if (value.Locked.action != .none or value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
@@ -1220,6 +1256,10 @@ pub fn Mixin(comptime Type: type) type {
 
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
+            }
+
+            if (value.* == .HTMLBundle) {
+                return globalObject.throwInvalidArguments("HTMLBundle cannot be used as a Response body", .{});
             }
 
             if (value.* == .Locked) {
@@ -1271,6 +1311,10 @@ pub fn Mixin(comptime Type: type) type {
 
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
+            }
+
+            if (value.* == .HTMLBundle) {
+                return globalObject.throwInvalidArguments("HTMLBundle cannot be used as a Response body", .{});
             }
 
             if (value.* == .Locked) {
@@ -1413,6 +1457,9 @@ pub const ValueBufferer = struct {
             },
             .Locked => {
                 try sink.bufferLockedBodyValue(value);
+            },
+            .HTMLBundle => {
+                return error.UnsupportedBodyType;
             },
         }
     }

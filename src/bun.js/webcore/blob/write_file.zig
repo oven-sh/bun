@@ -717,6 +717,13 @@ pub const WriteFileWaitFromLockedValueTask = struct {
                 value.Locked.onReceiveValue = thenWrap;
                 value.Locked.task = this;
             },
+            .HTMLBundle => {
+                file_blob.detach();
+                _ = value.use();
+                this.promise.deinit();
+                bun.destroy(this);
+                promise.reject(globalThis, ZigString.init("HTMLBundle cannot be written to a file").toErrorInstance(globalThis));
+            },
         }
     }
 };

@@ -1989,9 +1989,7 @@ pub const BundleV2 = struct {
                 },
             );
 
-            const didHandleCallbacks = if (this.plugins) |plugin| {
-                return runOnEndCallbacks(promise, root_obj, plugin);
-            } else false;
+            const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(promise, root_obj, plugin) else false;
 
             if (!didHandleCallbacks) {
                 promise.resolve(globalThis, root_obj);
@@ -2093,9 +2091,7 @@ pub const BundleV2 = struct {
                         },
                     );
 
-                    const didHandleCallbacks = if (this.plugins) |plugin| {
-                        return runOnEndCallbacks(promise, root_obj, plugin);
-                    } else false;
+                    const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(promise, root_obj, plugin) else false;
 
                     if (!didHandleCallbacks) {
                         promise.resolve(globalThis, root_obj);

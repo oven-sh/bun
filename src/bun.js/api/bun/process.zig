@@ -994,6 +994,8 @@ pub const PosixSpawnOptions = struct {
     /// for stdout. This is used to preserve
     /// consistent shell semantics.
     no_sigpipe: bool = true,
+    uid: ?u32 = null,
+    gid: ?u32 = null,
 
     pub const Stdio = union(enum) {
         path: []const u8,
@@ -1062,6 +1064,8 @@ pub const WindowsSpawnOptions = struct {
     stream: bool = true,
     use_execve_on_macos: bool = false,
     can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: bool = false,
+    uid: ?u32 = null,
+    gid: ?u32 = null,
     pub const WindowsOptions = struct {
         verbatim_arguments: bool = false,
         hide_window: bool = true,
@@ -1238,6 +1242,18 @@ pub fn spawnProcessPosix(
 
     var attr = try PosixSpawn.Attr.init();
     defer attr.deinit();
+    if (comptime Environment.isLinux) {
+        attr.uid = options.uid;
+        attr.gid = options.gid;
+    } else if (comptime Environment.isMac) {
+        // On macOS, uid/gid are handled separately in the custom spawn implementation
+        // We don't set them on the attr here
+    } else {
+        // On other platforms, throw an error if uid/gid are specified
+        if (options.uid != null or options.gid != null) {
+            return .{ .err = bun.sys.Error.fromCode(.PERM, .posix_spawn) };
+        }
+    }
 
     var flags: i32 = bun.c.POSIX_SPAWN_SETSIGDEF | bun.c.POSIX_SPAWN_SETSIGMASK;
 
@@ -1467,6 +1483,66 @@ pub fn spawnProcessPosix(
     }
 
     const argv0 = options.argv0 orelse argv[0].?;
+
+    // On macOS, if uid/gid are specified, we need to use a custom spawn implementation
+    // because posix_spawn doesn't support uid/gid changes
+    if (comptime Environment.isMac) {
+        if (options.uid != null or options.gid != null) {
+            // We need to use our custom fork+exec implementation
+            var chdir_buf: ?[:0]u8 = null;
+            defer if (chdir_buf) |buf| bun.default_allocator.free(buf);
+
+            if (options.cwd.len > 0) {
+                chdir_buf = try bun.default_allocator.dupeZ(u8, options.cwd);
+            }
+
+            const spawn_request = PosixSpawn.BunSpawnRequest{
+                .chdir_buf = if (chdir_buf) |buf| buf.ptr else null,
+                .detached = options.detached,
+                .actions = .{
+                    .ptr = null,
+                    .len = 0,
+                },
+                .uid = options.uid orelse 0,
+                .gid = options.gid orelse 0,
+                .has_uid = options.uid != null,
+                .has_gid = options.gid != null,
+            };
+
+            const spawn_result = PosixSpawn.BunSpawnRequest.spawn(
+                argv0,
+                spawn_request,
+                argv,
+                envp,
+            );
+
+            // Continue with the rest of the function
+            var failed_after_spawn = false;
+            defer {
+                if (failed_after_spawn) {
+                    for (to_close_on_error.items) |fd| {
+                        fd.close();
+                    }
+                    to_close_on_error.clearAndFree();
+                }
+            }
+
+            switch (spawn_result) {
+                .err => {
+                    failed_after_spawn = true;
+                    return .{ .err = spawn_result.err };
+                },
+                .result => |pid| {
+                    spawned.pid = pid;
+                    spawned.extra_pipes = extra_fds;
+                    extra_fds = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator);
+
+                    return .{ .result = spawned };
+                },
+            }
+        }
+    }
+
     const spawn_result = PosixSpawn.spawnZ(
         argv0,
         actions,
@@ -1535,6 +1611,11 @@ pub fn spawnProcessWindows(
 ) !bun.sys.Maybe(WindowsSpawnResult) {
     bun.markWindowsOnly();
     bun.analytics.Features.spawn += 1;
+
+    // Windows doesn't support uid/gid
+    if (options.uid != null or options.gid != null) {
+        return .{ .err = bun.sys.Error.fromCode(.NOTSUP, .posix_spawn) };
+    }
 
     var uv_process_options = std.mem.zeroes(uv.uv_process_options_t);
 

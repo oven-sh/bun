@@ -41,3 +41,8 @@ assert.throws(() => {
 }, {
   code: 'ERR_INVALID_ARG_VALUE',
 });
+
+assert.strictEqual(util.styleText('none', 'test'), 'test');
+assert.strictEqual(util.styleText(['none'], 'test'), 'test');
+assert.strictEqual(util.styleText(['none', 'red'], 'test'), '\u001b[31mtest\u001b[39m');
+assert.strictEqual(util.styleText(['red', 'none'], 'test'), '\u001b[31mtest\u001b[39m');

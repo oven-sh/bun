@@ -439,7 +439,7 @@ ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
     // The bindings package uses Error.prepareStackTrace to find the calling module
     // but empty filenames cause it to use the wrong module root directory
     // Instead, try to get some identifying information for this frame
-    
+
     // Try to use sourceID if available
     if (m_codeBlock) {
         auto sourceID = m_codeBlock->ownerExecutable()->sourceID();
@@ -448,7 +448,7 @@ ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
             return makeString("[source:"_s, sourceID, "]"_s);
         }
     }
-    
+
     // Last resort: return a distinguishable placeholder instead of empty string
     return "[unknown]"_s;
 }

@@ -1004,7 +1004,11 @@ pub fn printMetadata(writer: anytype) !void {
 
     if (comptime bun.Environment.isX64) {
         if (is_ancient_cpu) {
-            try writer.writeAll("CPU lacks AVX support. Please consider upgrading to a newer CPU.\n");
+            try writer.writeAll(
+                "This CPU does not support AVX instructions, which are required to run Bun.\n"
+                ++ "Please use a newer CPU or see the documentation for alternatives:\n"
+                ++ "https://bun.sh/docs/installation#cpu-requirements-and-baseline-builds\n"
+            );
         }
     }
 }

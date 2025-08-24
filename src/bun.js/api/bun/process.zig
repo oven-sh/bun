@@ -2201,7 +2201,7 @@ pub const sync = struct {
 
             if (out_fds_to_wait_for[1] != bun.invalid_fd) {
                 poll_fds.len += 1;
-                poll_fds[poll_fds.len - 1].fd = @intCast(out_fds_to_wait_for[0].cast());
+                poll_fds[poll_fds.len - 1].fd = @intCast(out_fds_to_wait_for[1].cast());
             }
 
             if (poll_fds.len == 0) {

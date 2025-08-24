@@ -1410,14 +1410,6 @@ pub const JSValue = enum(i64) {
         bun.debugAssert(!scope.hasException()); // TODO: properly propagate exception upwards
     }
 
-    pub fn thenWithJSValueCtx(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: jsc.JSHostFnZig, reject: jsc.JSHostFnZig) void {
-        var scope: CatchScope = undefined;
-        scope.init(global, @src());
-        defer scope.deinit();
-        this._then(global, ctx, resolve, reject);
-        bun.debugAssert(!scope.hasException()); // TODO: properly propagate exception upwards
-    }
-
     pub fn getDescription(this: JSValue, global: *JSGlobalObject) ZigString {
         var zig_str = ZigString.init("");
         getSymbolDescription(this, global, &zig_str);

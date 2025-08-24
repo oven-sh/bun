@@ -146,8 +146,6 @@ fn onBuildEndReject(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
 
 fn onEndResolve(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const args = callframe.arguments();
-    // args[0] is the result from the onEnd callbacks, not the build result
-    // Use the build result we stored in the context
     const ctx = args[1].asPromisePtr(OnEndContext);
     defer {
         ctx.completion_task.deref();
@@ -165,7 +163,6 @@ fn onEndReject(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
     const reason = args[0];
     const ctx = args[1].asPromisePtr(OnEndContext);
     defer {
-        // Release the reference we held on the completion task
         ctx.completion_task.deref();
         bun.default_allocator.destroy(ctx);
     }

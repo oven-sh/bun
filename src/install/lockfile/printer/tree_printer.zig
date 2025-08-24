@@ -400,11 +400,17 @@ pub fn print(
             .none, .dir => {
                 printed_installed_update_request = true;
 
-                const fmt = comptime Output.prettyFmt("<r><green>installed<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
+                const action_word = if (manager.subcommand == .update)
+                    (if (manager.updating_packages.contains(package_name)) "updated" else "added")
+                else
+                    "installed";
+
+                const fmt = comptime Output.prettyFmt("<r><green>{s}<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
 
                 try writer.print(
                     fmt,
                     .{
+                        action_word,
                         package_name,
                         resolved[package_id].fmt(string_buf, .posix),
                     },
@@ -421,11 +427,17 @@ pub fn print(
                 };
 
                 {
-                    const fmt = comptime Output.prettyFmt("<r><green>installed<r> {s}<r><d>@{}<r> with binaries:\n", enable_ansi_colors);
+                    const action_word = if (manager.subcommand == .update)
+                        (if (manager.updating_packages.contains(package_name)) "updated" else "added")
+                    else
+                        "installed";
+
+                    const fmt = comptime Output.prettyFmt("<r><green>{s}<r> {s}<r><d>@{}<r> with binaries:\n", enable_ansi_colors);
 
                     try writer.print(
                         fmt,
                         .{
+                            action_word,
                             package_name,
                             resolved[package_id].fmt(string_buf, .posix),
                         },

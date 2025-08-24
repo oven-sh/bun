@@ -451,21 +451,77 @@ pub const PublishCommand = struct {
         NeedAuth,
     };
 
-    fn isRepublishError(status_code: u32, response_body: []const u8) bool {
-        // Only check for republish errors on 403/409 status codes
-        if (status_code != 403 and status_code != 409) {
-            return false;
+    // Check if a package version already exists in the registry (Yarn's approach)
+    fn checkPackageVersionExists(
+        allocator: std.mem.Allocator, 
+        package_name: string,
+        version: string,
+        registry: *const Npm.Registry.Scope,
+    ) bool {
+        // Make a simple HEAD request to /<package>/<version> endpoint
+        // If it returns 200, version exists; if 404, it doesn't
+        var url_buf = std.ArrayList(u8).init(allocator);
+        defer url_buf.deinit();
+        
+        const registry_url = strings.withoutTrailingSlash(registry.url.href);
+        const encoded_name = bun.fmt.dependencyUrl(package_name);
+        
+        // Construct URL: registry/package/version
+        url_buf.writer().print("{s}/{s}/{s}", .{ registry_url, encoded_name, version }) catch return false;
+        
+        const package_version_url = URL.parse(url_buf.items);
+        
+        var response_buf = MutableString.init(allocator, 64) catch return false;  
+        defer response_buf.deinit();
+
+        // Simple headers
+        var headers = http.HeaderBuilder{};
+        headers.count("accept", "application/json");
+        
+        if (registry.token.len > 0) {
+            var auth_buf = std.ArrayList(u8).init(allocator);
+            defer auth_buf.deinit();
+            auth_buf.writer().print("Bearer {s}", .{registry.token}) catch return false;
+            headers.count("authorization", auth_buf.items);
+        } else if (registry.auth.len > 0) {
+            var auth_buf = std.ArrayList(u8).init(allocator);  
+            defer auth_buf.deinit();
+            auth_buf.writer().print("Basic {s}", .{registry.auth}) catch return false;
+            headers.count("authorization", auth_buf.items);
+        }
+        
+        headers.allocate(allocator) catch return false;
+        headers.append("accept", "application/json");
+        
+        if (registry.token.len > 0) {
+            var auth_buf = std.ArrayList(u8).init(allocator);
+            defer auth_buf.deinit();
+            auth_buf.writer().print("Bearer {s}", .{registry.token}) catch return false;
+            headers.append("authorization", auth_buf.items);
+        } else if (registry.auth.len > 0) {
+            var auth_buf = std.ArrayList(u8).init(allocator);
+            defer auth_buf.deinit();
+            auth_buf.writer().print("Basic {s}", .{registry.auth}) catch return false;
+            headers.append("authorization", auth_buf.items);
         }
 
-        // Check for common republish error messages
-        return strings.containsComptime(response_body, "cannot publish over") or
-            strings.containsComptime(response_body, "already exists") or
-            strings.containsComptime(response_body, "already published") or
-            strings.containsComptime(response_body, "previously published") or
-            strings.containsComptime(response_body, "version already exists") or
-            strings.containsComptime(response_body, "Cannot publish over") or
-            strings.containsComptime(response_body, "Already exists") or
-            strings.containsComptime(response_body, "You cannot publish");
+        var req = http.AsyncHTTP.initSync(
+            allocator,
+            .HEAD,  // Use HEAD request - we only need to know if it exists
+            package_version_url,
+            headers.entries,
+            headers.content.ptr.?[0..headers.content.len],
+            &response_buf,
+            "",
+            null,
+            null,
+            .follow,
+        );
+
+        const res = req.sendSync() catch return false;
+        
+        // 200 = version exists, 404 = doesn't exist, anything else = assume doesn't exist
+        return res.status_code == 200;
     }
 
     pub fn publish(
@@ -478,11 +534,23 @@ pub const PublishCommand = struct {
             return error.NeedAuth;
         }
 
-        // TODO: Implement Yarn's proactive approach here
-        // When --tolerate-republish is enabled, we should check if package version already exists
-        // BEFORE doing any expensive work (packing, uploading, etc.) by making a GET request
-        // to the registry API. For now, we use the reactive approach below.
+        // If --tolerate-republish is enabled, check if package version already exists
+        // BEFORE doing any expensive work (packing, uploading, etc.) - Yarn's approach
         const tolerate_republish = ctx.manager.options.publish_config.tolerate_republish;
+        if (tolerate_republish) {
+            const version_without_build_tag = Dependency.withoutBuildTag(ctx.package_version);
+            const package_exists = checkPackageVersionExists(
+                ctx.allocator,
+                ctx.package_name,
+                version_without_build_tag,
+                registry,
+            );
+
+            if (package_exists) {
+                Output.prettyln("<yellow>warning<r>: Registry already knows about version {s}; skipping.", .{version_without_build_tag});
+                return; // Skip publishing entirely, just like Yarn does
+            }
+        }
 
         // continues from `printSummary`
         Output.pretty(
@@ -575,12 +643,6 @@ pub const PublishCommand = struct {
                 };
 
                 if (!prompt_for_otp) {
-                    // Check if this is a republish error and we should tolerate it
-                    if (tolerate_republish and isRepublishError(res.status_code, response_buf.list.items)) {
-                        Output.prettyln("<yellow>warning<r>: Registry already knows about version {s}; skipping.", .{Dependency.withoutBuildTag(ctx.package_version)});
-                        return; // Skip publishing entirely
-                    }
-                    
                     // general error
                     const otp_response = false;
                     try Npm.responseError(
@@ -640,12 +702,6 @@ pub const PublishCommand = struct {
 
                 switch (otp_res.status_code) {
                     400...std.math.maxInt(@TypeOf(otp_res.status_code)) => {
-                        // Check if this is a republish error and we should tolerate it
-                        if (tolerate_republish and isRepublishError(otp_res.status_code, response_buf.list.items)) {
-                            Output.prettyln("<yellow>warning<r>: Registry already knows about version {s}; skipping.", .{Dependency.withoutBuildTag(ctx.package_version)});
-                            return; // Skip publishing entirely
-                        }
-                        
                         const otp_response = true;
                         try Npm.responseError(
                             ctx.allocator,

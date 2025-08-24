@@ -343,7 +343,9 @@ pub const Tag = enum(short) {
             }
 
             if (tag.isArrayLike() and try value.getLength(globalObject) > 0) {
-                return Tag.fromJS(globalObject, try value.getIndex(globalObject, 0));
+                // JavaScript arrays should be treated as JSON/JSONB by default
+                // since PostgreSQL arrays are typed and JavaScript arrays are not
+                return .jsonb;
             }
 
             // Ban these types:

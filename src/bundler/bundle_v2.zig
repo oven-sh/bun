@@ -1707,20 +1707,7 @@ pub const BundleV2 = struct {
     ) OOM!bun.jsc.JSValue {
         const completion = try createAndScheduleCompletionTask(config, plugins, globalThis, event_loop, alloc);
         completion.promise = jsc.JSPromise.Strong.init(globalThis);
-
-        const onEndCallbacksPromise = bun.jsc.JSPromise.Strong.init(globalThis);
-
-        const context = bun.default_allocator.create(OnEndContext) catch bun.outOfMemory();
-        context.* = .{
-            .end_callbacks_promise = onEndCallbacksPromise.value().asPromise().?,
-            .completion_task = completion,
-            .build_result = .zero, // populated by onBuildEndResolve
-        };
-        completion.ref();
-
-        completion.promise.value().then(globalThis, context, onBuildEndResolve, onBuildEndReject);
-
-        return onEndCallbacksPromise.value();
+        return completion.promise.value();
     }
 
     pub const BuildResult = struct {
@@ -1975,6 +1962,12 @@ pub const BundleV2 = struct {
             return result;
         }
 
+        /// Returns true if the promises were handled and resolved from BundlePlugin.ts, returns false if the caller should imediately resolve
+        fn runOnEndCallbacks(promise: *jsc.JSPromise, root_obj: jsc.JSValue, plugin: *bun.jsc.API.JSBundler.Plugin) bool {
+            const value = plugin.runOnEndCallbacks(root_obj, promise);
+            return value != .js_undefined;
+        }
+
         fn toJSError(this: *JSBundleCompletionTask, promise: *jsc.JSPromise, globalThis: *jsc.JSGlobalObject) void {
             if (this.config.throw_on_error) {
                 promise.reject(globalThis, this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed")));
@@ -1996,7 +1989,13 @@ pub const BundleV2 = struct {
                 },
             );
 
-            promise.resolve(globalThis, root_obj);
+            const didHandleCallbacks = if (this.plugins) |plugin| {
+                return runOnEndCallbacks(promise, root_obj, plugin);
+            } else false;
+
+            if (!didHandleCallbacks) {
+                promise.resolve(globalThis, root_obj);
+            }
         }
 
         pub fn onComplete(this: *JSBundleCompletionTask) void {
@@ -2094,7 +2093,13 @@ pub const BundleV2 = struct {
                         },
                     );
 
-                    promise.resolve(globalThis, root_obj);
+                    const didHandleCallbacks = if (this.plugins) |plugin| {
+                        return runOnEndCallbacks(promise, root_obj, plugin);
+                    } else false;
+
+                    if (!didHandleCallbacks) {
+                        promise.resolve(globalThis, root_obj);
+                    }
                 },
             }
         }

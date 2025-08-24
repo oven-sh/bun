@@ -1084,11 +1084,11 @@ pub const JSBundler = struct {
         }
 
         extern fn JSBundlerPlugin__tombstone(*Plugin) void;
-        extern fn JSBundlerPlugin__runOnEndCallbacks(*Plugin, jsc.JSValue) jsc.JSValue;
+        extern fn JSBundlerPlugin__runOnEndCallbacks(*Plugin, jsc.JSValue, jsc.JSValue) jsc.JSValue;
 
-        pub fn runOnEndCallbacks(this: *Plugin, build_result: jsc.JSValue) jsc.JSValue {
+        pub fn runOnEndCallbacks(this: *Plugin, build_result: jsc.JSValue, build_promise: jsc.JSValue) jsc.JSValue {
             jsc.markBinding(@src());
-            return JSBundlerPlugin__runOnEndCallbacks(this, build_result);
+            return JSBundlerPlugin__runOnEndCallbacks(this, build_result, build_promise.value());
         }
 
         pub fn deinit(this: *Plugin) void {

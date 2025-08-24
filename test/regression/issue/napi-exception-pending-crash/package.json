@@ -1,0 +1,9 @@
+{
+  "name": "test-napi-exception-pending-crash",
+  "version": "1.0.0",
+  "main": "test.js",
+  "gypfile": true,
+  "dependencies": {
+    "node-gyp": "^11.3.0"
+  }
+}

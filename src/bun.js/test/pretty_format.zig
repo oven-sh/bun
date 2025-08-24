@@ -488,7 +488,7 @@ pub const JestPrettyFormat = struct {
                         .UnlinkedEvalCodeBlock,
                         .UnlinkedFunctionCodeBlock,
                         .CodeBlock,
-                        .JSImmutableButterfly,
+                        .JSCellButterfly,
                         .JSSourceCode,
                         .JSScriptFetcher,
                         .JSScriptFetchParameters,

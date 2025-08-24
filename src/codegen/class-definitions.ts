@@ -212,7 +212,7 @@ export class ClassDefinition {
 
   configurable?: boolean;
   enumerable?: boolean;
-  structuredClone?: { transferable: boolean; tag: number };
+  structuredClone?: { transferable: boolean; tag: number; storable: boolean };
   inspectCustom?: boolean;
 
   callbacks?: Record<string, string>;

@@ -213,13 +213,13 @@ pub fn onConnectionTimeout(this: *PostgresSQLConnection) bun.api.Timer.EventLoop
 
     switch (this.status) {
         .connected => {
-            this.failFmt(.POSTGRES_IDLE_TIMEOUT, "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
+            this.failFmt("ERR_POSTGRES_IDLE_TIMEOUT", "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
         },
         else => {
-            this.failFmt(.POSTGRES_CONNECTION_TIMEOUT, "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
         .sent_startup_message => {
-            this.failFmt(.POSTGRES_CONNECTION_TIMEOUT, "Connection timed out after {} (sent startup message, but never received response)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timed out after {} (sent startup message, but never received response)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
     }
     return .disarm;
@@ -229,7 +229,7 @@ pub fn onMaxLifetimeTimeout(this: *PostgresSQLConnection) bun.api.Timer.EventLoo
     debug("onMaxLifetimeTimeout", .{});
     this.max_lifetime_timer.state = .FIRED;
     if (this.status == .failed) return .disarm;
-    this.failFmt(.POSTGRES_LIFETIME_TIMEOUT, "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
+    this.failFmt("ERR_POSTGRES_LIFETIME_TIMEOUT", "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
     return .disarm;
 }
 
@@ -311,7 +311,7 @@ pub fn failWithJSValue(this: *PostgresSQLConnection, value: JSValue) void {
     this.stopTimers();
     if (this.status == .failed) return;
 
-    this.status = .failed;
+    this.setStatus(.failed);
 
     this.ref();
     defer this.deref();
@@ -332,8 +332,13 @@ pub fn failWithJSValue(this: *PostgresSQLConnection, value: JSValue) void {
     ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
 }
 
-pub fn failFmt(this: *PostgresSQLConnection, comptime error_code: jsc.Error, comptime fmt: [:0]const u8, args: anytype) void {
-    this.failWithJSValue(error_code.fmt(this.globalObject, fmt, args));
+pub fn failFmt(this: *PostgresSQLConnection, code: []const u8, comptime fmt: [:0]const u8, args: anytype) void {
+    const message = std.fmt.allocPrint(bun.default_allocator, fmt, args) catch bun.outOfMemory();
+    defer bun.default_allocator.free(message);
+
+    const err = createPostgresError(this.globalObject, message, .{ .code = code }) catch |e| this.globalObject.takeError(e);
+
+    this.failWithJSValue(err);
 }
 
 pub fn fail(this: *PostgresSQLConnection, message: []const u8, err: AnyPostgresError) void {
@@ -579,7 +584,7 @@ comptime {
 
 pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var vm = globalObject.bunVM();
-    const arguments = callframe.arguments_old(15).slice();
+    const arguments = callframe.arguments();
     const hostname_str = try arguments[0].toBunString(globalObject);
     defer hostname_str.deref();
     const port = try arguments[1].coerce(i32, globalObject);
@@ -695,7 +700,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
 
     ptr.* = PostgresSQLConnection{
         .globalObject = globalObject,
-        .vm = globalObject.bunVM(),
+        .vm = vm,
         .database = database,
         .user = username,
         .password = password,
@@ -716,16 +721,6 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             .use_unnamed_prepared_statements = use_unnamed_prepared_statements,
         },
     };
-
-    ptr.updateHasPendingActivity();
-    ptr.poll_ref.ref(vm);
-    const js_value = ptr.toJS(globalObject);
-    js_value.ensureStillAlive();
-    ptr.js_value = js_value;
-
-    js.onconnectSetCached(js_value, globalObject, on_connect);
-    js.oncloseSetCached(js_value, globalObject, on_close);
-    bun.analytics.Features.postgres_connections += 1;
 
     {
         const hostname = hostname_str.toUTF8(bun.default_allocator);
@@ -761,9 +756,18 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
                 },
             };
         }
-        ptr.resetConnectionTimeout();
     }
 
+    // only call toJS if connectUnixAnon does not fail immediately
+    ptr.updateHasPendingActivity();
+    ptr.resetConnectionTimeout();
+    ptr.poll_ref.ref(vm);
+    const js_value = ptr.toJS(globalObject);
+    js_value.ensureStillAlive();
+    ptr.js_value = js_value;
+    js.onconnectSetCached(js_value, globalObject, on_connect);
+    js.oncloseSetCached(js_value, globalObject, on_close);
+    bun.analytics.Features.postgres_connections += 1;
     return js_value;
 }
 
@@ -1153,7 +1157,9 @@ fn advance(this: *PostgresSQLConnection) void {
                             } else {
                                 // deinit later
                                 req.status = .fail;
+                                offset += 1;
                             }
+
                             continue;
                         },
                         .prepared => {
@@ -1181,9 +1187,9 @@ fn advance(this: *PostgresSQLConnection) void {
                                 } else {
                                     // deinit later
                                     req.status = .fail;
+                                    offset += 1;
                                 }
                                 debug("bind and execute failed: {s}", .{@errorName(err)});
-
                                 continue;
                             };
 
@@ -1352,8 +1358,8 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                 .globalObject = this.globalObject,
             };
 
-            var stack_buf: [70]DataCell = undefined;
-            var cells: []DataCell = stack_buf[0..@min(statement.fields.len, jsc.JSObject.maxInlineCapacity())];
+            var stack_buf: [70]DataCell.SQLDataCell = undefined;
+            var cells: []DataCell.SQLDataCell = stack_buf[0..@min(statement.fields.len, jsc.JSObject.maxInlineCapacity())];
             var free_cells = false;
             defer {
                 for (cells[0..putter.count]) |*cell| {
@@ -1363,11 +1369,11 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             }
 
             if (statement.fields.len >= jsc.JSObject.maxInlineCapacity()) {
-                cells = try bun.default_allocator.alloc(DataCell, statement.fields.len);
+                cells = try bun.default_allocator.alloc(DataCell.SQLDataCell, statement.fields.len);
                 free_cells = true;
             }
             // make sure all cells are reset if reader short breaks the fields will just be null with is better than undefined behavior
-            @memset(cells, DataCell{ .tag = .null, .value = .{ .null = 0 } });
+            @memset(cells, DataCell.SQLDataCell{ .tag = .null, .value = .{ .null = 0 } });
             putter.list = cells;
 
             if (request.flags.result_mode == .raw) {
@@ -1391,7 +1397,14 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             };
             const pending_value = PostgresSQLQuery.js.pendingValueGetCached(thisValue) orelse .zero;
             pending_value.ensureStillAlive();
-            const result = putter.toJS(this.globalObject, pending_value, structure, statement.fields_flags, request.flags.result_mode, cached_structure);
+            const result = putter.toJS(
+                this.globalObject,
+                pending_value,
+                structure,
+                statement.fields_flags,
+                request.flags.result_mode,
+                cached_structure,
+            );
 
             if (pending_value == .zero) {
                 PostgresSQLQuery.js.pendingValueSetCached(thisValue, this.globalObject, result);
@@ -1801,7 +1814,7 @@ pub fn consumeOnCloseCallback(this: *const PostgresSQLConnection, globalObject: 
 
 const PreparedStatementsMap = std.HashMapUnmanaged(u64, *PostgresSQLStatement, bun.IdentityContext(u64), 80);
 
-const debug = bun.Output.scoped(.Postgres, false);
+const debug = bun.Output.scoped(.Postgres, .visible);
 
 const MAX_PIPELINE_SIZE = std.math.maxInt(u16); // about 64KB per connection
 
@@ -1810,7 +1823,8 @@ pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 pub const toJS = js.toJS;
 
-const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
+const DataCell = @import("./DataCell.zig");
+const PostgresCachedStructure = @import("../shared/CachedStructure.zig");
 const PostgresRequest = @import("./PostgresRequest.zig");
 const PostgresSQLQuery = @import("./PostgresSQLQuery.zig");
 const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
@@ -1818,14 +1832,14 @@ const SocketMonitor = @import("./SocketMonitor.zig");
 const protocol = @import("./PostgresProtocol.zig");
 const std = @import("std");
 const AuthenticationState = @import("./AuthenticationState.zig").AuthenticationState;
-const ConnectionFlags = @import("./ConnectionFlags.zig").ConnectionFlags;
-const Data = @import("./Data.zig").Data;
-const DataCell = @import("./DataCell.zig").DataCell;
+const ConnectionFlags = @import("../shared/ConnectionFlags.zig").ConnectionFlags;
+const Data = @import("../shared/Data.zig").Data;
 const SSLMode = @import("./SSLMode.zig").SSLMode;
 const Status = @import("./Status.zig").Status;
 const TLSStatus = @import("./TLSStatus.zig").TLSStatus;
 
 const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
+const createPostgresError = @import("./AnyPostgresError.zig").createPostgresError;
 const postgresErrorToJS = @import("./AnyPostgresError.zig").postgresErrorToJS;
 
 const bun = @import("bun");

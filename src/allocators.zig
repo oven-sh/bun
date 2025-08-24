@@ -1,5 +1,6 @@
-pub const c_allocator = @import("./allocators/basic.zig").c_allocator;
-pub const z_allocator = @import("./allocators/basic.zig").z_allocator;
+pub const c_allocator = basic.c_allocator;
+pub const z_allocator = basic.z_allocator;
+pub const freeWithoutSize = basic.freeWithoutSize;
 pub const mimalloc = @import("./allocators/mimalloc.zig");
 pub const MimallocArena = @import("./allocators/MimallocArena.zig");
 pub const AllocationScope = @import("./allocators/AllocationScope.zig");
@@ -225,7 +226,6 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
             }
         };
 
-        const Allocator = std.mem.Allocator;
         const Self = @This();
 
         allocator: Allocator,
@@ -311,7 +311,6 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
 
     return struct {
         pub const Overflow = OverflowList([]const u8, count / 4);
-        const Allocator = std.mem.Allocator;
         const Self = @This();
 
         backing_buf: [count * item_length]u8,
@@ -495,7 +494,6 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
 pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_keys: bool, comptime estimated_key_length: usize, comptime remove_trailing_slashes: bool) type {
     const max_index = count - 1;
     const BSSMapType = struct {
-        const Allocator = std.mem.Allocator;
         const Self = @This();
         const Overflow = OverflowList(ValueType, count / 4);
 
@@ -772,8 +770,44 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
     };
 }
 
+pub fn isDefault(allocator: Allocator) bool {
+    return allocator.vtable == c_allocator.vtable;
+}
+
+/// Allocate memory for a value of type `T` using the provided allocator, and initialize the memory
+/// with `value`.
+///
+/// If `allocator` is `bun.default_allocator`, this will internally use `bun.tryNew` to benefit from
+/// the added assertions.
+pub fn create(comptime T: type, allocator: Allocator, value: T) OOM!*T {
+    if ((comptime Environment.allow_assert) and isDefault(allocator)) {
+        return bun.tryNew(T, value);
+    }
+    const ptr = try allocator.create(T);
+    ptr.* = value;
+    return ptr;
+}
+
+/// Free memory previously allocated by `create`.
+///
+/// The memory must have been allocated by the `create` function in this namespace, not
+/// directly by `allocator.create`.
+pub fn destroy(allocator: Allocator, ptr: anytype) void {
+    if ((comptime Environment.allow_assert) and isDefault(allocator)) {
+        bun.destroy(ptr);
+    } else {
+        allocator.destroy(ptr);
+    }
+}
+
+const basic = if (bun.use_mimalloc)
+    @import("./allocators/basic.zig")
+else
+    @import("./allocators/fallback.zig");
+
 const Environment = @import("./env.zig");
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
 const OOM = bun.OOM;

@@ -53,11 +53,11 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 }
 
 pub fn estimatedSize(this: *const @This()) usize {
-    return @sizeOf(@This()) + switch (this.stream.mode) {
-        .ZSTD_COMPRESS => bun.c.ZSTD_sizeof_CCtx(@ptrCast(this.stream.state)),
-        .ZSTD_DECOMPRESS => bun.c.ZSTD_sizeof_DCtx(@ptrCast(this.stream.state)),
+    return @sizeOf(@This()) + @as(usize, switch (this.stream.mode) {
+        .ZSTD_COMPRESS => 5272, // estimate of bun.c.ZSTD_sizeof_CCtx(@ptrCast(this.stream.state)),
+        .ZSTD_DECOMPRESS => 95968, // estimate of bun.c.ZSTD_sizeof_DCtx(@ptrCast(this.stream.state)),
         else => 0,
-    };
+    });
 }
 
 pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -85,7 +85,7 @@ pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
     var err = this.stream.init(pledged_src_size);
     if (err.isError()) {
         try impl.emitError(this, globalThis, this_value, err);
-        return .jsBoolean(false);
+        return .false;
     }
 
     const params_ = initParamsArray_value.asArrayBuffer(globalThis) orelse return globalThis.throwInvalidArgumentTypeValue("initParamsArray", "Uint32Array", initParamsArray_value);
@@ -96,7 +96,7 @@ pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
         if (err_.isError()) return globalThis.ERR(.ZLIB_INITIALIZATION_FAILED, "{s}", .{std.mem.sliceTo(err_.msg.?, 0)}).throw();
     }
 
-    return .jsBoolean(true);
+    return .true;
 }
 
 pub fn params(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {

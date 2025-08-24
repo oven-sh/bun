@@ -23,13 +23,14 @@ pub const Error = union(enum) {
         }
     }
 
-    pub fn toJS(this: *const @This(), globalObject: *jsc.JSGlobalObject) JSValue {
+    pub fn toJS(this: *const @This(), globalObject: *jsc.JSGlobalObject) JSError!JSValue {
         return switch (this.*) {
             .protocol => |err| err.toJS(globalObject),
             .postgres_error => |err| postgresErrorToJS(globalObject, null, err),
         };
     }
 };
+
 pub const Status = enum {
     pending,
     parsing,
@@ -159,13 +160,13 @@ pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *jsc
     return this.cached_structure;
 }
 
-const debug = bun.Output.scoped(.Postgres, false);
+const debug = bun.Output.scoped(.Postgres, .visible);
 
-const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
+const PostgresCachedStructure = @import("../shared/CachedStructure.zig");
 const Signature = @import("./Signature.zig");
 const protocol = @import("./PostgresProtocol.zig");
 const std = @import("std");
-const DataCell = @import("./DataCell.zig").DataCell;
+const DataCell = @import("./DataCell.zig").SQLDataCell;
 
 const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
 const postgresErrorToJS = @import("./AnyPostgresError.zig").postgresErrorToJS;
@@ -174,6 +175,7 @@ const types = @import("./PostgresTypes.zig");
 const int4 = types.int4;
 
 const bun = @import("bun");
+const JSError = bun.JSError;
 const String = bun.String;
 
 const jsc = bun.jsc;

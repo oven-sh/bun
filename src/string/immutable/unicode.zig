@@ -1168,7 +1168,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
             if (res.status == .success) {
                 if (comptime sentinel) {
                     out[out_length] = 0;
-                    return out[0 .. out_length + 1 :0];
+                    return out[0..out_length :0];
                 }
                 return out;
             }

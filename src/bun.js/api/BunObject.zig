@@ -62,6 +62,7 @@ pub const BunObject = struct {
     pub const SHA512 = toJSLazyPropertyCallback(Crypto.SHA512.getter);
     pub const SHA512_256 = toJSLazyPropertyCallback(Crypto.SHA512_256.getter);
     pub const TOML = toJSLazyPropertyCallback(Bun.getTOMLObject);
+    pub const YAML = toJSLazyPropertyCallback(Bun.getYAMLObject);
     pub const Transpiler = toJSLazyPropertyCallback(Bun.getTranspilerConstructor);
     pub const argv = toJSLazyPropertyCallback(Bun.getArgv);
     pub const cwd = toJSLazyPropertyCallback(Bun.getCWD);
@@ -129,6 +130,7 @@ pub const BunObject = struct {
         @export(&BunObject.SHA512_256, .{ .name = lazyPropertyCallbackName("SHA512_256") });
 
         @export(&BunObject.TOML, .{ .name = lazyPropertyCallbackName("TOML") });
+        @export(&BunObject.YAML, .{ .name = lazyPropertyCallbackName("YAML") });
         @export(&BunObject.Glob, .{ .name = lazyPropertyCallbackName("Glob") });
         @export(&BunObject.Transpiler, .{ .name = lazyPropertyCallbackName("Transpiler") });
         @export(&BunObject.argv, .{ .name = lazyPropertyCallbackName("argv") });
@@ -229,13 +231,19 @@ pub fn braces(global: *jsc.JSGlobalObject, brace_str: bun.String, opts: gen.Brac
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
 
-    var lexer_output = Braces.Lexer.tokenize(arena.allocator(), brace_slice.slice()) catch |err| {
-        return global.throwError(err, "failed to tokenize braces");
+    var lexer_output = lexer_output: {
+        if (bun.strings.isAllASCII(brace_slice.slice())) {
+            break :lexer_output Braces.Lexer.tokenize(arena.allocator(), brace_slice.slice()) catch |err| {
+                return global.throwError(err, "failed to tokenize braces");
+            };
+        }
+
+        break :lexer_output Braces.NewLexer(.wtf8).tokenize(arena.allocator(), brace_slice.slice()) catch |err| {
+            return global.throwError(err, "failed to tokenize braces");
+        };
     };
 
-    const expansion_count = Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]) catch |err| {
-        return global.throwError(err, "failed to calculate brace expansion amount");
-    };
+    const expansion_count = Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]);
 
     if (opts.tokenize) {
         const str = try std.json.stringifyAlloc(global.bunVM().allocator, lexer_output.tokens.items[0..], .{});
@@ -272,7 +280,6 @@ pub fn braces(global: *jsc.JSGlobalObject, brace_str: bun.String, opts: gen.Brac
     ) catch |err| switch (err) {
         error.OutOfMemory => |e| return e,
         error.UnexpectedToken => return global.throwPretty("Unexpected token while expanding braces", .{}),
-        error.StackFull => return global.throwPretty("Too much nesting while expanding braces", .{}),
     };
 
     var out_strings = try arena.allocator().alloc(bun.String, expansion_count);
@@ -957,7 +964,7 @@ export fn Bun__resolveSyncWithPaths(
 }
 
 export fn Bun__resolveSyncWithStrings(global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, is_esm: bool) jsc.JSValue {
-    Output.scoped(.importMetaResolve, false)("source: {s}, specifier: {s}", .{ source.*, specifier.* });
+    Output.scoped(.importMetaResolve, .visible)("source: {s}, specifier: {s}", .{ source.*, specifier.* });
     return jsc.toJSHostCall(global, @src(), doResolveWithArgs, .{ global, specifier.*, source.*, is_esm, true, false });
 }
 
@@ -1062,22 +1069,22 @@ pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
                     @field(@TypeOf(entry.tag()), @typeName(jsc.API.HTTPServer)) => {
                         var server: *jsc.API.HTTPServer = entry.as(jsc.API.HTTPServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.js_value.get() orelse .js_undefined;
+                        return server.js_value.tryGet() orelse .js_undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(jsc.API.DebugHTTPServer)) => {
                         var server: *jsc.API.DebugHTTPServer = entry.as(jsc.API.DebugHTTPServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.js_value.get() orelse .js_undefined;
+                        return server.js_value.tryGet() orelse .js_undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(jsc.API.DebugHTTPSServer)) => {
                         var server: *jsc.API.DebugHTTPSServer = entry.as(jsc.API.DebugHTTPSServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.js_value.get() orelse .js_undefined;
+                        return server.js_value.tryGet() orelse .js_undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(jsc.API.HTTPSServer)) => {
                         var server: *jsc.API.HTTPSServer = entry.as(jsc.API.HTTPSServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.js_value.get() orelse .js_undefined;
+                        return server.js_value.tryGet() orelse .js_undefined;
                     },
                     else => {},
                 }
@@ -1112,7 +1119,7 @@ pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
                     if (route_list_object != .zero) {
                         ServerType.js.routeListSetCached(obj, globalObject, route_list_object);
                     }
-                    server.js_value.set(globalObject, obj);
+                    server.js_value.setStrong(obj, globalObject);
 
                     if (config.allow_hot) {
                         if (globalObject.bunVM().hotMap()) |hot| {
@@ -1241,13 +1248,13 @@ pub fn mmapFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
     var map_size: ?usize = null;
 
     if (args.nextEat()) |opts| {
-        flags.TYPE = if ((try opts.get(globalThis, "shared") orelse JSValue.true).toBoolean())
+        flags.TYPE = if ((try opts.getBooleanLoose(globalThis, "shared")) orelse true)
             .SHARED
         else
             .PRIVATE;
 
         if (@hasField(std.c.MAP, "SYNC")) {
-            if ((try opts.get(globalThis, "sync") orelse JSValue.false).toBoolean()) {
+            if ((try opts.getBooleanLoose(globalThis, "sync")) orelse false) {
                 flags.TYPE = .SHARED_VALIDATE;
                 flags.SYNC = true;
             }
@@ -1295,6 +1302,10 @@ pub fn getTOMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVa
     return TOMLObject.create(globalThis);
 }
 
+pub fn getYAMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return YAMLObject.create(globalThis);
+}
+
 pub fn getGlobConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.API.Glob.js.getConstructor(globalThis);
 }
@@ -1304,6 +1315,15 @@ pub fn getS3ClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject)
 
 pub fn getS3DefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return globalThis.bunVM().rareData().s3DefaultClient(globalThis);
+}
+
+pub fn getTLSDefaultCiphers(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return globalThis.bunVM().rareData().tlsDefaultCiphers();
+}
+
+pub fn setTLSDefaultCiphers(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject, ciphers: jsc.JSValue) jsc.JSValue {
+    globalThis.bunVM().rareData().setTLSDefaultCiphers(ciphers);
+    return .js_undefined;
 }
 
 pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
@@ -1459,8 +1479,7 @@ pub const JSZlib = struct {
         reader.deinit();
     }
     export fn global_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
-        comptime assert(bun.use_mimalloc);
-        bun.mimalloc.mi_free(ctx);
+        bun.allocators.freeWithoutSize(ctx);
     }
     export fn compressor_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
         var compressor: *zlib.ZlibCompressorArrayList = bun.cast(*zlib.ZlibCompressorArrayList, ctx.?);
@@ -1744,8 +1763,7 @@ pub const JSZlib = struct {
 
 pub const JSZstd = struct {
     export fn deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
-        comptime assert(bun.use_mimalloc);
-        bun.mimalloc.mi_free(ctx);
+        bun.allocators.freeWithoutSize(ctx);
     }
 
     inline fn getOptions(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!struct { jsc.Node.StringOrBuffer, ?JSValue } {
@@ -2075,6 +2093,7 @@ const FFIObject = bun.api.FFIObject;
 const HashObject = bun.api.HashObject;
 const TOMLObject = bun.api.TOMLObject;
 const UnsafeObject = bun.api.UnsafeObject;
+const YAMLObject = bun.api.YAMLObject;
 const node = bun.api.node;
 
 const jsc = bun.jsc;

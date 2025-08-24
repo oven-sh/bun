@@ -82,6 +82,10 @@ function getNodeParallelTestTimeout(testPath) {
   return 10_000;
 }
 
+process.on("SIGTRAP", () => {
+  console.warn("Test runner received SIGTRAP. Doing nothing.");
+});
+
 const { values: options, positionals: filters } = parseArgs({
   allowPositionals: true,
   options: {
@@ -178,6 +182,37 @@ if (options["quiet"]) {
   isQuiet = true;
 }
 
+let newFiles = [];
+let prFileCount = 0;
+if (isBuildkite) {
+  try {
+    console.log("on buildkite: collecting new files from PR");
+    const per_page = 50;
+    for (let i = 1; i <= 5; i++) {
+      const res = await fetch(
+        `https://api.github.com/repos/oven-sh/bun/pulls/${process.env.BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
+        {
+          headers: {
+            Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}`,
+          },
+        },
+      );
+      const doc = await res.json();
+      console.log(`-> page ${i}, found ${doc.length} items`);
+      if (doc.length === 0) break;
+      if (doc.length < per_page) break;
+      for (const { filename, status } of doc) {
+        prFileCount += 1;
+        if (status !== "added") continue;
+        newFiles.push(filename);
+      }
+    }
+    console.log(`- PR ${process.env.BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
+  } catch (e) {
+    console.error(e);
+  }
+}
+
 let coresDir;
 
 if (options["coredump-upload"]) {
@@ -270,6 +305,7 @@ const skipArray = (() => {
   }
   return readFileSync(path, "utf-8")
     .split("\n")
+    .map(line => line.trim())
     .filter(line => !line.startsWith("#") && line.length > 0);
 })();
 
@@ -419,6 +455,7 @@ async function runTests() {
       if (attempt >= maxAttempts || isAlwaysFailure(error)) {
         flaky = false;
         failedResults.push(failure);
+        break;
       }
     }
 
@@ -478,7 +515,7 @@ async function runTests() {
       console.log("run in", cwd);
       let exiting = false;
 
-      const server = spawn(execPath, ["run", "ci-remap-server", execPath, cwd, getCommit()], {
+      const server = spawn(execPath, ["run", "--silent", "ci-remap-server", execPath, cwd, getCommit()], {
         stdio: ["ignore", "pipe", "inherit"],
         cwd, // run in main repo
         env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },
@@ -488,18 +525,22 @@ async function runTests() {
       server.on("exit", (code, signal) => {
         if (!exiting && (code !== 0 || signal !== null)) errorResolve(signal ? signal : "code " + code);
       });
-      process.on("exit", () => {
+      function onBeforeExit() {
         exiting = true;
-        server.kill();
-      });
+        server.off("error");
+        server.off("exit");
+        server.kill?.();
+      }
+      process.once("beforeExit", onBeforeExit);
       const lines = createInterface(server.stdout);
       lines.on("line", line => {
         portResolve({ port: parseInt(line) });
       });
 
-      const result = await Promise.race([portPromise, errorPromise, setTimeoutPromise(5000, "timeout")]);
-      if (typeof result.port != "number") {
-        server.kill();
+      const result = await Promise.race([portPromise, errorPromise.catch(e => e), setTimeoutPromise(5000, "timeout")]);
+      if (typeof result?.port != "number") {
+        process.off("beforeExit", onBeforeExit);
+        server.kill?.();
         console.warn("ci-remap server did not start:", result);
       } else {
         console.log("crash reports parsed on port", result.port);
@@ -524,6 +565,7 @@ async function runTests() {
             };
             if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
               env.BUN_JSC_validateExceptionChecks = "1";
+              env.BUN_JSC_dumpSimulatedThrows = "1";
             }
             return runTest(title, async () => {
               const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -1247,6 +1289,7 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
   };
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
     env.BUN_JSC_validateExceptionChecks = "1";
+    env.BUN_JSC_dumpSimulatedThrows = "1";
   }
 
   const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -1976,6 +2019,9 @@ function formatTestToMarkdown(result, concise, retries) {
     if (retries > 0) {
       markdown += ` (${retries} ${retries === 1 ? "retry" : "retries"})`;
     }
+    if (newFiles.includes(testTitle)) {
+      markdown += ` (new)`;
+    }
 
     if (concise) {
       markdown += "</li>\n";
@@ -2181,6 +2227,7 @@ function isAlwaysFailure(error) {
     error.includes("illegal instruction") ||
     error.includes("sigtrap") ||
     error.includes("error: addresssanitizer") ||
+    error.includes("internal assertion failure") ||
     error.includes("core dumped") ||
     error.includes("crash reported")
   );

@@ -999,6 +999,7 @@ interface ArrayBuffer {
    * Read-only. The length of the ArrayBuffer (in bytes).
    */
   readonly byteLength: number;
+
   /**
    * Resize an ArrayBuffer in-place.
    */
@@ -1008,7 +1009,6 @@ interface ArrayBuffer {
    * Returns a section of an ArrayBuffer.
    */
   slice(begin: number, end?: number): ArrayBuffer;
-  readonly [Symbol.toStringTag]: string;
 }
 
 interface SharedArrayBuffer {
@@ -1284,7 +1284,7 @@ interface ImportMeta {
    * )
    * ```
    */
-  readonly main: boolean;
+  main: boolean;
 
   /** Alias of `import.meta.dir`. Exists for Node.js compatibility */
   dirname: string;
@@ -1426,12 +1426,12 @@ interface Blob {
   /**
    * Returns a promise that resolves to the contents of the blob as a Uint8Array (array of bytes) its the same as `new Uint8Array(await blob.arrayBuffer())`
    */
-  bytes(): Promise<Uint8Array>;
+  bytes(): Promise<Uint8Array<ArrayBuffer>>;
 
   /**
    * Returns a readable stream of the blob's contents
    */
-  stream(): ReadableStream<Uint8Array>;
+  stream(): ReadableStream<Uint8Array<ArrayBuffer>>;
 }
 
 declare var Blob: Bun.__internal.UseLibDomIfAvailable<
@@ -1506,14 +1506,14 @@ interface Uint8ArrayConstructor {
       alphabet?: "base64" | "base64url";
       lastChunkHandling?: "loose" | "strict" | "stop-before-partial";
     },
-  ): Uint8Array;
+  ): Uint8Array<ArrayBuffer>;
 
   /**
    * Create a new Uint8Array from a hex encoded string
    * @param hex The hex encoded string to convert to a Uint8Array
    * @returns A new Uint8Array containing the decoded data
    */
-  fromHex(hex: string): Uint8Array;
+  fromHex(hex: string): Uint8Array<ArrayBuffer>;
 }
 
 interface BroadcastChannel extends Bun.__internal.LibEmptyOrBroadcastChannel {}
@@ -1888,6 +1888,25 @@ interface BunFetchRequestInit extends RequestInit {
    * ```
    */
   unix?: string;
+
+  /**
+   * Control automatic decompression of the response body.
+   * When set to `false`, the response body will not be automatically decompressed,
+   * and the `Content-Encoding` header will be preserved. This can improve performance
+   * when you need to handle compressed data manually or forward it as-is.
+   * This is a custom property that is not part of the Fetch API specification.
+   *
+   * @default true
+   * @example
+   * ```js
+   * // Disable automatic decompression for a proxy server
+   * const response = await fetch("https://example.com/api", {
+   *   decompress: false
+   * });
+   * // response.headers.get('content-encoding') might be 'gzip' or 'br'
+   * ```
+   */
+  decompress?: boolean;
 }
 
 /**

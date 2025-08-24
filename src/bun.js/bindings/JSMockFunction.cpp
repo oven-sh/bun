@@ -1031,19 +1031,21 @@ JSC_DEFINE_CUSTOM_GETTER(jsMockFunctionGetter_protoImpl, (JSC::JSGlobalObject * 
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" JSC::EncodedJSValue JSMockFunction__getCalls(EncodedJSValue encodedValue)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSMockFunction__getCalls(JSC::JSGlobalObject* globalThis, EncodedJSValue encodedValue)
 {
+    auto scope = DECLARE_THROW_SCOPE(globalThis->vm());
     JSValue value = JSValue::decode(encodedValue);
     if (auto* mock = tryJSDynamicCast<JSMockFunction*>(value)) {
-        return JSValue::encode(mock->getCalls());
+        RELEASE_AND_RETURN(scope, JSValue::encode(mock->getCalls()));
     }
     return encodedJSUndefined();
 }
-extern "C" JSC::EncodedJSValue JSMockFunction__getReturns(EncodedJSValue encodedValue)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSMockFunction__getReturns(JSC::JSGlobalObject* globalThis, EncodedJSValue encodedValue)
 {
+    auto scope = DECLARE_THROW_SCOPE(globalThis->vm());
     JSValue value = JSValue::decode(encodedValue);
     if (auto* mock = tryJSDynamicCast<JSMockFunction*>(value)) {
-        return JSValue::encode(mock->getReturnValues());
+        RELEASE_AND_RETURN(scope, JSValue::encode(mock->getReturnValues()));
     }
     return encodedJSUndefined();
 }

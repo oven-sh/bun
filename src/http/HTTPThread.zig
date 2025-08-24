@@ -79,7 +79,7 @@ pub const RequestBodyBuffer = union(enum) {
     }
 };
 
-const threadlog = Output.scoped(.HTTPThread, true);
+const threadlog = Output.scoped(.HTTPThread, .hidden);
 const WriteMessage = struct {
     async_http_id: u32,
     flags: packed struct(u8) {
@@ -195,8 +195,8 @@ pub fn init(opts: *const InitOpts) void {
 
 pub fn onStart(opts: InitOpts) void {
     Output.Source.configureNamedThread("HTTP Client");
-    bun.http.default_arena = Arena.init() catch unreachable;
-    bun.http.default_allocator = bun.default_allocator;
+    bun.http.default_arena = Arena.init();
+    bun.http.default_allocator = bun.http.default_arena.allocator();
 
     const loop = bun.jsc.MiniEventLoop.initGlobal(null);
 
@@ -460,7 +460,7 @@ pub fn schedule(this: *@This(), batch: Batch) void {
 
 pub const Queue = UnboundedQueue(AsyncHTTP, .next);
 
-const log = Output.scoped(.HTTPThread, false);
+const log = Output.scoped(.HTTPThread, .visible);
 
 const stringZ = [:0]const u8;
 

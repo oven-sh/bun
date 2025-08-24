@@ -52,10 +52,6 @@ pub const Heap = opaque {
         return mi_heap_malloc(self, size);
     }
 
-    pub fn backing(_: *Heap) *Heap {
-        return mi_heap_get_default();
-    }
-
     pub fn calloc(self: *Heap, count: usize, size: usize) ?*anyopaque {
         return mi_heap_calloc(self, count, size);
     }
@@ -140,27 +136,45 @@ pub const Option = enum(c_uint) {
     show_stats = 1,
     verbose = 2,
     eager_commit = 3,
-    deprecated_eager_region_commit = 4,
-    deprecated_reset_decommits = 5,
-    large_os_pages = 6,
+    arena_eager_commit = 4,
+    purge_decommits = 5,
+    allow_large_os_pages = 6,
     reserve_huge_os_pages = 7,
     reserve_huge_os_pages_at = 8,
     reserve_os_memory = 9,
     deprecated_segment_cache = 10,
-    page_reset = 11,
-    abandoned_page_decommit = 12,
+    deprecated_page_reset = 11,
+    abandoned_page_purge = 12,
     deprecated_segment_reset = 13,
     eager_commit_delay = 14,
-    decommit_delay = 15,
+    purge_delay = 15,
     use_numa_nodes = 16,
-    limit_os_alloc = 17,
+    disallow_os_alloc = 17,
     os_tag = 18,
     max_errors = 19,
     max_warnings = 20,
-    max_segment_reclaim = 21,
-    allow_decommit = 22,
-    segment_decommit_delay = 23,
-    decommit_extend_delay = 24,
+    deprecated_max_segment_reclaim = 21,
+    destroy_on_exit = 22,
+    arena_reserve = 23,
+    arena_purge_mult = 24,
+    deprecated_purge_extend_delay = 25,
+    disallow_arena_alloc = 26,
+    retry_on_oom = 27,
+    visit_abandoned = 28,
+    guarded_min = 29,
+    guarded_max = 30,
+    guarded_precise = 31,
+    guarded_sample_rate = 32,
+    guarded_sample_seed = 33,
+    generic_collect = 34,
+    page_reclaim_on_free = 35,
+    page_full_retain = 36,
+    page_max_candidates = 37,
+    max_vabits = 38,
+    pagemap_commit = 39,
+    page_commit_on_demand = 40,
+    page_max_reclaim = 41,
+    page_cross_thread_max_reclaim = 42,
 };
 pub extern fn mi_option_is_enabled(option: Option) bool;
 pub extern fn mi_option_enable(option: Option) void;

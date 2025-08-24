@@ -1,5 +1,5 @@
 pub const SourceMap = @This();
-const debug = bun.Output.scoped(.SourceMap, false);
+const debug = bun.Output.scoped(.SourceMap, .visible);
 
 /// Coordinates in source maps are stored using relative offsets for size
 /// reasons. When joining together chunks of a source map that were emitted
@@ -249,6 +249,7 @@ pub fn parseJSON(
     };
 }
 
+/// Corresponds to a segment in the "mappings" field of a sourcemap
 pub const Mapping = struct {
     generated: LineColumnOffset,
     original: LineColumnOffset,
@@ -321,7 +322,7 @@ pub const Mapping = struct {
                 const step = count / 2;
                 const i: usize = index + step;
                 const mapping = line_column_offsets[i];
-                if (mapping.lines < line or (mapping.lines == line and mapping.columns <= column)) {
+                if (mapping.lines.zeroBased() < line or (mapping.lines.zeroBased() == line and mapping.columns.zeroBased() <= column)) {
                     index = i + 1;
                     count -|= step + 1;
                 } else {
@@ -330,7 +331,7 @@ pub const Mapping = struct {
             }
 
             if (index > 0) {
-                if (line_column_offsets[index - 1].lines == line) {
+                if (line_column_offsets[index - 1].lines.zeroBased() == line) {
                     return index - 1;
                 }
             }
@@ -356,7 +357,7 @@ pub const Mapping = struct {
                 const a = ctx.generated[a_index];
                 const b = ctx.generated[b_index];
 
-                return a.lines < b.lines or (a.lines == b.lines and a.columns <= b.columns);
+                return a.lines.zeroBased() < b.lines.zeroBased() or (a.lines.zeroBased() == b.lines.zeroBased() and a.columns.zeroBased() <= b.columns.zeroBased());
             }
         };
 
@@ -556,11 +557,11 @@ pub const Mapping = struct {
     };
 
     pub inline fn generatedLine(mapping: *const Mapping) i32 {
-        return mapping.generated.lines;
+        return mapping.generated.lines.zeroBased();
     }
 
     pub inline fn generatedColumn(mapping: *const Mapping) i32 {
-        return mapping.generated.columns;
+        return mapping.generated.columns.zeroBased();
     }
 
     pub inline fn sourceIndex(mapping: *const Mapping) i32 {
@@ -568,11 +569,11 @@ pub const Mapping = struct {
     }
 
     pub inline fn originalLine(mapping: *const Mapping) i32 {
-        return mapping.original.lines;
+        return mapping.original.lines.zeroBased();
     }
 
     pub inline fn originalColumn(mapping: *const Mapping) i32 {
-        return mapping.original.columns;
+        return mapping.original.columns.zeroBased();
     }
 
     pub inline fn nameIndex(mapping: *const Mapping) i32 {
@@ -607,8 +608,8 @@ pub const Mapping = struct {
             };
         }
 
-        var generated = LineColumnOffset{ .lines = 0, .columns = 0 };
-        var original = LineColumnOffset{ .lines = 0, .columns = 0 };
+        var generated = LineColumnOffset{ .lines = bun.Ordinal.start, .columns = bun.Ordinal.start };
+        var original = LineColumnOffset{ .lines = bun.Ordinal.start, .columns = bun.Ordinal.start };
         var name_index: i32 = 0;
         var source_index: i32 = 0;
         var needs_sort = false;
@@ -616,18 +617,18 @@ pub const Mapping = struct {
         var has_names = false;
         while (remain.len > 0) {
             if (remain[0] == ';') {
-                generated.columns = 0;
+                generated.columns = bun.Ordinal.start;
 
                 while (strings.hasPrefixComptime(
                     remain,
                     comptime [_]u8{';'} ** (@sizeOf(usize) / 2),
                 )) {
-                    generated.lines += (@sizeOf(usize) / 2);
+                    generated.lines = generated.lines.addScalar(@sizeOf(usize) / 2);
                     remain = remain[@sizeOf(usize) / 2 ..];
                 }
 
                 while (remain.len > 0 and remain[0] == ';') {
-                    generated.lines += 1;
+                    generated.lines = generated.lines.addScalar(1);
                     remain = remain[1..];
                 }
 
@@ -644,7 +645,7 @@ pub const Mapping = struct {
                     .fail = .{
                         .msg = "Missing generated column value",
                         .err = error.MissingGeneratedColumnValue,
-                        .value = generated.columns,
+                        .value = generated.columns.zeroBased(),
                         .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
                     },
                 };
@@ -652,13 +653,13 @@ pub const Mapping = struct {
 
             needs_sort = needs_sort or generated_column_delta.value < 0;
 
-            generated.columns += generated_column_delta.value;
-            if (generated.columns < 0) {
+            generated.columns = generated.columns.addScalar(generated_column_delta.value);
+            if (generated.columns.zeroBased() < 0) {
                 return .{
                     .fail = .{
                         .msg = "Invalid generated column value",
                         .err = error.InvalidGeneratedColumnValue,
-                        .value = generated.columns,
+                        .value = generated.columns.zeroBased(),
                         .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
                     },
                 };
@@ -721,13 +722,13 @@ pub const Mapping = struct {
                 };
             }
 
-            original.lines += original_line_delta.value;
-            if (original.lines < 0) {
+            original.lines = original.lines.addScalar(original_line_delta.value);
+            if (original.lines.zeroBased() < 0) {
                 return .{
                     .fail = .{
                         .msg = "Invalid original line value",
                         .err = error.InvalidOriginalLineValue,
-                        .value = original.lines,
+                        .value = original.lines.zeroBased(),
                         .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
                     },
                 };
@@ -741,19 +742,19 @@ pub const Mapping = struct {
                     .fail = .{
                         .msg = "Missing original column value",
                         .err = error.MissingOriginalColumnValue,
-                        .value = original.columns,
+                        .value = original.columns.zeroBased(),
                         .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
                     },
                 };
             }
 
-            original.columns += original_column_delta.value;
-            if (original.columns < 0) {
+            original.columns = original.columns.addScalar(original_column_delta.value);
+            if (original.columns.zeroBased() < 0) {
                 return .{
                     .fail = .{
                         .msg = "Invalid original column value",
                         .err = error.InvalidOriginalColumnValue,
-                        .value = original.columns,
+                        .value = original.columns.zeroBased(),
                         .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
                     },
                 };
@@ -974,23 +975,23 @@ pub const ParsedSourceMap = struct {
             map.mappings.sourceIndex(),
             0..,
         ) |gen, orig, source_index, i| {
-            if (current_line != gen.lines) {
-                assert(gen.lines > current_line);
-                const inc = gen.lines - current_line;
+            if (current_line != gen.lines.zeroBased()) {
+                assert(gen.lines.zeroBased() > current_line);
+                const inc = gen.lines.zeroBased() - current_line;
                 try writer.writeByteNTimes(';', @intCast(inc));
-                current_line = gen.lines;
+                current_line = gen.lines.zeroBased();
                 last_col = 0;
             } else if (i != 0) {
                 try writer.writeByte(',');
             }
-            try VLQ.encode(gen.columns - last_col).writeTo(writer);
-            last_col = gen.columns;
+            try VLQ.encode(gen.columns.zeroBased() - last_col).writeTo(writer);
+            last_col = gen.columns.zeroBased();
             try VLQ.encode(source_index - last_src).writeTo(writer);
             last_src = source_index;
-            try VLQ.encode(orig.lines - last_ol).writeTo(writer);
-            last_ol = orig.lines;
-            try VLQ.encode(orig.columns - last_oc).writeTo(writer);
-            last_oc = orig.columns;
+            try VLQ.encode(orig.lines.zeroBased() - last_ol).writeTo(writer);
+            last_ol = orig.lines.zeroBased();
+            try VLQ.encode(orig.columns.zeroBased() - last_oc).writeTo(writer);
+            last_oc = orig.columns.zeroBased();
         }
     }
 
@@ -1241,9 +1242,12 @@ pub const BakeSourceProvider = opaque {
     }
 };
 
+/// The sourcemap spec says line and column offsets are zero-based
 pub const LineColumnOffset = struct {
-    lines: i32 = 0,
-    columns: i32 = 0,
+    /// The zero-based line offset
+    lines: bun.Ordinal = bun.Ordinal.start,
+    /// The zero-based column offset
+    columns: bun.Ordinal = bun.Ordinal.start,
 
     pub const Optional = union(enum) {
         null: void,
@@ -1265,10 +1269,10 @@ pub const LineColumnOffset = struct {
     };
 
     pub fn add(this: *LineColumnOffset, b: LineColumnOffset) void {
-        if (b.lines == 0) {
-            this.columns += b.columns;
+        if (b.lines.zeroBased() == 0) {
+            this.columns = this.columns.add(b.columns);
         } else {
-            this.lines += b.lines;
+            this.lines = this.lines.add(b.lines);
             this.columns = b.columns;
         }
     }
@@ -1293,7 +1297,7 @@ pub const LineColumnOffset = struct {
             // This can lead to integer overflow, crashes, or hangs.
             // https://github.com/oven-sh/bun/issues/10624
             if (cursor.width == 0) {
-                this.columns += 1;
+                this.columns = this.columns.addScalar(1);
                 offset = i + 1;
                 continue;
             }
@@ -1304,19 +1308,19 @@ pub const LineColumnOffset = struct {
                 '\r', '\n', 0x2028, 0x2029 => {
                     // Handle Windows-specific "\r\n" newlines
                     if (cursor.c == '\r' and input.len > i + 1 and input[i + 1] == '\n') {
-                        this.columns += 1;
+                        this.columns = this.columns.addScalar(1);
                         continue;
                     }
 
-                    this.lines += 1;
-                    this.columns = 0;
+                    this.lines = this.lines.addScalar(1);
+                    this.columns = bun.Ordinal.start;
                 },
                 else => |c| {
                     // Mozilla's "source-map" library counts columns using UTF-16 code units
-                    this.columns += switch (c) {
+                    this.columns = this.columns.addScalar(switch (c) {
                         0...0xFFFF => 1,
                         else => 2,
-                    };
+                    });
                 },
             }
         }
@@ -1329,19 +1333,19 @@ pub const LineColumnOffset = struct {
             assert(!bun.strings.containsChar(remain, '\r'));
         }
 
-        this.columns += @intCast(remain.len);
+        this.columns = this.columns.addScalar(@intCast(remain.len));
     }
 
     pub fn comesBefore(a: LineColumnOffset, b: LineColumnOffset) bool {
-        return a.lines < b.lines or (a.lines == b.lines and a.columns < b.columns);
+        return a.lines.zeroBased() < b.lines.zeroBased() or (a.lines.zeroBased() == b.lines.zeroBased() and a.columns.zeroBased() < b.columns.zeroBased());
     }
 
     pub fn cmp(_: void, a: LineColumnOffset, b: LineColumnOffset) std.math.Order {
-        if (a.lines != b.lines) {
-            return std.math.order(a.lines, b.lines);
+        if (a.lines.zeroBased() != b.lines.zeroBased()) {
+            return std.math.order(a.lines.zeroBased(), b.lines.zeroBased());
         }
 
-        return std.math.order(a.columns, b.columns);
+        return std.math.order(a.columns.zeroBased(), b.columns.zeroBased());
     }
 };
 
@@ -1398,8 +1402,8 @@ pub const SourceMapPieces = struct {
 
         while (current < mappings.len) {
             if (mappings[current] == ';') {
-                generated.lines += 1;
-                generated.columns = 0;
+                generated.lines = generated.lines.addScalar(1);
+                generated.columns = bun.Ordinal.start;
                 prev_shift_column_delta = 0;
                 current += 1;
                 continue;
@@ -1408,7 +1412,7 @@ pub const SourceMapPieces = struct {
             const potential_end_of_run = current;
 
             const decode_result = decodeVLQ(mappings, current);
-            generated.columns += decode_result.value;
+            generated.columns = generated.columns.addScalar(decode_result.value);
             current = decode_result.start;
 
             const potential_start_of_run = current;
@@ -1439,15 +1443,15 @@ pub const SourceMapPieces = struct {
             }
 
             const shift = shifts[0];
-            if (shift.after.lines != generated.lines) {
+            if (shift.after.lines.zeroBased() != generated.lines.zeroBased()) {
                 continue;
             }
 
             j.pushStatic(mappings[start_of_run..potential_end_of_run]);
 
-            assert(shift.before.lines == shift.after.lines);
+            assert(shift.before.lines.zeroBased() == shift.after.lines.zeroBased());
 
-            const shift_column_delta = shift.after.columns - shift.before.columns;
+            const shift_column_delta = shift.after.columns.zeroBased() - shift.before.columns.zeroBased();
             const vlq_value = decode_result.value + shift_column_delta - prev_shift_column_delta;
             const encode = VLQ.encode(vlq_value);
             j.pushCloned(encode.slice());

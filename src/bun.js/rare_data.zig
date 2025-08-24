@@ -7,6 +7,7 @@ stderr_store: ?*Blob.Store = null,
 stdin_store: ?*Blob.Store = null,
 stdout_store: ?*Blob.Store = null,
 
+mysql_context: bun.api.MySQL.MySQLContext = .{},
 postgresql_context: bun.api.Postgres.PostgresSQLContext = .{},
 
 entropy_cache: ?*EntropyCache = null,
@@ -38,6 +39,8 @@ s3_default_client: jsc.Strong.Optional = .empty,
 default_csrf_secret: []const u8 = "",
 
 valkey_context: ValkeyContext = .{},
+
+tls_default_ciphers: ?[:0]const u8 = null,
 
 const PipeReadBuffer = [256 * 1024]u8;
 const DIGESTED_HMAC_256_LEN = 32;
@@ -421,6 +424,31 @@ pub export fn Bun__Process__getStdinFdType(vm: *jsc.VirtualMachine, fd: i32) Std
     }
 }
 
+fn setTLSDefaultCiphersFromJS(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const vm = globalThis.bunVM();
+    const args = callframe.arguments();
+    const ciphers = if (args.len > 0) args[0] else .js_undefined;
+    if (!ciphers.isString()) return globalThis.throwInvalidArgumentTypeValue("ciphers", "string", ciphers);
+    var sliced = try ciphers.toSlice(globalThis, bun.default_allocator);
+    defer sliced.deinit();
+    vm.rareData().setTLSDefaultCiphers(sliced.slice());
+    return .js_undefined;
+}
+
+fn getTLSDefaultCiphersFromJS(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const vm = globalThis.bunVM();
+    const ciphers = vm.rareData().tlsDefaultCiphers() orelse return try bun.String.createUTF8ForJS(globalThis, bun.uws.get_default_ciphers());
+
+    return try bun.String.createUTF8ForJS(globalThis, ciphers);
+}
+
+comptime {
+    const js_setTLSDefaultCiphers = jsc.toJSHostFn(setTLSDefaultCiphersFromJS);
+    @export(&js_setTLSDefaultCiphers, .{ .name = "Bun__setTLSDefaultCiphers" });
+    const js_getTLSDefaultCiphers = jsc.toJSHostFn(getTLSDefaultCiphersFromJS);
+    @export(&js_getTLSDefaultCiphers, .{ .name = "Bun__getTLSDefaultCiphers" });
+}
+
 pub fn spawnIPCContext(rare: *RareData, vm: *jsc.VirtualMachine) *uws.SocketContext {
     if (rare.spawn_ipc_usockets_context) |ctx| {
         return ctx;
@@ -466,6 +494,17 @@ pub fn s3DefaultClient(rare: *RareData, globalThis: *jsc.JSGlobalObject) jsc.JSV
     };
 }
 
+pub fn tlsDefaultCiphers(this: *RareData) ?[:0]const u8 {
+    return this.tls_default_ciphers orelse null;
+}
+
+pub fn setTLSDefaultCiphers(this: *RareData, ciphers: []const u8) void {
+    if (this.tls_default_ciphers) |old_ciphers| {
+        bun.default_allocator.free(old_ciphers);
+    }
+    this.tls_default_ciphers = bun.default_allocator.dupeZ(u8, ciphers) catch bun.outOfMemory();
+}
+
 pub fn defaultCSRFSecret(this: *RareData) []const u8 {
     if (this.default_csrf_secret.len == 0) {
         const secret = bun.default_allocator.alloc(u8, 16) catch bun.outOfMemory();
@@ -496,6 +535,11 @@ pub fn deinit(this: *RareData) void {
     if (this.websocket_deflate) |deflate| {
         this.websocket_deflate = null;
         deflate.deinit();
+    }
+
+    if (this.tls_default_ciphers) |ciphers| {
+        this.tls_default_ciphers = null;
+        bun.default_allocator.free(ciphers);
     }
 
     this.valkey_context.deinit();

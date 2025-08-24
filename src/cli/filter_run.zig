@@ -255,7 +255,7 @@ const State = struct {
     fn redraw(this: *This, is_abort: bool) !void {
         if (!this.pretty_output) return;
         this.draw_buf.clearRetainingCapacity();
-        try this.draw_buf.appendSlice("\x1b[?2026h");
+        try this.draw_buf.appendSlice(Output.synchronized_start);
         if (this.last_lines_written > 0) {
             // move cursor to the beginning of the line and clear it
             try this.draw_buf.appendSlice("\x1b[0G\x1b[K");
@@ -324,7 +324,7 @@ const State = struct {
                 try this.draw_buf.writer().print(fmt("<cyan><d>Waiting for {d} other script(s)<r>\n"), .{handle.remaining_dependencies});
             }
         }
-        try this.draw_buf.appendSlice("\x1b[?2026l");
+        try this.draw_buf.appendSlice(Output.synchronized_end);
         this.last_lines_written = 0;
         for (this.draw_buf.items) |c| {
             if (c == '\n') {

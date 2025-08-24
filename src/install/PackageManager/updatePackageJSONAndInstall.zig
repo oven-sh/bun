@@ -22,6 +22,7 @@ pub fn updatePackageJSONAndInstallWithManager(
 
                 Global.exit(0);
             },
+            .update => {},
             else => {},
         }
     }
@@ -54,6 +55,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdatesAndUpdateRequests(
         original_cwd,
     );
 }
+
 fn updatePackageJSONAndInstallWithManagerWithUpdates(
     manager: *PackageManager,
     ctx: Command.Context,

@@ -6,7 +6,7 @@
 
 const Blob = @This();
 
-const debug = Output.scoped(.Blob, false);
+const debug = Output.scoped(.Blob, .visible);
 
 pub const Store = @import("./blob/Store.zig");
 pub const read_file = @import("./blob/read_file.zig");
@@ -1464,6 +1464,15 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
     return writeFileWithSourceDestination(globalThis, &source_blob, &destination_blob, options);
 }
 
+fn validateWritableBlob(globalThis: *jsc.JSGlobalObject, blob: *Blob) bun.JSError!void {
+    const store = blob.store orelse {
+        return globalThis.throw("Cannot write to a detached Blob", .{});
+    };
+    if (store.data == .bytes) {
+        return globalThis.throwInvalidArguments("Cannot write to a Blob backed by bytes, which are always read-only", .{});
+    }
+}
+
 /// `Bun.write(destination, input, options?)`
 pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.arguments();
@@ -1479,12 +1488,7 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
     }
     // "Blob" must actually be a BunFile, not a webcore blob.
     if (path_or_blob == .blob) {
-        const store = path_or_blob.blob.store orelse {
-            return globalThis.throw("Cannot write to a detached Blob", .{});
-        };
-        if (store.data == .bytes) {
-            return globalThis.throwInvalidArguments("Cannot write to a Blob backed by bytes, which are always read-only", .{});
-        }
+        try validateWritableBlob(globalThis, &path_or_blob.blob);
     }
 
     const data = args.nextEat() orelse {
@@ -2132,11 +2136,11 @@ fn getExistsSync(this: *Blob) jsc.JSValue {
 
     // If there's no store that means it's empty and we just return true
     // it will not error to return an empty Blob
-    const store = this.store orelse return JSValue.jsBoolean(true);
+    const store = this.store orelse return .true;
 
     if (store.data == .bytes) {
         // Bytes will never error
-        return JSValue.jsBoolean(true);
+        return .true;
     }
 
     // We say regular files and pipes exist.
@@ -2224,6 +2228,8 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
 
+    try validateWritableBlob(globalThis, this);
+
     const data = args.nextEat() orelse {
         return globalThis.throwInvalidArguments("blob.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
     };
@@ -2275,13 +2281,14 @@ pub fn doUnlink(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
     const arguments = callframe.arguments_old(1).slice();
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
-    const store = this.store orelse {
-        return jsc.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Blob is detached", .{}));
-    };
+
+    try validateWritableBlob(globalThis, this);
+
+    const store = this.store.?;
     return switch (store.data) {
         .s3 => |*s3| try s3.unlink(store, globalThis, args.nextEat()),
         .file => |file| file.unlink(globalThis),
-        else => jsc.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Blob is read-only", .{})),
+        else => unreachable, // validateWritableBlob should have caught this
     };
 }
 
@@ -2569,9 +2576,9 @@ pub fn getWriter(
         return globalThis.throwInvalidArguments("options must be an object or undefined", .{});
     }
 
-    var store = this.store orelse {
-        return globalThis.throwInvalidArguments("Blob is detached", .{});
-    };
+    try validateWritableBlob(globalThis, this);
+
+    var store = this.store.?;
     if (this.isS3()) {
         const s3 = &this.store.?.data.s3;
         const path = s3.path();
@@ -2624,9 +2631,6 @@ pub fn getWriter(
             proxy_url,
             null,
         );
-    }
-    if (store.data != .file) {
-        return globalThis.throwInvalidArguments("Blob is read-only", .{});
     }
 
     if (Environment.isWindows) {
@@ -2703,7 +2707,7 @@ pub fn getWriter(
                 .path = ZigString.Slice.fromUTF8NeverFree(
                     store.data.file.pathlike.path.slice(),
                 ).cloneIfNeeded(
-                    globalThis.allocator(),
+                    bun.default_allocator,
                 ) catch bun.outOfMemory(),
             };
         }
@@ -3008,6 +3012,33 @@ pub fn getSizeForBindings(this: *Blob) u64 {
 
 export fn Bun__Blob__getSizeForBindings(this: *Blob) callconv(.C) u64 {
     return this.getSizeForBindings();
+}
+
+export fn Blob__getDataPtr(value: jsc.JSValue) callconv(.C) ?*anyopaque {
+    const blob = Blob.fromJS(value) orelse return null;
+    const data = blob.sharedView();
+    if (data.len == 0) return null;
+    return @constCast(data.ptr);
+}
+
+export fn Blob__getSize(value: jsc.JSValue) callconv(.C) usize {
+    const blob = Blob.fromJS(value) orelse return 0;
+    const data = blob.sharedView();
+    return data.len;
+}
+
+export fn Blob__fromBytes(globalThis: *jsc.JSGlobalObject, ptr: ?[*]const u8, len: usize) callconv(.C) *Blob {
+    if (ptr == null or len == 0) {
+        const blob = new(initEmpty(globalThis));
+        blob.allocator = bun.default_allocator;
+        return blob;
+    }
+
+    const bytes = bun.default_allocator.dupe(u8, ptr.?[0..len]) catch bun.outOfMemory();
+    const store = Store.init(bytes, bun.default_allocator);
+    var blob = initWithStore(store, globalThis);
+    blob.allocator = bun.default_allocator;
+    return new(blob);
 }
 
 pub fn getStat(this: *Blob, globalThis: *jsc.JSGlobalObject, callback: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -4359,7 +4390,7 @@ pub const Internal = struct {
 
     pub fn toStringOwned(this: *@This(), globalThis: *jsc.JSGlobalObject) JSValue {
         const bytes_without_bom = strings.withoutUTF8BOM(this.bytes.items);
-        if (strings.toUTF16Alloc(globalThis.allocator(), bytes_without_bom, false, false) catch &[_]u16{}) |out| {
+        if (strings.toUTF16Alloc(bun.default_allocator, bytes_without_bom, false, false) catch &[_]u16{}) |out| {
             const return_value = ZigString.toExternalU16(out.ptr, out.len, globalThis);
             return_value.ensureStillAlive();
             this.deinit();

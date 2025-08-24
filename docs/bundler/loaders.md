@@ -1,6 +1,6 @@
 The Bun bundler implements a set of default loaders out of the box. As a rule of thumb, the bundler and the runtime both support the same set of file types out of the box.
 
-`.js` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx` `.jsx` `.toml` `.json` `.txt` `.wasm` `.node` `.html`
+`.js` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx` `.jsx` `.toml` `.json` `.yaml` `.yml` `.txt` `.wasm` `.node` `.html`
 
 Bun uses the file extension to determine which built-in _loader_ should be used to parse the file. Every loader has a name, such as `js`, `tsx`, or `json`. These names are used when building [plugins](https://bun.com/docs/bundler/plugins) that extend Bun with custom loaders.
 
@@ -120,6 +120,55 @@ export default {
 ```
 
 {% /codetabs %}
+
+### `yaml`
+
+**YAML loader**. Default for `.yaml` and `.yml`.
+
+YAML files can be directly imported. Bun will parse them with its fast native YAML parser.
+
+```ts
+import config from "./config.yaml";
+config.database.host; // => "localhost"
+
+// via import attribute:
+// import myCustomYAML from './my.config' with {type: "yaml"};
+```
+
+During bundling, the parsed YAML is inlined into the bundle as a JavaScript object.
+
+```ts
+var config = {
+  database: {
+    host: "localhost",
+    port: 5432
+  },
+  // ...other fields
+};
+config.database.host;
+```
+
+If a `.yaml` or `.yml` file is passed as an entrypoint, it will be converted to a `.js` module that `export default`s the parsed object.
+
+{% codetabs %}
+
+```yaml#Input
+name: John Doe
+age: 35
+email: johndoe@example.com
+```
+
+```js#Output
+export default {
+  name: "John Doe",
+  age: 35,
+  email: "johndoe@example.com"
+}
+```
+
+{% /codetabs %}
+
+For more details on YAML support including the runtime API `Bun.YAML.parse()`, see the [YAML API documentation](/docs/api/yaml).
 
 ### `text`
 

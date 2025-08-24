@@ -46,7 +46,7 @@ pub fn toJS(
 
 const bun = @import("bun");
 const std = @import("std");
-const Data = @import("../Data.zig").Data;
+const Data = @import("../../shared/Data.zig").Data;
 
 const int_types = @import("./int_types.zig");
 const short = int_types.short;

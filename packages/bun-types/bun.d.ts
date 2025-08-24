@@ -1628,7 +1628,7 @@ declare module "bun" {
     kind: ImportKind;
   }
 
-  namespace _BunBuildInterface {
+  namespace Build {
     type Architecture = "x64" | "arm64";
     type Libc = "glibc" | "musl";
     type SIMD = "baseline" | "modern";
@@ -1641,6 +1641,7 @@ declare module "bun" {
       | `bun-windows-x64-${SIMD}`
       | `bun-linux-x64-${SIMD}-${Libc}`;
   }
+
   /**
    * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
    */
@@ -1836,7 +1837,7 @@ declare module "bun" {
   }
 
   interface CompileBuildOptions {
-    target?: _BunBuildInterface.Target;
+    target?: Bun.Build.Target;
     execArgv?: string[];
     executablePath?: string;
     outfile?: string;
@@ -1878,7 +1879,7 @@ declare module "bun" {
      * });
      * ```
      */
-    compile: boolean | _BunBuildInterface.Target | CompileBuildOptions;
+    compile: boolean | Bun.Build.Target | CompileBuildOptions;
   }
 
   /**

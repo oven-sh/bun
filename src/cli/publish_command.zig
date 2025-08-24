@@ -334,7 +334,7 @@ pub const PublishCommand = struct {
                 Global.crash();
             };
 
-            publish(false, &context) catch |err| {
+            publish(false, &context, cli.tolerate_republish) catch |err| {
                 switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
                     error.NeedAuth => {
@@ -381,7 +381,7 @@ pub const PublishCommand = struct {
         // TODO: read this into memory
         _ = bun.sys.unlink(context.abs_tarball_path);
 
-        publish(true, &context) catch |err| {
+        publish(true, &context, cli.tolerate_republish) catch |err| {
             switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
                 error.NeedAuth => {
@@ -451,15 +451,38 @@ pub const PublishCommand = struct {
         NeedAuth,
     };
 
+    fn isRepublishError(status_code: u32, response_body: []const u8) bool {
+        // Only check for republish errors on 403/409 status codes
+        if (status_code != 403 and status_code != 409) {
+            return false;
+        }
+
+        // Check for common republish error messages
+        return strings.containsComptime(response_body, "cannot publish over") or
+            strings.containsComptime(response_body, "already exists") or
+            strings.containsComptime(response_body, "already published") or
+            strings.containsComptime(response_body, "previously published") or
+            strings.containsComptime(response_body, "version already exists") or
+            strings.containsComptime(response_body, "Cannot publish over") or
+            strings.containsComptime(response_body, "Already exists") or
+            strings.containsComptime(response_body, "You cannot publish");
+    }
+
     pub fn publish(
         comptime directory_publish: bool,
         ctx: *const Context(directory_publish),
+        tolerate_republish: bool,
     ) PublishError!void {
         const registry = ctx.manager.scopeForPackageName(ctx.package_name);
 
         if (registry.token.len == 0 and (registry.url.password.len == 0 or registry.url.username.len == 0)) {
             return error.NeedAuth;
         }
+
+        // TODO: Implement Yarn's proactive approach here
+        // When --tolerate-republish is enabled, we should check if package version already exists
+        // BEFORE doing any expensive work (packing, uploading, etc.) by making a GET request
+        // to the registry API. For now, we use the reactive approach below.
 
         // continues from `printSummary`
         Output.pretty(
@@ -552,6 +575,12 @@ pub const PublishCommand = struct {
                 };
 
                 if (!prompt_for_otp) {
+                    // Check if this is a republish error and we should tolerate it
+                    if (tolerate_republish and isRepublishError(res.status_code, response_buf.list.items)) {
+                        Output.prettyln("<yellow>warning<r>: Registry already knows about version {s}; skipping.", .{Dependency.withoutBuildTag(ctx.package_version)});
+                        return; // Skip publishing entirely
+                    }
+                    
                     // general error
                     const otp_response = false;
                     try Npm.responseError(
@@ -611,6 +640,12 @@ pub const PublishCommand = struct {
 
                 switch (otp_res.status_code) {
                     400...std.math.maxInt(@TypeOf(otp_res.status_code)) => {
+                        // Check if this is a republish error and we should tolerate it
+                        if (tolerate_republish and isRepublishError(otp_res.status_code, response_buf.list.items)) {
+                            Output.prettyln("<yellow>warning<r>: Registry already knows about version {s}; skipping.", .{Dependency.withoutBuildTag(ctx.package_version)});
+                            return; // Skip publishing entirely
+                        }
+                        
                         const otp_response = true;
                         try Npm.responseError(
                             ctx.allocator,

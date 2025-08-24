@@ -1950,6 +1950,8 @@ inline fn createScope(
     var tag_to_use = tag;
 
     if (tag_to_use == .only or parent.tag == .only) {
+        // Prevent test.only in CI environments
+        try errorInCI(globalThis, (if (is_test) "test" else "describe") ++ ".only is not allowed in CI environments");
         Jest.runner.?.setOnly();
         tag_to_use = .only;
     } else if (is_test and Jest.runner.?.only and parent.tag != .only) {
@@ -2330,6 +2332,8 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
             const tag = parent.tag;
 
             if (tag == .only) {
+                // Prevent test.only in CI environments
+                try errorInCI(globalThis, ".only is not allowed in CI environments");
                 Jest.runner.?.setOnly();
             }
 
@@ -2481,8 +2485,16 @@ fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObject)
     return 0;
 }
 
+pub fn errorInCI(globalObject: *jsc.JSGlobalObject, message: []const u8) bun.JSError!void {
+    if (!bun.FeatureFlags.breaking_changes_1_3) return; // this is a breaking change for version 1.3
+    if (ci_info.detectCI()) |_| {
+        return globalObject.throwPretty("{s}\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{message});
+    }
+}
+
 const string = []const u8;
 
+const ci_info = @import("../../ci_info.zig");
 const std = @import("std");
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const Snapshots = @import("./snapshot.zig").Snapshots;

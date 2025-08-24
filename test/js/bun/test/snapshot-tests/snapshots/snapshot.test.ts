@@ -208,7 +208,9 @@ class SnapshotTester {
         expect(await this.getSnapshotContents()).toBe(this.targetSnapshotContents);
       }
       // update snapshots now, using -u flag unless this is the first run
-      await $`cd ${this.dir} && ${bunExe()} test ${isFirst && !opts.forceUpdate ? "" : "-u"} ./snapshot.test.ts`.quiet();
+      await $`cd ${this.dir} && ${bunExe()} test ${isFirst && !opts.forceUpdate ? "" : "-u"} ./snapshot.test.ts`
+        .quiet()
+        .env({ ...bunEnv, CI: "false" });
       // make sure the snapshot changed & didn't grow
       const newContents = await this.getSnapshotContents();
       if (!isFirst) {
@@ -218,7 +220,7 @@ class SnapshotTester {
       this.targetSnapshotContents = newContents;
     }
     // run, make sure snapshot does not change
-    await $`cd ${this.dir} && ${bunExe()} test ./snapshot.test.ts`.quiet();
+    await $`cd ${this.dir} && ${bunExe()} test ./snapshot.test.ts`.quiet().env({ ...bunEnv, CI: "false" });
     if (!opts.shouldGrow) {
       expect(await this.getSnapshotContents()).toBe(this.targetSnapshotContents);
     } else {
@@ -390,7 +392,7 @@ class InlineSnapshotTester {
 
     const spawnres = Bun.spawnSync({
       cmd: [bunExe(), "test", ...(eopts.update ? ["-u"] : []), thefile],
-      env: bunEnv,
+      env: { ...bunEnv, CI: "false" },
       cwd: this.tmpdir,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -424,7 +426,7 @@ class InlineSnapshotTester {
       // run without update, expect error
       const spawnres = Bun.spawnSync({
         cmd: [bunExe(), "test", thefile],
-        env: bunEnv,
+        env: { ...bunEnv, CI: "false" },
         cwd: this.tmpdir,
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -436,7 +438,7 @@ class InlineSnapshotTester {
     {
       const spawnres = Bun.spawnSync({
         cmd: [bunExe(), "test", ...(use_update ? ["-u"] : []), thefile],
-        env: bunEnv,
+        env: { ...bunEnv, CI: "false" },
         cwd: this.tmpdir,
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -454,7 +456,7 @@ class InlineSnapshotTester {
     {
       const spawnres = Bun.spawnSync({
         cmd: [bunExe(), "test", thefile],
-        env: bunEnv,
+        env: { ...bunEnv, CI: "false" },
         cwd: this.tmpdir,
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -472,7 +474,7 @@ class InlineSnapshotTester {
     {
       const spawnres = Bun.spawnSync({
         cmd: [bunExe(), "test", "-u", thefile],
-        env: bunEnv,
+        env: { ...bunEnv, CI: "false" },
         cwd: this.tmpdir,
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -954,11 +956,11 @@ test("write snapshot from filter", async () => {
       },
     },
   });
-  await $`cd ${dir} && ${bunExe()} test mytests`;
+  await $`cd ${dir} && ${bunExe()} test mytests`.env({ ...bunEnv, CI: "false" });
   expect(await Bun.file(dir + "/mytests/snap.test.ts").text()).toBe(sver("a", true));
   expect(await Bun.file(dir + "/mytests/snap2.test.ts").text()).toBe(sver("b", true));
   expect(await Bun.file(dir + "/mytests/more/testing.test.ts").text()).toBe(sver("TEST", true));
-  await $`cd ${dir} && ${bunExe()} test mytests`;
+  await $`cd ${dir} && ${bunExe()} test mytests`.env({ ...bunEnv, CI: "false" });
   expect(await Bun.file(dir + "/mytests/snap.test.ts").text()).toBe(sver("a", true));
   expect(await Bun.file(dir + "/mytests/snap2.test.ts").text()).toBe(sver("b", true));
   expect(await Bun.file(dir + "/mytests/more/testing.test.ts").text()).toBe(sver("TEST", true));

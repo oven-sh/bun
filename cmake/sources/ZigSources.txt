@@ -691,6 +691,7 @@ src/install/bin.zig
 src/install/dependency.zig
 src/install/ExternalSlice.zig
 src/install/extract_tarball.zig
+src/install/filesystem_utils.zig
 src/install/hoisted_install.zig
 src/install/install_binding.zig
 src/install/install.zig

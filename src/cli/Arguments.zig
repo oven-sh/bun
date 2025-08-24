@@ -103,6 +103,9 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
     clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
     clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
+    clap.parseParam("--use-system-ca                   Use the system's trusted certificate authorities") catch unreachable,
+    clap.parseParam("--use-openssl-ca                  Use OpenSSL's default CA store") catch unreachable,
+    clap.parseParam("--use-bundled-ca                  Use bundled CA store") catch unreachable,
     clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
     clap.parseParam("--sql-preconnect                  Preconnect to PostgreSQL at startup") catch unreachable,
     clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
@@ -745,6 +748,25 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.flag("--zero-fill-buffers")) {
             Bun__Node__ZeroFillBuffers = true;
         }
+        if (args.flag("--use-system-ca")) {
+            Bun__Node__UseSystemCA = true;
+        }
+
+        // Node.js compatibility: validate mutually exclusive CA flags
+        const use_openssl_ca = args.flag("--use-openssl-ca");
+        const use_bundled_ca = args.flag("--use-bundled-ca");
+
+        if (use_openssl_ca and use_bundled_ca) {
+            Output.prettyErrorln("<r><red>error<r>: either --use-openssl-ca or --use-bundled-ca can be used, not both", .{});
+            Global.exit(1);
+        }
+
+        // For now, --use-openssl-ca behaves like --use-system-ca (use system CA store)
+        if (use_openssl_ca) {
+            Bun__Node__UseSystemCA = true;
+        }
+        // --use-bundled-ca is the default behavior (only use bundled certs)
+        // So we don't need to set anything special for it
     }
 
     if (opts.port != null and opts.origin == null) {
@@ -1245,6 +1267,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 export var Bun__Node__ZeroFillBuffers = false;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
+pub export var Bun__Node__UseSystemCA = false;
 
 const string = []const u8;
 

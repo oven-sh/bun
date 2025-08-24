@@ -133,12 +133,7 @@ fn handleOnEndCallbacks(
     promise: *jsc.JSPromise,
     globalThis: *jsc.JSGlobalObject,
 ) bool {
-    const onEndResult = plugin.runOnEndCallbacks(root_obj);
-
-    if (globalThis.tryTakeException()) |err| {
-        promise.reject(globalThis, err);
-        return true;
-    }
+    const onEndResult = jsc.JSPromise.wrap(globalThis, bun.jsc.API.JSBundler.Plugin.runOnEndCallbacks, .{ plugin, root_obj });
 
     if (onEndResult.asPromise()) |onEndPromise| {
         switch (onEndPromise.status(globalThis.vm())) {

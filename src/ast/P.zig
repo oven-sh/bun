@@ -1994,6 +1994,9 @@ pub fn NewParser_(
                 p.jest.afterEach = try p.declareCommonJSSymbol(.unbound, "afterEach");
                 p.jest.beforeAll = try p.declareCommonJSSymbol(.unbound, "beforeAll");
                 p.jest.afterAll = try p.declareCommonJSSymbol(.unbound, "afterAll");
+                p.jest.xit = try p.declareCommonJSSymbol(.unbound, "xit");
+                p.jest.xtest = try p.declareCommonJSSymbol(.unbound, "xtest");
+                p.jest.xdescribe = try p.declareCommonJSSymbol(.unbound, "xdescribe");
             }
 
             if (p.options.features.react_fast_refresh) {

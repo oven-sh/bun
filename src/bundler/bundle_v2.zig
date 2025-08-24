@@ -1913,6 +1913,10 @@ pub const BundleV2 = struct {
                 },
             );
 
+            if (this.plugins) |plugins| {
+                _ = plugins.runOnEndPlugins(root_obj);
+            }
+
             promise.resolve(globalThis, root_obj);
         }
 
@@ -2010,6 +2014,12 @@ pub const BundleV2 = struct {
                             return promise.reject(globalThis, err);
                         },
                     );
+
+                    // Run onEnd plugins before resolving - success case
+                    if (this.plugins) |plugins| {
+                        _ = plugins.runOnEndPlugins(root_obj);
+                    }
+
                     promise.resolve(globalThis, root_obj);
                 },
             }

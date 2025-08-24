@@ -141,7 +141,7 @@ During bundling, the parsed YAML is inlined into the bundle as a JavaScript obje
 var config = {
   database: {
     host: "localhost",
-    port: 5432
+    port: 5432,
   },
   // ...other fields
 };

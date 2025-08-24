@@ -334,7 +334,7 @@ pub const PublishCommand = struct {
                 Global.crash();
             };
 
-            publish(false, &context, cli.tolerate_republish) catch |err| {
+            publish(false, &context) catch |err| {
                 switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
                     error.NeedAuth => {
@@ -381,7 +381,7 @@ pub const PublishCommand = struct {
         // TODO: read this into memory
         _ = bun.sys.unlink(context.abs_tarball_path);
 
-        publish(true, &context, cli.tolerate_republish) catch |err| {
+        publish(true, &context) catch |err| {
             switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
                 error.NeedAuth => {
@@ -471,7 +471,6 @@ pub const PublishCommand = struct {
     pub fn publish(
         comptime directory_publish: bool,
         ctx: *const Context(directory_publish),
-        tolerate_republish: bool,
     ) PublishError!void {
         const registry = ctx.manager.scopeForPackageName(ctx.package_name);
 
@@ -483,6 +482,7 @@ pub const PublishCommand = struct {
         // When --tolerate-republish is enabled, we should check if package version already exists
         // BEFORE doing any expensive work (packing, uploading, etc.) by making a GET request
         // to the registry API. For now, we use the reactive approach below.
+        const tolerate_republish = ctx.manager.options.publish_config.tolerate_republish;
 
         // continues from `printSummary`
         Output.pretty(

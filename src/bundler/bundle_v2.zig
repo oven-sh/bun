@@ -124,6 +124,50 @@ fn onEndReject(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
     return .js_undefined;
 }
 
+/// Returns true if the caller should stop processing the onEnd callbacks.
+/// If the caller should continue, it will return false.
+/// Continue probably means like "resolve the promise"
+fn handleOnEndCallbacks(
+    plugin: *bun.jsc.API.JSBundler.Plugin,
+    root_obj: jsc.JSValue,
+    promise: *jsc.JSPromise,
+    globalThis: *jsc.JSGlobalObject,
+) bool {
+    const onEndResult = plugin.runOnEndCallbacks(root_obj);
+
+    if (globalThis.hasException()) {
+        const err = globalThis.takeException();
+        promise.reject(globalThis, err);
+        return true;
+    }
+
+    if (onEndResult.asPromise()) |onEndPromise| {
+        switch (onEndPromise.status(globalThis.vm())) {
+            .pending => {
+                const ctx = bun.default_allocator.create(OnEndContext) catch {
+                    promise.resolve(globalThis, root_obj);
+                    return true;
+                };
+                ctx.* = .{
+                    .bundle_promise = promise,
+                    .build_result = root_obj,
+                };
+
+                onEndResult.then(globalThis, ctx, onEndResolve, onEndReject);
+                return true;
+            },
+            .fulfilled => {},
+            .rejected => {
+                const err = onEndPromise.result(globalThis.vm());
+                promise.reject(globalThis, err);
+                return true;
+            },
+        }
+    }
+
+    return false;
+}
+
 pub const BundleV2 = struct {
     transpiler: *Transpiler,
     /// When Server Component is enabled, this is used for the client bundles
@@ -1954,30 +1998,8 @@ pub const BundleV2 = struct {
             );
 
             if (this.plugins) |plugin| {
-                const onEndResult = plugin.runOnEndCallbacks(root_obj);
-
-                if (onEndResult.asPromise()) |onEndPromise| {
-                    switch (onEndPromise.status(globalThis.vm())) {
-                        .pending => {
-                            const ctx = bun.default_allocator.create(OnEndContext) catch {
-                                promise.resolve(globalThis, root_obj);
-                                return;
-                            };
-                            ctx.* = .{
-                                .bundle_promise = promise,
-                                .build_result = root_obj,
-                            };
-
-                            onEndResult.then(globalThis, ctx, onEndResolve, onEndReject);
-                            return;
-                        },
-                        .fulfilled => {},
-                        .rejected => {
-                            const err = onEndPromise.result(globalThis.vm());
-                            promise.reject(globalThis, err);
-                            return;
-                        },
-                    }
+                if (handleOnEndCallbacks(plugin, root_obj, promise, globalThis)) {
+                    return;
                 }
             }
 
@@ -2080,30 +2102,8 @@ pub const BundleV2 = struct {
                     );
 
                     if (this.plugins) |plugin| {
-                        const onEndResult = plugin.runOnEndCallbacks(root_obj);
-
-                        if (onEndResult.asPromise()) |onEndPromise| {
-                            switch (onEndPromise.status(globalThis.vm())) {
-                                .pending => {
-                                    const ctx = bun.default_allocator.create(OnEndContext) catch {
-                                        promise.resolve(globalThis, root_obj);
-                                        return;
-                                    };
-                                    ctx.* = .{
-                                        .bundle_promise = promise,
-                                        .build_result = root_obj,
-                                    };
-
-                                    onEndResult.then(globalThis, ctx, onEndResolve, onEndReject);
-                                    return;
-                                },
-                                .fulfilled => {},
-                                .rejected => {
-                                    const err = onEndPromise.result(globalThis.vm());
-                                    promise.reject(globalThis, err);
-                                    return;
-                                },
-                            }
+                        if (handleOnEndCallbacks(plugin, root_obj, promise, globalThis)) {
+                            return;
                         }
                     }
 

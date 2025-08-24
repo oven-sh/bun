@@ -9,22 +9,26 @@ pub fn killAllChildProcesses() void {
         return;
     }
 
+    const current_pid = std.c.getpid();
+    
+    // First, try to kill the entire process group - this is more reliable 
+    // on musl systems where process tree detection may be inconsistent
+    _ = std.c.kill(-current_pid, 15); // SIGTERM to entire process group
+    
+    // Give processes a brief moment to exit gracefully
+    std.time.sleep(50 * std.time.ns_per_ms);
+    
+    // Follow up with SIGKILL to ensure termination
+    _ = std.c.kill(-current_pid, 9); // SIGKILL to entire process group
+    
+    // Also walk the process tree as backup for any processes not in our process group
     var killed = std.AutoHashMap(c_int, void).init(bun.default_allocator);
     defer killed.deinit();
 
-    const current_pid = std.c.getpid();
     const children = getChildPids(current_pid, current_pid) catch return;
     defer if (children.len > 0) bun.default_allocator.free(children);
 
-    // First pass: SIGSTOP all processes in the tree to freeze them
-    for (children) |child| {
-        killProcessTreeRecursive(child, &killed, current_pid, true) catch {};
-    }
-
-    // Clear the killed map for the second pass
-    killed.clearRetainingCapacity();
-
-    // Second pass: SIGKILL all processes in the tree
+    // Kill remaining processes in the tree
     for (children) |child| {
         killProcessTreeRecursive(child, &killed, current_pid, false) catch {};
     }
@@ -131,22 +135,26 @@ fn killProcessTreeRecursive(pid: c_int, killed: *std.AutoHashMap(c_int, void), c
     }
     try killed.put(pid, {});
     
-    if (stop_only) {
-        // First pass: SIGSTOP to freeze the process tree
-        _ = std.c.kill(pid, 19); // SIGSTOP
-    } else {
-        // Second pass: SIGKILL to actually kill the processes
-        _ = std.c.kill(pid, 9); // SIGKILL
-    }
-    
-    // Get children and process them recursively
+    // Get children first to avoid race conditions where killing the parent
+    // might prevent us from finding the children
     const children = getChildPids(pid, current_pid) catch return;
     defer if (children.len > 0) bun.default_allocator.free(children);
     
+    // Process children first (depth-first)
     for (children) |child| {
         if (child > 0) {
             killProcessTreeRecursive(child, killed, current_pid, stop_only) catch {};
         }
+    }
+    
+    if (stop_only) {
+        // First pass: SIGSTOP to freeze the process tree
+        _ = std.c.kill(pid, 19); // SIGSTOP
+    } else {
+        // Second pass: try multiple signals to ensure the process dies
+        _ = std.c.kill(pid, 15); // SIGTERM first
+        std.time.sleep(5 * std.time.ns_per_ms); // Brief delay
+        _ = std.c.kill(pid, 9); // SIGKILL to ensure it dies
     }
 }
 

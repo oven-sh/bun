@@ -382,10 +382,6 @@ public:
         Bun__FileStreamWrapper__onResolveRequestStream,
         Bun__FileSink__onResolveStream,
         Bun__FileSink__onRejectStream,
-        BundleV2__onBuildEndResolve,
-        BundleV2__onBuildEndReject,
-        BundleV2__onEndResolve,
-        BundleV2__onEndReject,
     };
     static constexpr size_t promiseFunctionsSize = 40;
 

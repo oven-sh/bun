@@ -654,7 +654,7 @@ extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)
     plugin->plugin.tombstone();
 }
 
-extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedBuildResult)
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedBuildResult, JSC::EncodedJSValue encodedBuildPromise)
 {
     auto& vm = plugin->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -671,9 +671,11 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundler
 
     MarkedArgumentBuffer arguments;
     arguments.append(JSValue::decode(encodedBuildResult));
+    arguments.append(JSValue::decode(encodedBuildPromise));
 
     // TODO: use AsyncContextFrame?
-    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, runOnEndCallbacksFn, callData, plugin, arguments);
+    auto result
+        = JSC::profiledCall(globalObject, ProfilingReason::API, runOnEndCallbacksFn, callData, plugin, arguments);
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(result);

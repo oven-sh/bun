@@ -102,76 +102,6 @@ fn fmtEscapedNamespace(slice: []const u8, comptime fmt: []const u8, _: std.fmt.F
     try w.writeAll(rest);
 }
 
-const OnEndContext = struct {
-    end_callbacks_promise: *jsc.JSPromise,
-    completion_task: *BundleV2.JSBundleCompletionTask,
-    build_result: jsc.JSValue,
-};
-
-fn onBuildEndResolve(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const args = callframe.arguments();
-
-    const root_obj = args[0];
-    const ctx = args[1].asPromisePtr(OnEndContext);
-    ctx.build_result = root_obj;
-
-    if (ctx.completion_task.plugins) |plugin| {
-        const onEndCallbackResult = jsc.JSPromise.wrap(globalThis, bun.jsc.API.JSBundler.Plugin.runOnEndCallbacks, .{ plugin, root_obj });
-        onEndCallbackResult.then(globalThis, ctx, onEndResolve, onEndReject);
-    } else {
-        defer {
-            ctx.completion_task.deref();
-            bun.default_allocator.destroy(ctx);
-        }
-        ctx.end_callbacks_promise.resolve(globalThis, ctx.build_result);
-    }
-
-    return .js_undefined;
-}
-
-fn onBuildEndReject(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const args = callframe.arguments();
-
-    const reason = args[0];
-    const ctx = args[1].asPromisePtr(OnEndContext);
-    defer {
-        ctx.completion_task.deref();
-        bun.default_allocator.destroy(ctx);
-    }
-
-    ctx.end_callbacks_promise.reject(globalThis, reason);
-
-    return .js_undefined;
-}
-
-fn onEndResolve(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const args = callframe.arguments();
-    const ctx = args[1].asPromisePtr(OnEndContext);
-    defer {
-        ctx.completion_task.deref();
-        bun.default_allocator.destroy(ctx);
-    }
-
-    ctx.end_callbacks_promise.resolve(globalThis, ctx.build_result);
-
-    return .js_undefined;
-}
-
-fn onEndReject(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const args = callframe.arguments();
-
-    const reason = args[0];
-    const ctx = args[1].asPromisePtr(OnEndContext);
-    defer {
-        ctx.completion_task.deref();
-        bun.default_allocator.destroy(ctx);
-    }
-
-    ctx.end_callbacks_promise.reject(globalThis, reason);
-
-    return .js_undefined;
-}
-
 pub const BundleV2 = struct {
     transpiler: *Transpiler,
     /// When Server Component is enabled, this is used for the client bundles
@@ -4396,15 +4326,6 @@ pub const ParseTask = @import("./ParseTask.zig").ParseTask;
 pub const LinkerContext = @import("./LinkerContext.zig").LinkerContext;
 pub const LinkerGraph = @import("./LinkerGraph.zig").LinkerGraph;
 pub const Graph = @import("./Graph.zig");
-
-comptime {
-    if (bun.Environment.export_cpp_apis) {
-        @export(&jsc.toJSHostFn(onBuildEndResolve), .{ .name = "BundleV2__onBuildEndResolve" });
-        @export(&jsc.toJSHostFn(onBuildEndReject), .{ .name = "BundleV2__onBuildEndReject" });
-        @export(&jsc.toJSHostFn(onEndResolve), .{ .name = "BundleV2__onEndResolve" });
-        @export(&jsc.toJSHostFn(onEndReject), .{ .name = "BundleV2__onEndReject" });
-    }
-}
 
 const string = []const u8;
 

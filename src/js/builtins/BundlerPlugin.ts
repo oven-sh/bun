@@ -106,20 +106,35 @@ export function loadAndResolvePluginsForServe(
   return promiseResult;
 }
 
-export function runOnEndCallbacks(this: BundlerPlugin, buildResult: Bun.BuildOutput): Promise<void> | void {
+export function runOnEndCallbacks(
+  this: BundlerPlugin,
+  buildResult: Bun.BuildOutput,
+  buildPromise: Promise<Bun.BuildOutput>,
+): Promise<void> | void {
   if (!this.onEndCallbacks) return;
   const promises: PromiseLike<unknown>[] = [];
 
   for (const callback of this.onEndCallbacks) {
-    const result = callback(buildResult);
+    try {
+      const result = callback(buildResult);
 
-    if (result && $isPromise(result)) {
-      $arrayPush(promises, result);
+      if (result && $isPromise(result)) {
+        $arrayPush(promises, result);
+      }
+    } catch (e) {
+      $arrayPush(promises, Promise.reject(e));
     }
   }
 
   if (promises.length > 0) {
-    return Promise.all(promises); // return this promise - it gets "awaited" in the bundler before the whole build ends
+    return Promise.all(promises).then(
+      () => {
+        $resolvePromise(buildPromise, buildResult);
+      },
+      e => {
+        $rejectPromise(buildPromise, e);
+      },
+    ); // return this promise - it gets "awaited" in the bundler before the whole build ends
   }
 }
 

@@ -4569,14 +4569,6 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__FileSink__onResolveStream;
     } else if (handler == Bun__FileSink__onRejectStream) {
         return GlobalObject::PromiseFunctions::Bun__FileSink__onRejectStream;
-    } else if (handler == BundleV2__onBuildEndResolve) {
-        return GlobalObject::PromiseFunctions::BundleV2__onBuildEndResolve;
-    } else if (handler == BundleV2__onBuildEndReject) {
-        return GlobalObject::PromiseFunctions::BundleV2__onBuildEndReject;
-    } else if (handler == BundleV2__onEndResolve) {
-        return GlobalObject::PromiseFunctions::BundleV2__onEndResolve;
-    } else if (handler == BundleV2__onEndReject) {
-        return GlobalObject::PromiseFunctions::BundleV2__onEndReject;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

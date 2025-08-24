@@ -1,13 +1,13 @@
-import { describe, expect, test } from "bun:test";
-import { itBundled } from "./expectBundled";
+import { describe, expect } from "bun:test";
 import path from "node:path";
+import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   describe("plugin chain behavior", () => {
     // Test that returning undefined/null/{} continues to next plugin
     itBundled("plugin/ResolveChainContinues", ({ root }) => {
       const callOrder: string[] = [];
-      
+
       return {
         files: {
           "index.ts": /* ts */ `
@@ -67,12 +67,7 @@ describe("bundler", () => {
         },
         onAfterBundle() {
           // All plugins should have been called in order
-          expect(callOrder).toEqual([
-            "plugin1-resolve",
-            "plugin2-resolve", 
-            "plugin3-resolve",
-            "plugin4-resolve",
-          ]);
+          expect(callOrder).toEqual(["plugin1-resolve", "plugin2-resolve", "plugin3-resolve", "plugin4-resolve"]);
         },
       };
     });
@@ -80,7 +75,7 @@ describe("bundler", () => {
     // Test that returning a path stops the chain
     itBundled("plugin/ResolveChainStops", ({ root }) => {
       const callOrder: string[] = [];
-      
+
       return {
         files: {
           "index.ts": /* ts */ `
@@ -135,10 +130,7 @@ describe("bundler", () => {
         },
         onAfterBundle() {
           // Only first two plugins should have been called
-          expect(callOrder).toEqual([
-            "plugin1-resolve",
-            "plugin2-resolve",
-          ]);
+          expect(callOrder).toEqual(["plugin1-resolve", "plugin2-resolve"]);
         },
       };
     });
@@ -146,7 +138,7 @@ describe("bundler", () => {
     // Test entry point plugin chain behavior
     itBundled("plugin/EntryPointResolveChain", ({ root }) => {
       const callOrder: string[] = [];
-      
+
       return {
         files: {
           "actual-entry.ts": /* ts */ `
@@ -196,24 +188,19 @@ describe("bundler", () => {
         },
         onAfterBundle() {
           // All plugins should have been called
-          expect(callOrder).toEqual([
-            "plugin1-entry",
-            "plugin2-entry",
-            "plugin3-entry",
-          ]);
+          expect(callOrder).toEqual(["plugin1-entry", "plugin2-entry", "plugin3-entry"]);
         },
       };
     });
 
     // Test with various return values that should continue chain
     for (const returnValue of [undefined, null, {}, { external: undefined }, { namespace: undefined }]) {
-      const valueName = returnValue === undefined ? "undefined" 
-                      : returnValue === null ? "null"
-                      : JSON.stringify(returnValue);
-      
+      const valueName =
+        returnValue === undefined ? "undefined" : returnValue === null ? "null" : JSON.stringify(returnValue);
+
       itBundled(`plugin/ResolveChainContinuesWith${valueName.replace(/[^a-zA-Z0-9]/g, "")}`, ({ root }) => {
         let plugin2Called = false;
-        
+
         return {
           files: {
             "index.ts": /* ts */ `
@@ -256,13 +243,13 @@ describe("bundler", () => {
       });
     }
 
-    // Test that primitives other than null/undefined should continue chain  
+    // Test that primitives other than null/undefined should continue chain
     for (const value of [false, true, 0, 1, "string"]) {
       const valueName = JSON.stringify(value);
-      
+
       itBundled(`plugin/ResolveChainContinuesWithPrimitive${valueName.replace(/[^a-zA-Z0-9]/g, "")}`, ({ root }) => {
         let plugin2Called = false;
-        
+
         return {
           files: {
             "index.ts": /* ts */ `

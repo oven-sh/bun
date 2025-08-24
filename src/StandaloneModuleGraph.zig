@@ -828,7 +828,7 @@ pub const StandaloneModuleGraph = struct {
             inject_options.publisher != null or
             inject_options.version != null or
             inject_options.description != null or
-            inject_options.copyright != null)) 
+            inject_options.copyright != null))
         {
             var zname_buf: bun.OSPathBuffer = undefined;
             const zname_w = bun.strings.toWPathNormalized(&zname_buf, zname) catch |err| {
@@ -836,7 +836,7 @@ pub const StandaloneModuleGraph = struct {
                 cleanup(zname, cloned_executable_fd);
                 return bun.invalid_fd;
             };
-            
+
             // Single call to set all Windows metadata at once
             bun.windows.rescle.setWindowsMetadata(
                 zname_w.ptr,
@@ -1003,11 +1003,12 @@ pub const StandaloneModuleGraph = struct {
 
             // Set Windows icon and/or metadata using unified function
             if (windows_options.icon != null or
-                windows_options.title != null or 
-                windows_options.publisher != null or 
-                windows_options.version != null or 
-                windows_options.description != null or 
-                windows_options.copyright != null) {
+                windows_options.title != null or
+                windows_options.publisher != null or
+                windows_options.version != null or
+                windows_options.description != null or
+                windows_options.copyright != null)
+            {
                 // Need to get the full path to the executable
                 var full_path_buf: bun.OSPathBuffer = undefined;
                 const full_path = brk: {
@@ -1016,7 +1017,7 @@ pub const StandaloneModuleGraph = struct {
                     const dir_path = bun.getFdPath(bun.FD.fromStdDir(root_dir), &dir_buf) catch |err| {
                         return CompileResult.fail(std.fmt.allocPrint(allocator, "Failed to get directory path: {s}", .{@errorName(err)}) catch "Failed to get directory path");
                     };
-                    
+
                     // Join with the outfile name
                     const full_path_str = bun.path.joinAbsString(dir_path, &[_][]const u8{outfile}, .auto);
                     const full_path_w = bun.strings.toWPathNormalized(&full_path_buf, full_path_str);
@@ -1024,7 +1025,7 @@ pub const StandaloneModuleGraph = struct {
                     buf_u16[full_path_w.len] = 0;
                     break :brk buf_u16[0..full_path_w.len :0];
                 };
-                
+
                 bun.windows.rescle.setWindowsMetadata(
                     full_path.ptr,
                     windows_options.icon,
@@ -1477,7 +1478,6 @@ const w = std.os.windows;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Global = bun.Global;
 const Output = bun.Output;
 const SourceMap = bun.sourcemap;
 const StringPointer = bun.StringPointer;

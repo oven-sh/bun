@@ -317,7 +317,7 @@ pub fn writeOutputFilesToDisk(
                 .js,
             .hash = chunk.template.placeholder.hash,
             .output_kind = output_kind,
-            .loader = .js,
+            .loader = chunk.content.loader(),
             .source_map_index = source_map_index,
             .bytecode_index = bytecode_index,
             .size = @as(u32, @truncate(code_result.buffer.len)),

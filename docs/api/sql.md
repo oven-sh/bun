@@ -99,7 +99,7 @@ const users = await mysql`SELECT * FROM users WHERE id = ${userId}`;
 
 // Transactions work the same as PostgreSQL
 await mysql.begin(async tx => {
-  await tx`INSERT INTO users (name) VALUES (${'Alice'})`;
+  await tx`INSERT INTO users (name) VALUES (${"Alice"})`;
   await tx`UPDATE accounts SET balance = balance - 100 WHERE user_id = ${userId}`;
 });
 
@@ -586,23 +586,23 @@ import { SQL } from "bun";
 const db = new SQL({
   // Required for MySQL when using options object
   adapter: "mysql",
-  
+
   // Connection details
   hostname: "localhost",
   port: 3306,
   database: "myapp",
   username: "dbuser",
   password: "secretpass",
-  
+
   // Unix socket connection (alternative to hostname/port)
   // socket: "/var/run/mysqld/mysqld.sock",
-  
+
   // Connection pool settings
   max: 20, // Maximum connections in pool (default: 10)
   idleTimeout: 30, // Close idle connections after 30s
   maxLifetime: 0, // Connection lifetime in seconds (0 = forever)
   connectionTimeout: 30, // Timeout when establishing new connections
-  
+
   // SSL/TLS options
   ssl: "prefer", // or "disable", "require", "verify-ca", "verify-full"
   // tls: {
@@ -611,11 +611,11 @@ const db = new SQL({
   //   key: "path/to/key.pem",
   //   cert: "path/to/cert.pem",
   // },
-  
+
   // MySQL-specific options
   charset: "utf8mb4", // Character set (default: utf8mb4)
   prepare: true, // Use prepared statements (default: true)
-  
+
   // Callbacks
   onconnect: client => {
     console.log("Connected to MySQL");
@@ -1154,7 +1154,6 @@ There's still some things we haven't finished yet.
 - Column name transforms (e.g. `snake_case` to `camelCase`). This is mostly blocked on a unicode-aware implementation of changing the case in C++ using WebKit's `WTF::String`.
 - Column type transforms
 
-
 ## Database-Specific Features
 
 ### MySQL-Specific Features
@@ -1164,6 +1163,7 @@ MySQL has some unique characteristics and optimizations:
 #### Authentication Methods
 
 MySQL supports multiple authentication plugins that are automatically negotiated:
+
 - **`mysql_native_password`** - Traditional MySQL authentication, widely compatible
 - **`caching_sha2_password`** - Default in MySQL 8.0+, more secure with RSA key exchange
 - **`sha256_password`** - SHA-256 based authentication
@@ -1187,7 +1187,7 @@ for (const id of userIds) {
 // Query pipelining - multiple statements sent without waiting
 const [users, orders, products] = await Promise.all([
   mysql`SELECT * FROM users WHERE active = ${true}`,
-  mysql`SELECT * FROM orders WHERE status = ${'pending'}`,
+  mysql`SELECT * FROM orders WHERE status = ${"pending"}`,
   mysql`SELECT * FROM products WHERE in_stock = ${true}`,
 ]);
 ```
@@ -1229,22 +1229,22 @@ Bun automatically sends client information to MySQL for better monitoring:
 
 MySQL types are automatically converted to JavaScript types:
 
-| MySQL Type | JavaScript Type | Notes |
-|------------|----------------|--------|
-| INT, SMALLINT, MEDIUMINT | number | Within safe integer range |
-| BIGINT | string or BigInt | Based on `bigint` option |
-| DECIMAL, NUMERIC | string | To preserve precision |
-| FLOAT, DOUBLE | number | |
-| DATE | Date | JavaScript Date object |
-| DATETIME, TIMESTAMP | Date | With timezone handling |
-| TIME | string | "HH:MM:SS" format |
-| YEAR | number | |
-| CHAR, VARCHAR, TEXT | string | |
-| BINARY, VARBINARY, BLOB | Buffer | Node.js Buffer |
-| JSON | object/array | Automatically parsed |
-| BOOLEAN, BOOL | boolean | TINYINT(1) in MySQL |
-| BIT | Buffer | |
-| GEOMETRY | Buffer | Raw geometry data |
+| MySQL Type               | JavaScript Type  | Notes                     |
+| ------------------------ | ---------------- | ------------------------- |
+| INT, SMALLINT, MEDIUMINT | number           | Within safe integer range |
+| BIGINT                   | string or BigInt | Based on `bigint` option  |
+| DECIMAL, NUMERIC         | string           | To preserve precision     |
+| FLOAT, DOUBLE            | number           |                           |
+| DATE                     | Date             | JavaScript Date object    |
+| DATETIME, TIMESTAMP      | Date             | With timezone handling    |
+| TIME                     | string           | "HH:MM:SS" format         |
+| YEAR                     | number           |                           |
+| CHAR, VARCHAR, TEXT      | string           |                           |
+| BINARY, VARBINARY, BLOB  | Buffer           | Node.js Buffer            |
+| JSON                     | object/array     | Automatically parsed      |
+| BOOLEAN, BOOL            | boolean          | TINYINT(1) in MySQL       |
+| BIT                      | Buffer           |                           |
+| GEOMETRY                 | Buffer           | Raw geometry data         |
 
 #### Differences from PostgreSQL
 
@@ -1277,11 +1277,12 @@ We also haven't implemented some of the more uncommon features like:
 
 ```ts
 // Getting insert ID after INSERT
-const result = await mysql`INSERT INTO users (name) VALUES (${'Alice'})`;
+const result = await mysql`INSERT INTO users (name) VALUES (${"Alice"})`;
 console.log(result.insertId); // MySQL's LAST_INSERT_ID()
 
 // Handling affected rows
-const updated = await mysql`UPDATE users SET active = ${false} WHERE age < ${18}`;
+const updated =
+  await mysql`UPDATE users SET active = ${false} WHERE age < ${18}`;
 console.log(updated.affectedRows); // Number of rows updated
 
 // Using MySQL-specific functions
@@ -1293,14 +1294,14 @@ const uuid = await mysql`SELECT UUID() as id`;
 
 ```ts
 try {
-  await mysql`INSERT INTO users (email) VALUES (${'duplicate@email.com'})`;
+  await mysql`INSERT INTO users (email) VALUES (${"duplicate@email.com"})`;
 } catch (error) {
-  if (error.code === 'ER_DUP_ENTRY') {
-    console.log('Duplicate entry detected');
-  } else if (error.code === 'ER_ACCESS_DENIED_ERROR') {
-    console.log('Access denied');
-  } else if (error.code === 'ER_BAD_DB_ERROR') {
-    console.log('Database does not exist');
+  if (error.code === "ER_DUP_ENTRY") {
+    console.log("Duplicate entry detected");
+  } else if (error.code === "ER_ACCESS_DENIED_ERROR") {
+    console.log("Access denied");
+  } else if (error.code === "ER_BAD_DB_ERROR") {
+    console.log("Database does not exist");
   }
   // MySQL error codes are compatible with mysql/mysql2 packages
 }
@@ -1323,8 +1324,9 @@ The plan was to add more database drivers in the future. Now with MySQL support 
 > How do I know which database adapter is being used?
 
 The adapter is automatically detected from the connection string:
+
 - URLs starting with `mysql://` or `mysql2://` use MySQL
-- URLs matching SQLite patterns (`:memory:`, `sqlite://`, `file://`) use SQLite  
+- URLs matching SQLite patterns (`:memory:`, `sqlite://`, `file://`) use SQLite
 - Everything else defaults to PostgreSQL
 
 > Are MySQL stored procedures supported?

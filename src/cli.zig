@@ -635,14 +635,17 @@ pub const Command = struct {
         // bun build --compile entry point
         if (!bun.getRuntimeFeatureFlag(.BUN_BE_BUN)) {
             if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
-                var offset_for_passthrough: usize = if (bun.argv.len > 1) 1 else 0;
+                var offset_for_passthrough: usize = 0;
 
                 const ctx: *ContextData = brk: {
                     if (graph.compile_exec_argv.len > 0) {
+                        const original_argv_len = bun.argv.len;
                         var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
                         try bun.appendOptionsEnv(graph.compile_exec_argv, &argv_list, bun.default_allocator);
-                        offset_for_passthrough += (argv_list.items.len -| bun.argv.len);
                         bun.argv = argv_list.items;
+                        
+                        // Calculate offset: skip executable name + all exec argv options
+                        offset_for_passthrough = if (bun.argv.len > 1) 1 + (bun.argv.len -| original_argv_len) else 0;
 
                         // Handle actual options to parse.
                         break :brk try Command.init(allocator, log, .AutoCommand);
@@ -655,6 +658,10 @@ pub const Command = struct {
                         .allocator = bun.default_allocator,
                     };
                     global_cli_ctx = &context_data;
+                    
+                    // If no compile_exec_argv, set offset normally
+                    offset_for_passthrough = if (bun.argv.len > 1) 1 else 0;
+                    
                     break :brk global_cli_ctx;
                 };
 

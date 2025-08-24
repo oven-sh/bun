@@ -103,63 +103,76 @@ fn fmtEscapedNamespace(slice: []const u8, comptime fmt: []const u8, _: std.fmt.F
 }
 
 const OnEndContext = struct {
-    bundle_promise: *jsc.JSPromise,
+    end_callbacks_promise: *jsc.JSPromise,
+    completion_task: *BundleV2.JSBundleCompletionTask,
     build_result: jsc.JSValue,
 };
 
+fn onBuildEndResolve(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const args = callframe.arguments();
+
+    const root_obj = args[0];
+    const ctx = args[1].asPromisePtr(OnEndContext);
+    ctx.build_result = root_obj;
+
+    if (ctx.completion_task.plugins) |plugin| {
+        const onEndCallbackResult = jsc.JSPromise.wrap(globalThis, bun.jsc.API.JSBundler.Plugin.runOnEndCallbacks, .{ plugin, root_obj });
+        onEndCallbackResult.then(globalThis, ctx, onEndResolve, onEndReject);
+    } else {
+        defer {
+            ctx.completion_task.deref();
+            bun.default_allocator.destroy(ctx);
+        }
+        ctx.end_callbacks_promise.resolve(globalThis, ctx.build_result);
+    }
+
+    return .js_undefined;
+}
+
+fn onBuildEndReject(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const args = callframe.arguments();
+
+    const reason = args[0];
+    const ctx = args[1].asPromisePtr(OnEndContext);
+    defer {
+        ctx.completion_task.deref();
+        bun.default_allocator.destroy(ctx);
+    }
+
+    ctx.end_callbacks_promise.reject(globalThis, reason);
+
+    return .js_undefined;
+}
+
 fn onEndResolve(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const args = callframe.arguments();
-    const ctx = args[args.len - 1].asPromisePtr(OnEndContext);
-    defer bun.default_allocator.destroy(ctx);
-    ctx.bundle_promise.resolve(globalThis, ctx.build_result);
+    // args[0] is the result from the onEnd callbacks, not the build result
+    // Use the build result we stored in the context
+    const ctx = args[1].asPromisePtr(OnEndContext);
+    defer {
+        ctx.completion_task.deref();
+        bun.default_allocator.destroy(ctx);
+    }
+
+    ctx.end_callbacks_promise.resolve(globalThis, ctx.build_result);
+
     return .js_undefined;
 }
 
 fn onEndReject(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const args = callframe.arguments();
-    const ctx = args[args.len - 1].asPromisePtr(OnEndContext);
-    defer bun.default_allocator.destroy(ctx);
-    const err = if (args.len > 0) args[0] else .js_undefined;
-    ctx.bundle_promise.reject(globalThis, err);
-    return .js_undefined;
-}
 
-/// Returns true if the caller should stop processing the onEnd callbacks.
-/// If the caller should continue, it will return false.
-/// Continue probably means like "resolve the promise"
-fn handleOnEndCallbacks(
-    plugin: *bun.jsc.API.JSBundler.Plugin,
-    root_obj: jsc.JSValue,
-    promise: *jsc.JSPromise,
-    globalThis: *jsc.JSGlobalObject,
-) bool {
-    const onEndResult = jsc.JSPromise.wrap(globalThis, bun.jsc.API.JSBundler.Plugin.runOnEndCallbacks, .{ plugin, root_obj });
-
-    if (onEndResult.asPromise()) |onEndPromise| {
-        switch (onEndPromise.status(globalThis.vm())) {
-            .pending => {
-                const ctx = bun.default_allocator.create(OnEndContext) catch {
-                    promise.resolve(globalThis, root_obj);
-                    return true;
-                };
-                ctx.* = .{
-                    .bundle_promise = promise,
-                    .build_result = root_obj,
-                };
-
-                onEndResult.then(globalThis, ctx, onEndResolve, onEndReject);
-                return true;
-            },
-            .fulfilled => {},
-            .rejected => {
-                const err = onEndPromise.result(globalThis.vm());
-                promise.reject(globalThis, err);
-                return true;
-            },
-        }
+    const reason = args[0];
+    const ctx = args[1].asPromisePtr(OnEndContext);
+    defer {
+        // Release the reference we held on the completion task
+        ctx.completion_task.deref();
+        bun.default_allocator.destroy(ctx);
     }
 
-    return false;
+    ctx.end_callbacks_promise.reject(globalThis, reason);
+
+    return .js_undefined;
 }
 
 pub const BundleV2 = struct {
@@ -1715,7 +1728,20 @@ pub const BundleV2 = struct {
     ) OOM!bun.jsc.JSValue {
         const completion = try createAndScheduleCompletionTask(config, plugins, globalThis, event_loop, alloc);
         completion.promise = jsc.JSPromise.Strong.init(globalThis);
-        return completion.promise.value();
+
+        const onEndCallbacksPromise = bun.jsc.JSPromise.Strong.init(globalThis);
+
+        const context = bun.default_allocator.create(OnEndContext) catch bun.outOfMemory();
+        context.* = .{
+            .end_callbacks_promise = onEndCallbacksPromise.value().asPromise().?,
+            .completion_task = completion,
+            .build_result = .zero, // populated by onBuildEndResolve
+        };
+        completion.ref();
+
+        completion.promise.value().then(globalThis, context, onBuildEndResolve, onBuildEndReject);
+
+        return onEndCallbacksPromise.value();
     }
 
     pub const BuildResult = struct {
@@ -1747,7 +1773,7 @@ pub const BundleV2 = struct {
 
     pub const JSBundleCompletionTask = struct {
         pub const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", @This().deinit, .{});
-        // pub const ref = RefCount.ref;
+        pub const ref = RefCount.ref;
         pub const deref = RefCount.deref;
 
         ref_count: RefCount,
@@ -1991,12 +2017,6 @@ pub const BundleV2 = struct {
                 },
             );
 
-            if (this.plugins) |plugin| {
-                if (handleOnEndCallbacks(plugin, root_obj, promise, globalThis)) {
-                    return;
-                }
-            }
-
             promise.resolve(globalThis, root_obj);
         }
 
@@ -2094,12 +2114,6 @@ pub const BundleV2 = struct {
                             return promise.reject(globalThis, err);
                         },
                     );
-
-                    if (this.plugins) |plugin| {
-                        if (handleOnEndCallbacks(plugin, root_obj, promise, globalThis)) {
-                            return;
-                        }
-                    }
 
                     promise.resolve(globalThis, root_obj);
                 },
@@ -4489,6 +4503,8 @@ pub const Graph = @import("./Graph.zig");
 
 comptime {
     if (bun.Environment.export_cpp_apis) {
+        @export(&jsc.toJSHostFn(onBuildEndResolve), .{ .name = "BundleV2__onBuildEndResolve" });
+        @export(&jsc.toJSHostFn(onBuildEndReject), .{ .name = "BundleV2__onBuildEndReject" });
         @export(&jsc.toJSHostFn(onEndResolve), .{ .name = "BundleV2__onEndResolve" });
         @export(&jsc.toJSHostFn(onEndReject), .{ .name = "BundleV2__onEndReject" });
     }

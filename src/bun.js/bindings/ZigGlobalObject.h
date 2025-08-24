@@ -382,10 +382,12 @@ public:
         Bun__FileStreamWrapper__onResolveRequestStream,
         Bun__FileSink__onResolveStream,
         Bun__FileSink__onRejectStream,
+        BundleV2__onBuildEndResolve,
+        BundleV2__onBuildEndReject,
         BundleV2__onEndResolve,
         BundleV2__onEndReject,
     };
-    static constexpr size_t promiseFunctionsSize = 38;
+    static constexpr size_t promiseFunctionsSize = 40;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 

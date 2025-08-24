@@ -115,6 +115,7 @@ pub const auto_or_run_params = [_]ParamType{
     clap.parseParam("-F, --filter <STR>...             Run a script in all workspace packages matching the pattern") catch unreachable,
     clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
     clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
+    clap.parseParam("--restart <STR>                   Configure the restart policy. One of \"no\" (default), \"on-failure\", \"always\", \"unless-stopped\"") catch unreachable,
 };
 
 pub const auto_only_params = [_]ParamType{
@@ -1133,6 +1134,15 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     Output.prettyErrorln("<r><red>error<r>: Invalid elide-lines: \"{s}\"", .{elide_lines});
                     Global.exit(1);
                 };
+            }
+        }
+
+        if (args.option("--restart")) |restart_policy| {
+            if (Command.RestartPolicy.fromString(restart_policy)) |policy| {
+                ctx.runtime_options.restart_policy = policy;
+            } else {
+                Output.prettyErrorln("<r><red>error<r>: Invalid restart policy: \"{s}\". Valid options are: no, on-failure, always, unless-stopped", .{restart_policy});
+                Global.exit(1);
             }
         }
 

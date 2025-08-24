@@ -109,6 +109,24 @@ pub fn exit(code: u32) noreturn {
     // If we are crashing, allow the crash handler to finish it's work.
     bun.crash_handler.sleepForeverIfAnotherThreadIsCrashing();
 
+    // Check restart policy
+    const cli_ctx = bun.cli.Command.get();
+    const restart_policy = cli_ctx.runtime_options.restart_policy;
+    
+    // Determine if we should restart based on the policy and exit code
+    const should_restart = switch (restart_policy) {
+        .no => false,
+        .on_failure => code != 0,
+        .always => true,
+        .unless_stopped => code != 0, // restart on failure, not on manual stop (exit code 0)
+    };
+
+    if (should_restart) {
+        // Use bun.reloadProcess to restart
+        bun.reloadProcess(bun.default_allocator, false, true);
+        // If reloadProcess returned (failure case), continue with normal exit
+    }
+
     if (Environment.isDebug) {
         bun.assert(bun.debug_allocator_data.backing.?.deinit() == .ok);
         bun.debug_allocator_data.backing = null;

@@ -341,6 +341,21 @@ pub const Command = struct {
         },
     };
 
+    pub const RestartPolicy = enum {
+        no,
+        on_failure,
+        always,
+        unless_stopped,
+
+        pub fn fromString(str: []const u8) ?RestartPolicy {
+            if (strings.eqlComptime(str, "no")) return .no;
+            if (strings.eqlComptime(str, "on-failure")) return .on_failure;
+            if (strings.eqlComptime(str, "always")) return .always;
+            if (strings.eqlComptime(str, "unless-stopped")) return .unless_stopped;
+            return null;
+        }
+    };
+
     pub const RuntimeOptions = struct {
         smol: bool = false,
         debugger: Debugger = .{ .unspecified = {} },
@@ -358,6 +373,7 @@ pub const Command = struct {
         expose_gc: bool = false,
         preserve_symlinks_main: bool = false,
         console_depth: ?u16 = null,
+        restart_policy: RestartPolicy = .no,
     };
 
     var global_cli_ctx: Context = undefined;

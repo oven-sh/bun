@@ -436,9 +436,8 @@ bun build app.ts --outdir=dist
 This means:
 
 - Zero runtime YAML parsing overhead in production
-- Smaller bundle sizes (no YAML parser needed)
-- Type safety with TypeScript
-- Tree-shaking support for unused configuration
+- Smaller bundle sizes
+- Tree-shaking support for unused configuration (named imports)
 
 ### Dynamic Imports
 
@@ -458,73 +457,3 @@ async function loadUserSettings(userId: string) {
   }
 }
 ```
-
-## Use Cases
-
-### Testing and Fixtures
-
-YAML works well for test fixtures and seed data:
-
-```yaml#fixtures.yaml
-users:
-  - id: 1
-    name: Alice
-    email: alice@example.com
-    role: admin
-  - id: 2
-    name: Bob
-    email: bob@example.com
-    role: user
-
-products:
-  - sku: PROD-001
-    name: Widget
-    price: 19.99
-    stock: 100
-```
-
-```ts
-import fixtures from "./fixtures.yaml";
-import { db } from "./database";
-
-async function seed() {
-  await db.user.createMany({ data: fixtures.users });
-  await db.product.createMany({ data: fixtures.products });
-}
-```
-
-### API Definitions
-
-YAML is commonly used for API specifications like OpenAPI:
-
-```yaml#api.yaml
-openapi: 3.0.0
-info:
-  title: My API
-  version: 1.0.0
-
-paths:
-  /users:
-    get:
-      summary: List users
-      responses:
-        200:
-          description: Success
-```
-
-```ts#api.ts
-import apiSpec from "./api.yaml";
-import { generateRoutes } from "./router";
-
-const routes = generateRoutes(apiSpec);
-```
-
-## Performance
-
-Bun's YAML parser is implemented in Zig for optimal performance:
-
-- **Fast parsing**: Native implementation provides excellent parse speed
-- **Build-time optimization**: When importing YAML files, parsing happens at build time, resulting in zero runtime overhead
-- **Memory efficient**: Streaming parser design minimizes memory usage
-- **Hot reload support**: changes to YAML files trigger instant reloads without server restarts when used with `bun --hot` or Bun's [frontend dev server](/docs/bundler/fullstack)
-- **Error recovery**: Detailed error messages with line and column information

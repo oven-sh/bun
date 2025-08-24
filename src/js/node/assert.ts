@@ -34,7 +34,7 @@ const {
   isWeakMap,
   isAnyArrayBuffer,
 } = require("node:util/types");
-const { innerOk } = require("internal/assert/utils");
+const innerOk = require("internal/assert/utils");
 const { validateFunction } = require("internal/validators");
 
 const ArrayFrom = Array.from;

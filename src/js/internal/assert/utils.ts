@@ -243,7 +243,7 @@ function getErrMessage(_message: string, _value: unknown, _fn: Function): string
   //   }
 }
 
-export function innerOk(fn, argLen, value, message) {
+function innerOk(fn, argLen, value, message) {
   if (!value) {
     let generatedMessage = false;
 
@@ -270,3 +270,5 @@ export function innerOk(fn, argLen, value, message) {
     throw err;
   }
 }
+
+export default innerOk;

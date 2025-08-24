@@ -33,11 +33,9 @@ const MimallocAllocator = struct {
             mimalloc.mi_malloc(len);
 
         if (comptime Environment.isDebug) {
-            if (ptr != null) {
-                const usable = mimalloc.mi_malloc_usable_size(ptr);
-                if (usable < len and ptr != null) {
-                    std.debug.panic("mimalloc: allocated size is too small: {d} < {d}", .{ usable, len });
-                }
+            const usable = mimalloc.mi_malloc_usable_size(ptr);
+            if (usable < len) {
+                std.debug.panic("mimalloc: allocated size is too small: {d} < {d}", .{ usable, len });
             }
         }
 

@@ -129,7 +129,7 @@ pub const Row = struct {
 
     fn decodeText(this: *Row, allocator: std.mem.Allocator, comptime Context: type, reader: NewReader(Context)) AnyMySQLError.Error!void {
         const cells = try allocator.alloc(SQLDataCell, this.columns.len);
-        @memset(cells, SQLDataCell{ .tag = .null, .value = .{ .null = 0 } });
+        // @memset(cells, SQLDataCell{ .tag = .null, .value = .{ .null = 0 } });
         errdefer {
             for (cells) |*value| {
                 value.deinit();

@@ -1,3 +1,4 @@
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { bunEnv, bunExe, isCI, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import fs from "node:fs";
@@ -10,6 +11,11 @@ import { Duplex } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
 const { afterEach, beforeEach, describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
+
+function getMemorySize(obj) {
+  return estimateShallowMemoryUsageOf(obj[Symbol.for("::bunhttp2native::")]);
+}
+
 function invalidArgTypeHelper(input) {
   if (input === null) return " Received null";
 
@@ -1666,8 +1672,9 @@ it("http2 server handles multiple concurrent requests", async () => {
 
     server.on("listening", () => {
       const port = server.address().port;
-      const client = http2.connect(`http://localhost:${port}`);
 
+      const client = http2.connect(`http://localhost:${port}`);
+      const initialMemorySize = getMemorySize(client);
       client.setMaxListeners(101);
       client.on("goaway", console.log);
 
@@ -1700,6 +1707,9 @@ it("http2 server handles multiple concurrent requests", async () => {
         req.on("data", d => (data += d));
 
         req.on("end", () => {
+          // Test that memoryCost() works.
+          expect(getMemorySize(client)).toBeGreaterThan(initialMemorySize);
+
           expect(body).toBe(data);
         });
 

@@ -767,6 +767,14 @@ pub const H2FrameParser = struct {
             front: usize = 0,
             len: usize = 0,
 
+            pub fn memoryCost(this: *const PendingQueue) usize {
+                var counter: usize = @sizeOf(PendingQueue);
+                for (this.data.items) |*item| {
+                    counter += item.memoryCost();
+                }
+                return counter;
+            }
+
             pub fn deinit(self: *PendingQueue, allocator: Allocator) void {
                 self.front = 0;
                 self.len = 0;
@@ -847,7 +855,19 @@ pub const H2FrameParser = struct {
             pub fn slice(this: *const PendingFrame) []u8 {
                 return this.buffer[this.offset..this.len];
             }
+
+            pub fn memoryCost(this: *const PendingFrame) usize {
+                var counter: usize = @sizeOf(PendingFrame);
+                counter += this.buffer.len;
+                return counter;
+            }
         };
+
+        pub fn memoryCost(this: *const Stream) usize {
+            var counter: usize = @sizeOf(Stream);
+            counter += this.dataFrameQueue.memoryCost();
+            return counter;
+        }
 
         pub fn getPadding(
             this: *Stream,
@@ -1712,6 +1732,18 @@ pub const H2FrameParser = struct {
                 _ = corked._write(bytes);
             }
         }
+    }
+
+    pub fn memoryCost(this: *H2FrameParser) usize {
+        var counter: usize = @sizeOf(H2FrameParser);
+        counter += this.writeBuffer.memoryCost();
+        counter += this.readBuffer.memoryCost();
+        counter += this.streams.capacity() * @sizeOf(u32);
+        var iter = this.streams.valueIterator();
+        while (iter.next()) |stream| {
+            counter += stream.memoryCost();
+        }
+        return counter;
     }
 
     fn registerAutoFlush(this: *H2FrameParser) void {
@@ -4414,10 +4446,6 @@ pub const H2FrameParser = struct {
     }
     pub fn detachFromJS(this: *H2FrameParser, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
-        var it = this.streams.valueIterator();
-        while (it.next()) |stream| {
-            stream.freeResources(this, false);
-        }
         this.detach();
         if (this.strong_this.tryGet()) |this_value| {
             js.gc.context.clear(this_value, this.globalThis);
@@ -4444,6 +4472,18 @@ pub const H2FrameParser = struct {
             hpack.deinit();
             this.hpack = null;
         }
+
+        this.deinitStreams();
+    }
+
+    fn deinitStreams(this: *H2FrameParser) void {
+        var it = this.streams.valueIterator();
+        while (it.next()) |stream| {
+            stream.freeResources(this, true);
+        }
+        var streams = this.streams;
+        defer streams.deinit();
+        this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
     }
 
     fn deinit(this: *H2FrameParser) void {
@@ -4458,18 +4498,12 @@ pub const H2FrameParser = struct {
         }
         this.detach();
         this.strong_this.deinit();
-        var it = this.streams.valueIterator();
-        while (it.next()) |stream| {
-            stream.freeResources(this, true);
-        }
-        var streams = this.streams;
-        defer streams.deinit();
-        this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
     }
 
     pub fn finalize(this: *H2FrameParser) void {
         log("finalize", .{});
         this.strong_this.deinit();
+        this.deinitStreams();
         this.deref();
     }
 };

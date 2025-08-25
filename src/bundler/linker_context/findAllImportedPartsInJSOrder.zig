@@ -29,7 +29,7 @@ pub fn findImportedPartsInJSOrder(
     parts_prefix_shared: *std.ArrayList(PartRange),
     chunk_index: u32,
 ) !void {
-    var chunk_order_array = try std.ArrayList(Chunk.Order).initCapacity(this.allocator, chunk.files_with_parts_in_chunk.count());
+    var chunk_order_array = try std.ArrayList(Chunk.Order).initCapacity(this.allocator(), chunk.files_with_parts_in_chunk.count());
     defer chunk_order_array.deinit();
     const distances = this.graph.files.items(.distance_from_entry_point);
     for (chunk.files_with_parts_in_chunk.keys()) |source_index| {
@@ -164,10 +164,10 @@ pub fn findImportedPartsInJSOrder(
     parts_prefix_shared.clearRetainingCapacity();
 
     var visitor = FindImportedPartsVisitor{
-        .files = std.ArrayList(Index.Int).init(this.allocator),
+        .files = std.ArrayList(Index.Int).init(this.allocator()),
         .part_ranges = part_ranges_shared.*,
         .parts_prefix = parts_prefix_shared.*,
-        .visited = std.AutoHashMap(Index.Int, void).init(this.allocator),
+        .visited = std.AutoHashMap(Index.Int, void).init(this.allocator()),
         .flags = this.graph.meta.items(.flags),
         .parts = this.graph.ast.items(.parts),
         .import_records = this.graph.ast.items(.import_records),
@@ -194,7 +194,7 @@ pub fn findImportedPartsInJSOrder(
         },
     }
 
-    const parts_in_chunk_order = try this.allocator.alloc(PartRange, visitor.part_ranges.items.len + visitor.parts_prefix.items.len);
+    const parts_in_chunk_order = try this.allocator().alloc(PartRange, visitor.part_ranges.items.len + visitor.parts_prefix.items.len);
     bun.concat(PartRange, parts_in_chunk_order, &.{
         visitor.parts_prefix.items,
         visitor.part_ranges.items,

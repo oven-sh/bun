@@ -1,4 +1,5 @@
 import { file, Glob } from "bun";
+import { readdirSync } from "fs";
 import path from "path";
 
 // prettier-ignore
@@ -21,6 +22,10 @@ const words: Record<string, { reason: string; regex?: boolean }> = {
   "std.enums.tagName(": { reason: "Use bun.tagName instead" },
   "std.unicode": { reason: "Use bun.strings instead" },
   "std.Thread.Mutex": {reason: "Use bun.Mutex instead" },
+  ".jsBoolean(true)": { reason: "Use .true instead" },
+  "JSValue.true": { reason: "Use .true instead" },
+  ".jsBoolean(false)": { reason: "Use .false instead" },
+  "JSValue.false": { reason: "Use .false instead" },
 
   "allocator.ptr ==": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   "allocator.ptr !=": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
@@ -129,6 +134,22 @@ describe("banned words", () => {
       } else if (count.length < limit) {
         throw new Error(
           `Instances of banned word ${JSON.stringify(word)} reduced from ${limit} to ${count.length}\nUpdate limit by running \`bun ./test/internal/ban-words.test.ts\`\n`,
+        );
+      }
+    });
+  }
+});
+
+describe("required words", () => {
+  const expectDir = "src/bun.js/test/expect";
+  const files = readdirSync(expectDir);
+  for (const file of files) {
+    if (!file.endsWith(".zig") || file.startsWith(".") || file === "toHaveReturnedTimes.zig") continue;
+    test(file, async () => {
+      const content = await Bun.file(path.join(expectDir, file)).text();
+      if (!content.includes("incrementExpectCallCounter")) {
+        throw new Error(
+          `${expectDir}/${file} is missing string "incrementExpectCallCounter"\nAll expect() functions must call incrementExpectCallCounter()`,
         );
       }
     });

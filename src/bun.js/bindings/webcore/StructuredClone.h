@@ -36,5 +36,6 @@ namespace WebCore {
 
 JSC_DECLARE_HOST_FUNCTION(cloneArrayBuffer);
 JSC_DECLARE_HOST_FUNCTION(structuredCloneForStream);
-
+JSC_DECLARE_HOST_FUNCTION(jsFunctionStructuredClone);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionStructuredCloneAdvanced);
 } // namespace WebCore

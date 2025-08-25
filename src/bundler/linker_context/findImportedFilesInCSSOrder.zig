@@ -177,7 +177,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
     };
 
     var visitor = Visitor{
-        .allocator = this.allocator,
+        .allocator = this.allocator(),
         .temp_allocator = temp_allocator,
         .graph = &this.graph,
         .parse_graph = this.parse_graph,

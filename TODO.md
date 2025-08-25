@@ -1,9 +1,10 @@
 Complete before merge:
 
 - [ ] add preload hooks
-- [ ] remove describe/test functions in jest.zig
-- [ ] remove DescribeScope/TestScope in jest.zig
-- [ ] remove TestId stuff
+- [ ] fix toMatchInlineSnapshot
+- [ ] make the summary work again
+- [ ] make --bail work again
+- [ ] make test filtering work again
 - [ ] make sure ScopeFunctions class can finalize (see napi_handle_scope NapiHandleScopeImpl as an example)
   - currently, it never calls its finalize method because it no longer extends from finalize
 - [ ] see about caching ScopeFunctions by value maybe?
@@ -23,7 +24,9 @@ Complete before merge:
 - [ ] search for TODOs in the diff and fix them all
 - [ ] replace asserts with runtime throws or debug-only asserts (waitForPromise breaks many expectations)
 - [ ] check the todo list in https://linear.app/oven/issue/ENG-20152/new-buntest, confirm it fixes all those issues (or doesn't make them worse). add reproductions
-- [ ] decide what to do about strong
+- [ ] remove describe/test functions in jest.zig
+- [ ] remove DescribeScope/TestScope in jest.zig
+- [ ] remove TestId stuff
 - [ ] remove TODO.md
 
 Follow-up:

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, tempDirWithFiles } from "harness";
+import { bunRun, tempDirWithFiles } from "harness";
 
 describe("env.autoExpand in bunfig.toml", () => {
   test("autoExpand: true - variable expansion works (default behavior)", () => {
@@ -47,7 +47,8 @@ autoExpand = false
 autoExpand = false
 `,
       ".env": "BASE=base\nSIMPLE=$BASE\nBRACED=${BASE}\nWITH_DEFAULT=${MISSING:-default}\nNESTED=${BASE}_${BASE}",
-      "index.ts": "console.log([process.env.BASE, process.env.SIMPLE, process.env.BRACED, process.env.WITH_DEFAULT, process.env.NESTED].join('|'));",
+      "index.ts":
+        "console.log([process.env.BASE, process.env.SIMPLE, process.env.BRACED, process.env.WITH_DEFAULT, process.env.NESTED].join('|'));",
     });
     const { stdout } = bunRun(`${dir}/index.ts`);
     expect(stdout).toBe("base|$BASE|${BASE}|${MISSING:-default}|${BASE}_${BASE}");

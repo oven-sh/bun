@@ -485,7 +485,6 @@ pub const Loader = struct {
         };
     }
 
-
     pub fn loadProcess(this: *Loader) OOM!void {
         if (this.did_load_process) return;
 

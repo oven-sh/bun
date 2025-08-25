@@ -490,7 +490,12 @@ function ClientRequest(input, options, cb) {
     }
 
     try {
-      options.lookup(host, { all: true }, (err, results) => {
+      const lookupOptions = { all: true };
+      // Pass family option from agent if available
+      if (this[kAgent]?.options?.family) {
+        lookupOptions.family = this[kAgent].options.family;
+      }
+      options.lookup(host, lookupOptions, (err, results) => {
         if (err) {
           if (!!$debug) globalReportError(err);
           process.nextTick((self, err) => self.emit("error", err), this, err);
@@ -633,6 +638,12 @@ function ClientRequest(input, options, cb) {
     options = input || kEmptyObject;
   } else {
     options = ObjectAssign(input || {}, options);
+  }
+
+  // Set default DNS lookup if not provided
+  if (!options.lookup) {
+    const dns = require("node:dns");
+    options.lookup = dns.lookup;
   }
 
   this[kTls] = null;

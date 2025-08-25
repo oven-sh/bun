@@ -1,6 +1,5 @@
-import { SQL } from "bun";
-import { expect, test } from "bun:test";
-import { describeWithContainer, bunRun, bunEnv } from "harness";
+import { test } from "bun:test";
+import { bunEnv, bunRun, describeWithContainer } from "harness";
 import { join } from "path";
 describeWithContainer(
   "mysql",

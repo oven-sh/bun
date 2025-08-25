@@ -1,7 +1,7 @@
 const Mode = enum { describe, @"test" };
 mode: Mode,
 cfg: describe2.BaseScopeCfg,
-/// typically `.zero`
+/// typically `.zero`. not Strong.Optional because codegen adds it to the visit function.
 each: jsc.JSValue,
 
 pub fn getSkip(this: *ScopeFunctions, globalThis: *JSGlobalObject) bun.JSError!JSValue {
@@ -34,8 +34,19 @@ pub fn fnFailingIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame
 pub fn fnConcurrentIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
     return genericIf(this, globalThis, callFrame, .{ .self_concurrent = true }, "call .concurrentIf()", false);
 }
-pub fn fnEach(_: *ScopeFunctions, _: *JSGlobalObject, _: *CallFrame) bun.JSError!JSValue {
-    @panic("TODO: implement .each()");
+pub fn fnEach(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
+    groupLog.begin(@src());
+    defer groupLog.end();
+
+    const array = callFrame.argumentsAsArray(1)[0];
+    if (array.isUndefinedOrNull() or !array.isArray()) {
+        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
+        defer formatter.deinit();
+        return globalThis.throw("Expected array, got {}", .{array.toFmt(&formatter)});
+    }
+
+    if (this.each != .zero) return globalThis.throw("Cannot {s} on {f}", .{ "each", this });
+    return create(globalThis, this.mode, array, this.cfg);
 }
 
 pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -44,11 +55,51 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
 
     const this = ScopeFunctions.fromJS(callFrame.callee()) orelse return globalThis.throw("Expected callee to be ScopeFunctions", .{});
 
-    if (this.each != .zero) @panic("TODO: implement .each()");
-    return switch (this.mode) {
-        .describe => describe2.js_fns.describeFn(globalThis, callFrame, .{ .base = this.cfg, .signature = .{ .scope_functions = this } }),
-        .@"test" => describe2.js_fns.testFn(globalThis, callFrame, .{ .base = this.cfg, .signature = .{ .scope_functions = this } }),
-    };
+    const bunTest = try describe2.js_fns.getActive(globalThis, .{ .signature = .{ .scope_functions = this }, .allow_in_preload = false });
+
+    var args = try describe2.js_fns.parseArguments(globalThis, callFrame, .{ .scope_functions = this }, bunTest);
+    defer args.deinit(bunTest.gpa);
+
+    switch (bunTest.phase) {
+        .collection => {}, // ok
+        .execution => return globalThis.throw("TODO: support calling {}() inside a test", .{this}),
+        .done => return globalThis.throw("Cannot call {}() after the test run has completed", .{this}),
+    }
+
+    if (this.each != .zero) {
+        if (this.each.isUndefinedOrNull() or !this.each.isArray()) {
+            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
+            defer formatter.deinit();
+            return globalThis.throw("Expected array, got {}", .{this.each.toFmt(&formatter)});
+        }
+        var iter = try this.each.arrayIterator(globalThis);
+        while (try iter.next()) |item| {
+            if (item == .zero) break;
+
+            const item_is_array = !item.isUndefinedOrNull() and item.isArray();
+
+            var arg_size: usize = 1;
+            if (item_is_array) {
+                arg_size = try item.getLength(globalThis);
+            }
+
+            // we don't have to worry about the callback function here because that will be handled by describe2.zig
+            // we'll have to pass a list of protected arguments to pass to the callback and also pass the option when adding it to the call queue
+        }
+        @panic("TODO: implement .each()");
+    }
+
+    switch (this.mode) {
+        .describe => try bunTest.collection.enqueueDescribeCallback(args.callback, args.description, this.cfg),
+        .@"test" => {
+            const line_no = jsc.Jest.captureTestLineNumber(callFrame, globalThis);
+            try bunTest.collection.enqueueTestCallback(args.description, .{
+                .callback = args.callback,
+                .line_no = line_no,
+            }, this.cfg);
+        },
+    }
+    return .js_undefined;
 }
 
 fn genericIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *CallFrame, cfg: describe2.BaseScopeCfg, name: []const u8, invert: bool) bun.JSError!JSValue {
@@ -70,8 +121,16 @@ fn genericExtend(this: *ScopeFunctions, globalThis: *JSGlobalObject, cfg: descri
     defer groupLog.end();
 
     if (cfg.self_concurrent and this.mode == .describe) return globalThis.throw("Cannot {s} on {f}", .{ name, this });
+    if (cfg.self_only) try errorInCI(globalThis, ".only");
     const extended = this.cfg.extend(cfg) orelse return globalThis.throw("Cannot {s} on {f}", .{ name, this });
     return create(globalThis, this.mode, this.each, extended);
+}
+
+fn errorInCI(globalThis: *jsc.JSGlobalObject, signature: []const u8) bun.JSError!void {
+    if (!bun.FeatureFlags.breaking_changes_1_3) return; // this is a breaking change for version 1.3
+    if (ci_info.detectCI()) |_| {
+        return globalThis.throwPretty("{s} is not allowed in CI environments.\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{signature});
+    }
 }
 
 pub const js = jsc.Codegen.JSScopeFunctions;
@@ -125,3 +184,4 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const CallFrame = jsc.CallFrame;
 const VirtualMachine = jsc.VirtualMachine;
 const JSValue = jsc.JSValue;
+const ci_info = @import("../../ci_info.zig");

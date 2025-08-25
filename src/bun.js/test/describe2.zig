@@ -65,7 +65,7 @@ pub const js_fns = struct {
             if (this.description) |str| gpa.free(str);
         }
     };
-    fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, bunTest: *BunTestFile) bun.JSError!ParseArgumentsResult {
+    pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, bunTest: *BunTestFile) bun.JSError!ParseArgumentsResult {
         var a1, var a2, var a3 = callframe.argumentsAsArray(3);
 
         if (a1.isFunction()) {
@@ -121,29 +121,6 @@ pub const js_fns = struct {
 
         return result;
     }
-    pub fn describeFn(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, cfg: DescribeConfig) bun.JSError!jsc.JSValue {
-        group.begin(@src());
-        defer group.end();
-        errdefer group.log("ended in error", .{});
-
-        const bunTest = try getActive(globalThis, .{ .signature = cfg.signature, .allow_in_preload = false });
-
-        if (cfg.base.self_only) try errorInCI(globalThis, cfg.signature);
-
-        var args = try parseArguments(globalThis, callframe, cfg.signature, bunTest);
-        defer args.deinit(bunTest.gpa);
-
-        switch (bunTest.phase) {
-            .collection => {
-                try bunTest.collection.enqueueDescribeCallback(args.callback, args.description, cfg.base);
-                return .js_undefined; // vitest doesn't return a promise, even for `describe(async () => {})`
-            },
-            .execution => {
-                return globalThis.throw("Cannot call describe() inside a test", .{});
-            },
-            .done => return globalThis.throw("Cannot call describe() after the test run has completed", .{}),
-        }
-    }
 
     const GetActiveCfg = struct { signature: Signature, allow_in_preload: bool };
     fn getActiveTestRoot(globalThis: *jsc.JSGlobalObject, cfg: GetActiveCfg) bun.JSError!*BunTest {
@@ -159,53 +136,13 @@ pub const js_fns = struct {
         }
         return bunTestRoot;
     }
-    fn getActive(globalThis: *jsc.JSGlobalObject, cfg: GetActiveCfg) bun.JSError!*BunTestFile {
+    pub fn getActive(globalThis: *jsc.JSGlobalObject, cfg: GetActiveCfg) bun.JSError!*BunTestFile {
         const bunTestRoot = try getActiveTestRoot(globalThis, cfg);
         const bunTest = bunTestRoot.active_file orelse {
             return globalThis.throw("Cannot use {s} outside of a test file.", .{cfg.signature});
         };
 
         return bunTest;
-    }
-
-    fn errorInCI(globalThis: *jsc.JSGlobalObject, signature: Signature) bun.JSError!void {
-        if (!bun.FeatureFlags.breaking_changes_1_3) return; // this is a breaking change for version 1.3
-        if (ci_info.detectCI()) |_| {
-            return globalThis.throwPretty("{s} is not allowed in CI environments.\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{signature});
-        }
-    }
-
-    const TestConfig = struct {
-        base: BaseScopeCfg,
-        signature: Signature,
-    };
-    pub fn testFn(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, cfg: TestConfig) bun.JSError!jsc.JSValue {
-        group.begin(@src());
-        defer group.end();
-        errdefer group.log("ended in error", .{});
-
-        const bunTest = try getActive(globalThis, .{ .signature = cfg.signature, .allow_in_preload = false });
-
-        if (cfg.base.self_only) try errorInCI(globalThis, cfg.signature);
-
-        var args = try parseArguments(globalThis, callFrame, cfg.signature, bunTest);
-        defer args.deinit(bunTest.gpa);
-
-        const line_no = jsc.Jest.captureTestLineNumber(callFrame, globalThis);
-
-        switch (bunTest.phase) {
-            .collection => {
-                try bunTest.collection.enqueueTestCallback(args.description, .{
-                    .callback = args.callback,
-                    .line_no = line_no,
-                }, cfg.base);
-                return .js_undefined;
-            },
-            .execution => {
-                return globalThis.throw("TODO: queue this test callback to call after this test ends", .{});
-            },
-            .done => return globalThis.throw("Cannot call {s}() after the test run has completed", .{cfg.signature}),
-        }
     }
 
     pub fn genericHook(comptime tag: @Type(.enum_literal)) type {
@@ -786,7 +723,6 @@ pub const group = struct {
 
 pub const ScopeFunctions = @import("./ScopeFunctions.zig");
 
-const ci_info = @import("../../ci_info.zig");
 const std = @import("std");
 const test_command = @import("../../cli/test_command.zig");
 

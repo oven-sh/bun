@@ -146,7 +146,7 @@ pub fn exit(code: u32) noreturn {
                 
                 
                 // Use bun.reloadProcess to restart the process
-                bun.reloadProcess(bun.default_allocator, false, true);
+                bun.reloadProcess(bun.default_allocator, false, false);
                 // If reloadProcess returned (failure case), continue with normal exit
             }
             // If setenv failed, continue with normal exit

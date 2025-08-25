@@ -120,6 +120,7 @@ src/bun.js/api/glob.zig
 src/bun.js/api/HashObject.zig
 src/bun.js/api/html_rewriter.zig
 src/bun.js/api/JSBundler.zig
+src/bun.js/api/JSONCObject.zig
 src/bun.js/api/JSTranspiler.zig
 src/bun.js/api/server.zig
 src/bun.js/api/server/AnyRequestContext.zig

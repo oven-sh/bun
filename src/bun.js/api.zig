@@ -25,8 +25,9 @@ pub const SocketHandlers = @import("./api/bun/socket.zig").Handlers;
 
 pub const Subprocess = @import("./api/bun/subprocess.zig");
 pub const HashObject = @import("./api/HashObject.zig");
-pub const UnsafeObject = @import("./api/UnsafeObject.zig");
+pub const JSONCObject = @import("./api/JSONCObject.zig");
 pub const TOMLObject = @import("./api/TOMLObject.zig");
+pub const UnsafeObject = @import("./api/UnsafeObject.zig");
 pub const YAMLObject = @import("./api/YAMLObject.zig");
 pub const Timer = @import("./api/Timer.zig");
 pub const FFIObject = @import("./api/FFIObject.zig");

@@ -8,6 +8,7 @@
     macro(FFI) \
     macro(FileSystemRouter) \
     macro(Glob) \
+    macro(JSONC) \
     macro(MD4) \
     macro(MD5) \
     macro(S3Client) \

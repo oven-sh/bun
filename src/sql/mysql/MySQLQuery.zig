@@ -208,7 +208,7 @@ pub fn allowGC(thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject) void {
     js.targetSetCached(thisValue, globalObject, .zero);
 }
 
-pub fn onResult(this: *@This(), result_count: u64, globalObject: *jsc.JSGlobalObject, connection: jsc.JSValue, is_last: bool) void {
+pub fn onResult(this: *@This(), result_count: u64, globalObject: *jsc.JSGlobalObject, connection: jsc.JSValue, is_last: bool, last_insert_id: u64) void {
     this.ref();
     defer this.deref();
 
@@ -239,6 +239,7 @@ pub fn onResult(this: *@This(), result_count: u64, globalObject: *jsc.JSGlobalOb
         tag.toJSNumber(),
         if (connection == .zero) .js_undefined else MySQLConnection.js.queriesGetCached(connection) orelse .js_undefined,
         JSValue.jsBoolean(is_last),
+        JSValue.jsNumber(last_insert_id),
     });
 }
 

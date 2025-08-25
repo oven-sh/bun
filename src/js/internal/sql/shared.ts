@@ -231,6 +231,19 @@ function defaultToPostgresIfNoProtocol(url: string | URL | null): URL {
   }
   return new URL("postgres://" + url);
 }
+function adapterFromEnv(env: Bun.Env): Bun.SQL.__internal.Adapter {
+  // postgres url or postgres host provided
+  if (env.POSTGRES_URL || env.PGURL || env.PG_URL || env.PGHOST) {
+    return "postgres";
+  }
+  // mysql host or mysql url provided
+  if (env.MYSQL_URL || env.MYSQL_HOST) {
+    return "mysql";
+  }
+  // default is postgres
+  return "postgres";
+}
+
 function parseOptions(
   stringOrUrlOrOptions: Bun.SQL.Options | string | URL | undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options,
@@ -312,7 +325,7 @@ function parseOptions(
   let sslMode: SSLMode = SSLMode.disable;
 
   if (!stringOrUrl || (typeof stringOrUrl === "string" && stringOrUrl.length === 0)) {
-    let urlString = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL;
+    let urlString = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL || env.MYSQL_URL;
 
     if (!urlString) {
       urlString = env.TLS_POSTGRES_DATABASE_URL || env.TLS_DATABASE_URL;
@@ -412,13 +425,13 @@ function parseOptions(
         throw new Error(`Unsupported adapter: ${options.adapter}. Supported adapters: "postgres", "sqlite", "mysql"`);
     }
   } else {
-    adapter = "postgres";
+    adapter = adapterFromEnv(env);
   }
   options.adapter = adapter;
   assertIsOptionsOfAdapter(options, adapter);
-  hostname ||= options.hostname || options.host || env.PGHOST || "localhost";
+  hostname ||= options.hostname || options.host || env.PGHOST || env.MYSQL_HOST || "localhost";
 
-  port ||= Number(options.port || env.PGPORT || (adapter === "mysql" ? 3306 : 5432));
+  port ||= Number(options.port || env.PGPORT || env.MYSQL_PORT || (adapter === "mysql" ? 3306 : 5432));
 
   path ||= (options as { path?: string }).path || "";
 
@@ -441,6 +454,7 @@ function parseOptions(
     options.user ||
     env.PGUSERNAME ||
     env.PGUSER ||
+    env.MYSQL_USER ||
     env.USER ||
     env.USERNAME ||
     (adapter === "mysql" ? "root" : "postgres"); // default username for mysql is root and for postgres is postgres;
@@ -449,8 +463,9 @@ function parseOptions(
     options.db ||
     decodeIfValid((url?.pathname ?? "").slice(1)) ||
     env.PGDATABASE ||
+    env.MYSQL_DATABASE ||
     (adapter === "mysql" ? "mysql" : username); // default database;
-  password ||= options.password || options.pass || env.PGPASSWORD || "";
+  password ||= options.password || options.pass || env.PGPASSWORD || env.MYSQL_PASSWORD || "";
   const connection = options.connection;
   if (connection && $isObject(connection)) {
     for (const key in connection) {

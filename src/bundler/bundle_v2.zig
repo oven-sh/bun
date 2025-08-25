@@ -1899,38 +1899,39 @@ pub const BundleV2 = struct {
         }
 
         fn toJSError(this: *JSBundleCompletionTask, promise: *jsc.JSPromise, globalThis: *jsc.JSGlobalObject) void {
-            const root_obj = jsc.JSValue.createEmptyObject(globalThis, 3);
-            root_obj.put(globalThis, jsc.ZigString.static("outputs"), jsc.JSValue.createEmptyArray(globalThis, 0) catch return promise.reject(globalThis, error.JSError));
-            root_obj.put(
-                globalThis,
-                jsc.ZigString.static("success"),
-                .false,
-            );
-            root_obj.put(
-                globalThis,
-                jsc.ZigString.static("logs"),
-                this.log.toJSArray(globalThis, bun.default_allocator) catch |err| {
-                    return promise.reject(globalThis, err);
-                },
-            );
-
             const throw_on_error = this.config.throw_on_error;
 
-            const payload = brk: {
+            const build_result_or_error = brk: {
                 if (throw_on_error) {
                     const err = this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed"));
                     break :brk (err catch |e| globalThis.takeException(e));
                 }
+
+                const root_obj = jsc.JSValue.createEmptyObject(globalThis, 3);
+                root_obj.put(globalThis, jsc.ZigString.static("outputs"), jsc.JSValue.createEmptyArray(globalThis, 0) catch return promise.reject(globalThis, error.JSError));
+                root_obj.put(
+                    globalThis,
+                    jsc.ZigString.static("success"),
+                    .false,
+                );
+                root_obj.put(
+                    globalThis,
+                    jsc.ZigString.static("logs"),
+                    this.log.toJSArray(globalThis, bun.default_allocator) catch |err| {
+                        return promise.reject(globalThis, err);
+                    },
+                );
+
                 break :brk root_obj;
             };
 
-            const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(globalThis, plugin, payload, promise) else false;
+            const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(globalThis, plugin, build_result_or_error, promise) else false;
 
             if (!didHandleCallbacks) {
                 if (throw_on_error) {
-                    promise.reject(globalThis, payload);
+                    promise.reject(globalThis, build_result_or_error);
                 } else {
-                    promise.resolve(globalThis, payload);
+                    promise.resolve(globalThis, build_result_or_error);
                 }
             }
         }

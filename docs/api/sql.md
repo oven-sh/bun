@@ -511,15 +511,15 @@ DATABASE_URL="mysql2://user:pass@localhost:3306/mydb"
 
 If no connection URL is provided, MySQL checks these individual parameters:
 
-| Environment Variable | Default Value | Description       |
-| -------------------- | ------------- | ----------------- |
-| `MYSQL_HOST`         | `localhost`   | Database host     |
-| `MYSQL_PORT`         | `3306`        | Database port     |
-| `MYSQL_USER`         | (empty)       | Database user     |
-| `MYSQL_PASSWORD`     | (empty)       | Database password |
-| `MYSQL_DATABASE`     | (empty)       | Database name     |
-| `MYSQL_SOCKET`       | (empty)       | Unix socket path  |
-| `MYSQL_SSL_MODE`     | `prefer`      | SSL mode setting  |
+| Environment Variable     | Default Value | Description                      |
+| ------------------------ | ------------- | -------------------------------- |
+| `MYSQL_HOST`             | `localhost`   | Database host                    |
+| `MYSQL_PORT`             | `3306`        | Database port                    |
+| `MYSQL_USER`             | `root`        | Database user                    |
+| `MYSQL_PASSWORD`         | (empty)       | Database password                |
+| `MYSQL_DATABASE`         | `mysql`       | Database name                    |
+| `MYSQL_URL`              | (empty)       | Primary connection URL for MySQL |
+| `TLS_MYSQL_DATABASE_URL` | (empty)       | SSL/TLS-enabled connection URL   |
 
 ### PostgreSQL Environment Variables
 
@@ -611,10 +611,6 @@ const db = new SQL({
   //   key: "path/to/key.pem",
   //   cert: "path/to/cert.pem",
   // },
-
-  // MySQL-specific options
-  charset: "utf8mb4", // Character set (default: utf8mb4)
-  prepare: true, // Use prepared statements (default: true)
 
   // Callbacks
   onconnect: client => {
@@ -1156,10 +1152,6 @@ There's still some things we haven't finished yet.
 
 ## Database-Specific Features
 
-### MySQL-Specific Features
-
-MySQL has some unique characteristics and optimizations:
-
 #### Authentication Methods
 
 MySQL supports multiple authentication plugins that are automatically negotiated:
@@ -1194,14 +1186,10 @@ const [users, orders, products] = await Promise.all([
 
 #### Multiple Result Sets
 
-MySQL can return multiple result sets from stored procedures and multi-statement queries:
+MySQL can return multiple result sets from multi-statement queries:
 
 ```ts
 const mysql = new SQL("mysql://user:pass@localhost/mydb");
-
-// Stored procedure that returns multiple result sets
-const results = await mysql`CALL GetUserAndOrders(${userId})`;
-// results will contain all result sets from the procedure
 
 // Multi-statement queries with simple() method
 const multiResults = await mysql`
@@ -1229,32 +1217,35 @@ Bun automatically sends client information to MySQL for better monitoring:
 
 MySQL types are automatically converted to JavaScript types:
 
-| MySQL Type               | JavaScript Type  | Notes                     |
-| ------------------------ | ---------------- | ------------------------- |
-| INT, SMALLINT, MEDIUMINT | number           | Within safe integer range |
-| BIGINT                   | string or BigInt | Based on `bigint` option  |
-| DECIMAL, NUMERIC         | string           | To preserve precision     |
-| FLOAT, DOUBLE            | number           |                           |
-| DATE                     | Date             | JavaScript Date object    |
-| DATETIME, TIMESTAMP      | Date             | With timezone handling    |
-| TIME                     | string           | "HH:MM:SS" format         |
-| YEAR                     | number           |                           |
-| CHAR, VARCHAR, TEXT      | string           |                           |
-| BINARY, VARBINARY, BLOB  | Buffer           | Node.js Buffer            |
-| JSON                     | object/array     | Automatically parsed      |
-| BOOLEAN, BOOL            | boolean          | TINYINT(1) in MySQL       |
-| BIT                      | Buffer           |                           |
-| GEOMETRY                 | Buffer           | Raw geometry data         |
+| MySQL Type                              | JavaScript Type          | Notes                                                                                                |
+| --------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------- |
+| INT, SMALLINT, MEDIUMINT                | number                   | Within safe integer range                                                                            |
+| BIGINT                                  | string, number or BigInt | If the value fits in i32/u32 size will be number otherwise string or BigInt Based on `bigint` option |
+| DECIMAL, NUMERIC                        | string                   | To preserve precision                                                                                |
+| FLOAT, DOUBLE                           | number                   |                                                                                                      |
+| DATE                                    | Date                     | JavaScript Date object                                                                               |
+| DATETIME, TIMESTAMP                     | Date                     | With timezone handling                                                                               |
+| TIME                                    | number                   | Total of microseconds                                                                                |
+| YEAR                                    | number                   |                                                                                                      |
+| CHAR, VARCHAR, VARSTRING, STRING        | string                   |                                                                                                      |
+| TINY TEXT, MEDIUM TEXT, TEXT, LONG TEXT | string                   |                                                                                                      |
+| TINY BLOB, MEDIUM BLOB, BLOG, LONG BLOB | string                   | BLOB Types are alias for TEXT types                                                                  |
+| JSON                                    | object/array             | Automatically parsed                                                                                 |
+| BOOLEAN, BOOL                           | boolean                  | TINYINT(1) in MySQL                                                                                  |
+| GEOMETRY                                | string                   | Geometry data                                                                                        |
 
 #### Differences from PostgreSQL
 
 While the API is unified, there are some behavioral differences:
 
 1. **Parameter placeholders**: MySQL uses `?` internally but Bun converts `$1, $2` style automatically
-2. **RETURNING clause**: MySQL doesn't support RETURNING; use `LAST_INSERT_ID()` or a separate SELECT
+2. **RETURNING clause**: MySQL doesn't support RETURNING; use `result.lastInsertRowid` or a separate SELECT
 3. **Boolean type**: MySQL uses TINYINT(1) for booleans
 4. **Array types**: MySQL doesn't have native array types like PostgreSQL
-5. **COPY command**: Use `LOAD DATA INFILE` for bulk imports in MySQL
+
+### MySQL-Specific Features
+
+We haven't implemented `LOAD DATA INFILE` support yet
 
 ### PostgreSQL-Specific Features
 
@@ -1278,7 +1269,7 @@ We also haven't implemented some of the more uncommon features like:
 ```ts
 // Getting insert ID after INSERT
 const result = await mysql`INSERT INTO users (name) VALUES (${"Alice"})`;
-console.log(result.insertId); // MySQL's LAST_INSERT_ID()
+console.log(result.lastInsertRowid); // MySQL's LAST_INSERT_ID()
 
 // Handling affected rows
 const updated =

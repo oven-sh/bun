@@ -7,7 +7,7 @@ type AnyFunction = (...args: any[]) => any;
 interface BundlerPlugin {
   onLoad: Map<string, [RegExp, OnLoadCallback][]>;
   onResolve: Map<string, [RegExp, OnResolveCallback][]>;
-  onEndCallbacks: Array<Function> | undefined;
+  onEndCallbacks: Array<(build: Bun.BuildOutput) => void | Promise<void>> | undefined;
   /** Binding to `JSBundlerPlugin__onLoadAsync` */
   onLoadAsync(
     internalID,
@@ -108,15 +108,17 @@ export function loadAndResolvePluginsForServe(
 
 export function runOnEndCallbacks(
   this: BundlerPlugin,
-  buildResultOrError: Bun.BuildOutput | AggregateError,
   promise: Promise<Bun.BuildOutput>,
+  buildResult: Bun.BuildOutput,
+  buildRejection: AggregateError | undefined,
 ): Promise<void> | void {
-  if (!this.onEndCallbacks) return;
+  const callbacks = this.onEndCallbacks;
+  if (!callbacks) return;
   const promises: PromiseLike<unknown>[] = [];
 
-  for (const callback of this.onEndCallbacks) {
+  for (const callback of callbacks) {
     try {
-      const result = callback(buildResultOrError);
+      const result = callback(buildResult);
 
       if (result && $isPromise(result)) {
         $arrayPush(promises, result);
@@ -131,10 +133,10 @@ export function runOnEndCallbacks(
     // in bundle_v2.zig is done by checking if this function did not return undefined
     return Promise.all(promises).then(
       () => {
-        if (buildResultOrError instanceof AggregateError) {
-          $rejectPromise(promise, buildResultOrError);
+        if (buildRejection !== undefined) {
+          $rejectPromise(promise, buildRejection);
         } else {
-          $resolvePromise(promise, buildResultOrError);
+          $resolvePromise(promise, buildResult);
         }
       },
       e => {

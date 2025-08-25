@@ -654,7 +654,7 @@ extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)
     plugin->plugin.tombstone();
 }
 
-extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedBuildResult, JSC::EncodedJSValue encodedBuildPromise)
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedBuildPromise, JSC::EncodedJSValue encodedBuildResult, JSC::EncodedJSValue encodedRejection)
 {
     auto& vm = plugin->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -670,8 +670,9 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundler
     }
 
     MarkedArgumentBuffer arguments;
-    arguments.append(JSValue::decode(encodedBuildResult));
     arguments.append(JSValue::decode(encodedBuildPromise));
+    arguments.append(JSValue::decode(encodedBuildResult));
+    arguments.append(JSValue::decode(encodedRejection));
 
     // TODO: use AsyncContextFrame?
     auto result

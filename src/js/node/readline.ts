@@ -56,7 +56,6 @@ var debug = process.env.BUN_JS_DEBUG ? console.log : () => {};
 const SymbolAsyncIterator = Symbol.asyncIterator;
 const SymbolIterator = Symbol.iterator;
 const SymbolFor = Symbol.for;
-const SymbolReplace = Symbol.replace;
 const ArrayFrom = Array.from;
 const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeSort = Array.prototype.sort;
@@ -71,7 +70,6 @@ const ArrayPrototypeReverse = Array.prototype.reverse;
 const ArrayPrototypeShift = Array.prototype.shift;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const RegExpPrototypeExec = RegExp.prototype.exec;
-const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
 const StringFromCharCode = String.fromCharCode;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeCodePointAt = String.prototype.codePointAt;
@@ -1234,6 +1232,9 @@ var _Interface = class Interface extends InterfaceConstructor {
   // eslint-disable-next-line no-useless-constructor
   constructor(input, output, completer, terminal) {
     super(input, output, completer, terminal);
+  }
+  [Symbol.dispose]() {
+    this.close();
   }
   get columns() {
     var output = this.output;
@@ -2528,6 +2529,7 @@ Interface.prototype._getDisplayPos = _Interface.prototype[kGetDisplayPos];
 Interface.prototype._getCursorPos = _Interface.prototype.getCursorPos;
 Interface.prototype._moveCursor = _Interface.prototype[kMoveCursor];
 Interface.prototype._ttyWrite = _Interface.prototype[kTtyWrite];
+Interface.prototype[Symbol.dispose] = _Interface.prototype[Symbol.dispose];
 
 function _ttyWriteDumb(s, key) {
   key = key || kEmptyObject;

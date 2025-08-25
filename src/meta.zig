@@ -338,7 +338,9 @@ pub fn SliceChild(comptime T: type) type {
 }
 
 /// userland implementation of https://github.com/ziglang/zig/issues/21879
-pub fn VoidFieldTypes(comptime T: type) type {
+pub fn useAllFields(comptime T: type, _: VoidFields(T)) void {}
+
+fn VoidFields(comptime T: type) type {
     const fields = @typeInfo(T).@"struct".fields;
     var new_fields = fields[0..fields.len].*;
     for (&new_fields) |*field| {
@@ -355,6 +357,20 @@ pub fn VoidFieldTypes(comptime T: type) type {
 
 pub fn voidFieldTypeDiscardHelper(data: anytype) void {
     _ = data;
+}
+
+pub fn hasDecl(comptime T: type, comptime name: []const u8) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct", .@"union", .@"enum", .@"opaque" => @hasDecl(T, name),
+        else => false,
+    };
+}
+
+pub fn hasField(comptime T: type, comptime name: []const u8) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct", .@"union", .@"enum" => @hasField(T, name),
+        else => false,
+    };
 }
 
 const bun = @import("bun");

@@ -905,7 +905,7 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn endBuffered(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
                 this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                return JSValue.jsBoolean(false);
+                return .false;
             }
 
             const args = callframe.argumentsUndef(2);
@@ -2044,7 +2044,7 @@ pub fn jsIsNamedPipeSocket(global: *jsc.JSGlobalObject, callframe: *jsc.CallFram
     } else if (socket.as(TLSSocket)) |this| {
         return jsc.JSValue.jsBoolean(this.socket.isNamedPipe());
     }
-    return jsc.JSValue.jsBoolean(false);
+    return .false;
 }
 
 pub fn jsGetBufferedAmount(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {

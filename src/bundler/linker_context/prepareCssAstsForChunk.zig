@@ -107,7 +107,7 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                             )) {
                                 .result => |v| v,
                                 .err => |e| {
-                                    c.log.addErrorFmt(null, Loc.Empty, c.allocator, "Error generating CSS for import: {}", .{e}) catch bun.outOfMemory();
+                                    c.log.addErrorFmt(null, Loc.Empty, c.allocator(), "Error generating CSS for import: {}", .{e}) catch bun.outOfMemory();
                                     continue;
                                 },
                             };

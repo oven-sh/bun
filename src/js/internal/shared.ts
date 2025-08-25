@@ -29,7 +29,7 @@ function throwNotImplemented(feature: string, issue?: number, extra?: string): n
   throw new NotImplementedError(feature, issue, extra);
 }
 
-function hideFromStack(...fns) {
+function hideFromStack(...fns: Function[]) {
   for (const fn of fns) {
     Object.defineProperty(fn, "name", {
       value: "::bunternal::",
@@ -37,7 +37,7 @@ function hideFromStack(...fns) {
   }
 }
 
-let warned;
+let warned: Set<string>;
 function warnNotImplementedOnce(feature: string, issue?: number) {
   if (!warned) {
     warned = new Set();
@@ -50,16 +50,14 @@ function warnNotImplementedOnce(feature: string, issue?: number) {
   console.warn(new NotImplementedError(feature, issue));
 }
 
-//
-
 let util: typeof import("node:util");
 class ExceptionWithHostPort extends Error {
   errno: number;
   syscall: string;
   port?: number;
-  address;
+  address: string;
 
-  constructor(err, syscall, address, port) {
+  constructor(err: number, syscall: string, address: string, port?: number) {
     // TODO(joyeecheung): We have to use the type-checked
     // getSystemErrorName(err) to guard against invalid arguments from users.
     // This can be replaced with [ code ] = errmap.get(err) when this method
@@ -109,6 +107,9 @@ class ConnResetException extends Error {
 }
 
 class ErrnoException extends Error {
+  errno: number;
+  syscall: string;
+
   constructor(err, syscall, original) {
     util ??= require("node:util");
     const code = util.getSystemErrorName(err);
@@ -137,7 +138,7 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject as any) {
   };
 }
 
-const kEmptyObject = ObjectFreeze({ __proto__: null });
+const kEmptyObject = ObjectFreeze(Object.create(null));
 
 //
 

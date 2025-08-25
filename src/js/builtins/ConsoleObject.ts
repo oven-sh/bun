@@ -709,7 +709,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         return final([iterKey, valuesKey], [getIndexArray(length), values]);
       }
 
-      const map = { __proto__: null };
+      const map = Object.create(null);
       let hasPrimitives = false;
       const valuesKeyArray: any = [];
       const indexKeyArray = Object.keys(tabularData);

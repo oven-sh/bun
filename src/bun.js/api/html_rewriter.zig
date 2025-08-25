@@ -60,12 +60,19 @@ pub const HTMLRewriter = struct {
         listener: JSValue,
     ) bun.JSError!JSValue {
         const selector_slice = std.fmt.allocPrint(bun.default_allocator, "{}", .{selector_name}) catch bun.outOfMemory();
+        defer bun.default_allocator.free(selector_slice);
 
         var selector = LOLHTML.HTMLSelector.parse(selector_slice) catch
-            return createLOLHTMLError(global);
+            return global.throwValue(createLOLHTMLError(global));
+        errdefer selector.deinit();
+
         const handler_ = try ElementHandler.init(global, listener);
         const handler = bun.default_allocator.create(ElementHandler) catch bun.outOfMemory();
         handler.* = handler_;
+        errdefer {
+            handler.deinit();
+            bun.default_allocator.destroy(handler);
+        }
 
         this.builder.addElementContentHandlers(
             selector,
@@ -91,8 +98,7 @@ pub const HTMLRewriter = struct {
             else
                 null,
         ) catch {
-            selector.deinit();
-            return createLOLHTMLError(global);
+            return global.throwValue(createLOLHTMLError(global));
         };
 
         this.context.selectors.append(bun.default_allocator, selector) catch bun.outOfMemory();
@@ -110,6 +116,10 @@ pub const HTMLRewriter = struct {
 
         const handler = bun.default_allocator.create(DocumentHandler) catch bun.outOfMemory();
         handler.* = handler_;
+        errdefer {
+            handler.deinit();
+            bun.default_allocator.destroy(handler);
+        }
 
         // If this fails, subsequent calls to write or end should throw
         this.builder.addDocumentContentHandlers(
@@ -883,6 +893,11 @@ fn HandlerCallback(
                 wrapper.deref();
             }
 
+            // Use a CatchScope to properly handle exceptions from the JavaScript callback
+            var scope: bun.jsc.CatchScope = undefined;
+            scope.init(this.global, @src());
+            defer scope.deinit();
+
             const result = @field(this, callback_name).?.call(
                 this.global,
                 if (comptime @hasField(HandlerType, "thisObject"))
@@ -891,9 +906,35 @@ fn HandlerCallback(
                     JSValue.zero,
                 &.{wrapper.toJS(this.global)},
             ) catch {
-                // If there's an error, we'll propagate it to the caller.
+                // If there's an exception in the scope, capture it for later retrieval
+                if (scope.exception()) |exc| {
+                    const exc_value = JSValue.fromCell(exc);
+                    // Store the exception in the VM's unhandled rejection capture mechanism
+                    // if it's available (this is the same mechanism used by BufferOutputSink)
+                    if (this.global.bunVM().unhandled_pending_rejection_to_capture) |err_ptr| {
+                        err_ptr.* = exc_value;
+                        exc_value.protect();
+                    }
+                }
+                // Clear the exception from the scope to prevent assertion failures
+                scope.clearException();
+                // Return true to indicate failure to LOLHTML, which will cause the write
+                // operation to fail and the error handling logic to take over.
                 return true;
             };
+
+            // Check if there's an exception that was thrown but not caught by the error union
+            if (scope.exception()) |exc| {
+                const exc_value = JSValue.fromCell(exc);
+                // Store the exception in the VM's unhandled rejection capture mechanism
+                if (this.global.bunVM().unhandled_pending_rejection_to_capture) |err_ptr| {
+                    err_ptr.* = exc_value;
+                    exc_value.protect();
+                }
+                // Clear the exception to prevent assertion failures
+                scope.clearException();
+                return true;
+            }
 
             if (!result.isUndefinedOrNull()) {
                 if (result.isError() or result.isAggregateError(this.global)) {
@@ -1601,19 +1642,19 @@ pub const AttributeIterator = struct {
         const value_label = jsc.ZigString.static("value");
 
         if (this.iterator == null) {
-            return JSValue.createObject2(globalObject, done_label, value_label, JSValue.jsBoolean(true), .js_undefined);
+            return JSValue.createObject2(globalObject, done_label, value_label, .true, .js_undefined);
         }
 
         var attribute = this.iterator.?.next() orelse {
             this.iterator.?.deinit();
             this.iterator = null;
-            return JSValue.createObject2(globalObject, done_label, value_label, JSValue.jsBoolean(true), .js_undefined);
+            return JSValue.createObject2(globalObject, done_label, value_label, .true, .js_undefined);
         };
 
         const value = attribute.value();
         const name = attribute.name();
 
-        return JSValue.createObject2(globalObject, done_label, value_label, JSValue.jsBoolean(false), try bun.String.toJSArray(
+        return JSValue.createObject2(globalObject, done_label, value_label, .false, try bun.String.toJSArray(
             globalObject,
             &[_]bun.String{
                 name.toString(),
@@ -1700,7 +1741,7 @@ pub const Element = struct {
     /// Returns a boolean indicating whether an attribute exists on the element.
     pub fn hasAttribute_(this: *Element, global: *JSGlobalObject, name: ZigString) JSValue {
         if (this.element == null)
-            return JSValue.jsBoolean(false);
+            return .false;
 
         var slice = name.toSlice(bun.default_allocator);
         defer slice.deinit();

@@ -84,7 +84,7 @@ pub const ProcessExitHandler = struct {
             LifecycleScriptSubprocess,
             ShellSubprocess,
             ProcessHandle,
-
+            SecurityScanSubprocess,
             SyncProcess,
         },
     );
@@ -113,6 +113,10 @@ pub const ProcessExitHandler = struct {
             },
             @field(TaggedPointer.Tag, @typeName(ShellSubprocess)) => {
                 const subprocess = this.ptr.as(ShellSubprocess);
+                subprocess.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(SecurityScanSubprocess)) => {
+                const subprocess = this.ptr.as(SecurityScanSubprocess);
                 subprocess.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, @typeName(SyncProcess)) => {
@@ -2197,7 +2201,7 @@ pub const sync = struct {
 
             if (out_fds_to_wait_for[1] != bun.invalid_fd) {
                 poll_fds.len += 1;
-                poll_fds[poll_fds.len - 1].fd = @intCast(out_fds_to_wait_for[0].cast());
+                poll_fds[poll_fds.len - 1].fd = @intCast(out_fds_to_wait_for[1].cast());
             }
 
             if (poll_fds.len == 0) {
@@ -2246,10 +2250,12 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const PosixSpawn = bun.spawn;
-const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const Maybe = bun.sys.Maybe;
 const ShellSubprocess = bun.shell.ShellSubprocess;
 const uv = bun.windows.libuv;
+
+const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
+const SecurityScanSubprocess = bun.install.SecurityScanSubprocess;
 
 const jsc = bun.jsc;
 const Subprocess = jsc.Subprocess;

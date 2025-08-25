@@ -1893,17 +1893,12 @@ pub const BundleV2 = struct {
         }
 
         /// Returns true if the promises were handled and resolved from BundlePlugin.ts, returns false if the caller should imediately resolve
-        fn runOnEndCallbacks(globalThis: *jsc.JSGlobalObject, plugin: *bun.jsc.API.JSBundler.Plugin, root_obj: jsc.JSValue, promise: *jsc.JSPromise) bool {
-            const value = plugin.runOnEndCallbacks(globalThis, root_obj, promise);
+        fn runOnEndCallbacks(globalThis: *jsc.JSGlobalObject, plugin: *bun.jsc.API.JSBundler.Plugin, build_result_or_error: jsc.JSValue, promise: *jsc.JSPromise) bool {
+            const value = plugin.runOnEndCallbacks(globalThis, build_result_or_error, promise);
             return value != .js_undefined;
         }
 
         fn toJSError(this: *JSBundleCompletionTask, promise: *jsc.JSPromise, globalThis: *jsc.JSGlobalObject) void {
-            if (this.config.throw_on_error) {
-                promise.reject(globalThis, this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed")));
-                return;
-            }
-
             const root_obj = jsc.JSValue.createEmptyObject(globalThis, 3);
             root_obj.put(globalThis, jsc.ZigString.static("outputs"), jsc.JSValue.createEmptyArray(globalThis, 0) catch return promise.reject(globalThis, error.JSError));
             root_obj.put(
@@ -1919,10 +1914,24 @@ pub const BundleV2 = struct {
                 },
             );
 
-            const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(globalThis, plugin, root_obj, promise) else false;
+            const throw_on_error = this.config.throw_on_error;
+
+            const payload = brk: {
+                if (throw_on_error) {
+                    const err = this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed"));
+                    break :brk (err catch |e| globalThis.takeException(e));
+                }
+                break :brk root_obj;
+            };
+
+            const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(globalThis, plugin, payload, promise) else false;
 
             if (!didHandleCallbacks) {
-                promise.resolve(globalThis, root_obj);
+                if (throw_on_error) {
+                    promise.reject(globalThis, payload);
+                } else {
+                    promise.resolve(globalThis, payload);
+                }
             }
         }
 

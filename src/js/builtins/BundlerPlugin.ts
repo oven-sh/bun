@@ -108,15 +108,15 @@ export function loadAndResolvePluginsForServe(
 
 export function runOnEndCallbacks(
   this: BundlerPlugin,
-  buildResult: Bun.BuildOutput,
-  buildPromise: Promise<Bun.BuildOutput>,
+  buildResultOrError: Bun.BuildOutput | AggregateError,
+  promise: Promise<Bun.BuildOutput>,
 ): Promise<void> | void {
   if (!this.onEndCallbacks) return;
   const promises: PromiseLike<unknown>[] = [];
 
   for (const callback of this.onEndCallbacks) {
     try {
-      const result = callback(buildResult);
+      const result = callback(buildResultOrError);
 
       if (result && $isPromise(result)) {
         $arrayPush(promises, result);
@@ -131,10 +131,14 @@ export function runOnEndCallbacks(
     // in bundle_v2.zig is done by checking if this function did not return undefined
     return Promise.all(promises).then(
       () => {
-        $resolvePromise(buildPromise, buildResult);
+        if (buildResultOrError instanceof AggregateError) {
+          $rejectPromise(promise, buildResultOrError);
+        } else {
+          $resolvePromise(promise, buildResultOrError);
+        }
       },
       e => {
-        $rejectPromise(buildPromise, e);
+        $rejectPromise(promise, e);
       },
     );
   }

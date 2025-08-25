@@ -1086,9 +1086,9 @@ pub const JSBundler = struct {
         extern fn JSBundlerPlugin__tombstone(*Plugin) void;
         extern fn JSBundlerPlugin__runOnEndCallbacks(*Plugin, jsc.JSValue, jsc.JSValue) jsc.JSValue;
 
-        pub fn runOnEndCallbacks(this: *Plugin, globalThis: *jsc.JSGlobalObject, build_result: jsc.JSValue, build_promise: *jsc.JSPromise) jsc.JSValue {
+        pub fn runOnEndCallbacks(this: *Plugin, globalThis: *jsc.JSGlobalObject, build_result_or_error: jsc.JSValue, build_promise: *jsc.JSPromise) jsc.JSValue {
             jsc.markBinding(@src());
-            return JSBundlerPlugin__runOnEndCallbacks(this, build_result, build_promise.asValue(globalThis));
+            return JSBundlerPlugin__runOnEndCallbacks(this, build_result_or_error, build_promise.asValue(globalThis));
         }
 
         pub fn deinit(this: *Plugin) void {

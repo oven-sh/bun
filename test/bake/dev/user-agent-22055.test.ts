@@ -18,10 +18,11 @@ devTest("returns plain text errors for non-browser User-Agent (#22055)", {
     // Test with browser User-Agent (should get HTML)
     const browserResponse = await dev.fetch("/", {
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-      }
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+      },
     });
-    
+
     expect(browserResponse.status).toBe(500);
     const browserText = await browserResponse.text();
     expect(browserResponse.headers.get("content-type")).toContain("text/html");
@@ -30,10 +31,10 @@ devTest("returns plain text errors for non-browser User-Agent (#22055)", {
     // Test with non-browser User-Agent (should get plain text)
     const fetchResponse = await dev.fetch("/", {
       headers: {
-        "User-Agent": "fetch/1.0"
-      }
+        "User-Agent": "fetch/1.0",
+      },
     });
-    
+
     expect(fetchResponse.status).toBe(500);
     const fetchText = await fetchResponse.text();
     expect(fetchResponse.headers.get("content-type")).toContain("text/plain");

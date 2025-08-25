@@ -2935,13 +2935,13 @@ fn encodeSerializedFailures(
 /// Check if the client is likely a browser based on User-Agent header
 fn isBrowserClient(req: *Request) bool {
     const user_agent = req.header("user-agent") orelse return false;
-    
+
     // Check for common browser indicators in User-Agent string
     return std.mem.indexOf(u8, user_agent, "Mozilla/") != null or
-           std.mem.indexOf(u8, user_agent, "Chrome/") != null or
-           std.mem.indexOf(u8, user_agent, "Safari/") != null or
-           std.mem.indexOf(u8, user_agent, "Firefox/") != null or
-           std.mem.indexOf(u8, user_agent, "Edge/") != null;
+        std.mem.indexOf(u8, user_agent, "Chrome/") != null or
+        std.mem.indexOf(u8, user_agent, "Safari/") != null or
+        std.mem.indexOf(u8, user_agent, "Firefox/") != null or
+        std.mem.indexOf(u8, user_agent, "Edge/") != null;
 }
 
 fn sendSerializedFailures(
@@ -3012,7 +3012,7 @@ fn sendSerializedFailures(
         try buf.writer().print("{s}\n\n", .{page_title});
         try buf.writer().print("Bun development server encountered an error.\n", .{});
         try buf.writer().print("Found {d} error(s) preventing the application from running.\n\n", .{failures.len});
-        
+
         try buf.writer().print("To see detailed error information, open this URL in a web browser.\n", .{});
         try buf.writer().print("For programmatic access to error details, consider using WebSocket connections.\n", .{});
 

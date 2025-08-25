@@ -22,7 +22,7 @@ function wrapError(error: Error | MySQLErrorOptions) {
   return new MySQLError(error.message, error);
 }
 initMySQL(
-  function onResolveMySQLQuery(query, result, commandTag, count, queries, is_last, last_insert_rowid) {
+  function onResolveMySQLQuery(query, result, commandTag, count, queries, is_last, last_insert_rowid, affected_rows) {
     /// simple queries
     if (query[_flags] & SQLQueryFlags.simple) {
       $assert(result instanceof SQLResultArray, "Invalid result array");
@@ -31,6 +31,7 @@ initMySQL(
 
       result.count = count || 0;
       result.lastInsertRowid = last_insert_rowid;
+      result.affectedRows = affected_rows || 0;
       const last_result = query[_results];
 
       if (!last_result) {
@@ -62,6 +63,7 @@ initMySQL(
 
     result.count = count || 0;
     result.lastInsertRowid = last_insert_rowid;
+    result.affectedRows = affected_rows || 0;
     if (queries) {
       const queriesIndex = queries.indexOf(query);
       if (queriesIndex !== -1) {

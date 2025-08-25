@@ -1691,7 +1691,7 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
     }
 }
 
-fn handleResultSetOK(this: *MySQLConnection, request: *MySQLQuery, statement: *MySQLStatement, status_flags: StatusFlags, last_insert_id: u64) void {
+fn handleResultSetOK(this: *MySQLConnection, request: *MySQLQuery, statement: *MySQLStatement, status_flags: StatusFlags, last_insert_id: u64, affected_rows: u64) void {
     this.status_flags = status_flags;
     this.flags.is_ready_for_query = !status_flags.has(.SERVER_MORE_RESULTS_EXISTS);
     debug("handleResultSetOK: {d} {}", .{ status_flags.toInt(), status_flags.has(.SERVER_MORE_RESULTS_EXISTS) });
@@ -1702,7 +1702,14 @@ fn handleResultSetOK(this: *MySQLConnection, request: *MySQLQuery, statement: *M
     if (this.flags.is_ready_for_query) {
         this.finishRequest(request);
     }
-    request.onResult(statement.result_count, this.globalObject, this.js_value, this.flags.is_ready_for_query, last_insert_id);
+    request.onResult(
+        statement.result_count,
+        this.globalObject,
+        this.js_value,
+        this.flags.is_ready_for_query,
+        last_insert_id,
+        affected_rows,
+    );
     statement.reset();
 }
 
@@ -1747,7 +1754,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                     // if packet type is OK it means the query is done and no results are returned
                     try ok.decode(reader);
                     defer ok.deinit();
-                    this.handleResultSetOK(request, statement, ok.status_flags, ok.last_insert_id);
+                    this.handleResultSetOK(request, statement, ok.status_flags, ok.last_insert_id, ok.affected_rows);
                     return;
                 }
 
@@ -1783,13 +1790,13 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                         try ok.decode(reader);
                         defer ok.deinit();
 
-                        this.handleResultSetOK(request, statement, ok.status_flags, ok.last_insert_id);
+                        this.handleResultSetOK(request, statement, ok.status_flags, ok.last_insert_id, ok.affected_rows);
                         return;
                     } else if (packet_type == .EOF) {
                         // this is actually a OK packet but with the flag EOF
                         try ok.decode(reader);
                         defer ok.deinit();
-                        this.handleResultSetOK(request, statement, ok.status_flags, ok.last_insert_id);
+                        this.handleResultSetOK(request, statement, ok.status_flags, ok.last_insert_id, ok.affected_rows);
                         return;
                     }
                 }

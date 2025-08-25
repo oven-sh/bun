@@ -6,7 +6,6 @@ const NpmArgs = struct {
     pub const package_version: string = "npm_package_version";
 };
 
-
 pub const RunCommand = struct {
     const shells_to_search = &[_]string{
         "bash",
@@ -371,7 +370,7 @@ pub const RunCommand = struct {
         use_system_shell: bool,
     ) !void {
         const restart_policy = ctx.runtime_options.restart_policy;
-        
+
         // If no restart policy, run once
         if (restart_policy == .no) {
             const exit_code = try runPackageScriptOnce(ctx, allocator, original_script, name, cwd, env, passthrough, silent, use_system_shell);
@@ -380,29 +379,29 @@ pub const RunCommand = struct {
             }
             return;
         }
-        
+
         // Restart logic - follow Docker model (no hardcoded limits)
         var restart_count: u32 = 0;
-        
+
         while (true) {
             const exit_code = try runPackageScriptOnce(ctx, allocator, original_script, name, cwd, env, passthrough, silent, use_system_shell);
-            
+
             const should_restart = switch (restart_policy) {
                 .no => false,
                 .on_failure => exit_code != 0,
                 .always => true,
                 .unless_stopped => exit_code != 0,
             };
-            
+
             if (!should_restart) {
                 if (exit_code != 0) {
                     Global.exit(exit_code);
                 }
                 return;
             }
-            
+
             restart_count += 1;
-            
+
             if (!silent) {
                 Output.prettyln("<d>Restarting script '{s}' (attempt {d})...<r>", .{ name, restart_count + 1 });
             }
@@ -1259,7 +1258,6 @@ pub const RunCommand = struct {
 
         Output.flush();
     }
-
 
     fn _bootAndHandleError(ctx: Command.Context, path: string, loader: ?bun.options.Loader) bool {
         Global.configureAllocator(.{ .long_running = true });

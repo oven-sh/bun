@@ -1,10 +1,5 @@
-import { test, expect } from "bun:test";
-import {
-  bunEnv,
-  bunExe,
-  tempDirWithFiles,
-  writeFile,
-} from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { resolve } from "path";
 
 test("--restart flag parsing", () => {
@@ -25,10 +20,7 @@ test("--restart with invalid policy shows error", async () => {
     stderr: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(1);
   expect(stderr).toContain("Invalid restart policy");
@@ -50,11 +42,7 @@ test("--restart=no does not restart on success", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stdout).toContain("This script succeeds");
@@ -77,11 +65,7 @@ test("--restart=no does not restart on failure", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(1);
   expect(stdout).toContain("This script fails");
@@ -127,7 +111,7 @@ test("--restart=on-failure restarts on failure but not success", async () => {
   });
 
   expect(result1.exitCode).toBe(0); // Should eventually succeed
-  
+
   // Verify restarts happened by checking the counter file
   const counterFile = resolve(dir, "restart-counter.txt");
   const fs = require("fs");
@@ -136,7 +120,7 @@ test("--restart=on-failure restarts on failure but not success", async () => {
     expect(finalCount).toBe(3); // Should have run 3 times (2 failures + 1 success)
   }
 
-  // Test success case - should not restart  
+  // Test success case - should not restart
   const result2 = Bun.spawnSync({
     cmd: [bunExe(), "run", "--restart", "on-failure", resolve(dir, "success.js")],
     env: bunEnv,
@@ -176,30 +160,25 @@ test("--restart=always restarts on both success and failure", async () => {
     `,
   });
 
-  
   const proc = Bun.spawn({
     cmd: [bunExe(), "run", "--restart", "always", resolve(dir, "counter.js")],
     env: bunEnv,
-    stdout: "pipe", 
+    stdout: "pipe",
     stderr: "pipe",
   });
 
   // Give it time to restart a few times, then kill
   setTimeout(() => proc.kill(), 500);
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(), 
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Should have been killed by timeout
   expect(exitCode).not.toBe(0);
-  
-  // Check that restart actually happened by reading the counter file 
+
+  // Check that restart actually happened by reading the counter file
   // Wait a bit for filesystem writes to complete
   await new Promise(resolve => setTimeout(resolve, 100));
-  
+
   const counterFile = resolve(dir, "always-counter.txt");
   const fs = require("fs");
   if (fs.existsSync(counterFile)) {
@@ -247,11 +226,7 @@ test("--restart=unless-stopped restarts on failure but not success", async () =>
     timeout_ms: 10000,
   });
 
-  const [stdout1, stderr1, exitCode1] = await Promise.all([
-    proc1.stdout.text(),
-    proc1.stderr.text(),
-    proc1.exited,
-  ]);
+  const [stdout1, stderr1, exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
 
   expect(exitCode1).toBe(0);
   expect(stdout1).toContain("Unless-stopped fail attempt 1");
@@ -266,11 +241,7 @@ test("--restart=unless-stopped restarts on failure but not success", async () =>
     stderr: "pipe",
   });
 
-  const [stdout2, stderr2, exitCode2] = await Promise.all([
-    proc2.stdout.text(),
-    proc2.stderr.text(),
-    proc2.exited,
-  ]);
+  const [stdout2, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
 
   expect(exitCode2).toBe(0);
   expect(stdout2).toContain("Unless-stopped success");
@@ -324,11 +295,7 @@ test("--restart works with package.json scripts", async () => {
     timeout_ms: 10000,
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stdout).toContain("Package script attempt 1");
@@ -344,11 +311,7 @@ test("--restart flag is available but has no effect on install command", async (
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Install should work normally and exit successfully
   expect(exitCode).toBe(0);
@@ -372,11 +335,7 @@ test("multiple --restart flags uses the last one", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stdout).toContain("Multiple restart flags test");

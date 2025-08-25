@@ -114,7 +114,7 @@ pub fn exit(code: u32) noreturn {
     // Check restart policy for JavaScript files
     const cli_ctx = bun.cli.Command.get();
     const restart_policy = cli_ctx.runtime_options.restart_policy;
-    
+
     // Determine if we should restart based on the policy and exit code
     const should_restart = switch (restart_policy) {
         .no => false,
@@ -127,11 +127,11 @@ pub fn exit(code: u32) noreturn {
         // Track restart count for logging purposes
         const restart_count_env = bun.getenvZ("BUN_RESTART_COUNT") orelse "0";
         const restart_count = std.fmt.parseInt(u32, restart_count_env, 10) catch 0;
-        
+
         // Set environment variable for next restart
         var restart_count_buf: [16]u8 = undefined;
         const new_count_str = std.fmt.bufPrint(&restart_count_buf, "{d}", .{restart_count + 1}) catch "0";
-        
+
         // Create null-terminated string for setenv
         var value_buf: [32]u8 = undefined;
         if (std.fmt.bufPrintZ(&value_buf, "{s}", .{new_count_str})) |value_z| {
@@ -143,8 +143,7 @@ pub fn exit(code: u32) noreturn {
                     bun.Output.prettyln("<d>Process restarting (attempt {d})...<r>", .{restart_count + 1});
                 }
                 bun.Output.flush();
-                
-                
+
                 // Use bun.reloadProcess to restart the process
                 bun.reloadProcess(bun.default_allocator, false, false);
                 // If reloadProcess returned (failure case), continue with normal exit
@@ -154,7 +153,6 @@ pub fn exit(code: u32) noreturn {
             // Failed to format value, continue with normal exit
         }
     }
-
 
     if (Environment.isDebug) {
         bun.assert(bun.debug_allocator_data.backing.?.deinit() == .ok);

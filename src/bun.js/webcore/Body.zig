@@ -268,6 +268,9 @@ pub const Value = union(Tag) {
     Empty,
     Error: ValueError,
     Null,
+    Render: struct {
+        path: []const u8,
+    },
 
     // We may not have all the data yet
     // So we can't know for sure if it's empty or not
@@ -280,6 +283,7 @@ pub const Value = union(Tag) {
             .Blob => this.Blob.size == 0,
             .WTFStringImpl => this.WTFStringImpl.length() == 0,
             .Error, .Locked => false,
+            .Render => false,
         };
     }
 
@@ -440,6 +444,7 @@ pub const Value = union(Tag) {
         Empty,
         Error,
         Null,
+        Render,
     };
 
     // pub const empty = Value{ .Empty = {} };
@@ -455,6 +460,10 @@ pub const Value = union(Tag) {
                 return jsc.WebCore.ReadableStream.empty(globalThis);
             },
             .Null => {
+                return JSValue.null;
+            },
+            .Render => {
+                // Render variant cannot be converted to a stream
                 return JSValue.null;
             },
             .InternalBlob, .Blob, .WTFStringImpl => {
@@ -751,6 +760,7 @@ pub const Value = union(Tag) {
             .InternalBlob => this.InternalBlob.sliceConst(),
             .WTFStringImpl => if (this.WTFStringImpl.canUseAsUTF8()) this.WTFStringImpl.latin1Slice() else "",
             // .InlineBlob => this.InlineBlob.sliceConst(),
+            .Render => "",
             else => "",
         };
     }
@@ -1396,6 +1406,7 @@ pub const ValueBufferer = struct {
             .WTFStringImpl,
             .InternalBlob,
             .Blob,
+            .Render,
             => {
                 // toBlobIfPossible checks for WTFString needing a conversion.
                 var input = value.useAsAnyBlobAllowNonUTF8String();

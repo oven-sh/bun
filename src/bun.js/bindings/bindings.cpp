@@ -5996,11 +5996,56 @@ extern "C" void JSC__JSValue__transformToReactElementWithOptions(JSC::EncodedJSV
     // Set type property
     auto typeIdentifier = JSC::Identifier::fromString(vm, "type"_s);
 
+    // TODO: this is fucking awful
+    // Check if this is a render redirect (Response.render() case)
+    // We detect this by checking if component is the special marker string "__bun_render_redirect__"
+    bool isRenderRedirect = false;
+    if (component.isString()) {
+        JSC::JSString* componentString = component.toString(globalObject);
+        if (componentString) {
+            String componentStr = componentString->value(globalObject);
+            if (componentStr == "__bun_render_redirect__"_s) {
+                isRenderRedirect = true;
+            }
+        }
+    }
+
+    // Handle Response.render() case - use BakeSSRResponse builtin to create wrapper
+    if (isRenderRedirect) {
+        // Get the render path and params from the response object
+        auto renderPathIdentifier = JSC::Identifier::fromString(vm, "__renderPath"_s);
+        auto renderParamsIdentifier = JSC::Identifier::fromString(vm, "__renderParams"_s);
+
+        JSC::JSValue renderPath = responseObject->get(globalObject, renderPathIdentifier);
+        JSC::JSValue renderParams = responseObject->get(globalObject, renderParamsIdentifier);
+
+        // Use the BakeSSRResponse builtin's wrapComponent function
+        JSC::JSFunction* wrapComponentFn = JSC::JSFunction::create(vm, globalObject, bakeSSRResponseWrapComponentCodeGenerator(vm), globalObject);
+
+        // Call wrapComponent(path, params, true, responseObject) where true indicates this is a render redirect
+        JSC::MarkedArgumentBuffer args;
+        args.append(renderPath);
+        args.append(renderParams);
+        args.append(JSC::jsBoolean(true)); // This is a render redirect
+        args.append(response); // Pass the Response object
+
+        // Call the wrapComponent function
+        auto callData = JSC::getCallData(wrapComponentFn);
+        JSC::JSValue wrappedComponent = JSC::call(globalObject, wrapComponentFn, callData, JSC::jsUndefined(), args);
+
+        if (!scope.exception() && !wrappedComponent.isUndefinedOrNull()) {
+            responseObject->putDirect(vm, typeIdentifier, wrappedComponent, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+        } else {
+            // If there was an error, clear it and set type to null
+            scope.clearException();
+            responseObject->putDirect(vm, typeIdentifier, JSC::jsNull(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+        }
+    }
     // TODO: this is stupid
     // Check if the component is a JSX element (has $$typeof property)
     // If it is, we need to wrap it in a function for React to work properly
     // because `<Component />` is already the result of calling Component()
-    if (component.isObject()) {
+    else if (component.isObject()) {
         JSC::JSObject* componentObject = component.getObject();
         auto typeofProperty = JSC::Identifier::fromString(vm, "$$typeof"_s);
         JSC::JSValue typeofValue = componentObject->get(globalObject, typeofProperty);
@@ -6019,10 +6064,12 @@ extern "C" void JSC__JSValue__transformToReactElementWithOptions(JSC::EncodedJSV
                 // So for BakeSSRResponse.ts with export function wrapComponent:
                 JSC::JSFunction* wrapComponentFn = JSC::JSFunction::create(vm, globalObject, bakeSSRResponseWrapComponentCodeGenerator(vm), globalObject);
 
-                // Call wrapComponent(component, responseOptions)
+                // Call wrapComponent(component, responseOptions, false, undefined)
                 JSC::MarkedArgumentBuffer args;
                 args.append(component);
                 args.append(responseOptions);
+                args.append(JSC::jsBoolean(false)); // Not a render redirect
+                args.append(JSC::jsUndefined()); // No response object for regular case
 
                 // Call the wrapComponent function
                 auto callData = JSC::getCallData(wrapComponentFn);

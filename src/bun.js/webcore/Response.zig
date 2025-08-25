@@ -30,6 +30,8 @@ redirected: bool = false,
 /// In the server we use a flag response_protected to protect/unprotect the response
 ref_count: u32 = 1,
 
+is_jsx: bool = false,
+
 // We must report a consistent value for this
 reported_estimated_size: usize = 0,
 
@@ -120,7 +122,7 @@ pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globa
             var any_blob = body.useAsAnyBlob();
             return any_blob.toArrayBufferTransfer(globalObject) catch return .zero;
         },
-        .Error, .Locked => return .js_undefined,
+        .Error, .Locked, .Render => return .js_undefined,
     }
 }
 
@@ -540,39 +542,50 @@ pub fn constructRender(
         return globalThis.throwInvalidArguments("Response.render() path must be a string", .{});
     }
 
-    // Get params if provided (second argument)
+    // Get the path string
+    const path_str = try path_arg.toSlice(globalThis, bun.default_allocator);
+
+    // Duplicate the path string so it persists
+    const path_copy = bun.default_allocator.dupe(u8, path_str.slice()) catch {
+        path_str.deinit();
+        return globalThis.throwOutOfMemory();
+    };
+    path_str.deinit();
+
+    // Create a Response with Render body
+    var response = bun.new(Response, Response{
+        .body = Body{
+            .value = .{
+                .Render = .{
+                    .path = path_copy,
+                },
+            },
+        },
+        .init = Response.Init{
+            .status_code = 200,
+        },
+    });
+
+    const response_js = response.toJS(globalThis);
+    response_js.ensureStillAlive();
+
+    // Store the render path and params on the response for later use
+    // When React tries to render this component, we'll check for these and throw RenderAbortError
+    response_js.put(globalThis, "__renderPath", path_arg);
     const params_arg = if (arguments.len >= 2) arguments.ptr[1] else JSValue.jsNull();
+    response_js.put(globalThis, "__renderParams", params_arg);
 
-    // Get the AsyncLocalStorage instance
-    const als = vm.dev_server_async_local_storage.get() orelse {
-        return globalThis.throwInvalidArguments("Response.render() AsyncLocalStorage not found", .{});
-    };
+    // TODO: this is terrible
+    // Create a simple wrapper function that will be called by React
+    // This needs to be handled specially in transformToReactElementWithOptions
+    // We'll pass a special marker as the component to indicate this is a render redirect
+    const render_marker = ZigString.init("__bun_render_redirect__").toJS(globalThis);
 
-    // Call als.getStore() to get the current store
-    const getStore_fn = try als.get(globalThis, "getStore") orelse {
-        return globalThis.throwInvalidArguments("Response.render() getStore method not found", .{});
-    };
+    // Transform the Response to act as a React element
+    // The C++ code will need to check for this special marker
+    JSValue.transformToReactElementWithOptions(response_js, render_marker, params_arg, globalThis);
 
-    const store = try getStore_fn.call(globalThis, als, &.{});
-
-    if (store.isUndefinedOrNull()) {
-        return globalThis.throwInvalidArguments("Response.render() no active context", .{});
-    }
-
-    // Get the renderAbort function from the store
-    const renderAbort = try store.get(globalThis, "renderAbort") orelse {
-        return globalThis.throwInvalidArguments("Response.render() is only available in non-streaming mode", .{});
-    };
-
-    if (!renderAbort.isCallable()) {
-        return globalThis.throwInvalidArguments("Response.render() is only available in non-streaming mode", .{});
-    }
-
-    // Call renderAbort(path, params) - this will throw and abort the render
-    _ = try renderAbort.call(globalThis, store, &.{ path_arg, params_arg });
-
-    // This should not be reached as renderAbort should throw
-    return .js_undefined;
+    return response_js;
 }
 
 pub fn constructError(
@@ -597,6 +610,7 @@ pub fn constructError(
 pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_value: jsc.JSValue) bun.JSError!*Response {
     var arguments = callframe.argumentsAsArray(2);
 
+    var is_jsx = false;
     if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
         if (arguments[0].as(Blob)) |blob| {
             if (blob.isS3()) {
@@ -640,6 +654,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, t
                 // so it can store them for later use when the component is rendered
                 const responseOptions = if (arguments[1].isObject()) arguments[1] else .js_undefined;
                 JSValue.transformToReactElementWithOptions(this_value, arg, responseOptions, globalThis);
+                is_jsx = true;
             }
         }
     }
@@ -681,6 +696,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, t
     var response = bun.new(Response, Response{
         .body = body,
         .init = init,
+        .is_jsx = is_jsx,
     });
 
     if (response.body.value == .Blob and

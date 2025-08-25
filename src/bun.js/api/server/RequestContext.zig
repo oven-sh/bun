@@ -186,7 +186,23 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             // 5 - is the only reference of the context
             // 6 - is not waiting for request body
             // 7 - did not call sendfile
-            return this.resp != null and !this.flags.aborted and !this.flags.has_marked_complete and !this.flags.has_marked_pending and this.ref_count == 1 and !this.flags.is_waiting_for_request_body and !this.flags.has_sendfile_ctx;
+            ctxLog("RequestContext(0x{x}).shouldRenderMissing {s} {s} {s} {s} {s} {s} {s}", .{
+                @intFromPtr(this),
+                if (this.resp != null) "has response" else "no response",
+                if (this.flags.aborted) "aborted" else "not aborted",
+                if (this.flags.has_marked_complete) "marked complete" else "not marked complete",
+                if (this.flags.has_marked_pending) "marked pending" else "not marked pending",
+                if (this.ref_count == 1) "only reference" else "not only reference",
+                if (this.flags.is_waiting_for_request_body) "waiting for request body" else "not waiting for request body",
+                if (this.flags.has_sendfile_ctx) "has sendfile context" else "no sendfile context",
+            });
+            return this.resp != null and
+                !this.flags.aborted and
+                !this.flags.has_marked_complete and
+                !this.flags.has_marked_pending and
+                this.ref_count == 1 and
+                !this.flags.is_waiting_for_request_body and
+                !this.flags.has_sendfile_ctx;
         }
 
         pub fn isDeadRequest(this: *RequestContext) bool {
@@ -1449,6 +1465,12 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     resp.writeHeaderInt("content-length", 0);
                     this.endWithoutBody(this.shouldCloseConnection());
                 },
+                .Render => {
+                    // Render should have been handled elsewhere, this is unexpected
+                    this.renderMetadata();
+                    resp.writeHeaderInt("content-length", 0);
+                    this.endWithoutBody(this.shouldCloseConnection());
+                },
             }
         }
 
@@ -1860,6 +1882,74 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     lock.onReceiveValue = doRenderWithBodyLocked;
                     lock.task = this;
 
+                    return;
+                },
+                .Render => |render_body| {
+                    // Handle Response.render() case - need to call DevServer with new path
+                    defer bun.default_allocator.free(render_body.path);
+
+                    if (this.server) |server| {
+                        if (@hasField(@TypeOf(server.*), "dev_server")) {
+                            if (server.dev_server) |dev_server_| {
+                                const dev_server: *bun.bake.DevServer = dev_server_;
+                                // Use the current response from the RequestContext
+                                const response = if (this.resp) |resp|
+                                    bun.uws.AnyResponse.init(resp)
+                                else {
+                                    this.renderMissing();
+                                    return;
+                                };
+
+                                const signal = if (this.signal) |signal| signal.ref() else null;
+
+                                const resp = this.resp;
+                                this.detachResponse();
+
+                                const new_request_ctx = server.request_pool_allocator.tryGet() catch bun.outOfMemory();
+                                new_request_ctx.* = .{
+                                    .allocator = server.allocator,
+                                    .resp = resp,
+                                    .req = this.req,
+                                    .method = this.method,
+                                    .server = server,
+                                    .defer_deinit_until_callback_completes = null,
+                                    .signal = signal,
+                                };
+
+                                const url = bun.String.cloneUTF8(render_body.path);
+                                const body: jsc.WebCore.Body.Value = .{ .Null = {} };
+
+                                const new_request = Request.new(.{
+                                    .method = .GET, // TODO: use the correct one
+                                    .request_context = AnyRequestContext.init(new_request_ctx),
+                                    .https = ssl_enabled,
+                                    .signal = if (signal) |s| s.ref() else null,
+                                    .body = server.vm.initRequestBodyValue(body) catch bun.outOfMemory(),
+                                    .url = url,
+                                });
+
+                                new_request_ctx.request_weakref = .initRef(new_request);
+
+                                server.onPendingRequest();
+                                // Call DevServer with the render path
+                                dev_server.handleRenderRedirect(bun.jsc.API.SavedRequest{
+                                    .js_request = .create(new_request.toJS(server.globalThis), server.globalThis),
+                                    .ctx = AnyRequestContext.init(new_request_ctx),
+                                    .request = new_request,
+                                    .response = bun.uws.AnyResponse.init(resp.?),
+                                }, render_body.path, response) catch {
+                                    // On error, render missing
+                                    this.renderMissing();
+                                    return;
+                                };
+
+                                return;
+                            }
+                        }
+                    }
+
+                    // Fallback to rendering missing
+                    this.renderMissing();
                     return;
                 },
                 else => {},

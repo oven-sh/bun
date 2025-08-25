@@ -24,6 +24,7 @@ class RenderAbortError extends Error {
   constructor(
     public path: string,
     public params: Record<string, any> | null,
+    public response: Response,
   ) {
     super("Response.render() called");
     this.name = "RenderAbortError";
@@ -137,8 +138,8 @@ server_exports = {
           params: error.params,
         };
 
-        // Re-throw to let native code handle the recursive call
-        throw error;
+        // return it so the Zig code can handle it and re-render new route
+        return error.response;
       }
       throw error;
     }

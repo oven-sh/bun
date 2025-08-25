@@ -951,7 +951,7 @@ fn ensureRouteIsBundled(
     dev: *DevServer,
     route_bundle_index: RouteBundle.Index,
     kind: DeferredRequest.Handler.Kind,
-    req: *Request,
+    req: ReqOrSaved,
     resp: AnyResponse,
 ) bun.JSError!void {
     assert(dev.magic == .valid);
@@ -1066,23 +1066,35 @@ fn ensureRouteIsBundled(
             );
         },
         .loaded => switch (kind) {
-            .server_handler => try dev.onFrameworkRequestWithBundle(route_bundle_index, .{ .stack = req }, resp),
-            .bundled_html_page => dev.onHtmlRequestWithBundle(route_bundle_index, resp, bun.http.Method.which(req.method()) orelse .POST),
+            .server_handler => try dev.onFrameworkRequestWithBundle(route_bundle_index, if (req == .req) .{ .stack = req.req } else .{ .saved = req.saved }, resp),
+            .bundled_html_page => dev.onHtmlRequestWithBundle(route_bundle_index, resp, req.method()),
         },
     }
 }
+
+const ReqOrSaved = union(enum) {
+    req: *Request,
+    saved: bun.jsc.API.SavedRequest,
+
+    pub fn method(this: *const @This()) bun.http.Method {
+        return switch (this.*) {
+            .req => |req| bun.http.Method.which(req.method()) orelse .POST,
+            .saved => |saved| saved.request.method,
+        };
+    }
+};
 
 fn deferRequest(
     dev: *DevServer,
     requests_array: *DeferredRequest.List,
     route_bundle_index: RouteBundle.Index,
     kind: DeferredRequest.Handler.Kind,
-    req: *Request,
+    req: ReqOrSaved,
     resp: AnyResponse,
 ) !void {
     const deferred = dev.deferred_request_pool.get();
     debug.log("DeferredRequest(0x{x}).init", .{@intFromPtr(&deferred.data)});
-    const method = bun.http.Method.which(req.method()) orelse .POST;
+    const method = req.method();
     deferred.data = .{
         .route_bundle_index = route_bundle_index,
         .dev = dev,
@@ -1093,9 +1105,12 @@ fn deferRequest(
                 break :brk .{ .bundled_html_page = .{ .response = resp, .method = method } };
             },
             .server_handler => brk: {
-                const server_handler = dev.server.?.prepareAndSaveJsRequestContext(req, resp, dev.vm.global, method) orelse {
-                    dev.deferred_request_pool.put(deferred);
-                    return;
+                const server_handler = switch (req) {
+                    .req => |r| dev.server.?.prepareAndSaveJsRequestContext(r, resp, dev.vm.global, method) orelse {
+                        dev.deferred_request_pool.put(deferred);
+                        return;
+                    },
+                    .saved => |saved| saved,
                 };
                 server_handler.ctx.setAbortCallback(DeferredRequest.onAbortWrapper, &deferred.data);
                 break :brk .{
@@ -2923,7 +2938,7 @@ fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
         dev.ensureRouteIsBundled(
             dev.getOrPutRouteBundle(.{ .framework = route_index }) catch bun.outOfMemory(),
             .server_handler,
-            req,
+            .{ .req = req },
             AnyResponse.init(resp),
         ) catch bun.outOfMemory();
         return;
@@ -2938,7 +2953,31 @@ fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
 }
 
 pub fn respondForHTMLBundle(dev: *DevServer, html: *HTMLBundle.HTMLBundleRoute, req: *uws.Request, resp: AnyResponse) !void {
-    try dev.ensureRouteIsBundled(try dev.getOrPutRouteBundle(.{ .html = html }), .bundled_html_page, req, resp);
+    try dev.ensureRouteIsBundled(try dev.getOrPutRouteBundle(.{ .html = html }), .bundled_html_page, .{ .req = req }, resp);
+}
+
+// TODO: path params
+pub fn handleRenderRedirect(
+    dev: *DevServer,
+    saved_request: bun.jsc.API.SavedRequest,
+    render_path: []const u8,
+    resp: AnyResponse,
+) !void {
+    // Match the render path against the router
+    var params: FrameworkRouter.MatchedParams = undefined;
+    if (dev.router.matchSlow(render_path, &params)) |route_index| {
+        // Found a matching route, bundle it and handle the request
+        dev.ensureRouteIsBundled(
+            dev.getOrPutRouteBundle(.{ .framework = route_index }) catch bun.outOfMemory(),
+            .server_handler,
+            .{ .saved = saved_request },
+            resp,
+        ) catch bun.outOfMemory();
+        return;
+    }
+
+    // No matching route found - render 404
+    sendBuiltInNotFound(resp);
 }
 
 fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !RouteBundle.Index {

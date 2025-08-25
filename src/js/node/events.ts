@@ -50,14 +50,14 @@ const kFirstEventParam = SymbolFor("nodejs.kFirstEventParam");
 const captureRejectionSymbol = SymbolFor("nodejs.rejection");
 
 let FixedQueue;
-const kEmptyObject = Object.freeze({ __proto__: null });
+const kEmptyObject = Object.freeze(Object.create(null));
 
 var defaultMaxListeners = 10;
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.$apply(this)`.
 function EventEmitter(opts) {
   if (this._events === undefined || this._events === this.__proto__._events) {
-    this._events = { __proto__: null };
+    this._events = Object.create(null);
     this._eventsCount = 0;
   }
 
@@ -242,7 +242,7 @@ EventEmitterPrototype.addListener = function addListener(type, fn) {
   checkListener(fn);
   var events = this._events;
   if (!events) {
-    events = this._events = { __proto__: null };
+    events = this._events = Object.create(null);
     this._eventsCount = 0;
   } else if (events.newListener) {
     this.emit("newListener", type, fn.listener ?? fn);
@@ -267,7 +267,7 @@ EventEmitterPrototype.prependListener = function prependListener(type, fn) {
   checkListener(fn);
   var events = this._events;
   if (!events) {
-    events = this._events = { __proto__: null };
+    events = this._events = Object.create(null);
     this._eventsCount = 0;
   } else if (events.newListener) {
     this.emit("newListener", type, fn.listener ?? fn);
@@ -373,7 +373,7 @@ EventEmitterPrototype.removeAllListeners = function removeAllListeners(type) {
         this._eventsCount--;
       }
     } else {
-      this._events = { __proto__: null };
+      this._events = Object.create(null);
     }
     return this;
   }
@@ -385,7 +385,7 @@ EventEmitterPrototype.removeAllListeners = function removeAllListeners(type) {
       this.removeAllListeners(key);
     }
     this.removeAllListeners("removeListener");
-    this._events = { __proto__: null };
+    this._events = Object.create(null);
     this._eventsCount = 0;
     return this;
   }

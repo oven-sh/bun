@@ -37,7 +37,7 @@
   "std.fs.cwd": 104,
   "std.log": 1,
   "std.mem.indexOfAny(u8": 0,
-  "std.unicode": 30,
+  "std.unicode": 33,
   "undefined != ": 0,
   "undefined == ": 0,
   "usingnamespace": 0

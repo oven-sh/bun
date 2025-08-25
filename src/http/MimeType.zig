@@ -1368,6 +1368,8 @@ pub const extensions = ComptimeStringMap(Table, .{
     .{ "tk", .@"application/x-tcl" },
     .{ "tmo", .@"application/vnd.tmobile-livetv" },
     .{ "toml", .@"application/toml" },
+    .{ "yaml", .@"text/yaml" },
+    .{ "yml", .@"text/yaml" },
     .{ "torrent", .@"application/x-bittorrent" },
     .{ "tpl", .@"application/vnd.groove-tool-template" },
     .{ "tpt", .@"application/vnd.trid.tpt" },

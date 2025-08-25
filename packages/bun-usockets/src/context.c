@@ -491,8 +491,7 @@ struct us_socket_t* us_socket_context_connect_resolved_dns_with_local_address(st
     s->context = context;
     s->timeout = 0;
     s->long_timeout = 0;
-    s->low_prio_state = 0;
-    s->flags.is_cork = 0;
+    s->flags.low_prio_state = 0;
     s->flags.is_paused = 0;
     s->flags.is_ipc = 0;
     s->next = 0;

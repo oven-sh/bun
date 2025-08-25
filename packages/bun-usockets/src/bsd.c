@@ -1456,6 +1456,63 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
     return fd;
 }
 
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_with_local_address(struct sockaddr_storage *addr, int options, struct sockaddr_storage *local_addr) {
+    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0, NULL);
+    if (fd == LIBUS_SOCKET_ERROR) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    // Bind to local address if provided
+    if (local_addr != NULL) {
+        int bind_result = bind(fd, (struct sockaddr*)local_addr, 
+                             local_addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6));
+        if (bind_result != 0) {
+            bsd_close_socket(fd);
+            return LIBUS_SOCKET_ERROR;
+        }
+    }
+
+#ifdef _WIN32
+    win32_set_nonblocking(fd);
+
+    // On windows we can't connect to the null address directly.
+    // To match POSIX behavior, we need to connect to localhost instead.
+    struct sockaddr_storage converted;
+    if (convert_null_addr(addr, &converted)) {
+        addr = &converted;
+    }
+
+    // This sets the socket to fail quickly if no connection can be established to localhost,
+    // instead of waiting for the default 2 seconds. This is necessary because we always try to connect
+    // using IPv6 first, but it's possible that whatever we want to connect to is only listening on IPv4.
+    // see https://github.com/libuv/libuv/blob/bf61390769068de603e6deec8e16623efcbe761a/src/win/tcp.c#L806
+    TCP_INITIAL_RTO_PARAMETERS retransmit_ioctl;
+    DWORD bytes;
+    if (is_loopback(addr)) {
+        memset(&retransmit_ioctl, 0, sizeof(retransmit_ioctl));
+        retransmit_ioctl.Rtt = TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS;
+        retransmit_ioctl.MaxSynRetransmissions = TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS;
+        WSAIoctl(fd,
+                SIO_TCP_INITIAL_RTO,
+                &retransmit_ioctl,
+                sizeof(retransmit_ioctl),
+                NULL,
+                0,
+                &bytes,
+                NULL,
+                NULL);
+    }
+
+#endif
+    int rc = bsd_do_connect_raw(fd, (struct sockaddr*) addr, addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6));
+
+    if (rc != 0) {
+        bsd_close_socket(fd);
+        return LIBUS_SOCKET_ERROR;
+    }
+    return fd;
+}
+
 static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const char *server_path, size_t len, int options, struct sockaddr_un* server_address, const size_t addrlen) {
     LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, NULL);
 

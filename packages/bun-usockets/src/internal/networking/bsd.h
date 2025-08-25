@@ -229,6 +229,7 @@ int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int por
 int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, int options);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_with_local_address(struct sockaddr_storage *addr, int options, struct sockaddr_storage *local_addr);
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, size_t pathlen, int options);
 

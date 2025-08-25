@@ -476,13 +476,23 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 }
             }
 
-            const socket = try HTTPSocket.connectAnon(
-                hostname,
-                port,
-                this.us_socket_context,
-                ActiveSocket.init(client).ptr(),
-                false,
-            );
+            const socket = if (client.local_address.length() > 0)
+                try HTTPSocket.connectAnonWithLocalAddress(
+                    hostname,
+                    port,
+                    this.us_socket_context,
+                    ActiveSocket.init(client).ptr(),
+                    false,
+                    client.local_address.slice(),
+                )
+            else
+                try HTTPSocket.connectAnon(
+                    hostname,
+                    port,
+                    this.us_socket_context,
+                    ActiveSocket.init(client).ptr(),
+                    false,
+                );
             client.allow_retry = false;
             return socket;
         }

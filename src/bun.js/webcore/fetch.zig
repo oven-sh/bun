@@ -1114,6 +1114,7 @@ pub const FetchTasklet = struct {
                 .hostname = fetch_options.hostname,
                 .signals = fetch_tasklet.signals,
                 .unix_socket_path = fetch_options.unix_socket_path,
+                .local_address = fetch_options.local_address,
                 .disable_timeout = fetch_options.disable_timeout,
                 .disable_keepalive = fetch_options.disable_keepalive,
                 .disable_decompression = fetch_options.disable_decompression,
@@ -1264,6 +1265,7 @@ pub const FetchTasklet = struct {
         memory_reporter: *bun.MemoryReportingAllocator,
         check_server_identity: jsc.Strong.Optional = .empty,
         unix_socket_path: ZigString.Slice,
+        local_address: ZigString.Slice,
         ssl_config: ?*SSLConfig = null,
     };
 
@@ -1533,6 +1535,7 @@ pub fn Bun__fetch_(
     var hostname: ?[]u8 = null;
     var range: ?[]u8 = null;
     var unix_socket_path: ZigString.Slice = ZigString.Slice.empty;
+    var local_address: ZigString.Slice = ZigString.Slice.empty;
 
     var url_proxy_buffer: []const u8 = "";
     const URLType = enum {
@@ -1553,6 +1556,7 @@ pub fn Bun__fetch_(
         }
 
         unix_socket_path.deinit();
+        local_address.deinit();
 
         allocator.free(url_proxy_buffer);
         url_proxy_buffer = "";
@@ -1824,6 +1828,34 @@ pub fn Bun__fetch_(
         break :extract_unix_socket_path unix_socket_path;
     };
 
+    if (globalThis.hasException()) {
+        is_error = true;
+        return .zero;
+    }
+
+    // localAddress: string | undefined
+    local_address = extract_local_address: {
+        const objects_to_try = [_]JSValue{
+            options_object orelse .zero,
+            request_init_object orelse .zero,
+        };
+        inline for (0..2) |i| {
+            if (objects_to_try[i] != .zero) {
+                if (try objects_to_try[i].get(globalThis, "localAddress")) |local_addr| {
+                    if (local_addr.isString() and try local_addr.getLength(ctx) > 0) {
+                        if (local_addr.toSliceCloneWithAllocator(globalThis, allocator)) |slice| {
+                            break :extract_local_address slice;
+                        }
+                    }
+                }
+                if (globalThis.hasException()) {
+                    is_error = true;
+                    return .zero;
+                }
+            }
+        }
+        break :extract_local_address local_address;
+    };
     if (globalThis.hasException()) {
         is_error = true;
         return .zero;
@@ -2219,6 +2251,7 @@ pub fn Bun__fetch_(
     // But it's better than status quo.
     if (url_type != .remote) {
         defer unix_socket_path.deinit();
+        defer local_address.deinit();
         var path_buf: bun.PathBuffer = undefined;
         const PercentEncoding = @import("../../url.zig").PercentEncoding;
         var path_buf2: bun.PathBuffer = undefined;
@@ -2647,6 +2680,7 @@ pub fn Bun__fetch_(
             .memory_reporter = memory_reporter,
             .check_server_identity = if (check_server_identity.isEmptyOrUndefinedOrNull()) .empty else .create(check_server_identity, globalThis),
             .unix_socket_path = unix_socket_path,
+            .local_address = local_address,
         },
         // Pass the Strong value instead of creating a new one, or else we
         // will leak it
@@ -2678,6 +2712,7 @@ pub fn Bun__fetch_(
     ssl_config = null;
     hostname = null;
     unix_socket_path = ZigString.Slice.empty;
+    local_address = ZigString.Slice.empty;
 
     return promise_val;
 }

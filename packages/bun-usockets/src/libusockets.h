@@ -329,6 +329,8 @@ void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls) nonnull_fn_d
 */
 void *us_socket_context_connect(int ssl, struct us_socket_context_t * nonnull_arg context,
     const char *host, int port, int options, int socket_ext_size, int *is_connecting) __attribute__((nonnull(2)));
+void *us_socket_context_connect_with_local_address(int ssl, struct us_socket_context_t * nonnull_arg context,
+    const char *host, int port, const char *local_host, int local_port, int options, int socket_ext_size, int *is_connecting) __attribute__((nonnull(2)));
 
 struct us_socket_t *us_socket_context_connect_unix(int ssl, us_socket_context_r context,
     const char *server_path, size_t pathlen, int options, int socket_ext_size) __attribute__((nonnull(2)));

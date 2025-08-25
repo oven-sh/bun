@@ -473,6 +473,33 @@ static void init_addr_with_port(struct addrinfo* info, int port, struct sockaddr
     }
 }
 
+struct us_socket_t* us_socket_context_connect_resolved_dns_with_local_address(struct us_socket_context_t *context, struct sockaddr_storage* addr, struct sockaddr_storage* local_addr, int options, int socket_ext_size) {
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket_with_local_address(addr, options, local_addr);
+    if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
+        return NULL;
+    }
+
+    bsd_socket_nodelay(connect_socket_fd, 1);
+
+    /* Connect sockets are semi-sockets just like listen sockets */
+    struct us_poll_t *p = us_create_poll(context->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
+    us_poll_init(p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
+    us_poll_start(p, context->loop, LIBUS_SOCKET_WRITABLE);
+
+    struct us_socket_t *s = (struct us_socket_t *) p;
+
+    s->context = context;
+    s->timeout = 0;
+    s->long_timeout = 0;
+    s->low_prio_state = 0;
+    s->flags.is_cork = 0;
+    s->flags.is_paused = 0;
+    s->flags.is_ipc = 0;
+    s->next = 0;
+
+    return s;
+}
+
 static bool try_parse_ip(const char *ip_str, int port, struct sockaddr_storage *storage) {
     memset(storage, 0, sizeof(struct sockaddr_storage));
     // Try to parse as IPv4
@@ -559,6 +586,59 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
     Bun__addrinfo_set(ai_req, c);
 
     return c;
+}
+
+void *us_socket_context_connect_with_local_address(int ssl, struct us_socket_context_t *context, const char *host, int port, const char *local_host, int local_port, int options, int socket_ext_size, int* has_dns_resolved) {
+#ifndef LIBUS_NO_SSL
+    if (ssl == 1) {
+        // For SSL sockets, fall back to regular connect for now
+        // TODO: Implement SSL local address binding
+        return us_internal_ssl_socket_context_connect((struct us_internal_ssl_socket_context_t *) context, host, port, options, socket_ext_size, has_dns_resolved);
+    }
+#endif
+
+    struct us_loop_t* loop = us_socket_context_loop(ssl, context);
+
+    // Parse local address
+    struct sockaddr_storage local_addr;
+    if (!try_parse_ip(local_host, local_port, &local_addr)) {
+        // Failed to parse local address, fall back to regular connect
+        return us_socket_context_connect(ssl, context, host, port, options, socket_ext_size, has_dns_resolved);
+    }
+
+    // fast path for IP addresses in text form
+    struct sockaddr_storage addr;
+    if (try_parse_ip(host, port, &addr)) {
+        *has_dns_resolved = 1;
+        return us_socket_context_connect_resolved_dns_with_local_address(context, &addr, &local_addr, options, socket_ext_size);
+    }
+
+    struct addrinfo_request* ai_req;
+    if (Bun__addrinfo_get(loop, host, (uint16_t)port, &ai_req) == 0) {
+        // fast path for cached results
+        struct addrinfo_result *result = Bun__addrinfo_getRequestResult(ai_req);
+        // fast failure path
+        if (result->error) {
+            errno = result->error;
+            Bun__addrinfo_freeRequest(ai_req, 1);
+            return NULL;
+        }
+
+        // if there is only one result we can immediately connect
+        struct addrinfo_result_entry* entries = result->entries;
+        if (entries && entries->info.ai_next == NULL) {
+            struct sockaddr_storage addr;
+            init_addr_with_port(&entries->info, port, &addr);
+            *has_dns_resolved = 1;
+            struct us_socket_t *s = us_socket_context_connect_resolved_dns_with_local_address(context, &addr, &local_addr, options, socket_ext_size);
+            Bun__addrinfo_freeRequest(ai_req, s == NULL);
+            return s;
+        }
+    }
+
+    // For now, fall back to regular connect for complex DNS resolution cases
+    // TODO: Implement local address binding for complex DNS resolution
+    return us_socket_context_connect(ssl, context, host, port, options, socket_ext_size, has_dns_resolved);
 }
 
 int start_connections(struct us_connecting_socket_t *c, int count) {

@@ -80,6 +80,8 @@ pub fn clearData(this: *AsyncHTTP) void {
     this.response = null;
     this.client.unix_socket_path.deinit();
     this.client.unix_socket_path = jsc.ZigString.Slice.empty;
+    this.client.local_address.deinit();
+    this.client.local_address = jsc.ZigString.Slice.empty;
 }
 
 pub const State = enum(u32) {
@@ -96,6 +98,7 @@ pub const Options = struct {
     hostname: ?[]u8 = null,
     signals: ?Signals = null,
     unix_socket_path: ?jsc.ZigString.Slice = null,
+    local_address: ?jsc.ZigString.Slice = null,
     disable_timeout: ?bool = null,
     verbose: ?HTTPVerboseLevel = null,
     disable_keepalive: ?bool = null,
@@ -190,6 +193,10 @@ pub fn init(
     if (options.unix_socket_path) |val| {
         assert(this.client.unix_socket_path.length() == 0);
         this.client.unix_socket_path = val;
+    }
+    if (options.local_address) |val| {
+        assert(this.client.local_address.length() == 0);
+        this.client.local_address = val;
     }
     if (options.disable_timeout) |val| {
         this.client.flags.disable_timeout = val;

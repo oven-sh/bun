@@ -634,6 +634,60 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return socket;
         }
 
+        pub fn connectAnonWithLocalAddress(
+            raw_host: []const u8,
+            port: i32,
+            socket_ctx: *SocketContext,
+            ptr: *anyopaque,
+            allowHalfOpen: bool,
+            local_address: ?[]const u8,
+        ) !ThisSocket {
+            // For now, if no local address is provided, use the regular connectAnon
+            if (local_address == null or local_address.?.len == 0) {
+                return connectAnon(raw_host, port, socket_ctx, ptr, allowHalfOpen);
+            }
+            
+            debug("connect with local address({s}, {d}, local: {s})", .{ raw_host, port, local_address.? });
+            var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
+            var allocator = stack_fallback.get();
+
+            // remove brackets from IPv6 addresses, as getaddrinfo doesn't understand them
+            const clean_host = if (raw_host.len > 1 and raw_host[0] == '[' and raw_host[raw_host.len - 1] == ']')
+                raw_host[1 .. raw_host.len - 1]
+            else
+                raw_host;
+
+            const host = allocator.dupeZ(u8, clean_host) catch bun.outOfMemory();
+            defer allocator.free(host);
+
+            const local_host = allocator.dupeZ(u8, local_address.?) catch bun.outOfMemory();
+            defer allocator.free(local_host);
+
+            var did_dns_resolve: i32 = 0;
+            const socket_ptr = socket_ctx.connectWithLocalAddress(
+                is_ssl,
+                host.ptr,
+                port,
+                local_host.ptr,
+                0, // local port (0 means any available port)
+                if (allowHalfOpen) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0,
+                @sizeOf(*anyopaque),
+                &did_dns_resolve,
+            ) orelse return error.FailedToOpenSocket;
+            const socket = if (did_dns_resolve == 1)
+                ThisSocket{
+                    .socket = .{ .connected = @ptrCast(socket_ptr) },
+                }
+            else
+                ThisSocket{
+                    .socket = .{ .connecting = @ptrCast(socket_ptr) },
+                };
+            if (socket.ext(*anyopaque)) |holder| {
+                holder.* = ptr;
+            }
+            return socket;
+        }
+
         pub fn unsafeConfigure(
             ctx: *SocketContext,
             comptime ssl_type: bool,

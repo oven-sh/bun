@@ -918,7 +918,6 @@ OutgoingMessage.prototype.getHeaders = function () {
 };
 
 OutgoingMessage.prototype.hasHeader = function (name) {
-  console.log("OutgoingMessage.prototype.hasHeader", this[kBunServer]);
   if (this[kBunServer]) {
     validateString(name, "name");
     const headers = this[headersSymbol];

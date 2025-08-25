@@ -235,13 +235,11 @@ IncomingMessage.prototype.setTimeout = function setTimeout(msecs, callback) {
   if (this[kBunServer]) {
     this.take;
     const req = this[kHandle] || this[webRequestOrResponse];
-
     if (req) {
       setRequestTimeout(req, Math.ceil(msecs / 1000));
       typeof callback === "function" && this.once("timeout", callback);
     }
     return this;
-    return;
   }
 
   if (callback) this.on("timeout", callback);
@@ -258,7 +256,7 @@ IncomingMessage.prototype.setTimeout = function setTimeout(msecs, callback) {
 // version.
 // Ref: https://v8.dev/blog/v8-release-89
 IncomingMessage.prototype._read = function _read(n) {
-  if (kHandle) {
+  if (this[kBunServer]) {
     if (!this._consuming) {
       this._readableState.readingMore = false;
       this._consuming = true;
@@ -417,6 +415,8 @@ IncomingMessage.prototype._destroy = function _destroy(err, cb) {
 };
 
 IncomingMessage.prototype._addHeaderLines = function (headers, n) {
+  $assert(!this[kBunServer]);
+
   if (headers?.length) {
     let dest;
     if (this.complete) {
@@ -531,6 +531,8 @@ function matchKnownFields(field, lowercased = false) {
 // winner and drop the second. Extended header fields (those beginning with
 // 'x-') are always joined.
 IncomingMessage.prototype._addHeaderLine = function (field, value, dest) {
+  $assert(!this[kBunServer]);
+
   field = matchKnownFields(field);
   const flag = field.charCodeAt(0);
   if (flag === 0 || flag === 2) {
@@ -565,6 +567,8 @@ IncomingMessage.prototype._addHeaderLine = function (field, value, dest) {
 };
 
 IncomingMessage.prototype._addHeaderLineDistinct = function (field, value, dest) {
+  $assert(!this[kBunServer]);
+
   field = field.toLowerCase();
   if (!dest[field]) {
     dest[field] = [value];
@@ -709,7 +713,7 @@ IncomingMessage.prototype._construct = function (callback) {
     callback();
     return;
   }
-  Readable.prototype._construct?.$call(this, callback);
+  callback();
 };
 
 function onIncomingMessagePauseNodeHTTPResponse(this: import("node:http").IncomingMessage) {

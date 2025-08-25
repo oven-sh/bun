@@ -84,7 +84,6 @@ function setCloseCallback(self, callback) {
 }
 
 function assignSocketInternal(self, socket) {
-  console.log("assignSocketInternal");
   if (socket._httpMessage) {
     throw $ERR_HTTP_SOCKET_ASSIGNED();
   }
@@ -526,12 +525,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         const http_req = new RequestClass(kHandle, url, method, headersObject, headersArray, handle, hasBody, socket);
-        console.log(
-          "http_req",
-          http_req[Symbol.for("meghan.kind")],
-          http_req instanceof IncomingMessage,
-          http_req instanceof IncomingMessage2,
-        );
         if (isAncientHTTP) {
           http_req.httpVersion = "1.0";
         }
@@ -540,12 +533,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           [kHandle]: handle,
           [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
         });
-        console.log(
-          "http_res",
-          http_res[Symbol.for("meghan.kind")],
-          http_res instanceof OutgoingMessage,
-          http_res instanceof OutgoingMessage2,
-        );
         setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
         handle.onabort = onServerRequestEvent.bind(socket);
         // start buffering data if any, the user will need to resume() or .on("data") to read it
@@ -573,9 +560,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         socket[kRequest] = http_req;
         const is_upgrade = http_req.headers.upgrade;
-        console.log("is_upgrade", is_upgrade);
-        console.log("canUseInternalAssignSocket", canUseInternalAssignSocket);
-        console.log("socket", `${socket}`);
         if (!is_upgrade) {
           if (canUseInternalAssignSocket) {
             // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
@@ -1339,15 +1323,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     }
   }
   this._header = " ";
-  console.log(
-    "this",
-    this[Symbol.for("meghan.kind")],
-    this instanceof OutgoingMessage,
-    this instanceof OutgoingMessage2,
-    this instanceof ServerResponse,
-  );
   const req = this.req;
-  console.log("req", req[Symbol.for("meghan.kind")], req instanceof IncomingMessage, req instanceof IncomingMessage2);
   const socket = req.socket;
   if (!req._consuming && !req?._readableState?.resumeScheduled) {
     req._dump();

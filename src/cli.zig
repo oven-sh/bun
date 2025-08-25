@@ -328,6 +328,9 @@ pub const Command = struct {
         test_filter_pattern: ?[]const u8 = null,
         test_filter_regex: ?*RegularExpression = null,
 
+        /// Test file patterns. If specified, these override the default test discovery patterns.
+        file_patterns: ?[]const string = null,
+
         file_reporter: ?TestCommand.FileReporter = null,
         reporter_outfile: ?[]const u8 = null,
     };

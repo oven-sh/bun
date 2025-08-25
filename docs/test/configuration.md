@@ -20,6 +20,35 @@ The `root` option specifies a root directory for test discovery, overriding the 
 root = "src"  # Only scan for tests in the src directory
 ```
 
+#### filePatterns
+
+The `filePatterns` option allows you to customize the patterns used to identify test files, overriding the default patterns. You can specify a single string or an array of strings.
+
+```toml
+[test]
+filePatterns = "*.mytest.js"  # Single pattern
+```
+
+```toml
+[test]
+filePatterns = ["*.mytest.js", "*.spec.ts", "**/*.unit.js"]  # Multiple patterns
+```
+
+By default, `bun test` searches for files matching these patterns:
+
+- `*.test.{js|jsx|ts|tsx}`
+- `*_test.{js|jsx|ts|tsx}`
+- `*.spec.{js|jsx|ts|tsx}`
+- `*_spec.{js|jsx|ts|tsx}`
+
+When you specify custom patterns, these default patterns are completely replaced with your custom ones.
+
+**Path resolution:**
+
+- Patterns starting with `./` or `../` are resolved relative to the directory containing your `bunfig.toml` file
+- Other glob patterns like `**/*.test.ts` are matched against relative paths from the current working directory
+- Absolute paths are used as-is
+
 ### Reporters
 
 #### reporter.junit

@@ -205,7 +205,7 @@ pub const RunCommand = struct {
 
     const log = Output.scoped(.RUN, .visible);
 
-    pub fn runPackageScriptForeground(
+    pub fn runPackageScriptOnce(
         ctx: Command.Context,
         allocator: std.mem.Allocator,
         original_script: string,
@@ -215,7 +215,7 @@ pub const RunCommand = struct {
         passthrough: []const string,
         silent: bool,
         use_system_shell: bool,
-    ) !void {
+    ) !u32 {
         const shell_bin = findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
         env.map.put("npm_lifecycle_event", name) catch unreachable;
         env.map.put("npm_lifecycle_script", original_script) catch unreachable;
@@ -252,7 +252,7 @@ pub const RunCommand = struct {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
                 }
 
-                Global.exit(1);
+                return 1;
             };
 
             if (code > 0) {
@@ -261,10 +261,10 @@ pub const RunCommand = struct {
                     Output.flush();
                 }
 
-                Global.exit(code);
+                return code;
             }
 
-            return;
+            return 0;
         }
 
         const argv = [_]string{
@@ -302,7 +302,7 @@ pub const RunCommand = struct {
             }
 
             Output.flush();
-            return;
+            return 1;
         })) {
             .err => |err| {
                 if (!silent) {
@@ -310,7 +310,7 @@ pub const RunCommand = struct {
                 }
 
                 Output.flush();
-                return;
+                return 1;
             },
             .result => |result| result,
         };
@@ -330,7 +330,7 @@ pub const RunCommand = struct {
                         Output.flush();
                     }
 
-                    Global.exit(exit_code.code);
+                    return exit_code.code;
                 }
             },
 
@@ -348,13 +348,64 @@ pub const RunCommand = struct {
                 }
 
                 Output.flush();
-                return;
+                return 1;
             },
 
             else => {},
         }
 
-        return;
+        return 0;
+    }
+
+    // Package script runner with restart support
+    pub fn runPackageScriptForeground(
+        ctx: Command.Context,
+        allocator: std.mem.Allocator,
+        original_script: string,
+        name: string,
+        cwd: string,
+        env: *DotEnv.Loader,
+        passthrough: []const string,
+        silent: bool,
+        use_system_shell: bool,
+    ) !void {
+        const restart_policy = ctx.runtime_options.restart_policy;
+
+        // If no restart policy, run once
+        if (restart_policy == .no) {
+            const exit_code = try runPackageScriptOnce(ctx, allocator, original_script, name, cwd, env, passthrough, silent, use_system_shell);
+            if (exit_code != 0) {
+                Global.exit(exit_code);
+            }
+            return;
+        }
+
+        // Restart logic - follow Docker model (no hardcoded limits)
+        var restart_count: u32 = 0;
+
+        while (true) {
+            const exit_code = try runPackageScriptOnce(ctx, allocator, original_script, name, cwd, env, passthrough, silent, use_system_shell);
+
+            const should_restart = switch (restart_policy) {
+                .no => false,
+                .on_failure => exit_code != 0,
+                .always => true,
+                .unless_stopped => exit_code != 0,
+            };
+
+            if (!should_restart) {
+                if (exit_code != 0) {
+                    Global.exit(exit_code);
+                }
+                return;
+            }
+
+            restart_count += 1;
+
+            if (!silent) {
+                Output.prettyln("<d>Restarting script '{s}' (attempt {d})...<r>", .{ name, restart_count + 1 });
+            }
+        }
     }
 
     /// When printing error messages from 'bun run', attribute bun overridden node.js to bun

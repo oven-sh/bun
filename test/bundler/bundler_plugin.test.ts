@@ -1034,7 +1034,7 @@ describe("bundler", () => {
     };
   });
 
-  itBundled("plugin/OnEndWithBuildResult", ({ root }) => {
+  itBundled("plugin/OnEndWithBuildResult", () => {
     let buildResult: Bun.BuildOutput | null = null;
     let callbackExecuted = false;
 
@@ -1258,8 +1258,349 @@ describe("bundler", () => {
       },
       onAfterBundle(api) {
         promiseResolved = true;
-        // All callbacks should have been called in order before promise resolved
         expect(callOrder).toEqual(["first", "second", "third"]);
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndBuildFailsThrowsSync", () => {
+    let onEndCalled = false;
+    let onEndError: Error | null = null;
+
+    return {
+      files: {
+        "index.ts": `
+          import { missing } from "./does-not-exist.ts";
+          console.log(missing);
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onEnd(() => {
+          onEndCalled = true;
+          onEndError = new Error("onEnd threw synchronously");
+          throw onEndError;
+        });
+      },
+      bundleErrors: {
+        "/index.ts": [`Cannot find module "./does-not-exist.ts"`],
+      },
+      onAfterBundle(api) {
+        expect(onEndCalled).toBe(true);
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndBuildFailsThrowsAsyncMicrotask", () => {
+    let onEndCalled = false;
+
+    return {
+      files: {
+        "index.ts": `
+          import { missing } from "./does-not-exist.ts";
+          console.log(missing);
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onEnd(async () => {
+          onEndCalled = true;
+          await Promise.resolve();
+          throw new Error("onEnd threw async microtask");
+        });
+      },
+      bundleErrors: {
+        "/index.ts": [`Cannot find module "./does-not-exist.ts"`],
+      },
+      onAfterBundle(api) {
+        expect(onEndCalled).toBe(true);
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndBuildFailsThrowsAsyncActual", () => {
+    let onEndCalled = false;
+
+    return {
+      files: {
+        "index.ts": `
+          import { missing } from "./does-not-exist.ts";
+          console.log(missing);
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onEnd(async () => {
+          onEndCalled = true;
+          await Bun.sleep(0); // Actual async
+          throw new Error("onEnd threw async actual");
+        });
+      },
+      bundleErrors: {
+        "/index.ts": [`Cannot find module "./does-not-exist.ts"`],
+      },
+      onAfterBundle(api) {
+        expect(onEndCalled).toBe(true);
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndBuildSucceedsThrowsSync", () => {
+    let onEndCalled = false;
+    let errorThrown = false;
+
+    return {
+      files: {
+        "index.ts": `
+          console.log("Build succeeds");
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onEnd(() => {
+          onEndCalled = true;
+          errorThrown = true;
+          throw new Error("onEnd threw synchronously after success");
+        });
+      },
+      onAfterBundle(api) {
+        // Build should succeed but onEnd throws
+        expect(onEndCalled).toBe(true);
+        expect(errorThrown).toBe(true);
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndBuildSucceedsThrowsAsyncMicrotask", () => {
+    let onEndCalled = false;
+
+    return {
+      files: {
+        "index.ts": `
+          console.log("Build succeeds");
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onEnd(async () => {
+          onEndCalled = true;
+          await Promise.resolve(); // Microtask
+          throw new Error("onEnd threw async microtask after success");
+        });
+      },
+      onAfterBundle(api) {
+        expect(onEndCalled).toBe(true);
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndBuildSucceedsThrowsAsyncActual", () => {
+    let onEndCalled = false;
+
+    return {
+      files: {
+        "index.ts": `
+          console.log("Build succeeds");
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onEnd(async () => {
+          onEndCalled = true;
+          await Bun.sleep(0); // Actual async
+          throw new Error("onEnd threw async actual after success");
+        });
+      },
+      onAfterBundle(api) {
+        expect(onEndCalled).toBe(true);
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndWithGCBeforeAwait", () => {
+    let onEndCalled = false;
+
+    return {
+      files: {
+        "index.ts": `
+          console.log("Build succeeds");
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onEnd(async () => {
+          onEndCalled = true;
+          Bun.gc(true); // Force GC before await
+          await Bun.sleep(0);
+          Bun.gc(true); // Force GC after await
+        });
+      },
+      onAfterBundle(api) {
+        expect(onEndCalled).toBe(true);
+        expect(api.readFile("out/index.js")).toContain("Build succeeds");
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndMultipleMixedErrors", () => {
+    const events: string[] = [];
+    let errorCount = 0;
+
+    return {
+      files: {
+        "index.ts": `
+          console.log("Build succeeds");
+        `,
+      },
+      outdir: "/out",
+      throw: false,
+      plugins(builder) {
+        builder.onEnd(() => {
+          events.push("first-success");
+        });
+
+        builder.onEnd(() => {
+          events.push("second-throw");
+          errorCount++;
+          throw new Error("second callback error");
+        });
+
+        builder.onEnd(async () => {
+          events.push("third-throw");
+          await Promise.resolve();
+          errorCount++;
+          throw new Error("third callback error");
+        });
+
+        builder.onEnd(() => {
+          events.push("fourth-success");
+        });
+
+        builder.onEnd(async () => {
+          events.push("fifth-throw");
+          await Bun.sleep(0);
+          errorCount++;
+          throw new Error("fifth callback error");
+        });
+      },
+      onAfterBundle(api) {
+        expect(events).toEqual(["first-success", "second-throw", "third-throw", "fourth-success", "fifth-throw"]);
+        expect(errorCount).toBe(3);
+        expect(api.readFile("out/index.js")).toContain("Build succeeds");
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndFirstThrowsRestRun", () => {
+    const events: string[] = [];
+
+    return {
+      files: {
+        "index.ts": `
+          export const test = "multiple callbacks";
+        `,
+      },
+      outdir: "/out",
+      throw: false,
+      plugins(builder) {
+        builder.onEnd(() => {
+          events.push("first");
+          throw new Error("first callback error");
+        });
+
+        builder.onEnd(() => {
+          events.push("second");
+        });
+
+        builder.onEnd(async () => {
+          events.push("third");
+          await Promise.resolve();
+        });
+
+        builder.onEnd(() => {
+          events.push("fourth");
+        });
+      },
+      onAfterBundle(api) {
+        expect(events).toEqual(["first", "second", "third", "fourth"]);
+        expect(api.readFile("out/index.js")).toContain("multiple callbacks");
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndMultipleAsyncWithGC", () => {
+    const events: string[] = [];
+
+    return {
+      files: {
+        "index.ts": `
+          export default "gc test";
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onEnd(async () => {
+          events.push("first-start");
+          Bun.gc(true);
+          await Bun.sleep(0);
+          events.push("first-end");
+        });
+
+        builder.onEnd(async () => {
+          events.push("second-start");
+          await Promise.resolve();
+          Bun.gc(true);
+          events.push("second-end");
+        });
+
+        builder.onEnd(async () => {
+          events.push("third-start");
+          Bun.gc(true);
+          await Bun.sleep(0);
+          Bun.gc(true);
+          events.push("third-end");
+        });
+      },
+      onAfterBundle(api) {
+        expect(events).toEqual(["first-start", "second-start", "third-start", "second-end", "first-end", "third-end"]);
+        expect(api.readFile("out/index.js")).toContain("gc test");
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndBuildFailsMultipleCallbacksSomeThrow", () => {
+    const events: string[] = [];
+
+    return {
+      files: {
+        "index.ts": `
+          import { missing } from "./not-found.ts";
+        `,
+      },
+      outdir: "/out",
+      throw: false,
+      plugins(builder) {
+        builder.onEnd(() => {
+          events.push("first");
+        });
+
+        builder.onEnd(() => {
+          events.push("second-throw");
+          throw new Error("second throws");
+        });
+
+        builder.onEnd(async () => {
+          events.push("third-async");
+          await Bun.sleep(0);
+          throw new Error("third throws async");
+        });
+
+        builder.onEnd(() => {
+          events.push("fourth");
+        });
+      },
+      onAfterBundle() {
+        expect(events).toEqual(["first", "second-throw", "third-async", "fourth"]);
       },
     };
   });

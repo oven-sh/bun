@@ -1099,6 +1099,127 @@ describe("bun pm pkg", () => {
     });
   });
 
+  describe("array append functionality (npm compatibility)", () => {
+    it("should append to existing array using key[]=value syntax", async () => {
+      const { code } = await runPmPkg(["set", "keywords[]=newkeyword"], testDir!);
+      expect(code).toBe(0);
+
+      const { output: getOutput } = await runPmPkg(["get", "keywords"], testDir!);
+      const parsed = JSON.parse(getOutput);
+      expect(Array.isArray(parsed)).toBe(true);
+      expect(parsed).toContain("test");
+      expect(parsed).toContain("package");
+      expect(parsed).toContain("newkeyword");
+      expect(parsed).toHaveLength(3);
+    });
+
+    it("should create new array when property doesn't exist using key[]=value syntax", async () => {
+      const { code } = await runPmPkg(["set", "newarrayfield[]=firstitem"], testDir!);
+      expect(code).toBe(0);
+
+      const { output: getOutput } = await runPmPkg(["get", "newarrayfield"], testDir!);
+      const parsed = JSON.parse(getOutput);
+      expect(Array.isArray(parsed)).toBe(true);
+      expect(parsed).toEqual(["firstitem"]);
+    });
+
+    it("should append multiple items to array in single command", async () => {
+      const { code } = await runPmPkg(["set", "keywords[]=first", "keywords[]=second"], testDir!);
+      expect(code).toBe(0);
+
+      const { output: getOutput } = await runPmPkg(["get", "keywords"], testDir!);
+      const parsed = JSON.parse(getOutput);
+      expect(Array.isArray(parsed)).toBe(true);
+      expect(parsed).toContain("test");
+      expect(parsed).toContain("package");
+      expect(parsed).toContain("first");
+      expect(parsed).toContain("second");
+      expect(parsed).toHaveLength(4);
+    });
+
+    it("should handle nested array append syntax", async () => {
+      const { code } = await runPmPkg(["set", "config.tags[]=newtag"], testDir!);
+      expect(code).toBe(0);
+
+      const { output: getOutput } = await runPmPkg(["get", "config.tags"], testDir!);
+      const parsed = JSON.parse(getOutput);
+      expect(Array.isArray(parsed)).toBe(true);
+      expect(parsed).toEqual(["newtag"]);
+    });
+
+    it("should append to nested existing array", async () => {
+      // First create a nested array
+      const { code: setupCode } = await runPmPkg(["set", 'nested.items=["existing"]', "--json"], testDir!);
+      expect(setupCode).toBe(0);
+
+      // Then append to it
+      const { code } = await runPmPkg(["set", "nested.items[]=appended"], testDir!);
+      expect(code).toBe(0);
+
+      const { output: getOutput } = await runPmPkg(["get", "nested.items"], testDir!);
+      const parsed = JSON.parse(getOutput);
+      expect(Array.isArray(parsed)).toBe(true);
+      expect(parsed).toEqual(["existing", "appended"]);
+    });
+
+    it("should error when trying to append to non-array property", async () => {
+      const { error, code } = await runPmPkg(["set", "name[]=invalid"], testDir!, false);
+      expect(code).toBe(1);
+      expect(error).toContain("Property name[] already exists and is not an Array or Object");
+    });
+
+    it("should handle array append with JSON values", async () => {
+      const { code } = await runPmPkg(["set", 'numbers[]=42', "--json"], testDir!);
+      expect(code).toBe(0);
+
+      const { output: getOutput } = await runPmPkg(["get", "numbers"], testDir!);
+      const parsed = JSON.parse(getOutput);
+      expect(Array.isArray(parsed)).toBe(true);
+      expect(parsed).toEqual([42]);
+      expect(typeof parsed[0]).toBe("number");
+    });
+
+    it("should handle array append with complex JSON objects", async () => {
+      const { code } = await runPmPkg(["set", 'contributors[]={"name":"New Contributor","email":"new@example.com"}', "--json"], testDir!);
+      expect(code).toBe(0);
+
+      const { output: getOutput } = await runPmPkg(["get", "contributors"], testDir!);
+      const parsed = JSON.parse(getOutput);
+      expect(Array.isArray(parsed)).toBe(true);
+      expect(parsed).toHaveLength(3); // Original 2 plus 1 new
+      expect(parsed[2]).toEqual({
+        name: "New Contributor",
+        email: "new@example.com"
+      });
+    });
+
+    it("should maintain array order when appending", async () => {
+      const { code } = await runPmPkg(["set", "order[]=first", "order[]=second", "order[]=third"], testDir!);
+      expect(code).toBe(0);
+
+      const { output: getOutput } = await runPmPkg(["get", "order"], testDir!);
+      const parsed = JSON.parse(getOutput);
+      expect(parsed).toEqual(["first", "second", "third"]);
+    });
+
+    it("should preserve existing array structure when appending", async () => {
+      // Get original keywords array
+      const { output: originalOutput } = await runPmPkg(["get", "keywords"], testDir!);
+      const originalKeywords = JSON.parse(originalOutput);
+
+      // Append new item
+      const { code } = await runPmPkg(["set", "keywords[]=appended"], testDir!);
+      expect(code).toBe(0);
+
+      // Verify structure is preserved with new item added
+      const { output: newOutput } = await runPmPkg(["get", "keywords"], testDir!);
+      const newKeywords = JSON.parse(newOutput);
+      
+      expect(newKeywords.slice(0, originalKeywords.length)).toEqual(originalKeywords);
+      expect(newKeywords[newKeywords.length - 1]).toBe("appended");
+    });
+  });
+
   // npm does the actual "" key, but bun right now doesn't support it
   describe.todo("empty string key compatibility", () => {
     let emptyKeyDir: string;

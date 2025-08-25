@@ -25,6 +25,29 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#if ASSERT_ENABLED
+// Debug network traffic logging
+static FILE *debug_recv_file = NULL;
+static FILE *debug_send_file = NULL;
+static int debug_logging_initialized = 0;
+
+static void init_debug_logging() {
+    if (debug_logging_initialized) return;
+    debug_logging_initialized = 1;
+    
+    const char *recv_path = getenv("BUN_RECV");
+    const char *send_path = getenv("BUN_SEND");
+    
+    if (recv_path) {
+        debug_recv_file = fopen(recv_path, "a");
+    }
+    
+    if (send_path) {
+        debug_send_file = fopen(send_path, "a");
+    }
+}
+#endif
+
 #ifndef _WIN32
 // Necessary for the stdint include
 #ifndef _GNU_SOURCE
@@ -721,6 +744,17 @@ ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
             continue;
         }
 
+#if ASSERT_ENABLED
+        // Debug logging for received data
+        if (ret > 0) {
+            init_debug_logging();
+            if (debug_recv_file) {
+                fwrite(buf, 1, ret, debug_recv_file);
+                fflush(debug_recv_file);
+            }
+        }
+#endif
+
         return ret;
     }
 }
@@ -787,6 +821,17 @@ ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length) {
         if (UNLIKELY(IS_EINTR(rc))) {
             continue;
         }
+
+#if ASSERT_ENABLED
+        // Debug logging for sent data
+        if (rc > 0) {
+            init_debug_logging();
+            if (debug_send_file) {
+                fwrite(buf, 1, rc, debug_send_file);
+                fflush(debug_send_file);
+            }
+        }
+#endif
 
         return rc;
     }

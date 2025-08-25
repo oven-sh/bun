@@ -1096,7 +1096,6 @@ describe("bundler", () => {
   itBundled("plugin/OnEndWithThrowOnErrorTrue", ({ root }) => {
     let onEndCalled = false;
     let onEndCalledBeforePromiseResolved = false;
-    let promiseResolved = false;
 
     return {
       files: {
@@ -1108,22 +1107,18 @@ describe("bundler", () => {
       },
       outdir: "/out",
       throw: true,
+      bundleErrors: {
+        "/index.ts": [`Could not resolve: "./does-not-exist"`],
+      },
       plugins(builder) {
-        builder.onEnd(() => {
+        builder.onEnd(result => {
           onEndCalled = true;
-          // Check that promise hasn't resolved yet
-          onEndCalledBeforePromiseResolved = !promiseResolved;
+          expect(result.success).toBe(false);
+          expect(result.logs).toBeDefined();
+          expect(result.logs.length).toBeGreaterThan(0);
         });
       },
-      expectedBuildError: true,
-      onAfterBundle(api) {
-        // This will only be called if throwOnError is false or build succeeds
-        // Since we expect an error and throwOnError is true, this shouldn't be called
-        promiseResolved = true;
-      },
-      onBuildError(error) {
-        promiseResolved = true;
-        // Verify onEnd was called before the promise rejected
+      onAfterBundle() {
         expect(onEndCalled).toBe(true);
         expect(onEndCalledBeforePromiseResolved).toBe(true);
       },

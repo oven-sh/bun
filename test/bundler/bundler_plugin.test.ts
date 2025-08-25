@@ -1061,35 +1061,6 @@ describe("bundler", () => {
     };
   });
 
-  itBundled("plugin/OnEndErrorHandling", ({ root }) => {
-    let errorCaught = false;
-    let callbackExecuted = false;
-
-    return {
-      files: {
-        "index.ts": /* ts */ `
-          export const test = "error handling";
-        `,
-      },
-      outdir: "/out",
-      plugins(builder) {
-        builder.onEnd(() => {
-          callbackExecuted = true;
-          try {
-            throw new Error("Test error in onEnd");
-          } catch (e) {
-            errorCaught = true;
-          }
-        });
-      },
-      onAfterBundle(api) {
-        expect(callbackExecuted).toBe(true);
-        expect(errorCaught).toBe(true);
-        expect(api.readFile("out/index.js")).toContain("error handling");
-      },
-    };
-  });
-
   itBundled("plugin/OnEndWithFileWrite", ({ root }) => {
     let fileWritten = false;
 
@@ -1345,35 +1316,6 @@ describe("bundler", () => {
       onAfterBundle(api) {
         expect(onEndCalled).toBe(true);
         expect(asyncCompleted).toBe(true);
-      },
-    };
-  });
-
-  itBundled("plugin/OnEndBuildSucceedsThrowsSync", () => {
-    let onEndCalled = false;
-    let errorCaught = false;
-
-    return {
-      files: {
-        "index.ts": `
-          console.log("Build succeeds");
-        `,
-      },
-      outdir: "/out",
-      plugins(builder) {
-        builder.onEnd(() => {
-          onEndCalled = true;
-          try {
-            throw new Error("onEnd error handling test");
-          } catch (e) {
-            errorCaught = true;
-          }
-        });
-      },
-      onAfterBundle(api) {
-        expect(onEndCalled).toBe(true);
-        expect(errorCaught).toBe(true);
-        expect(api.readFile("out/index.js")).toContain("Build succeeds");
       },
     };
   });

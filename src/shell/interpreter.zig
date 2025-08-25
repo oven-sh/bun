@@ -266,6 +266,9 @@ pub const Interpreter = struct {
     vm_args_utf8: std.ArrayList(jsc.ZigString.Slice),
     async_commands_executing: u32 = 0,
 
+    /// List of active subprocesses for kill() support
+    active_subprocesses: std.ArrayList(*Subprocess) = std.ArrayList(*Subprocess).init(undefined),
+
     globalThis: *jsc.JSGlobalObject,
 
     flags: packed struct(u8) {
@@ -863,6 +866,7 @@ pub const Interpreter = struct {
             },
 
             .vm_args_utf8 = std.ArrayList(jsc.ZigString.Slice).init(bun.default_allocator),
+            .active_subprocesses = std.ArrayList(*Subprocess).init(bun.default_allocator),
             .__alloc_scope = if (bun.Environment.enableAllocScopes) bun.AllocationScope.init(allocator) else {},
             .globalThis = undefined,
         };
@@ -1201,6 +1205,7 @@ pub const Interpreter = struct {
             str.deinit();
         }
         this.vm_args_utf8.deinit();
+        this.active_subprocesses.deinit();
         this.this_jsvalue = .zero;
         this.allocator.destroy(this);
     }
@@ -1273,6 +1278,31 @@ pub const Interpreter = struct {
         return jsc.JSValue.jsBoolean(this.started.load(.seq_cst));
     }
 
+    pub fn kill(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        _ = globalThis; // autofix
+        
+        const args_ = callframe.arguments_old(1);
+        const args = args_.ptr[0..args_.len];
+        const signal: i32 = if (args.len > 0 and args[0].isNumber()) 
+            args[0].toInt32() 
+        else 
+            15; // SIGTERM by default
+
+        var killed_count: u32 = 0;
+        
+        // Kill all active subprocesses
+        for (this.active_subprocesses.items) |subprocess| {
+            if (!subprocess.hasExited()) {
+                switch (subprocess.tryKill(signal)) {
+                    .result => killed_count += 1,
+                    .err => {}, // Ignore kill errors (process might have already exited)
+                }
+            }
+        }
+        
+        return jsc.JSValue.jsBoolean(killed_count > 0);
+    }
+
     pub fn getBufferedStdout(this: *ThisInterpreter, globalThis: *JSGlobalObject) jsc.JSValue {
         return ioToJSValue(globalThis, this.root_shell.buffered_stdout());
     }
@@ -1288,6 +1318,21 @@ pub const Interpreter = struct {
 
     pub fn hasPendingActivity(this: *ThisInterpreter) bool {
         return this.has_pending_activity.load(.seq_cst) > 0;
+    }
+
+    pub fn registerSubprocess(this: *ThisInterpreter, subprocess: *Subprocess) void {
+        this.active_subprocesses.append(subprocess) catch {
+            // If we can't track it, just continue - the kill method won't find it but it's not critical
+        };
+    }
+
+    pub fn unregisterSubprocess(this: *ThisInterpreter, subprocess: *Subprocess) void {
+        for (this.active_subprocesses.items, 0..) |proc, i| {
+            if (proc == subprocess) {
+                _ = this.active_subprocesses.swapRemove(i);
+                break;
+            }
+        }
     }
 
     fn incrPendingActivityFlag(has_pending_activity: *std.atomic.Value(u32)) void {
@@ -1975,6 +2020,7 @@ const JSValue = bun.jsc.JSValue;
 const shell = bun.shell;
 const Yield = shell.Yield;
 const ast = shell.AST;
+const Subprocess = shell.subproc.ShellSubprocess;
 
 const windows = bun.windows;
 const uv = windows.libuv;

@@ -1,0 +1,2 @@
+[sys] read(6[/workspace/bun/build/debug/bun-debug], 4096) = 4096 (0.398ms)
+[sys] close(6[/workspace/bun/build/debug/bun-debug])

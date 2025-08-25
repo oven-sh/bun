@@ -1048,7 +1048,7 @@ fn ensureRouteIsBundled(
             if (dev.bundling_failures.count() > 0) {
                 // Trace the graph to see if there are any failures that are
                 // reachable by this route.
-                switch (try checkRouteFailures(dev, route_bundle_index, resp)) {
+                switch (try checkRouteFailures(dev, route_bundle_index, req, resp)) {
                     .stop => return,
                     .ok => {}, // Errors were cleared or not in the way.
                     .rebuild => continue :sw .unqueued, // Do the build all over again
@@ -1103,6 +1103,7 @@ fn deferRequest(
 fn checkRouteFailures(
     dev: *DevServer,
     route_bundle_index: RouteBundle.Index,
+    req: *Request,
     resp: anytype,
 ) !enum { stop, ok, rebuild } {
     var sfa_state = std.heap.stackFallback(65536, dev.allocator());
@@ -1130,7 +1131,7 @@ fn checkRouteFailures(
         }
 
         try dev.sendSerializedFailures(
-            null,
+            req,
             resp,
             dev.incremental_result.failures_added.items,
             .bundler,

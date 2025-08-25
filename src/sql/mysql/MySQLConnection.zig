@@ -33,7 +33,7 @@ status_flags: StatusFlags = .{},
 auth_plugin: ?AuthMethod = null,
 auth_state: AuthState = .{ .pending = {} },
 
-auth_data: []const u8 = "",
+auth_data: []u8 = "",
 database: []const u8 = "",
 user: []const u8 = "",
 password: []const u8 = "",
@@ -1376,11 +1376,21 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
             };
             const auth_data = auth_switch.plugin_data.slice();
             this.auth_plugin = auth_method;
-            if (this.auth_data.len > 0) {
-                bun.default_allocator.free(this.auth_data);
-                this.auth_data = "";
+            const current_auth_data_len = this.auth_data.len;
+            const new_auth_data = auth_data.len;
+            if (current_auth_data_len > 0) {
+                if (!bun.default_allocator.resize(this.auth_data, new_auth_data)) {
+                    bun.default_allocator.free(this.auth_data);
+                    this.auth_data = try bun.default_allocator.dupe(u8, auth_data);
+                } else {
+                    const slice = this.auth_data[0..new_auth_data];
+                    @memcpy(slice, auth_data);
+                    this.auth_data = slice;
+                }
+            } else {
+                this.auth_data = try bun.default_allocator.dupe(u8, auth_data);
             }
-            this.auth_data = try bun.default_allocator.dupe(u8, auth_data);
+
             // Send new auth response
             try this.sendAuthSwitchResponse(auth_method, auth_data);
         },

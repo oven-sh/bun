@@ -127,6 +127,8 @@ export function runOnEndCallbacks(
   }
 
   if (promises.length > 0) {
+    // we return the promise here because detecting if the promise was handled or not
+    // in bundle_v2.zig is done by checking if this function did not return undefined
     return Promise.all(promises).then(
       () => {
         $resolvePromise(buildPromise, buildResult);
@@ -134,7 +136,7 @@ export function runOnEndCallbacks(
       e => {
         $rejectPromise(buildPromise, e);
       },
-    ); // return this promise - it gets "awaited" in the bundler before the whole build ends
+    );
   }
 }
 

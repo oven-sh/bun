@@ -146,6 +146,25 @@ describe("bundler", () => {
     },
   });
 
+  for (const value of [null, undefined, true, 1, "string", {} as never]) {
+    const str = JSON.stringify(value) ?? "undefined";
+    itBundled(`plugin/ResolveEntryPointReturns${str.charAt(0).toUpperCase() + str.slice(1)}`, {
+      files: {
+        "index.ts": /* ts */ `
+          console.log("hello world");
+        `,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /.*/ }, () => {
+          return value as never;
+        });
+      },
+      run: {
+        stdout: "hello world",
+      },
+    });
+  }
+
   // Load Plugin Errors
   itBundled("plugin/ResolveThrow", {
     files: resolveFixture,
@@ -255,11 +274,13 @@ describe("bundler", () => {
       },
       plugins(builder) {
         // this was being called when it shouldnt
-        builder.onResolve({ filter: /.*/, namespace: "magic" }, args => {
+        builder.onResolve({ filter: /.*/, namespace: "magic" }, () => {
           onResolveCountBad++;
+          return null as never;
         });
-        builder.onResolve({ filter: /magic:some_string/, namespace: "magic" }, args => {
+        builder.onResolve({ filter: /magic:some_string/, namespace: "magic" }, () => {
           onResolveCountBad++;
+          return null as never;
         });
         builder.onResolve({ filter: /magic:some_string/ }, args => {
           return {
@@ -760,7 +781,7 @@ describe("bundler", () => {
         build.onResolve({ filter: /^plugin$/ }, args => {
           expect(args.path).toBe("plugin");
           expect(args.importer).toBe("");
-          expect(args.kind).toBe("entry-point");
+          expect(args.kind).toBe("entry-point-build");
           expect(args.namespace).toBe("");
           // expect(args.pluginData).toEqual(undefined);
           // expect(args.resolveDir).toEqual(root);
@@ -895,5 +916,351 @@ describe("bundler", () => {
       expect(js).toContain('.png"');
       expect(js).toContain('.wasm"');
     },
+  });
+
+  itBundled("plugin/OnEndBasic", ({ root }) => {
+    let onEndCalled = false;
+
+    return {
+      files: {
+        "index.ts": `
+          console.log("Hello from main");
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onEnd(() => {
+          onEndCalled = true;
+        });
+      },
+      onAfterBundle(api) {
+        expect(onEndCalled).toBe(true);
+        expect(api.readFile("out/index.js")).toContain("Hello from main");
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndMultipleCallbacks", ({ root }) => {
+    const callOrder: string[] = [];
+
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          export const value = 42;
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onEnd(() => {
+          callOrder.push("first");
+        });
+
+        builder.onEnd(() => {
+          callOrder.push("second");
+        });
+
+        builder.onEnd(() => {
+          callOrder.push("third");
+        });
+      },
+      onAfterBundle(api) {
+        expect(callOrder).toEqual(["first", "second", "third"]);
+        expect(api.readFile("out/index.js")).toContain("42");
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndWithAsyncCallback", ({ root }) => {
+    let asyncCompleted = false;
+
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          export default "async test";
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onEnd(async () => {
+          await new Promise(resolve => setTimeout(resolve, 10));
+          asyncCompleted = true;
+        });
+      },
+      onAfterBundle(api) {
+        expect(asyncCompleted).toBe(true);
+        expect(api.readFile("out/index.js")).toContain("async test");
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndWithMultiplePlugins", ({ root }) => {
+    const events: string[] = [];
+
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import "./module.js";
+          console.log("main");
+        `,
+        "module.js": /* js */ `
+          console.log("module");
+        `,
+      },
+      outdir: "/out",
+      plugins: [
+        {
+          name: "plugin1",
+          setup(builder) {
+            builder.onEnd(() => {
+              events.push("plugin1-end");
+            });
+          },
+        },
+        {
+          name: "plugin2",
+          setup(builder) {
+            builder.onEnd(() => {
+              events.push("plugin2-end");
+            });
+          },
+        },
+      ],
+      onAfterBundle(api) {
+        expect(events).toContain("plugin1-end");
+        expect(events).toContain("plugin2-end");
+        expect(api.readFile("out/index.js")).toContain("main");
+        expect(api.readFile("out/index.js")).toContain("module");
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndWithBuildResult", ({ root }) => {
+    let buildResult: Bun.BuildOutput | null = null;
+    let callbackExecuted = false;
+
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          export const result = "success";
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onEnd(result => {
+          callbackExecuted = true;
+          buildResult = result;
+        });
+      },
+      onAfterBundle(api) {
+        expect(callbackExecuted).toBe(true);
+        expect(buildResult).toBeDefined();
+        expect(buildResult!.outputs).toBeDefined();
+        expect(Array.isArray(buildResult!.outputs)).toBe(true);
+        expect(api.readFile("out/index.js")).toContain("success");
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndErrorHandling", ({ root }) => {
+    let errorCaught = false;
+    let callbackExecuted = false;
+
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          export const test = "error handling";
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onEnd(() => {
+          callbackExecuted = true;
+          try {
+            throw new Error("Test error in onEnd");
+          } catch (e) {
+            errorCaught = true;
+          }
+        });
+      },
+      onAfterBundle(api) {
+        expect(callbackExecuted).toBe(true);
+        expect(errorCaught).toBe(true);
+        expect(api.readFile("out/index.js")).toContain("error handling");
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndWithFileWrite", ({ root }) => {
+    let fileWritten = false;
+
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          export const data = { version: "1.0.0" };
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onEnd(async () => {
+          const metadata = {
+            buildTime: new Date().toISOString(),
+            files: ["index.js"],
+          };
+          await Bun.write(join(root, "out", "build-metadata.json"), JSON.stringify(metadata, null, 2));
+          fileWritten = true;
+        });
+      },
+      onAfterBundle(api) {
+        expect(fileWritten).toBe(true);
+        expect(api.readFile("out/index.js")).toContain("1.0.0");
+        // Check if metadata file was created
+        api.assertFileExists("out/build-metadata.json");
+        const metadata = JSON.parse(api.readFile("out/build-metadata.json"));
+        expect(metadata.files).toEqual(["index.js"]);
+        expect(metadata.buildTime).toBeDefined();
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndWithThrowOnErrorTrue", ({ root }) => {
+    let onEndCalled = false;
+    let onEndCalledBeforePromiseResolved = false;
+    let promiseResolved = false;
+
+    return {
+      files: {
+        "index.ts": `
+          // This will cause a build error
+          import { nonExistent } from "./does-not-exist";
+          console.log(nonExistent);
+        `,
+      },
+      outdir: "/out",
+      throw: true,
+      plugins(builder) {
+        builder.onEnd(() => {
+          onEndCalled = true;
+          // Check that promise hasn't resolved yet
+          onEndCalledBeforePromiseResolved = !promiseResolved;
+        });
+      },
+      expectedBuildError: true,
+      onAfterBundle(api) {
+        // This will only be called if throwOnError is false or build succeeds
+        // Since we expect an error and throwOnError is true, this shouldn't be called
+        promiseResolved = true;
+      },
+      onBuildError(error) {
+        promiseResolved = true;
+        // Verify onEnd was called before the promise rejected
+        expect(onEndCalled).toBe(true);
+        expect(onEndCalledBeforePromiseResolved).toBe(true);
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndWithThrowOnErrorFalse", ({ root }) => {
+    let onEndCalled = false;
+    let onEndCalledBeforePromiseResolved = false;
+    let promiseResolved = false;
+
+    return {
+      files: {
+        "index.ts": `
+          // This will cause a build error
+          import { nonExistent } from "./does-not-exist";
+          console.log(nonExistent);
+        `,
+      },
+      outdir: "/out",
+      throw: false,
+      plugins(builder) {
+        builder.onEnd(result => {
+          onEndCalled = true;
+          // Check that promise hasn't resolved yet
+          onEndCalledBeforePromiseResolved = !promiseResolved;
+          // Result should contain errors
+          expect(result.success).toBe(false);
+          expect(result.logs).toBeDefined();
+          expect(result.logs.length).toBeGreaterThan(0);
+        });
+      },
+      onAfterBundle(api) {
+        promiseResolved = true;
+        // Verify onEnd was called before the promise resolved
+        expect(onEndCalled).toBe(true);
+        expect(onEndCalledBeforePromiseResolved).toBe(true);
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndAlwaysFiresOnSuccess", ({ root }) => {
+    let onEndCalled = false;
+    let onEndCalledBeforePromiseResolved = false;
+    let promiseResolved = false;
+
+    return {
+      files: {
+        "index.ts": `
+          export const success = true;
+          console.log("Build successful");
+        `,
+      },
+      outdir: "/out",
+      throw: true, // Doesn't matter since build will succeed
+      plugins(builder) {
+        builder.onEnd(result => {
+          onEndCalled = true;
+          // Check that promise hasn't resolved yet
+          onEndCalledBeforePromiseResolved = !promiseResolved;
+          // Result should indicate success
+          expect(result.success).toBe(true);
+          expect(result.outputs).toBeDefined();
+          expect(result.outputs.length).toBeGreaterThan(0);
+        });
+      },
+      onAfterBundle(api) {
+        promiseResolved = true;
+        // Verify onEnd was called before the promise resolved
+        expect(onEndCalled).toBe(true);
+        expect(onEndCalledBeforePromiseResolved).toBe(true);
+        expect(api.readFile("out/index.js")).toContain("Build successful");
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndMultipleCallbacksWithError", ({ root }) => {
+    const callOrder: string[] = [];
+    let promiseResolved = false;
+
+    return {
+      files: {
+        "index.ts": `
+          // This will cause a build error
+          import { missing } from "./missing-module";
+        `,
+      },
+      outdir: "/out",
+      throw: false, // Let the build continue so we can check callbacks
+      plugins(builder) {
+        builder.onEnd(() => {
+          callOrder.push("first");
+          expect(promiseResolved).toBe(false);
+        });
+        builder.onEnd(() => {
+          callOrder.push("second");
+          expect(promiseResolved).toBe(false);
+        });
+        builder.onEnd(() => {
+          callOrder.push("third");
+          expect(promiseResolved).toBe(false);
+        });
+      },
+      onAfterBundle(api) {
+        promiseResolved = true;
+        // All callbacks should have been called in order before promise resolved
+        expect(callOrder).toEqual(["first", "second", "third"]);
+      },
+    };
   });
 });

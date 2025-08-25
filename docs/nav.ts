@@ -219,6 +219,9 @@ export default {
     page("install/npmrc", ".npmrc support", {
       description: "Bun supports loading some configuration options from .npmrc",
     }),
+    page("install/security-scanner-api", "Security scanner API", {
+      description: "Scan your project for vulnerabilities with Bun's security scanner API.",
+    }),
     // page("install/utilities", "Utilities", {
     //   description: "Use `bun pm` to introspect your global module cache or project dependency tree.",
     // }),

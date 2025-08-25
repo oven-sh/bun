@@ -198,6 +198,7 @@ pub const Runtime = struct {
         unwrap_commonjs_to_esm: bool = false,
 
         emit_decorator_metadata: bool = false,
+        experimental_decorators: bool = false,
 
         /// If true and if the source is transpiled as cjs, don't wrap the module.
         /// This is used for `--print` entry points so we can get the result.
@@ -222,6 +223,7 @@ pub const Runtime = struct {
             .dont_bundle_twice,
             .commonjs_at_runtime,
             .emit_decorator_metadata,
+            .experimental_decorators,
             .lower_using,
 
             // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true

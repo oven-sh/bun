@@ -42,6 +42,7 @@ pub const TSConfigJSON = struct {
     preserve_imports_not_used_as_values: ?bool = false,
 
     emit_decorator_metadata: bool = false,
+    experimental_decorators: bool = false,
 
     pub fn hasBaseURL(tsconfig: *const TSConfigJSON) bool {
         return tsconfig.base_url.len > 0;
@@ -175,6 +176,13 @@ pub const TSConfigJSON = struct {
             if (compiler_opts.expr.asProperty("emitDecoratorMetadata")) |emit_decorator_metadata_prop| {
                 if (emit_decorator_metadata_prop.expr.asBool()) |val| {
                     result.emit_decorator_metadata = val;
+                }
+            }
+
+            // Parse "experimentalDecorators"
+            if (compiler_opts.expr.asProperty("experimentalDecorators")) |experimental_decorators_prop| {
+                if (experimental_decorators_prop.expr.asBool()) |val| {
+                    result.experimental_decorators = val;
                 }
             }
 

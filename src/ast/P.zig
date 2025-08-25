@@ -4822,7 +4822,10 @@ pub fn NewParser_(
                             args[2] = descriptor_key;
                             args[3] = descriptor_kind;
 
-                            const decorator = p.callRuntime(prop.key.?.loc, "__legacyDecorateClassTS", args);
+                            const decorator = if (p.options.features.experimental_decorators) 
+                                p.callRuntime(prop.key.?.loc, "__legacyDecorateClassTS", args)
+                            else
+                                p.callRuntime(prop.key.?.loc, "__decorateClassES", args);
                             const decorator_stmt = p.s(S.SExpr{ .value = decorator }, decorator.loc);
 
                             if (prop.flags.contains(.is_static)) {
@@ -4961,7 +4964,10 @@ pub fn NewParser_(
 
                         stmts.appendAssumeCapacity(Stmt.assign(
                             p.newExpr(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc),
-                            p.callRuntime(stmt.loc, "__legacyDecorateClassTS", args),
+                            if (p.options.features.experimental_decorators) 
+                                p.callRuntime(stmt.loc, "__legacyDecorateClassTS", args)
+                            else
+                                p.callRuntime(stmt.loc, "__decorateClassES", args),
                         ));
 
                         p.recordUsage(class.class_name.?.ref.?);

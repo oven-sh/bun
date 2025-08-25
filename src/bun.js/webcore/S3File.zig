@@ -398,6 +398,7 @@ pub const S3BlobStatTask = struct {
                     stat_result.etag,
                     stat_result.contentType,
                     stat_result.lastModified,
+                    stat_result.metadata,
                     globalThis,
                 ) catch return).toJS(globalThis)); // TODO: properly propagate exception upwards
             },

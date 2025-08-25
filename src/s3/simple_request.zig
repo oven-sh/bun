@@ -7,6 +7,7 @@ pub const S3StatResult = union(enum) {
         lastModified: []const u8 = "",
         /// format: text/plain, contentType is not owned and need to be copied if used after this callback
         contentType: []const u8 = "",
+        metadata: std.StringHashMap([]const u8) = undefined,
     },
     not_found: S3Error,
 
@@ -225,12 +226,39 @@ pub const S3HttpSimpleTask = struct {
             .stat => |callback| {
                 switch (response.status_code) {
                     200 => {
+                        var metadata = std.StringHashMap([]const u8).init(std.heap.page_allocator);
+
+                        const prefix = "x-amz-meta-";
+
+                        for (response.headers.list) |entry| {
+                            if (std.mem.startsWith(u8, entry.name, prefix)) {
+                                // Remove the prefix by slicing the key
+                                const stripped_name = entry.name[prefix.len..];
+
+                                const key_copy = std.heap.page_allocator.dupe(u8, stripped_name) catch continue;
+                                const value_copy = std.heap.page_allocator.dupe(u8, entry.value) catch {
+                                    std.heap.page_allocator.free(key_copy);
+                                    continue;
+                                };
+
+                                // put consumes our owned slices
+                                _ = metadata.put(key_copy, value_copy) catch {
+                                    std.heap.page_allocator.free(key_copy);
+                                    std.heap.page_allocator.free(value_copy);
+                                };
+                            }
+                        }
+
                         callback(.{
                             .success = .{
                                 .etag = response.headers.get("etag") orelse "",
                                 .lastModified = response.headers.get("last-modified") orelse "",
                                 .contentType = response.headers.get("content-type") orelse "",
-                                .size = if (response.headers.get("content-length")) |content_len| (std.fmt.parseInt(usize, content_len, 10) catch 0) else 0,
+                                .size = if (response.headers.get("content-length")) |content_len|
+                                    (std.fmt.parseInt(usize, content_len, 10) catch 0)
+                                else
+                                    0,
+                                .metadata = metadata,
                             },
                         }, this.callback_context);
                     },
@@ -358,6 +386,7 @@ pub const S3SimpleRequestOptions = struct {
     range: ?[]const u8 = null,
     acl: ?ACL = null,
     storage_class: ?StorageClass = null,
+    custom_headers: ?bun.http.Headers = null,
 };
 
 pub fn executeSimpleS3Request(
@@ -381,20 +410,48 @@ pub fn executeSimpleS3Request(
     };
 
     const headers = brk: {
-        var header_buffer: [10]picohttp.Header = undefined;
-        if (options.range) |range_| {
-            const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });
-            break :brk bun.http.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
-        } else {
-            if (options.content_type) |content_type| {
-                if (content_type.len > 0) {
-                    const _headers = result.mixWithHeader(&header_buffer, .{ .name = "Content-Type", .value = content_type });
-                    break :brk bun.http.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
-                }
-            }
+        var header_buffer: [12]picohttp.Header = undefined;
 
-            break :brk bun.http.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
+        var header_count: usize = 0;
+
+        // Copy signed headers
+        const signed_headers = result.headers();
+        for (signed_headers) |h| {
+            header_buffer[header_count] = h;
+            header_count += 1;
         }
+
+        // Add range header
+        if (options.range) |range_| {
+            header_buffer[header_count] = .{ .name = "range", .value = range_ };
+            header_count += 1;
+        }
+
+        // Add content-type header
+        if (options.content_type) |content_type| {
+            if (content_type.len > 0) {
+                header_buffer[header_count] = .{ .name = "Content-Type", .value = content_type };
+                header_count += 1;
+            }
+        }
+
+        // Add custom headers
+        if (options.custom_headers) |custom_headers| {
+            const header_entries = custom_headers.entries.slice();
+            const header_names = header_entries.items(.name);
+            const header_values = header_entries.items(.value);
+
+            for (header_names, 0..header_names.len) |name, i| {
+                // Avoid overwriting existing headers
+                header_buffer[header_count] = .{
+                    .name = custom_headers.asStr(name),
+                    .value = custom_headers.asStr(header_values[i]),
+                };
+                header_count += 1;
+            }
+        }
+
+        break :brk bun.http.Headers.fromPicoHttpHeaders(header_buffer[0..header_count], bun.default_allocator) catch bun.outOfMemory();
     };
     const task = S3HttpSimpleTask.new(.{
         .http = undefined,

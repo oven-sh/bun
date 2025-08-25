@@ -230,6 +230,7 @@ pub fn upload(
     storage_class: ?StorageClass,
     callback: *const fn (S3UploadResult, *anyopaque) void,
     callback_context: *anyopaque,
+    custom_headers: ?bun.http.Headers,
 ) void {
     S3SimpleRequest.executeSimpleS3Request(this, .{
         .path = path,
@@ -239,6 +240,7 @@ pub fn upload(
         .content_type = content_type,
         .acl = acl,
         .storage_class = storage_class,
+        .custom_headers = custom_headers,
     }, .{ .upload = callback }, callback_context);
 }
 /// returns a writable stream that writes to the s3 path

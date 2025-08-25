@@ -66,6 +66,11 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
         .done => return globalThis.throw("Cannot call {}() after the test run has completed", .{this}),
     }
 
+    const line_no = switch (this.mode) {
+        .@"test" => jsc.Jest.captureTestLineNumber(callFrame, globalThis),
+        else => 0,
+    };
+
     if (this.each != .zero) {
         if (this.each.isUndefinedOrNull() or !this.each.isArray()) {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
@@ -73,33 +78,49 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
             return globalThis.throw("Expected array, got {}", .{this.each.toFmt(&formatter)});
         }
         var iter = try this.each.arrayIterator(globalThis);
-        while (try iter.next()) |item| {
+        var test_idx: usize = 0;
+        while (try iter.next()) |item| : (test_idx += 1) {
             if (item == .zero) break;
 
-            const item_is_array = !item.isUndefinedOrNull() and item.isArray();
+            var function_args = std.ArrayListUnmanaged(Strong).empty;
+            defer function_args.deinit(bunTest.gpa);
+            defer for (function_args.items) |*arg| arg.deinit();
 
-            var arg_size: usize = 1;
-            if (item_is_array) {
-                arg_size = try item.getLength(globalThis);
+            if (item.isUndefinedOrNull() and item.isArray()) {
+                // Spread array as args (matching Jest & Vitest)
+                try function_args.ensureUnusedCapacity(bunTest.gpa, try item.getLength(globalThis));
+
+                var item_iter = try item.arrayIterator(globalThis);
+                var idx: usize = 0;
+                while (try item_iter.next()) |array_item| : (idx += 1) {
+                    try function_args.append(bunTest.gpa, .init(bunTest.gpa, array_item));
+                }
+            } else {
+                try function_args.append(bunTest.gpa, .init(bunTest.gpa, item));
             }
 
-            // we don't have to worry about the callback function here because that will be handled by describe2.zig
-            // we'll have to pass a list of protected arguments to pass to the callback and also pass the option when adding it to the call queue
+            const formatted_label: ?[]const u8 = if (args.description) |desc| try jsc.Jest.formatLabel(globalThis, desc, function_args.items, test_idx, bunTest.gpa) else null;
+            defer if (formatted_label) |label| bunTest.gpa.free(label);
+
+            try this.enqueueDescribeOrTestCallback(bunTest, args.callback, formatted_label, line_no); // TODO: need to pass the arguments to the callback. jest.zig can handle the done argument.
         }
-        @panic("TODO: implement .each()");
+    } else {
+        try this.enqueueDescribeOrTestCallback(bunTest, args.callback, args.description, line_no);
     }
 
+    return .js_undefined;
+}
+
+fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunTestFile, callback: jsc.JSValue, description: ?[]const u8, line_no: u32) bun.JSError!void {
     switch (this.mode) {
-        .describe => try bunTest.collection.enqueueDescribeCallback(args.callback, args.description, this.cfg),
+        .describe => try bunTest.collection.enqueueDescribeCallback(callback, description, this.cfg),
         .@"test" => {
-            const line_no = jsc.Jest.captureTestLineNumber(callFrame, globalThis);
-            try bunTest.collection.enqueueTestCallback(args.description, .{
-                .callback = args.callback,
+            try bunTest.collection.enqueueTestCallback(description, .{
+                .callback = callback,
                 .line_no = line_no,
             }, this.cfg);
         },
     }
-    return .js_undefined;
 }
 
 fn genericIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *CallFrame, cfg: describe2.BaseScopeCfg, name: []const u8, invert: bool) bun.JSError!JSValue {
@@ -185,3 +206,5 @@ const CallFrame = jsc.CallFrame;
 const VirtualMachine = jsc.VirtualMachine;
 const JSValue = jsc.JSValue;
 const ci_info = @import("../../ci_info.zig");
+
+const Strong = jsc.Strong.Safe;

@@ -2032,8 +2032,7 @@ fn consumeArg(
 }
 
 // Generate test label by positionally injecting parameters with printf formatting
-fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSValue, test_idx: usize) !string {
-    const allocator = bun.default_allocator;
+pub fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []jsc.Strong.Safe, test_idx: usize, allocator: std.mem.Allocator) !string {
     var idx: usize = 0;
     var args_idx: usize = 0;
     var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, label.len) catch bun.outOfMemory();
@@ -2041,7 +2040,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
     while (idx < label.len) {
         const char = label[idx];
 
-        if (char == '$' and idx + 1 < label.len and function_args.len > 0 and function_args[0].isObject()) {
+        if (char == '$' and idx + 1 < label.len and function_args.len > 0 and function_args[0].get().isObject()) {
             const var_start = idx + 1;
             var var_end = var_start;
 
@@ -2064,7 +2063,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                 }
 
                 const var_path = label[var_start..var_end];
-                const value = try function_args[0].getIfPropertyExistsFromPath(globalThis, bun.String.init(var_path).toJS(globalThis));
+                const value = try function_args[0].get().getIfPropertyExistsFromPath(globalThis, bun.String.init(var_path).toJS(globalThis));
                 if (!value.isEmptyOrUndefinedOrNull()) {
                     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                     defer formatter.deinit();
@@ -2084,7 +2083,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
             list.appendSlice(allocator, label[var_start..var_end]) catch bun.outOfMemory();
             idx = var_end;
         } else if (char == '%' and (idx + 1 < label.len) and !(args_idx >= function_args.len)) {
-            const current_arg = function_args[args_idx];
+            const current_arg = function_args[args_idx].get();
 
             switch (label[idx + 1]) {
                 's' => {

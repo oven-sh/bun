@@ -832,7 +832,7 @@ pub const ShellRmTask = struct {
             return Maybe(void).initErr(Syscall.Error.fromCode(bun.sys.E.ISDIR, .TODO).withPath(bun.default_allocator.dupeZ(u8, dir_task.path) catch bun.outOfMemory()));
         }
 
-        const flags = bun.O.DIRECTORY | bun.O.RDONLY;
+        const flags = bun.O.DIRECTORY | bun.O.RDONLY | bun.O.NOFOLLOW;
         const fd = switch (ShellSyscall.openat(dirfd, path, flags, 0)) {
             .result => |fd| fd,
             .err => |e| {

@@ -501,12 +501,12 @@ pub const PmPkgCommand = struct {
 
     fn appendToArray(allocator: std.mem.Allocator, root: *js_ast.Expr, key: []const u8, value: []const u8, parse_json: bool) !void {
         const new_value = try parseValue(allocator, value, parse_json);
-        
+
         // Handle nested keys like "config.tags"
         if (strings.indexOf(key, ".")) |_| {
             return try appendToNestedArray(allocator, root, key, new_value);
         }
-        
+
         // Simple case: top-level key
         const existing = root.get(key);
         if (existing == null) {
@@ -524,12 +524,12 @@ pub const PmPkgCommand = struct {
             if (existing.?.data != .e_array) {
                 return error.ArrayAppendToNonArray;
             }
-            
+
             const old_items = existing.?.data.e_array.items.slice();
             const new_items = try allocator.alloc(js_ast.Expr, old_items.len + 1);
             @memcpy(new_items[0..old_items.len], old_items);
             new_items[old_items.len] = new_value;
-            
+
             const updated_array = js_ast.Expr.init(js_ast.E.Array, js_ast.E.Array{
                 .items = js_ast.ExprNodeList.init(new_items),
                 .close_bracket_loc = existing.?.data.e_array.close_bracket_loc,
@@ -538,33 +538,33 @@ pub const PmPkgCommand = struct {
             try root.data.e_object.put(allocator, key, updated_array);
         }
     }
-    
+
     fn appendToNestedArray(allocator: std.mem.Allocator, root: *js_ast.Expr, key: []const u8, new_value: js_ast.Expr) !void {
         var parts = std.mem.tokenizeScalar(u8, key, '.');
         var path_parts = std.ArrayList([]const u8).init(allocator);
         defer path_parts.deinit();
-        
+
         while (parts.next()) |part| {
             try path_parts.append(part);
         }
-        
+
         if (path_parts.items.len == 0) {
             return error.EmptyKey;
         }
-        
+
         return try appendToNestedArrayRecursive(allocator, root, path_parts.items, new_value);
     }
-    
+
     fn appendToNestedArrayRecursive(allocator: std.mem.Allocator, root: *js_ast.Expr, path: []const []const u8, new_value: js_ast.Expr) !void {
         if (path.len == 0) return;
-        
+
         const current_key = path[0];
         const remaining_path = path[1..];
-        
+
         if (remaining_path.len == 0) {
             // This is the final key - handle array append
             const existing = root.get(current_key);
-            
+
             if (existing == null) {
                 // Create new array
                 const array_items = try allocator.alloc(js_ast.Expr, 1);
@@ -580,12 +580,12 @@ pub const PmPkgCommand = struct {
                 if (existing.?.data != .e_array) {
                     return error.ArrayAppendToNonArray;
                 }
-                
+
                 const old_items = existing.?.data.e_array.items.slice();
                 const new_items = try allocator.alloc(js_ast.Expr, old_items.len + 1);
                 @memcpy(new_items[0..old_items.len], old_items);
                 new_items[old_items.len] = new_value;
-                
+
                 const updated_array = js_ast.Expr.init(js_ast.E.Array, js_ast.E.Array{
                     .items = js_ast.ExprNodeList.init(new_items),
                     .close_bracket_loc = existing.?.data.e_array.close_bracket_loc,
@@ -595,7 +595,7 @@ pub const PmPkgCommand = struct {
             }
             return;
         }
-        
+
         // Navigate deeper
         var nested_obj = root.get(current_key);
         if (nested_obj == null or nested_obj.?.data != .e_object) {
@@ -603,11 +603,11 @@ pub const PmPkgCommand = struct {
             try root.data.e_object.put(allocator, current_key, new_obj);
             nested_obj = root.get(current_key);
         }
-        
+
         if (nested_obj.?.data != .e_object) {
             return error.ExpectedObject;
         }
-        
+
         var nested = nested_obj.?;
         try appendToNestedArrayRecursive(allocator, &nested, remaining_path, new_value);
         try root.data.e_object.put(allocator, current_key, nested);
@@ -620,7 +620,7 @@ pub const PmPkgCommand = struct {
 
         // Check for array append syntax (key[]=value)
         if (strings.endsWith(key, "[]")) {
-            const array_key = key[0..key.len - 2];
+            const array_key = key[0 .. key.len - 2];
             return try appendToArray(allocator, root, array_key, value, parse_json);
         }
 

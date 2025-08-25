@@ -1169,7 +1169,7 @@ describe("bun pm pkg", () => {
     });
 
     it("should handle array append with JSON values", async () => {
-      const { code } = await runPmPkg(["set", 'numbers[]=42', "--json"], testDir!);
+      const { code } = await runPmPkg(["set", "numbers[]=42", "--json"], testDir!);
       expect(code).toBe(0);
 
       const { output: getOutput } = await runPmPkg(["get", "numbers"], testDir!);
@@ -1180,7 +1180,10 @@ describe("bun pm pkg", () => {
     });
 
     it("should handle array append with complex JSON objects", async () => {
-      const { code } = await runPmPkg(["set", 'contributors[]={"name":"New Contributor","email":"new@example.com"}', "--json"], testDir!);
+      const { code } = await runPmPkg(
+        ["set", 'contributors[]={"name":"New Contributor","email":"new@example.com"}', "--json"],
+        testDir!,
+      );
       expect(code).toBe(0);
 
       const { output: getOutput } = await runPmPkg(["get", "contributors"], testDir!);
@@ -1189,7 +1192,7 @@ describe("bun pm pkg", () => {
       expect(parsed).toHaveLength(3); // Original 2 plus 1 new
       expect(parsed[2]).toEqual({
         name: "New Contributor",
-        email: "new@example.com"
+        email: "new@example.com",
       });
     });
 
@@ -1214,7 +1217,7 @@ describe("bun pm pkg", () => {
       // Verify structure is preserved with new item added
       const { output: newOutput } = await runPmPkg(["get", "keywords"], testDir!);
       const newKeywords = JSON.parse(newOutput);
-      
+
       expect(newKeywords.slice(0, originalKeywords.length)).toEqual(originalKeywords);
       expect(newKeywords[newKeywords.length - 1]).toBe("appended");
     });

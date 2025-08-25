@@ -1,7 +1,7 @@
-import { define } from "../../codegen/class-definitions";
+import { type ClassDefinition, define } from "../../codegen/class-definitions";
 
 const types = ["PostgresSQL", "MySQL"];
-const classes = [];
+const classes: ClassDefinition[] = [];
 for (const type of types) {
   classes.push(
     define({

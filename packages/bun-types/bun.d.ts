@@ -5485,6 +5485,7 @@ declare module "bun" {
   type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | void;
   type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
   type OnStartCallback = () => void | Promise<void>;
+  type OnEndCallback = () => void | Promise<void>;
 
   interface OnResolveArgs {
     /**
@@ -5562,6 +5563,7 @@ declare module "bun" {
      * @returns `this` for method chaining
      */
     onStart(callback: OnStartCallback): this;
+    onEnd(callback: OnEndCallback): this;
     onBeforeParse(
       constraints: PluginConstraints,
       callback: {

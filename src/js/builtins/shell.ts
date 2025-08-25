@@ -244,25 +244,25 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       if (!this.#hasRun || !this.#interpreter) {
         return false;
       }
-      
+
       let sig = 15; // SIGTERM by default
       if (typeof signal === "number") {
         sig = signal;
       } else if (typeof signal === "string") {
         // Convert named signals to numbers
         const namedSignals: Record<string, number> = {
-          'SIGTERM': 15,
-          'SIGKILL': 9,
-          'SIGINT': 2,
-          'SIGQUIT': 3,
-          'SIGHUP': 1,
-          'SIGUSR1': 10,
-          'SIGUSR2': 12,
+          "SIGTERM": 15,
+          "SIGKILL": 9,
+          "SIGINT": 2,
+          "SIGQUIT": 3,
+          "SIGHUP": 1,
+          "SIGUSR1": 10,
+          "SIGUSR2": 12,
         };
-        
+
         const upperSignal = signal.toUpperCase();
-        const normalizedSignal = upperSignal.startsWith('SIG') ? upperSignal : `SIG${upperSignal}`;
-        
+        const normalizedSignal = upperSignal.startsWith("SIG") ? upperSignal : `SIG${upperSignal}`;
+
         if (namedSignals[normalizedSignal] !== undefined) {
           sig = namedSignals[normalizedSignal];
         } else {
@@ -271,7 +271,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       } else if (signal !== undefined) {
         throw new TypeError("Signal must be a number or string");
       }
-      
+
       return this.#interpreter.kill(sig);
     }
 

@@ -1280,16 +1280,16 @@ pub const Interpreter = struct {
 
     pub fn kill(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         _ = globalThis; // autofix
-        
+
         const args_ = callframe.arguments_old(1);
         const args = args_.ptr[0..args_.len];
-        const signal: i32 = if (args.len > 0 and args[0].isNumber()) 
-            args[0].toInt32() 
-        else 
+        const signal: i32 = if (args.len > 0 and args[0].isNumber())
+            args[0].toInt32()
+        else
             15; // SIGTERM by default
 
         var killed_count: u32 = 0;
-        
+
         // Kill all active subprocesses
         for (this.active_subprocesses.items) |subprocess| {
             if (!subprocess.hasExited()) {
@@ -1299,7 +1299,7 @@ pub const Interpreter = struct {
                 }
             }
         }
-        
+
         return jsc.JSValue.jsBoolean(killed_count > 0);
     }
 

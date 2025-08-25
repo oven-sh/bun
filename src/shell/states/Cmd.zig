@@ -528,7 +528,7 @@ fn initSubproc(this: *Cmd) Yield {
         },
     };
     subproc.ref();
-    
+
     // Register subprocess for kill() support
     this.base.interpreter.registerSubprocess(subproc);
     this.spawn_arena_freed = true;
@@ -701,10 +701,10 @@ pub fn deinit(this: *Cmd) void {
     if (this.exec != .none) {
         if (this.exec == .subproc) {
             var cmd = this.exec.subproc.child;
-            
+
             // Unregister subprocess from interpreter tracking
             this.base.interpreter.unregisterSubprocess(cmd);
-            
+
             if (cmd.hasExited()) {
                 cmd.unref(true);
             } else {

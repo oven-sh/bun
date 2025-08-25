@@ -857,7 +857,7 @@ describe("--tolerate-republish", async () => {
       name: "republish-test-1",
       version: "1.0.0",
     };
-    
+
     await Promise.all([
       rm(join(registry.packagesPath, "republish-test-1"), { recursive: true, force: true }),
       write(join(packageDir, "bunfig.toml"), bunfig),
@@ -882,7 +882,7 @@ describe("--tolerate-republish", async () => {
       name: "republish-test-2",
       version: "1.0.0",
     };
-    
+
     await Promise.all([
       rm(join(registry.packagesPath, "republish-test-2"), { recursive: true, force: true }),
       write(join(packageDir, "bunfig.toml"), bunfig),
@@ -908,7 +908,7 @@ describe("--tolerate-republish", async () => {
       name: "republish-test-3",
       version: "1.0.0",
     };
-    
+
     await Promise.all([
       rm(join(registry.packagesPath, "republish-test-3"), { recursive: true, force: true }),
       write(join(packageDir, "bunfig.toml"), bunfig),

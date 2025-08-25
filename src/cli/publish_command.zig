@@ -452,7 +452,7 @@ pub const PublishCommand = struct {
     };
 
     fn checkPackageVersionExists(
-        allocator: std.mem.Allocator, 
+        allocator: std.mem.Allocator,
         package_name: string,
         version: string,
         registry: *const Npm.Registry.Scope,
@@ -461,32 +461,32 @@ pub const PublishCommand = struct {
         defer url_buf.deinit();
         const registry_url = strings.withoutTrailingSlash(registry.url.href);
         const encoded_name = bun.fmt.dependencyUrl(package_name);
-        
+
         url_buf.writer().print("{s}/{s}/{s}", .{ registry_url, encoded_name, version }) catch return false;
-        
+
         const package_version_url = URL.parse(url_buf.items);
-        
-        var response_buf = MutableString.init(allocator, 64) catch return false;  
+
+        var response_buf = MutableString.init(allocator, 64) catch return false;
         defer response_buf.deinit();
 
         var headers = http.HeaderBuilder{};
         headers.count("accept", "application/json");
-        
+
         if (registry.token.len > 0) {
             var auth_buf = std.ArrayList(u8).init(allocator);
             defer auth_buf.deinit();
             auth_buf.writer().print("Bearer {s}", .{registry.token}) catch return false;
             headers.count("authorization", auth_buf.items);
         } else if (registry.auth.len > 0) {
-            var auth_buf = std.ArrayList(u8).init(allocator);  
+            var auth_buf = std.ArrayList(u8).init(allocator);
             defer auth_buf.deinit();
             auth_buf.writer().print("Basic {s}", .{registry.auth}) catch return false;
             headers.count("authorization", auth_buf.items);
         }
-        
+
         headers.allocate(allocator) catch return false;
         headers.append("accept", "application/json");
-        
+
         if (registry.token.len > 0) {
             var auth_buf = std.ArrayList(u8).init(allocator);
             defer auth_buf.deinit();

@@ -1920,13 +1920,15 @@ pub const BundleV2 = struct {
                 if (throw_on_error) {
                     const aggregate_error = this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed")) catch |e| globalThis.takeException(e);
                     break :blk runOnEndCallbacks(globalThis, plugin, promise, build_result, aggregate_error) catch |err| {
-                        _ = globalThis.takeException(err);
-                        break :blk false;
+                        const exception = globalThis.takeException(err);
+                        promise.reject(globalThis, exception);
+                        return;
                     };
                 } else {
                     break :blk runOnEndCallbacks(globalThis, plugin, promise, build_result, .js_undefined) catch |err| {
-                        _ = globalThis.takeException(err);
-                        break :blk false;
+                        const exception = globalThis.takeException(err);
+                        promise.reject(globalThis, exception);
+                        return;
                     };
                 }
             } else false;
@@ -2036,9 +2038,10 @@ pub const BundleV2 = struct {
                         },
                     );
 
-                    const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(globalThis, plugin, promise, build_output, .js_undefined) catch |err| blk: {
-                        _ = globalThis.takeException(err);
-                        break :blk false;
+                    const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(globalThis, plugin, promise, build_output, .js_undefined) catch |err| {
+                        const exception = globalThis.takeException(err);
+                        promise.reject(globalThis, exception);
+                        return;
                     } else false;
 
                     if (!didHandleCallbacks) {

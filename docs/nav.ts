@@ -219,7 +219,7 @@ export default {
     page("install/npmrc", ".npmrc support", {
       description: "Bun supports loading some configuration options from .npmrc",
     }),
-    page("install/security-scanner-api", "Security scanner API", {
+    page("install/security-scanner-api", "Security Scanner API", {
       description: "Scan your project for vulnerabilities with Bun's security scanner API.",
     }),
     // page("install/utilities", "Utilities", {

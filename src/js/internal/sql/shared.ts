@@ -233,11 +233,11 @@ function defaultToPostgresIfNoProtocol(url: string | URL | null): URL {
 }
 function adapterFromEnv(env: Bun.Env): Bun.SQL.__internal.Adapter {
   // postgres url or postgres host provided
-  if (env.POSTGRES_URL || env.PGURL || env.PG_URL || env.PGHOST) {
+  if (env.POSTGRES_URL || env.PGURL || env.PG_URL || env.PGHOST || env.TLS_POSTGRES_DATABASE_URL) {
     return "postgres";
   }
   // mysql host or mysql url provided
-  if (env.MYSQL_URL || env.MYSQL_HOST) {
+  if (env.MYSQL_URL || env.MYSQL_HOST || env.TLS_MYSQL_DATABASE_URL) {
     return "mysql";
   }
   // default is postgres
@@ -328,7 +328,8 @@ function parseOptions(
     let urlString = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL || env.MYSQL_URL;
 
     if (!urlString) {
-      urlString = env.TLS_POSTGRES_DATABASE_URL || env.TLS_DATABASE_URL;
+      urlString =
+        env.TLS_POSTGRES_DATABASE_URL || env.TLS_DATABASE_URL || env.TLS_MYSQL_DATABASE_URL || env.TLS_MYSQL_URL;
       if (urlString) {
         sslMode = SSLMode.require;
       }

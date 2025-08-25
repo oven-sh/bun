@@ -60,7 +60,7 @@
       "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "0",
-        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_DEBUG_QUIET_LOGS": "0",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",

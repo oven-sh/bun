@@ -1469,7 +1469,6 @@ ServerResponse.prototype._finish = function () {
 };
 
 ServerResponse.prototype.detachSocket = function (socket) {
-  console.log("ServerResponse.prototype.detachSocket");
   // console.trace();
   if (socket._httpMessage === this) {
     socket[kCloseCallback] && (socket[kCloseCallback] = undefined);
@@ -1542,7 +1541,6 @@ ServerResponse.prototype.writeHead = function (statusCode, statusMessage, header
 };
 
 ServerResponse.prototype.assignSocket = function (socket) {
-  console.log("ServerResponse.prototype.assignSocket");
   if (socket._httpMessage) {
     throw $ERR_HTTP_SOCKET_ASSIGNED();
   }

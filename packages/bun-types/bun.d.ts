@@ -5570,13 +5570,14 @@ declare module "bun" {
      *
      * @example
      * ```ts
-     * Bun.plugin({
+     * const plugin: Bun.BunPlugin = {
+     *   name: "my-plugin",
      *   setup(builder) {
      *     builder.onEnd((result) => {
      *       console.log("bundle just finished!!", result);
      *     });
      *   },
-     * });
+     * };
      * ```
      *
      * @returns `this` for method chaining

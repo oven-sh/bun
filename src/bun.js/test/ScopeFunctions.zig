@@ -102,21 +102,20 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
             const formatted_label: ?[]const u8 = if (args.description) |desc| try jsc.Jest.formatLabel(globalThis, desc, function_args.items, test_idx, bunTest.gpa) else null;
             defer if (formatted_label) |label| bunTest.gpa.free(label);
 
-            try this.enqueueDescribeOrTestCallback(bunTest, args.callback, formatted_label, line_no); // TODO: need to pass the arguments to the callback. jest.zig can handle the done argument.
+            try this.enqueueDescribeOrTestCallback(bunTest, args.callback, function_args.items, formatted_label, line_no);
         }
     } else {
-        try this.enqueueDescribeOrTestCallback(bunTest, args.callback, args.description, line_no);
+        try this.enqueueDescribeOrTestCallback(bunTest, args.callback, &.{}, args.description, line_no);
     }
 
     return .js_undefined;
 }
 
-fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunTestFile, callback: jsc.JSValue, description: ?[]const u8, line_no: u32) bun.JSError!void {
+fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunTestFile, callback: jsc.JSValue, args: []const Strong, description: ?[]const u8, line_no: u32) bun.JSError!void {
     switch (this.mode) {
-        .describe => try bunTest.collection.enqueueDescribeCallback(callback, description, this.cfg),
+        .describe => try bunTest.collection.enqueueDescribeCallback(callback, args, description, this.cfg),
         .@"test" => {
-            try bunTest.collection.enqueueTestCallback(description, .{
-                .callback = callback,
+            try bunTest.collection.enqueueTestCallback(description, callback, args, .{
                 .line_no = line_no,
             }, this.cfg);
         },

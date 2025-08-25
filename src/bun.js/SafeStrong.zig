@@ -30,6 +30,9 @@ pub fn swap(this: *Strong, safety_gpa: std.mem.Allocator, next: jsc.JSValue) jsc
     this.* = .init(safety_gpa, next);
     return prev;
 }
+pub fn dupe(this: *Strong, gpa: std.mem.Allocator) Strong {
+    return .init(gpa, this.get());
+}
 pub fn ref(this: *Strong) void {
     this._raw.protect();
     if (enable_safety) if (this._safety) |safety| {
@@ -70,6 +73,9 @@ pub const Optional = struct {
         const result = this._backing.swap(safety_gpa, next orelse .zero);
         if (result == .zero) return null;
         return result;
+    }
+    pub fn dupe(this: *Optional, gpa: std.mem.Allocator) Optional {
+        return .{ ._backing = this._backing.dupe(gpa) };
     }
     pub fn has(this: Optional) bool {
         return this._backing.get() != .zero;

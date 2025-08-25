@@ -164,8 +164,7 @@ pub const js_fns = struct {
 
                 switch (bunTest.phase) {
                     .collection => {
-                        try bunTest.collection.enqueueHookCallback(tag, .{
-                            .callback = callback,
+                        try bunTest.collection.enqueueHookCallback(tag, callback, &.{}, .{
                             .line_no = 0,
                         }, .{});
 
@@ -316,7 +315,7 @@ pub const BunTestFile = struct {
 
         while (true) {
             defer callback_queue.clearRetainingCapacity();
-            defer for (callback_queue.items) |*item| item.callback.deinit();
+            defer for (callback_queue.items) |*item| item.deinit(this.gpa);
 
             const status = switch (this.phase) {
                 .collection => try this.collection.runOne(globalThis, &callback_queue),
@@ -424,13 +423,17 @@ pub const BunTestFile = struct {
 
         if (cfg.done_parameter) {
             const length = try cfg.callback.get().getLength(globalThis);
-            if (length > 0) {
+            if (length > cfg.args_owned.len) {
                 // TODO: support done parameter
-                group.log("TODO: support done parameter", .{});
+                @panic("TODO: support done parameter");
             }
         }
 
-        const result: ?jsc.JSValue = cfg.callback.get().call(globalThis, .js_undefined, &.{}) catch |e| blk: {
+        const args_dupe = this.gpa.alloc(jsc.JSValue, cfg.args_owned.len) catch bun.outOfMemory();
+        defer this.gpa.free(args_dupe);
+        for (args_dupe, cfg.args_owned) |*arg, arg_owned| arg.* = arg_owned.get();
+
+        const result: ?jsc.JSValue = cfg.callback.get().call(globalThis, .js_undefined, args_dupe) catch |e| blk: {
             this.onUncaughtException(globalThis, globalThis.takeError(e), false, cfg.data);
             group.log("callTestCallback -> error", .{});
             break :blk null;
@@ -488,8 +491,27 @@ pub const CallbackQueue = std.ArrayList(CallbackEntry);
 
 pub const CallbackEntry = struct {
     callback: Strong,
+    args_owned: []Strong,
     done_parameter: bool,
     data: u64,
+    pub fn init(gpa: std.mem.Allocator, callback: jsc.JSValue, args: []Strong, done_parameter: bool, data: u64) CallbackEntry {
+        const args_owned = gpa.dupe(gpa, args) catch bun.outOfMemory();
+        errdefer gpa.free(args_owned);
+        for (args_owned) |*arg| arg.* = arg.dupe(gpa);
+        errdefer for (args_owned) |*arg| arg.deinit(gpa);
+
+        return .{
+            .callback = .init(gpa, callback),
+            .args_owned = args_owned,
+            .done_parameter = done_parameter,
+            .data = data,
+        };
+    }
+    pub fn deinit(this: *CallbackEntry, gpa: std.mem.Allocator) void {
+        this.callback.deinit();
+        for (this.args_owned) |*arg| arg.deinit();
+        gpa.free(this.args_owned);
+    }
 };
 
 pub const Collection = @import("./Collection.zig");
@@ -603,13 +625,13 @@ pub const DescribeScope = struct {
         try this.entries.append(.{ .describe = child });
         return child;
     }
-    pub fn appendTest(this: *DescribeScope, buntest: *BunTestFile, name_not_owned: ?[]const u8, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
-        const entry = try ExecutionEntry.create(buntest, name_not_owned, cfg, this, base);
+    pub fn appendTest(this: *DescribeScope, buntest: *BunTestFile, name_not_owned: ?[]const u8, cb: ?jsc.JSValue, args_not_owned: []const Strong, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
+        const entry = try ExecutionEntry.create(buntest, name_not_owned, cb, args_not_owned, cfg, this, base);
         try this.entries.append(.{ .test_callback = entry });
         return entry;
     }
-    pub fn appendHook(this: *DescribeScope, buntest: *BunTestFile, tag: enum { beforeAll, beforeEach, afterEach, afterAll }, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
-        const entry = try ExecutionEntry.create(buntest, null, cfg, this, base);
+    pub fn appendHook(this: *DescribeScope, buntest: *BunTestFile, tag: enum { beforeAll, beforeEach, afterEach, afterAll }, callback: ?jsc.JSValue, args: []const Strong, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
+        const entry = try ExecutionEntry.create(buntest, null, callback, args, cfg, this, base);
         switch (tag) {
             .beforeAll => try this.beforeAll.append(entry),
             .beforeEach => try this.beforeEach.append(entry),
@@ -620,26 +642,34 @@ pub const DescribeScope = struct {
     }
 };
 pub const ExecutionEntryCfg = struct {
-    callback: ?jsc.JSValue,
     line_no: u32,
 };
 pub const ExecutionEntry = struct {
     base: BaseScope,
     callback: Strong.Optional,
+    args_owned: []Strong,
     /// only available if using junit reporter, otherwise 0
     line_no: u32,
     result: Execution.Result = .pending,
 
-    fn create(buntest: *BunTestFile, name_not_owned: ?[]const u8, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
+    fn create(buntest: *BunTestFile, name_not_owned: ?[]const u8, cb: ?jsc.JSValue, args_not_owned: []const Strong, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
+        const args = buntest.gpa.dupe(Strong, args_not_owned) catch bun.outOfMemory();
+        errdefer buntest.gpa.free(args);
+        for (args) |*arg| arg.* = arg.dupe(buntest.gpa);
+        errdefer for (args) |*arg| arg.deinit(buntest.gpa);
+
         const entry = bun.create(buntest.gpa, ExecutionEntry, .{
             .base = .init(base, buntest, name_not_owned, parent),
-            .callback = if (cfg.callback) |cb| .init(buntest.gpa, cb) else .empty,
+            .callback = .init(buntest.gpa, cb),
+            .args_owned = args,
             .line_no = cfg.line_no,
         });
         return entry;
     }
     pub fn destroy(this: *ExecutionEntry, buntest: *BunTestFile) void {
         this.callback.deinit();
+        for (this.args_owned) |*arg| arg.deinit();
+        buntest.gpa.free(this.args_owned);
         this.base.deinit(buntest);
         buntest.gpa.destroy(this);
     }

@@ -33,7 +33,7 @@ status_flags: StatusFlags = .{},
 auth_plugin: ?AuthMethod = null,
 auth_state: AuthState = .{ .pending = {} },
 
-auth_data: []u8 = "",
+auth_data: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
 database: []const u8 = "",
 user: []const u8 = "",
 password: []const u8 = "",
@@ -964,8 +964,7 @@ pub fn deinit(this: *MySQLConnection) void {
     this.write_buffer.deinit(bun.default_allocator);
     this.read_buffer.deinit(bun.default_allocator);
     this.statements.deinit(bun.default_allocator);
-    bun.default_allocator.free(this.auth_data);
-    this.auth_data = "";
+    this.auth_data.deinit();
     this.tls_config.deinit();
     if (this.tls_ctx) |ctx| {
         ctx.deinit(true);
@@ -1169,16 +1168,15 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
         this.status_flags,
     });
 
-    if (this.auth_data.len > 0) {
-        bun.default_allocator.free(this.auth_data);
-        this.auth_data = "";
+    if (this.auth_data.items.len > 0) {
+        this.auth_data.deinit();
+        this.auth_data = std.ArrayList(u8).init(bun.default_allocator);
     }
 
     // Store auth data
-    const auth_data = try bun.default_allocator.alloc(u8, handshake.auth_plugin_data_part_1.len + handshake.auth_plugin_data_part_2.len);
-    @memcpy(auth_data[0..8], &handshake.auth_plugin_data_part_1);
-    @memcpy(auth_data[8..], handshake.auth_plugin_data_part_2);
-    this.auth_data = auth_data;
+    try this.auth_data.ensureTotalCapacity(handshake.auth_plugin_data_part_1.len + handshake.auth_plugin_data_part_2.len);
+    try this.auth_data.appendSlice(handshake.auth_plugin_data_part_1[0..]);
+    try this.auth_data.appendSlice(handshake.auth_plugin_data_part_2[0..]);
 
     // Get auth plugin
     if (handshake.auth_plugin_name.slice().len > 0) {
@@ -1205,7 +1203,7 @@ fn handleHandshakeDecodePublicKey(this: *MySQLConnection, comptime Context: type
     var encrypted_password = Auth.caching_sha2_password.EncryptedPassword{
         .password = this.password,
         .public_key = response.data.slice(),
-        .nonce = this.auth_data,
+        .nonce = this.auth_data.items,
         .sequence_id = this.sequence_id,
     };
     try encrypted_password.write(this.writer());
@@ -1376,20 +1374,8 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
             };
             const auth_data = auth_switch.plugin_data.slice();
             this.auth_plugin = auth_method;
-            const current_auth_data_len = this.auth_data.len;
-            const new_auth_data = auth_data.len;
-            if (current_auth_data_len > 0) {
-                if (!bun.default_allocator.resize(this.auth_data, new_auth_data)) {
-                    bun.default_allocator.free(this.auth_data);
-                    this.auth_data = try bun.default_allocator.dupe(u8, auth_data);
-                } else {
-                    const slice = this.auth_data[0..new_auth_data];
-                    @memcpy(slice, auth_data);
-                    this.auth_data = slice;
-                }
-            } else {
-                this.auth_data = try bun.default_allocator.dupe(u8, auth_data);
-            }
+            this.auth_data.clearRetainingCapacity();
+            try this.auth_data.appendSlice(auth_data);
 
             // Send new auth response
             try this.sendAuthSwitchResponse(auth_method, auth_data);
@@ -1485,12 +1471,12 @@ pub fn sendHandshakeResponse(this: *MySQLConnection) AnyMySQLError.Error!void {
     // Generate auth response based on plugin
     var scrambled_buf: [32]u8 = undefined;
     if (this.auth_plugin) |plugin| {
-        if (this.auth_data.len == 0) {
+        if (this.auth_data.items.len == 0) {
             this.fail("Missing auth data from server", error.MissingAuthData);
             return;
         }
 
-        response.auth_response = .{ .temporary = try plugin.scramble(this.password, this.auth_data, &scrambled_buf) };
+        response.auth_response = .{ .temporary = try plugin.scramble(this.password, this.auth_data.items, &scrambled_buf) };
     }
     response.capability_flags.reject();
     try response.write(this.writer());

@@ -132,13 +132,21 @@ fn messageWithTypeAndLevel_(
         return;
     }
 
-    if (message_type == .Assert and len == 0) {
-        const text = if (Output.enable_ansi_colors_stderr)
-            Output.prettyFmt("<r><red>Assertion failed<r>\n", true)
-        else
-            "Assertion failed\n";
-        console.error_writer.unbuffered_writer.writeAll(text) catch {};
-        return;
+    if (message_type == .Assert) {
+        if (len == 0) {
+            const text = if (Output.enable_ansi_colors_stderr)
+                Output.prettyFmt("<r><red>Assertion failed<r>\n", true)
+            else
+                "Assertion failed\n";
+            console.error_writer.unbuffered_writer.writeAll(text) catch {};
+            return;
+        } else {
+            const prefix = if (Output.enable_ansi_colors_stderr)
+                Output.prettyFmt("<r><red>Assertion failed: <r>", true)
+            else
+                "Assertion failed: ";
+            console.error_writer.unbuffered_writer.writeAll(prefix) catch {};
+        }
     }
 
     const enable_colors = if (level == .Warning or level == .Error)

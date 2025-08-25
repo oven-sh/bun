@@ -1145,6 +1145,9 @@ describe("bundler", () => {
       },
       outdir: "/out",
       throw: false,
+      bundleErrors: {
+        "/index.ts": [`Could not resolve: "./does-not-exist"`],
+      },
       plugins(builder) {
         builder.onEnd(result => {
           onEndCalled = true;
@@ -1536,6 +1539,9 @@ describe("bundler", () => {
       },
       outdir: "/out",
       throw: false,
+      bundleErrors: {
+        "/index.ts": [`Could not resolve: "./not-found.ts"`],
+      },
       plugins(builder) {
         builder.onEnd(() => {
           events.push("first");

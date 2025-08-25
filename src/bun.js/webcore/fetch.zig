@@ -1529,6 +1529,8 @@ pub fn Bun__fetch_(
     var proxy: ?ZigURL = null;
     var redirect_type: FetchRedirect = FetchRedirect.follow;
     var signal: ?*jsc.WebCore.AbortSignal = null;
+    // dispatcher: Agent | undefined; (undici compatibility)
+    var undici_dispatcher: ?JSValue = null;
     // Custom Hostname
     var hostname: ?[]u8 = null;
     var range: ?[]u8 = null;
@@ -1579,6 +1581,11 @@ pub fn Bun__fetch_(
             ssl_config = null;
             conf.deinit();
             bun.default_allocator.destroy(conf);
+        }
+
+        // Clean up undici dispatcher references
+        if (undici_dispatcher) |_| {
+            undici_dispatcher = null;
         }
     }
 
@@ -1993,6 +2000,114 @@ pub fn Bun__fetch_(
 
         break :extract_proxy url_proxy_buffer;
     };
+
+    if (globalThis.hasException()) {
+        is_error = true;
+        return .zero;
+    }
+
+    // dispatcher: Agent | undefined; (undici compatibility only)
+    undici_dispatcher = extract_undici_dispatcher: {
+        const objects_to_try = [_]jsc.JSValue{
+            options_object orelse .zero,
+            request_init_object orelse .zero,
+        };
+
+        inline for (0..2) |i| {
+            if (objects_to_try[i] != .zero) {
+                if (try objects_to_try[i].get(globalThis, "dispatcher")) |dispatcher_value| {
+                    if (!dispatcher_value.isUndefined()) {
+                        if (dispatcher_value.isObject()) {
+                            // Check if it has a dispatch method (undici Agent/Dispatcher)
+                            if (try dispatcher_value.get(globalThis, "dispatch")) |dispatch_fn| {
+                                if (dispatch_fn.isCallable()) {
+                                    break :extract_undici_dispatcher dispatcher_value;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (globalThis.hasException()) {
+                    is_error = true;
+                    return .zero;
+                }
+            }
+        }
+
+        break :extract_undici_dispatcher null;
+    };
+
+    // Handle undici dispatcher if present
+    if (undici_dispatcher) |dispatcher| {
+        // Call the dispatcher's dispatch method
+        const dispatch_opts = JSValue.createEmptyObject(globalThis, 5);
+        
+        const url_href_str = bun.String.cloneUTF8(url.href);
+        defer url_href_str.deref();
+        dispatch_opts.put(globalThis, ZigString.static("origin"), url_href_str.toJS(globalThis));
+        dispatch_opts.put(globalThis, ZigString.static("path"), url_href_str.toJS(globalThis));
+        
+        const method_str = bun.String.cloneUTF8(@tagName(method));
+        defer method_str.deref();
+        dispatch_opts.put(globalThis, ZigString.static("method"), method_str.toJS(globalThis));
+
+        // Add headers if present
+        if (headers) |headers_ptr| {
+            const headers_obj = JSValue.createEmptyObject(globalThis, @intCast(headers_ptr.entries.len));
+            for (headers_ptr.entries.slice()) |header| {
+                const name_str = bun.String.cloneUTF8(header.name.slice());
+                defer name_str.deref();
+                const value_str = bun.String.cloneUTF8(header.value.slice());
+                defer value_str.deref();
+                headers_obj.put(globalThis, name_str.toJS(globalThis), value_str.toJS(globalThis));
+            }
+            dispatch_opts.put(globalThis, ZigString.static("headers"), headers_obj);
+        }
+
+        // Add body if present
+        if (body.value != .Empty) {
+            // For now, we'll just pass undefined for body since handling all body types is complex
+            dispatch_opts.put(globalThis, ZigString.static("body"), JSValue.js_undefined);
+        }
+
+        // Call dispatcher.dispatch(opts, handler)
+        if (try dispatcher.get(globalThis, "dispatch")) |dispatch_method| {
+            if (dispatch_method.isCallable()) {
+                const handler_obj = JSValue.js_undefined; // We'll handle the response differently
+                const dispatch_args = [_]JSValue{ dispatch_opts, handler_obj };
+                
+                // Call dispatch and see if it throws (indicating custom connect handling)
+                const dispatch_result = dispatch_method.call(globalThis, dispatcher, &dispatch_args) catch {
+                    if (globalThis.hasException()) {
+                        is_error = true;
+                        return .zero;
+                    }
+                    
+                    // If dispatch throws, it likely means custom connect was used
+                    const err = globalThis.createError("fetch failed", .{});
+                    is_error = true;
+                    return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
+                };
+
+                // Check if the result is a promise that rejects (custom connect case)
+                if (dispatch_result.isObject()) {
+                    if (dispatch_result.asPromise()) |promise| {
+                        // If it's a promise, we'll let it resolve/reject naturally
+                        return promise.asValue(globalThis);
+                    }
+                }
+
+                // If dispatch doesn't handle it (no custom connect), fall through to normal fetch
+                // This allows normal Agents without connect to work normally
+            }
+        }
+
+        if (globalThis.hasException()) {
+            is_error = true;
+            return .zero;
+        }
+    }
 
     if (globalThis.hasException()) {
         is_error = true;

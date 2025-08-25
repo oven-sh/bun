@@ -130,7 +130,7 @@ export const ESBUILD_PATH = import.meta.resolveSync("esbuild/bin/esbuild");
 export interface BundlerTestInput {
   /** Temporary flag to mark failing tests as skipped. */
   todo?: boolean;
-
+  throw?: boolean;
   // file options
   files: Record<string, string | Buffer | Uint8ClampedArray | Blob>;
   /** Files to be written only after the bundle is done. */
@@ -488,6 +488,7 @@ function expectBundled(
     expectExactFilesize,
     generateOutput = true,
     onAfterApiBundle,
+    throw: _throw = false,
     ...unknownProps
   } = opts;
 
@@ -564,6 +565,9 @@ function expectBundled(
   }
   if (ESBUILD && dotenv) {
     throw new Error("dotenv not implemented in esbuild");
+  }
+  if (ESBUILD && _throw) {
+    throw new Error("throw not implemented in esbuild");
   }
   if (dryRun) {
     return testRef(id, opts);
@@ -1037,7 +1041,7 @@ function expectBundled(
           }
         }
 
-        const buildConfig = {
+        const buildConfig: BuildConfig = {
           entrypoints: [...entryPaths, ...(entryPointsRaw ?? [])],
           external,
           packages,
@@ -1063,7 +1067,7 @@ function expectBundled(
           ignoreDCEAnnotations,
           drop,
           define: define ?? {},
-          throw: false,
+          throw: _throw ?? false,
           compile,
         } as BuildConfig;
 

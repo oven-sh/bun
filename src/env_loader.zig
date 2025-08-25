@@ -487,18 +487,38 @@ pub const Loader = struct {
     pub fn loadProcess(this: *Loader) !void {
         if (this.did_load_process) return;
 
-        var env_map = try std.process.getEnvMap(this.allocator);
-        defer env_map.deinit();
+        if (comptime Environment.isWindows) {
+            // Windows use `std.process.getEnvMap` to prevent charset error
+            var env_map = try std.process.getEnvMap(this.allocator);
+            defer env_map.deinit();
 
-        try this.map.map.ensureTotalCapacity(env_map.count());
+            try this.map.map.ensureTotalCapacity(env_map.count());
 
-        var env_map_iterator = env_map.iterator();
-        while (env_map_iterator.next()) |entry| {
-            try this.map.putAllocKeyAndValue(
-                this.allocator,
-                entry.key_ptr.*,
-                entry.value_ptr.*,
-            );
+            var env_map_iterator = env_map.iterator();
+            while (env_map_iterator.next()) |entry| {
+                try this.map.putAllocKeyAndValue(
+                    this.allocator,
+                    entry.key_ptr.*,
+                    entry.value_ptr.*,
+                );
+            }
+        } else {
+            // Non-Windows uses the original implementation with higher performance
+            try this.map.map.ensureTotalCapacity(std.os.environ.len);
+            for (std.os.environ) |_env| {
+                var env = bun.span(_env);
+                if (strings.indexOfChar(env, '=')) |i| {
+                    const key = env[0..i];
+                    const value = env[i + 1 ..];
+                    if (key.len > 0) {
+                        try this.map.put(key, value);
+                    }
+                } else {
+                    if (env.len > 0) {
+                        try this.map.put(env, "");
+                    }
+                }
+            }
         }
 
         this.did_load_process = true;

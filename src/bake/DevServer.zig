@@ -2932,16 +2932,13 @@ fn encodeSerializedFailures(
     }
 }
 
-/// Check if the client is likely a browser based on User-Agent header
-fn isBrowserClient(req: *Request) bool {
-    const user_agent = req.header("user-agent") orelse return false;
-
-    // Check for common browser indicators in User-Agent string
-    return std.mem.indexOf(u8, user_agent, "Mozilla/") != null or
-        std.mem.indexOf(u8, user_agent, "Chrome/") != null or
-        std.mem.indexOf(u8, user_agent, "Safari/") != null or
-        std.mem.indexOf(u8, user_agent, "Firefox/") != null or
-        std.mem.indexOf(u8, user_agent, "Edge/") != null;
+/// Check if the client accepts HTML responses based on Accept header
+fn acceptsHtml(req: *Request) bool {
+    const accept = req.header("accept") orelse return true; // Default to HTML if no Accept header
+    
+    // Check if client accepts text/html or */*
+    return std.mem.indexOf(u8, accept, "text/html") != null or
+           std.mem.indexOf(u8, accept, "*/*") != null;
 }
 
 fn sendSerializedFailures(
@@ -2952,11 +2949,11 @@ fn sendSerializedFailures(
     kind: ErrorPageKind,
     inspector_agent: ?*BunFrontendDevServerAgent,
 ) !void {
-    // Check if client is a browser based on User-Agent
+    // Check if client accepts HTML based on Accept header
     // If no request is available, default to HTML (likely from deferred requests)
-    const is_browser = req == null or isBrowserClient(req.?);
-    if (is_browser) {
-        // Return HTML error page for browsers
+    const wants_html = req == null or acceptsHtml(req.?);
+    if (wants_html) {
+        // Return HTML error page for clients that accept HTML
         var buf: std.ArrayList(u8) = try .initCapacity(dev.allocator(), 2048);
         errdefer buf.deinit();
 
@@ -3000,7 +2997,7 @@ fn sendSerializedFailures(
             .status_code = 500,
         });
     } else {
-        // Return plain text error for non-browser clients (fetch, curl, etc.)
+        // Return plain text error for clients that don't accept HTML
         var buf: std.ArrayList(u8) = try .initCapacity(dev.allocator(), 512);
         errdefer buf.deinit();
 
@@ -3012,7 +3009,7 @@ fn sendSerializedFailures(
         try buf.writer().print("{s}\n\n", .{page_title});
         try buf.writer().print("Bun development server encountered an error.\n", .{});
         try buf.writer().print("Found {d} error(s) preventing the application from running.\n\n", .{failures.len});
-
+        
         try buf.writer().print("To see detailed error information, open this URL in a web browser.\n", .{});
         try buf.writer().print("For programmatic access to error details, consider using WebSocket connections.\n", .{});
 

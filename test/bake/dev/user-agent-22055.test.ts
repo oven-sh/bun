@@ -2,8 +2,8 @@ import { expect } from "bun:test";
 import { devTest, minimalFramework } from "../bake-harness";
 
 // Test for issue #22055: https://github.com/oven-sh/bun/issues/22055
-// Development server should return plain text errors for non-browser User-Agents
-devTest("returns plain text errors for non-browser User-Agent (#22055)", {
+// Development server should return plain text errors for clients that don't accept HTML
+devTest("returns appropriate errors based on Accept header (#22055)", {
   framework: minimalFramework,
   files: {
     "routes/index.ts": `
@@ -15,32 +15,31 @@ devTest("returns plain text errors for non-browser User-Agent (#22055)", {
     `,
   },
   async test(dev) {
-    // Test with browser User-Agent (should get HTML)
-    const browserResponse = await dev.fetch("/", {
+    // Test with Accept: text/html (should get HTML)
+    const htmlResponse = await dev.fetch("/", {
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-      },
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+      }
     });
+    
+    expect(htmlResponse.status).toBe(500);
+    const htmlText = await htmlResponse.text();
+    expect(htmlResponse.headers.get("content-type")).toContain("text/html");
+    expect(htmlText).toContain("<!doctype html>");
 
-    expect(browserResponse.status).toBe(500);
-    const browserText = await browserResponse.text();
-    expect(browserResponse.headers.get("content-type")).toContain("text/html");
-    expect(browserText).toContain("<!doctype html>");
-
-    // Test with non-browser User-Agent (should get plain text)
-    const fetchResponse = await dev.fetch("/", {
+    // Test without HTML in Accept header (should get plain text)
+    const plainResponse = await dev.fetch("/", {
       headers: {
-        "User-Agent": "fetch/1.0",
-      },
+        "Accept": "application/json, text/plain"
+      }
     });
-
-    expect(fetchResponse.status).toBe(500);
-    const fetchText = await fetchResponse.text();
-    expect(fetchResponse.headers.get("content-type")).toContain("text/plain");
-    expect(fetchText).toContain("Build Failed");
-    expect(fetchText).toContain("Bun development server encountered an error");
-    expect(fetchText).not.toContain("<!doctype html>");
-    expect(fetchText).not.toContain("<script>");
+    
+    expect(plainResponse.status).toBe(500);
+    const plainText = await plainResponse.text();
+    expect(plainResponse.headers.get("content-type")).toContain("text/plain");
+    expect(plainText).toContain("Build Failed");
+    expect(plainText).toContain("Bun development server encountered an error");
+    expect(plainText).not.toContain("<!doctype html>");
+    expect(plainText).not.toContain("<script>");
   },
 });

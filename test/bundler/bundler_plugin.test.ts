@@ -1428,6 +1428,7 @@ describe("bundler", () => {
         builder.onEnd(async () => {
           events.push("third-throw");
           await Promise.resolve();
+          events.push("third-throw-after-await");
           errorCount++;
           throw new Error("third callback error");
         });
@@ -1439,14 +1440,28 @@ describe("bundler", () => {
         builder.onEnd(async () => {
           events.push("fifth-throw");
           await Bun.sleep(0);
+          // Shouldn't reach here, promise should have already rejected elsewhere
+          events.push("fifth-throw-after-await");
           errorCount++;
           throw new Error("fifth callback error");
         });
       },
-      onAfterBundle(api) {
-        expect(events).toEqual(["first-success", "second-throw", "third-throw", "fourth-success", "fifth-throw"]);
-        expect(errorCount).toBe(3);
-        expect(api.readFile("out/index.js")).toContain("Build succeeds");
+      bundleErrors: {
+        "<bun>": ["second callback error"],
+      },
+      onAfterApiBundle(build) {
+        expect(build.success).toBe(false);
+        expect(events).toMatchInlineSnapshot(`
+          [
+            "first-success",
+            "second-throw",
+            "third-throw",
+            "fourth-success",
+            "fifth-throw",
+            "third-throw-after-await",
+          ]
+        `);
+        expect(errorCount).toBe(2);
       },
     };
   });
@@ -1481,9 +1496,12 @@ describe("bundler", () => {
           events.push("fourth");
         });
       },
-      onAfterBundle(api) {
+      bundleErrors: {
+        "<bun>": ["first callback error"],
+      },
+      onAfterApiBundle(build) {
+        expect(build.success).toBe(false);
         expect(events).toEqual(["first", "second", "third", "fourth"]);
-        expect(api.readFile("out/index.js")).toContain("multiple callbacks");
       },
     };
   });
@@ -1560,10 +1578,11 @@ describe("bundler", () => {
           events.push("fourth");
         });
       },
-      onAfterApiBundle(build) {
-        expect(build.success).toBe(true);
+      bundleErrors: {
+        "<bun>": ["second throws"],
       },
-      onAfterBundle(api) {
+      onAfterApiBundle(build) {
+        expect(build.success).toBe(false);
         expect(events).toEqual(["first", "second-throw", "third-async", "fourth"]);
       },
     };
@@ -1572,7 +1591,6 @@ describe("bundler", () => {
   itBundled("plugin/OnEndAsyncErrorsAreAwaited", () => {
     let asyncStarted = false;
     let asyncCompleted = false;
-    let buildCompleted = false;
 
     return {
       files: {
@@ -1581,7 +1599,6 @@ describe("bundler", () => {
         `,
       },
       outdir: "/out",
-      throw: false,
       plugins(builder) {
         builder.onEnd(async () => {
           asyncStarted = true;
@@ -1590,16 +1607,13 @@ describe("bundler", () => {
           throw new Error("async error after delay");
         });
       },
-      onAfterApiBundle(build) {
-        buildCompleted = true;
-        expect(build.success).toBe(true);
-        expect(asyncStarted).toBe(true);
+      bundleErrors: {
+        "<bun>": ["async error after delay"],
       },
-      onAfterBundle(api) {
+      onAfterApiBundle(build) {
+        expect(build.success).toBe(false);
         expect(asyncStarted).toBe(true);
         expect(asyncCompleted).toBe(true);
-        expect(buildCompleted).toBe(true);
-        expect(api.readFile("out/index.js")).toContain("async error test");
       },
     };
   });

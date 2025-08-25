@@ -1104,15 +1104,26 @@ for (const [key, blob] of build.outputs) {
         try {
           build = await Bun.build(buildConfig);
         } catch (e) {
-          if (!(e instanceof AggregateError)) {
-            throw e;
+          if (e instanceof AggregateError) {
+            build = {
+              outputs: [],
+              success: false,
+              logs: e.errors,
+            };
+          } else {
+            build = {
+              outputs: [],
+              success: false,
+              logs: [
+                {
+                  level: "error",
+                  message: e instanceof Error ? e.message : String(e),
+                  name: "BuildMessage",
+                  position: null,
+                },
+              ],
+            };
           }
-
-          build = {
-            outputs: [],
-            success: false,
-            logs: e.errors,
-          };
         }
         if (onAfterApiBundle) await onAfterApiBundle(build);
         configRef = null!;

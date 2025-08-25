@@ -133,7 +133,8 @@ pub fn doPatchCommit(
                 .ids => |ids| brk: {
                     for (ids.items) |id| {
                         const pkg = lockfile.packages.get(id);
-                        const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
+                        var temp_buf: [512]u8 = undefined;
+                        const resolution_label = std.fmt.bufPrint(&temp_buf, "{}", .{pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
                         if (std.mem.eql(u8, resolution_label, version)) {
                             break :brk pkg;
                         }
@@ -551,7 +552,6 @@ pub fn preparePatch(manager: *PackageManager) !void {
 
     var folder_path_buf: bun.PathBuffer = undefined;
     var iterator = Lockfile.Tree.Iterator(.node_modules).init(manager.lockfile);
-    var resolution_buf: [1024]u8 = undefined;
 
     var win_normalizer: if (bun.Environment.isWindows) bun.PathBuffer else struct {} = undefined;
 
@@ -620,7 +620,8 @@ pub fn preparePatch(manager: *PackageManager) !void {
                 .ids => |ids| id: {
                     for (ids.items) |id| {
                         const pkg = lockfile.packages.get(id);
-                        const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
+                        var temp_buf: [512]u8 = undefined;
+                        const resolution_label = std.fmt.bufPrint(&temp_buf, "{}", .{pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
                         if (std.mem.eql(u8, resolution_label, version)) {
                             break :id pkg;
                         }
@@ -635,7 +636,11 @@ pub fn preparePatch(manager: *PackageManager) !void {
             const existing_patchfile_hash = existing_patchfile_hash: {
                 var __sfb = std.heap.stackFallback(1024, manager.allocator);
                 const allocator = __sfb.get();
-                const name_and_version = std.fmt.allocPrint(allocator, "{s}@{}", .{ name, actual_package.resolution.fmt(strbuf, .posix) }) catch unreachable;
+                // For GitHub dependencies, create a simplified name@commitish format to avoid formatter issues
+                const name_and_version = if (actual_package.resolution.tag == .github) 
+                    std.fmt.allocPrint(allocator, "{s}@{s}", .{ name, actual_package.resolution.value.github.committish.slice(strbuf) }) catch unreachable
+                else
+                    std.fmt.allocPrint(allocator, "{s}@{}", .{ name, actual_package.resolution.fmt(strbuf, .posix) }) catch unreachable;
                 defer allocator.free(name_and_version);
                 const name_and_version_hash = String.Builder.stringHash(name_and_version);
                 if (lockfile.patched_dependencies.get(name_and_version_hash)) |patched_dep| {
@@ -673,7 +678,11 @@ pub fn preparePatch(manager: *PackageManager) !void {
             const existing_patchfile_hash = existing_patchfile_hash: {
                 var __sfb = std.heap.stackFallback(1024, manager.allocator);
                 const sfballoc = __sfb.get();
-                const name_and_version = std.fmt.allocPrint(sfballoc, "{s}@{}", .{ name, pkg.resolution.fmt(strbuf, .posix) }) catch unreachable;
+                // For GitHub dependencies, create a simplified name@commitish format to avoid formatter issues
+                const name_and_version = if (pkg.resolution.tag == .github) 
+                    std.fmt.allocPrint(sfballoc, "{s}@{s}", .{ name, pkg.resolution.value.github.committish.slice(strbuf) }) catch unreachable
+                else
+                    std.fmt.allocPrint(sfballoc, "{s}@{}", .{ name, pkg.resolution.fmt(strbuf, .posix) }) catch unreachable;
                 defer sfballoc.free(name_and_version);
                 const name_and_version_hash = String.Builder.stringHash(name_and_version);
                 if (manager.lockfile.patched_dependencies.get(name_and_version_hash)) |patched_dep| {

@@ -69,6 +69,10 @@ pub const InputFile = struct {
     unique_key_for_additional_file: string = "",
     content_hash_for_additional_file: u64 = 0,
     is_plugin_file: bool = false,
+    sourcemap: ?*bun.sourcemap.ParsedSourceMap = null,
+    /// Index to InputFile containing the original source content (for sourcemap support)
+    /// 0 means no original source, valid indices start at 1
+    original_source_index: Index.Int = 0,
 };
 
 pub inline fn pathToSourceIndexMap(this: *Graph, target: options.Target) *PathToSourceIndexMap {

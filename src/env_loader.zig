@@ -485,9 +485,6 @@ pub const Loader = struct {
         };
     }
 
-    pub fn setAutoExpand(this: *Loader, auto_expand: bool) void {
-        this.auto_expand = auto_expand;
-    }
 
     pub fn loadProcess(this: *Loader) OOM!void {
         if (this.did_load_process) return;

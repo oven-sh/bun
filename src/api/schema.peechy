@@ -350,9 +350,6 @@ message TransformOptions {
   uint16 port = 23;
   MessageLevel logLevel = 24;
   SourceMapMode source_map = 25;
-  string[] conditions = 26;
-  PackagesMode packages = 27;
-  bool env_auto_expand = 28;
 }
 
 smol SourceMapMode {

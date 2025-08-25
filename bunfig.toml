@@ -1,0 +1,12 @@
+# This file is used to configure Bun
+# Documentation: https://bun.sh/docs/cli/bunfig
+
+# Uncomment the lines below to configure Bun's behavior
+# [env]
+# autoExpand = true
+
+# [bundle]
+# format = "esm"  # "esm" | "cjs" | "iife"
+
+# [install]
+# frozenLockfile = false

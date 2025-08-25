@@ -408,7 +408,7 @@ pub const Transpiler = struct {
         };
 
         // Set autoExpand from the TransformOptions
-        env_loader.setAutoExpand(opts.env_auto_expand);
+        env_loader.auto_expand = opts.env_auto_expand;
 
         if (DotEnv.instance == null) {
             DotEnv.instance = env_loader;

@@ -4822,7 +4822,7 @@ pub fn NewParser_(
                             args[2] = descriptor_key;
                             args[3] = descriptor_kind;
 
-                            const decorator = if (p.options.features.experimental_decorators) 
+                            const decorator = if (p.options.features.experimental_decorators)
                                 p.callRuntime(prop.key.?.loc, "__legacyDecorateClassTS", args)
                             else
                                 p.callRuntime(prop.key.?.loc, "__decorateClassES", args);
@@ -4964,7 +4964,7 @@ pub fn NewParser_(
 
                         stmts.appendAssumeCapacity(Stmt.assign(
                             p.newExpr(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc),
-                            if (p.options.features.experimental_decorators) 
+                            if (p.options.features.experimental_decorators)
                                 p.callRuntime(stmt.loc, "__legacyDecorateClassTS", args)
                             else
                                 p.callRuntime(stmt.loc, "__decorateClassES", args),

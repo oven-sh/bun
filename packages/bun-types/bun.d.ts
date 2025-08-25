@@ -643,7 +643,7 @@ declare module "bun" {
      * console.log(YAML.parse("abc: def")) // { "abc": "def" }
      * ```
      */
-    export function parse(input: string): object | string | number | boolean | null;
+    export function parse(input: string): unknown;
   }
 
   /**

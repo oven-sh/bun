@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("Bun.JSONC exists", () => {
   expect(Bun.JSONC).toBeDefined();
@@ -18,7 +18,7 @@ test("Bun.JSONC.parse handles comments", () => {
     /* This is a block comment */
     "value": 42
   }`;
-  
+
   const result = Bun.JSONC.parse(jsonc);
   expect(result).toEqual({ name: "test", value: 42 });
 });
@@ -28,7 +28,7 @@ test("Bun.JSONC.parse handles trailing commas", () => {
     "name": "test",
     "value": 42,
   }`;
-  
+
   const result = Bun.JSONC.parse(jsonc);
   expect(result).toEqual({ name: "test", value: 42 });
 });
@@ -39,7 +39,7 @@ test("Bun.JSONC.parse handles arrays with trailing commas", () => {
     2,
     3,
   ]`;
-  
+
   const result = Bun.JSONC.parse(jsonc);
   expect(result).toEqual([1, 2, 3]);
 });
@@ -60,16 +60,16 @@ test("Bun.JSONC.parse handles complex JSONC", () => {
       "lint", // Code formatting
     ],
   }`;
-  
+
   const result = Bun.JSONC.parse(jsonc);
   expect(result).toEqual({
     name: "my-app",
     version: "1.0.0",
     dependencies: {
       react: "^18.0.0",
-      typescript: "^5.0.0"
+      typescript: "^5.0.0",
     },
-    scripts: ["build", "test", "lint"]
+    scripts: ["build", "test", "lint"],
   });
 });
 
@@ -82,14 +82,14 @@ test("Bun.JSONC.parse handles nested objects", () => {
       }
     },
   }`;
-  
+
   const result = Bun.JSONC.parse(jsonc);
   expect(result).toEqual({
     outer: {
       inner: {
-        value: 123
-      }
-    }
+        value: 123,
+      },
+    },
   });
 });
 
@@ -99,27 +99,27 @@ test("Bun.JSONC.parse handles boolean and null values", () => {
     "disabled": false, // Boolean false
     "nothing": null, // Null value
   }`;
-  
+
   const result = Bun.JSONC.parse(jsonc);
   expect(result).toEqual({
     enabled: true,
     disabled: false,
-    nothing: null
+    nothing: null,
   });
 });
 
 test("Bun.JSONC.parse throws on invalid JSON", () => {
   expect(() => {
-    Bun.JSONC.parse('{ invalid json }');
+    Bun.JSONC.parse("{ invalid json }");
   }).toThrow();
 });
 
 test("Bun.JSONC.parse handles empty object", () => {
-  const result = Bun.JSONC.parse('{}');
+  const result = Bun.JSONC.parse("{}");
   expect(result).toEqual({});
 });
 
 test("Bun.JSONC.parse handles empty array", () => {
-  const result = Bun.JSONC.parse('[]');
+  const result = Bun.JSONC.parse("[]");
   expect(result).toEqual([]);
 });

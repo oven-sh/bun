@@ -61,6 +61,7 @@
     macro(nanoseconds) \
     macro(openInEditor) \
     macro(registerMacro) \
+    macro(rename) \
     macro(resolve) \
     macro(resolveSync) \
     macro(serve) \

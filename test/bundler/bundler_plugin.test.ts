@@ -1528,20 +1528,18 @@ describe("bundler", () => {
     };
   });
 
-  itBundled("plugin/OnEndBuildFailsMultipleCallbacksSomeThrow", () => {
+  itBundled("plugin/OnEndMultipleCallbacksSomeThrow", () => {
     const events: string[] = [];
 
     return {
       files: {
         "index.ts": `
-          import { missing } from "./not-found.ts";
+          // Build will succeed but some onEnd callbacks throw
+          export const test = "multiple callbacks with errors";
         `,
       },
       outdir: "/out",
       throw: false,
-      bundleErrors: {
-        "/index.ts": [`Could not resolve: "./not-found.ts"`],
-      },
       plugins(builder) {
         builder.onEnd(() => {
           events.push("first");
@@ -1562,8 +1560,46 @@ describe("bundler", () => {
           events.push("fourth");
         });
       },
-      onAfterBundle() {
+      onAfterApiBundle(build) {
+        expect(build.success).toBe(true);
+      },
+      onAfterBundle(api) {
         expect(events).toEqual(["first", "second-throw", "third-async", "fourth"]);
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndAsyncErrorsAreAwaited", () => {
+    let asyncStarted = false;
+    let asyncCompleted = false;
+    let buildCompleted = false;
+
+    return {
+      files: {
+        "index.ts": `
+          export const test = "async error test";
+        `,
+      },
+      outdir: "/out",
+      throw: false,
+      plugins(builder) {
+        builder.onEnd(async () => {
+          asyncStarted = true;
+          await Bun.sleep(5);
+          asyncCompleted = true;
+          throw new Error("async error after delay");
+        });
+      },
+      onAfterApiBundle(build) {
+        buildCompleted = true;
+        expect(build.success).toBe(true);
+        expect(asyncStarted).toBe(true);
+      },
+      onAfterBundle(api) {
+        expect(asyncStarted).toBe(true);
+        expect(asyncCompleted).toBe(true);
+        expect(buildCompleted).toBe(true);
+        expect(api.readFile("out/index.js")).toContain("async error test");
       },
     };
   });

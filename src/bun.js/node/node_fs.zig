@@ -5930,9 +5930,6 @@ pub const NodeFS = struct {
                 .success;
         }
 
-        bun.assert(args.mtime.nsec <= 1e9);
-        bun.assert(args.atime.nsec <= 1e9);
-
         return switch (Syscall.lutimes(args.path.sliceZ(&this.sync_error_buf), args.atime, args.mtime)) {
             .err => |err| .{ .err = err.withPath(args.path.slice()) },
             .result => .success,

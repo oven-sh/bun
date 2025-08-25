@@ -427,7 +427,19 @@ pub const Command = struct {
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
             Cli.cmd = command;
             context_data = .{
-                .args = std.mem.zeroes(api.TransformOptions),
+                .args = .{
+                    .env_auto_expand = true,
+                    .ignore_dce_annotations = false,
+                    .entry_points = &.{},
+                    .inject = &.{},
+                    .external = &.{},
+                    .main_fields = &.{},
+                    .extension_order = &.{},
+                    .conditions = &.{},
+                    .env_files = &.{},
+                    .drop = &.{},
+                    .bunfig_path = "",
+                },
                 .log = log,
                 .start_time = start_time,
                 .allocator = allocator,
@@ -652,7 +664,19 @@ pub const Command = struct {
                     }
 
                     context_data = .{
-                        .args = std.mem.zeroes(api.TransformOptions),
+                        .args = .{
+                            .env_auto_expand = true,
+                            .ignore_dce_annotations = false,
+                            .entry_points = &.{},
+                            .inject = &.{},
+                            .external = &.{},
+                            .main_fields = &.{},
+                            .extension_order = &.{},
+                            .conditions = &.{},
+                            .env_files = &.{},
+                            .drop = &.{},
+                            .bunfig_path = "",
+                        },
                         .log = log,
                         .start_time = start_time,
                         .allocator = bun.default_allocator,

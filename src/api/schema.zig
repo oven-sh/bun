@@ -1189,6 +1189,9 @@ pub const api = struct {
         /// defaults
         defaults: ?StringMap = null,
 
+        /// autoExpand
+        autoExpand: ?bool = null,
+
         pub fn decode(reader: anytype) anyerror!EnvConfig {
             var this = std.mem.zeroes(EnvConfig);
 
@@ -1203,6 +1206,9 @@ pub const api = struct {
                     },
                     2 => {
                         this.defaults = try reader.readValue(StringMap);
+                    },
+                    3 => {
+                        this.autoExpand = try reader.readValue(bool);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -1220,6 +1226,10 @@ pub const api = struct {
             if (this.defaults) |defaults| {
                 try writer.writeFieldID(2);
                 try writer.writeValue(@TypeOf(defaults), defaults);
+            }
+            if (this.autoExpand) |autoExpand| {
+                try writer.writeFieldID(3);
+                try writer.writeValue(@TypeOf(autoExpand), autoExpand);
             }
             try writer.endMessage();
         }
@@ -1718,6 +1728,7 @@ pub const api = struct {
         serve_minify_identifiers: ?bool = null,
         serve_env_behavior: DotEnvBehavior = ._none,
         serve_env_prefix: ?[]const u8 = null,
+        env_auto_expand: bool = true,
         serve_splitting: bool = false,
         serve_public_path: ?[]const u8 = null,
         serve_hmr: ?bool = null,
@@ -1817,6 +1828,9 @@ pub const api = struct {
                     },
                     27 => {
                         this.packages = try reader.readValue(PackagesMode);
+                    },
+                    28 => {
+                        this.env_auto_expand = try reader.readValue(bool);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -1937,6 +1951,9 @@ pub const api = struct {
                 try writer.writeFieldID(27);
                 try writer.writeValue([]const u8, packages);
             }
+
+            try writer.writeFieldID(28);
+            try writer.writeValue(@TypeOf(this.env_auto_expand), this.env_auto_expand);
 
             try writer.endMessage();
         }

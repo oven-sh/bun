@@ -1,8 +1,7 @@
 pub const Version = extern struct {
-    major: u32 = 0,
-    minor: u32 = 0,
-    patch: u32 = 0,
-    _tag_padding: [4]u8 = .{0} ** 4, // [see padding_checker.zig]
+    major: u64 = 0,
+    minor: u64 = 0,
+    patch: u64 = 0,
     tag: Tag = .{},
 
     /// Assumes that there is only one buffer for all the strings
@@ -219,9 +218,9 @@ pub const Version = extern struct {
     }
 
     pub const Partial = struct {
-        major: ?u32 = null,
-        minor: ?u32 = null,
-        patch: ?u32 = null,
+        major: ?u64 = null,
+        minor: ?u64 = null,
+        patch: ?u64 = null,
         tag: Tag = .{},
 
         pub fn min(this: Partial) Version {
@@ -235,18 +234,18 @@ pub const Version = extern struct {
 
         pub fn max(this: Partial) Version {
             return .{
-                .major = this.major orelse std.math.maxInt(u32),
-                .minor = this.minor orelse std.math.maxInt(u32),
-                .patch = this.patch orelse std.math.maxInt(u32),
+                .major = this.major orelse std.math.maxInt(u64),
+                .minor = this.minor orelse std.math.maxInt(u64),
+                .patch = this.patch orelse std.math.maxInt(u64),
                 .tag = this.tag,
             };
         }
     };
 
     const Hashable = extern struct {
-        major: u32,
-        minor: u32,
-        patch: u32,
+        major: u64,
+        minor: u64,
+        patch: u64,
         pre: u64,
         build: u64,
     };
@@ -514,8 +513,8 @@ pub const Version = extern struct {
                 // if left is null, left is less than.
                 if (lhs_part == null) return .lt;
 
-                const lhs_uint: ?u32 = std.fmt.parseUnsigned(u32, lhs_part.?, 10) catch null;
-                const rhs_uint: ?u32 = std.fmt.parseUnsigned(u32, rhs_part.?, 10) catch null;
+                const lhs_uint: ?u64 = std.fmt.parseUnsigned(u64, lhs_part.?, 10) catch null;
+                const rhs_uint: ?u64 = std.fmt.parseUnsigned(u64, rhs_part.?, 10) catch null;
 
                 // a part that doesn't parse as an integer is greater than a part that does
                 // https://github.com/npm/node-semver/blob/816c7b2cbfcb1986958a290f941eddfd0441139e/internal/identifiers.js#L12
@@ -945,9 +944,9 @@ pub const Version = extern struct {
         return result;
     }
 
-    fn parseVersionNumber(input: string) ?u32 {
-        // max decimal u32 is 4294967295
-        var bytes: [10]u8 = undefined;
+    fn parseVersionNumber(input: string) ?u64 {
+        // max decimal u64 is 18446744073709551615 which is 20 characters long
+        var bytes: [20]u8 = undefined;
         var byte_i: u8 = 0;
 
         assert(input[0] != '.');
@@ -971,7 +970,7 @@ pub const Version = extern struct {
         if (byte_i == 0) return null;
 
         if (comptime Environment.isDebug) {
-            return std.fmt.parseInt(u32, bytes[0..byte_i], 10) catch |err| {
+            return std.fmt.parseInt(u64, bytes[0..byte_i], 10) catch |err| {
                 Output.prettyErrorln("ERROR {s} parsing version: \"{s}\", bytes: {s}", .{
                     @errorName(err),
                     input,
@@ -981,7 +980,7 @@ pub const Version = extern struct {
             };
         }
 
-        return std.fmt.parseInt(u32, bytes[0..byte_i], 10) catch 0;
+        return std.fmt.parseInt(u64, bytes[0..byte_i], 10) catch 0;
     }
 };
 

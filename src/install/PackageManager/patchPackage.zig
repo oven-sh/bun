@@ -637,7 +637,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
                 var __sfb = std.heap.stackFallback(1024, manager.allocator);
                 const allocator = __sfb.get();
                 // For GitHub dependencies, create a simplified name@commitish format to avoid formatter issues
-                const name_and_version = if (actual_package.resolution.tag == .github) 
+                const name_and_version = if (actual_package.resolution.tag == .github)
                     std.fmt.allocPrint(allocator, "{s}@{s}", .{ name, actual_package.resolution.value.github.committish.slice(strbuf) }) catch unreachable
                 else
                     std.fmt.allocPrint(allocator, "{s}@{}", .{ name, actual_package.resolution.fmt(strbuf, .posix) }) catch unreachable;
@@ -679,7 +679,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
                 var __sfb = std.heap.stackFallback(1024, manager.allocator);
                 const sfballoc = __sfb.get();
                 // For GitHub dependencies, create a simplified name@commitish format to avoid formatter issues
-                const name_and_version = if (pkg.resolution.tag == .github) 
+                const name_and_version = if (pkg.resolution.tag == .github)
                     std.fmt.allocPrint(sfballoc, "{s}@{s}", .{ name, pkg.resolution.value.github.committish.slice(strbuf) }) catch unreachable
                 else
                     std.fmt.allocPrint(sfballoc, "{s}@{}", .{ name, pkg.resolution.fmt(strbuf, .posix) }) catch unreachable;

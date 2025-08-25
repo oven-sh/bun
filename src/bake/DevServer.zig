@@ -2935,10 +2935,10 @@ fn encodeSerializedFailures(
 /// Check if the client accepts HTML responses based on Accept header
 fn acceptsHtml(req: *Request) bool {
     const accept = req.header("accept") orelse return true; // Default to HTML if no Accept header
-    
+
     // Check if client accepts text/html or */*
     return std.mem.indexOf(u8, accept, "text/html") != null or
-           std.mem.indexOf(u8, accept, "*/*") != null;
+        std.mem.indexOf(u8, accept, "*/*") != null;
 }
 
 fn sendSerializedFailures(
@@ -3009,7 +3009,7 @@ fn sendSerializedFailures(
         try buf.writer().print("{s}\n\n", .{page_title});
         try buf.writer().print("Bun development server encountered an error.\n", .{});
         try buf.writer().print("Found {d} error(s) preventing the application from running.\n\n", .{failures.len});
-        
+
         try buf.writer().print("To see detailed error information, open this URL in a web browser.\n", .{});
         try buf.writer().print("For programmatic access to error details, consider using WebSocket connections.\n", .{});
 

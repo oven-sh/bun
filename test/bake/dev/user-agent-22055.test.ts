@@ -18,10 +18,10 @@ devTest("returns appropriate errors based on Accept header (#22055)", {
     // Test with Accept: text/html (should get HTML)
     const htmlResponse = await dev.fetch("/", {
       headers: {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-      }
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
     });
-    
+
     expect(htmlResponse.status).toBe(500);
     const htmlText = await htmlResponse.text();
     expect(htmlResponse.headers.get("content-type")).toContain("text/html");
@@ -30,10 +30,10 @@ devTest("returns appropriate errors based on Accept header (#22055)", {
     // Test without HTML in Accept header (should get plain text)
     const plainResponse = await dev.fetch("/", {
       headers: {
-        "Accept": "application/json, text/plain"
-      }
+        "Accept": "application/json, text/plain",
+      },
     });
-    
+
     expect(plainResponse.status).toBe(500);
     const plainText = await plainResponse.text();
     expect(plainResponse.headers.get("content-type")).toContain("text/plain");

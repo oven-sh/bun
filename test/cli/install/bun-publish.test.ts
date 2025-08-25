@@ -875,7 +875,7 @@ describe("--tolerate-republish", async () => {
     expect(err).toContain("403") || expect(err).toContain("already exists") || expect(err).toContain("cannot publish");
   });
 
-  test("republishing with --tolerate-republish checks registry proactively and skips", async () => {
+  test("republishing with --tolerate-republish skips when version exists", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
     const bunfig = await registry.authBunfig("republish-tolerate");
     const pkgJson = {
@@ -894,14 +894,14 @@ describe("--tolerate-republish", async () => {
     expect(exitCode).toBe(0);
     expect(out).toContain("+ republish-test-2@1.0.0");
 
-    // Second publish with --tolerate-republish should check registry and skip (Yarn's approach)
+    // Second publish with --tolerate-republish should skip
     ({ out, err, exitCode } = await publish(env, packageDir, "--tolerate-republish"));
     expect(exitCode).toBe(0);
     expect(err).toContain("warning: Registry already knows about version 1.0.0; skipping.");
     expect(err).not.toContain("error:");
   });
 
-  test("republishing tarball with --tolerate-republish checks registry and skips", async () => {
+  test("republishing tarball with --tolerate-republish skips when version exists", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
     const bunfig = await registry.authBunfig("republish-tarball");
     const pkgJson = {
@@ -923,7 +923,7 @@ describe("--tolerate-republish", async () => {
     expect(exitCode).toBe(0);
     expect(out).toContain("+ republish-test-3@1.0.0");
 
-    // Second publish with --tolerate-republish should proactively check and skip
+    // Second publish with --tolerate-republish should skip
     ({ out, err, exitCode } = await publish(env, packageDir, "./republish-test-3-1.0.0.tgz", "--tolerate-republish"));
     expect(exitCode).toBe(0);
     expect(err).toContain("warning: Registry already knows about version 1.0.0; skipping.");

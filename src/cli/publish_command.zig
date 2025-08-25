@@ -451,22 +451,17 @@ pub const PublishCommand = struct {
         NeedAuth,
     };
 
-    // Check if a package version already exists in the registry (Yarn's approach)
     fn checkPackageVersionExists(
         allocator: std.mem.Allocator, 
         package_name: string,
         version: string,
         registry: *const Npm.Registry.Scope,
     ) bool {
-        // Make a simple HEAD request to /<package>/<version> endpoint
-        // If it returns 200, version exists; if 404, it doesn't
         var url_buf = std.ArrayList(u8).init(allocator);
         defer url_buf.deinit();
-        
         const registry_url = strings.withoutTrailingSlash(registry.url.href);
         const encoded_name = bun.fmt.dependencyUrl(package_name);
         
-        // Construct URL: registry/package/version
         url_buf.writer().print("{s}/{s}/{s}", .{ registry_url, encoded_name, version }) catch return false;
         
         const package_version_url = URL.parse(url_buf.items);
@@ -474,7 +469,6 @@ pub const PublishCommand = struct {
         var response_buf = MutableString.init(allocator, 64) catch return false;  
         defer response_buf.deinit();
 
-        // Simple headers
         var headers = http.HeaderBuilder{};
         headers.count("accept", "application/json");
         
@@ -507,7 +501,7 @@ pub const PublishCommand = struct {
 
         var req = http.AsyncHTTP.initSync(
             allocator,
-            .HEAD,  // Use HEAD request - we only need to know if it exists
+            .HEAD,
             package_version_url,
             headers.entries,
             headers.content.ptr.?[0..headers.content.len],
@@ -519,8 +513,6 @@ pub const PublishCommand = struct {
         );
 
         const res = req.sendSync() catch return false;
-        
-        // 200 = version exists, 404 = doesn't exist, anything else = assume doesn't exist
         return res.status_code == 200;
     }
 
@@ -534,8 +526,6 @@ pub const PublishCommand = struct {
             return error.NeedAuth;
         }
 
-        // If --tolerate-republish is enabled, check if package version already exists
-        // BEFORE doing any expensive work (packing, uploading, etc.) - Yarn's approach
         const tolerate_republish = ctx.manager.options.publish_config.tolerate_republish;
         if (tolerate_republish) {
             const version_without_build_tag = Dependency.withoutBuildTag(ctx.package_version);
@@ -548,7 +538,7 @@ pub const PublishCommand = struct {
 
             if (package_exists) {
                 Output.prettyln("<yellow>warning<r>: Registry already knows about version {s}; skipping.", .{version_without_build_tag});
-                return; // Skip publishing entirely, just like Yarn does
+                return;
             }
         }
 

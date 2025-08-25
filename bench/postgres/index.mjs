@@ -1,6 +1,6 @@
 const isBun = typeof globalThis?.Bun?.sql !== "undefined";
 import postgres from "postgres";
-const sql = isBun ? Bun.sql : postgres;
+const sql = isBun ? Bun.sql : postgres();
 
 // Create the table if it doesn't exist
 await sql`

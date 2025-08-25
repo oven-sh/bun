@@ -781,7 +781,7 @@ describe("bundler", () => {
         build.onResolve({ filter: /^plugin$/ }, args => {
           expect(args.path).toBe("plugin");
           expect(args.importer).toBe("");
-          expect(args.kind).toBe("entry-point");
+          expect(args.kind).toBe("entry-point-build");
           expect(args.namespace).toBe("");
           // expect(args.pluginData).toEqual(undefined);
           // expect(args.resolveDir).toEqual(root);
@@ -941,7 +941,7 @@ describe("bundler", () => {
   });
 
   itBundled("plugin/OnEndMultipleCallbacks", ({ root }) => {
-    const callOrder = [];
+    const callOrder: string[] = [];
 
     return {
       files: {
@@ -1118,6 +1118,148 @@ describe("bundler", () => {
         const metadata = JSON.parse(api.readFile("out/build-metadata.json"));
         expect(metadata.files).toEqual(["index.js"]);
         expect(metadata.buildTime).toBeDefined();
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndWithThrowOnErrorTrue", ({ root }) => {
+    let onEndCalled = false;
+    let onEndCalledBeforePromiseResolved = false;
+    let promiseResolved = false;
+
+    return {
+      files: {
+        "index.ts": `
+          // This will cause a build error
+          import { nonExistent } from "./does-not-exist";
+          console.log(nonExistent);
+        `,
+      },
+      outdir: "/out",
+      throw: true,
+      plugins(builder) {
+        builder.onEnd(() => {
+          onEndCalled = true;
+          // Check that promise hasn't resolved yet
+          onEndCalledBeforePromiseResolved = !promiseResolved;
+        });
+      },
+      expectedBuildError: true,
+      onAfterBundle(api) {
+        // This will only be called if throwOnError is false or build succeeds
+        // Since we expect an error and throwOnError is true, this shouldn't be called
+        promiseResolved = true;
+      },
+      onBuildError(error) {
+        promiseResolved = true;
+        // Verify onEnd was called before the promise rejected
+        expect(onEndCalled).toBe(true);
+        expect(onEndCalledBeforePromiseResolved).toBe(true);
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndWithThrowOnErrorFalse", ({ root }) => {
+    let onEndCalled = false;
+    let onEndCalledBeforePromiseResolved = false;
+    let promiseResolved = false;
+
+    return {
+      files: {
+        "index.ts": `
+          // This will cause a build error
+          import { nonExistent } from "./does-not-exist";
+          console.log(nonExistent);
+        `,
+      },
+      outdir: "/out",
+      throw: false,
+      plugins(builder) {
+        builder.onEnd(result => {
+          onEndCalled = true;
+          // Check that promise hasn't resolved yet
+          onEndCalledBeforePromiseResolved = !promiseResolved;
+          // Result should contain errors
+          expect(result.success).toBe(false);
+          expect(result.logs).toBeDefined();
+          expect(result.logs.length).toBeGreaterThan(0);
+        });
+      },
+      onAfterBundle(api) {
+        promiseResolved = true;
+        // Verify onEnd was called before the promise resolved
+        expect(onEndCalled).toBe(true);
+        expect(onEndCalledBeforePromiseResolved).toBe(true);
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndAlwaysFiresOnSuccess", ({ root }) => {
+    let onEndCalled = false;
+    let onEndCalledBeforePromiseResolved = false;
+    let promiseResolved = false;
+
+    return {
+      files: {
+        "index.ts": `
+          export const success = true;
+          console.log("Build successful");
+        `,
+      },
+      outdir: "/out",
+      throw: true, // Doesn't matter since build will succeed
+      plugins(builder) {
+        builder.onEnd(result => {
+          onEndCalled = true;
+          // Check that promise hasn't resolved yet
+          onEndCalledBeforePromiseResolved = !promiseResolved;
+          // Result should indicate success
+          expect(result.success).toBe(true);
+          expect(result.outputs).toBeDefined();
+          expect(result.outputs.length).toBeGreaterThan(0);
+        });
+      },
+      onAfterBundle(api) {
+        promiseResolved = true;
+        // Verify onEnd was called before the promise resolved
+        expect(onEndCalled).toBe(true);
+        expect(onEndCalledBeforePromiseResolved).toBe(true);
+        expect(api.readFile("out/index.js")).toContain("Build successful");
+      },
+    };
+  });
+
+  itBundled("plugin/OnEndMultipleCallbacksWithError", ({ root }) => {
+    const callOrder: string[] = [];
+    let promiseResolved = false;
+
+    return {
+      files: {
+        "index.ts": `
+          // This will cause a build error
+          import { missing } from "./missing-module";
+        `,
+      },
+      outdir: "/out",
+      throw: false, // Let the build continue so we can check callbacks
+      plugins(builder) {
+        builder.onEnd(() => {
+          callOrder.push("first");
+          expect(promiseResolved).toBe(false);
+        });
+        builder.onEnd(() => {
+          callOrder.push("second");
+          expect(promiseResolved).toBe(false);
+        });
+        builder.onEnd(() => {
+          callOrder.push("third");
+          expect(promiseResolved).toBe(false);
+        });
+      },
+      onAfterBundle(api) {
+        promiseResolved = true;
+        // All callbacks should have been called in order before promise resolved
+        expect(callOrder).toEqual(["first", "second", "third"]);
       },
     };
   });

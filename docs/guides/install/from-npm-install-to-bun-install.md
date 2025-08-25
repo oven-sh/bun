@@ -2,30 +2,45 @@
 name: Migrate from npm install to bun install
 ---
 
-`bun install` is a Node.js compatible npm client designed to be an incredibly fast successor to npm.
+Bun is easy to start using, even in existing projects. To migrate an NPM project, just run:
 
-We've put a lot of work into making sure that the migration path from `npm install` to `bun install` is as easy as running `bun install` instead of `npm install`.
+```sh
+bun install
+```
+
+**That's it!** We've put a lot of work into making sure that the migration path from `npm install` is as easy as running `bun install`.
 
 - **Designed for Node.js & Bun**: `bun install` installs a Node.js compatible `node_modules` folder. You can use it in place of `npm install` for Node.js projects without any code changes and without using Bun's runtime.
 - **Automatically converts `package-lock.json`** to bun's `bun.lock` lockfile format, preserving your existing resolved dependency versions without any manual work on your part. You can secretly use `bun install` in place of `npm install` at work without anyone noticing.
 - **`.npmrc` compatible**: bun install reads npm registry configuration from npm's `.npmrc`, so you can use the same configuration for both npm and Bun.
 - **Hardlinks**: On Windows and Linux, `bun install` uses hardlinks to conserve disk space and install times.
 
-```bash
-# It only takes one command to migrate
-$ bun i
+See the [quickstart doc](https://bun.sh/docs/quickstart) for more help getting started with Bun.
 
-# To add dependencies:
-$ bun i @types/bun
+## Using Bun types
 
-# To add devDependencies:
-$ bun i -d @types/bun
+To type-check `global.Bun` prototype methods or other Bun-specific APIs, add the `@types/bun` dev dependency:
 
-# To remove a dependency:
-$ bun rm @types/bun
+```sh
+bun i -d @types/bun
 ```
 
+See the [TypeScript guide](https://bun.sh/docs/typescript) for more info.
+
 ---
+
+## Basic usage
+
+```bash
+# To add dependencies:
+$ bun i pkg-to-install
+
+# To add devDependencies:
+$ bun i -d dev-pkg-to-install
+
+# To remove a dependency:
+$ bun rm pkg-to-remove
+```
 
 ## Run package.json scripts faster
 

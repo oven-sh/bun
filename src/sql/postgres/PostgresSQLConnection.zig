@@ -1453,12 +1453,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             debug("-> {s}", .{cmd.command_tag.slice()});
             defer this.updateRef();
 
-            if (request.flags.simple) {
-                // simple queries can have multiple commands
-                request.onResult(cmd.command_tag.slice(), this.globalObject, this.js_value, false);
-            } else {
-                request.onResult(cmd.command_tag.slice(), this.globalObject, this.js_value, true);
-            }
+            request.onResult(cmd.command_tag.slice(), this.globalObject, this.js_value, false);
         },
         .BindComplete => {
             try reader.eatMessage(protocol.BindComplete);

@@ -26,49 +26,46 @@ function wrapPostgresError(error: Error | PostgresErrorOptions) {
 
 initPostgres(
   function onResolvePostgresQuery(query, result, commandTag, count, queries, is_last) {
-    /// simple queries
-    if (query[_flags] & SQLQueryFlags.simple) {
-      // simple can have multiple results or a single result
-      if (is_last) {
-        if (queries) {
-          const queriesIndex = queries.indexOf(query);
-          if (queriesIndex !== -1) {
-            queries.splice(queriesIndex, 1);
-          }
-        }
-        try {
-          query.resolve(query[_results]);
-        } catch {}
-        return;
-      }
-      $assert(result instanceof SQLResultArray, "Invalid result array");
-      // prepare for next query
-      query[_handle].setPendingValue(new SQLResultArray());
-
-      if (typeof commandTag === "string") {
-        if (commandTag.length > 0) {
-          result.command = commandTag;
-        }
-      } else {
-        result.command = cmds[commandTag];
-      }
-
-      result.count = count || 0;
-      const last_result = query[_results];
-
-      if (!last_result) {
-        query[_results] = result;
-      } else {
-        if (last_result instanceof SQLResultArray) {
-          // multiple results
-          query[_results] = [last_result, result];
-        } else {
-          // 3 or more results
-          last_result.push(result);
+    if (is_last) {
+      if (queries) {
+        const queriesIndex = queries.indexOf(query);
+        if (queriesIndex !== -1) {
+          queries.splice(queriesIndex, 1);
         }
       }
+      try {
+        query.resolve(query[_results]);
+      } catch {}
       return;
     }
+    $assert(result instanceof SQLResultArray, "Invalid result array");
+    // prepare for next query
+    query[_handle].setPendingValue(new SQLResultArray());
+
+    if (typeof commandTag === "string") {
+      if (commandTag.length > 0) {
+        result.command = commandTag;
+      }
+    } else {
+      result.command = cmds[commandTag];
+    }
+
+    result.count = count || 0;
+    const last_result = query[_results];
+
+    if (!last_result) {
+      query[_results] = result;
+    } else {
+      if (last_result instanceof SQLResultArray) {
+        // multiple results
+        query[_results] = [last_result, result];
+      } else {
+        // 3 or more results
+        last_result.push(result);
+      }
+    }
+    return;
+
     /// prepared statements
     $assert(result instanceof SQLResultArray, "Invalid result array");
     if (typeof commandTag === "string") {

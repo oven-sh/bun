@@ -87,6 +87,7 @@ src/bun.js.zig
 src/bun.js/api.zig
 src/bun.js/api/bun/dns.zig
 src/bun.js/api/bun/h2_frame_parser.zig
+src/bun.js/api/bun/linux_container.zig
 src/bun.js/api/bun/lshpack.zig
 src/bun.js/api/bun/process.zig
 src/bun.js/api/bun/socket.zig

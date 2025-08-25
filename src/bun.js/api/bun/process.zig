@@ -1,6 +1,7 @@
 const pid_t = if (Environment.isPosix) std.posix.pid_t else uv.uv_pid_t;
 const fd_t = if (Environment.isPosix) std.posix.fd_t else i32;
 const log = bun.Output.scoped(.PROCESS, .visible);
+const LinuxContainer = if (Environment.isLinux) @import("linux_container.zig") else struct {};
 
 const win_rusage = struct {
     utime: struct {
@@ -994,6 +995,8 @@ pub const PosixSpawnOptions = struct {
     /// for stdout. This is used to preserve
     /// consistent shell semantics.
     no_sigpipe: bool = true,
+    /// Linux-only container options for ephemeral cgroupv2 and namespaces
+    container: if (Environment.isLinux) ?LinuxContainer.ContainerOptions else void = if (Environment.isLinux) null else {},
 
     pub const Stdio = union(enum) {
         path: []const u8,
@@ -1466,14 +1469,43 @@ pub fn spawnProcessPosix(
         }
     }
 
+    // Handle Linux container setup if requested
+    var container_context: ?*LinuxContainer.ContainerContext = null;
+    defer {
+        if (container_context) |ctx| {
+            ctx.deinit();
+        }
+    }
+
+    if (comptime Environment.isLinux) {
+        if (options.container) |container_opts| {
+            container_context = LinuxContainer.ContainerContext.init(bun.default_allocator, container_opts) catch |err| {
+                switch (err) {
+                    LinuxContainer.ContainerError.NotLinux => return .{ .err = bun.sys.Error.fromCode(.NOSYS, .open) },
+                    LinuxContainer.ContainerError.RequiresRoot => return .{ .err = bun.sys.Error.fromCode(.PERM, .open) },
+                    else => return .{ .err = bun.sys.Error.fromCode(.INVAL, .open) },
+                }
+            };
+            
+            container_context.?.setup() catch |err| {
+                switch (err) {
+                    LinuxContainer.ContainerError.NamespaceNotSupported => return .{ .err = bun.sys.Error.fromCode(.NOSYS, .open) },
+                    LinuxContainer.ContainerError.CgroupNotSupported => return .{ .err = bun.sys.Error.fromCode(.NOSYS, .mkdir) },
+                    LinuxContainer.ContainerError.MountFailed => return .{ .err = bun.sys.Error.fromCode(.PERM, .open) },
+                    else => return .{ .err = bun.sys.Error.fromCode(.INVAL, .open) },
+                }
+            };
+        }
+    }
+
     const argv0 = options.argv0 orelse argv[0].?;
-    const spawn_result = PosixSpawn.spawnZ(
-        argv0,
-        actions,
-        attr,
-        argv,
-        envp,
-    );
+    const spawn_result = if (comptime Environment.isLinux) brk: {
+        if (options.container != null) {
+            break :brk spawnWithContainer(argv0, actions, attr, argv, envp, container_context.?);
+        } else {
+            break :brk PosixSpawn.spawnZ(argv0, actions, attr, argv, envp);
+        }
+    } else PosixSpawn.spawnZ(argv0, actions, attr, argv, envp);
     var failed_after_spawn = false;
     defer {
         if (failed_after_spawn) {
@@ -1493,6 +1525,16 @@ pub fn spawnProcessPosix(
             spawned.pid = pid;
             spawned.extra_pipes = extra_fds;
             extra_fds = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator);
+
+            // Add process to cgroup if using containers
+            if (comptime Environment.isLinux) {
+                if (container_context) |ctx| {
+                    ctx.addProcessToCgroup(pid) catch |err| {
+                        log("Failed to add process {d} to cgroup: {}", .{ pid, err });
+                        // Non-fatal error, continue with spawning
+                    };
+                }
+            }
 
             if (comptime Environment.isLinux) {
                 // If it's spawnSync and we want to block the entire thread
@@ -2242,6 +2284,22 @@ pub const sync = struct {
         };
     }
 };
+
+/// Spawn a process with container isolation (Linux-only)
+fn spawnWithContainer(
+    argv0: [*:0]const u8,
+    actions: PosixSpawn.Actions,
+    attr: PosixSpawn.Attr, 
+    argv: [*:null]?[*:0]const u8,
+    envp: [*:null]?[*:0]const u8,
+    container_context: *LinuxContainer.ContainerContext,
+) bun.sys.Maybe(std.posix.pid_t) {
+    _ = container_context; // TODO: Use container_context for additional setup if needed
+    
+    // For now, just use the regular posix_spawn since the namespace setup 
+    // was already done in the container setup phase
+    return PosixSpawn.spawnZ(argv0, actions, attr, argv, envp);
+}
 
 const std = @import("std");
 const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;

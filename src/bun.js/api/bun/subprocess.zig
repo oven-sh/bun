@@ -1026,6 +1026,8 @@ pub fn spawnMaybeSync(
     var killSignal: SignalCode = SignalCode.default;
     var maxBuffer: ?i64 = null;
 
+    var container_options: if (Environment.isLinux) ?LinuxContainer.ContainerOptions else void = if (Environment.isLinux) null else {};
+
     var windows_hide: bool = false;
     var windows_verbatim_arguments: bool = false;
     var abort_signal: ?*jsc.WebCore.AbortSignal = null;
@@ -1240,6 +1242,61 @@ pub fn spawnMaybeSync(
                     }
                 }
             }
+
+            // Linux container options parsing
+            if (comptime Environment.isLinux) {
+                if (try args.get(globalThis, "container")) |container_val| {
+                    if (!container_val.isObject()) {
+                        return globalThis.throwInvalidArguments("container must be an object", .{});
+                    }
+
+                    var container_opts = LinuxContainer.ContainerOptions{};
+
+                    if (try container_val.get(globalThis, "cgroup")) |val| {
+                        if (val.isBoolean()) {
+                            container_opts.cgroup = val.asBoolean();
+                        }
+                    }
+
+                    if (try container_val.get(globalThis, "userNamespace")) |val| {
+                        if (val.isBoolean()) {
+                            container_opts.user_namespace = val.asBoolean();
+                        }
+                    }
+
+                    if (try container_val.get(globalThis, "pidNamespace")) |val| {
+                        if (val.isBoolean()) {
+                            container_opts.pid_namespace = val.asBoolean();
+                        }
+                    }
+
+                    if (try container_val.get(globalThis, "networkNamespace")) |val| {
+                        if (val.isBoolean()) {
+                            container_opts.network_namespace = val.asBoolean();
+                        }
+                    }
+
+                    if (try container_val.get(globalThis, "memoryLimit")) |val| {
+                        if (val.isNumber()) {
+                            const limit = val.asNumber();
+                            if (limit > 0 and !std.math.isInf(limit)) {
+                                container_opts.memory_limit = @intFromFloat(limit);
+                            }
+                        }
+                    }
+
+                    if (try container_val.get(globalThis, "cpuLimit")) |val| {
+                        if (val.isNumber()) {
+                            const limit = val.asNumber();
+                            if (limit > 0 and limit <= 100 and !std.math.isInf(limit)) {
+                                container_opts.cpu_limit = @floatCast(limit / 100.0);
+                            }
+                        }
+                    }
+
+                    container_options = container_opts;
+                }
+            }
         } else {
             try getArgv(globalThis, cmd_value, PATH, cwd, &argv0, allocator, &argv);
         }
@@ -1372,6 +1429,7 @@ pub fn spawnMaybeSync(
         .extra_fds = extra_fds.items,
         .argv0 = argv0,
         .can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = can_block_entire_thread_to_reduce_cpu_usage_in_fast_path,
+        .container = if (Environment.isLinux) container_options else {},
 
         .windows = if (Environment.isWindows) .{
             .hide_window = windows_hide,
@@ -1846,6 +1904,7 @@ const PosixSpawn = bun.spawn;
 const Process = bun.spawn.Process;
 const Rusage = bun.spawn.Rusage;
 const Stdio = bun.spawn.Stdio;
+const LinuxContainer = if (Environment.isLinux) @import("linux_container.zig") else struct {};
 
 const windows = bun.windows;
 const uv = windows.libuv;

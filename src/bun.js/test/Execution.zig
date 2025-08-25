@@ -107,15 +107,10 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
                 sequence.executing = true;
                 this.onSequenceStarted(sequence_index);
 
-                if (next_item.callback.get()) |cb| {
+                if (next_item.callback) |cb| {
                     groupLog.log("runSequence queued callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.entry_index });
 
-                    const args_owned = this.bunTest().gpa.dupe(jsc.Strong.Safe, next_item.args_owned) catch bun.outOfMemory();
-                    errdefer this.bunTest().gpa.free(args_owned);
-                    for (args_owned) |*arg| arg.* = arg.dupe(this.bunTest().gpa);
-                    errdefer for (args_owned) |*arg| arg.deinit();
-
-                    try callback_queue.append(.{ .callback = .init(this.bunTest().gpa, cb), .args_owned = args_owned, .done_parameter = true, .data = sequence_index });
+                    try callback_queue.append(.{ .callback = cb.dupe(this.bunTest().gpa), .done_parameter = true, .data = sequence_index });
                     status = .execute;
                     break;
                 } else switch (next_item.base.mode) {

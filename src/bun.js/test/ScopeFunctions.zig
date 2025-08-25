@@ -71,6 +71,9 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
         else => 0,
     };
 
+    var callback: describe2.CallbackWithArgs = .init(bunTest.gpa, args.callback, &.{});
+    defer callback.deinit(bunTest.gpa);
+
     if (this.each != .zero) {
         if (this.each.isUndefinedOrNull() or !this.each.isArray()) {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
@@ -82,40 +85,36 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
         while (try iter.next()) |item| : (test_idx += 1) {
             if (item == .zero) break;
 
-            var function_args = std.ArrayListUnmanaged(Strong).empty;
-            defer function_args.deinit(bunTest.gpa);
-            defer for (function_args.items) |*arg| arg.deinit();
-
             if (item.isUndefinedOrNull() and item.isArray()) {
                 // Spread array as args (matching Jest & Vitest)
-                try function_args.ensureUnusedCapacity(bunTest.gpa, try item.getLength(globalThis));
+                callback.args.ensureUnusedCapacity(bunTest.gpa, try item.getLength(globalThis));
 
                 var item_iter = try item.arrayIterator(globalThis);
                 var idx: usize = 0;
                 while (try item_iter.next()) |array_item| : (idx += 1) {
-                    try function_args.append(bunTest.gpa, .init(bunTest.gpa, array_item));
+                    callback.args.append(bunTest.gpa, array_item);
                 }
             } else {
-                try function_args.append(bunTest.gpa, .init(bunTest.gpa, item));
+                callback.args.append(bunTest.gpa, item);
             }
 
-            const formatted_label: ?[]const u8 = if (args.description) |desc| try jsc.Jest.formatLabel(globalThis, desc, function_args.items, test_idx, bunTest.gpa) else null;
+            const formatted_label: ?[]const u8 = if (args.description) |desc| try jsc.Jest.formatLabel(globalThis, desc, callback.args.get(), test_idx, bunTest.gpa) else null;
             defer if (formatted_label) |label| bunTest.gpa.free(label);
 
-            try this.enqueueDescribeOrTestCallback(bunTest, args.callback, function_args.items, formatted_label, line_no);
+            try this.enqueueDescribeOrTestCallback(bunTest, callback, formatted_label, line_no);
         }
     } else {
-        try this.enqueueDescribeOrTestCallback(bunTest, args.callback, &.{}, args.description, line_no);
+        try this.enqueueDescribeOrTestCallback(bunTest, callback, args.description, line_no);
     }
 
     return .js_undefined;
 }
 
-fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunTestFile, callback: jsc.JSValue, args: []const Strong, description: ?[]const u8, line_no: u32) bun.JSError!void {
+fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunTestFile, callback: describe2.CallbackWithArgs, description: ?[]const u8, line_no: u32) bun.JSError!void {
     switch (this.mode) {
-        .describe => try bunTest.collection.enqueueDescribeCallback(callback, args, description, this.cfg),
+        .describe => try bunTest.collection.enqueueDescribeCallback(callback, description, this.cfg),
         .@"test" => {
-            try bunTest.collection.enqueueTestCallback(description, callback, args, .{
+            try bunTest.collection.enqueueTestCallback(description, callback, .{
                 .line_no = line_no,
             }, this.cfg);
         },

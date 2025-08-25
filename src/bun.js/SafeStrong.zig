@@ -30,7 +30,7 @@ pub fn swap(this: *Strong, safety_gpa: std.mem.Allocator, next: jsc.JSValue) jsc
     this.* = .init(safety_gpa, next);
     return prev;
 }
-pub fn dupe(this: *Strong, gpa: std.mem.Allocator) Strong {
+pub fn dupe(this: Strong, gpa: std.mem.Allocator) Strong {
     return .init(gpa, this.get());
 }
 pub fn ref(this: *Strong) void {
@@ -85,6 +85,39 @@ pub const Optional = struct {
     }
     pub fn unref(this: *Optional) void {
         this._backing.unref();
+    }
+};
+
+pub const List = struct {
+    _backing: std.ArrayListUnmanaged(jsc.JSValue),
+    pub const empty: List = .{ ._backing = .{ .items = &.{} } };
+    pub fn init(gpa: std.mem.Allocator, items: []const jsc.JSValue) List {
+        var result: std.ArrayListUnmanaged(jsc.JSValue) = .empty;
+        result.appendSlice(gpa, items) catch bun.outOfMemory();
+        for (result.items) |*item| item.protect();
+        return .{ ._backing = result };
+    }
+    pub fn deinit(this: *List, gpa: std.mem.Allocator) void {
+        for (this._backing.items) |*item| item.unprotect();
+        this._backing.deinit(gpa);
+    }
+    pub fn get(this: List) []const jsc.JSValue {
+        return this._backing.items;
+    }
+    pub fn append(this: *List, gpa: std.mem.Allocator, item: jsc.JSValue) void {
+        item.protect();
+        this._backing.append(gpa, item) catch bun.outOfMemory();
+    }
+    pub fn ensureUnusedCapacity(this: *List, gpa: std.mem.Allocator, additional: usize) void {
+        this._backing.ensureUnusedCapacity(gpa, additional) catch bun.outOfMemory();
+    }
+
+    pub fn swap(this: *List, gpa: std.mem.Allocator, items: []jsc.JSValue) void {
+        this.deinit(gpa);
+        this.* = .init(items);
+    }
+    pub fn dupe(this: List, gpa: std.mem.Allocator) List {
+        return .init(gpa, this.get());
     }
 };
 

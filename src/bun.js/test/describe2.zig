@@ -164,7 +164,7 @@ pub const js_fns = struct {
 
                 switch (bunTest.phase) {
                     .collection => {
-                        try bunTest.collection.enqueueHookCallback(tag, callback, &.{}, .{
+                        try bunTest.collection.enqueueHookCallback(tag, callback, .{
                             .line_no = 0,
                         }, .{});
 
@@ -422,18 +422,14 @@ pub const BunTestFile = struct {
         //   need to be able to pass context information to runOneCompleted
 
         if (cfg.done_parameter) {
-            const length = try cfg.callback.get().getLength(globalThis);
-            if (length > cfg.args_owned.len) {
+            const length = try cfg.callback.callback.get().getLength(globalThis);
+            if (length > cfg.callback.args.get().len) {
                 // TODO: support done parameter
                 @panic("TODO: support done parameter");
             }
         }
 
-        const args_dupe = this.gpa.alloc(jsc.JSValue, cfg.args_owned.len) catch bun.outOfMemory();
-        defer this.gpa.free(args_dupe);
-        for (args_dupe, cfg.args_owned) |*arg, arg_owned| arg.* = arg_owned.get();
-
-        const result: ?jsc.JSValue = cfg.callback.get().call(globalThis, .js_undefined, args_dupe) catch |e| blk: {
+        const result: ?jsc.JSValue = cfg.callback.callback.get().call(globalThis, .js_undefined, cfg.callback.args.get()) catch |e| blk: {
             this.onUncaughtException(globalThis, globalThis.takeError(e), false, cfg.data);
             group.log("callTestCallback -> error", .{});
             break :blk null;
@@ -490,27 +486,40 @@ pub const HandleUncaughtExceptionResult = enum {
 pub const CallbackQueue = std.ArrayList(CallbackEntry);
 
 pub const CallbackEntry = struct {
-    callback: Strong,
-    args_owned: []Strong,
+    callback: CallbackWithArgs,
     done_parameter: bool,
     data: u64,
-    pub fn init(gpa: std.mem.Allocator, callback: jsc.JSValue, args: []Strong, done_parameter: bool, data: u64) CallbackEntry {
-        const args_owned = gpa.dupe(gpa, args) catch bun.outOfMemory();
-        errdefer gpa.free(args_owned);
-        for (args_owned) |*arg| arg.* = arg.dupe(gpa);
-        errdefer for (args_owned) |*arg| arg.deinit(gpa);
-
+    pub fn init(gpa: std.mem.Allocator, callback: CallbackWithArgs, done_parameter: bool, data: u64) CallbackEntry {
         return .{
-            .callback = .init(gpa, callback),
-            .args_owned = args_owned,
+            .callback = callback.dupe(gpa),
             .done_parameter = done_parameter,
             .data = data,
         };
     }
     pub fn deinit(this: *CallbackEntry, gpa: std.mem.Allocator) void {
+        this.callback.deinit(gpa);
+    }
+};
+
+pub const CallbackWithArgs = struct {
+    callback: Strong,
+    args: Strong.List,
+
+    pub fn init(gpa: std.mem.Allocator, callback: jsc.JSValue, args: []const jsc.JSValue) CallbackWithArgs {
+        return .{
+            .callback = .init(gpa, callback),
+            .args = .init(gpa, args),
+        };
+    }
+    pub fn deinit(this: *CallbackWithArgs, gpa: std.mem.Allocator) void {
         this.callback.deinit();
-        for (this.args_owned) |*arg| arg.deinit();
-        gpa.free(this.args_owned);
+        this.args.deinit(gpa);
+    }
+    pub fn dupe(this: CallbackWithArgs, gpa: std.mem.Allocator) CallbackWithArgs {
+        return .{
+            .callback = this.callback.dupe(gpa),
+            .args = this.args.dupe(gpa),
+        };
     }
 };
 
@@ -625,13 +634,13 @@ pub const DescribeScope = struct {
         try this.entries.append(.{ .describe = child });
         return child;
     }
-    pub fn appendTest(this: *DescribeScope, buntest: *BunTestFile, name_not_owned: ?[]const u8, cb: ?jsc.JSValue, args_not_owned: []const Strong, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
-        const entry = try ExecutionEntry.create(buntest, name_not_owned, cb, args_not_owned, cfg, this, base);
+    pub fn appendTest(this: *DescribeScope, buntest: *BunTestFile, name_not_owned: ?[]const u8, callback: ?CallbackWithArgs, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
+        const entry = try ExecutionEntry.create(buntest, name_not_owned, callback, cfg, this, base);
         try this.entries.append(.{ .test_callback = entry });
         return entry;
     }
-    pub fn appendHook(this: *DescribeScope, buntest: *BunTestFile, tag: enum { beforeAll, beforeEach, afterEach, afterAll }, callback: ?jsc.JSValue, args: []const Strong, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
-        const entry = try ExecutionEntry.create(buntest, null, callback, args, cfg, this, base);
+    pub fn appendHook(this: *DescribeScope, buntest: *BunTestFile, tag: enum { beforeAll, beforeEach, afterEach, afterAll }, callback: ?jsc.JSValue, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
+        const entry = try ExecutionEntry.create(buntest, null, if (callback) |c| .init(buntest.gpa, c, &.{}) else null, cfg, this, base);
         switch (tag) {
             .beforeAll => try this.beforeAll.append(entry),
             .beforeEach => try this.beforeEach.append(entry),
@@ -646,30 +655,21 @@ pub const ExecutionEntryCfg = struct {
 };
 pub const ExecutionEntry = struct {
     base: BaseScope,
-    callback: Strong.Optional,
-    args_owned: []Strong,
+    callback: ?CallbackWithArgs,
     /// only available if using junit reporter, otherwise 0
     line_no: u32,
     result: Execution.Result = .pending,
 
-    fn create(buntest: *BunTestFile, name_not_owned: ?[]const u8, cb: ?jsc.JSValue, args_not_owned: []const Strong, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
-        const args = buntest.gpa.dupe(Strong, args_not_owned) catch bun.outOfMemory();
-        errdefer buntest.gpa.free(args);
-        for (args) |*arg| arg.* = arg.dupe(buntest.gpa);
-        errdefer for (args) |*arg| arg.deinit(buntest.gpa);
-
+    fn create(buntest: *BunTestFile, name_not_owned: ?[]const u8, cb: ?CallbackWithArgs, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
         const entry = bun.create(buntest.gpa, ExecutionEntry, .{
             .base = .init(base, buntest, name_not_owned, parent),
-            .callback = .init(buntest.gpa, cb),
-            .args_owned = args,
+            .callback = if (cb) |c| c.dupe(buntest.gpa) else null,
             .line_no = cfg.line_no,
         });
         return entry;
     }
     pub fn destroy(this: *ExecutionEntry, buntest: *BunTestFile) void {
-        this.callback.deinit();
-        for (this.args_owned) |*arg| arg.deinit();
-        buntest.gpa.free(this.args_owned);
+        if (this.callback) |*c| c.deinit(buntest.gpa);
         this.base.deinit(buntest);
         buntest.gpa.destroy(this);
     }

@@ -48,7 +48,7 @@ pub fn generateOrderDescribe(this: *Execution, current: *DescribeScope) bun.JSEr
 }
 pub fn generateOrderTest(this: *Execution, current: *ExecutionEntry) bun.JSError!void {
     const entries_start = this._entries.items.len;
-    const use_hooks = current.callback.get() != null;
+    const use_hooks = current.callback != null;
 
     // gather beforeEach (alternatively, this could be implemented recursively to make it less complicated)
     if (use_hooks) {

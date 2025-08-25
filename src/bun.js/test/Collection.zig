@@ -7,14 +7,11 @@ root_scope: *DescribeScope,
 active_scope: *DescribeScope, // TODO: consider using async context rather than storing active_scope
 
 const QueuedDescribe = struct {
-    callback: Strong,
-    args_owned: []Strong,
+    callback: describe2.CallbackWithArgs,
     active_scope: *DescribeScope,
     new_scope: *DescribeScope,
     fn deinit(this: *QueuedDescribe, gpa: std.mem.Allocator) void {
-        this.callback.deinit();
-        for (this.args_owned) |*arg| arg.deinit();
-        gpa.free(this.args_owned);
+        this.callback.deinit(gpa);
     }
 };
 
@@ -49,7 +46,7 @@ fn bunTest(this: *Collection) *BunTestFile {
     return @fieldParentPtr("collection", this);
 }
 
-pub fn enqueueDescribeCallback(this: *Collection, callback: ?jsc.JSValue, args: []const Strong, name_not_owned: ?[]const u8, cfg: describe2.BaseScopeCfg) bun.JSError!void {
+pub fn enqueueDescribeCallback(this: *Collection, callback: ?describe2.CallbackWithArgs, name_not_owned: ?[]const u8, cfg: describe2.BaseScopeCfg) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
@@ -60,37 +57,31 @@ pub fn enqueueDescribeCallback(this: *Collection, callback: ?jsc.JSValue, args: 
     if (callback) |cb| {
         group.log("enqueueDescribeCallback / {s} / in scope: {s}", .{ name_not_owned orelse "undefined", this.active_scope.base.name orelse "undefined" });
 
-        const args_dupe = buntest.gpa.dupe(Strong, args) catch bun.outOfMemory();
-        errdefer buntest.gpa.free(args_dupe);
-        for (args_dupe) |*arg| arg.* = arg.dupe(buntest.gpa);
-        errdefer for (args_dupe) |*arg| arg.deinit();
-
         try this.describe_callback_queue.append(.{
             .active_scope = this.active_scope,
-            .callback = .init(this.bunTest().gpa, cb),
-            .args_owned = args_dupe,
+            .callback = cb.dupe(buntest.gpa),
             .new_scope = new_scope,
         });
     }
 }
 
-pub fn enqueueTestCallback(this: *Collection, name_not_owned: ?[]const u8, callback: jsc.JSValue, args: []const Strong, cfg: describe2.ExecutionEntryCfg, base: describe2.BaseScopeCfg) bun.JSError!void {
+pub fn enqueueTestCallback(this: *Collection, name_not_owned: ?[]const u8, callback: describe2.CallbackWithArgs, cfg: describe2.ExecutionEntryCfg, base: describe2.BaseScopeCfg) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
     bun.assert(!this.locked);
     group.log("enqueueTestCallback / {s} / in scope: {s}", .{ name_not_owned orelse "undefined", this.active_scope.base.name orelse "undefined" });
 
-    _ = try this.active_scope.appendTest(this.bunTest(), name_not_owned, callback, args, cfg, base);
+    _ = try this.active_scope.appendTest(this.bunTest(), name_not_owned, callback, cfg, base);
 }
-pub fn enqueueHookCallback(this: *Collection, comptime tag: @Type(.enum_literal), callback: jsc.JSValue, args: []const Strong, cfg: describe2.ExecutionEntryCfg, base: describe2.BaseScopeCfg) bun.JSError!void {
+pub fn enqueueHookCallback(this: *Collection, comptime tag: @Type(.enum_literal), callback: ?jsc.JSValue, cfg: describe2.ExecutionEntryCfg, base: describe2.BaseScopeCfg) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
     bun.assert(!this.locked);
     group.log("enqueueHookCallback / in scope: {s}", .{this.active_scope.base.name orelse "undefined"});
 
-    _ = try this.active_scope.appendHook(this.bunTest(), tag, callback, args, cfg, base);
+    _ = try this.active_scope.appendHook(this.bunTest(), tag, callback, cfg, base);
 }
 
 pub fn runOne(this: *Collection, globalThis: *jsc.JSGlobalObject, callback_queue: *describe2.CallbackQueue) bun.JSError!describe2.RunOneResult {
@@ -108,7 +99,7 @@ pub fn runOne(this: *Collection, globalThis: *jsc.JSGlobalObject, callback_queue
     var first = this.describe_callback_queue.orderedRemove(0);
     defer first.deinit(buntest.gpa);
 
-    const callback = first.callback.get();
+    const callback = first.callback;
     const active_scope = first.active_scope;
     const new_scope = first.new_scope;
 
@@ -118,12 +109,7 @@ pub fn runOne(this: *Collection, globalThis: *jsc.JSGlobalObject, callback_queue
     this.active_scope = new_scope;
     group.log("collection:runOne set scope to {s}", .{this.active_scope.base.name orelse "undefined"});
 
-    const args_dupe = buntest.gpa.dupe(Strong, first.args_owned) catch bun.outOfMemory();
-    errdefer buntest.gpa.free(args_dupe);
-    for (args_dupe) |*arg| arg.* = arg.dupe(buntest.gpa);
-    errdefer for (args_dupe) |*arg| arg.deinit();
-
-    try callback_queue.append(.{ .callback = .init(buntest.gpa, callback), .args_owned = args_dupe, .done_parameter = false, .data = @intFromPtr(previous_scope) });
+    try callback_queue.append(.{ .callback = callback.dupe(buntest.gpa), .done_parameter = false, .data = @intFromPtr(previous_scope) });
     return .execute;
 }
 pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, _: ?jsc.JSValue, data: u64) bun.JSError!void {

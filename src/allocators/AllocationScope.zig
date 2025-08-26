@@ -280,7 +280,7 @@ pub inline fn downcast(a: Allocator) ?Self {
         null;
 }
 
-pub fn leakSlice(scope: *AllocationScope, memory: anytype) void {
+pub fn leakSlice(scope: *Self, memory: anytype) void {
     if (comptime !enabled) return;
     _ = @typeInfo(@TypeOf(memory)).pointer;
     bun.assert(!scope.trackExternalFree(memory, null));

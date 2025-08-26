@@ -840,7 +840,7 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
             dev,
             arena.allocator(),
             source_id.kind,
-            dev.allocator,
+            dev.allocator(),
             .client,
         ) catch bun.outOfMemory();
         const response = StaticRoute.initFromAnyBlob(&.fromOwnedSlice(dev.allocator(), json_bytes), .{
@@ -2341,22 +2341,23 @@ pub fn finalizeBundle(
                 .paths = &.{},
                 .files = .empty,
                 .overlapping_memory_cost = 0,
+                .dev_allocator = dev.dev_allocator(),
             };
 
             // Fill the source map entry
-            var arena = std.heap.ArenaAllocator.init(dev.allocator);
+            var arena = std.heap.ArenaAllocator.init(dev.allocator());
             defer arena.deinit();
-            try dev.server_graph.takeSourceMap(arena.allocator(), dev.allocator, &source_map_entry);
+            try dev.server_graph.takeSourceMap(arena.allocator(), dev.allocator(), &source_map_entry);
             defer {
                 source_map_entry.ref_count = 0;
-                source_map_entry.deinit(dev);
+                source_map_entry.deinit();
             }
 
             const json_data = try source_map_entry.renderJSON(
                 dev,
                 arena.allocator(),
                 .hmr_chunk,
-                dev.allocator,
+                dev.allocator(),
                 .server,
             );
             break :json json_data;
@@ -2367,7 +2368,7 @@ pub fn finalizeBundle(
             .kind = .hmr_chunk,
             .script_id = server_script_id,
         });
-        defer dev.allocator.free(server_bundle);
+        defer dev.allocator().free(server_bundle);
 
         // TODO: is this the best place to set this? Would it be better to
         // transpile the server modules to replace `new Response(...)` with `new

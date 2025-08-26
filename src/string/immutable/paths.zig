@@ -274,8 +274,12 @@ pub fn toKernel32Path(wbuf: []u16, utf8: []const u8) [:0]u16 {
         return toWPath(wbuf, path);
     }
     if (utf8.len > 2 and bun.path.isDriveLetter(utf8[0]) and utf8[1] == ':' and bun.path.isSepAny(utf8[2])) {
+        // Ensure we have space for the 4-character prefix
+        bun.unsafeAssert(wbuf.len >= 4);
         wbuf[0..4].* = bun.windows.long_path_prefix;
         const wpath = toWPath(wbuf[4..], path);
+        // Verify the result length fits within buffer bounds
+        bun.unsafeAssert(wpath.len + 4 <= wbuf.len);
         return wbuf[0 .. wpath.len + 4 :0];
     }
     return toWPath(wbuf, path);

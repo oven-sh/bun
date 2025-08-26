@@ -964,30 +964,7 @@ pub const BundleV2 = struct {
             switch (variant) {
                 .normal => {
                     for (data) |entry_point| {
-                        var should_use_plugins = false;
-                        if (this.plugins) |plugins| {
-                            var temp_path = Fs.Path.init(entry_point);
-                            temp_path.namespace = "file";
-                            should_use_plugins = plugins.hasAnyMatches(&temp_path, false);
-                            debug("Entry point '{s}' plugin match: {}", .{ entry_point, should_use_plugins });
-                        }
-
-                        if (should_use_plugins) {
-                            var resolve: *jsc.API.JSBundler.Resolve = bun.default_allocator.create(jsc.API.JSBundler.Resolve) catch unreachable;
-                            this.incrementScanCounter();
-
-                            resolve.* = jsc.API.JSBundler.Resolve.init(this, .{
-                                .kind = .entry_point_build,
-                                .source_file = "", // No importer for entry points
-                                .namespace = "file",
-                                .specifier = entry_point,
-                                .importer_source_index = std.math.maxInt(u32), // Sentinel value for entry points
-                                .import_record_index = 0,
-                                .range = Logger.Range.None,
-                                .original_target = this.transpiler.options.target,
-                            });
-
-                            resolve.dispatch();
+                        if (this.enqueueEntryPointOnResolvePluginIfNeeded(entry_point, this.transpiler.options.target)) {
                             continue;
                         }
 
@@ -1027,42 +1004,25 @@ pub const BundleV2 = struct {
                         else
                             this.transpiler;
 
-                        var should_use_plugins = false;
-                        if (this.plugins) |plugins| {
-                            var temp_path = Fs.Path.init(abs_path);
-                            temp_path.namespace = "file";
-                            should_use_plugins = plugins.hasAnyMatches(&temp_path, false);
-                        }
+                        const targets_to_check = [_]struct {
+                            should_dispatch: bool,
+                            target: options.Target,
+                        }{
+                            .{ .should_dispatch = flags.client, .target = .browser },
+                            .{ .should_dispatch = flags.server, .target = this.transpiler.options.target },
+                            .{ .should_dispatch = flags.ssr, .target = .bake_server_components_ssr },
+                        };
 
-                        if (should_use_plugins) {
-                            const targets_to_dispatch = [_]struct {
-                                should_dispatch: bool,
-                                target: options.Target,
-                            }{
-                                .{ .should_dispatch = flags.client, .target = .browser },
-                                .{ .should_dispatch = flags.server, .target = this.transpiler.options.target },
-                                .{ .should_dispatch = flags.ssr, .target = .bake_server_components_ssr },
-                            };
-
-                            for (targets_to_dispatch) |target_info| {
-                                if (target_info.should_dispatch) {
-                                    var resolve: *jsc.API.JSBundler.Resolve = bun.default_allocator.create(jsc.API.JSBundler.Resolve) catch unreachable;
-                                    this.incrementScanCounter();
-
-                                    resolve.* = jsc.API.JSBundler.Resolve.init(this, .{
-                                        .kind = .entry_point_build,
-                                        .source_file = "",
-                                        .namespace = "file",
-                                        .specifier = abs_path,
-                                        .importer_source_index = std.math.maxInt(u32),
-                                        .import_record_index = 0,
-                                        .range = Logger.Range.None,
-                                        .original_target = target_info.target,
-                                    });
-
-                                    resolve.dispatch();
+                        var any_plugin_matched = false;
+                        for (targets_to_check) |target_info| {
+                            if (target_info.should_dispatch) {
+                                if (this.enqueueEntryPointOnResolvePluginIfNeeded(abs_path, target_info.target)) {
+                                    any_plugin_matched = true;
                                 }
                             }
+                        }
+
+                        if (any_plugin_matched) {
                             continue;
                         }
 
@@ -1098,29 +1058,7 @@ pub const BundleV2 = struct {
                             .server => this.transpiler.options.target,
                         };
 
-                        var should_use_plugins = false;
-                        if (this.plugins) |plugins| {
-                            var temp_path = Fs.Path.init(abs_path);
-                            temp_path.namespace = "file";
-                            should_use_plugins = plugins.hasAnyMatches(&temp_path, false);
-                        }
-
-                        if (should_use_plugins) {
-                            var resolve: *jsc.API.JSBundler.Resolve = bun.default_allocator.create(jsc.API.JSBundler.Resolve) catch unreachable;
-                            this.incrementScanCounter();
-
-                            resolve.* = jsc.API.JSBundler.Resolve.init(this, .{
-                                .kind = .entry_point_build,
-                                .source_file = "",
-                                .namespace = "file",
-                                .specifier = abs_path,
-                                .importer_source_index = std.math.maxInt(u32),
-                                .import_record_index = 0,
-                                .range = Logger.Range.None,
-                                .original_target = target,
-                            });
-
-                            resolve.dispatch();
+                        if (this.enqueueEntryPointOnResolvePluginIfNeeded(abs_path, target)) {
                             continue;
                         }
 
@@ -2879,6 +2817,38 @@ pub const BundleV2 = struct {
             }
         }
 
+        return false;
+    }
+
+    pub fn enqueueEntryPointOnResolvePluginIfNeeded(
+        this: *BundleV2,
+        entry_point: []const u8,
+        target: options.Target,
+    ) bool {
+        if (this.plugins) |plugins| {
+            var temp_path = Fs.Path.init(entry_point);
+            temp_path.namespace = "file";
+            if (plugins.hasAnyMatches(&temp_path, false)) {
+                debug("Entry point '{s}' plugin match", .{entry_point});
+
+                var resolve: *jsc.API.JSBundler.Resolve = bun.default_allocator.create(jsc.API.JSBundler.Resolve) catch unreachable;
+                this.incrementScanCounter();
+
+                resolve.* = jsc.API.JSBundler.Resolve.init(this, .{
+                    .kind = .entry_point_build,
+                    .source_file = "", // No importer for entry points
+                    .namespace = "file",
+                    .specifier = entry_point,
+                    .importer_source_index = std.math.maxInt(u32), // Sentinel value for entry points
+                    .import_record_index = 0,
+                    .range = Logger.Range.None,
+                    .original_target = target,
+                });
+
+                resolve.dispatch();
+                return true;
+            }
+        }
         return false;
     }
 

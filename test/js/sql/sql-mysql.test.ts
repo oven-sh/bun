@@ -273,8 +273,8 @@ describeWithContainer(
       const values = [{ a: true }, { a: false }];
       await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
       const [[a], [b]] = await sql`select * from ${sql(random_name)}`.values();
-      expect(a).toBe(true);
-      expect(b).toBe(false);
+      expect(a).toBe(1);
+      expect(b).toBe(0);
     });
 
     test("Date", async () => {

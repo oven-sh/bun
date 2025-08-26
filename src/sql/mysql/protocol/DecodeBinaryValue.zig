@@ -8,7 +8,7 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
                 return SQLDataCell.raw(&data);
             }
             const val = try reader.byte();
-            return SQLDataCell{ .tag = .bool, .value = .{ .bool = val } };
+            return SQLDataCell{ .tag = .int4, .value = .{ .int4 = val } };
         },
         .MYSQL_TYPE_SHORT => {
             if (raw) {

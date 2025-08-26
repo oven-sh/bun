@@ -808,6 +808,62 @@ pub noinline fn mkdirIfNotExists(this: anytype, err: bun.sys.Error, path_string:
     return .no;
 }
 
+// I know, I know, tons of repetition BUT this whole point is to rage bait someone into making their own better/faster/safer/etc implementation of S3 metadata handling
+
+// Callback for adding metadata headers from a JS object, will check if key starts with "x-amz-meta-" and prepend it if not, might be removed? TBD
+pub fn addMetadataHeadersCallback(
+    global: *jsc.JSGlobalObject,
+    user_data: ?*anyopaque,
+    key: *jsc.ZigString,
+    value: jsc.JSValue,
+    _: bool,
+    _: bool,
+) callconv(.C) void {
+    if (value.isString()) {
+        // Recover headers pointer
+        const headers_ptr: *bun.http.Headers = @alignCast(@ptrCast(user_data.?));
+
+        // Convert key and value to []const u8
+        var name = key.slice();
+        const val = value.asString().toSlice(global, bun.default_allocator).slice();
+
+        const prefix = "x-amz-meta-";
+        if (!std.mem.startsWith(u8, name, prefix)) {
+            var buf: [256]u8 = undefined; // adjust size if needed
+            // Copy prefix first
+            std.mem.copyForwards(u8, buf[0..prefix.len], prefix);
+            // Copy original key after the prefix
+            std.mem.copyForwards(u8, buf[prefix.len .. prefix.len + name.len], name);
+            // Slice the buffer manually; no return value from copyForwards
+            name = buf[0 .. prefix.len + name.len];
+        }
+
+        headers_ptr.append(name, val) catch {};
+    }
+}
+
+// Same as above just without the prefix logic
+pub fn addHeadersCallback(
+    global: *jsc.JSGlobalObject,
+    user_data: ?*anyopaque,
+    key: *jsc.ZigString,
+    value: jsc.JSValue,
+    _: bool,
+    _: bool,
+) callconv(.C) void {
+    if (value.isString()) {
+        // Recover headers pointer
+        const headers_ptr: *bun.http.Headers = @alignCast(@ptrCast(user_data.?));
+
+        // Convert key and value to []const u8
+        const name = key.slice();
+        const val = value.asString().toSlice(global, bun.default_allocator).slice();
+
+        // Append to headers
+        headers_ptr.append(name, val) catch {};
+    }
+}
+
 /// Write an empty string to a file by truncating it.
 ///
 /// This behavior matches what we do with the fast path.
@@ -931,6 +987,22 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
             const proxy = ctx.bunVM().transpiler.env.getHttpProxy(true, null);
             const proxy_url = if (proxy) |p| p.href else null;
             destination_store.ref();
+
+            var headers = bun.http.Headers{ .allocator = bun.default_allocator };
+
+            // Optional extra headers passed in extra_options
+            if (options.extra_options) |extra_options| {
+                if (extra_options.isObject()) {
+                    if (try extra_options.get(ctx, "metadata")) |metadata_jsvalue| {
+                        try metadata_jsvalue.forEachProperty(ctx, &headers, addMetadataHeadersCallback);
+                    }
+
+                    if (try extra_options.get(ctx, "headers")) |headers_jsvalue| {
+                        try headers_jsvalue.forEachProperty(ctx, &headers, addHeadersCallback);
+                    }
+                }
+            }
+
             S3.upload(
                 &aws_options.credentials,
                 s3.path(),
@@ -945,6 +1017,7 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
                     .store = destination_store,
                     .global = ctx,
                 }),
+                headers,
             );
             return promise_value;
         },
@@ -1117,6 +1190,21 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                     const promise = jsc.JSPromise.Strong.init(ctx);
                     const promise_value = promise.value();
 
+                    var headers = bun.http.Headers{ .allocator = bun.default_allocator };
+
+                    // Optional extra headers passed in extra_options
+                    if (options.extra_options) |extra_options| {
+                        if (extra_options.isObject()) {
+                            if (try extra_options.get(ctx, "metadata")) |metadata_jsvalue| {
+                                try metadata_jsvalue.forEachProperty(ctx, &headers, addMetadataHeadersCallback);
+                            }
+
+                            if (try extra_options.get(ctx, "headers")) |headers_jsvalue| {
+                                try headers_jsvalue.forEachProperty(ctx, &headers, addHeadersCallback);
+                            }
+                        }
+                    }
+
                     S3.upload(
                         &aws_options.credentials,
                         s3.path(),
@@ -1131,6 +1219,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                             .promise = promise,
                             .global = ctx,
                         }),
+                        headers,
                     );
                     return promise_value;
                 }

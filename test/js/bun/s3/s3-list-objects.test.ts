@@ -1073,6 +1073,54 @@ describe("S3 - List Objects", () => {
       expect(error.code).toBe("ERR_S3_MISSING_CREDENTIALS");
     }
   });
+
+  it("Should upload correct metadata and headers", async () => {
+    let reqHeaders: Headers;
+    using server = createBunServer(async req => {
+      reqHeaders = req.headers;
+      if (req.method === "PUT") {
+        return new Response("", {
+          status: 200,
+        });
+      }
+      return new Response(
+        `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+        <Name>my_bucket</Name>
+        </ListBucketResult>`,
+        {
+          headers: {
+            "Content-Type": "application/xml",
+          },
+          status: 200,
+        },
+      );
+    });
+
+    const client = new S3Client({
+      ...options,
+      endpoint: server.url.href,
+    });
+
+    await client.write("file.txt", "content", {
+      metadata: {
+        somekey: "somevalue",
+        anotherKey: "anothervalue",
+        bestjsframework: "bun",
+      },
+      headers: {
+        "Content-Type": "application/javascript",
+        "X-Amz-Meta-Custom": "customValue",
+      },
+    });
+
+    expect(reqHeaders!.get("x-amz-meta-somekey")).toBe("somevalue");
+    expect(reqHeaders!.get("x-amz-meta-anotherkey")).toBe("anothervalue");
+    expect(reqHeaders!.get("x-amz-meta-bestjsframework")).toBe("bun");
+    expect(reqHeaders!.get("x-amz-meta-custom")).toBe("customValue");
+    expect(reqHeaders!.get("content-type")).toEndWith("application/javascript");
+
+    await client.list();
+  });
 });
 
 const optionsFromEnv: S3Options = {
@@ -1165,5 +1213,29 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
     const storedFile = res.contents![1];
     expect(storedFile.owner).toBeObject();
     expect(storedFile.owner!.id).toBeString();
+  });
+
+  it("should list object with metadata", async () => {
+    await bucket.write(file_1, "content 1 - with metadata!", {
+      metadata: {
+        bestframework: "bun",
+      },
+    });
+
+    const res = await bucket.stat(file_1);
+    expect(res.metadata).toBeObject();
+    expect(res.metadata!.bestframework).toBe("bun");
+  });
+
+  it("should list object with custom headers", async () => {
+    await bucket.write(file_1, "content 1 - with headers!", {
+      headers: {
+        "Content-Type": "application/javascript",
+      },
+    });
+
+    const res = await bucket.stat(file_1);
+    expect(res.type).toBeString();
+    expect(res.type).toEndWith("application/javascript");
   });
 });

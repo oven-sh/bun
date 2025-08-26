@@ -227,6 +227,7 @@ pub fn load(
     sources: []const Logger.Source,
     server_component_boundaries: ServerComponentBoundary.List,
     dynamic_import_entry_points: []const Index.Int,
+    entry_point_original_names: *const IndexStringMap,
 ) !void {
     const scb = server_component_boundaries.slice();
     try this.files.setCapacity(this.allocator, sources.len);
@@ -262,7 +263,14 @@ pub fn load(
                 bun.assert(source.index.get() == i.get());
             }
             entry_point_kinds[source.index.get()] = EntryPoint.Kind.user_specified;
-            path_string.* = bun.PathString.init(source.path.text);
+
+            // Check if this entry point has an original name (from virtual entry resolution)
+            if (entry_point_original_names.get(i.get())) |original_name| {
+                path_string.* = bun.PathString.init(original_name);
+            } else {
+                path_string.* = bun.PathString.init(source.path.text);
+            }
+
             source_index.* = source.index.get();
         }
 
@@ -462,6 +470,7 @@ const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 
 const EntryPoint = bun.bundle_v2.EntryPoint;
 const Index = bun.bundle_v2.Index;
+const IndexStringMap = bun.bundle_v2.IndexStringMap;
 const JSAst = bun.bundle_v2.JSAst;
 const JSMeta = bun.bundle_v2.JSMeta;
 const Logger = bun.bundle_v2.Logger;

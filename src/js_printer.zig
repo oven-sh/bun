@@ -488,7 +488,6 @@ pub const PrintResult = union(enum) {
 
     pub const Success = struct {
         code: []u8,
-        code_allocator: std.mem.Allocator,
         source_map: ?SourceMap.Chunk = null,
     };
 };
@@ -4473,6 +4472,7 @@ fn NewPrinter(
                         .json => p.printWhitespacer(ws(" with { type: \"json\" }")),
                         .jsonc => p.printWhitespacer(ws(" with { type: \"jsonc\" }")),
                         .toml => p.printWhitespacer(ws(" with { type: \"toml\" }")),
+                        .yaml => p.printWhitespacer(ws(" with { type: \"yaml\" }")),
                         .wasm => p.printWhitespacer(ws(" with { type: \"wasm\" }")),
                         .napi => p.printWhitespacer(ws(" with { type: \"napi\" }")),
                         .base64 => p.printWhitespacer(ws(" with { type: \"base64\" }")),
@@ -6012,7 +6012,6 @@ pub fn printWithWriterAndPlatform(
     return .{
         .result = .{
             .code = buffer.toOwnedSlice(),
-            .code_allocator = buffer.allocator,
             .source_map = source_map,
         },
     };

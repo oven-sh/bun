@@ -1018,7 +1018,7 @@ pub fn isAbsolute(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: 
     try validateString(globalObject, path_ptr, "path", .{});
 
     const pathZStr = try path_ptr.getZigString(globalObject);
-    if (pathZStr.len == 0) return jsc.JSValue.jsBoolean(false);
+    if (pathZStr.len == 0) return .false;
     if (isWindows) return jsc.JSValue.jsBoolean(isAbsoluteWindowsZigString(pathZStr));
     return jsc.JSValue.jsBoolean(isAbsolutePosixZigString(pathZStr));
 }

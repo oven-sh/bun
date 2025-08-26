@@ -2567,10 +2567,13 @@ class StructuredCloneableSerialize {
     CppStructuredCloneableSerializeFunction cppWriteBytes;
     ZigStructuredCloneableSerializeFunction zigFunction;
 
-    uint8_t tag;
+    uint8_t tag = 0;
 
     // the type from zig
-    void* impl;
+    void* impl = nullptr;
+
+    bool isForTransfer = false;
+    bool isForStorage = false;
 
     static std::optional<StructuredCloneableSerialize> fromJS(JSC::JSValue);
     void write(CloneSerializer* serializer, JSC::JSGlobalObject* globalObject)
@@ -2601,7 +2604,7 @@ function writeCppSerializers() {
       return StructuredCloneableSerialize { .cppWriteBytes = SerializedScriptValue::writeBytesForBun, .zigFunction = ${symbolName(
         klass.name,
         "onStructuredCloneSerialize",
-      )}, .tag = ${klass.structuredClone.tag}, .impl = result->wrapped() };
+      )}, .tag = ${klass.structuredClone.tag}, .impl = result->wrapped(), .isForTransfer = ${!!klass.structuredClone.transferable}, .isForStorage = ${!!klass.structuredClone.storable} };
     }
     `;
   }

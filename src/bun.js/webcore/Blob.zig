@@ -2138,11 +2138,11 @@ fn getExistsSync(this: *Blob) jsc.JSValue {
 
     // If there's no store that means it's empty and we just return true
     // it will not error to return an empty Blob
-    const store = this.store orelse return JSValue.jsBoolean(true);
+    const store = this.store orelse return .true;
 
     if (store.data == .bytes) {
         // Bytes will never error
-        return JSValue.jsBoolean(true);
+        return .true;
     }
 
     // We say regular files and pipes exist.
@@ -2709,7 +2709,7 @@ pub fn getWriter(
                 .path = ZigString.Slice.fromUTF8NeverFree(
                     store.data.file.pathlike.path.slice(),
                 ).cloneIfNeeded(
-                    globalThis.allocator(),
+                    bun.default_allocator,
                 ) catch bun.outOfMemory(),
             };
         }
@@ -4392,7 +4392,7 @@ pub const Internal = struct {
 
     pub fn toStringOwned(this: *@This(), globalThis: *jsc.JSGlobalObject) JSValue {
         const bytes_without_bom = strings.withoutUTF8BOM(this.bytes.items);
-        if (strings.toUTF16Alloc(globalThis.allocator(), bytes_without_bom, false, false) catch &[_]u16{}) |out| {
+        if (strings.toUTF16Alloc(bun.default_allocator, bytes_without_bom, false, false) catch &[_]u16{}) |out| {
             const return_value = ZigString.toExternalU16(out.ptr, out.len, globalThis);
             return_value.ensureStillAlive();
             this.deinit();

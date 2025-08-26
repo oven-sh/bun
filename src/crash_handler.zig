@@ -1656,38 +1656,45 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
         },
     }
 
-    var arena = bun.ArenaAllocator.init(bun.default_allocator);
-    defer arena.deinit();
-    var sfa = std.heap.stackFallback(16384, arena.allocator());
-    const alloc = sfa.get();
-
-    var argv = std.ArrayList([]const u8).init(alloc);
-
-    const program = switch (bun.Environment.os) {
-        .windows => "pdb-addr2line",
-        else => "llvm-symbolizer",
+    const programs: []const [:0]const u8 = switch (bun.Environment.os) {
+        .windows => &.{"pdb-addr2line"},
+        // if `llvm-symbolizer` doesn't work, also try `llvm-symbolizer-19`
+        else => &.{ "llvm-symbolizer", "llvm-symbolizer-19" },
     };
-    argv.append(program) catch return;
+    for (programs) |program| {
+        var arena = bun.ArenaAllocator.init(bun.default_allocator);
+        defer arena.deinit();
+        var sfa = std.heap.stackFallback(16384, arena.allocator());
+        spawnSymbolizer(program, sfa.get(), &trace) catch |err| switch (err) {
+            // try next program if this one wasn't found
+            error.FileNotFound => {},
+            else => return,
+        };
+    }
+}
 
-    argv.append("--exe") catch return;
-    argv.append(
+fn spawnSymbolizer(program: [:0]const u8, alloc: std.mem.Allocator, trace: *const std.builtin.StackTrace) !void {
+    var argv = std.ArrayList([]const u8).init(alloc);
+    try argv.append(program);
+    try argv.append("--exe");
+    try argv.append(
         switch (bun.Environment.os) {
             .windows => brk: {
-                const image_path = bun.strings.toUTF8Alloc(alloc, bun.windows.exePathW()) catch return;
-                break :brk std.mem.concat(alloc, u8, &.{
+                const image_path = try bun.strings.toUTF8Alloc(alloc, bun.windows.exePathW());
+                break :brk try std.mem.concat(alloc, u8, &.{
                     image_path[0 .. image_path.len - 3],
                     "pdb",
-                }) catch return;
+                });
             },
-            else => bun.selfExePath() catch return,
+            else => try bun.selfExePath(),
         },
-    ) catch return;
+    );
 
     var name_bytes: [1024]u8 = undefined;
     for (trace.instruction_addresses[0..trace.index]) |addr| {
         const line = StackLine.fromAddress(addr, &name_bytes) orelse
             continue;
-        argv.append(std.fmt.allocPrint(alloc, "0x{X}", .{line.address}) catch return) catch return;
+        try argv.append(try std.fmt.allocPrint(alloc, "0x{X}", .{line.address}));
     }
 
     var child = std.process.Child.init(argv.items, alloc);
@@ -1698,22 +1705,22 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
     child.expand_arg0 = .expand;
     child.progress_node = std.Progress.Node.none;
 
-    child.spawn() catch {
-        stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch return;
+    const stderr = std.io.getStdErr().writer();
+    child.spawn() catch |err| {
+        stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch {};
         if (bun.Environment.isWindows) {
-            stderr.print("(You can compile pdb-addr2line from https://github.com/oven-sh/bun.report, cd pdb-addr2line && cargo build)\n", .{}) catch return;
+            stderr.print("(You can compile pdb-addr2line from https://github.com/oven-sh/bun.report, cd pdb-addr2line && cargo build)\n", .{}) catch {};
         }
-        return;
+        return err;
     };
 
-    const result = child.spawnAndWait() catch {
-        stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch return;
-        return;
+    const result = child.spawnAndWait() catch |err| {
+        stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch {};
+        return err;
     };
 
     if (result != .Exited or result.Exited != 0) {
-        stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch return;
-        return;
+        stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch {};
     }
 }
 

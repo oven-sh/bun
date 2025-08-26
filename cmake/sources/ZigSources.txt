@@ -498,7 +498,6 @@ src/copy_file.zig
 src/crash_handler.zig
 src/create/SourceFileProjectGenerator.zig
 src/csrf.zig
-src/css_scanner.zig
 src/css/compat.zig
 src/css/context.zig
 src/css/css_internals.zig

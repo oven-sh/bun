@@ -4,7 +4,7 @@ var default_manager: ?*PathWatcherManager = null;
 // TODO: we probably should use native instead of libuv abstraction here for better performance
 pub const PathWatcherManager = struct {
     const options = @import("../../options.zig");
-    const log = Output.scoped(.PathWatcherManager, false);
+    const log = Output.scoped(.PathWatcherManager, .visible);
 
     watchers: bun.StringArrayHashMapUnmanaged(*PathWatcher) = .{},
     vm: *jsc.VirtualMachine,
@@ -71,7 +71,7 @@ pub const PathWatcher = struct {
 
     pub const new = bun.TrivialNew(PathWatcher);
 
-    const log = Output.scoped(.@"fs.watch", false);
+    const log = Output.scoped(.@"fs.watch", .visible);
 
     pub const ChangeEvent = struct {
         hash: Watcher.HashType = 0,

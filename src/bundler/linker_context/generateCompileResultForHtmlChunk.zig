@@ -184,7 +184,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
 
     // HTML bundles for dev server must be allocated to it, as it must outlive
     // the bundle task. See `DevServer.RouteBundle.HTML.bundled_html_text`
-    const output_allocator = if (c.dev_server) |dev| dev.allocator else worker.allocator;
+    const output_allocator = if (c.dev_server) |dev| dev.allocator() else worker.allocator;
 
     var html_loader: HTMLLoader = .{
         .linker = c,

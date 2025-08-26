@@ -309,7 +309,7 @@ pub fn createWatchEvent(event: FileEvent, index: WatchItemIndex) WatchEvent {
     };
 }
 
-const log = Output.scoped(.watcher, false);
+const log = Output.scoped(.watcher, .visible);
 
 const std = @import("std");
 const w = std.os.windows;

@@ -77,7 +77,7 @@ pub fn writeFormatCredentials(credentials: *S3Credentials, options: bun.S3.Multi
 }
 
 pub const S3Client = struct {
-    const log = bun.Output.scoped(.S3Client, false);
+    const log = bun.Output.scoped(.S3Client, .visible);
     pub const js = jsc.Codegen.JSS3Client;
     pub const toJS = js.toJS;
     pub const fromJS = js.fromJS;

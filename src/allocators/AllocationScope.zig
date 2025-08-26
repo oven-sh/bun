@@ -1,19 +1,24 @@
 //! AllocationScope wraps another allocator, providing leak and invalid free assertions.
 //! It also allows measuring how much memory a scope has allocated.
+//!
+//! AllocationScope is conceptually a pointer, so it can be moved without invalidating allocations.
+//! Therefore, it isn't necessary to pass an AllocationScope by pointer.
 
-const AllocationScope = @This();
+const Self = @This();
 
 pub const enabled = bun.Environment.enableAllocScopes;
 
-parent: Allocator,
-state: if (enabled) struct {
+internal_state: if (enabled) *State else Allocator,
+
+const State = struct {
+    parent: Allocator,
     mutex: bun.Mutex,
     total_memory_allocated: usize,
     allocations: std.AutoHashMapUnmanaged([*]const u8, Allocation),
     frees: std.AutoArrayHashMapUnmanaged([*]const u8, Free),
     /// Once `frees` fills up, entries are overwritten from start to end.
     free_overwrite_index: std.math.IntFittingRange(0, max_free_tracking + 1),
-} else void,
+};
 
 pub const max_free_tracking = 2048 - 1;
 
@@ -36,55 +41,72 @@ pub const Extra = union(enum) {
     const RefCountDebugData = @import("../ptr/ref_count.zig").DebugData;
 };
 
-pub fn init(parent: Allocator) AllocationScope {
-    return if (comptime enabled)
-        .{
-            .parent = parent,
-            .state = .{
-                .total_memory_allocated = 0,
-                .allocations = .empty,
-                .frees = .empty,
-                .free_overwrite_index = 0,
-                .mutex = .{},
-            },
-        }
+pub fn init(parent_alloc: Allocator) Self {
+    const state = if (comptime enabled)
+        bun.new(State, .{
+            .parent = parent_alloc,
+            .total_memory_allocated = 0,
+            .allocations = .empty,
+            .frees = .empty,
+            .free_overwrite_index = 0,
+            .mutex = .{},
+        })
     else
-        .{ .parent = parent, .state = {} };
+        parent_alloc;
+    return .{ .internal_state = state };
 }
 
-pub fn deinit(scope: *AllocationScope) void {
-    if (comptime enabled) {
-        scope.state.mutex.lock();
-        defer scope.state.allocations.deinit(scope.parent);
-        const count = scope.state.allocations.count();
-        if (count == 0) return;
-        Output.errGeneric("Allocation scope leaked {d} allocations ({})", .{
-            count,
-            bun.fmt.size(scope.state.total_memory_allocated, .{}),
-        });
-        var it = scope.state.allocations.iterator();
-        var n: usize = 0;
-        while (it.next()) |entry| {
-            Output.prettyErrorln("- {any}, len {d}, at:", .{ entry.key_ptr.*, entry.value_ptr.len });
-            bun.crash_handler.dumpStackTrace(entry.value_ptr.allocated_at.trace(), trace_limits);
+pub fn deinit(scope: Self) void {
+    if (comptime !enabled) return;
 
-            switch (entry.value_ptr.extra) {
-                .none => {},
-                inline else => |t| t.onAllocationLeak(@constCast(entry.key_ptr.*[0..entry.value_ptr.len])),
-            }
+    const state = scope.internal_state;
+    state.mutex.lock();
+    defer bun.destroy(state);
+    defer state.allocations.deinit(state.parent);
+    const count = state.allocations.count();
+    if (count == 0) return;
+    Output.errGeneric("Allocation scope leaked {d} allocations ({})", .{
+        count,
+        bun.fmt.size(state.total_memory_allocated, .{}),
+    });
+    var it = state.allocations.iterator();
+    var n: usize = 0;
+    while (it.next()) |entry| {
+        Output.prettyErrorln("- {any}, len {d}, at:", .{ entry.key_ptr.*, entry.value_ptr.len });
+        bun.crash_handler.dumpStackTrace(entry.value_ptr.allocated_at.trace(), trace_limits);
 
-            n += 1;
-            if (n >= 8) {
-                Output.prettyErrorln("(only showing first 10 leaks)", .{});
-                break;
-            }
+        switch (entry.value_ptr.extra) {
+            .none => {},
+            inline else => |t| t.onAllocationLeak(@constCast(entry.key_ptr.*[0..entry.value_ptr.len])),
         }
-        Output.panic("Allocation scope leaked {}", .{bun.fmt.size(scope.state.total_memory_allocated, .{})});
+
+        n += 1;
+        if (n >= 8) {
+            Output.prettyErrorln("(only showing first 10 leaks)", .{});
+            break;
+        }
     }
+    Output.panic("Allocation scope leaked {}", .{bun.fmt.size(state.total_memory_allocated, .{})});
 }
 
-pub fn allocator(scope: *AllocationScope) Allocator {
-    return if (comptime enabled) .{ .ptr = scope, .vtable = &vtable } else scope.parent;
+pub fn allocator(scope: Self) Allocator {
+    const state = scope.internal_state;
+    return if (comptime enabled) .{ .ptr = state, .vtable = &vtable } else state;
+}
+
+pub fn parent(scope: Self) Allocator {
+    const state = scope.internal_state;
+    return if (comptime enabled) state.parent else state;
+}
+
+pub fn total(self: Self) usize {
+    if (comptime !enabled) @compileError("AllocationScope must be enabled");
+    return self.internal_state.total_memory_allocated;
+}
+
+pub fn numAllocations(self: Self) usize {
+    if (comptime !enabled) @compileError("AllocationScope must be enabled");
+    return self.internal_state.allocations.count();
 }
 
 const vtable: Allocator.VTable = .{
@@ -107,60 +129,61 @@ pub const free_trace_limits: bun.crash_handler.WriteStackTraceLimits = .{
 };
 
 fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
-    const scope: *AllocationScope = @ptrCast(@alignCast(ctx));
-    scope.state.mutex.lock();
-    defer scope.state.mutex.unlock();
-    scope.state.allocations.ensureUnusedCapacity(scope.parent, 1) catch
+    const state: *State = @ptrCast(@alignCast(ctx));
+
+    state.mutex.lock();
+    defer state.mutex.unlock();
+    state.allocations.ensureUnusedCapacity(state.parent, 1) catch
         return null;
-    const result = scope.parent.vtable.alloc(scope.parent.ptr, len, alignment, ret_addr) orelse
+    const result = state.parent.vtable.alloc(state.parent.ptr, len, alignment, ret_addr) orelse
         return null;
-    scope.trackAllocationAssumeCapacity(result[0..len], ret_addr, .none);
+    trackAllocationAssumeCapacity(state, result[0..len], ret_addr, .none);
     return result;
 }
 
-fn trackAllocationAssumeCapacity(scope: *AllocationScope, buf: []const u8, ret_addr: usize, extra: Extra) void {
+fn trackAllocationAssumeCapacity(state: *State, buf: []const u8, ret_addr: usize, extra: Extra) void {
     const trace = StoredTrace.capture(ret_addr);
-    scope.state.allocations.putAssumeCapacityNoClobber(buf.ptr, .{
+    state.allocations.putAssumeCapacityNoClobber(buf.ptr, .{
         .allocated_at = trace,
         .len = buf.len,
         .extra = extra,
     });
-    scope.state.total_memory_allocated += buf.len;
+    state.total_memory_allocated += buf.len;
 }
 
 fn free(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
-    const scope: *AllocationScope = @ptrCast(@alignCast(ctx));
-    scope.state.mutex.lock();
-    defer scope.state.mutex.unlock();
-    const invalid = scope.trackFreeAssumeLocked(buf, ret_addr);
+    const state: *State = @ptrCast(@alignCast(ctx));
+    state.mutex.lock();
+    defer state.mutex.unlock();
+    const invalid = trackFreeAssumeLocked(state, buf, ret_addr);
 
-    scope.parent.vtable.free(scope.parent.ptr, buf, alignment, ret_addr);
+    state.parent.vtable.free(state.parent.ptr, buf, alignment, ret_addr);
 
     // If asan did not catch the free, panic now.
     if (invalid) @panic("Invalid free");
 }
 
-fn trackFreeAssumeLocked(scope: *AllocationScope, buf: []const u8, ret_addr: usize) bool {
-    if (scope.state.allocations.fetchRemove(buf.ptr)) |entry| {
-        scope.state.total_memory_allocated -= entry.value.len;
+fn trackFreeAssumeLocked(state: *State, buf: []const u8, ret_addr: usize) bool {
+    if (state.allocations.fetchRemove(buf.ptr)) |entry| {
+        state.total_memory_allocated -= entry.value.len;
 
         free_entry: {
-            scope.state.frees.put(scope.parent, buf.ptr, .{
+            state.frees.put(state.parent, buf.ptr, .{
                 .allocated_at = entry.value.allocated_at,
                 .freed_at = StoredTrace.capture(ret_addr),
             }) catch break :free_entry;
             // Store a limited amount of free entries
-            if (scope.state.frees.count() >= max_free_tracking) {
-                const i = scope.state.free_overwrite_index;
-                scope.state.free_overwrite_index = @mod(scope.state.free_overwrite_index + 1, max_free_tracking);
-                scope.state.frees.swapRemoveAt(i);
+            if (state.frees.count() >= max_free_tracking) {
+                const i = state.free_overwrite_index;
+                state.free_overwrite_index = @mod(state.free_overwrite_index + 1, max_free_tracking);
+                state.frees.swapRemoveAt(i);
             }
         }
         return false;
     } else {
         bun.Output.errGeneric("Invalid free, pointer {any}, len {d}", .{ buf.ptr, buf.len });
 
-        if (scope.state.frees.get(buf.ptr)) |free_entry_const| {
+        if (state.frees.get(buf.ptr)) |free_entry_const| {
             var free_entry = free_entry_const;
             bun.Output.printErrorln("Pointer allocated here:", .{});
             bun.crash_handler.dumpStackTrace(free_entry.allocated_at.trace(), trace_limits);
@@ -176,27 +199,29 @@ fn trackFreeAssumeLocked(scope: *AllocationScope, buf: []const u8, ret_addr: usi
     }
 }
 
-pub fn assertOwned(scope: *AllocationScope, ptr: anytype) void {
+pub fn assertOwned(scope: Self, ptr: anytype) void {
     if (comptime !enabled) return;
     const cast_ptr: [*]const u8 = @ptrCast(switch (@typeInfo(@TypeOf(ptr)).pointer.size) {
         .c, .one, .many => ptr,
         .slice => if (ptr.len > 0) ptr.ptr else return,
     });
-    scope.state.mutex.lock();
-    defer scope.state.mutex.unlock();
-    _ = scope.state.allocations.getPtr(cast_ptr) orelse
+    const state = scope.internal_state;
+    state.mutex.lock();
+    defer state.mutex.unlock();
+    _ = state.allocations.getPtr(cast_ptr) orelse
         @panic("this pointer was not owned by the allocation scope");
 }
 
-pub fn assertUnowned(scope: *AllocationScope, ptr: anytype) void {
+pub fn assertUnowned(scope: Self, ptr: anytype) void {
     if (comptime !enabled) return;
     const cast_ptr: [*]const u8 = @ptrCast(switch (@typeInfo(@TypeOf(ptr)).pointer.size) {
         .c, .one, .many => ptr,
         .slice => if (ptr.len > 0) ptr.ptr else return,
     });
-    scope.state.mutex.lock();
-    defer scope.state.mutex.unlock();
-    if (scope.state.allocations.getPtr(cast_ptr)) |owned| {
+    const state = scope.internal_state;
+    state.mutex.lock();
+    defer state.mutex.unlock();
+    if (state.allocations.getPtr(cast_ptr)) |owned| {
         Output.warn("Owned pointer allocated here:");
         bun.crash_handler.dumpStackTrace(owned.allocated_at.trace(), trace_limits, trace_limits);
     }
@@ -205,17 +230,18 @@ pub fn assertUnowned(scope: *AllocationScope, ptr: anytype) void {
 
 /// Track an arbitrary pointer. Extra data can be stored in the allocation,
 /// which will be printed when a leak is detected.
-pub fn trackExternalAllocation(scope: *AllocationScope, ptr: []const u8, ret_addr: ?usize, extra: Extra) void {
+pub fn trackExternalAllocation(scope: Self, ptr: []const u8, ret_addr: ?usize, extra: Extra) void {
     if (comptime !enabled) return;
-    scope.state.mutex.lock();
-    defer scope.state.mutex.unlock();
-    scope.state.allocations.ensureUnusedCapacity(scope.parent, 1) catch bun.outOfMemory();
-    trackAllocationAssumeCapacity(scope, ptr, ptr.len, ret_addr orelse @returnAddress(), extra);
+    const state = scope.internal_state;
+    state.mutex.lock();
+    defer state.mutex.unlock();
+    state.allocations.ensureUnusedCapacity(state.parent, 1) catch bun.outOfMemory();
+    trackAllocationAssumeCapacity(state, ptr, ptr.len, ret_addr orelse @returnAddress(), extra);
 }
 
 /// Call when the pointer from `trackExternalAllocation` is freed.
 /// Returns true if the free was invalid.
-pub fn trackExternalFree(scope: *AllocationScope, slice: anytype, ret_addr: ?usize) bool {
+pub fn trackExternalFree(scope: Self, slice: anytype, ret_addr: ?usize) bool {
     if (comptime !enabled) return false;
     const ptr: []const u8 = switch (@typeInfo(@TypeOf(slice))) {
         .pointer => |p| switch (p.size) {
@@ -231,23 +257,25 @@ pub fn trackExternalFree(scope: *AllocationScope, slice: anytype, ret_addr: ?usi
     };
     // Empty slice usually means invalid pointer
     if (ptr.len == 0) return false;
-    scope.state.mutex.lock();
-    defer scope.state.mutex.unlock();
-    return trackFreeAssumeLocked(scope, ptr, ret_addr orelse @returnAddress());
+    const state = scope.internal_state;
+    state.mutex.lock();
+    defer state.mutex.unlock();
+    return trackFreeAssumeLocked(state, ptr, ret_addr orelse @returnAddress());
 }
 
-pub fn setPointerExtra(scope: *AllocationScope, ptr: *anyopaque, extra: Extra) void {
+pub fn setPointerExtra(scope: Self, ptr: *anyopaque, extra: Extra) void {
     if (comptime !enabled) return;
-    scope.state.mutex.lock();
-    defer scope.state.mutex.unlock();
-    const allocation = scope.state.allocations.getPtr(ptr) orelse
+    const state = scope.internal_state;
+    state.mutex.lock();
+    defer state.mutex.unlock();
+    const allocation = state.allocations.getPtr(ptr) orelse
         @panic("Pointer not owned by allocation scope");
     allocation.extra = extra;
 }
 
-pub inline fn downcast(a: Allocator) ?*AllocationScope {
+pub inline fn downcast(a: Allocator) ?Self {
     return if (enabled and a.vtable == &vtable)
-        @ptrCast(@alignCast(a.ptr))
+        .{ .internal_state = @ptrCast(@alignCast(a.ptr)) }
     else
         null;
 }

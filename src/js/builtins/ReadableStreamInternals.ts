@@ -2050,7 +2050,6 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       throw $ERR_INVALID_STATE("Internal error: invalid result from pull. This is a bug in Bun. Please report it.");
     }
 
-    // eslint-disable-next-line no-unused-private-class-members
     #pull(controller) {
       var handle = $getByIdDirectPrivate(this, "stream");
 
@@ -2103,7 +2102,6 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       }
     }
 
-    // eslint-disable-next-line no-unused-private-class-members
     #cancel(reason) {
       var handle = $getByIdDirectPrivate(this, "stream");
       this.$data = undefined;

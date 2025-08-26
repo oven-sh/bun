@@ -198,7 +198,7 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
 
             const a: ?u8 = if (try args[0].getTruthy(globalThis, "a")) |a_value| brk2: {
                 if (a_value.isNumber()) {
-                    break :brk2 @intCast(@mod(@as(i64, @intFromFloat(a_value.asNumber() * 255.0)), 256));
+                    break :brk2 @intCast(@mod(@as(i64, bun.intFromFloat(i64, a_value.asNumber() * 255.0)), 256));
                 }
                 break :brk2 null;
             } else null;

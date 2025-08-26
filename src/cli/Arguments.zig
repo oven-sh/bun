@@ -108,6 +108,7 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
     clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"") catch unreachable,
     clap.parseParam("--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)") catch unreachable,
+    clap.parseParam("--user-agent <STR>               Set the default User-Agent header for HTTP requests") catch unreachable,
 };
 
 pub const auto_or_run_params = [_]ParamType{
@@ -138,6 +139,7 @@ pub const bunx_commands = [_]ParamType{
 pub const build_only_params = [_]ParamType{
     clap.parseParam("--production                     Set NODE_ENV=production and enable minification") catch unreachable,
     clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production") catch unreachable,
+    clap.parseParam("--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv") catch unreachable,
     clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
     clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
     clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
@@ -171,6 +173,11 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'.") catch unreachable,
     clap.parseParam("--windows-hide-console           When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable") catch unreachable,
     clap.parseParam("--windows-icon <STR>             When using --compile targeting Windows, assign an executable icon") catch unreachable,
+    clap.parseParam("--windows-title <STR>            When using --compile targeting Windows, set the executable product name") catch unreachable,
+    clap.parseParam("--windows-publisher <STR>        When using --compile targeting Windows, set the executable company name") catch unreachable,
+    clap.parseParam("--windows-version <STR>          When using --compile targeting Windows, set the executable version (e.g. 1.2.3.4)") catch unreachable,
+    clap.parseParam("--windows-description <STR>      When using --compile targeting Windows, set the executable description") catch unreachable,
+    clap.parseParam("--windows-copyright <STR>        When using --compile targeting Windows, set the executable copyright") catch unreachable,
 } ++ if (FeatureFlags.bake_debugging_features) [_]ParamType{
     clap.parseParam("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically") catch unreachable,
     clap.parseParam("--debug-no-minify                When --app is set, do not minify anything") catch unreachable,
@@ -637,6 +644,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
         }
 
+        if (args.option("--user-agent")) |user_agent| {
+            bun.http.overridden_default_user_agent = user_agent;
+        }
+
         ctx.debug.offline_mode_setting = if (args.flag("--prefer-offline"))
             Bunfig.OfflineMode.offline
         else if (args.flag("--prefer-latest"))
@@ -881,6 +892,14 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.bundler_options.inline_entrypoint_import_meta_main = true;
         }
 
+        if (args.option("--compile-exec-argv")) |compile_exec_argv| {
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--compile-exec-argv requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.compile_exec_argv = compile_exec_argv;
+        }
+
         if (args.flag("--windows-hide-console")) {
             // --windows-hide-console technically doesnt depend on WinAPI, but since since --windows-icon
             // does, all of these customization options have been gated to windows-only
@@ -892,7 +911,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("--windows-hide-console requires --compile", .{});
                 Global.crash();
             }
-            ctx.bundler_options.windows_hide_console = true;
+            ctx.bundler_options.windows.hide_console = true;
         }
         if (args.option("--windows-icon")) |path| {
             if (!Environment.isWindows) {
@@ -903,7 +922,62 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("--windows-icon requires --compile", .{});
                 Global.crash();
             }
-            ctx.bundler_options.windows_icon = path;
+            ctx.bundler_options.windows.icon = path;
+        }
+        if (args.option("--windows-title")) |title| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-title is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-title requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.title = title;
+        }
+        if (args.option("--windows-publisher")) |publisher| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-publisher is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-publisher requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.publisher = publisher;
+        }
+        if (args.option("--windows-version")) |version| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-version is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-version requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.version = version;
+        }
+        if (args.option("--windows-description")) |description| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-description is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-description requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.description = description;
+        }
+        if (args.option("--windows-copyright")) |copyright| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-copyright is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-copyright requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.copyright = copyright;
         }
 
         if (args.option("--outdir")) |outdir| {

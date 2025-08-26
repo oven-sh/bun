@@ -206,7 +206,7 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
         }
       } else if (parseQueryString) {
         this.search = null;
-        this.query = { __proto__: null };
+        this.query = Object.create(null);
       }
       return this;
     }

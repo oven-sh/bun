@@ -6,7 +6,7 @@ pub const Tag = enum(u3) {
     todo,
     skipped_because_label,
 };
-const debug = Output.scoped(.jest, false);
+const debug = Output.scoped(.jest, .visible);
 
 var max_test_id_for_debugger: u32 = 0;
 
@@ -359,7 +359,7 @@ pub const Jest = struct {
         else
             .{ TestScope, DescribeScope };
 
-        const module = JSValue.createEmptyObject(globalObject, 14);
+        const module = JSValue.createEmptyObject(globalObject, 17);
 
         const test_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("test"), 2, ThisTestScope.call, false);
         module.put(
@@ -388,6 +388,21 @@ pub const Jest = struct {
             ZigString.static("it"),
             test_fn,
         );
+
+        const xit_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("xit"), 2, ThisTestScope.skip, false);
+        module.put(
+            globalObject,
+            ZigString.static("xit"),
+            xit_fn,
+        );
+
+        const xtest_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("xtest"), 2, ThisTestScope.skip, false);
+        module.put(
+            globalObject,
+            ZigString.static("xtest"),
+            xtest_fn,
+        );
+
         const describe = jsc.host_fn.NewFunction(globalObject, ZigString.static("describe"), 2, ThisDescribeScope.call, false);
         inline for (.{
             "only",
@@ -414,6 +429,14 @@ pub const Jest = struct {
             globalObject,
             ZigString.static("describe"),
             describe,
+        );
+
+        // Jest compatibility alias for skipped describe blocks
+        const xdescribe_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("xdescribe"), 2, ThisDescribeScope.skip, false);
+        module.put(
+            globalObject,
+            ZigString.static("xdescribe"),
+            xdescribe_fn,
         );
 
         inline for (.{ "beforeAll", "beforeEach", "afterAll", "afterEach" }) |name| {
@@ -953,7 +976,7 @@ pub const DescribeScope = struct {
 
                 cb.protect();
                 @field(DescribeScope.active.?, @tagName(hook) ++ "s").append(bun.default_allocator, cb) catch unreachable;
-                return JSValue.jsBoolean(true);
+                return .true;
             }
         }.run;
     }
@@ -1348,6 +1371,9 @@ pub const WrappedTestScope = struct {
     pub const each = wrapTestFunction("test", TestScope.each);
 };
 
+pub const xit = wrapTestFunction("xit", TestScope.skip);
+pub const xtest = wrapTestFunction("xtest", TestScope.skip);
+
 pub const WrappedDescribeScope = struct {
     pub const call = wrapTestFunction("describe", DescribeScope.call);
     pub const only = wrapTestFunction("describe", DescribeScope.only);
@@ -1358,6 +1384,8 @@ pub const WrappedDescribeScope = struct {
     pub const todoIf = wrapTestFunction("describe", DescribeScope.todoIf);
     pub const each = wrapTestFunction("describe", DescribeScope.each);
 };
+
+pub const xdescribe = wrapTestFunction("xdescribe", DescribeScope.skip);
 
 pub const TestRunnerTask = struct {
     test_id: TestRunner.Test.ID,

@@ -1,4 +1,4 @@
-const debug = Output.scoped(.CLI, true);
+const debug = Output.scoped(.CLI, .hidden);
 
 pub var start_time: i128 = undefined;
 
@@ -420,8 +420,8 @@ pub const Command = struct {
             // Compile options
             compile: bool = false,
             compile_target: Cli.CompileTarget = .{},
-            windows_hide_console: bool = false,
-            windows_icon: ?[]const u8 = null,
+            compile_exec_argv: ?[]const u8 = null,
+            windows: options.WindowsOptions = .{},
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
@@ -635,21 +635,41 @@ pub const Command = struct {
         // bun build --compile entry point
         if (!bun.getRuntimeFeatureFlag(.BUN_BE_BUN)) {
             if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
-                context_data = .{
-                    .args = std.mem.zeroes(api.TransformOptions),
-                    .log = log,
-                    .start_time = start_time,
-                    .allocator = bun.default_allocator,
-                };
-                global_cli_ctx = &context_data;
-                var ctx = global_cli_ctx;
+                var offset_for_passthrough: usize = 0;
 
-                ctx.args.target = api.Target.bun;
-                if (bun.argv.len > 1) {
-                    ctx.passthrough = bun.argv[1..];
-                } else {
-                    ctx.passthrough = &[_]string{};
-                }
+                const ctx: *ContextData = brk: {
+                    if (graph.compile_exec_argv.len > 0) {
+                        const original_argv_len = bun.argv.len;
+                        var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
+                        try bun.appendOptionsEnv(graph.compile_exec_argv, &argv_list, bun.default_allocator);
+                        bun.argv = argv_list.items;
+
+                        // Calculate offset: skip executable name + all exec argv options
+                        offset_for_passthrough = if (bun.argv.len > 1) 1 + (bun.argv.len -| original_argv_len) else 0;
+
+                        // Handle actual options to parse.
+                        break :brk try Command.init(allocator, log, .AutoCommand);
+                    }
+
+                    context_data = .{
+                        .args = std.mem.zeroes(api.TransformOptions),
+                        .log = log,
+                        .start_time = start_time,
+                        .allocator = bun.default_allocator,
+                    };
+                    global_cli_ctx = &context_data;
+
+                    // If no compile_exec_argv, set offset normally
+                    offset_for_passthrough = if (bun.argv.len > 1) 1 else 0;
+
+                    break :brk global_cli_ctx;
+                };
+
+                ctx.args.target = .bun;
+                if (ctx.debug.global_cache == .auto)
+                    ctx.debug.global_cache = .disable;
+
+                ctx.passthrough = bun.argv[offset_for_passthrough..];
 
                 try bun_js.Run.bootStandalone(
                     ctx,
@@ -1023,11 +1043,16 @@ pub const Command = struct {
                         \\Execute an npm package executable (CLI), automatically installing into a global shared cache if not installed in node_modules.
                         \\
                         \\Flags:
-                        \\  <cyan>--bun<r>      Force the command to run with Bun instead of Node.js
+                        \\  <cyan>--bun<r>                  Force the command to run with Bun instead of Node.js
+                        \\  <cyan>-p, --package <blue>\<package\><r>    Specify package to install when binary name differs from package name
+                        \\  <cyan>--no-install<r>           Skip installation if package is not already installed
+                        \\  <cyan>--verbose<r>              Enable verbose output during installation
+                        \\  <cyan>--silent<r>               Suppress output during installation
                         \\
                         \\Examples<d>:<r>
                         \\  <b><green>bunx<r> <blue>prisma<r> migrate<r>
                         \\  <b><green>bunx<r> <blue>prettier<r> foo.js<r>
+                        \\  <b><green>bunx<r> <cyan>-p @angular/cli<r> <blue>ng<r> new my-app
                         \\  <b><green>bunx<r> <cyan>--bun<r> <blue>vite<r> dev foo.js<r>
                         \\
                     , .{});

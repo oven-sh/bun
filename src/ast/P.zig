@@ -1070,7 +1070,7 @@ pub fn NewParser_(
             }
         }
 
-        pub fn keyNameForError(noalias p: *P, key: js_ast.Expr) string {
+        pub fn keyNameForError(noalias p: *P, key: *const js_ast.Expr) string {
             switch (key.data) {
                 .e_string => {
                     return key.data.e_string.string(p.allocator) catch unreachable;
@@ -1994,6 +1994,9 @@ pub fn NewParser_(
                 p.jest.afterEach = try p.declareCommonJSSymbol(.unbound, "afterEach");
                 p.jest.beforeAll = try p.declareCommonJSSymbol(.unbound, "beforeAll");
                 p.jest.afterAll = try p.declareCommonJSSymbol(.unbound, "afterAll");
+                p.jest.xit = try p.declareCommonJSSymbol(.unbound, "xit");
+                p.jest.xtest = try p.declareCommonJSSymbol(.unbound, "xtest");
+                p.jest.xdescribe = try p.declareCommonJSSymbol(.unbound, "xdescribe");
             }
 
             if (p.options.features.react_fast_refresh) {

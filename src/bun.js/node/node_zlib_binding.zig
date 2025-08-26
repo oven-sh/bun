@@ -1,4 +1,4 @@
-const debug = bun.Output.scoped(.zlib, true);
+const debug = bun.Output.scoped(.zlib, .hidden);
 
 pub fn crc32(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.arguments_old(2).ptr;

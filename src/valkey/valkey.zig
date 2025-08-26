@@ -460,6 +460,7 @@ pub const ValkeyClient = struct {
 
         this.status = .disconnected;
         this.flags.is_reconnecting = true;
+        this.flags.is_authenticated = false;
 
         // Signal reconnect timer should be started
         this.onValkeyReconnect();
@@ -960,7 +961,7 @@ pub const ValkeyClient = struct {
 
 // Auto-pipelining
 
-const debug = bun.Output.scoped(.Redis, false);
+const debug = bun.Output.scoped(.Redis, .visible);
 
 const protocol = @import("./valkey_protocol.zig");
 const std = @import("std");

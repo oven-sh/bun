@@ -29,7 +29,7 @@ pub const Source = webcore.ReadableStream.NewSource(
     toBufferedValue,
 );
 
-const log = Output.scoped(.ByteStream, false);
+const log = Output.scoped(.ByteStream, .visible);
 
 pub const tag = webcore.ReadableStream.Tag.Bytes;
 

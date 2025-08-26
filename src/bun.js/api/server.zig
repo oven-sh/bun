@@ -1,5 +1,5 @@
-const httplog = Output.scoped(.Server, false);
-const ctxLog = Output.scoped(.RequestContext, false);
+const httplog = Output.scoped(.Server, .visible);
+const ctxLog = Output.scoped(.RequestContext, .visible);
 
 pub const WebSocketServerContext = @import("./server/WebSocketServerContext.zig");
 pub const HTTPStatusText = @import("./server/HTTPStatusText.zig");
@@ -532,7 +532,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub const App = uws.NewApp(ssl_enabled);
         app: ?*App = null,
         listener: ?*App.ListenSocket = null,
-        js_value: jsc.Strong.Optional = .empty,
+        js_value: jsc.JSRef = jsc.JSRef.empty(),
         /// Potentially null before listen() is called, and once .destroy() is called.
         vm: *jsc.VirtualMachine,
         globalThis: *JSGlobalObject,
@@ -624,11 +624,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn jsValueAssertAlive(server: *ThisServer) jsc.JSValue {
-            bun.debugAssert(server.listener != null); // this assertion is only valid while listening
-            return server.js_value.get() orelse brk: {
-                bun.debugAssert(false);
-                break :brk .js_undefined; // safe-ish
-            };
+            // With JSRef, we can safely access the JS value even after stop() via weak reference
+            return server.js_value.get();
         }
 
         pub fn requestIP(this: *ThisServer, request: *jsc.WebCore.Request) bun.JSError!jsc.JSValue {
@@ -709,7 +706,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 return globalThis.throw("publish requires a non-empty topic", .{});
             }
 
-            const compress = (compress_value orelse JSValue.jsBoolean(true)).toBoolean();
+            // https://github.com/ziglang/zig/issues/24563
+            const compress_js = compress_value orelse .true;
+            const compress = compress_js.toBoolean();
 
             if (message_value.asArrayBuffer(globalThis)) |buffer| {
                 return JSValue.jsNumber(
@@ -750,12 +749,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             if (this.flags.terminated) {
-                return JSValue.jsBoolean(false);
+                return .false;
             }
 
             if (object.as(NodeHTTPResponse)) |nodeHttpResponse| {
                 if (nodeHttpResponse.flags.ended or nodeHttpResponse.flags.socket_closed) {
-                    return .jsBoolean(false);
+                    return .false;
                 }
 
                 var data_value = jsc.JSValue.zero;
@@ -839,14 +838,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 return globalThis.throwInvalidArguments("upgrade requires a Request object", .{});
             };
 
-            var upgrader = request.request_context.get(RequestContext) orelse return .jsBoolean(false);
+            var upgrader = request.request_context.get(RequestContext) orelse return .false;
 
             if (upgrader.isAbortedOrEnded()) {
-                return .jsBoolean(false);
+                return .false;
             }
 
             if (upgrader.upgrade_context == null or @intFromPtr(upgrader.upgrade_context) == std.math.maxInt(usize)) {
-                return .jsBoolean(false);
+                return .false;
             }
 
             const resp = upgrader.resp.?;
@@ -878,7 +877,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             if (sec_websocket_key_str.len == 0) {
-                return .jsBoolean(false);
+                return .false;
             }
 
             if (sec_websocket_protocol.len > 0) {
@@ -1002,7 +1001,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 ctx,
             );
 
-            return .jsBoolean(true);
+            return .true;
         }
 
         pub fn onReloadFromZig(this: *ThisServer, new_config: *ServerConfig, globalThis: *jsc.JSGlobalObject) void {
@@ -1071,8 +1070,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             const route_list_value = this.setRoutes();
             if (new_config.had_routes_object) {
-                if (this.js_value.get()) |server_js_value| {
-                    js.routeListSetCached(server_js_value, this.globalThis, route_list_value);
+                if (this.js_value.tryGet()) |server_js_value| {
+                    if (server_js_value != .zero) {
+                        js.gc.routeList.set(server_js_value, globalThis, route_list_value);
+                    }
                 }
             }
 
@@ -1094,8 +1095,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.app.?.clearRoutes();
             const route_list_value = this.setRoutes();
             if (route_list_value != .zero) {
-                if (this.js_value.get()) |server_js_value| {
-                    js.routeListSetCached(server_js_value, this.globalThis, route_list_value);
+                if (this.js_value.tryGet()) |server_js_value| {
+                    if (server_js_value != .zero) {
+                        js.gc.routeList.set(server_js_value, this.globalThis, route_list_value);
+                    }
                 }
             }
             return true;
@@ -1123,7 +1126,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             this.onReloadFromZig(&new_config, globalThis);
 
-            return this.js_value.get() orelse .js_undefined;
+            return this.js_value.get();
         }
 
         pub fn onFetch(
@@ -1427,6 +1430,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         pub fn finalize(this: *ThisServer) void {
             httplog("finalize", .{});
+            this.js_value.deinit();
             this.flags.has_js_deinited = true;
             this.deinitIfWeCan();
         }
@@ -1539,7 +1543,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn stop(this: *ThisServer, abrupt: bool) void {
-            this.js_value.deinit();
+            const current_value = this.js_value.get();
+            this.js_value.setWeak(current_value);
 
             if (this.config.allow_hot and this.config.id.len > 0) {
                 if (this.globalThis.bunVM().hotMap()) |hot| {
@@ -1642,7 +1647,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .config = config.*,
                 .base_url_string_for_joining = base_url,
                 .vm = jsc.VirtualMachine.get(),
-                .allocator = Arena.getThreadlocalDefault(),
+                .allocator = Arena.getThreadLocalDefault(),
                 .dev_server = dev_server,
             });
 
@@ -1855,7 +1860,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             resp.timeout(this.config.idleTimeout);
 
             const globalThis = this.globalThis;
-            const thisObject: JSValue = this.js_value.get() orelse .js_undefined;
+            const thisObject: JSValue = this.js_value.tryGet() orelse .js_undefined;
             const vm = this.vm;
 
             var node_http_response: ?*NodeHTTPResponse = null;
@@ -2585,7 +2590,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         .html => |html_bundle_route| {
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *HTMLBundle.Route, html_bundle_route.data, entry.path, entry.method);
                             if (dev_server) |dev| {
-                                dev.html_router.put(dev.allocator, entry.path, html_bundle_route.data) catch bun.outOfMemory();
+                                dev.html_router.put(dev.allocator(), entry.path, html_bundle_route.data) catch bun.outOfMemory();
                             }
                             needs_plugins = true;
                         },

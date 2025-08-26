@@ -1,7 +1,9 @@
 Complete before merge:
 
+- [ ] make sure it exits with code 1 on failure
 - [ ] add preload hooks
-- [ ] fix toMatchInlineSnapshot
+- [x] fix toMatchInlineSnapshot
+- [x] make sure error.SnapshotInConcurrentGroup prints well
 - [ ] make the summary work again
 - [ ] make --bail work again
 - [ ] make test filtering work again
@@ -29,9 +31,23 @@ Complete before merge:
 - [ ] remove TestId stuff
 - [ ] remove TODO.md
 
+Add tests:
+
+- [ ] test error.SnapshotInConcurrentGroup
+
+Code quality:
+
+- [ ] In Execution.zig, rename order: ..., order_index to groups, group_index for consistency.
+- [ ] In Execution.zig, change (start, end) to (start, len)
+- [ ] In Execution.zig, change order sequence and entries to be slices rather than ArrayLists. We have to rework test() in test().
+
 Follow-up:
 
+- [ ] looks like we don't need to use file_id anymore (remove `bun.jsc.Jest.Jest.runner.?.getOrPutFile(file_path).file_id;`, store the file path directly)
+- [ ] CallbackWithArguments is copied like 3 times which copies the arguments list 3 times
+- [x] toMatchInlineSnapshot should not call addCount() because it both adds count and determines the name and value_ptr for a non-inline snapshot. we only need to add the count.
 - [ ] console.log headers saying which test it is for
+  - [ ] refActiveExecutionEntry should also be able to know the current test even in test.concurrent
 - [ ] 'dot' test reporter like vitest?
 - [ ] `.concurrent.test.ts` to make all items concurrent. consider adding a concurrent directory for bunfig.toml?
 - [] `test.failing.if(false)` errors because it can't replace mode 'failing' with mode 'skip' (maybe failing should be a bool?)

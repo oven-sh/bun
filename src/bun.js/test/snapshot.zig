@@ -40,8 +40,11 @@ pub const Snapshots = struct {
         file: std.fs.File,
     };
 
-    pub fn addCount(this: *Snapshots, expect: *Expect, hint: []const u8) !struct { []const u8, usize } {
+    pub fn addCountOnly(this: *Snapshots) void {
         this.total += 1;
+    }
+    pub fn addCount(this: *Snapshots, expect: *Expect, hint: []const u8) !struct { []const u8, usize } {
+        this.addCountOnly();
         const snapshot_name = try expect.getSnapshotName(this.allocator, hint);
         const count_entry = try this.counts.getOrPut(snapshot_name);
         if (count_entry.found_existing) {
@@ -53,7 +56,8 @@ pub const Snapshots = struct {
         return .{ count_entry.key_ptr.*, count_entry.value_ptr.* };
     }
     pub fn getOrPut(this: *Snapshots, expect: *Expect, target_value: []const u8, hint: string) !?string {
-        switch (try this.getSnapshotFile(expect.testScope().?.describe.file_id)) {
+        const bunTest = expect.bunTest() orelse return error.SnapshotFailed;
+        switch (try this.getSnapshotFile(bunTest.file_id)) {
             .result => {},
             .err => |err| {
                 return switch (err.syscall) {

@@ -1753,11 +1753,12 @@ pub const TestCommand = struct {
         const resolution = try vm.transpiler.resolveEntryPoint(file_name);
         try vm.clearEntryPoint();
 
-        const file_path = resolution.path_pair.primary.text;
+        const file_path = bun.fs.FileSystem.instance.filename_store.append([]const u8, resolution.path_pair.primary.text) catch bun.outOfMemory();
         const file_title = bun.path.relative(FileSystem.instance.top_level_dir, file_path);
+        const file_id = bun.jsc.Jest.Jest.runner.?.getOrPutFile(file_path).file_id;
 
         var describe2Root = &jest.Jest.runner.?.describe2Root;
-        describe2Root.enterFile(file_path);
+        describe2Root.enterFile(file_id);
         defer describe2Root.exitFile();
 
         // In Github Actions, append a special prefix that will group

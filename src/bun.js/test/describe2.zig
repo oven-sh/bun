@@ -9,6 +9,11 @@ const Signature = union(enum) {
     }
 };
 
+pub fn getActive() ?*BunTestFile {
+    const runner = bun.jsc.Jest.Jest.runner orelse return null;
+    return runner.describe2Root.active_file orelse return null;
+}
+
 pub const js_fns = struct {
     fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, description: jsc.JSValue, signature: Signature) bun.JSError![]const u8 {
         const is_valid_description =
@@ -182,11 +187,13 @@ pub const js_fns = struct {
 
 pub const BunTest = struct {
     gpa: std.mem.Allocator,
+    in_preload: bool,
     active_file: ?*BunTestFile,
 
     pub fn init(outer_gpa: std.mem.Allocator) BunTest {
         return .{
             .gpa = outer_gpa,
+            .in_preload = true,
             .active_file = null,
         };
     }
@@ -194,9 +201,10 @@ pub const BunTest = struct {
         bun.assert(this.active_file == null);
     }
 
-    pub fn enterFile(this: *BunTest, _: []const u8) void {
+    pub fn enterFile(this: *BunTest, file_id: jsc.Jest.TestRunner.File.ID) void {
         bun.assert(this.active_file == null);
-        this.active_file = bun.create(this.gpa, BunTestFile, .init(this.gpa, this));
+        this.in_preload = false;
+        this.active_file = bun.create(this.gpa, BunTestFile, .init(this.gpa, this, file_id));
     }
     pub fn exitFile(this: *BunTest) void {
         bun.assert(this.active_file != null);
@@ -213,6 +221,7 @@ pub const BunTestFile = struct {
     allocation_scope: *bun.AllocationScope,
     gpa: std.mem.Allocator,
     done_promise: Strong.Optional = .empty,
+    file_id: jsc.Jest.TestRunner.File.ID,
 
     phase: enum {
         collection,
@@ -222,7 +231,7 @@ pub const BunTestFile = struct {
     collection: Collection,
     execution: Execution,
 
-    pub fn init(outer_gpa: std.mem.Allocator, bunTest: *BunTest) BunTestFile {
+    pub fn init(outer_gpa: std.mem.Allocator, bunTest: *BunTest, file_id: jsc.Jest.TestRunner.File.ID) BunTestFile {
         group.begin(@src());
         defer group.end();
 
@@ -234,6 +243,7 @@ pub const BunTestFile = struct {
             .allocation_scope = allocation_scope,
             .gpa = gpa,
             .phase = .collection,
+            .file_id = file_id,
             .collection = .init(gpa),
             .execution = .init(gpa),
         };
@@ -251,17 +261,45 @@ pub const BunTestFile = struct {
         backing.destroy(this.allocation_scope);
     }
 
-    const RefData = struct {
+    pub const RefData = struct {
         buntest: *BunTestFile,
         data: u64,
         pub fn deinit(this: *RefData) void {
-            // TODO jsvalue(this).unprotect()
-            this.buntest.gpa.destroy(this);
+            // TODO: ref counted
+            // this.buntest.gpa.destroy(this);
+            bun.default_allocator.destroy(this);
         }
     };
-    pub fn ref(this: *BunTestFile, data: u64) *anyopaque {
-        // TODO jsvalue(this).protect()
-        return bun.create(this.gpa, RefData, .{ .buntest = this, .data = data });
+    pub fn ref(this: *BunTestFile, data: u64) *RefData {
+        // TODO: BunTestFile must be ref-counted to prevent UAF
+        // return bun.create(this.gpa, RefData, .{ .buntest = this, .data = data });
+        return bun.new(RefData, .{ .buntest = this, .data = data });
+    }
+
+    pub fn refActiveExecutionEntry(this: *BunTestFile) ?Execution.CurrentEntryRef {
+        if (this.phase != .execution) return null;
+
+        const ref_value = this.ref(0);
+
+        const active_group = &this.execution.order.items[this.execution.order_index];
+        if (active_group.sequence_start + 1 != active_group.sequence_end) return .{
+            ._internal_ref = ref_value,
+            .buntest = this,
+            .order_index = this.execution.order_index,
+            .entry_data = null, // the current execution entry is not known because we are running a concurrent test
+        };
+
+        const active_sequence_index = active_group.sequence_start; // if there is only one concurrent item, then this is the active sequence index
+        const sequence = &this.execution._sequences.items[active_sequence_index];
+        return .{
+            ._internal_ref = ref_value,
+            .buntest = this,
+            .order_index = this.execution.order_index,
+            .entry_data = .{
+                .sequence_index = active_sequence_index,
+                .entry_index = sequence.entry_index,
+            },
+        };
     }
 
     pub fn getFile(_: *BunTestFile) []const u8 {

@@ -3,7 +3,34 @@ _sequences: std.ArrayList(ExecutionSequence),
 _entries: std.ArrayList(*ExecutionEntry),
 order_index: usize,
 
-const ConcurrentGroup = struct {
+pub const CurrentEntryRef = struct {
+    _internal_ref: *bun.jsc.Jest.describe2.BunTestFile.RefData,
+    buntest: *BunTestFile,
+    order_index: usize,
+    entry_data: ?struct {
+        sequence_index: usize,
+        entry_index: usize,
+    },
+
+    pub fn deinit(this: *CurrentEntryRef) void {
+        this._internal_ref.deinit();
+        this.buntest = undefined;
+    }
+
+    pub fn group(this: *const CurrentEntryRef) *ConcurrentGroup {
+        return &this.buntest.execution.order.items[this.order_index];
+    }
+    pub fn sequence(this: *const CurrentEntryRef) ?*ExecutionSequence {
+        const entry_data = this.entry_data orelse return null;
+        return &this.buntest.execution._sequences.items[entry_data.sequence_index];
+    }
+    pub fn entry(this: *const CurrentEntryRef) ?*ExecutionEntry {
+        const entry_data = this.entry_data orelse return null;
+        return this.buntest.execution._entries.items[entry_data.entry_index];
+    }
+};
+
+pub const ConcurrentGroup = struct {
     sequence_start: usize,
     sequence_end: usize,
     executing: bool = false,

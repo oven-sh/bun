@@ -12,7 +12,8 @@ pub fn toThrowErrorMatchingSnapshot(this: *Expect, globalThis: *JSGlobalObject, 
         return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n", .{});
     }
 
-    if (this.testScope() == null) {
+    const bunTest = this.bunTest();
+    if (bunTest == null) {
         const signature = comptime getSignature("toThrowErrorMatchingSnapshot", "", true);
         return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n", .{});
     }

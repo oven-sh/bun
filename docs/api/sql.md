@@ -90,8 +90,7 @@ const db2 = new SQL({
 const db3 = new SQL("myapp.db", { adapter: "sqlite" });
 ```
 
-<details>
-<summary>SQLite Connection String Formats</summary>
+{% details summary="SQLite Connection String Formats" %}
 
 SQLite accepts various URL formats for connection strings:
 
@@ -122,10 +121,9 @@ new SQL("sqlite://data.db?mode=rwc"); // Read-write-create mode (default)
 
 **Note:** Simple filenames without a protocol (like `"myapp.db"`) require explicitly specifying `{ adapter: "sqlite" }` to avoid ambiguity with PostgreSQL.
 
-</details>
+{% /details %}
 
-<details>
-<summary>SQLite-Specific Options</summary>
+{% details summary="SQLite-Specific Options" %}
 
 SQLite databases support additional configuration options:
 
@@ -151,7 +149,7 @@ Query parameters in the URL are parsed to set these options:
 - `?mode=rw` → `readonly: false, create: false`
 - `?mode=rwc` → `readonly: false, create: true` (default)
 
-</details>
+{% /details %}
 
 ### Inserting data
 
@@ -532,15 +530,14 @@ const db = new SQL({
 });
 ```
 
-<details>
-<summary>SQLite Connection Notes</summary>
+{% details summary="SQLite Connection Notes" %}
 
 - **Connection Pooling**: SQLite doesn't use connection pooling as it's a file-based database. Each `SQL` instance represents a single connection.
 - **Transactions**: SQLite supports nested transactions through savepoints, similar to PostgreSQL.
 - **Concurrent Access**: SQLite handles concurrent access through file locking. Use WAL mode for better concurrency.
 - **Memory Databases**: Using `:memory:` creates a temporary database that exists only for the connection lifetime.
 
-</details>
+{% /details %}
 
 ## Dynamic passwords
 
@@ -838,6 +835,8 @@ try {
 }
 ```
 
+{% details summary="PostgreSQL-Specific Error Codes" %}
+
 ### PostgreSQL Connection Errors
 
 | Connection Errors                 | Description                                          |
@@ -903,12 +902,13 @@ try {
 | `ERR_POSTGRES_UNSAFE_TRANSACTION`        | Unsafe transaction operation detected |
 | `ERR_POSTGRES_INVALID_TRANSACTION_STATE` | Invalid transaction state             |
 
+{% /details %}
+
 ### SQLite-Specific Errors
 
 SQLite errors provide error codes and numbers that correspond to SQLite's standard error codes:
 
-<details>
-<summary>Common SQLite Error Codes</summary>
+{% details summary="Common SQLite Error Codes" %}
 
 | Error Code          | errno | Description                                          |
 | ------------------- | ----- | ---------------------------------------------------- |
@@ -945,7 +945,7 @@ try {
 }
 ```
 
-</details>
+{% /details %}
 
 ## Numbers and BigInt
 
@@ -998,13 +998,7 @@ We also haven't implemented some of the more uncommon features like:
 - Point & PostGIS types
 - All the multi-dimensional integer array types (only a couple of the types are supported)
 
-## Frequently Asked Questions
-
-> Why is this `Bun.sql` and not `Bun.postgres`?
-
-The plan is to add more database drivers in the future.
-
-> Why not just use an existing library?
+## Why not just use an existing library?
 
 npm packages like postgres.js, pg, and node-postgres can be used in Bun too. They're great options.
 

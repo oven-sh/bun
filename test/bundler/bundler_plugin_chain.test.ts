@@ -190,7 +190,7 @@ describe("bundler", () => {
         onAfterBundle(api) {
           // All plugins should have been called
           expect(callOrder).toEqual(["plugin1-entry", "plugin2-entry", "plugin3-entry"]);
-          
+
           // Check what file was actually created
           try {
             api.readFile("/out/actual-entry.js");

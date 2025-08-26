@@ -263,14 +263,14 @@ pub fn load(
                 bun.assert(source.index.get() == i.get());
             }
             entry_point_kinds[source.index.get()] = EntryPoint.Kind.user_specified;
-            
+
             // Check if this entry point has an original name (from virtual entry resolution)
             if (entry_point_original_names.get(i.get())) |original_name| {
                 path_string.* = bun.PathString.init(original_name);
             } else {
                 path_string.* = bun.PathString.init(source.path.text);
             }
-            
+
             source_index.* = source.index.get();
         }
 

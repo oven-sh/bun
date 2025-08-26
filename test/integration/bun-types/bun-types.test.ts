@@ -283,76 +283,7 @@ describe("@types/bun integration test", () => {
       });
 
       expect(emptyInterfaces).toEqual(new Set());
-      expect(diagnostics).toEqual([
-        {
-          "code": 2582,
-          "line": "my-test.test.ts:2:48",
-          "message":
-            "Cannot find name 'test'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
-        },
-        {
-          "code": 2582,
-          "line": "my-test.test.ts:3:46",
-          "message":
-            "Cannot find name 'it'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
-        },
-        {
-          "code": 2582,
-          "line": "my-test.test.ts:4:52",
-          "message":
-            "Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:5:50",
-          "message": "Cannot find name 'expect'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:6:53",
-          "message": "Cannot find name 'beforeAll'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:7:54",
-          "message": "Cannot find name 'beforeEach'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:8:53",
-          "message": "Cannot find name 'afterEach'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:9:52",
-          "message": "Cannot find name 'afterAll'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:10:61",
-          "message": "Cannot find name 'setDefaultTimeout'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:11:48",
-          "message": "Cannot find name 'mock'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:12:49",
-          "message": "Cannot find name 'spyOn'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:13:44",
-          "message": "Cannot find name 'jest'.",
-        },
-        {
-          "code": 2688,
-          "line": "reference-the-globals.ts:1:23",
-          "message": "Cannot find type definition file for 'bun/test-globals'.",
-        },
-      ]);
+      expect(diagnostics).toEqual([]);
     });
 
     test("test-globals FAILS when the test-globals.d.ts is not referenced", async () => {

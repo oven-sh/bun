@@ -277,7 +277,7 @@ describe("@types/bun integration test", () => {
     test("checks without lib.dom.d.ts and test-globals references", async () => {
       const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
         files: {
-          "reference-the-globals.ts": `/// <reference types="bun/test-globals" />`,
+          "reference-the-globals.ts": `/// <reference types="bun-types/test-globals" />`,
           "my-test.test.ts": code,
         },
       });

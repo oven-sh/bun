@@ -2494,8 +2494,14 @@ pub const BundleV2 = struct {
             on_parse_finalizers.deinit(bun.default_allocator);
         }
 
-        defer this.graph.ast.deinit(this.allocator());
-        defer this.graph.input_files.deinit(this.allocator());
+        defer {
+            this.graph.ast.deinit(this.allocator());
+            this.graph.input_files.deinit(this.allocator());
+            this.graph.entry_points.deinit(this.allocator());
+            for (this.graph.entry_point_original_names.values()) |name| this.allocator().free(name);
+            this.graph.entry_point_original_names.deinit(this.allocator());
+        }
+
         if (this.graph.pool.workers_assignments.count() > 0) {
             {
                 this.graph.pool.workers_assignments_lock.lock();

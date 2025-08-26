@@ -5997,15 +5997,18 @@ extern "C" void JSC__JSValue__transformToReactElementWithOptions(JSC::EncodedJSV
     auto typeIdentifier = JSC::Identifier::fromString(vm, "type"_s);
 
     // TODO: this is fucking awful
-    // Check if this is a render redirect (Response.render() case)
-    // We detect this by checking if component is the special marker string "__bun_render_redirect__"
+    // Check if this is a render redirect (Response.render() case) or regular redirect (Response.redirect() case)
+    // We detect this by checking if component is the special marker string "__bun_render_redirect__" or "__bun_redirect__"
     bool isRenderRedirect = false;
+    bool isRedirect = false;
     if (component.isString()) {
         JSC::JSString* componentString = component.toString(globalObject);
         if (componentString) {
             String componentStr = componentString->value(globalObject);
             if (componentStr == "__bun_render_redirect__"_s) {
                 isRenderRedirect = true;
+            } else if (componentStr == "__bun_redirect__"_s) {
+                isRedirect = true;
             }
         }
     }
@@ -6027,6 +6030,34 @@ extern "C" void JSC__JSValue__transformToReactElementWithOptions(JSC::EncodedJSV
         args.append(renderPath);
         args.append(renderParams);
         args.append(JSC::jsBoolean(true)); // This is a render redirect
+        args.append(response); // Pass the Response object
+
+        // Call the wrapComponent function
+        auto callData = JSC::getCallData(wrapComponentFn);
+        JSC::JSValue wrappedComponent = JSC::call(globalObject, wrapComponentFn, callData, JSC::jsUndefined(), args);
+
+        if (!scope.exception() && !wrappedComponent.isUndefinedOrNull()) {
+            responseObject->putDirect(vm, typeIdentifier, wrappedComponent, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+        } else {
+            // If there was an error, clear it and set type to null
+            scope.clearException();
+            responseObject->putDirect(vm, typeIdentifier, JSC::jsNull(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+        }
+    }
+    // Handle Response.redirect() case - use BakeSSRResponse builtin to create wrapper
+    else if (isRedirect) {
+        // Use the BakeSSRResponse builtin's wrapComponent function
+        JSC::JSFunction* wrapComponentFn = JSC::JSFunction::create(vm, globalObject, bakeSSRResponseWrapComponentCodeGenerator(vm), globalObject);
+
+        // Call wrapComponent(undefined, undefined, "redirect", responseObject)
+        // For redirect, we pass "redirect" as the third parameter and the Response object as the fourth
+        JSC::MarkedArgumentBuffer args;
+        args.append(JSC::jsUndefined()); // No component for redirect
+        args.append(JSC::jsUndefined()); // No response options for redirect
+        
+        // Pass "redirect" string as the third parameter to indicate this is a redirect
+        // The responseOptions parameter from transformToReactElementWithOptions contains "redirect"
+        args.append(responseOptions);  // This should be the "redirect" string
         args.append(response); // Pass the Response object
 
         // Call the wrapComponent function

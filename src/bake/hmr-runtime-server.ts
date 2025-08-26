@@ -31,8 +31,19 @@ class RenderAbortError extends Error {
   }
 }
 
-// Make RenderAbortError globally available for other modules
+/// Created when the user does `return Response.redirect(...)`
+class RedirectAbortError extends Error {
+  constructor(
+    public response: Response,
+  ) {
+    super("Response.redirect() called");
+    this.name = "RedirectAbortError";
+  }
+}
+
+// Make RenderAbortError and RedirectAbortError globally available for other modules
 (globalThis as any).RenderAbortError = RenderAbortError;
+(globalThis as any).RedirectAbortError = RedirectAbortError;
 
 interface Exports {
   handleRequest: (
@@ -141,6 +152,13 @@ server_exports = {
         // return it so the Zig code can handle it and re-render new route
         return error.response;
       }
+      
+      // Handle Response.redirect() aborts
+      if (error instanceof RedirectAbortError) {
+        // Return the redirect response directly
+        return error.response;
+      }
+      
       throw error;
     }
   },

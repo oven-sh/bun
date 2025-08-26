@@ -516,8 +516,23 @@ pub fn constructRedirect(
     var headers_ref = response.init.headers.?;
     try headers_ref.put(.Location, url_string_slice.slice(), globalThis);
     const ptr = bun.new(Response, response);
+    
+    const response_js = ptr.toJS(globalThis);
+    
+    // Check if dev_server_async_local_storage is set (indicating we're in Bun dev server)
+    const vm = globalThis.bunVM();
+    if (vm.dev_server_async_local_storage.has()) {
+        // Mark this as a redirect Response that should be handled specially
+        // when used in a React component
+        const redirect_marker = ZigString.init("__bun_redirect__").toJS(globalThis);
+        
+        // Transform the Response to act as a React element with special redirect handling
+        // Pass "redirect" as the third parameter to indicate this is a redirect
+        const redirect_flag = ZigString.init("redirect").toJS(globalThis);
+        JSValue.transformToReactElementWithOptions(response_js, redirect_marker, redirect_flag, globalThis);
+    }
 
-    return ptr.toJS(globalThis);
+    return response_js;
 }
 
 pub fn constructRender(

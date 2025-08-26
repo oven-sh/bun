@@ -1304,7 +1304,6 @@ pub fn GlobWalker_(
 
         fn matchPatternSlow(this: *GlobWalker, pattern_component: *Component, filepath: []const u8) bool {
             return match(
-                this.arena.allocator(),
                 pattern_component.patternSlice(this.pattern),
                 filepath,
             ).matches();
@@ -1664,8 +1663,6 @@ pub fn matchWildcardFilepath(glob: []const u8, path: []const u8) bool {
 pub fn matchWildcardLiteral(literal: []const u8, path: []const u8) bool {
     return std.mem.eql(u8, literal, path);
 }
-
-pub const matchImpl = match;
 
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");

@@ -997,7 +997,7 @@ pub const CommandLineReporter = struct {
                 if (opts.ignore_patterns.len > 0) {
                     var should_ignore = false;
                     for (opts.ignore_patterns) |pattern| {
-                        if (bun.glob.match(bun.default_allocator, pattern, relative_path).matches()) {
+                        if (bun.glob.match(pattern, relative_path).matches()) {
                             should_ignore = true;
                             break;
                         }
@@ -1117,7 +1117,7 @@ pub const CommandLineReporter = struct {
 
                 var should_ignore = false;
                 for (opts.ignore_patterns) |pattern| {
-                    if (bun.glob.match(bun.default_allocator, pattern, relative_path).matches()) {
+                    if (bun.glob.match(pattern, relative_path).matches()) {
                         should_ignore = true;
                         break;
                     }

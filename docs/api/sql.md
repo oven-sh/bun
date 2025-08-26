@@ -835,6 +835,8 @@ try {
 }
 ```
 
+{% details summary="PostgreSQL-Specific Error Codes" %}
+
 ### PostgreSQL Connection Errors
 
 | Connection Errors                 | Description                                          |
@@ -899,6 +901,8 @@ try {
 | ---------------------------------------- | ------------------------------------- |
 | `ERR_POSTGRES_UNSAFE_TRANSACTION`        | Unsafe transaction operation detected |
 | `ERR_POSTGRES_INVALID_TRANSACTION_STATE` | Invalid transaction state             |
+
+{% /details %}
 
 ### SQLite-Specific Errors
 
@@ -994,13 +998,7 @@ We also haven't implemented some of the more uncommon features like:
 - Point & PostGIS types
 - All the multi-dimensional integer array types (only a couple of the types are supported)
 
-## Frequently Asked Questions
-
-> Why is this `Bun.sql` and not `Bun.postgres`?
-
-The plan is to add more database drivers in the future.
-
-> Why not just use an existing library?
+## Why not just use an existing library?
 
 npm packages like postgres.js, pg, and node-postgres can be used in Bun too. They're great options.
 

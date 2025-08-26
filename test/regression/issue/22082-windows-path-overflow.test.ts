@@ -2,10 +2,10 @@
 // https://github.com/oven-sh/bun/issues/22082
 // Crash on ollama.generate due to Windows path buffer overflow
 // The fix gracefully handles buffer overflow by falling back to regular path conversion
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
-import { resolve } from "node:path";
 import { promises as fs } from "node:fs";
+import { resolve } from "node:path";
 
 test("Windows path handling doesn't crash with long paths", async () => {
   // Create a temp directory with a nested structure to simulate long paths
@@ -14,17 +14,7 @@ test("Windows path handling doesn't crash with long paths", async () => {
   });
 
   // Test path resolution that could trigger the buffer overflow
-  const longPath = resolve(
-    dir,
-    "nested",
-    "deep",
-    "directory",
-    "structure",
-    "with",
-    "many",
-    "levels",
-    "file.txt"
-  );
+  const longPath = resolve(dir, "nested", "deep", "directory", "structure", "with", "many", "levels", "file.txt");
 
   // This should not crash - it may fail to access the file, but it shouldn't panic
   try {
@@ -45,7 +35,7 @@ test("Windows path handling doesn't crash with long paths", async () => {
     "could".repeat(100),
     "cause".repeat(100),
     "buffer".repeat(100),
-    "overflow.txt"
+    "overflow.txt",
   );
 
   // This should also not crash
@@ -63,7 +53,7 @@ test("Windows path handling doesn't crash with long paths", async () => {
   }).not.toThrow();
 
   expect(() => {
-    require("node:fs").existsSync(veryLongPath);  
+    require("node:fs").existsSync(veryLongPath);
   }).not.toThrow();
 });
 
@@ -78,11 +68,11 @@ test("ollama-like path handling doesn't crash", async () => {
     if (typeof imagePath !== "string") {
       return Buffer.from(imagePath).toString("base64");
     }
-    
+
     try {
       // This is the path resolution that triggered the crash
       const resolvedPath = resolve(imagePath);
-      
+
       if (require("node:fs").existsSync(resolvedPath)) {
         // Read and convert to base64
         const fileBuffer = await fs.readFile(resolvedPath);
@@ -91,21 +81,21 @@ test("ollama-like path handling doesn't crash", async () => {
     } catch (error) {
       // Continue if there's an error
     }
-    
+
     // Assume it's already base64
     return imagePath;
   }
 
   const imagePath = resolve(dir, "image.jpg");
-  
+
   // This should not crash
   const result = await simulateOllamaEncodeImage(imagePath);
   expect(result).toBeDefined();
   expect(typeof result).toBe("string");
-  
+
   // Test with a very long path
   const longImagePath = resolve(dir, "very".repeat(50) + "long".repeat(50) + "image.jpg");
-  
+
   // This should also not crash
   const longResult = await simulateOllamaEncodeImage(longImagePath);
   expect(longResult).toBeDefined();

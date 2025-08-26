@@ -280,22 +280,22 @@ pub fn toKernel32Path(wbuf: []u16, utf8: []const u8) [:0]u16 {
             return toWPath(wbuf, path);
         }
         wbuf[0..4].* = bun.windows.long_path_prefix;
-        
+
         // Convert the path to the remaining buffer space (leaving room for null terminator)
         if (wbuf.len <= 4) {
             // Edge case: buffer is exactly 4 characters, can only fit prefix
             wbuf[4] = 0;
             return wbuf[0..4 :0];
         }
-        
+
         const wpath = toWPath(wbuf[4..], path);
-        
+
         // Check if the result fits within buffer bounds
         if (wpath.len + 4 > wbuf.len) {
             // Path + prefix too long, fall back to regular conversion without prefix
             return toWPath(wbuf, path);
         }
-        
+
         return wbuf[0 .. wpath.len + 4 :0];
     }
     return toWPath(wbuf, path);

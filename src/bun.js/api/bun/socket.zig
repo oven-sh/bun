@@ -858,7 +858,7 @@ pub fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn writeMaybeCorked(this: *This, buffer: []const u8) i32 {
-            if (this.socket.isShutdown() or this.socket.isClosed()) {
+            if (this.socket.isShutdown() or this.socket.isClosed() or this.socket.isDetached()) {
                 return -1;
             }
 
@@ -884,14 +884,9 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn writeBuffered(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
                 this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                // TODO: should we separate unattached and detached? unattached shouldn't throw here
-                const err: jsc.SystemError = .{
-                    .errno = @intFromEnum(bun.sys.SystemErrno.EBADF),
-                    .code = .static("EBADF"),
-                    .message = .static("write EBADF"),
-                    .syscall = .static("write"),
-                };
-                return globalObject.throwValue(err.toErrorInstance(globalObject));
+                // Return false instead of throwing EBADF to match Node.js behavior
+                // where writes to closed sockets fail gracefully rather than throwing sync errors
+                return .false;
             }
 
             const args = callframe.argumentsUndef(2);

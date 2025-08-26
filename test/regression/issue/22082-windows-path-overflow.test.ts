@@ -1,6 +1,7 @@
 // Regression test for issue #22082
 // https://github.com/oven-sh/bun/issues/22082
 // Crash on ollama.generate due to Windows path buffer overflow
+// The fix gracefully handles buffer overflow by falling back to regular path conversion
 import { test, expect } from "bun:test";
 import { tempDirWithFiles } from "harness";
 import { resolve } from "node:path";

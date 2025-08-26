@@ -133,11 +133,9 @@ pub const js_fns = struct {
             return globalThis.throw("Cannot use {s} outside of the test runner. Run \"bun test\" to run tests.", .{cfg.signature});
         }
         const bunTestRoot = &bun.jsc.Jest.Jest.runner.?.describe2Root;
-        if (!cfg.allow_in_preload) {
-            const vm = globalThis.bunVM();
-            if (vm.is_in_preload) {
-                return globalThis.throw("Cannot use {s} during preload.", .{cfg.signature});
-            }
+        const vm = globalThis.bunVM();
+        if (vm.is_in_preload and !cfg.allow_in_preload) {
+            return globalThis.throw("Cannot use {s} during preload.", .{cfg.signature});
         }
         return bunTestRoot;
     }
@@ -158,7 +156,7 @@ pub const js_fns = struct {
                 errdefer group.log("ended in error", .{});
 
                 const bunTestRoot = try getActiveTestRoot(globalThis, .{ .signature = .{ .str = @tagName(tag) ++ "()" }, .allow_in_preload = true });
-                const bunTest = bunTestRoot.active_file orelse {
+                const bunTest = bunTestRoot.getActiveFile(globalThis.bunVM()) orelse {
                     @panic("TODO implement genericHook in preload");
                 };
 
@@ -190,14 +188,28 @@ pub const BunTest = struct {
     in_preload: bool,
     active_file: ?*BunTestFile,
 
+    hook_scope: *DescribeScope,
+
     pub fn init(outer_gpa: std.mem.Allocator) BunTest {
+        const gpa = outer_gpa;
+        const hook_scope = DescribeScope.create(gpa, .{
+            .parent = null,
+            .name = null,
+            .concurrent = false,
+            .mode = .normal,
+            .only = .no,
+            .filter = .no,
+        });
         return .{
             .gpa = outer_gpa,
             .in_preload = true,
             .active_file = null,
+            .hook_scope = hook_scope,
         };
     }
     pub fn deinit(this: *BunTest) void {
+        bun.assert(this.hook_scope.entries.items.len == 0); // entries must not be appended to the hook_scope
+        this.hook_scope.destroy(this.gpa);
         bun.assert(this.active_file == null);
     }
 
@@ -211,6 +223,12 @@ pub const BunTest = struct {
         this.active_file.?.deinit();
         this.gpa.destroy(this.active_file.?);
         this.active_file = null;
+    }
+    pub fn getActiveFile(this: *BunTest, vm: *jsc.VirtualMachine) ?*BunTestFile {
+        if (vm.is_in_preload) {
+            return null;
+        }
+        return this.active_file;
     }
 };
 
@@ -244,7 +262,7 @@ pub const BunTestFile = struct {
             .gpa = gpa,
             .phase = .collection,
             .file_id = file_id,
-            .collection = .init(gpa),
+            .collection = .init(gpa, bunTest),
             .execution = .init(gpa),
         };
     }
@@ -621,8 +639,8 @@ pub const BaseScope = struct {
             .filter = if (this.self_filter) .yes else .no,
         };
     }
-    pub fn deinit(this: BaseScope, buntest: *BunTestFile) void {
-        if (this.name) |name| buntest.gpa.free(name);
+    pub fn deinit(this: BaseScope, gpa: std.mem.Allocator) void {
+        if (this.name) |name| gpa.free(name);
     }
 };
 
@@ -644,19 +662,19 @@ pub const DescribeScope = struct {
             .afterEach = .init(gpa),
         });
     }
-    pub fn destroy(this: *DescribeScope, buntest: *BunTestFile) void {
-        for (this.entries.items) |*entry| entry.deinit(buntest);
-        for (this.beforeAll.items) |item| item.destroy(buntest);
-        for (this.beforeEach.items) |item| item.destroy(buntest);
-        for (this.afterAll.items) |item| item.destroy(buntest);
-        for (this.afterEach.items) |item| item.destroy(buntest);
+    pub fn destroy(this: *DescribeScope, gpa: std.mem.Allocator) void {
+        for (this.entries.items) |*entry| entry.deinit(gpa);
+        for (this.beforeAll.items) |item| item.destroy(gpa);
+        for (this.beforeEach.items) |item| item.destroy(gpa);
+        for (this.afterAll.items) |item| item.destroy(gpa);
+        for (this.afterEach.items) |item| item.destroy(gpa);
         this.entries.deinit();
         this.beforeAll.deinit();
         this.beforeEach.deinit();
         this.afterAll.deinit();
         this.afterEach.deinit();
-        this.base.deinit(buntest);
-        buntest.gpa.destroy(this);
+        this.base.deinit(gpa);
+        gpa.destroy(this);
     }
 
     fn markContainsOnly(this: *DescribeScope) void {
@@ -706,10 +724,10 @@ pub const ExecutionEntry = struct {
         });
         return entry;
     }
-    pub fn destroy(this: *ExecutionEntry, buntest: *BunTestFile) void {
-        if (this.callback) |*c| c.deinit(buntest.gpa);
-        this.base.deinit(buntest);
-        buntest.gpa.destroy(this);
+    pub fn destroy(this: *ExecutionEntry, gpa: std.mem.Allocator) void {
+        if (this.callback) |*c| c.deinit(gpa);
+        this.base.deinit(gpa);
+        gpa.destroy(this);
     }
 };
 pub const TestScheduleEntry = union(enum) {
@@ -717,11 +735,11 @@ pub const TestScheduleEntry = union(enum) {
     test_callback: *ExecutionEntry,
     fn deinit(
         this: *TestScheduleEntry,
-        buntest: *BunTestFile,
+        gpa: std.mem.Allocator,
     ) void {
         switch (this.*) {
-            .describe => |describe| describe.destroy(buntest),
-            .test_callback => |test_scope| test_scope.destroy(buntest),
+            .describe => |describe| describe.destroy(gpa),
+            .test_callback => |test_scope| test_scope.destroy(gpa),
         }
     }
     pub fn isOrContainsOnly(this: TestScheduleEntry) bool {

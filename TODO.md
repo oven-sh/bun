@@ -19,10 +19,9 @@ Complete before merge:
 - [ ] add tests & pass existing tests
 - [ ] add gc test (test that items referenced by a test callback are freed after the test is executed)
 - [ ] add back associating uncaught exceptions with the active test
-- [ ] `test.concurrent.only()`
-- [ ] `test.skip.only.concurrent()`. basically we need to make it a class that contains the options.
-- [ ] remove describe2.ts
-- [ ] remove describe2BeforeAll.ts
+- [x] `test.concurrent.only()`
+- [x] `test.skip.only.concurrent()`. basically we need to make it a class that contains the options.
+- [ ] move the testing files into being real behaviour tests
 - [ ] search for TODOs in the diff and fix them all
 - [ ] replace asserts with runtime throws or debug-only asserts (waitForPromise breaks many expectations)
 - [ ] check the todo list in https://linear.app/oven/issue/ENG-20152/new-buntest, confirm it fixes all those issues (or doesn't make them worse). add reproductions
@@ -40,6 +39,7 @@ Code quality:
 - [ ] In Execution.zig, rename order: ..., order_index to groups, group_index for consistency.
 - [ ] In Execution.zig, change (start, end) to (start, len)
 - [ ] In Execution.zig, change order sequence and entries to be slices rather than ArrayLists. We have to rework test() in test().
+- [ ] Should make line_no be an enum with a none option and a function to get if line nombers are enabled
 
 Follow-up:
 

@@ -15,12 +15,12 @@ const QueuedDescribe = struct {
     }
 };
 
-pub fn init(gpa: std.mem.Allocator) Collection {
+pub fn init(gpa: std.mem.Allocator, bun_test_root: *describe2.BunTest) Collection {
     group.begin(@src());
     defer group.end();
 
     const root_scope = DescribeScope.create(gpa, .{
-        .parent = null,
+        .parent = bun_test_root.hook_scope,
         .name = null,
         .concurrent = false,
         .mode = .normal,
@@ -35,7 +35,7 @@ pub fn init(gpa: std.mem.Allocator) Collection {
     };
 }
 pub fn deinit(this: *Collection) void {
-    this.root_scope.destroy(this.bunTest());
+    this.root_scope.destroy(this.bunTest().gpa);
     for (this.describe_callback_queue.items) |*item| {
         item.deinit(this.bunTest().gpa);
     }

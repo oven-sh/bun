@@ -2271,8 +2271,8 @@ pub const BundleV2 = struct {
 
                         // Store the original entry point name for virtual entries that fall back to file resolution
                         if (source_index) |idx| {
-                            const original_name = this.allocator().dupe(u8, resolve.import_record.specifier) catch bun.outOfMemory();
-                            this.graph.entry_point_original_names.put(this.allocator(), idx, original_name) catch bun.outOfMemory();
+                            const original_name = this.allocator().dupe(u8, resolve.import_record.specifier) catch |err| bun.handleOom(err);
+                            this.graph.entry_point_original_names.put(this.allocator(), idx, original_name) catch |err| bun.handleOom(err);
                         }
                         return;
                     }
@@ -2382,19 +2382,19 @@ pub const BundleV2 = struct {
 
                 if (out_source_index) |source_index| {
                     if (resolve.import_record.kind == .entry_point_build) {
-                        this.graph.entry_points.append(this.allocator(), source_index) catch bun.outOfMemory();
+                        this.graph.entry_points.append(this.allocator(), source_index) catch |err| bun.handleOom(err);
 
                         // Store the original entry point name for virtual entries
                         // This preserves the original name for output file naming
-                        const original_name = this.allocator().dupe(u8, resolve.import_record.specifier) catch bun.outOfMemory();
-                        this.graph.entry_point_original_names.put(this.allocator(), source_index.get(), original_name) catch bun.outOfMemory();
+                        const original_name = this.allocator().dupe(u8, resolve.import_record.specifier) catch |err| bun.handleOom(err);
+                        this.graph.entry_point_original_names.put(this.allocator(), source_index.get(), original_name) catch |err| bun.handleOom(err);
                     } else {
                         const source_import_records = &this.graph.ast.items(.import_records)[resolve.import_record.importer_source_index];
                         if (source_import_records.len <= resolve.import_record.import_record_index) {
                             const entry = this.resolve_tasks_waiting_for_import_source_index.getOrPut(
                                 this.allocator(),
                                 resolve.import_record.importer_source_index,
-                            ) catch bun.outOfMemory();
+                            ) catch |err| bun.handleOom(err);
                             if (!entry.found_existing) {
                                 entry.value_ptr.* = .{};
                             }
@@ -2404,7 +2404,7 @@ pub const BundleV2 = struct {
                                     .to_source_index = source_index,
                                     .import_record_index = resolve.import_record.import_record_index,
                                 },
-                            ) catch bun.outOfMemory();
+                            ) catch |err| bun.handleOom(err);
                         } else {
                             const import_record: *ImportRecord = &source_import_records.slice()[resolve.import_record.import_record_index];
                             import_record.source_index = source_index;

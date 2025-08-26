@@ -151,9 +151,6 @@ pub const Bunfig = struct {
         pub fn parse(this: *Parser, comptime cmd: Command.Tag) !void {
             bun.analytics.Features.bunfig += 1;
 
-            // Set default values
-            this.bunfig.env_auto_expand = true;
-
             const json = this.json;
             var allocator = this.allocator;
 

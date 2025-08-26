@@ -248,7 +248,6 @@ enum DotEnvBehavior {
 message EnvConfig {
   string prefix = 1;
   StringMap defaults = 2;
-  bool autoExpand = 3;
 }
 
 struct LoadedEnvConfig {

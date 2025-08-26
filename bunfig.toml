@@ -1,12 +1,12 @@
-# This file is used to configure Bun
-# Documentation: https://bun.sh/docs/cli/bunfig
+[test]
+# Large monorepos (like Bun) may want to specify the test directory more specifically 
+# By default, `bun test` scans every single folder recursively which, if you
+# have a gigantic submodule (like WebKit), requires lots of directory
+# traversals
+#
+# Instead, we can only scan the test directory for Bun's runtime tests
+root = "test"
+preload = "./test/preload.ts"
 
-# Uncomment the lines below to configure Bun's behavior
-# [env]
-# autoExpand = true
-
-# [bundle]
-# format = "esm"  # "esm" | "cjs" | "iife"
-
-# [install]
-# frozenLockfile = false
+[install]
+linker = "isolated"

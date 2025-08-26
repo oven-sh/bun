@@ -270,11 +270,12 @@ describeWithContainer(
       expect((await sql`select ${true} as x`)[0].x).toBe(1);
       const random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a bool)`;
-      const values = [{ a: true }, { a: false }];
+      const values = [{ a: true }, { a: false }, { a: 8 }];
       await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
-      const [[a], [b]] = await sql`select * from ${sql(random_name)}`.values();
+      const [[a], [b], [c]] = await sql`select * from ${sql(random_name)}`.values();
       expect(a).toBe(1);
       expect(b).toBe(0);
+      expect(c).toBe(8);
     });
 
     test("Date", async () => {

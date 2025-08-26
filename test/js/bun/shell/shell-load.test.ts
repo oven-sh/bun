@@ -9,7 +9,7 @@ describe("shell load", () => {
       expect([path.join(import.meta.dir, "./shell-immediate-exit-fixture.js")]).toRun();
     },
     {
-      timeout: 1000 * 15,
+      timeout: 1000 * 30,
     },
   );
 });

@@ -349,7 +349,12 @@ pub const Chunk = struct {
                             remain,
                             "\n//# debugId={}\n",
                             .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
-                        ) catch bun.outOfMemory()).len..];
+                        ) catch |err| switch (err) {
+                            error.NoSpaceLeft => std.debug.panic(
+                                "unexpected NoSpaceLeft error from bufPrint",
+                                .{},
+                            ),
+                        }).len..];
                     }
 
                     bun.assert(remain.len == 0);
@@ -377,7 +382,7 @@ pub const Chunk = struct {
                                 graph.heap.allocator(),
                                 "\n//# debugId={}\n",
                                 .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
-                            ) catch bun.outOfMemory();
+                            ) catch |err| bun.handleOom(err);
 
                             break :brk try joiner.doneWithEnd(allocator, debug_id_fmt);
                         }

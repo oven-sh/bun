@@ -129,7 +129,7 @@ pub fn addPartToFile(
 
                     entry.value_ptr.* = .init(list.items);
                 } else {
-                    entry.value_ptr.* = BabyList(u32).fromSlice(self.graph.allocator, &.{self.part_id}) catch bun.outOfMemory();
+                    entry.value_ptr.* = BabyList(u32).fromSlice(self.graph.allocator, &.{self.part_id}) catch |err| bun.handleOom(err);
                 }
             } else {
                 entry.value_ptr.push(self.graph.allocator, self.part_id) catch unreachable;
@@ -346,9 +346,9 @@ pub fn load(
 
     {
         var input_symbols = js_ast.Symbol.Map.initList(js_ast.Symbol.NestedList.init(this.ast.items(.symbols)));
-        var symbols = input_symbols.symbols_for_source.clone(this.allocator) catch bun.outOfMemory();
+        var symbols = bun.handleOom(input_symbols.symbols_for_source.clone(this.allocator));
         for (symbols.slice(), input_symbols.symbols_for_source.slice()) |*dest, src| {
-            dest.* = src.clone(this.allocator) catch bun.outOfMemory();
+            dest.* = bun.handleOom(src.clone(this.allocator));
         }
         this.symbols = js_ast.Symbol.Map.initList(symbols);
     }

@@ -13,10 +13,10 @@ pub fn deinit(self: *IndexStringList, allocator: std.mem.Allocator) void {
     self.map.deinit(allocator);
 }
 
-pub fn get(self: *IndexStringList, index: Index.Int) []const u8 {
-    return self.map.get(index).?;
+pub fn get(self: *const IndexStringList, index: Index.Int) ?[]const u8 {
+    return self.map.get(index);
 }
 
-pub fn put(self: *IndexStringList, index: Index.Int, value: []const u8) void {
-    self.map.put(index, value) catch unreachable;
+pub fn put(self: *IndexStringList, allocator: std.mem.Allocator, index: Index.Int, value: []const u8) !void {
+    try self.map.put(allocator, index, value);
 }

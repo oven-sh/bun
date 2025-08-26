@@ -1,8 +1,6 @@
-const std = @import("std");
-const bun = @import("bun");
-pub const Index = bun.ast.Index;
-
 const IndexStringList = @This();
+
+pub const Index = bun.ast.Index;
 
 map: std.AutoArrayHashMapUnmanaged(Index.Int, []const u8) = .{},
 
@@ -20,3 +18,6 @@ pub fn get(self: *const IndexStringList, index: Index.Int) ?[]const u8 {
 pub fn put(self: *IndexStringList, allocator: std.mem.Allocator, index: Index.Int, value: []const u8) !void {
     try self.map.put(allocator, index, value);
 }
+
+const bun = @import("bun");
+const std = @import("std");

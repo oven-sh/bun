@@ -470,6 +470,7 @@ const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 
 const EntryPoint = bun.bundle_v2.EntryPoint;
 const Index = bun.bundle_v2.Index;
+const IndexStringList = bun.bundle_v2.IndexStringList;
 const JSAst = bun.bundle_v2.JSAst;
 const JSMeta = bun.bundle_v2.JSMeta;
 const Logger = bun.bundle_v2.Logger;
@@ -478,4 +479,3 @@ const Ref = bun.bundle_v2.Ref;
 const ResolvedExports = bun.bundle_v2.ResolvedExports;
 const ServerComponentBoundary = bun.bundle_v2.ServerComponentBoundary;
 const TopLevelSymbolToParts = bun.bundle_v2.TopLevelSymbolToParts;
-const IndexStringList = bun.bundle_v2.IndexStringList;

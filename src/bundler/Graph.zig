@@ -103,6 +103,7 @@ pub const Index = bun.ast.Index;
 
 const string = []const u8;
 
+const IndexStringList = @import("./IndexStringList.zig");
 const Logger = @import("../logger.zig");
 const _resolver = @import("../resolver/resolver.zig");
 const std = @import("std");
@@ -124,4 +125,3 @@ const BundleV2 = bun.bundle_v2.BundleV2;
 const ParseTask = bun.bundle_v2.ParseTask;
 const PathToSourceIndexMap = bun.bundle_v2.PathToSourceIndexMap;
 const ThreadPool = bun.bundle_v2.ThreadPool;
-const IndexStringList = @import("IndexStringList.zig");

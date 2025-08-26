@@ -5,6 +5,8 @@ heap: ThreadLocalArena,
 
 /// Mapping user-specified entry points to their Source Index
 entry_points: std.ArrayListUnmanaged(Index) = .{},
+/// Maps entry point source indices to their original specifiers (for virtual entries resolved by plugins)
+entry_point_original_names: std.AutoArrayHashMapUnmanaged(Index.Int, []const u8) = .{},
 /// Every source index has an associated InputFile
 input_files: MultiArrayList(InputFile) = .{},
 /// Every source index has an associated Ast

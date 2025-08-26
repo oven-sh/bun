@@ -119,11 +119,11 @@ describe("bundler plugin onResolve entry point", () => {
         }
       });
     },
-    outputPaths: ["out/entry1.js.js", "out/entry2.js.js", "out/entry3.js.js"],
+    outputPaths: ["out/entry1.js", "out/entry2.js", "out/entry3.js"],
     run: [
-      { file: "out/entry1.js.js", stdout: "SUCCESS: entry1 modified" },
-      { file: "out/entry2.js.js", stdout: "SUCCESS: entry2 modified" },
-      { file: "out/entry3.js.js", stdout: "SUCCESS: entry3 modified" },
+      { file: "out/entry1.js", stdout: "SUCCESS: entry1 modified" },
+      { file: "out/entry2.js", stdout: "SUCCESS: entry2 modified" },
+      { file: "out/entry3.js", stdout: "SUCCESS: entry3 modified" },
     ],
   });
 });

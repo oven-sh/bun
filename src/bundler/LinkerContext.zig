@@ -211,7 +211,7 @@ pub const LinkerContext = struct {
 
         const sources: []const Logger.Source = this.parse_graph.input_files.items(.source);
 
-        try this.graph.load(entry_points, sources, server_component_boundaries, bundle.dynamic_import_entry_points.keys());
+        try this.graph.load(entry_points, sources, server_component_boundaries, bundle.dynamic_import_entry_points.keys(), &this.parse_graph.entry_point_original_names);
         bundle.dynamic_import_entry_points.deinit();
 
         var runtime_named_exports = &this.graph.ast.items(.named_exports)[Index.runtime.get()];

@@ -472,14 +472,13 @@ pub const PublishCommand = struct {
         var headers = http.HeaderBuilder{};
         headers.count("accept", "application/json");
 
+        var auth_buf = std.ArrayList(u8).init(allocator);
+        defer auth_buf.deinit();
+
         if (registry.token.len > 0) {
-            var auth_buf = std.ArrayList(u8).init(allocator);
-            defer auth_buf.deinit();
             auth_buf.writer().print("Bearer {s}", .{registry.token}) catch return false;
             headers.count("authorization", auth_buf.items);
         } else if (registry.auth.len > 0) {
-            var auth_buf = std.ArrayList(u8).init(allocator);
-            defer auth_buf.deinit();
             auth_buf.writer().print("Basic {s}", .{registry.auth}) catch return false;
             headers.count("authorization", auth_buf.items);
         }
@@ -488,13 +487,11 @@ pub const PublishCommand = struct {
         headers.append("accept", "application/json");
 
         if (registry.token.len > 0) {
-            var auth_buf = std.ArrayList(u8).init(allocator);
-            defer auth_buf.deinit();
+            auth_buf.clearRetainingCapacity();
             auth_buf.writer().print("Bearer {s}", .{registry.token}) catch return false;
             headers.append("authorization", auth_buf.items);
         } else if (registry.auth.len > 0) {
-            var auth_buf = std.ArrayList(u8).init(allocator);
-            defer auth_buf.deinit();
+            auth_buf.clearRetainingCapacity();
             auth_buf.writer().print("Basic {s}", .{registry.auth}) catch return false;
             headers.append("authorization", auth_buf.items);
         }

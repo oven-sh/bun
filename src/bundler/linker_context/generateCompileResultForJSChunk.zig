@@ -32,8 +32,7 @@ fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCon
     // as it must outlive the bundle task.
     const allocator = blk: {
         const dev = c.dev_server orelse break :blk default_allocator;
-        const graph = c.parse_graph.ast.items(.target)[part_range.source_index.get()].bakeGraph();
-        break :blk if (graph == .client) dev.allocator() else default_allocator;
+        break :blk dev.allocator();
     };
 
     var arena = &worker.temporary_arena;

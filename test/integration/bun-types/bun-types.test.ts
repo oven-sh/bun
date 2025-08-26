@@ -288,7 +288,7 @@ describe("@types/bun integration test", () => {
 
     test("test-globals FAILS when the test-globals.d.ts is not referenced", async () => {
       const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
-        files: { "my-test.test.ts": code }, // no reference to bun/test-globals
+        files: { "my-test.test.ts": code }, // no reference to bun-types/test-globals
       });
 
       expect(emptyInterfaces).toEqual(new Set()); // should still have no empty interfaces

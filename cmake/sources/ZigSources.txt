@@ -416,7 +416,7 @@ src/bundler/DeferredBatchTask.zig
 src/bundler/entry_points.zig
 src/bundler/Graph.zig
 src/bundler/HTMLImportManifest.zig
-src/bundler/IndexStringList.zig
+src/bundler/IndexStringMap.zig
 src/bundler/linker_context/computeChunks.zig
 src/bundler/linker_context/computeCrossChunkDependencies.zig
 src/bundler/linker_context/convertStmtsForChunk.zig

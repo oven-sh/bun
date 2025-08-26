@@ -227,7 +227,7 @@ pub fn load(
     sources: []const Logger.Source,
     server_component_boundaries: ServerComponentBoundary.List,
     dynamic_import_entry_points: []const Index.Int,
-    entry_point_original_names: *const IndexStringList,
+    entry_point_original_names: *const IndexStringMap,
 ) !void {
     const scb = server_component_boundaries.slice();
     try this.files.setCapacity(this.allocator, sources.len);
@@ -470,7 +470,7 @@ const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 
 const EntryPoint = bun.bundle_v2.EntryPoint;
 const Index = bun.bundle_v2.Index;
-const IndexStringList = bun.bundle_v2.IndexStringList;
+const IndexStringMap = bun.bundle_v2.IndexStringMap;
 const JSAst = bun.bundle_v2.JSAst;
 const JSMeta = bun.bundle_v2.JSMeta;
 const Logger = bun.bundle_v2.Logger;

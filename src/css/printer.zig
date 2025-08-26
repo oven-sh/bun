@@ -352,13 +352,13 @@ pub fn Printer(comptime Writer: type) type {
         pub fn writeFmt(this: *This, comptime fmt: []const u8, args: anytype) PrintErr!void {
             // assuming the writer comes from an ArrayList
             const start: usize = getWrittenAmt(this.dest);
-            this.dest.print(fmt, args) catch bun.outOfMemory();
+            bun.handleOom(this.dest.print(fmt, args));
             const written = getWrittenAmt(this.dest) - start;
             this.col += @intCast(written);
         }
 
         fn replaceDots(allocator: Allocator, s: []const u8) []const u8 {
-            var str = allocator.dupe(u8, s) catch bun.outOfMemory();
+            var str = bun.handleOom(allocator.dupe(u8, s));
             std.mem.replaceScalar(u8, str[0..], '.', '-');
             return str;
         }

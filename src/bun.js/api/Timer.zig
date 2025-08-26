@@ -315,7 +315,7 @@ pub const All = struct {
                 bun.String.createFormat(
                     "{d} does not fit into a 32-bit signed integer" ++ suffix,
                     .{countdown},
-                ) catch bun.outOfMemory()
+                ) catch |err| bun.handleOom(err)
             else
                 // -Infinity is handled by TimeoutNegativeWarning
                 bun.String.ascii("Infinity does not fit into a 32-bit signed integer" ++ suffix),
@@ -323,7 +323,7 @@ pub const All = struct {
                 bun.String.createFormat(
                     "{d} is a negative number" ++ suffix,
                     .{countdown},
-                ) catch bun.outOfMemory()
+                ) catch |err| bun.handleOom(err)
             else
                 bun.String.ascii("-Infinity is a negative number" ++ suffix),
             // std.fmt gives us "nan" but Node.js wants "NaN".

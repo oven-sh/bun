@@ -241,7 +241,7 @@ pub inline fn lenI(self: *MutableString) i32 {
 }
 
 pub fn toOwnedSlice(self: *MutableString) []u8 {
-    return bun.handleOom(self.list.toOwnedSlice(self.allocator));
+    return bun.handleOom(self.list.toOwnedSlice(self.allocator)); // TODO
 }
 
 pub fn toDynamicOwned(self: *MutableString) DynamicOwned([]u8) {

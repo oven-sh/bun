@@ -406,7 +406,7 @@ pub fn scheduleShutdown(this: *@This(), http: *AsyncHTTP) void {
         this.queued_shutdowns.append(bun.default_allocator, .{
             .async_http_id = http.async_http_id,
             .is_tls = http.client.isHTTPS(),
-        }) catch bun.outOfMemory();
+        }) catch |err| bun.handleOom(err);
     }
     if (this.has_awoken.load(.monotonic))
         this.loop.loop.wakeup();
@@ -422,7 +422,7 @@ pub fn scheduleRequestWrite(this: *@This(), http: *AsyncHTTP, messageType: Write
                 .is_tls = http.client.isHTTPS(),
                 .type = messageType,
             },
-        }) catch bun.outOfMemory();
+        }) catch |err| bun.handleOom(err);
     }
     if (this.has_awoken.load(.monotonic))
         this.loop.loop.wakeup();
@@ -431,7 +431,7 @@ pub fn scheduleRequestWrite(this: *@This(), http: *AsyncHTTP, messageType: Write
 pub fn scheduleProxyDeref(this: *@This(), proxy: *ProxyTunnel) void {
     // this is always called on the http thread
     {
-        this.queued_proxy_deref.append(bun.default_allocator, proxy) catch bun.outOfMemory();
+        bun.handleOom(this.queued_proxy_deref.append(bun.default_allocator, proxy));
     }
     if (this.has_awoken.load(.monotonic))
         this.loop.loop.wakeup();

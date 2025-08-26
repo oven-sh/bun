@@ -235,7 +235,7 @@ pub fn trackExternalAllocation(scope: Self, ptr: []const u8, ret_addr: ?usize, e
     const state = scope.internal_state;
     state.mutex.lock();
     defer state.mutex.unlock();
-    state.allocations.ensureUnusedCapacity(state.parent, 1) catch bun.outOfMemory();
+    bun.handleOom(state.allocations.ensureUnusedCapacity(state.parent, 1));
     trackAllocationAssumeCapacity(state, ptr, ptr.len, ret_addr orelse @returnAddress(), extra);
 }
 

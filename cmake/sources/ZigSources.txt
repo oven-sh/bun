@@ -650,6 +650,7 @@ src/glob.zig
 src/glob/GlobWalker.zig
 src/glob/match.zig
 src/Global.zig
+src/handle_oom.zig
 src/heap_breakdown.zig
 src/highway.zig
 src/hmac.zig

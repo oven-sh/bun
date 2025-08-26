@@ -94,7 +94,7 @@ pub noinline fn computeChunks(
                     .content = .{
                         .css = .{
                             .imports_in_chunk_in_order = order,
-                            .asts = this.allocator().alloc(bun.css.BundlerStyleSheet, order.len) catch bun.outOfMemory(),
+                            .asts = bun.handleOom(this.allocator().alloc(bun.css.BundlerStyleSheet, order.len)),
                         },
                     },
                     .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
@@ -156,7 +156,7 @@ pub noinline fn computeChunks(
                     var css_files_with_parts_in_chunk = std.AutoArrayHashMapUnmanaged(Index.Int, void){};
                     for (order.slice()) |entry| {
                         if (entry.kind == .source_index) {
-                            css_files_with_parts_in_chunk.put(this.allocator(), entry.kind.source_index.get(), {}) catch bun.outOfMemory();
+                            bun.handleOom(css_files_with_parts_in_chunk.put(this.allocator(), entry.kind.source_index.get(), {}));
                         }
                     }
                     css_chunk_entry.value_ptr.* = .{
@@ -169,7 +169,7 @@ pub noinline fn computeChunks(
                         .content = .{
                             .css = .{
                                 .imports_in_chunk_in_order = order,
-                                .asts = this.allocator().alloc(bun.css.BundlerStyleSheet, order.len) catch bun.outOfMemory(),
+                                .asts = bun.handleOom(this.allocator().alloc(bun.css.BundlerStyleSheet, order.len)),
                             },
                         },
                         .files_with_parts_in_chunk = css_files_with_parts_in_chunk,

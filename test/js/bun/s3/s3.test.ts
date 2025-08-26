@@ -158,6 +158,39 @@ describe.skipIf(!r2Credentials.endpoint && !isCI)("Virtual Hosted-Style", () => 
       const url = new URL(presigned);
       expect(url.hostname).toBe("bucket.s3.us-east-1.amazonaws.com");
     }
+
+    {
+      const client = new Bun.S3Client({
+        virtualHostedStyle: true,
+        bucket: "bucket",
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "us-west-2",
+      });
+      const presigned = client.presign("filename.txt", {
+        expiresIn: 3600,
+        method: "PUT",
+        contentLength: 200,
+      });
+      const url = new URL(presigned);
+      expect(url.hostname).toBe("bucket.s3.us-west-2.amazonaws.com");
+      expect(presigned.includes("Content-Length=200")).toBe(true);
+      expect(presigned.includes("X-Amz-Expires=3600")).toBe(true);
+    }
+
+    {
+      const client = new Bun.S3Client({
+        bucket: "bucket",
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "us-east-1",
+      });
+      const presigned = client.presign("filename.txt", {
+        ContentLength: 10000,
+      });
+      const url = new URL(presigned);
+      expect(presigned.includes("Content-Length=10000")).toBe(true);
+    }
   });
 
   it("inspect", () => {
@@ -419,6 +452,77 @@ for (let credentials of allCredentials) {
                 await bucket.write(tmp_filename, "Hello Bun!", { ...options, type: "application/xml" });
                 const response = await fetch(bucket.file(tmp_filename, options).presign());
                 expect(response.headers.get("content-type")).toStartWith("application/xml");
+              }
+            });
+
+            it("should enforce contentLength restrictions on S3Client presigned URLs", async () => {
+              const testContent = "Test data for S3Client";
+              const contentLength = testContent.length;
+              const uploadFilename = bucketInName ? `${S3Bucket}/${randomUUID()}-s3client` : `${randomUUID()}-s3client`;
+
+              {
+                const presignedUrl = bucket.presign(uploadFilename, {
+                  method: "PUT",
+                  expiresIn: 3600,
+                  contentLength: contentLength,
+                });
+
+                expect(presignedUrl.includes(`Content-Length=${contentLength}`)).toBe(true);
+
+                const response = await fetch(presignedUrl, {
+                  method: "PUT",
+                  body: testContent,
+                  headers: {
+                    "Content-Type": "text/plain",
+                  },
+                });
+
+                expect(response.status).toBe(200);
+
+                const file = bucket.file(uploadFilename, options);
+                const downloaded = await file.text();
+                expect(downloaded).toBe(testContent);
+
+                await file.unlink();
+              }
+
+              {
+                const presignedUrl = bucket.presign(uploadFilename + "-less", {
+                  method: "PUT",
+                  expiresIn: 3600,
+                  contentLength: contentLength,
+                });
+
+                const shortContent = "Short";
+                const response = await fetch(presignedUrl, {
+                  method: "PUT",
+                  body: shortContent,
+                  headers: {
+                    "Content-Type": "text/plain",
+                  },
+                });
+
+                expect([400, 403]).toContain(response.status);
+              }
+
+              {
+                const presignedUrl = bucket.presign(uploadFilename + "-more", {
+                  method: "PUT",
+                  expiresIn: 3600,
+                  contentLength: contentLength,
+                });
+
+                const longContent =
+                  "This content is definitely much longer than the expected 23 bytes and should cause a failure";
+                const response = await fetch(presignedUrl, {
+                  method: "PUT",
+                  body: longContent,
+                  headers: {
+                    "Content-Type": "text/plain",
+                  },
+                });
+
+                expect([400, 403]).toContain(response.status);
               }
             });
 
@@ -691,6 +795,107 @@ for (let credentials of allCredentials) {
                 const response = await fetch(s3file.presign());
                 expect(response.headers.get("content-type")).toStartWith("application/json");
               }
+            });
+
+            it("should enforce contentLength restrictions on PUT presigned URLs", async () => {
+              const testContent = "Hello, Bun!";
+              const contentLength = testContent.length;
+              const uploadFilename = tmp_filename + "-contentlength-test";
+
+              {
+                const s3file = s3(uploadFilename, options);
+                const presignedUrl = s3file.presign({
+                  method: "PUT",
+                  expiresIn: 3600,
+                  contentLength: contentLength,
+                });
+
+                expect(presignedUrl.includes(`Content-Length=${contentLength}`)).toBe(true);
+
+                const response = await fetch(presignedUrl, {
+                  method: "PUT",
+                  body: testContent,
+                  headers: {
+                    "Content-Type": "text/plain",
+                  },
+                });
+
+                expect(response.status).toBe(200);
+
+                const downloaded = await s3file.text();
+                expect(downloaded).toBe(testContent);
+
+                await s3file.unlink();
+              }
+
+              {
+                const s3file = s3(uploadFilename + "-less", options);
+                const presignedUrl = s3file.presign({
+                  method: "PUT",
+                  expiresIn: 3600,
+                  contentLength: contentLength,
+                });
+
+                const shortContent = "Short";
+                const response = await fetch(presignedUrl, {
+                  method: "PUT",
+                  body: shortContent,
+                  headers: {
+                    "Content-Type": "text/plain",
+                  },
+                });
+
+                expect([400, 403]).toContain(response.status);
+              }
+
+              {
+                const s3file = s3(uploadFilename + "-more", options);
+                const presignedUrl = s3file.presign({
+                  method: "PUT",
+                  expiresIn: 3600,
+                  contentLength: contentLength,
+                });
+
+                const longContent = "This is a much longer content than expected";
+                const response = await fetch(presignedUrl, {
+                  method: "PUT",
+                  body: longContent,
+                  headers: {
+                    "Content-Type": "text/plain",
+                  },
+                });
+
+                expect([400, 403]).toContain(response.status);
+              }
+            });
+
+            it("should work with ContentLength (AWS SDK style) restrictions", async () => {
+              const testData = Buffer.alloc(100, "x");
+              const uploadFilename = tmp_filename + "-aws-style";
+
+              const s3file = s3(uploadFilename, options);
+              const presignedUrl = s3file.presign({
+                method: "PUT",
+                expiresIn: 3600,
+                ContentLength: 100,
+              });
+
+              expect(presignedUrl.includes("Content-Length=100")).toBe(true);
+
+              const response = await fetch(presignedUrl, {
+                method: "PUT",
+                body: testData,
+                headers: {
+                  "Content-Type": "application/octet-stream",
+                },
+              });
+
+              expect(response.status).toBe(200);
+
+              const stat = await s3file.stat();
+              expect(stat.size).toBe(100);
+
+              await s3file.unlink();
             });
 
             it("should be able to upload large files in one go using Bun.write", async () => {
@@ -1223,6 +1428,36 @@ for (let credentials of allCredentials) {
               expiresIn: 10,
             });
             expect(url).toBeDefined();
+            expect(url.includes("X-Amz-Expires=10")).toBe(true);
+            expect(url.includes("X-Amz-Date")).toBe(true);
+            expect(url.includes("X-Amz-Signature")).toBe(true);
+            expect(url.includes("X-Amz-Credential")).toBe(true);
+            expect(url.includes("X-Amz-Algorithm")).toBe(true);
+            expect(url.includes("X-Amz-SignedHeaders")).toBe(true);
+          });
+          it("should work with contentLength", async () => {
+            const s3file = s3("s3://bucket/credentials-test", s3Options);
+            const url = s3file.presign({
+              expiresIn: 10,
+              contentLength: 200,
+            });
+            expect(url).toBeDefined();
+            expect(url.includes("Content-Length=200")).toBe(true);
+            expect(url.includes("X-Amz-Expires=10")).toBe(true);
+            expect(url.includes("X-Amz-Date")).toBe(true);
+            expect(url.includes("X-Amz-Signature")).toBe(true);
+            expect(url.includes("X-Amz-Credential")).toBe(true);
+            expect(url.includes("X-Amz-Algorithm")).toBe(true);
+            expect(url.includes("X-Amz-SignedHeaders")).toBe(true);
+          });
+          it("should work with ContentLength (AWS SDK style)", async () => {
+            const s3file = s3("s3://bucket/credentials-test", s3Options);
+            const url = s3file.presign({
+              expiresIn: 10,
+              ContentLength: 10000,
+            });
+            expect(url).toBeDefined();
+            expect(url.includes("Content-Length=10000")).toBe(true);
             expect(url.includes("X-Amz-Expires=10")).toBe(true);
             expect(url.includes("X-Amz-Date")).toBe(true);
             expect(url.includes("X-Amz-Signature")).toBe(true);

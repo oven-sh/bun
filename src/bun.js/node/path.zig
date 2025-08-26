@@ -2751,9 +2751,9 @@ pub fn resolveJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, allocato
     var bufLen: usize = if (isWindows) 8 else 0;
     for (paths) |path| bufLen += if (bufLen > 0 and path.len > 0) path.len + 1 else path.len;
     bufLen = @max(bufLen, PATH_SIZE(T));
-    const buf = bun.handleOom(allocator.alloc(T, bufLen));
+    const buf = try allocator.alloc(T, bufLen);
     defer allocator.free(buf);
-    const buf2 = bun.handleOom(allocator.alloc(T, bufLen));
+    const buf2 = try allocator.alloc(T, bufLen);
     defer allocator.free(buf2);
     return if (isWindows) resolveWindowsJS_T(T, globalObject, paths, buf, buf2) else resolvePosixJS_T(T, globalObject, paths, buf, buf2);
 }
@@ -2767,7 +2767,7 @@ pub fn resolve(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_large, arena.allocator());
     const allocator = stack_fallback.get();
 
-    var paths = bun.handleOom(allocator.alloc(string, args_len));
+    var paths = try allocator.alloc(string, args_len);
     defer allocator.free(paths);
     var path_count: usize = 0;
 
@@ -2885,9 +2885,9 @@ pub fn toNamespacedPathWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobal
 pub fn toNamespacedPathJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, path: []const T) bun.JSError!jsc.JSValue {
     if (!isWindows or path.len == 0) return bun.String.createUTF8ForJS(globalObject, path);
     const bufLen = @max(path.len, PATH_SIZE(T));
-    const buf = bun.handleOom(allocator.alloc(T, bufLen));
+    const buf = try allocator.alloc(T, bufLen);
     defer allocator.free(buf);
-    const buf2 = bun.handleOom(allocator.alloc(T, bufLen));
+    const buf2 = try allocator.alloc(T, bufLen);
     defer allocator.free(buf2);
     return toNamespacedPathWindowsJS_T(T, globalObject, path, buf, buf2);
 }

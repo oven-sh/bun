@@ -279,8 +279,8 @@ describeWithContainer(
       expect(d).toBe(-1);
       {
         random_name += "2";
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a tinyint(1) unsigned)`;
         try {
-          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a tinyint(1) unsigned)`;
           const values = [{ a: -1 }];
           await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
           expect.unreachable();
@@ -288,6 +288,11 @@ describeWithContainer(
           expect(e.code).toBe("ERR_MYSQL_SERVER_ERROR");
           expect(e.message).toContain("Out of range value for column 'a'");
         }
+
+        const values = [{ a: 255 }];
+        await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
+        const [[a]] = await sql`select * from ${sql(random_name)}`.values();
+        expect(a).toBe(255);
       }
     });
 

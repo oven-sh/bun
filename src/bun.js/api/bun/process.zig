@@ -151,6 +151,8 @@ pub const Process = struct {
     exit_handler: ProcessExitHandler = ProcessExitHandler{},
     sync: bool = false,
     event_loop: jsc.EventLoopHandle,
+    /// Linux container context - must be cleaned up when process exits
+    container_context: if (Environment.isLinux) ?*LinuxContainer.ContainerContext else void = if (Environment.isLinux) null else {},
 
     pub fn memoryCost(_: *const Process) usize {
         return @sizeOf(@This());
@@ -189,6 +191,7 @@ pub const Process = struct {
 
                 break :brk Status{ .running = {} };
             },
+            .container_context = if (Environment.isLinux) posix.container_context else {},
         });
     }
 
@@ -213,6 +216,15 @@ pub const Process = struct {
         this.status = status;
 
         if (this.hasExited()) {
+            // Clean up container context BEFORE detaching
+            if (comptime Environment.isLinux) {
+                if (this.container_context) |ctx| {
+                    log("Cleaning up container context for PID {d}", .{this.pid});
+                    ctx.cleanup();
+                    ctx.deinit();
+                    this.container_context = null;
+                }
+            }
             this.detach();
         }
 
@@ -489,6 +501,16 @@ pub const Process = struct {
     }
 
     fn deinit(this: *Process) void {
+        // Ensure container cleanup happens even if process didn't exit normally
+        if (comptime Environment.isLinux) {
+            if (this.container_context) |ctx| {
+                log("Cleaning up container context in deinit for PID {d}", .{this.pid});
+                ctx.cleanup();
+                ctx.deinit();
+                this.container_context = null;
+            }
+        }
+        
         this.poller.deinit();
         bun.destroy(this);
     }
@@ -1105,6 +1127,8 @@ pub const PosixSpawnResult = struct {
     stderr: ?bun.FileDescriptor = null,
     ipc: ?bun.FileDescriptor = null,
     extra_pipes: std.ArrayList(bun.FileDescriptor) = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator),
+    /// Linux container context - ownership is transferred to the Process
+    container_context: if (Environment.isLinux) ?*LinuxContainer.ContainerContext else void = if (Environment.isLinux) null else {},
 
     memfds: [3]bool = .{ false, false, false },
 
@@ -1241,6 +1265,13 @@ pub fn spawnProcessPosix(
 
     var attr = try PosixSpawn.Attr.init();
     defer attr.deinit();
+    
+    // Enable PDEATHSIG when using containers for better cleanup guarantees
+    if (comptime Environment.isLinux) {
+        if (options.container != null) {
+            attr.set_pdeathsig = true;
+        }
+    }
 
     var flags: i32 = bun.c.POSIX_SPAWN_SETSIGDEF | bun.c.POSIX_SPAWN_SETSIGMASK;
 
@@ -1483,15 +1514,42 @@ pub fn spawnProcessPosix(
                 switch (err) {
                     LinuxContainer.ContainerError.NotLinux => return .{ .err = bun.sys.Error.fromCode(.NOSYS, .open) },
                     LinuxContainer.ContainerError.RequiresRoot => return .{ .err = bun.sys.Error.fromCode(.PERM, .open) },
+                    LinuxContainer.ContainerError.InsufficientPrivileges => return .{ .err = bun.sys.Error.fromCode(.PERM, .open) },
+                    LinuxContainer.ContainerError.OutOfMemory => return .{ .err = bun.sys.Error.fromCode(.NOMEM, .open) },
                     else => return .{ .err = bun.sys.Error.fromCode(.INVAL, .open) },
                 }
             };
             
             container_context.?.setup() catch |err| {
+                // Clean up on error
+                defer {
+                    container_context.?.deinit();
+                    container_context = null;
+                }
+                
                 switch (err) {
-                    LinuxContainer.ContainerError.NamespaceNotSupported => return .{ .err = bun.sys.Error.fromCode(.NOSYS, .open) },
-                    LinuxContainer.ContainerError.CgroupNotSupported => return .{ .err = bun.sys.Error.fromCode(.NOSYS, .mkdir) },
-                    LinuxContainer.ContainerError.MountFailed => return .{ .err = bun.sys.Error.fromCode(.PERM, .open) },
+                    LinuxContainer.ContainerError.NamespaceNotSupported,
+                    LinuxContainer.ContainerError.UserNamespaceNotSupported,
+                    LinuxContainer.ContainerError.PidNamespaceNotSupported,
+                    LinuxContainer.ContainerError.NetworkNamespaceNotSupported,
+                    LinuxContainer.ContainerError.MountNamespaceNotSupported,
+                    LinuxContainer.ContainerError.Clone3NotSupported => return .{ .err = bun.sys.Error.fromCode(.NOSYS, .open) },
+                    
+                    LinuxContainer.ContainerError.CgroupNotSupported,
+                    LinuxContainer.ContainerError.CgroupV2NotAvailable => return .{ .err = bun.sys.Error.fromCode(.NOSYS, .mkdir) },
+                    
+                    LinuxContainer.ContainerError.OverlayfsNotSupported,
+                    LinuxContainer.ContainerError.TmpfsNotSupported,
+                    LinuxContainer.ContainerError.BindMountNotSupported => return .{ .err = bun.sys.Error.fromCode(.NOSYS, .open) },
+                    
+                    LinuxContainer.ContainerError.MountFailed,
+                    LinuxContainer.ContainerError.NetworkSetupFailed => return .{ .err = bun.sys.Error.fromCode(.PERM, .open) },
+                    
+                    LinuxContainer.ContainerError.InsufficientPrivileges,
+                    LinuxContainer.ContainerError.RequiresRoot => return .{ .err = bun.sys.Error.fromCode(.PERM, .open) },
+                    
+                    LinuxContainer.ContainerError.InvalidConfiguration => return .{ .err = bun.sys.Error.fromCode(.INVAL, .open) },
+                    LinuxContainer.ContainerError.OutOfMemory => return .{ .err = bun.sys.Error.fromCode(.NOMEM, .open) },
                     else => return .{ .err = bun.sys.Error.fromCode(.INVAL, .open) },
                 }
             };
@@ -1526,13 +1584,16 @@ pub fn spawnProcessPosix(
             spawned.extra_pipes = extra_fds;
             extra_fds = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator);
 
-            // Add process to cgroup if using containers
+            // Add process to cgroup and transfer ownership of container context
             if (comptime Environment.isLinux) {
                 if (container_context) |ctx| {
                     ctx.addProcessToCgroup(pid) catch |err| {
                         log("Failed to add process {d} to cgroup: {}", .{ pid, err });
                         // Non-fatal error, continue with spawning
                     };
+                    // Transfer ownership to PosixSpawnResult
+                    spawned.container_context = container_context;
+                    container_context = null; // Prevent double-free
                 }
             }
 
@@ -2294,10 +2355,15 @@ fn spawnWithContainer(
     envp: [*:null]?[*:0]const u8,
     container_context: *LinuxContainer.ContainerContext,
 ) bun.sys.Maybe(std.posix.pid_t) {
-    _ = container_context; // TODO: Use container_context for additional setup if needed
+    _ = container_context; // Container setup already done, cleanup handled by Process deinit
     
-    // For now, just use the regular posix_spawn since the namespace setup 
-    // was already done in the container setup phase
+    // Add posix_spawn file action to set PR_SET_PDEATHSIG
+    // This ensures the child gets SIGKILL if the parent (Bun) dies unexpectedly
+    // Note: This would require extending posix_spawn actions, so for now we rely on:
+    // 1. PID namespace (kills all children when namespace leader dies)
+    // 2. Process.deinit cleanup (for normal exits)
+    // 3. Cgroup freezer in cleanup (prevents new processes during cleanup)
+    
     return PosixSpawn.spawnZ(argv0, actions, attr, argv, envp);
 }
 

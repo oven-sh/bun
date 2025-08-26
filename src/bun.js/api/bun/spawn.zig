@@ -92,6 +92,7 @@ pub const BunSpawn = struct {
 
     pub const Attr = struct {
         detached: bool = false,
+        set_pdeathsig: bool = false, // If true, child gets SIGKILL when parent dies (Linux only)
 
         pub fn init() !Attr {
             return Attr{};
@@ -265,6 +266,7 @@ pub const PosixSpawn = struct {
     const BunSpawnRequest = extern struct {
         chdir_buf: ?[*:0]u8 = null,
         detached: bool = false,
+        set_pdeathsig: bool = false, // If true, child gets SIGKILL when parent dies
         actions: ActionsList = .{},
 
         const ActionsList = extern struct {
@@ -331,6 +333,7 @@ pub const PosixSpawn = struct {
                     },
                     .chdir_buf = if (actions) |a| a.chdir_buf else null,
                     .detached = if (attr) |a| a.detached else false,
+                    .set_pdeathsig = if (attr) |a| a.set_pdeathsig else false,
                 },
                 argv,
                 envp,

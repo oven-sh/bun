@@ -1251,50 +1251,128 @@ pub fn spawnMaybeSync(
                     }
 
                     var container_opts = LinuxContainer.ContainerOptions{};
+                    var namespace_opts: ?LinuxContainer.NamespaceOptions = null;
+                    var resource_limits: ?LinuxContainer.ResourceLimits = null;
+                    var fs_mounts = std.ArrayList(LinuxContainer.FilesystemMount).init(bun.default_allocator);
 
-                    if (try container_val.get(globalThis, "cgroup")) |val| {
-                        if (val.isBoolean()) {
-                            container_opts.cgroup = val.asBoolean();
+                    // Parse namespace options
+                    if (try container_val.get(globalThis, "namespace")) |ns_val| {
+                        if (ns_val.isObject()) {
+                            var ns = LinuxContainer.NamespaceOptions{};
+                            
+                            // PID namespace
+                            if (try ns_val.get(globalThis, "pid")) |val| {
+                                if (val.isBoolean()) {
+                                    ns.pid = val.asBoolean();
+                                }
+                            }
+                            
+                            // User namespace
+                            if (try ns_val.get(globalThis, "user")) |val| {
+                                if (val.isBoolean()) {
+                                    ns.user = .{ .enable = val.asBoolean() };
+                                } else if (val.isObject()) {
+                                    // TODO: Parse custom UID/GID mappings
+                                    ns.user = .{ .enable = true };
+                                }
+                            }
+                            
+                            // Network namespace
+                            if (try ns_val.get(globalThis, "network")) |val| {
+                                if (val.isBoolean()) {
+                                    ns.network = .{ .enable = val.asBoolean() };
+                                } else if (val.isObject()) {
+                                    // TODO: Parse advanced network config
+                                    ns.network = .{ .enable = true };
+                                }
+                            }
+                            
+                            namespace_opts = ns;
                         }
                     }
-
-                    if (try container_val.get(globalThis, "userNamespace")) |val| {
-                        if (val.isBoolean()) {
-                            container_opts.user_namespace = val.asBoolean();
-                        }
-                    }
-
-                    if (try container_val.get(globalThis, "pidNamespace")) |val| {
-                        if (val.isBoolean()) {
-                            container_opts.pid_namespace = val.asBoolean();
-                        }
-                    }
-
-                    if (try container_val.get(globalThis, "networkNamespace")) |val| {
-                        if (val.isBoolean()) {
-                            container_opts.network_namespace = val.asBoolean();
-                        }
-                    }
-
-                    if (try container_val.get(globalThis, "memoryLimit")) |val| {
-                        if (val.isNumber()) {
-                            const limit = val.asNumber();
-                            if (limit > 0 and !std.math.isInf(limit)) {
-                                container_opts.memory_limit = @intFromFloat(limit);
+                    
+                    // Parse filesystem mounts
+                    if (try container_val.get(globalThis, "fs")) |fs_val| {
+                        if (fs_val.isArray()) {
+                            var iter = try fs_val.arrayIterator(globalThis);
+                            while (try iter.next()) |mount_val| {
+                                if (!mount_val.isObject()) continue;
+                                
+                                const type_val = try mount_val.get(globalThis, "type") orelse continue;
+                                if (!type_val.isString()) continue;
+                                
+                                const type_str = (try type_val.toBunString(globalThis)).toUTF8(bun.default_allocator);
+                                defer type_str.deinit();
+                                
+                                const to_val = try mount_val.get(globalThis, "to") orelse continue;
+                                if (!to_val.isString()) continue;
+                                const to_str = (try to_val.toBunString(globalThis)).toUTF8(bun.default_allocator);
+                                const to_owned = bun.default_allocator.dupe(u8, to_str.slice()) catch continue;
+                                
+                                var mount = LinuxContainer.FilesystemMount{
+                                    .type = if (std.mem.eql(u8, type_str.slice(), "overlayfs"))
+                                        .overlayfs
+                                    else if (std.mem.eql(u8, type_str.slice(), "tmpfs"))
+                                        .tmpfs
+                                    else if (std.mem.eql(u8, type_str.slice(), "bind"))
+                                        .bind
+                                    else continue,
+                                    .to = to_owned,
+                                };
+                                
+                                // Parse from field for bind mounts
+                                if (mount.type == .bind) {
+                                    if (try mount_val.get(globalThis, "from")) |from_val| {
+                                        if (from_val.isString()) {
+                                            const from_str = (try from_val.toBunString(globalThis)).toUTF8(bun.default_allocator);
+                                            mount.from = bun.default_allocator.dupe(u8, from_str.slice()) catch continue;
+                                        }
+                                    }
+                                }
+                                
+                                // TODO: Parse mount-specific options
+                                
+                                fs_mounts.append(mount) catch continue;
                             }
                         }
                     }
-
-                    if (try container_val.get(globalThis, "cpuLimit")) |val| {
-                        if (val.isNumber()) {
-                            const limit = val.asNumber();
-                            if (limit > 0 and limit <= 100 and !std.math.isInf(limit)) {
-                                container_opts.cpu_limit = @floatCast(limit / 100.0);
+                    
+                    // Parse resource limits
+                    if (try container_val.get(globalThis, "limit")) |limit_val| {
+                        if (limit_val.isObject()) {
+                            var limits = LinuxContainer.ResourceLimits{};
+                            
+                            // CPU limit
+                            if (try limit_val.get(globalThis, "cpu")) |val| {
+                                if (val.isNumber()) {
+                                    const limit = val.asNumber();
+                                    if (limit > 0 and limit <= 100 and !std.math.isInf(limit)) {
+                                        limits.cpu = @floatCast(limit);
+                                    }
+                                }
                             }
+                            
+                            // RAM limit
+                            if (try limit_val.get(globalThis, "ram")) |val| {
+                                if (val.isNumber()) {
+                                    const limit = val.asNumber();
+                                    if (limit > 0 and !std.math.isInf(limit)) {
+                                        limits.ram = @intFromFloat(limit);
+                                    }
+                                }
+                            }
+                            
+                            resource_limits = limits;
                         }
                     }
-
-                    container_options = container_opts;
+                    
+                    // Build final container options
+                    if (namespace_opts != null or fs_mounts.items.len > 0 or resource_limits != null) {
+                        container_opts.namespace = namespace_opts;
+                        container_opts.fs = if (fs_mounts.items.len > 0) fs_mounts.items else null;
+                        container_opts.limit = resource_limits;
+                        container_options = container_opts;
+                    }
                 }
             }
         } else {

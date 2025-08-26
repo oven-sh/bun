@@ -264,18 +264,31 @@ describeWithContainer(
       expect((await sql`select ${"hello"} as x`)[0].x).toBe("hello");
     });
 
-    test("Boolean", async () => {
+    test("Boolean/TinyInt", async () => {
       // Protocol will always return 0 or 1 for TRUE and FALSE when not using a table.
       expect((await sql`select ${false} as x`)[0].x).toBe(0);
       expect((await sql`select ${true} as x`)[0].x).toBe(1);
-      const random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+      let random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a bool)`;
-      const values = [{ a: true }, { a: false }, { a: 8 }];
+      const values = [{ a: true }, { a: false }, { a: 8 }, { a: -1 }];
       await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
-      const [[a], [b], [c]] = await sql`select * from ${sql(random_name)}`.values();
+      const [[a], [b], [c], [d]] = await sql`select * from ${sql(random_name)}`.values();
       expect(a).toBe(1);
       expect(b).toBe(0);
       expect(c).toBe(8);
+      expect(d).toBe(-1);
+      {
+        random_name += "2";
+        try {
+          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a tinyint(1) unsigned)`;
+          const values = [{ a: -1 }];
+          await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
+          expect.unreachable();
+        } catch (e: any) {
+          expect(e.code).toBe("ERR_MYSQL_SERVER_ERROR");
+          expect(e.message).toContain("Out of range value for column 'a'");
+        }
+      }
     });
 
     test("Date", async () => {

@@ -3,6 +3,7 @@ packages/bun-usockets/src/crypto/sni_tree.cpp
 src/bake/BakeGlobalObject.cpp
 src/bake/BakeProduction.cpp
 src/bake/BakeSourceProvider.cpp
+src/bake/DevServerSourceProvider.cpp
 src/bun.js/bindings/ActiveDOMCallback.cpp
 src/bun.js/bindings/AsymmetricKeyValue.cpp
 src/bun.js/bindings/AsyncContextFrame.cpp
@@ -396,6 +397,7 @@ src/bun.js/bindings/webcore/ReadableStreamDefaultController.cpp
 src/bun.js/bindings/webcore/ReadableStreamSink.cpp
 src/bun.js/bindings/webcore/ReadableStreamSource.cpp
 src/bun.js/bindings/webcore/ResourceTiming.cpp
+src/bun.js/bindings/webcore/ResponseHelpers.cpp
 src/bun.js/bindings/webcore/RFC7230.cpp
 src/bun.js/bindings/webcore/SerializedScriptValue.cpp
 src/bun.js/bindings/webcore/ServerTiming.cpp

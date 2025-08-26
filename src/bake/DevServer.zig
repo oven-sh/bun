@@ -840,7 +840,8 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
             dev,
             arena.allocator(),
             source_id.kind,
-            dev.allocator(),
+            dev.allocator,
+            .client,
         ) catch bun.outOfMemory();
         const response = StaticRoute.initFromAnyBlob(&.fromOwnedSlice(dev.allocator(), json_bytes), .{
             .server = dev.server,
@@ -952,7 +953,7 @@ fn ensureRouteIsBundled(
     dev: *DevServer,
     route_bundle_index: RouteBundle.Index,
     kind: DeferredRequest.Handler.Kind,
-    req: *Request,
+    req: ReqOrSaved,
     resp: AnyResponse,
 ) bun.JSError!void {
     assert(dev.magic == .valid);
@@ -1067,35 +1068,60 @@ fn ensureRouteIsBundled(
             );
         },
         .loaded => switch (kind) {
-            .server_handler => try dev.onFrameworkRequestWithBundle(route_bundle_index, .{ .stack = req }, resp),
-            .bundled_html_page => dev.onHtmlRequestWithBundle(route_bundle_index, resp, bun.http.Method.which(req.method()) orelse .POST),
+            .server_handler => try dev.onFrameworkRequestWithBundle(route_bundle_index, if (req == .req) .{ .stack = req.req } else .{ .saved = req.saved }, resp),
+            .bundled_html_page => dev.onHtmlRequestWithBundle(route_bundle_index, resp, req.method()),
         },
     }
 }
+
+const ReqOrSaved = union(enum) {
+    req: *Request,
+    saved: bun.jsc.API.SavedRequest,
+
+    pub fn method(this: *const @This()) bun.http.Method {
+        return switch (this.*) {
+            .req => |req| bun.http.Method.which(req.method()) orelse .POST,
+            .saved => |saved| saved.request.method,
+        };
+    }
+};
 
 fn deferRequest(
     dev: *DevServer,
     requests_array: *DeferredRequest.List,
     route_bundle_index: RouteBundle.Index,
     kind: DeferredRequest.Handler.Kind,
-    req: *Request,
+    req: ReqOrSaved,
     resp: AnyResponse,
 ) !void {
     const deferred = dev.deferred_request_pool.get();
-    const method = bun.http.Method.which(req.method()) orelse .POST;
+    debug.log("DeferredRequest(0x{x}).init", .{@intFromPtr(&deferred.data)});
+    const method = req.method();
     deferred.data = .{
         .route_bundle_index = route_bundle_index,
         .dev = dev,
         .ref_count = .init(),
         .handler = switch (kind) {
-            .bundled_html_page => .{ .bundled_html_page = .{ .response = resp, .method = method } },
-            .server_handler => .{
-                .server_handler = dev.server.?.prepareAndSaveJsRequestContext(req, resp, dev.vm.global, method) orelse return,
+            .bundled_html_page => brk: {
+                resp.onAborted(*DeferredRequest, DeferredRequest.onAbort, &deferred.data);
+                break :brk .{ .bundled_html_page = .{ .response = resp, .method = method } };
+            },
+            .server_handler => brk: {
+                const server_handler = switch (req) {
+                    .req => |r| dev.server.?.prepareAndSaveJsRequestContext(r, resp, dev.vm.global, method) orelse {
+                        dev.deferred_request_pool.put(deferred);
+                        return;
+                    },
+                    .saved => |saved| saved,
+                };
+                server_handler.ctx.setAbortCallback(DeferredRequest.onAbortWrapper, &deferred.data);
+                break :brk .{
+                    .server_handler = server_handler,
+                };
             },
         },
     };
     deferred.data.ref();
-    resp.onAborted(*DeferredRequest, DeferredRequest.onAbort, &deferred.data);
     requests_array.prepend(deferred);
 }
 
@@ -1182,7 +1208,7 @@ fn onFrameworkRequestWithBundle(
     const route_bundle = dev.routeBundlePtr(route_bundle_index);
     assert(route_bundle.data == .framework);
 
-    const bundle = &route_bundle.data.framework;
+    const framework_bundle = &route_bundle.data.framework;
 
     // Extract route params by re-matching the URL
     var params: FrameworkRouter.MatchedParams = undefined;
@@ -1231,7 +1257,7 @@ fn onFrameworkRequestWithBundle(
             const value_str = bun.String.cloneUTF8(param.value);
             defer value_str.deref();
 
-            obj.put(global, key_str, value_str.toJS(global));
+            _ = try obj.putBunStringOneOrArray(global, &key_str, value_str.toJS(global));
         }
         break :blk obj;
     } else JSValue.null;
@@ -1239,13 +1265,31 @@ fn onFrameworkRequestWithBundle(
     const server_request_callback = dev.server_fetch_function_callback.get() orelse
         unreachable; // did not initialize server code
 
-    const router_type = dev.router.typePtr(dev.router.routePtr(bundle.route_index).type);
+    const router_type = dev.router.typePtr(dev.router.routePtr(framework_bundle.route_index).type);
 
-    dev.server.?.onRequestFromSaved(
+    // FIXME: We should not create these on every single request
+    // Wrapper functions for AsyncLocalStorage that match JSHostFnZig signature
+    const SetAsyncLocalStorageWrapper = struct {
+        pub fn call(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+            return VirtualMachine.VirtualMachine__setDevServerAsyncLocalStorage(global, callframe);
+        }
+    };
+
+    const GetAsyncLocalStorageWrapper = struct {
+        pub fn call(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+            return VirtualMachine.VirtualMachine__getDevServerAsyncLocalStorage(global, callframe);
+        }
+    };
+
+    // Create the setter and getter functions for AsyncLocalStorage
+    const setAsyncLocalStorage = jsc.JSFunction.create(dev.vm.global, "setDevServerAsyncLocalStorage", SetAsyncLocalStorageWrapper.call, 1, .{});
+    const getAsyncLocalStorage = jsc.JSFunction.create(dev.vm.global, "getDevServerAsyncLocalStorage", GetAsyncLocalStorageWrapper.call, 0, .{});
+
+    dev.server.?.onSavedRequest(
         req,
         resp,
         server_request_callback,
-        5,
+        7,
         .{
             // routerTypeMain
             router_type.server_file_string.get() orelse str: {
@@ -1257,17 +1301,17 @@ fn onFrameworkRequestWithBundle(
                 break :str str;
             },
             // routeModules
-            bundle.cached_module_list.get() orelse arr: {
+            framework_bundle.cached_module_list.get() orelse arr: {
                 const global = dev.vm.global;
                 const keys = dev.server_graph.bundled_files.keys();
                 var n: usize = 1;
-                var route = dev.router.routePtr(bundle.route_index);
+                var route = dev.router.routePtr(framework_bundle.route_index);
                 while (true) {
                     if (route.file_layout != .none) n += 1;
                     route = dev.router.routePtr(route.parent.unwrap() orelse break);
                 }
                 const arr = try JSValue.createEmptyArray(global, n);
-                route = dev.router.routePtr(bundle.route_index);
+                route = dev.router.routePtr(framework_bundle.route_index);
                 {
                     const relative_path_buf = bun.path_buffer_pool.get();
                     defer bun.path_buffer_pool.put(relative_path_buf);
@@ -1288,11 +1332,11 @@ fn onFrameworkRequestWithBundle(
                     }
                     route = dev.router.routePtr(route.parent.unwrap() orelse break);
                 }
-                bundle.cached_module_list = .create(arr, global);
+                framework_bundle.cached_module_list = .create(arr, global);
                 break :arr arr;
             },
             // clientId
-            bundle.cached_client_bundle_url.get() orelse str: {
+            framework_bundle.cached_client_bundle_url.get() orelse str: {
                 const bundle_index: u32 = route_bundle_index.get();
                 const generation: u32 = route_bundle.client_script_generation;
                 const str = bun.String.createFormat(client_prefix ++ "/route-{}{}.js", .{
@@ -1301,17 +1345,21 @@ fn onFrameworkRequestWithBundle(
                 }) catch bun.outOfMemory();
                 defer str.deref();
                 const js = str.toJS(dev.vm.global);
-                bundle.cached_client_bundle_url = .create(js, dev.vm.global);
+                framework_bundle.cached_client_bundle_url = .create(js, dev.vm.global);
                 break :str js;
             },
             // styles
-            bundle.cached_css_file_array.get() orelse arr: {
+            framework_bundle.cached_css_file_array.get() orelse arr: {
                 const js = dev.generateCssJSArray(route_bundle) catch bun.outOfMemory();
-                bundle.cached_css_file_array = .create(js, dev.vm.global);
+                framework_bundle.cached_css_file_array = .create(js, dev.vm.global);
                 break :arr js;
             },
             // params
             params_js_value,
+            // setDevServerAsyncLocalStorage function
+            setAsyncLocalStorage,
+            // getDevServerAsyncLocalStorage function
+            getAsyncLocalStorage,
         },
     );
 }
@@ -1476,7 +1524,7 @@ fn generateJavaScriptCodeForHTMLFile(
 
 pub fn onJsRequestWithBundle(dev: *DevServer, bundle_index: RouteBundle.Index, resp: AnyResponse, method: bun.http.Method) void {
     const route_bundle = dev.routeBundlePtr(bundle_index);
-    const blob = route_bundle.client_bundle orelse generate: {
+    const client_bundle = route_bundle.client_bundle orelse generate: {
         const payload = dev.generateClientBundle(route_bundle) catch bun.outOfMemory();
         errdefer dev.allocator().free(payload);
         route_bundle.client_bundle = StaticRoute.initFromAnyBlob(
@@ -1489,7 +1537,7 @@ pub fn onJsRequestWithBundle(dev: *DevServer, bundle_index: RouteBundle.Index, r
         break :generate route_bundle.client_bundle.?;
     };
     dev.source_maps.addWeakRef(route_bundle.sourceMapId());
-    blob.onWithMethod(method, resp);
+    client_bundle.onWithMethod(method, resp);
 }
 
 pub fn onSrcRequest(dev: *DevServer, req: *uws.Request, resp: anytype) void {
@@ -1539,7 +1587,11 @@ pub const DeferredRequest = struct {
     pub const List = std.SinglyLinkedList(DeferredRequest);
     pub const Node = List.Node;
 
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinitImpl, .{});
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinitImpl, .{
+        .debug_name = "DeferredRequest",
+    });
+
+    const debugLog = bun.Output.Scoped("DlogeferredRequest", .hidden).log;
 
     route_bundle_index: RouteBundle.Index,
     handler: Handler,
@@ -1572,8 +1624,18 @@ pub const DeferredRequest = struct {
         };
     };
 
-    fn onAbort(this: *DeferredRequest, resp: AnyResponse) void {
-        _ = resp;
+    fn onAbortWrapper(this: *anyopaque) void {
+        const self: *DeferredRequest = @alignCast(@ptrCast(this));
+        self.onAbortImpl();
+    }
+
+    fn onAbort(this: *DeferredRequest, _: AnyResponse) void {
+        this.onAbortImpl();
+    }
+
+    fn onAbortImpl(this: *DeferredRequest) void {
+        debugLog("DeferredRequest(0x{x}) onAbort", .{@intFromPtr(this)});
+
         this.abort();
         assert(this.handler == .aborted);
     }
@@ -1584,6 +1646,7 @@ pub const DeferredRequest = struct {
     /// such as for bundling failures or aborting the server.
     /// Does not free the underlying `DeferredRequest.Node`
     fn deinitImpl(this: *DeferredRequest) void {
+        debugLog("DeferredRequest(0x{x}) deinitImpl", .{@intFromPtr(this)});
         this.ref_count.assertNoRefs();
 
         defer this.dev.deferred_request_pool.put(@fieldParentPtr("data", this));
@@ -1595,11 +1658,11 @@ pub const DeferredRequest = struct {
 
     /// Deinitializes state by aborting the connection.
     fn abort(this: *DeferredRequest) void {
+        debugLog("DeferredRequest(0x{x}) abort", .{@intFromPtr(this)});
         var handler = this.handler;
         this.handler = .aborted;
         switch (handler) {
             .server_handler => |*saved| {
-                saved.ctx.onAbort(saved.response);
                 saved.js_request.deinit();
             },
             .bundled_html_page => |r| {
@@ -2266,14 +2329,70 @@ pub fn finalizeBundle(
 
     // Load all new chunks into the server runtime.
     if (!dev.frontend_only and dev.server_graph.current_chunk_len > 0) {
-        const server_bundle = try dev.server_graph.takeJSBundle(&.{ .kind = .hmr_chunk });
-        defer dev.allocator().free(server_bundle);
+        // Generate a script_id for server bundles
+        // Use high bit set to distinguish from client bundles, and include generation
+        const server_script_id = SourceMapStore.Key.init((1 << 63) | @as(u64, dev.generation));
 
-        const server_modules = c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.cloneLatin1(server_bundle)) catch |err| {
-            // No user code has been evaluated yet, since everything is to
-            // be wrapped in a function clousure. This means that the likely
-            // error is going to be a syntax error, or other mistake in the
-            // bundler.
+        // Get the source map if available and render to JSON
+        var source_map_json = if (dev.server_graph.current_chunk_source_maps.items.len > 0) json: {
+            // Create a temporary source map entry to render
+            var source_map_entry = SourceMapStore.Entry{
+                .ref_count = 1,
+                .paths = &.{},
+                .files = .empty,
+                .overlapping_memory_cost = 0,
+            };
+
+            // Fill the source map entry
+            var arena = std.heap.ArenaAllocator.init(dev.allocator);
+            defer arena.deinit();
+            try dev.server_graph.takeSourceMap(arena.allocator(), dev.allocator, &source_map_entry);
+            defer {
+                source_map_entry.ref_count = 0;
+                source_map_entry.deinit(dev);
+            }
+
+            const json_data = try source_map_entry.renderJSON(
+                dev,
+                arena.allocator(),
+                .hmr_chunk,
+                dev.allocator,
+                .server,
+            );
+            break :json json_data;
+        } else null;
+        defer if (source_map_json) |json| bun.default_allocator.free(json);
+
+        const server_bundle = try dev.server_graph.takeJSBundle(&.{
+            .kind = .hmr_chunk,
+            .script_id = server_script_id,
+        });
+        defer dev.allocator.free(server_bundle);
+
+        // TODO: is this the best place to set this? Would it be better to
+        // transpile the server modules to replace `new Response(...)` with `new
+        // ResponseBake(...)`??
+        dev.vm.setAllowJSXInResponseConstructor(true);
+
+        const server_modules = if (bun.take(&source_map_json)) |json| blk: {
+            // This memory will be owned by the `DevServerSourceProvider` in C++
+            // from here on out
+            dev.allocation_scope.leakSlice(json);
+
+            break :blk c.BakeLoadServerHmrPatchWithSourceMap(
+                @ptrCast(dev.vm.global),
+                bun.String.cloneUTF8(server_bundle),
+                json.ptr,
+                json.len,
+            ) catch |err| {
+                // No user code has been evaluated yet, since everything is to
+                // be wrapped in a function clousure. This means that the likely
+                // error is going to be a syntax error, or other mistake in the
+                // bundler.
+                dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
+                @panic("Error thrown while evaluating server code. This is always a bug in the bundler.");
+            };
+        } else c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.cloneLatin1(server_bundle)) catch |err| {
             dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
             @panic("Error thrown while evaluating server code. This is always a bug in the bundler.");
         };
@@ -2819,7 +2938,7 @@ fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
         dev.ensureRouteIsBundled(
             dev.getOrPutRouteBundle(.{ .framework = route_index }) catch bun.outOfMemory(),
             .server_handler,
-            req,
+            .{ .req = req },
             AnyResponse.init(resp),
         ) catch bun.outOfMemory();
         return;
@@ -2834,7 +2953,31 @@ fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
 }
 
 pub fn respondForHTMLBundle(dev: *DevServer, html: *HTMLBundle.HTMLBundleRoute, req: *uws.Request, resp: AnyResponse) !void {
-    try dev.ensureRouteIsBundled(try dev.getOrPutRouteBundle(.{ .html = html }), .bundled_html_page, req, resp);
+    try dev.ensureRouteIsBundled(try dev.getOrPutRouteBundle(.{ .html = html }), .bundled_html_page, .{ .req = req }, resp);
+}
+
+// TODO: path params
+pub fn handleRenderRedirect(
+    dev: *DevServer,
+    saved_request: bun.jsc.API.SavedRequest,
+    render_path: []const u8,
+    resp: AnyResponse,
+) !void {
+    // Match the render path against the router
+    var params: FrameworkRouter.MatchedParams = undefined;
+    if (dev.router.matchSlow(render_path, &params)) |route_index| {
+        // Found a matching route, bundle it and handle the request
+        dev.ensureRouteIsBundled(
+            dev.getOrPutRouteBundle(.{ .framework = route_index }) catch bun.outOfMemory(),
+            .server_handler,
+            .{ .saved = saved_request },
+            resp,
+        ) catch bun.outOfMemory();
+        return;
+    }
+
+    // No matching route found - render 404
+    sendBuiltInNotFound(resp);
 }
 
 fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !RouteBundle.Index {
@@ -3592,6 +3735,11 @@ const c = struct {
     fn BakeLoadServerHmrPatch(global: *jsc.JSGlobalObject, code: bun.String) bun.JSError!JSValue {
         const f = @extern(*const fn (*jsc.JSGlobalObject, bun.String) callconv(.c) JSValue, .{ .name = "BakeLoadServerHmrPatch" }).*;
         return bun.jsc.fromJSHostCall(global, @src(), f, .{ global, code });
+    }
+
+    fn BakeLoadServerHmrPatchWithSourceMap(global: *jsc.JSGlobalObject, code: bun.String, source_map_json_ptr: [*]const u8, source_map_json_len: usize) bun.JSError!JSValue {
+        const f = @extern(*const fn (*jsc.JSGlobalObject, bun.String, [*]const u8, usize) callconv(.c) JSValue, .{ .name = "BakeLoadServerHmrPatchWithSourceMap" }).*;
+        return bun.jsc.fromJSHostCall(global, @src(), f, .{ global, code, source_map_json_ptr, source_map_json_len });
     }
 
     fn BakeLoadInitialServerCode(global: *jsc.JSGlobalObject, code: bun.String, separate_ssr_graph: bool) bun.JSError!JSValue {

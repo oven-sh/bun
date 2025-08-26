@@ -3,10 +3,45 @@
 import type { Bake } from "bun";
 import "./debug";
 import { loadExports, replaceModules, serverManifest, ssrManifest } from "./hmr-module";
+// import { AsyncLocalStorage } from "node:async_hooks";
+const { AsyncLocalStorage } = require("node:async_hooks");
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
 }
+
+export type RequestContext = {
+  responseOptions: ResponseInit;
+  streamingStarted?: boolean;
+  renderAbort?: (path: string, params: Record<string, any> | null) => never;
+};
+
+// Create the AsyncLocalStorage instance for propagating response options
+const responseOptionsALS = new AsyncLocalStorage();
+
+/// Created when the user does `return Response.render(...)`
+class RenderAbortError extends Error {
+  constructor(
+    public path: string,
+    public params: Record<string, any> | null,
+    public response: Response,
+  ) {
+    super("Response.render() called");
+    this.name = "RenderAbortError";
+  }
+}
+
+/// Created when the user does `return Response.redirect(...)`
+class RedirectAbortError extends Error {
+  constructor(public response: Response) {
+    super("Response.redirect() called");
+    this.name = "RedirectAbortError";
+  }
+}
+
+// Make RenderAbortError and RedirectAbortError globally available for other modules
+(globalThis as any).RenderAbortError = RenderAbortError;
+(globalThis as any).RedirectAbortError = RedirectAbortError;
 
 interface Exports {
   handleRequest: (
@@ -16,6 +51,8 @@ interface Exports {
     clientEntryUrl: string,
     styles: string[],
     params: Record<string, string> | null,
+    setAsyncLocalStorage: Function,
+    getAsyncLocalStorage: Function,
   ) => any;
   registerUpdate: (
     modules: any,
@@ -26,7 +63,20 @@ interface Exports {
 
 declare let server_exports: Exports;
 server_exports = {
-  async handleRequest(req, routerTypeMain, routeModules, clientEntryUrl, styles, params) {
+  async handleRequest(
+    req,
+    routerTypeMain,
+    routeModules,
+    clientEntryUrl,
+    styles,
+    params,
+    setAsyncLocalStorage,
+    getAsyncLocalStorage,
+  ) {
+    // FIXME: We should only have to do this once
+    // Set the AsyncLocalStorage instance in the VM
+    setAsyncLocalStorage(responseOptionsALS);
+
     if (IS_BUN_DEVELOPMENT && process.env.BUN_DEBUG_BAKE_JS) {
       console.log("handleRequest", {
         routeModules,
@@ -48,20 +98,67 @@ server_exports = {
     }
 
     const [pageModule, ...layouts] = await Promise.all(routeModules.map(loadExports));
-    const response = await serverRenderer(req, {
-      styles: styles,
-      modules: [clientEntryUrl],
-      layouts,
-      pageModule,
-      modulepreload: [],
-      params,
-    });
 
-    if (!(response instanceof Response)) {
-      throw new Error(`Server-side request handler was expected to return a Response object.`);
+    // Add cookies to request when mode is 'ssr'
+    let requestWithCookies = req;
+    if (pageModule.mode === "ssr") {
+      requestWithCookies.cookies = req.cookies || new Bun.CookieMap(req.headers.get("Cookie") || "");
     }
 
-    return response;
+    let storeValue: RequestContext = {
+      responseOptions: {},
+    };
+
+    try {
+      // Run the renderer inside the AsyncLocalStorage context
+      // This allows Response constructors to access the stored options
+      const response = await responseOptionsALS.run(storeValue, async () => {
+        return await serverRenderer(
+          requestWithCookies,
+          {
+            styles: styles,
+            modules: [clientEntryUrl],
+            layouts,
+            pageModule,
+            modulepreload: [],
+            params,
+            // Pass request in metadata when mode is 'ssr'
+            request: pageModule.mode === "ssr" ? requestWithCookies : undefined,
+          },
+          responseOptionsALS,
+        );
+      });
+
+      if (!(response instanceof Response)) {
+        throw new Error(`Server-side request handler was expected to return a Response object.`);
+      }
+
+      return response;
+    } catch (error) {
+      // Handle Response.render() aborts
+      if (error instanceof RenderAbortError) {
+        // TODO: Implement route resolution to get the new route modules
+        // For now, we'll need to get this information from the native side
+        // The native code will need to resolve the route and call handleRequest again
+
+        // Store the render error info so native code can access it
+        (globalThis as any).__lastRenderAbort = {
+          path: error.path,
+          params: error.params,
+        };
+
+        // return it so the Zig code can handle it and re-render new route
+        return error.response;
+      }
+
+      // Handle Response.redirect() aborts
+      if (error instanceof RedirectAbortError) {
+        // Return the redirect response directly
+        return error.response;
+      }
+
+      throw error;
+    }
   },
   async registerUpdate(modules, componentManifestAdd, componentManifestDelete) {
     replaceModules(modules);

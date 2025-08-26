@@ -88,6 +88,7 @@ pub const Value = bun.TaggedPointerUnion(.{
     SavedMappings,
     SourceProviderMap,
     BakeSourceProvider,
+    DevServerSourceProvider,
 });
 
 pub const MissingSourceMapNoteInfo = struct {
@@ -105,6 +106,10 @@ pub const MissingSourceMapNoteInfo = struct {
 };
 
 pub fn putBakeSourceProvider(this: *SavedSourceMap, opaque_source_provider: *BakeSourceProvider, path: []const u8) void {
+    this.putValue(path, Value.init(opaque_source_provider)) catch bun.outOfMemory();
+}
+
+pub fn putDevServerSourceProvider(this: *SavedSourceMap, opaque_source_provider: *DevServerSourceProvider, path: []const u8) void {
     this.putValue(path, Value.init(opaque_source_provider)) catch bun.outOfMemory();
 }
 
@@ -279,6 +284,33 @@ fn getWithContent(
             MissingSourceMapNoteInfo.path = storage;
             return .{};
         },
+        @field(Value.Tag, @typeName(DevServerSourceProvider)) => {
+            // TODO: This is a copy-paste of above branch
+            const ptr: *DevServerSourceProvider = Value.from(mapping.value_ptr.*).as(DevServerSourceProvider);
+            this.unlock();
+
+            // Do not lock the mutex while we're parsing JSON!
+            if (ptr.getSourceMap(path, .none, hint)) |parse| {
+                if (parse.map) |map| {
+                    map.ref();
+                    // The mutex is not locked. We have to check the hash table again.
+                    this.putValue(path, Value.init(map)) catch bun.outOfMemory();
+
+                    return parse;
+                }
+            }
+
+            this.lock();
+            defer this.unlock();
+            // does not have a valid source map. let's not try again
+            _ = this.map.remove(hash);
+
+            // Store path for a user note.
+            const storage = MissingSourceMapNoteInfo.storage[0..path.len];
+            @memcpy(storage, path);
+            MissingSourceMapNoteInfo.path = storage;
+            return .{};
+        },
         else => {
             if (Environment.allow_assert) {
                 @panic("Corrupt pointer tag");
@@ -333,5 +365,6 @@ const logger = bun.logger;
 
 const SourceMap = bun.sourcemap;
 const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
+const DevServerSourceProvider = bun.sourcemap.DevServerSourceProvider;
 const ParsedSourceMap = SourceMap.ParsedSourceMap;
 const SourceProviderMap = SourceMap.SourceProviderMap;

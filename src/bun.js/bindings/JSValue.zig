@@ -52,6 +52,26 @@ pub const JSValue = enum(i64) {
         return jsc.JSObject.getIndex(this, globalThis, i);
     }
 
+    extern fn JSC__JSValue__isJSXElement(JSValue, *JSGlobalObject) bool;
+    pub fn isJSXElement(this: JSValue, globalThis: *jsc.JSGlobalObject) JSError!bool {
+        return bun.jsc.fromJSHostCallGeneric(
+            globalThis,
+            @src(),
+            JSC__JSValue__isJSXElement,
+            .{ this, globalThis },
+        );
+    }
+
+    extern fn JSC__JSValue__transformToReactElement(responseValue: JSValue, componentValue: JSValue, globalObject: *JSGlobalObject) void;
+    pub fn transformToReactElement(responseValue: JSValue, componentValue: JSValue, globalThis: *jsc.JSGlobalObject) void {
+        JSC__JSValue__transformToReactElement(responseValue, componentValue, globalThis);
+    }
+
+    extern fn JSC__JSValue__transformToReactElementWithOptions(responseValue: JSValue, componentValue: JSValue, responseOptions: JSValue, globalObject: *JSGlobalObject) void;
+    pub fn transformToReactElementWithOptions(responseValue: JSValue, componentValue: JSValue, responseOptions: JSValue, globalThis: *jsc.JSGlobalObject) void {
+        JSC__JSValue__transformToReactElementWithOptions(responseValue, componentValue, responseOptions, globalThis);
+    }
+
     extern fn JSC__JSValue__getDirectIndex(JSValue, *JSGlobalObject, u32) JSValue;
     pub fn getDirectIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue {
         return JSC__JSValue__getDirectIndex(this, globalThis, i);
@@ -324,6 +344,13 @@ pub const JSValue = enum(i64) {
         if (comptime bun.Environment.isDebug)
             jsc.markBinding(@src());
         JSC__JSValue__putBunString(value, global, key, result);
+    }
+
+    extern "c" fn JSC__JSValue__upsertBunStringArray(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: jsc.JSValue) JSValue;
+
+    /// Put key/val pair into `obj`. If `key` is already present on the object, create an array for the values.
+    pub fn putBunStringOneOrArray(obj: JSValue, global: *JSGlobalObject, key: *const bun.String, value: jsc.JSValue) bun.JSError!JSValue {
+        return fromJSHostCall(global, @src(), JSC__JSValue__upsertBunStringArray, .{ obj, global, key, value });
     }
 
     pub fn put(value: JSValue, global: *JSGlobalObject, key: anytype, result: jsc.JSValue) void {

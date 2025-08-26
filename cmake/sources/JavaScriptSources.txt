@@ -1,5 +1,6 @@
 src/js/builtins.d.ts
 src/js/builtins/Bake.ts
+src/js/builtins/BakeSSRResponse.ts
 src/js/builtins/BundlerPlugin.ts
 src/js/builtins/ByteLengthQueuingStrategy.ts
 src/js/builtins/CommonJS.ts

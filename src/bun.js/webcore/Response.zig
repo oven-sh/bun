@@ -1,5 +1,21 @@
 const Response = @This();
 
+// C++ helper functions for AsyncLocalStorage integration
+extern fn Response__getAsyncLocalStorageStore(global: *JSGlobalObject, als: JSValue) JSValue;
+extern fn Response__mergeAsyncLocalStorageOptions(global: *JSGlobalObject, alsStore: JSValue, initOptions: JSValue) void;
+
+// Zig function to update AsyncLocalStorage with response options
+pub fn bakeGetAsyncLocalStorage(global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const vm = global.bunVM();
+
+    // Get the AsyncLocalStorage instance from the VM
+    if (vm.getDevServerAsyncLocalStorage()) |als| {
+        return als;
+    }
+
+    return .js_undefined;
+}
+
 const ResponseMixin = BodyMixin(@This());
 pub const js = jsc.Codegen.JSResponse;
 // NOTE: toJS is overridden
@@ -13,6 +29,8 @@ redirected: bool = false,
 /// We increment this count in fetch so if JS Response is discarted we can resolve the Body
 /// In the server we use a flag response_protected to protect/unprotect the response
 ref_count: u32 = 1,
+
+is_jsx: bool = false,
 
 // We must report a consistent value for this
 reported_estimated_size: usize = 0,
@@ -104,7 +122,7 @@ pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globa
             var any_blob = body.useAsAnyBlob();
             return any_blob.toArrayBufferTransfer(globalObject) catch return .zero;
         },
-        .Error, .Locked => return .js_undefined,
+        .Error, .Locked, .Render => return .js_undefined,
     }
 }
 
@@ -303,6 +321,7 @@ pub fn cloneValue(
 }
 
 pub fn clone(this: *Response, globalThis: *JSGlobalObject) bun.JSError!*Response {
+    // TODO: handle clone for jsxElement for bake?
     return bun.new(Response, try this.cloneValue(globalThis));
 }
 
@@ -498,8 +517,92 @@ pub fn constructRedirect(
     try headers_ref.put(.Location, url_string_slice.slice(), globalThis);
     const ptr = bun.new(Response, response);
 
-    return ptr.toJS(globalThis);
+    const response_js = ptr.toJS(globalThis);
+
+    // Check if dev_server_async_local_storage is set (indicating we're in Bun dev server)
+    const vm = globalThis.bunVM();
+    if (vm.dev_server_async_local_storage.has()) {
+        // Mark this as a redirect Response that should be handled specially
+        // when used in a React component
+        const redirect_marker = ZigString.init("__bun_redirect__").toJS(globalThis);
+
+        // Transform the Response to act as a React element with special redirect handling
+        // Pass "redirect" as the third parameter to indicate this is a redirect
+        const redirect_flag = ZigString.init("redirect").toJS(globalThis);
+        JSValue.transformToReactElementWithOptions(response_js, redirect_marker, redirect_flag, globalThis);
+    }
+
+    return response_js;
 }
+
+pub fn constructRender(
+    globalThis: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!JSValue {
+    const arguments = callframe.arguments_old(2);
+    const vm = globalThis.bunVM();
+
+    // Check if dev_server_async_local_storage is set
+    if (!vm.dev_server_async_local_storage.has()) {
+        return globalThis.throwInvalidArguments("Response.render() is only available in the Bun dev server", .{});
+    }
+
+    // Validate arguments
+    if (arguments.len < 1) {
+        return globalThis.throwInvalidArguments("Response.render() requires at least a path argument", .{});
+    }
+
+    const path_arg = arguments.ptr[0];
+    if (!path_arg.isString()) {
+        return globalThis.throwInvalidArguments("Response.render() path must be a string", .{});
+    }
+
+    // Get the path string
+    const path_str = try path_arg.toSlice(globalThis, bun.default_allocator);
+
+    // Duplicate the path string so it persists
+    const path_copy = bun.default_allocator.dupe(u8, path_str.slice()) catch {
+        path_str.deinit();
+        return globalThis.throwOutOfMemory();
+    };
+    path_str.deinit();
+
+    // Create a Response with Render body
+    var response = bun.new(Response, Response{
+        .body = Body{
+            .value = .{
+                .Render = .{
+                    .path = path_copy,
+                },
+            },
+        },
+        .init = Response.Init{
+            .status_code = 200,
+        },
+    });
+
+    const response_js = response.toJS(globalThis);
+    response_js.ensureStillAlive();
+
+    // Store the render path and params on the response for later use
+    // When React tries to render this component, we'll check for these and throw RenderAbortError
+    response_js.put(globalThis, "__renderPath", path_arg);
+    const params_arg = if (arguments.len >= 2) arguments.ptr[1] else JSValue.jsNull();
+    response_js.put(globalThis, "__renderParams", params_arg);
+
+    // TODO: this is terrible
+    // Create a simple wrapper function that will be called by React
+    // This needs to be handled specially in transformToReactElementWithOptions
+    // We'll pass a special marker as the component to indicate this is a render redirect
+    const render_marker = ZigString.init("__bun_render_redirect__").toJS(globalThis);
+
+    // Transform the Response to act as a React element
+    // The C++ code will need to check for this special marker
+    JSValue.transformToReactElementWithOptions(response_js, render_marker, params_arg, globalThis);
+
+    return response_js;
+}
+
 pub fn constructError(
     globalThis: *jsc.JSGlobalObject,
     _: *jsc.CallFrame,
@@ -519,9 +622,10 @@ pub fn constructError(
     return response.toJS(globalThis);
 }
 
-pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Response {
-    const arguments = callframe.argumentsAsArray(2);
+pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_value: jsc.JSValue) bun.JSError!*Response {
+    var arguments = callframe.argumentsAsArray(2);
 
+    var is_jsx = false;
     if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
         if (arguments[0].as(Blob)) |blob| {
             if (blob.isS3()) {
@@ -552,6 +656,20 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
                 var headers_ref = response.init.headers.?;
                 try headers_ref.put(.Location, result.url, globalThis);
                 return bun.new(Response, response);
+            }
+        }
+
+        // Special case for bake: allow `return new Response(<jsx> ... </jsx>, { ... }`
+        // inside of a react component
+        if (globalThis.allowJSXInResponseConstructor()) {
+            const arg = arguments[0];
+            // Check if it's a JSX element (object with $$typeof)
+            if (try arg.isJSXElement(globalThis)) {
+                // Pass the response options (arguments[1]) to transformToReactElement
+                // so it can store them for later use when the component is rendered
+                const responseOptions = if (arguments[1].isObject()) arguments[1] else .js_undefined;
+                JSValue.transformToReactElementWithOptions(this_value, arg, responseOptions, globalThis);
+                is_jsx = true;
             }
         }
     }
@@ -593,6 +711,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     var response = bun.new(Response, Response{
         .body = body,
         .init = init,
+        .is_jsx = is_jsx,
     });
 
     if (response.body.value == .Blob and

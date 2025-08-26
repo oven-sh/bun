@@ -297,6 +297,10 @@ pub const Stdio = union(enum) {
             },
 
             .Blob, .WTFStringImpl, .InternalBlob => unreachable, // handled above.
+            .Render => {
+                // Render bodies should not be used as stdio
+                return globalThis.throwInvalidArguments("Response.render() result cannot be used as stdio", .{});
+            },
             .Locked => {
                 if (is_sync) {
                     return globalThis.throwInvalidArguments("ReadableStream cannot be used in sync mode", .{});

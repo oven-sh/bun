@@ -55,6 +55,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         /// Defer finalization until after the request handler task is completed?
         defer_deinit_until_callback_completes: ?*bool = null,
 
+        onAbortCb: ?*const fn (this: *anyopaque) void = null,
+        onAbortData: ?*anyopaque = null,
+
         // TODO: support builtin compression
         const can_sendfile = !ssl_enabled and !Environment.isWindows;
 
@@ -183,7 +186,23 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             // 5 - is the only reference of the context
             // 6 - is not waiting for request body
             // 7 - did not call sendfile
-            return this.resp != null and !this.flags.aborted and !this.flags.has_marked_complete and !this.flags.has_marked_pending and this.ref_count == 1 and !this.flags.is_waiting_for_request_body and !this.flags.has_sendfile_ctx;
+            ctxLog("RequestContext(0x{x}).shouldRenderMissing {s} {s} {s} {s} {s} {s} {s}", .{
+                @intFromPtr(this),
+                if (this.resp != null) "has response" else "no response",
+                if (this.flags.aborted) "aborted" else "not aborted",
+                if (this.flags.has_marked_complete) "marked complete" else "not marked complete",
+                if (this.flags.has_marked_pending) "marked pending" else "not marked pending",
+                if (this.ref_count == 1) "only reference" else "not only reference",
+                if (this.flags.is_waiting_for_request_body) "waiting for request body" else "not waiting for request body",
+                if (this.flags.has_sendfile_ctx) "has sendfile context" else "no sendfile context",
+            });
+            return this.resp != null and
+                !this.flags.aborted and
+                !this.flags.has_marked_complete and
+                !this.flags.has_marked_pending and
+                this.ref_count == 1 and
+                !this.flags.is_waiting_for_request_body and
+                !this.flags.has_sendfile_ctx;
         }
 
         pub fn isDeadRequest(this: *RequestContext) bool {
@@ -201,6 +220,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         /// destroy RequestContext, should be only called by deref or if defer_deinit_until_callback_completes is ref is set to true
         pub fn deinit(this: *RequestContext) void {
+            ctxLog("deinit", .{});
             this.detachResponse();
             this.endRequestStreamingAndDrain();
             // TODO: has_marked_complete is doing something?
@@ -337,6 +357,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         pub fn renderDefaultError(
             this: *RequestContext,
+            arena_allocator: std.mem.Allocator,
             log: *logger.Log,
             err: anyerror,
             exceptions: []Api.JsException,
@@ -351,12 +372,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 }
             }
 
-            const allocator = this.allocator;
-
-            const fallback_container = allocator.create(Api.FallbackMessageContainer) catch unreachable;
-            defer allocator.destroy(fallback_container);
+            const fallback_container = arena_allocator.create(Api.FallbackMessageContainer) catch unreachable;
+            defer arena_allocator.destroy(fallback_container);
             fallback_container.* = Api.FallbackMessageContainer{
-                .message = std.fmt.allocPrint(allocator, comptime Output.prettyFmt(fmt, false), args) catch unreachable,
+                .message = std.fmt.allocPrint(arena_allocator, comptime Output.prettyFmt(fmt, false), args) catch unreachable,
                 .router = null,
                 .reason = .fetch_event_handler,
                 .cwd = VirtualMachine.get().transpiler.fs.top_level_dir,
@@ -364,18 +383,19 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     .code = @as(u16, @truncate(@intFromError(err))),
                     .name = @errorName(err),
                     .exceptions = exceptions,
-                    .build = log.toAPI(allocator) catch unreachable,
+                    .build = log.toAPI(arena_allocator) catch unreachable,
                 },
             };
 
             if (comptime fmt.len > 0) Output.prettyErrorln(fmt, args);
             Output.flush();
 
-            var bb = std.ArrayList(u8).init(allocator);
+            // Explicitly use `this.allocator` and *not* the arena
+            var bb = std.ArrayList(u8).init(this.allocator);
             const bb_writer = bb.writer();
 
             Fallback.renderBackend(
-                allocator,
+                arena_allocator,
                 fallback_container,
                 @TypeOf(bb_writer),
                 bb_writer,
@@ -436,6 +456,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         pub fn end(this: *RequestContext, data: []const u8, closeConnection: bool) void {
+            ctxLog("end", .{});
             if (this.resp) |resp| {
                 defer this.deref();
 
@@ -461,6 +482,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         pub fn endWithoutBody(this: *RequestContext, closeConnection: bool) void {
+            ctxLog("endWithoutBody", .{});
             if (this.resp) |resp| {
                 defer this.deref();
 
@@ -556,11 +578,15 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         pub fn onAbort(this: *RequestContext, resp: *App.Response) void {
+            ctxLog("onAbort", .{});
             assert(this.resp == resp);
             assert(!this.flags.aborted);
             assert(this.server != null);
             // mark request as aborted
             this.flags.aborted = true;
+            if (this.onAbortData != null and this.onAbortCb != null) {
+                this.onAbortCb.?(this.onAbortData.?);
+            }
 
             this.detachResponse();
             var any_js_calls = false;
@@ -1439,6 +1465,12 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     resp.writeHeaderInt("content-length", 0);
                     this.endWithoutBody(this.shouldCloseConnection());
                 },
+                .Render => {
+                    // Render should have been handled elsewhere, this is unexpected
+                    this.renderMetadata();
+                    resp.writeHeaderInt("content-length", 0);
+                    this.endWithoutBody(this.shouldCloseConnection());
+                },
             }
         }
 
@@ -1675,6 +1707,55 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(req.allocator);
                         defer exception_list.deinit();
                         server.vm.runErrorHandler(err, &exception_list);
+
+                        // Render the error fallback HTML page like renderDefaultError does
+                        if (!req.flags.has_written_status) {
+                            req.flags.has_written_status = true;
+                            if (req.resp) |resp| {
+                                resp.writeStatus("500 Internal Server Error");
+                                resp.writeHeader("content-type", MimeType.html.value);
+                            }
+                        }
+
+                        const allocator = req.allocator;
+                        const fallback_container = allocator.create(Api.FallbackMessageContainer) catch unreachable;
+                        defer allocator.destroy(fallback_container);
+
+                        // Create error message for the stream rejection
+                        const error_message = "Stream error during server-side rendering";
+
+                        fallback_container.* = Api.FallbackMessageContainer{
+                            .message = allocator.dupe(u8, error_message) catch unreachable,
+                            .router = null,
+                            .reason = .fetch_event_handler,
+                            .cwd = server.vm.transpiler.fs.top_level_dir,
+                            .problems = Api.Problems{
+                                .code = 500,
+                                .name = "StreamError",
+                                .exceptions = exception_list.items,
+                                .build = .{
+                                    .msgs = &.{},
+                                },
+                            },
+                        };
+
+                        var bb = std.ArrayList(u8).init(allocator);
+                        defer bb.clearAndFree();
+                        const bb_writer = bb.writer();
+
+                        Fallback.renderBackend(
+                            allocator,
+                            fallback_container,
+                            @TypeOf(bb_writer),
+                            bb_writer,
+                        ) catch unreachable;
+
+                        if (req.resp) |resp| {
+                            _ = resp.write(bb.items);
+                        }
+
+                        req.endStream(req.shouldCloseConnection());
+                        return;
                     }
                 }
             }
@@ -1801,6 +1882,74 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     lock.onReceiveValue = doRenderWithBodyLocked;
                     lock.task = this;
 
+                    return;
+                },
+                .Render => |render_body| {
+                    // Handle Response.render() case - need to call DevServer with new path
+                    defer bun.default_allocator.free(render_body.path);
+
+                    if (this.server) |server| {
+                        if (@hasField(@TypeOf(server.*), "dev_server")) {
+                            if (server.dev_server) |dev_server_| {
+                                const dev_server: *bun.bake.DevServer = dev_server_;
+                                // Use the current response from the RequestContext
+                                const response = if (this.resp) |resp|
+                                    bun.uws.AnyResponse.init(resp)
+                                else {
+                                    this.renderMissing();
+                                    return;
+                                };
+
+                                const signal = if (this.signal) |signal| signal.ref() else null;
+
+                                const resp = this.resp;
+                                this.detachResponse();
+
+                                const new_request_ctx = server.request_pool_allocator.tryGet() catch bun.outOfMemory();
+                                new_request_ctx.* = .{
+                                    .allocator = server.allocator,
+                                    .resp = resp,
+                                    .req = this.req,
+                                    .method = this.method,
+                                    .server = server,
+                                    .defer_deinit_until_callback_completes = null,
+                                    .signal = signal,
+                                };
+
+                                const url = bun.String.cloneUTF8(render_body.path);
+                                const body: jsc.WebCore.Body.Value = .{ .Null = {} };
+
+                                const new_request = Request.new(.{
+                                    .method = .GET, // TODO: use the correct one
+                                    .request_context = AnyRequestContext.init(new_request_ctx),
+                                    .https = ssl_enabled,
+                                    .signal = if (signal) |s| s.ref() else null,
+                                    .body = server.vm.initRequestBodyValue(body) catch bun.outOfMemory(),
+                                    .url = url,
+                                });
+
+                                new_request_ctx.request_weakref = .initRef(new_request);
+
+                                server.onPendingRequest();
+                                // Call DevServer with the render path
+                                dev_server.handleRenderRedirect(bun.jsc.API.SavedRequest{
+                                    .js_request = .create(new_request.toJS(server.globalThis), server.globalThis),
+                                    .ctx = AnyRequestContext.init(new_request_ctx),
+                                    .request = new_request,
+                                    .response = bun.uws.AnyResponse.init(resp.?),
+                                }, render_body.path, response) catch {
+                                    // On error, render missing
+                                    this.renderMissing();
+                                    return;
+                                };
+
+                                return;
+                            }
+                        }
+                    }
+
+                    // Fallback to rendering missing
+                    this.renderMissing();
                     return;
                 },
                 else => {},
@@ -1945,7 +2094,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             var vm: *jsc.VirtualMachine = this.server.?.vm;
             const globalThis = this.server.?.globalThis;
             if (comptime debug_mode) {
-                var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(this.allocator);
+                var arena = std.heap.ArenaAllocator.init(this.allocator);
+                defer arena.deinit();
+                const allocator = arena.allocator();
+                var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(allocator);
                 defer exception_list.deinit();
                 const prev_exception_list = vm.onUnhandledRejectionExceptionList;
                 vm.onUnhandledRejectionExceptionList = &exception_list;
@@ -1953,9 +2105,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 vm.onUnhandledRejectionExceptionList = prev_exception_list;
 
                 this.renderDefaultError(
+                    allocator,
                     vm.log,
                     error.ExceptionOcurred,
-                    exception_list.toOwnedSlice() catch @panic("TODO"),
+                    exception_list.items,
                     "<r><red>{s}<r> - <b>{}<r> failed",
                     .{ @as(string, @tagName(this.method)), this.ensurePathname() },
                 );

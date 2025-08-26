@@ -83,6 +83,9 @@ export default [
       error: {
         fn: "constructError",
       },
+      render: {
+        fn: "constructRender",
+      },
     },
     proto: {
       url: {
@@ -124,6 +127,7 @@ export default [
         getter: "getBodyUsed",
       },
     },
+    constructNeedsThis: true,
   }),
   define({
     name: "Blob",

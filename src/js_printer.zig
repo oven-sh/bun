@@ -428,6 +428,7 @@ pub const Options = struct {
     line_offset_tables: ?SourceMap.LineOffsetTable.List = null,
 
     mangled_props: ?*const bun.bundle_v2.MangledProps,
+    input_source_map: ?*bun.sourcemap.ParsedSourceMap = null,
 
     // Default indentation is 2 spaces
     pub const Indentation = struct {
@@ -5628,6 +5629,7 @@ pub fn getSourceMapBuilder(
     opts: Options,
     source: *const logger.Source,
     tree: *const Ast,
+    input_source_map: ?*bun.sourcemap.ParsedSourceMap,
 ) SourceMap.Chunk.Builder {
     if (comptime generate_source_map == .disable)
         return undefined;
@@ -5640,6 +5642,7 @@ pub fn getSourceMapBuilder(
         .cover_lines_without_mappings = true,
         .approximate_input_line_count = tree.approximate_newline_count,
         .prepend_count = is_bun_platform and generate_source_map == .lazy,
+        .input_source_map = input_source_map,
         .line_offset_tables = opts.line_offset_tables orelse brk: {
             if (generate_source_map == .lazy) break :brk SourceMap.LineOffsetTable.generate(
                 opts.source_map_allocator orelse opts.allocator,
@@ -5754,7 +5757,7 @@ pub fn printAst(
         tree.import_records.slice(),
         opts,
         renamer,
-        getSourceMapBuilder(if (generate_source_map) .lazy else .disable, ascii_only, opts, source, &tree),
+        getSourceMapBuilder(if (generate_source_map) .lazy else .disable, ascii_only, opts, source, &tree, opts.input_source_map),
     );
     defer {
         if (comptime generate_source_map) {
@@ -5953,7 +5956,7 @@ pub fn printWithWriterAndPlatform(
         import_records,
         opts,
         renamer,
-        getSourceMapBuilder(if (generate_source_maps) .eager else .disable, is_bun_platform, opts, source, &ast),
+        getSourceMapBuilder(if (generate_source_maps) .eager else .disable, is_bun_platform, opts, source, &ast, opts.input_source_map),
     );
     printer.was_lazy_export = ast.has_lazy_export;
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
@@ -6036,7 +6039,7 @@ pub fn printCommonJS(
         tree.import_records.slice(),
         opts,
         renamer.toRenamer(),
-        getSourceMapBuilder(if (generate_source_map) .lazy else .disable, false, opts, source, &tree),
+        getSourceMapBuilder(if (generate_source_map) .lazy else .disable, false, opts, source, &tree, opts.input_source_map),
     );
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());

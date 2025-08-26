@@ -927,6 +927,7 @@ pub const JSBundler = struct {
             success: struct {
                 source_code: []const u8 = "",
                 loader: options.Loader = .file,
+                sourcemap: ?[]const u8 = null,
             },
             pending,
             no_match,
@@ -937,6 +938,9 @@ pub const JSBundler = struct {
                 switch (this.*) {
                     .success => |success| {
                         bun.default_allocator.free(success.source_code);
+                        if (success.sourcemap) |sm| {
+                            bun.default_allocator.free(sm);
+                        }
                     },
                     .err => |*err| {
                         err.deinit(bun.default_allocator);
@@ -1015,6 +1019,7 @@ pub const JSBundler = struct {
             _: *anyopaque,
             source_code_value: JSValue,
             loader_as_int: JSValue,
+            sourcemap_value: JSValue,
         ) void {
             jsc.markBinding(@src());
             if (source_code_value.isEmptyOrUndefinedOrNull() or loader_as_int.isEmptyOrUndefinedOrNull()) {
@@ -1039,10 +1044,26 @@ pub const JSBundler = struct {
 
                     @panic("Unexpected: source_code is not a string");
                 };
+
+                const sourcemap = if (!sourcemap_value.isEmptyOrUndefinedOrNull())
+                    bun.JSC.Node.StringOrBuffer.fromJSToOwnedSlice(global, sourcemap_value, bun.default_allocator) catch |err| {
+                        switch (err) {
+                            error.OutOfMemory => {
+                                bun.outOfMemory();
+                            },
+                            error.JSError => {},
+                        }
+
+                        @panic("Unexpected: sourcemap is not a string");
+                    }
+                else
+                    null;
+
                 this.value = .{
                     .success = .{
                         .loader = options.Loader.fromAPI(loader),
                         .source_code = source_code,
+                        .sourcemap = sourcemap,
                     },
                 };
             }

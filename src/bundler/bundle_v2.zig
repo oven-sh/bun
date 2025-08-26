@@ -2261,10 +2261,11 @@ pub const BundleV2 = struct {
                 // The file could be on disk.
                 if (strings.eqlComptime(resolve.import_record.namespace, "file")) {
                     if (resolve.import_record.kind == .entry_point_build) {
-                        const resolved = this.transpiler.resolveEntryPoint(resolve.import_record.specifier) catch {
+                        const target = resolve.import_record.original_target;
+                        const resolved = this.transpilerForTarget(target).resolveEntryPoint(resolve.import_record.specifier) catch {
                             return;
                         };
-                        const source_index = this.enqueueEntryItem(null, resolved, true, resolve.import_record.original_target) catch {
+                        const source_index = this.enqueueEntryItem(null, resolved, true, target) catch {
                             return;
                         };
 

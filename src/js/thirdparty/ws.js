@@ -652,7 +652,7 @@ function wsEmitClose(server) {
 }
 
 function abortHandshake(response, code, message, headers = {}) {
-  message = message || http.STATUS_CODES[code] || 'HTTP Error';
+  message = message || http.STATUS_CODES[code] || "HTTP Error";
   headers = {
     Connection: "close",
     "Content-Type": "text/html",

@@ -451,40 +451,12 @@ describe("@types/bun integration test", () => {
 
     expect(emptyInterfaces).toEqual(new Set());
     expect(diagnostics).toEqual([
-      {
-        "code": 2503,
-        "line": "[slug].tsx:5:51",
-        "message": "Cannot find namespace 'React'.",
-      },
-      {
-        "code": 7031,
-        "line": "[slug].tsx:11:60",
-        "message": "Binding element 'params' implicitly has an 'any' type.",
-      },
-      {
-        "code": 2554,
-        "line": "[slug].tsx:12:27",
-        "message": "Expected 2 arguments, but got 0.",
-      },
-      {
-        "code": 7026,
-        "line": "[slug].tsx:17:10",
-        "message": "JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists.",
-      },
+      // This is expected because we, of course, can't check that our tsx file is passing
+      // when tsx is turned off...
       {
         "code": 17004,
         "line": "[slug].tsx:17:10",
         "message": "Cannot use JSX unless the '--jsx' flag is provided.",
-      },
-      {
-        "code": 7026,
-        "line": "[slug].tsx:17:21",
-        "message": "JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists.",
-      },
-      {
-        "code": 2503,
-        "line": "node_modules/bun-types/experimental.d.ts:194:73",
-        "message": "Cannot find namespace 'React'.",
       },
     ]);
   });

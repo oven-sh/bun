@@ -1,9 +1,9 @@
 import type { Bake } from "bun";
 import { renderToHtml, renderToStaticHtml } from "bun-framework-react/ssr.tsx" with { bunBakeGraph: "ssr" };
 import { serverManifest } from "bun:bake/server";
+import type { AsyncLocalStorage } from "node:async_hooks";
 import { PassThrough } from "node:stream";
 import { renderToPipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
-import type { AsyncLocalStorage } from "node:async_hooks";
 import type { RequestContext } from "../hmr-runtime-server";
 
 function assertReactComponent(Component: any) {

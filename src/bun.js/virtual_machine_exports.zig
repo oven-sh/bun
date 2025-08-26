@@ -215,11 +215,12 @@ const IPC = @import("./ipc.zig");
 const std = @import("std");
 
 const bun = @import("bun");
-const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
-const DevServerSourceProvider = bun.sourcemap.DevServerSourceProvider;
 const PluginRunner = bun.transpiler.PluginRunner;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
+
+const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
+const DevServerSourceProvider = bun.sourcemap.DevServerSourceProvider;

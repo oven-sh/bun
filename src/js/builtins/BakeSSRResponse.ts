@@ -6,7 +6,7 @@
 export function wrapComponent(strongComponent, responseOptions, isRenderRedirect, responseObject) {
   const bakeGetAsyncLocalStorage = $newZigFunction("bun.js/webcore/Response.zig", "bakeGetAsyncLocalStorage", 0);
 
-  return function() {
+  return function () {
     // For Response.redirect(), we need to throw a RedirectAbortError
     if (isRenderRedirect === "redirect") {
       // responseObject is the Response from Response.redirect()
@@ -20,7 +20,7 @@ export function wrapComponent(strongComponent, responseOptions, isRenderRedirect
       error.response = responseObject;
       throw error;
     }
-    
+
     // For Response.render(), we need to throw a RenderAbortError
     if (isRenderRedirect === true || isRenderRedirect === "render") {
       // strongComponent is the path string, responseOptions is params, responseObject is the Response
@@ -37,7 +37,7 @@ export function wrapComponent(strongComponent, responseOptions, isRenderRedirect
       error.response = responseObject;
       throw error;
     }
-    
+
     // For new Response(<jsx />, {}), update AsyncLocalStorage
     const async_local_storage = bakeGetAsyncLocalStorage();
     if (async_local_storage) {

@@ -227,7 +227,7 @@ pub fn load(
     sources: []const Logger.Source,
     server_component_boundaries: ServerComponentBoundary.List,
     dynamic_import_entry_points: []const Index.Int,
-    entry_point_original_names: *const std.AutoArrayHashMapUnmanaged(Index.Int, []const u8),
+    entry_point_original_names: *const IndexStringList,
 ) !void {
     const scb = server_component_boundaries.slice();
     try this.files.setCapacity(this.allocator, sources.len);
@@ -478,3 +478,4 @@ const Ref = bun.bundle_v2.Ref;
 const ResolvedExports = bun.bundle_v2.ResolvedExports;
 const ServerComponentBoundary = bun.bundle_v2.ServerComponentBoundary;
 const TopLevelSymbolToParts = bun.bundle_v2.TopLevelSymbolToParts;
+const IndexStringList = bun.bundle_v2.IndexStringList;

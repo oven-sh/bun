@@ -6,7 +6,7 @@ heap: ThreadLocalArena,
 /// Mapping user-specified entry points to their Source Index
 entry_points: std.ArrayListUnmanaged(Index) = .{},
 /// Maps entry point source indices to their original specifiers (for virtual entries resolved by plugins)
-entry_point_original_names: std.AutoArrayHashMapUnmanaged(Index.Int, []const u8) = .{},
+entry_point_original_names: IndexStringList = .{},
 /// Every source index has an associated InputFile
 input_files: MultiArrayList(InputFile) = .{},
 /// Every source index has an associated Ast
@@ -124,3 +124,4 @@ const BundleV2 = bun.bundle_v2.BundleV2;
 const ParseTask = bun.bundle_v2.ParseTask;
 const PathToSourceIndexMap = bun.bundle_v2.PathToSourceIndexMap;
 const ThreadPool = bun.bundle_v2.ThreadPool;
+const IndexStringList = @import("IndexStringList.zig");

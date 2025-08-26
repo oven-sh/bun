@@ -2498,7 +2498,6 @@ pub const BundleV2 = struct {
             this.graph.ast.deinit(this.allocator());
             this.graph.input_files.deinit(this.allocator());
             this.graph.entry_points.deinit(this.allocator());
-            for (this.graph.entry_point_original_names.values()) |name| this.allocator().free(name);
             this.graph.entry_point_original_names.deinit(this.allocator());
         }
 
@@ -4469,7 +4468,7 @@ pub const Loc = Logger.Loc;
 pub const bake = bun.bake;
 pub const lol = bun.LOLHTML;
 pub const DataURL = @import("../resolver/resolver.zig").DataURL;
-
+pub const IndexStringList = @import("./IndexStringList.zig").IndexStringList;
 pub const DeferredBatchTask = @import("./DeferredBatchTask.zig").DeferredBatchTask;
 pub const ThreadPool = @import("./ThreadPool.zig").ThreadPool;
 pub const ParseTask = @import("./ParseTask.zig").ParseTask;

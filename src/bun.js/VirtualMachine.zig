@@ -310,7 +310,11 @@ pub const VMHolder = struct {
 };
 
 pub inline fn get() *VirtualMachine {
-    return VMHolder.vm.?;
+    return getOrNull().?;
+}
+
+pub inline fn getOrNull() ?*VirtualMachine {
+    return VMHolder.vm;
 }
 
 pub fn getMainThreadVM() ?*VirtualMachine {
@@ -1614,7 +1618,7 @@ fn _resolve(
                 source_to_use,
                 normalized_specifier,
                 if (is_esm) .stmt else .require,
-                if (jsc_vm.standalone_module_graph == null) jsc_vm.transpiler.resolver.opts.global_cache else .disable,
+                jsc_vm.transpiler.resolver.opts.global_cache,
             )) {
                 .success => |r| r,
                 .failure => |e| e,
@@ -1707,7 +1711,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
             source_utf8.slice(),
             error.NameTooLong,
             if (is_esm) .stmt else if (is_user_require_resolve) .require_resolve else .require,
-        ) catch bun.outOfMemory();
+        ) catch |err| bun.handleOom(err);
         const msg = logger.Msg{
             .data = logger.rangeData(
                 null,

@@ -46,6 +46,9 @@ pub const All = struct {
         }
     } = .{},
 
+    /// Updates the "Date" header.
+    date_header_timer: DateHeaderTimer = .{},
+
     pub fn init() @This() {
         return .{
             .thread_id = std.Thread.getCurrentId(),
@@ -199,6 +202,27 @@ pub const All = struct {
         return VirtualMachine.get().timer.last_id;
     }
 
+    fn isDateTimerActive(this: *const All) bool {
+        return this.date_header_timer.event_loop_timer.state == .ACTIVE;
+    }
+
+    pub fn updateDateHeaderTimerIfNecessary(this: *All, loop: *const uws.Loop, vm: *VirtualMachine) void {
+        if (loop.shouldEnableDateHeaderTimer()) {
+            if (!this.isDateTimerActive()) {
+                this.date_header_timer.enable(
+                    vm,
+                    // Be careful to avoid adding extra calls to bun.timespec.now()
+                    // when it's not needed.
+                    &bun.timespec.now(),
+                );
+            }
+        } else {
+            // don't un-schedule it here.
+            // it's better to wake up an extra 1 time after a second idle
+            // than to have to check a date potentially on every single HTTP request.
+        }
+    }
+
     pub fn getTimeout(this: *All, spec: *timespec, vm: *VirtualMachine) bool {
         var maybe_now: ?timespec = null;
         while (this.timers.peek()) |min| {
@@ -291,7 +315,7 @@ pub const All = struct {
                 bun.String.createFormat(
                     "{d} does not fit into a 32-bit signed integer" ++ suffix,
                     .{countdown},
-                ) catch bun.outOfMemory()
+                ) catch |err| bun.handleOom(err)
             else
                 // -Infinity is handled by TimeoutNegativeWarning
                 bun.String.ascii("Infinity does not fit into a 32-bit signed integer" ++ suffix),
@@ -299,7 +323,7 @@ pub const All = struct {
                 bun.String.createFormat(
                     "{d} is a negative number" ++ suffix,
                     .{countdown},
-                ) catch bun.outOfMemory()
+                ) catch |err| bun.handleOom(err)
             else
                 bun.String.ascii("-Infinity is a negative number" ++ suffix),
             // std.fmt gives us "nan" but Node.js wants "NaN".
@@ -571,6 +595,8 @@ pub const ID = extern struct {
 /// A timer created by WTF code and invoked by Bun's event loop
 pub const WTFTimer = @import("./Timer/WTFTimer.zig");
 
+pub const DateHeaderTimer = @import("./Timer/DateHeaderTimer.zig");
+
 pub const internal_bindings = struct {
     /// Node.js has some tests that check whether timers fire at the right time. They check this
     /// with the internal binding `getLibuvNow()`, which returns an integer in milliseconds. This
@@ -598,6 +624,7 @@ const Environment = bun.Environment;
 const JSError = bun.JSError;
 const assert = bun.assert;
 const timespec = bun.timespec;
+const uws = bun.uws;
 const heap = bun.io.heap;
 const uv = bun.windows.libuv;
 

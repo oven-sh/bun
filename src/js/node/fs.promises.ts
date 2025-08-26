@@ -19,7 +19,7 @@ const kUnref = Symbol("kUnref");
 const kTransfer = Symbol("kTransfer");
 const kTransferList = Symbol("kTransferList");
 const kDeserialize = Symbol("kDeserialize");
-const kEmptyObject = ObjectFreeze({ __proto__: null });
+const kEmptyObject = ObjectFreeze(Object.create(null));
 const kFlag = Symbol("kFlag");
 
 const { validateInteger } = require("internal/validators");

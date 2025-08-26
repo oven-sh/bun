@@ -216,7 +216,7 @@ pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) vo
     if (this.next_immediate_tasks.capacity > 0) {
         // this would only occur if we were recursively running tickImmediateTasks.
         @branchHint(.unlikely);
-        this.immediate_tasks.appendSlice(bun.default_allocator, this.next_immediate_tasks.items) catch bun.outOfMemory();
+        bun.handleOom(this.immediate_tasks.appendSlice(bun.default_allocator, this.next_immediate_tasks.items));
         this.next_immediate_tasks.deinit(bun.default_allocator);
     }
 
@@ -326,8 +326,8 @@ pub fn usocketsLoop(this: *const EventLoop) *uws.Loop {
 }
 
 pub fn autoTick(this: *EventLoop) void {
-    var loop = this.usocketsLoop();
-    var ctx = this.virtual_machine;
+    const loop = this.usocketsLoop();
+    const ctx = this.virtual_machine;
 
     this.tickImmediateTasks(ctx);
     if (comptime Environment.isPosix) {
@@ -349,6 +349,8 @@ pub fn autoTick(this: *EventLoop) void {
             loop.unrefCount(pending_unref);
         }
     }
+
+    ctx.timer.updateDateHeaderTimerIfNecessary(loop, ctx);
 
     this.runImminentGCTimer();
 
@@ -378,8 +380,8 @@ pub fn autoTick(this: *EventLoop) void {
 }
 
 pub fn tickPossiblyForever(this: *EventLoop) void {
-    var ctx = this.virtual_machine;
-    var loop = this.usocketsLoop();
+    const ctx = this.virtual_machine;
+    const loop = this.usocketsLoop();
 
     if (comptime Environment.isPosix) {
         const pending_unref = ctx.pending_unref_counter;
@@ -428,6 +430,8 @@ pub fn autoTickActive(this: *EventLoop) void {
             loop.unrefCount(pending_unref);
         }
     }
+
+    ctx.timer.updateDateHeaderTimerIfNecessary(loop, ctx);
 
     if (loop.isActive()) {
         this.processGCTimer();
@@ -525,7 +529,7 @@ pub fn enqueueTask(this: *EventLoop, task: Task) void {
 }
 
 pub fn enqueueImmediateTask(this: *EventLoop, task: *Timer.ImmediateObject) void {
-    this.immediate_tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
+    bun.handleOom(this.immediate_tasks.append(bun.default_allocator, task));
 }
 
 pub fn ensureWaker(this: *EventLoop) void {

@@ -249,6 +249,8 @@ expectType(sql([1, 2, 3] as const)).is<Bun.SQL.Helper<readonly [1, 2, 3]>>();
 expectType(sql("users")).is<Bun.SQL.Query<any>>();
 expectType(sql<1>("users")).is<Bun.SQL.Query<1>>();
 
+declare const user: { name: "Alice"; email: "alice@example.com" };
+
 // @ts-expect-error - missing key in object
 sql(user, "notAKey");
 
@@ -265,3 +267,9 @@ sql([1, 2, 3], "notAKey");
 expectType<Bun.SQLQuery<"hey">>();
 expectType<Bun.SQLTransactionContextCallback<"hey">>();
 expectType<Bun.SQLSavepointContextCallback<"hey">>();
+
+// check some types exist
+expectType<Bun.SQL.AwaitPromisesArray<[]>>;
+expectType<Bun.SQL.SQLiteOptions>;
+expectType<Bun.SQL.PostgresOrMySQLOptions>;
+expectType<Bun.SQL.ContextCallbackResult<unknown>>;

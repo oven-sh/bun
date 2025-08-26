@@ -379,7 +379,7 @@ var require_src = __commonJS((exports, module) => {
    * @returns {Record<string, string | string[]>}
    */
   function parse(qs, sep, eq, options) {
-    const obj = { __proto__: null };
+    const obj = Object.create(null);
 
     if (typeof qs !== "string" || qs.length === 0) {
       return obj;

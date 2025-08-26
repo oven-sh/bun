@@ -162,6 +162,7 @@ public:
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onLoadFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onResolveFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> setupFunction;
+
     JSC::JSGlobalObject* m_globalObject;
 
 private:
@@ -626,6 +627,7 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
 
     auto result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, setupFunction, callData, plugin, arguments);
     RETURN_IF_EXCEPTION(scope, {}); // should be able to use RELEASE_AND_RETURN, no? observed it returning undefined with exception active
+
     return JSValue::encode(result);
 }
 
@@ -650,6 +652,34 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
 extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)
 {
     plugin->plugin.tombstone();
+}
+
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedBuildPromise, JSC::EncodedJSValue encodedBuildResult, JSC::EncodedJSValue encodedRejection)
+{
+    auto& vm = plugin->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = plugin->globalObject();
+
+    // TODO: have a prototype for JSBundlerPlugin that this is put on instead of re-creating the function on each usage
+    auto* runOnEndCallbacksFn = JSC::JSFunction::create(vm, globalObject,
+        WebCore::bundlerPluginRunOnEndCallbacksCodeGenerator(vm), globalObject);
+
+    JSC::CallData callData = JSC::getCallData(runOnEndCallbacksFn);
+    if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
+        return JSValue::encode(jsUndefined());
+    }
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(JSValue::decode(encodedBuildPromise));
+    arguments.append(JSValue::decode(encodedBuildResult));
+    arguments.append(JSValue::decode(encodedRejection));
+
+    // TODO: use AsyncContextFrame?
+    auto result
+        = JSC::profiledCall(globalObject, ProfilingReason::API, runOnEndCallbacksFn, callData, plugin, arguments);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return JSValue::encode(result);
 }
 
 extern "C" int JSBundlerPlugin__callOnBeforeParsePlugins(

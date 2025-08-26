@@ -206,7 +206,7 @@ const FullSettingsPayload = packed struct(u288) {
         result.put(globalObject, jsc.ZigString.static("maxHeaderSize"), jsc.JSValue.jsNumber(this.maxHeaderListSize));
         // TODO: we dont support this setting yet see https://nodejs.org/api/http2.html#settings-object
         // we should also support customSettings
-        result.put(globalObject, jsc.ZigString.static("enableConnectProtocol"), jsc.JSValue.jsBoolean(false));
+        result.put(globalObject, jsc.ZigString.static("enableConnectProtocol"), .false);
         return result;
     }
 
@@ -778,7 +778,7 @@ pub const H2FrameParser = struct {
             }
 
             pub fn enqueue(self: *PendingQueue, value: PendingFrame, allocator: Allocator) void {
-                self.data.append(allocator, value) catch bun.outOfMemory();
+                bun.handleOom(self.data.append(allocator, value));
                 self.len += 1;
                 log("PendingQueue.enqueue {}", .{self.len});
             }
@@ -1015,7 +1015,7 @@ pub const H2FrameParser = struct {
                 }
                 if (last_frame.len == 0) {
                     // we have an empty frame with means we can just use this frame with a new buffer
-                    last_frame.buffer = client.allocator.alloc(u8, MAX_PAYLOAD_SIZE_WITHOUT_FRAME) catch bun.outOfMemory();
+                    last_frame.buffer = bun.handleOom(client.allocator.alloc(u8, MAX_PAYLOAD_SIZE_WITHOUT_FRAME));
                 }
                 const max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME;
                 const remaining = max_size - last_frame.len;
@@ -1051,7 +1051,7 @@ pub const H2FrameParser = struct {
                 .end_stream = end_stream,
                 .len = @intCast(bytes.len),
                 // we need to clone this data to send it later
-                .buffer = if (bytes.len == 0) "" else client.allocator.alloc(u8, MAX_PAYLOAD_SIZE_WITHOUT_FRAME) catch bun.outOfMemory(),
+                .buffer = if (bytes.len == 0) "" else bun.handleOom(client.allocator.alloc(u8, MAX_PAYLOAD_SIZE_WITHOUT_FRAME)),
                 .callback = if (callback.isCallable()) jsc.Strong.Optional.create(callback, globalThis) else .empty,
             };
             if (bytes.len > 0) {
@@ -1547,7 +1547,7 @@ pub const H2FrameParser = struct {
                     this.writeBufferOffset += written;
 
                     // we still have more to buffer and even more now
-                    _ = this.writeBuffer.write(this.allocator, bytes) catch bun.outOfMemory();
+                    _ = bun.handleOom(this.writeBuffer.write(this.allocator, bytes));
                     this.globalThis.vm().reportExtraMemory(bytes.len);
 
                     log("_genericWrite flushed {} and buffered more {}", .{ written, bytes.len });
@@ -1563,7 +1563,7 @@ pub const H2FrameParser = struct {
                 if (written < bytes.len) {
                     const pending = bytes[written..];
                     // ops not all data was sent, lets buffer again
-                    _ = this.writeBuffer.write(this.allocator, pending) catch bun.outOfMemory();
+                    _ = bun.handleOom(this.writeBuffer.write(this.allocator, pending));
                     this.globalThis.vm().reportExtraMemory(pending.len);
 
                     log("_genericWrite buffered more {}", .{pending.len});
@@ -1583,7 +1583,7 @@ pub const H2FrameParser = struct {
         if (written < bytes.len) {
             const pending = bytes[written..];
             // ops not all data was sent, lets buffer again
-            _ = this.writeBuffer.write(this.allocator, pending) catch bun.outOfMemory();
+            _ = bun.handleOom(this.writeBuffer.write(this.allocator, pending));
             this.globalThis.vm().reportExtraMemory(pending.len);
 
             return false;
@@ -1664,7 +1664,7 @@ pub const H2FrameParser = struct {
             else => {
                 if (this.has_nonnative_backpressure) {
                     // we should not invoke JS when we have backpressure is cheaper to keep it queued here
-                    _ = this.writeBuffer.write(this.allocator, bytes) catch bun.outOfMemory();
+                    _ = bun.handleOom(this.writeBuffer.write(this.allocator, bytes));
                     this.globalThis.vm().reportExtraMemory(bytes.len);
 
                     return false;
@@ -1676,7 +1676,7 @@ pub const H2FrameParser = struct {
                 switch (code) {
                     -1 => {
                         // dropped
-                        _ = this.writeBuffer.write(this.allocator, bytes) catch bun.outOfMemory();
+                        _ = bun.handleOom(this.writeBuffer.write(this.allocator, bytes));
                         this.globalThis.vm().reportExtraMemory(bytes.len);
                         this.has_nonnative_backpressure = true;
                     },
@@ -1770,7 +1770,7 @@ pub const H2FrameParser = struct {
         this.remainingLength -= @intCast(end);
         if (this.remainingLength > 0) {
             // buffer more data
-            _ = this.readBuffer.appendSlice(payload) catch bun.outOfMemory();
+            _ = bun.handleOom(this.readBuffer.appendSlice(payload));
             this.globalThis.vm().reportExtraMemory(payload.len);
 
             return null;
@@ -1783,7 +1783,7 @@ pub const H2FrameParser = struct {
 
         if (this.readBuffer.list.items.len > 0) {
             // return buffered data
-            _ = this.readBuffer.appendSlice(payload) catch bun.outOfMemory();
+            _ = bun.handleOom(this.readBuffer.appendSlice(payload));
             this.globalThis.vm().reportExtraMemory(payload.len);
 
             return .{
@@ -2417,7 +2417,7 @@ pub const H2FrameParser = struct {
         }
 
         // new stream open
-        const entry = this.streams.getOrPut(streamIdentifier) catch bun.outOfMemory();
+        const entry = bun.handleOom(this.streams.getOrPut(streamIdentifier));
 
         entry.value_ptr.* = Stream.init(
             streamIdentifier,
@@ -2485,7 +2485,7 @@ pub const H2FrameParser = struct {
             const total = buffered_data + bytes.len;
             if (total < FrameHeader.byteSize) {
                 // buffer more data
-                _ = this.readBuffer.appendSlice(bytes) catch bun.outOfMemory();
+                _ = bun.handleOom(this.readBuffer.appendSlice(bytes));
                 this.globalThis.vm().reportExtraMemory(bytes.len);
 
                 return bytes.len;
@@ -2525,7 +2525,7 @@ pub const H2FrameParser = struct {
 
         if (bytes.len < FrameHeader.byteSize) {
             // buffer more dheaderata
-            this.readBuffer.appendSlice(bytes) catch bun.outOfMemory();
+            bun.handleOom(this.readBuffer.appendSlice(bytes));
             this.globalThis.vm().reportExtraMemory(bytes.len);
 
             return bytes.len;
@@ -3040,7 +3040,7 @@ pub const H2FrameParser = struct {
         };
 
         if (!stream.canSendData() and !stream.canReceiveData()) {
-            return jsc.JSValue.jsBoolean(false);
+            return .false;
         }
 
         if (!options.isObject()) {
@@ -3083,7 +3083,7 @@ pub const H2FrameParser = struct {
         }
         if (parent_id == stream.id) {
             this.sendGoAway(stream.id, ErrorCode.PROTOCOL_ERROR, "Stream with self dependency", this.lastStreamID, true);
-            return jsc.JSValue.jsBoolean(false);
+            return .false;
         }
 
         stream.streamDependency = parent_id;
@@ -3111,7 +3111,7 @@ pub const H2FrameParser = struct {
             _ = frame.write(@TypeOf(writer), writer);
             _ = priority.write(@TypeOf(writer), writer);
         }
-        return jsc.JSValue.jsBoolean(true);
+        return .true;
     }
     pub fn rstStream(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         log("rstStream", .{});
@@ -3143,7 +3143,7 @@ pub const H2FrameParser = struct {
 
         this.endStream(stream, @enumFromInt(error_code));
 
-        return jsc.JSValue.jsBoolean(true);
+        return .true;
     }
 
     const MemoryWriter = struct {
@@ -3542,7 +3542,7 @@ pub const H2FrameParser = struct {
         };
         if (!stream.canSendData()) {
             this.dispatchWriteCallback(callback_arg);
-            return jsc.JSValue.jsBoolean(false);
+            return .false;
         }
 
         const encoding: jsc.Node.Encoding = brk: {
@@ -3571,7 +3571,7 @@ pub const H2FrameParser = struct {
 
         this.sendData(stream, buffer.slice(), close, callback_arg);
 
-        return jsc.JSValue.jsBoolean(true);
+        return .true;
     }
 
     fn getNextStreamID(this: *H2FrameParser) u32 {
@@ -4277,10 +4277,10 @@ pub const H2FrameParser = struct {
         var this = brk: {
             if (ENABLE_ALLOCATOR_POOL) {
                 if (H2FrameParser.pool == null) {
-                    H2FrameParser.pool = bun.default_allocator.create(H2FrameParser.H2FrameParserHiveAllocator) catch bun.outOfMemory();
+                    H2FrameParser.pool = bun.handleOom(bun.default_allocator.create(H2FrameParser.H2FrameParserHiveAllocator));
                     H2FrameParser.pool.?.* = H2FrameParser.H2FrameParserHiveAllocator.init(bun.default_allocator);
                 }
-                const self = H2FrameParser.pool.?.tryGet() catch bun.outOfMemory();
+                const self = bun.handleOom(H2FrameParser.pool.?.tryGet());
 
                 self.* = H2FrameParser{
                     .ref_count = .init(),

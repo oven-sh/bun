@@ -7,7 +7,6 @@ pub const LinkerContext = struct {
 
     parse_graph: *Graph = undefined,
     graph: LinkerGraph = undefined,
-    allocator: std.mem.Allocator = undefined,
     log: *Logger.Log = undefined,
 
     resolver: *Resolver = undefined,
@@ -45,8 +44,12 @@ pub const LinkerContext = struct {
 
     mangled_props: MangledProps = .{},
 
+    pub fn allocator(this: *const LinkerContext) std.mem.Allocator {
+        return this.graph.allocator;
+    }
+
     pub fn pathWithPrettyInitialized(this: *LinkerContext, path: Fs.Path) !Fs.Path {
-        return bundler.genericPathWithPrettyInitialized(path, this.options.target, this.resolver.fs.top_level_dir, this.graph.allocator);
+        return bundler.genericPathWithPrettyInitialized(path, this.options.target, this.resolver.fs.top_level_dir, this.allocator());
     }
 
     pub const LinkerOptions = struct {
@@ -112,16 +115,16 @@ pub const LinkerContext = struct {
                 // was generated. This will be preserved so that remapping
                 // stack traces can show the source code, even after incremental
                 // rebuilds occur.
-                const allocator = if (worker.ctx.transpiler.options.dev_server) |dev|
-                    dev.allocator
+                const alloc = if (worker.ctx.transpiler.options.dev_server) |dev|
+                    dev.allocator()
                 else
                     worker.allocator;
 
-                SourceMapData.computeQuotedSourceContents(task.ctx, allocator, task.source_index);
+                SourceMapData.computeQuotedSourceContents(task.ctx, alloc, task.source_index);
             }
         };
 
-        pub fn computeLineOffsets(this: *LinkerContext, allocator: std.mem.Allocator, source_index: Index.Int) void {
+        pub fn computeLineOffsets(this: *LinkerContext, alloc: std.mem.Allocator, source_index: Index.Int) void {
             debug("Computing LineOffsetTable: {d}", .{source_index});
             const line_offset_table: *bun.sourcemap.LineOffsetTable.List = &this.graph.files.items(.line_offset_table)[source_index];
 
@@ -137,7 +140,7 @@ pub const LinkerContext = struct {
             const approximate_line_count = this.graph.ast.items(.approximate_newline_count)[source_index];
 
             line_offset_table.* = bun.sourcemap.LineOffsetTable.generate(
-                allocator,
+                alloc,
                 source.contents,
 
                 // We don't support sourcemaps for source files with more than 2^31 lines
@@ -147,23 +150,20 @@ pub const LinkerContext = struct {
 
         pub fn computeQuotedSourceContents(this: *LinkerContext, _: std.mem.Allocator, source_index: Index.Int) void {
             debug("Computing Quoted Source Contents: {d}", .{source_index});
+            const quoted_source_contents = &this.graph.files.items(.quoted_source_contents)[source_index];
+            if (quoted_source_contents.take()) |old| {
+                old.deinit();
+            }
+
             const loader: options.Loader = this.parse_graph.input_files.items(.loader)[source_index];
-            const quoted_source_contents: *?[]u8 = &this.graph.files.items(.quoted_source_contents)[source_index];
             if (!loader.canHaveSourceMap()) {
-                if (quoted_source_contents.*) |slice| {
-                    bun.default_allocator.free(slice);
-                    quoted_source_contents.* = null;
-                }
                 return;
             }
 
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
             var mutable = MutableString.initEmpty(bun.default_allocator);
-            js_printer.quoteForJSON(source.contents, &mutable, false) catch bun.outOfMemory();
-            if (quoted_source_contents.*) |slice| {
-                bun.default_allocator.free(slice);
-            }
-            quoted_source_contents.* = mutable.slice();
+            bun.handleOom(js_printer.quoteForJSON(source.contents, &mutable, false));
+            quoted_source_contents.* = mutable.toDefaultOwned().toOptional();
         }
     };
 
@@ -205,7 +205,7 @@ pub const LinkerContext = struct {
         this.log = bundle.transpiler.log;
 
         this.resolver = &bundle.transpiler.resolver;
-        this.cycle_detector = std.ArrayList(ImportTracker).init(this.allocator);
+        this.cycle_detector = std.ArrayList(ImportTracker).init(this.allocator());
 
         this.graph.reachable_files = reachable;
 
@@ -258,8 +258,8 @@ pub const LinkerContext = struct {
         bun.assert(this.options.source_maps != .none);
         this.source_maps.line_offset_wait_group = .initWithCount(reachable.len);
         this.source_maps.quoted_contents_wait_group = .initWithCount(reachable.len);
-        this.source_maps.line_offset_tasks = this.allocator.alloc(SourceMapData.Task, reachable.len) catch unreachable;
-        this.source_maps.quoted_contents_tasks = this.allocator.alloc(SourceMapData.Task, reachable.len) catch unreachable;
+        this.source_maps.line_offset_tasks = this.allocator().alloc(SourceMapData.Task, reachable.len) catch unreachable;
+        this.source_maps.quoted_contents_tasks = this.allocator().alloc(SourceMapData.Task, reachable.len) catch unreachable;
 
         var batch = ThreadPoolLib.Batch{};
         var second_batch = ThreadPoolLib.Batch{};
@@ -308,7 +308,7 @@ pub const LinkerContext = struct {
                     @panic("Assertion failed: HTML import file not found in pathToSourceIndexMap");
                 };
 
-                html_source_indices.push(this.graph.allocator, source_index) catch bun.outOfMemory();
+                bun.handleOom(html_source_indices.push(this.allocator(), source_index));
 
                 // S.LazyExport is a call to __jsonParse.
                 const original_ref = parts[html_import]
@@ -332,7 +332,7 @@ pub const LinkerContext = struct {
                     actual_ref,
                     1,
                     Index.runtime,
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             }
         }
     }
@@ -442,7 +442,7 @@ pub const LinkerContext = struct {
         const ref = this.graph.generateNewSymbol(source_index, .other, name);
         const part_index = this.graph.addPartToFile(source_index, .{
             .declared_symbols = js_ast.DeclaredSymbol.List.fromSlice(
-                this.allocator,
+                this.allocator(),
                 &[_]js_ast.DeclaredSymbol{
                     .{ .ref = ref, .is_top_level = true },
                 },
@@ -452,13 +452,13 @@ pub const LinkerContext = struct {
 
         try this.graph.generateSymbolImportAndUse(source_index, part_index, module_ref, 1, Index.init(source_index));
         var top_level = &this.graph.meta.items(.top_level_symbol_to_parts_overlay)[source_index];
-        var parts_list = this.allocator.alloc(u32, 1) catch unreachable;
+        var parts_list = this.allocator().alloc(u32, 1) catch unreachable;
         parts_list[0] = part_index;
 
-        top_level.put(this.allocator, ref, BabyList(u32).init(parts_list)) catch unreachable;
+        top_level.put(this.allocator(), ref, BabyList(u32).init(parts_list)) catch unreachable;
 
         var resolved_exports = &this.graph.meta.items(.resolved_exports)[source_index];
-        resolved_exports.put(this.allocator, alias, ExportData{
+        resolved_exports.put(this.allocator(), alias, ExportData{
             .data = ImportTracker{
                 .source_index = Index.init(source_index),
                 .import_ref = ref,
@@ -490,14 +490,14 @@ pub const LinkerContext = struct {
                     const loader = loaders[record.source_index.get()];
 
                     switch (loader) {
-                        .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .jsonc, .html, .sqlite_embedded => {
+                        .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .jsonc, .yaml, .html, .sqlite_embedded => {
                             log.addErrorFmt(
                                 source,
                                 record.range.loc,
-                                this.allocator,
+                                this.allocator(),
                                 "Cannot import a \".{s}\" file into a CSS file",
                                 .{@tagName(loader)},
-                            ) catch bun.outOfMemory();
+                            ) catch |err| bun.handleOom(err);
                         },
                         .css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh => {},
                     }
@@ -582,7 +582,7 @@ pub const LinkerContext = struct {
             // AutoBitSet needs to be initialized if it is dynamic
             if (AutoBitSet.needsDynamic(entry_points.len)) {
                 for (file_entry_bits) |*bits| {
-                    bits.* = try AutoBitSet.initEmpty(c.allocator, entry_points.len);
+                    bits.* = try AutoBitSet.initEmpty(c.allocator(), entry_points.len);
                 }
             } else if (file_entry_bits.len > 0) {
                 // assert that the tag is correct
@@ -747,11 +747,13 @@ pub const LinkerContext = struct {
         const source_indices_for_contents = source_id_map.keys();
         if (source_indices_for_contents.len > 0) {
             j.pushStatic("\n    ");
-            j.pushStatic(quoted_source_map_contents[source_indices_for_contents[0]] orelse "");
+            j.pushStatic(
+                quoted_source_map_contents[source_indices_for_contents[0]].getConst() orelse "",
+            );
 
             for (source_indices_for_contents[1..]) |index| {
                 j.pushStatic(",\n    ");
-                j.pushStatic(quoted_source_map_contents[index] orelse "");
+                j.pushStatic(quoted_source_map_contents[index].getConst() orelse "");
             }
         }
         j.pushStatic(
@@ -838,7 +840,7 @@ pub const LinkerContext = struct {
                         // Use the pretty path as the file name since it should be platform-
                         // independent (relative paths and the "/" path separator)
                         if (source.path.text.ptr == source.path.pretty.ptr) {
-                            source.path = c.pathWithPrettyInitialized(source.path) catch bun.outOfMemory();
+                            source.path = bun.handleOom(c.pathWithPrettyInitialized(source.path));
                         }
                         source.path.assertPrettyIsValid();
 
@@ -964,7 +966,7 @@ pub const LinkerContext = struct {
 
                     // Require of a top-level await chain is forbidden
                     if (record.kind == .require) {
-                        var notes = std.ArrayList(Logger.Data).init(c.allocator);
+                        var notes = std.ArrayList(Logger.Data).init(c.allocator());
 
                         var tla_pretty_path: string = "";
                         var other_source_index = record.source_index.get();
@@ -979,9 +981,9 @@ pub const LinkerContext = struct {
                                 const source = &input_files[other_source_index];
                                 tla_pretty_path = source.path.pretty;
                                 notes.append(Logger.Data{
-                                    .text = std.fmt.allocPrint(c.allocator, "The top-level await in {s} is here:", .{tla_pretty_path}) catch bun.outOfMemory(),
+                                    .text = bun.handleOom(std.fmt.allocPrint(c.allocator(), "The top-level await in {s} is here:", .{tla_pretty_path})),
                                     .location = .initOrNull(source, parent_result_tla_keyword),
-                                }) catch bun.outOfMemory();
+                                }) catch |err| bun.handleOom(err);
                                 break;
                             }
 
@@ -995,7 +997,7 @@ pub const LinkerContext = struct {
                             other_source_index = parent_tla_check.parent;
 
                             try notes.append(Logger.Data{
-                                .text = try std.fmt.allocPrint(c.allocator, "The file {s} imports the file {s} here:", .{
+                                .text = try std.fmt.allocPrint(c.allocator(), "The file {s} imports the file {s} here:", .{
                                     input_files[parent_source_index].path.pretty,
                                     input_files[other_source_index].path.pretty,
                                 }),
@@ -1006,9 +1008,9 @@ pub const LinkerContext = struct {
                         const source: *const Logger.Source = &input_files[source_index];
                         const imported_pretty_path = source.path.pretty;
                         const text: string = if (strings.eql(imported_pretty_path, tla_pretty_path))
-                            try std.fmt.allocPrint(c.allocator, "This require call is not allowed because the imported file \"{s}\" contains a top-level await", .{imported_pretty_path})
+                            try std.fmt.allocPrint(c.allocator(), "This require call is not allowed because the imported file \"{s}\" contains a top-level await", .{imported_pretty_path})
                         else
-                            try std.fmt.allocPrint(c.allocator, "This require call is not allowed because the transitive dependency \"{s}\" contains a top-level await", .{tla_pretty_path});
+                            try std.fmt.allocPrint(c.allocator(), "This require call is not allowed because the transitive dependency \"{s}\" contains a top-level await", .{tla_pretty_path});
 
                         try c.log.addRangeErrorWithNotes(source, record.range, text, notes.items);
                     }
@@ -1047,12 +1049,12 @@ pub const LinkerContext = struct {
             this.all_stmts.deinit();
         }
 
-        pub fn init(allocator: std.mem.Allocator) StmtList {
+        pub fn init(alloc: std.mem.Allocator) StmtList {
             return .{
-                .inside_wrapper_prefix = std.ArrayList(Stmt).init(allocator),
-                .outside_wrapper_prefix = std.ArrayList(Stmt).init(allocator),
-                .inside_wrapper_suffix = std.ArrayList(Stmt).init(allocator),
-                .all_stmts = std.ArrayList(Stmt).init(allocator),
+                .inside_wrapper_prefix = std.ArrayList(Stmt).init(alloc),
+                .outside_wrapper_prefix = std.ArrayList(Stmt).init(alloc),
+                .inside_wrapper_suffix = std.ArrayList(Stmt).init(alloc),
+                .all_stmts = std.ArrayList(Stmt).init(alloc),
             };
         }
     };
@@ -1063,7 +1065,7 @@ pub const LinkerContext = struct {
         loc: Logger.Loc,
         namespace_ref: Ref,
         import_record_index: u32,
-        allocator: std.mem.Allocator,
+        alloc: std.mem.Allocator,
         ast: *const JSAst,
     ) !bool {
         const record = ast.import_records.at(import_record_index);
@@ -1080,11 +1082,11 @@ pub const LinkerContext = struct {
                     S.Local,
                     S.Local{
                         .decls = G.Decl.List.fromSlice(
-                            allocator,
+                            alloc,
                             &.{
                                 .{
                                     .binding = Binding.alloc(
-                                        allocator,
+                                        alloc,
                                         B.Identifier{
                                             .ref = namespace_ref,
                                         },
@@ -1121,10 +1123,10 @@ pub const LinkerContext = struct {
                 try stmts.inside_wrapper_prefix.append(
                     Stmt.alloc(S.Local, .{
                         .decls = try G.Decl.List.fromSlice(
-                            allocator,
+                            alloc,
                             &.{
                                 .{
-                                    .binding = Binding.alloc(allocator, B.Identifier{
+                                    .binding = Binding.alloc(alloc, B.Identifier{
                                         .ref = namespace_ref,
                                     }, loc),
                                     .value = Expr.init(E.RequireString, .{
@@ -1193,7 +1195,7 @@ pub const LinkerContext = struct {
     pub fn printCodeForFileInChunkJS(
         c: *LinkerContext,
         r: renamer.Renamer,
-        allocator: std.mem.Allocator,
+        alloc: std.mem.Allocator,
         writer: *js_printer.BufferWriter,
         out_stmts: []Stmt,
         ast: *const js_ast.BundledAst,
@@ -1229,13 +1231,13 @@ pub const LinkerContext = struct {
             .print_dce_annotations = c.options.emit_dce_annotations,
             .has_run_symbol_renamer = true,
 
-            .allocator = allocator,
+            .allocator = alloc,
             .source_map_allocator = if (c.dev_server != null and
                 c.parse_graph.input_files.items(.loader)[source_index.get()].isJavaScriptLike())
                 // The loader check avoids globally allocating asset source maps
                 writer.buffer.allocator
             else
-                allocator,
+                alloc,
             .to_esm_ref = to_esm_ref,
             .to_commonjs_ref = to_commonjs_ref,
             .require_ref = switch (c.options.output_format) {
@@ -1322,9 +1324,9 @@ pub const LinkerContext = struct {
         const all_sources: []Logger.Source = c.parse_graph.input_files.items(.source);
 
         // Collect all local css names
-        var sfb = std.heap.stackFallback(512, c.allocator);
-        const allocator = sfb.get();
-        var local_css_names = std.AutoHashMap(bun.bundle_v2.Ref, void).init(allocator);
+        var sfb = std.heap.stackFallback(512, c.allocator());
+        const alloc = sfb.get();
+        var local_css_names = std.AutoHashMap(bun.bundle_v2.Ref, void).init(alloc);
         defer local_css_names.deinit();
 
         for (all_css_asts, 0..) |maybe_css_ast, source_index| {
@@ -1344,22 +1346,22 @@ pub const LinkerContext = struct {
                             break :ref ref;
                         };
 
-                        const entry = local_css_names.getOrPut(ref) catch bun.outOfMemory();
+                        const entry = bun.handleOom(local_css_names.getOrPut(ref));
                         if (entry.found_existing) continue;
 
                         const source = all_sources[ref.source_index];
 
                         const original_name = symbol.original_name;
                         const path_hash = bun.css.css_modules.hash(
-                            allocator,
+                            alloc,
                             "{s}",
                             // use path relative to cwd for determinism
                             .{source.path.pretty},
                             false,
                         );
 
-                        const final_generated_name = std.fmt.allocPrint(c.graph.allocator, "{s}_{s}", .{ original_name, path_hash }) catch bun.outOfMemory();
-                        c.mangled_props.put(c.allocator, ref, final_generated_name) catch bun.outOfMemory();
+                        const final_generated_name = bun.handleOom(std.fmt.allocPrint(c.allocator(), "{s}_{s}", .{ original_name, path_hash }));
+                        bun.handleOom(c.mangled_props.put(c.allocator(), ref, final_generated_name));
                     }
                 }
             }
@@ -1730,7 +1732,7 @@ pub const LinkerContext = struct {
         defer c.cycle_detector.shrinkRetainingCapacity(cycle_detector_top);
 
         var tracker = init_tracker;
-        var ambiguous_results = std.ArrayList(MatchImport).init(c.allocator);
+        var ambiguous_results = std.ArrayList(MatchImport).init(c.allocator());
         defer ambiguous_results.clearAndFree();
 
         var result: MatchImport = MatchImport{};
@@ -1759,7 +1761,7 @@ pub const LinkerContext = struct {
             }
 
             const prev_source_index = tracker.source_index.get();
-            c.cycle_detector.append(tracker) catch bun.outOfMemory();
+            bun.handleOom(c.cycle_detector.append(tracker));
 
             // Resolve the import by one step
             const advanced = c.advanceImportTracker(&tracker);
@@ -1801,7 +1803,7 @@ pub const LinkerContext = struct {
                         c.log.addRangeWarningFmt(
                             source,
                             source.rangeOfIdentifier(named_import.alias_loc.?),
-                            c.allocator,
+                            c.allocator(),
                             "Import \"{s}\" will always be undefined because the file \"{s}\" has no exports",
                             .{
                                 named_import.alias.?,
@@ -1868,7 +1870,7 @@ pub const LinkerContext = struct {
                             c.log.addRangeWarningFmtWithNote(
                                 source,
                                 r,
-                                c.allocator,
+                                c.allocator(),
                                 "Browser polyfill for module \"{s}\" doesn't have a matching export named \"{s}\"",
                                 .{
                                     next_source.path.pretty,
@@ -1882,7 +1884,7 @@ pub const LinkerContext = struct {
                             c.log.addRangeWarningFmt(
                                 source,
                                 r,
-                                c.allocator,
+                                c.allocator(),
                                 "Import \"{s}\" will always be undefined because there is no matching export in \"{s}\"",
                                 .{
                                     named_import.alias.?,
@@ -1894,7 +1896,7 @@ pub const LinkerContext = struct {
                         c.log.addRangeErrorFmtWithNote(
                             source,
                             r,
-                            c.allocator,
+                            c.allocator(),
                             "Browser polyfill for module \"{s}\" doesn't have a matching export named \"{s}\"",
                             .{
                                 next_source.path.pretty,
@@ -1908,7 +1910,7 @@ pub const LinkerContext = struct {
                         c.log.addRangeErrorFmt(
                             source,
                             r,
-                            c.allocator,
+                            c.allocator(),
                             "No matching export in \"{s}\" for import \"{s}\"",
                             .{
                                 next_source.path.pretty,
@@ -2049,7 +2051,7 @@ pub const LinkerContext = struct {
 
                 // Generate a dummy part that depends on the "__commonJS" symbol.
                 const dependencies: []js_ast.Dependency = if (c.options.output_format != .internal_bake_dev) brk: {
-                    const dependencies = c.allocator.alloc(js_ast.Dependency, common_js_parts.len) catch bun.outOfMemory();
+                    const dependencies = bun.handleOom(c.allocator().alloc(js_ast.Dependency, common_js_parts.len));
                     for (common_js_parts, dependencies) |part, *cjs| {
                         cjs.* = .{
                             .part_index = part,
@@ -2059,14 +2061,14 @@ pub const LinkerContext = struct {
                     break :brk dependencies;
                 } else &.{};
                 var symbol_uses: Part.SymbolUseMap = .empty;
-                symbol_uses.put(c.allocator, wrapper_ref, .{ .count_estimate = 1 }) catch bun.outOfMemory();
+                bun.handleOom(symbol_uses.put(c.allocator(), wrapper_ref, .{ .count_estimate = 1 }));
                 const part_index = c.graph.addPartToFile(
                     source_index,
                     .{
                         .stmts = &.{},
                         .symbol_uses = symbol_uses,
                         .declared_symbols = js_ast.DeclaredSymbol.List.fromSlice(
-                            c.allocator,
+                            c.allocator(),
                             &[_]js_ast.DeclaredSymbol{
                                 .{ .ref = c.graph.ast.items(.exports_ref)[source_index], .is_top_level = true },
                                 .{ .ref = c.graph.ast.items(.module_ref)[source_index], .is_top_level = true },
@@ -2108,7 +2110,7 @@ pub const LinkerContext = struct {
                     &.{};
 
                 // generate a dummy part that depends on the "__esm" symbol
-                const dependencies = c.allocator.alloc(js_ast.Dependency, esm_parts.len) catch unreachable;
+                const dependencies = c.allocator().alloc(js_ast.Dependency, esm_parts.len) catch unreachable;
                 for (esm_parts, dependencies) |part, *esm| {
                     esm.* = .{
                         .part_index = part,
@@ -2117,12 +2119,12 @@ pub const LinkerContext = struct {
                 }
 
                 var symbol_uses: Part.SymbolUseMap = .empty;
-                symbol_uses.put(c.allocator, wrapper_ref, .{ .count_estimate = 1 }) catch bun.outOfMemory();
+                bun.handleOom(symbol_uses.put(c.allocator(), wrapper_ref, .{ .count_estimate = 1 }));
                 const part_index = c.graph.addPartToFile(
                     source_index,
                     .{
                         .symbol_uses = symbol_uses,
-                        .declared_symbols = js_ast.DeclaredSymbol.List.fromSlice(c.allocator, &[_]js_ast.DeclaredSymbol{
+                        .declared_symbols = js_ast.DeclaredSymbol.List.fromSlice(c.allocator(), &[_]js_ast.DeclaredSymbol{
                             .{ .ref = wrapper_ref, .is_top_level = true },
                         }) catch unreachable,
                         .dependencies = Dependency.List.init(dependencies),
@@ -2137,7 +2139,7 @@ pub const LinkerContext = struct {
                         c.esm_runtime_ref,
                         1,
                         Index.runtime,
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                 }
             },
             else => {},
@@ -2278,7 +2280,7 @@ pub const LinkerContext = struct {
         imports_to_bind: *RefImportData,
         source_index: Index.Int,
     ) void {
-        var named_imports = named_imports_ptr.clone(c.allocator) catch bun.outOfMemory();
+        var named_imports = bun.handleOom(named_imports_ptr.clone(c.allocator()));
         defer named_imports_ptr.* = named_imports;
 
         const Sorter = struct {
@@ -2302,7 +2304,7 @@ pub const LinkerContext = struct {
 
             const import_ref = ref;
 
-            var re_exports = std.ArrayList(js_ast.Dependency).init(c.allocator);
+            var re_exports = std.ArrayList(js_ast.Dependency).init(c.allocator());
             const result = c.matchImportWithExport(.{
                 .source_index = Index.source(source_index),
                 .import_ref = import_ref,
@@ -2311,7 +2313,7 @@ pub const LinkerContext = struct {
             switch (result.kind) {
                 .normal => {
                     imports_to_bind.put(
-                        c.allocator,
+                        c.allocator(),
                         import_ref,
                         .{
                             .re_exports = bun.BabyList(js_ast.Dependency).init(re_exports.items),
@@ -2330,7 +2332,7 @@ pub const LinkerContext = struct {
                 },
                 .normal_and_namespace => {
                     imports_to_bind.put(
-                        c.allocator,
+                        c.allocator(),
                         import_ref,
                         .{
                             .re_exports = bun.BabyList(js_ast.Dependency).init(re_exports.items),
@@ -2352,7 +2354,7 @@ pub const LinkerContext = struct {
                     c.log.addRangeErrorFmt(
                         source,
                         r,
-                        c.allocator,
+                        c.allocator(),
                         "Detected cycle while resolving import \"{s}\"",
                         .{
                             named_import.alias.?,
@@ -2361,7 +2363,7 @@ pub const LinkerContext = struct {
                 },
                 .probably_typescript_type => {
                     c.graph.meta.items(.probably_typescript_type)[source_index].put(
-                        c.allocator,
+                        c.allocator(),
                         import_ref,
                         {},
                     ) catch unreachable;
@@ -2379,7 +2381,7 @@ pub const LinkerContext = struct {
                         c.log.addRangeWarningFmt(
                             source,
                             r,
-                            c.allocator,
+                            c.allocator(),
                             "Import \"{s}\" will always be undefined because there are multiple matching exports",
                             .{
                                 named_import.alias.?,
@@ -2389,7 +2391,7 @@ pub const LinkerContext = struct {
                         c.log.addRangeErrorFmt(
                             source,
                             r,
-                            c.allocator,
+                            c.allocator(),
                             "Ambiguous import \"{s}\" has multiple matching exports",
                             .{
                                 named_import.alias.?,
@@ -2404,7 +2406,7 @@ pub const LinkerContext = struct {
 
     pub fn breakOutputIntoPieces(
         c: *LinkerContext,
-        allocator: std.mem.Allocator,
+        alloc: std.mem.Allocator,
         j: *StringJoiner,
         count: u32,
     ) !Chunk.IntermediateOutput {
@@ -2423,10 +2425,10 @@ pub const LinkerContext = struct {
 
         var pieces = brk: {
             errdefer j.deinit();
-            break :brk try std.ArrayList(OutputPiece).initCapacity(allocator, count);
+            break :brk try std.ArrayList(OutputPiece).initCapacity(alloc, count);
         };
         errdefer pieces.deinit();
-        const complete_output = try j.done(allocator);
+        const complete_output = try j.done(alloc);
         var output = complete_output;
 
         const prefix = c.unique_key_prefix;

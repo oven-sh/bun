@@ -474,7 +474,7 @@ pub fn DebugData(thread_safe: bool) type {
             const id = nextId(debug);
             debug.map.put(bun.default_allocator, id, .{
                 .acquired_at = .capture(return_address),
-            }) catch bun.outOfMemory();
+            }) catch |err| bun.handleOom(err);
             return id;
         }
 
@@ -487,7 +487,7 @@ pub fn DebugData(thread_safe: bool) type {
             debug.frees.put(bun.default_allocator, id, .{
                 .acquired_at = entry.value.acquired_at,
                 .released_at = .capture(return_address),
-            }) catch bun.outOfMemory();
+            }) catch |err| bun.handleOom(err);
         }
 
         fn deinit(debug: *@This(), data: []const u8, ret_addr: usize) void {
@@ -547,7 +547,7 @@ fn genericDump(
 }
 
 pub fn maybeAssertNoRefs(T: type, ptr: *const T) void {
-    if (!@hasField(T, "ref_count")) return;
+    if (comptime !bun.meta.hasField(T, "ref_count")) return;
     const Rc = @FieldType(T, "ref_count");
     switch (@typeInfo(Rc)) {
         .@"struct" => if (@hasDecl(Rc, "assertNoRefs"))

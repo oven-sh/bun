@@ -17,7 +17,6 @@ describe("bundler", () => {
   itBundled("compile/HelloWorldWithProcessVersionsBun", {
     compile: true,
     files: {
-      [`/${process.platform}-${process.arch}.js`]: "module.exports = process.versions.bun;",
       "/entry.ts": /* js */ `
         process.exitCode = 1;
         process.versions.bun = "bun!";
@@ -26,8 +25,48 @@ describe("bundler", () => {
           process.exitCode = 0;
         }
       `,
+      [`/${process.platform}-${process.arch}.js`]: "module.exports = process.versions.bun;",
     },
     run: { exitCode: 0 },
+  });
+  itBundled("compile/HelloWorldWithProcessVersionsBunAPI", {
+    compile: true,
+    backend: "api",
+    outfile: "dist/out",
+    files: {
+      "/entry.ts": /* js */ `
+        import { foo } from "hello:world";
+        if (foo !== "bar") throw new Error("fail");
+        process.exitCode = 1;
+        process.versions.bun = "bun!";
+        if (process.versions.bun === "bun!") throw new Error("fail");
+        const another = require("./${process.platform}-${process.arch}.js").replaceAll("-debug", "");
+        if (another === "${Bun.version.replaceAll("-debug", "")}") {
+          process.exitCode = 0;
+        }
+      `,
+      [`/${process.platform}-${process.arch}.js`]: "module.exports = process.versions.bun;",
+    },
+    run: { exitCode: 0, stdout: "hello world" },
+    plugins: [
+      {
+        name: "hello-world",
+        setup(api) {
+          api.onResolve({ filter: /hello:world/, namespace: "file" }, args => {
+            return {
+              path: args.path,
+              namespace: "hello",
+            };
+          });
+          api.onLoad({ filter: /.*/, namespace: "hello" }, args => {
+            return {
+              contents: "export const foo = 'bar'; console.log('hello world');",
+              loader: "js",
+            };
+          });
+        },
+      },
+    ],
   });
   itBundled("compile/HelloWorldBytecode", {
     compile: true,

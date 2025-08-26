@@ -28,11 +28,24 @@ pub const Handler = struct {
     globalObject: *jsc.JSGlobalObject = undefined,
     active_connections: usize = 0,
 
+    /// Only used by NodeHTTPResponse.
+    ///
+    /// Before we call into JavaScript and after the WebSocket is upgraded, we need to call a function in NodeHTTPResponse.
+    ///
+    /// This is per-ServerWebSocket data, so it needs to be null'd on usage.
+    onBeforeOpen: ?*OnBeforeOpen = null,
+
     /// used by publish()
-    flags: packed struct(u2) {
+    flags: packed struct(u8) {
         ssl: bool = false,
         publish_to_self: bool = false,
+        _: u6 = 0,
     } = .{},
+
+    pub const OnBeforeOpen = struct {
+        ctx: *anyopaque,
+        callback: *const fn (*anyopaque, this_value: jsc.JSValue, socket: *uws.RawWebSocket) void,
+    };
 
     pub fn runErrorCallback(this: *const Handler, vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObject, error_value: jsc.JSValue) void {
         const onError = this.onError;

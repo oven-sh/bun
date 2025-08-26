@@ -1,15 +1,16 @@
 {
   "private": true,
   "name": "bun",
-  "version": "1.2.21",
+  "version": "1.2.22",
   "workspaces": [
     "./packages/bun-types",
     "./packages/@types/bun"
   ],
   "devDependencies": {
-    "bun-tracestrings": "github:oven-sh/bun.report#912ca63e26c51429d3e6799aa2a6ab079b188fd8",
     "@lezer/common": "^1.2.3",
     "@lezer/cpp": "^1.1.3",
+    "@types/bun": "workspace:*",
+    "bun-tracestrings": "github:oven-sh/bun.report#912ca63e26c51429d3e6799aa2a6ab079b188fd8",
     "esbuild": "^0.21.4",
     "mitata": "^0.1.11",
     "peechy": "0.4.34",
@@ -48,6 +49,9 @@
     "css-properties": "bun run src/css/properties/generate_properties.ts",
     "uv-posix-stubs": "bun run src/bun.js/bindings/libuv/generate_uv_posix_stubs.ts",
     "bump": "bun ./scripts/bump.ts",
+    "jsc:build": "bun ./scripts/build-jsc.ts release",
+    "jsc:build:debug": "bun ./scripts/build-jsc.ts debug",
+    "jsc:build:lto": "bun ./scripts/build-jsc.ts lto",
     "typecheck": "tsc --noEmit && cd test && bun run typecheck",
     "fmt": "bun run prettier",
     "fmt:cpp": "bun run clang-format",

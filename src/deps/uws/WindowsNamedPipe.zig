@@ -81,7 +81,7 @@ fn onPipeClose(this: *WindowsNamedPipe) void {
 fn onReadAlloc(this: *WindowsNamedPipe, suggested_size: usize) []u8 {
     var available = this.incoming.available();
     if (available.len < suggested_size) {
-        this.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size) catch bun.outOfMemory();
+        bun.handleOom(this.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size));
         available = this.incoming.available();
     }
     return available.ptr[0..suggested_size];
@@ -155,8 +155,8 @@ fn onHandshake(this: *WindowsNamedPipe, handshake_success: bool, ssl_error: uws.
 
     this.ssl_error = .{
         .error_no = ssl_error.error_no,
-        .code = if (ssl_error.code == null or ssl_error.error_no == 0) "" else bun.default_allocator.dupeZ(u8, ssl_error.code[0..bun.len(ssl_error.code) :0]) catch bun.outOfMemory(),
-        .reason = if (ssl_error.reason == null or ssl_error.error_no == 0) "" else bun.default_allocator.dupeZ(u8, ssl_error.reason[0..bun.len(ssl_error.reason) :0]) catch bun.outOfMemory(),
+        .code = if (ssl_error.code == null or ssl_error.error_no == 0) "" else bun.handleOom(bun.default_allocator.dupeZ(u8, ssl_error.code[0..bun.len(ssl_error.code) :0])),
+        .reason = if (ssl_error.reason == null or ssl_error.error_no == 0) "" else bun.handleOom(bun.default_allocator.dupeZ(u8, ssl_error.reason[0..bun.len(ssl_error.reason) :0])),
     };
     this.handlers.onHandshake(this.handlers.ctx, handshake_success, ssl_error);
 }
@@ -179,7 +179,7 @@ fn callWriteOrEnd(this: *WindowsNamedPipe, data: ?[]const u8, msg_more: bool) vo
             }
             if (this.flags.disconnected) {
                 // enqueue to be sent after connecting
-                this.writer.outgoing.write(bytes) catch bun.outOfMemory();
+                bun.handleOom(this.writer.outgoing.write(bytes));
             } else {
                 // write will enqueue the data if it cannot be sent
                 _ = this.writer.write(bytes);

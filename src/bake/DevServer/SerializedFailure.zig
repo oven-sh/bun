@@ -9,12 +9,12 @@
 /// for deterministic output; there is code in DevServer that uses `swapRemove`.
 pub const SerializedFailure = @This();
 
-/// Serialized data is always owned by dev.allocator
+/// Serialized data is always owned by dev.allocator()
 /// The first 32 bits of this slice contain the owner
 data: []u8,
 
 pub fn deinit(f: SerializedFailure, dev: *DevServer) void {
-    dev.allocator.free(f.data);
+    dev.allocator().free(f.data);
 }
 
 /// The metaphorical owner of an incremental file error. The packed variant
@@ -110,7 +110,7 @@ pub fn initFromJs(dev: *DevServer, owner: Owner, value: JSValue) !SerializedFail
         @panic("TODO");
     }
     // Avoid small re-allocations without requesting so much from the heap
-    var sfb = std.heap.stackFallback(65536, dev.allocator);
+    var sfb = std.heap.stackFallback(65536, dev.allocator());
     var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
         unreachable; // enough space
     const w = payload.writer();
@@ -120,7 +120,7 @@ pub fn initFromJs(dev: *DevServer, owner: Owner, value: JSValue) !SerializedFail
 
     // Avoid-recloning if it is was moved to the hap
     const data = if (payload.items.ptr == &sfb.buffer)
-        try dev.allocator.dupe(u8, payload.items)
+        try dev.allocator().dupe(u8, payload.items)
     else
         payload.items;
 
@@ -137,7 +137,7 @@ pub fn initFromLog(
     assert(messages.len > 0);
 
     // Avoid small re-allocations without requesting so much from the heap
-    var sfb = std.heap.stackFallback(65536, dev.allocator);
+    var sfb = std.heap.stackFallback(65536, dev.allocator());
     var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
         unreachable; // enough space
     const w = payload.writer();
@@ -154,7 +154,7 @@ pub fn initFromLog(
 
     // Avoid-recloning if it is was moved to the hap
     const data = if (payload.items.ptr == &sfb.buffer)
-        try dev.allocator.dupe(u8, payload.items)
+        try dev.allocator().dupe(u8, payload.items)
     else
         payload.items;
 

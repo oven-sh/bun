@@ -8,7 +8,11 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
                 return SQLDataCell.raw(&data);
             }
             const val = try reader.byte();
-            return SQLDataCell{ .tag = .int4, .value = .{ .int4 = val } };
+            if (unsigned) {
+                return SQLDataCell{ .tag = .uint4, .value = .{ .uint4 = try reader.int(u16) } };
+            }
+            const ival: i8 = @bitCast(val);
+            return SQLDataCell{ .tag = .int4, .value = .{ .int4 = ival } };
         },
         .MYSQL_TYPE_SHORT => {
             if (raw) {

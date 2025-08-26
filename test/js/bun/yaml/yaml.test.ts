@@ -303,6 +303,17 @@ explicit_null: !!null "anything"
       });
     });
 
+    test("handles strings that look like numbers", () => {
+      const yaml = `
+shasum1: 1e18495d9d7f6b41135e5ee828ef538dc94f9be4
+shasum2: 19f3afed71c8ee421de3892615197b57bd0f2c8f
+`;
+      expect(Bun.YAML.parse(yaml)).toEqual({
+        shasum1: "1e18495d9d7f6b41135e5ee828ef538dc94f9be4",
+        shasum2: "19f3afed71c8ee421de3892615197b57bd0f2c8f",
+      });
+    });
+
     test("handles merge keys", () => {
       const yaml = `
 defaults: &defaults

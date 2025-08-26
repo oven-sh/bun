@@ -646,6 +646,32 @@ declare module "bun" {
     export function parse(input: string): object;
   }
 
+   * YAML related APIs
+   */
+  namespace YAML {
+    /**
+     * Parse a YAML string into a JavaScript value
+     *
+     * @category Utilities
+     *
+     * @param input The YAML string to parse
+     * @returns A JavaScript value
+     *
+     * @example
+     * ```ts
+     * import { YAML } from "bun";
+     *
+     * console.log(YAML.parse("123")) // 123
+     * console.log(YAML.parse("123")) // null
+     * console.log(YAML.parse("false")) // false
+     * console.log(YAML.parse("abc")) // "abc"
+     * console.log(YAML.parse("- abc")) // [ "abc" ]
+     * console.log(YAML.parse("abc: def")) // { "abc": "def" }
+     * ```
+     */
+    export function parse(input: string): unknown;
+  }
+
   /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
    *
@@ -1655,7 +1681,7 @@ declare module "bun" {
     kind: ImportKind;
   }
 
-  namespace _BunBuildInterface {
+  namespace Build {
     type Architecture = "x64" | "arm64";
     type Libc = "glibc" | "musl";
     type SIMD = "baseline" | "modern";
@@ -1668,6 +1694,7 @@ declare module "bun" {
       | `bun-windows-x64-${SIMD}`
       | `bun-linux-x64-${SIMD}-${Libc}`;
   }
+
   /**
    * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
    */
@@ -1840,9 +1867,10 @@ declare module "bun" {
     drop?: string[];
 
     /**
-     * When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
-     * When set to `false`, the `success` property of the returned object will be `false` when a build failure happens.
-     * This defaults to `true`.
+     * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
+     * - When set to `false`, returns a {@link BuildOutput} with `{success: false}`
+     *
+     * @default true
      */
     throw?: boolean;
 
@@ -1863,7 +1891,7 @@ declare module "bun" {
   }
 
   interface CompileBuildOptions {
-    target?: _BunBuildInterface.Target;
+    target?: Bun.Build.Target;
     execArgv?: string[];
     executablePath?: string;
     outfile?: string;
@@ -1905,7 +1933,7 @@ declare module "bun" {
      * });
      * ```
      */
-    compile: boolean | _BunBuildInterface.Target | CompileBuildOptions;
+    compile: boolean | Bun.Build.Target | CompileBuildOptions;
   }
 
   /**
@@ -5511,6 +5539,7 @@ declare module "bun" {
   type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | void;
   type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
   type OnStartCallback = () => void | Promise<void>;
+  type OnEndCallback = (result: BuildOutput) => void | Promise<void>;
 
   interface OnResolveArgs {
     /**
@@ -5588,6 +5617,25 @@ declare module "bun" {
      * @returns `this` for method chaining
      */
     onStart(callback: OnStartCallback): this;
+    /**
+     * Register a callback which will be invoked when bundling ends. This is
+     * called after all modules have been bundled and the build is complete.
+     *
+     * @example
+     * ```ts
+     * const plugin: Bun.BunPlugin = {
+     *   name: "my-plugin",
+     *   setup(builder) {
+     *     builder.onEnd((result) => {
+     *       console.log("bundle just finished!!", result);
+     *     });
+     *   },
+     * };
+     * ```
+     *
+     * @returns `this` for method chaining
+     */
+    onEnd(callback: OnEndCallback): this;
     onBeforeParse(
       constraints: PluginConstraints,
       callback: {

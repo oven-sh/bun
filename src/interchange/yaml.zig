@@ -1921,8 +1921,10 @@ pub fn Parser(comptime enc: Encoding) type {
                     var decimal = parser.next() == '.';
                     var x = false;
                     var o = false;
+                    var e = false;
                     var @"+" = false;
                     var @"-" = false;
+                    var hex = false;
 
                     parser.inc(1);
 
@@ -1982,9 +1984,30 @@ pub fn Parser(comptime enc: Encoding) type {
                         },
 
                         '1'...'9',
-                        'a'...'f',
-                        'A'...'F',
+                        => {
+                            first = false;
+                            parser.inc(1);
+                            continue :end parser.next();
+                        },
+
+                        'e',
+                        'E',
+                        => {
+                            if (e) {
+                                hex = true;
+                            }
+                            e = true;
+                            parser.inc(1);
+                            continue :end parser.next();
+                        },
+
+                        'a'...'d',
+                        'f',
+                        'A'...'D',
+                        'F',
                         => |c| {
+                            hex = true;
+
                             defer first = false;
                             if (first) {
                                 if (c == 'b' or c == 'B') {
@@ -1993,7 +2016,6 @@ pub fn Parser(comptime enc: Encoding) type {
                             }
 
                             parser.inc(1);
-
                             continue :end parser.next();
                         },
 
@@ -2061,7 +2083,7 @@ pub fn Parser(comptime enc: Encoding) type {
                     }
 
                     var scalar: NodeScalar = scalar: {
-                        if (x or o) {
+                        if (x or o or hex) {
                             const unsigned = std.fmt.parseUnsigned(u64, parser.slice(start, end), 0) catch {
                                 return;
                             };

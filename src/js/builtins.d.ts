@@ -146,8 +146,35 @@ declare function $getInternalField<Fields extends any[], N extends keyof Fields>
   base: InternalFieldObject<Fields>,
   number: N,
 ): Fields[N];
-declare function $fulfillPromise(...args: any[]): TODO;
-declare function $rejectPromise(...args: any[]): TODO;
+/**
+ * Use {@link $fulfillPromise} when:
+ * - Fulfilling with primitive values (numbers, strings, booleans, null, undefined)
+ * - Fulfilling with plain objects that definitely don't have a then method
+ * - You're in internal code that has already done the thenable checking
+ *
+ * Use {@link $resolvePromise} when:
+ * - The value might be a promise or thenable
+ * - You need the full resolution algorithm (self-check, thenable unwrapping)
+ * - You're implementing user-facing APIs where the resolution value is unknown
+ */
+declare function $fulfillPromise<T>(promise: Promise<T>, value: NoInfer<T>): void;
+/**
+ * Use {@link $fulfillPromise} when:
+ * - Fulfilling with primitive values (numbers, strings, booleans, null, undefined)
+ * - Fulfilling with plain objects that definitely don't have a then method
+ * - You're in internal code that has already done the thenable checking
+ *
+ * Use {@link $resolvePromise} when:
+ * - The value might be a promise or thenable
+ * - You need the full resolution algorithm (self-check, thenable unwrapping)
+ * - You're implementing user-facing APIs where the resolution value is unknown
+ */
+declare function $resolvePromise<T>(promise: Promise<T>, value: NoInfer<T>): void;
+/**
+ * Reject a promise with a value
+ */
+declare function $rejectPromise(promise: Promise<unknown>, value: unknown): void;
+
 declare function $loadEsmIntoCjs(...args: any[]): TODO;
 declare function $getGeneratorInternalField(): TODO;
 declare function $getAsyncGeneratorInternalField(): TODO;
@@ -600,8 +627,8 @@ type ClassWithIntrinsics<T> = { [K in keyof T as T[K] extends Function ? `$${K}`
 declare interface Map<K, V> extends ClassWithIntrinsics<Map<K, V>> {}
 declare interface CallableFunction extends ClassWithIntrinsics<CallableFunction> {}
 declare interface Promise<T> extends ClassWithIntrinsics<Promise<T>> {}
-declare interface ArrayBufferConstructor<T> extends ClassWithIntrinsics<ArrayBufferConstructor<T>> {}
-declare interface PromiseConstructor<T> extends ClassWithIntrinsics<PromiseConstructor<T>> {}
+declare interface ArrayBufferConstructor extends ClassWithIntrinsics<ArrayBufferConstructor> {}
+declare interface PromiseConstructor extends ClassWithIntrinsics<PromiseConstructor> {}
 
 declare interface UnderlyingSource {
   $lazy?: boolean;
@@ -826,9 +853,6 @@ declare function $checkBufferRead(buf: Buffer, offset: number, byteLength: numbe
  * Schedules a callback to be invoked as a microtask.
  */
 declare function $enqueueJob<T extends (...args: any[]) => any>(callback: T, ...args: Parameters<T>): void;
-
-declare function $rejectPromise(promise: Promise<unknown>, reason: unknown): void;
-declare function $resolvePromise(promise: Promise<unknown>, value: unknown): void;
 
 interface Map<K, V> {
   $get: typeof Map.prototype.get;

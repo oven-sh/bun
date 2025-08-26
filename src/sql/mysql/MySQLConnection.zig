@@ -658,7 +658,12 @@ fn advance(this: *@This()) void {
                 }
             },
             .binding, .running, .partial_response => {
-                offset += 1;
+                const total_requests_running = this.pipelined_requests + this.nonpipelinable_requests;
+                if (offset < total_requests_running) {
+                    offset += total_requests_running;
+                } else {
+                    offset += 1;
+                }
                 continue;
             },
             .success => {

@@ -6056,10 +6056,10 @@ extern "C" void JSC__JSValue__transformToReactElementWithOptions(JSC::EncodedJSV
         JSC::MarkedArgumentBuffer args;
         args.append(JSC::jsUndefined()); // No component for redirect
         args.append(JSC::jsUndefined()); // No response options for redirect
-        
+
         // Pass "redirect" string as the third parameter to indicate this is a redirect
         // The responseOptions parameter from transformToReactElementWithOptions contains "redirect"
-        args.append(responseOptions);  // This should be the "redirect" string
+        args.append(responseOptions); // This should be the "redirect" string
         args.append(response); // Pass the Response object
 
         // Call the wrapComponent function

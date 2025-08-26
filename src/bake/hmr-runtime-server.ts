@@ -33,9 +33,7 @@ class RenderAbortError extends Error {
 
 /// Created when the user does `return Response.redirect(...)`
 class RedirectAbortError extends Error {
-  constructor(
-    public response: Response,
-  ) {
+  constructor(public response: Response) {
     super("Response.redirect() called");
     this.name = "RedirectAbortError";
   }
@@ -152,13 +150,13 @@ server_exports = {
         // return it so the Zig code can handle it and re-render new route
         return error.response;
       }
-      
+
       // Handle Response.redirect() aborts
       if (error instanceof RedirectAbortError) {
         // Return the redirect response directly
         return error.response;
       }
-      
+
       throw error;
     }
   },

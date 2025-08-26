@@ -66,7 +66,7 @@ pub const JSValue = enum(i64) {
     pub fn transformToReactElement(responseValue: JSValue, componentValue: JSValue, globalThis: *jsc.JSGlobalObject) void {
         JSC__JSValue__transformToReactElement(responseValue, componentValue, globalThis);
     }
-    
+
     extern fn JSC__JSValue__transformToReactElementWithOptions(responseValue: JSValue, componentValue: JSValue, responseOptions: JSValue, globalObject: *JSGlobalObject) void;
     pub fn transformToReactElementWithOptions(responseValue: JSValue, componentValue: JSValue, responseOptions: JSValue, globalThis: *jsc.JSGlobalObject) void {
         JSC__JSValue__transformToReactElementWithOptions(responseValue, componentValue, responseOptions, globalThis);

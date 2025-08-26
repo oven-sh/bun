@@ -416,7 +416,6 @@ private:
                 if (httpContextData->flags.shouldCloseAfterParsingHttp && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)) {
                     /* Gracefully close the socket by shutting down and then closing */
                     if (!us_socket_is_closed(SSL, s) && !us_socket_is_shut_down(SSL, s)) {
-                        printf("us_socket_shutdown\n");
                         us_socket_shutdown(SSL, s);
                         us_socket_shutdown_read(SSL, s);
                     }

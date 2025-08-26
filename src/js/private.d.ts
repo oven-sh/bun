@@ -264,3 +264,10 @@ declare module "node:net" {
     _connections: number;
   }
 }
+
+import "node:http";
+declare module "node:http" {
+  interface IncomingMessage {
+    _dumped: boolean;
+  }
+}

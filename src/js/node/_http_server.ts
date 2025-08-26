@@ -1536,6 +1536,7 @@ ServerResponse.prototype.writeHead = function (statusCode, statusMessage, header
   _writeHead(statusCode, statusMessage, headers, this);
 
   this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
+  this._header = " ";
 
   return this;
 };

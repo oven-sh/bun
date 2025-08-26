@@ -329,13 +329,17 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
                                 .ansi_16 => {
                                     const ansi_16_color = Ansi256.get16(rgba.red, rgba.green, rgba.blue);
                                     // 16-color ansi, foreground text color
-                                    break :color bun.String.cloneLatin1(&[_]u8{
-                                        // 0x1b is the escape character
-                                        // 38 is the foreground color code
-                                        // 5 is the 16-color mode
-                                        // {d} is the color index
-                                        0x1b, '[', '3', '8', ';', '5', ';', ansi_16_color, 'm',
-                                    });
+                                    var buf: [16]u8 = undefined;
+                                    // 0x1b is the escape character
+                                    buf[0] = 0x1b;
+                                    buf[1] = '[';
+                                    buf[2] = '3';
+                                    buf[3] = '8';
+                                    buf[4] = ';';
+                                    buf[5] = '5';
+                                    buf[6] = ';';
+                                    const extra = std.fmt.bufPrint(buf[7..], "{d}m", .{ansi_16_color}) catch unreachable;
+                                    break :color bun.String.cloneLatin1(buf[0 .. 7 + extra.len]);
                                 },
                                 .ansi_16m => {
                                     // true color ansi

@@ -263,12 +263,37 @@ pub const PosixSpawn = struct {
     pub const Actions = if (Environment.isLinux) BunSpawn.Actions else PosixSpawnActions;
     pub const Attr = if (Environment.isLinux) BunSpawn.Attr else PosixSpawnAttr;
 
+    pub const ContainerSetup = extern struct {
+        child_pid: pid_t = 0,
+        sync_pipe_read: c_int = -1,
+        sync_pipe_write: c_int = -1,
+        error_pipe_read: c_int = -1,
+        error_pipe_write: c_int = -1,
+        
+        // UID/GID mapping
+        has_uid_mapping: bool = false,
+        uid_inside: u32 = 0,
+        uid_outside: u32 = 0,
+        uid_count: u32 = 0,
+        
+        has_gid_mapping: bool = false,
+        gid_inside: u32 = 0,
+        gid_outside: u32 = 0,
+        gid_count: u32 = 0,
+        
+        // Resource limits
+        cgroup_path: ?[*:0]const u8 = null,
+        memory_limit: u64 = 0,
+        cpu_limit_pct: u32 = 0,
+    };
+
     const BunSpawnRequest = extern struct {
         chdir_buf: ?[*:0]u8 = null,
         detached: bool = false,
         set_pdeathsig: bool = false, // If true, child gets SIGKILL when parent dies
         actions: ActionsList = .{},
         namespace_flags: u32 = 0, // CLONE_NEW* flags for container namespaces
+        container_setup: ?*ContainerSetup = null, // Container-specific setup
 
         const ActionsList = extern struct {
             ptr: ?[*]const BunSpawn.Action = null,
@@ -321,6 +346,7 @@ pub const PosixSpawn = struct {
         argv: [*:null]?[*:0]const u8,
         envp: [*:null]?[*:0]const u8,
         namespace_flags: u32,
+        container_setup: ?*ContainerSetup,
     ) Maybe(pid_t) {
         if (comptime Environment.isLinux) {
             return BunSpawnRequest.spawn(
@@ -337,6 +363,7 @@ pub const PosixSpawn = struct {
                     .detached = if (attr) |a| a.detached else false,
                     .set_pdeathsig = if (attr) |a| a.set_pdeathsig else false,
                     .namespace_flags = namespace_flags,
+                    .container_setup = container_setup,
                 },
                 argv,
                 envp,

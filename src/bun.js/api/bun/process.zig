@@ -2358,10 +2358,44 @@ fn spawnWithContainer(
     // Calculate namespace flags from container options
     var namespace_flags: u32 = 0;
     
+    // Create container setup structure
+    var container_setup = PosixSpawn.ContainerSetup{};
+    
     if (container_context.options.namespace) |ns| {
         // User namespace must be created first if specified
-        if (ns.user != null) {
+        if (ns.user) |user_config| {
             namespace_flags |= std.os.linux.CLONE.NEWUSER;
+            
+            // Setup UID/GID mappings (parent will write these)
+            switch (user_config) {
+                .enable => {
+                    container_setup.has_uid_mapping = true;
+                    container_setup.uid_inside = 0;  // Map to root inside
+                    container_setup.uid_outside = std.os.linux.getuid();
+                    container_setup.uid_count = 1;
+                    
+                    container_setup.has_gid_mapping = true;
+                    container_setup.gid_inside = 0;  // Map to root inside
+                    container_setup.gid_outside = std.os.linux.getgid();
+                    container_setup.gid_count = 1;
+                },
+                .custom => |mapping| {
+                    // For now, only handle the first mapping in the arrays
+                    if (mapping.uid_map.len > 0) {
+                        container_setup.has_uid_mapping = true;
+                        container_setup.uid_inside = mapping.uid_map[0].inside_id;
+                        container_setup.uid_outside = mapping.uid_map[0].outside_id;
+                        container_setup.uid_count = mapping.uid_map[0].length;
+                    }
+                    
+                    if (mapping.gid_map.len > 0) {
+                        container_setup.has_gid_mapping = true;
+                        container_setup.gid_inside = mapping.gid_map[0].inside_id;
+                        container_setup.gid_outside = mapping.gid_map[0].outside_id;
+                        container_setup.gid_count = mapping.gid_map[0].length;
+                    }
+                },
+            }
         }
         
         if (ns.pid != null and ns.pid.?) {
@@ -2378,8 +2412,19 @@ fn spawnWithContainer(
         namespace_flags |= std.os.linux.CLONE.NEWNS;
     }
     
-    // Use the extended spawn with namespace flags
-    return PosixSpawn.spawnZWithNamespaces(argv0, actions, attr, argv, envp, namespace_flags);
+    // Resource limits
+    if (container_context.options.limit) |limits| {
+        if (limits.ram) |ram| {
+            container_setup.memory_limit = ram;
+        }
+        if (limits.cpu) |cpu| {
+            container_setup.cpu_limit_pct = @intFromFloat(cpu);
+        }
+        // TODO: Set cgroup_path based on generated cgroup name
+    }
+    
+    // Use the extended spawn with namespace flags and container setup
+    return PosixSpawn.spawnZWithNamespaces(argv0, actions, attr, argv, envp, namespace_flags, &container_setup);
 }
 
 const std = @import("std");

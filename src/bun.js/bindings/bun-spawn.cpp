@@ -16,6 +16,7 @@
 #include <linux/sched.h>
 #include <sched.h>
 #include <errno.h>
+#include <stdio.h>
 
 extern char** environ;
 
@@ -68,6 +69,31 @@ typedef struct bun_spawn_file_action_list_t {
     size_t len;
 } bun_spawn_file_action_list_t;
 
+// Container setup context passed between parent and child
+typedef struct bun_container_setup_t {
+    pid_t child_pid;  // Set by parent after clone3
+    int sync_pipe_read;  // Child reads from this
+    int sync_pipe_write; // Parent writes to this
+    int error_pipe_read;  // Parent reads errors from this
+    int error_pipe_write; // Child writes errors to this
+    
+    // UID/GID mapping for user namespaces
+    bool has_uid_mapping;
+    uint32_t uid_inside;
+    uint32_t uid_outside;
+    uint32_t uid_count;
+    
+    bool has_gid_mapping;
+    uint32_t gid_inside;
+    uint32_t gid_outside; 
+    uint32_t gid_count;
+    
+    // Cgroup path if resource limits are set
+    const char* cgroup_path;
+    uint64_t memory_limit;
+    uint32_t cpu_limit_pct;
+} bun_container_setup_t;
+
 typedef struct bun_spawn_request_t {
     const char* chdir;
     bool detached;
@@ -75,7 +101,105 @@ typedef struct bun_spawn_request_t {
     bun_spawn_file_action_list_t actions;
     // Container namespace flags
     uint32_t namespace_flags;  // CLONE_NEW* flags for namespaces
+    bun_container_setup_t* container_setup; // Container-specific setup data
 } bun_spawn_request_t;
+
+// Helper function to write UID/GID mappings for user namespace
+static int write_id_mapping(pid_t child_pid, const char* map_file, 
+                           uint32_t inside, uint32_t outside, uint32_t count) {
+    char path[256];
+    snprintf(path, sizeof(path), "/proc/%d/%s", child_pid, map_file);
+    
+    int fd = open(path, O_WRONLY);
+    if (fd < 0) return -1;
+    
+    char mapping[128];
+    int len = snprintf(mapping, sizeof(mapping), "%u %u %u\n", inside, outside, count);
+    
+    ssize_t written = write(fd, mapping, len);
+    close(fd);
+    
+    return written == len ? 0 : -1;
+}
+
+// Helper to write "deny" to setgroups for user namespace
+static int deny_setgroups(pid_t child_pid) {
+    char path[256];
+    snprintf(path, sizeof(path), "/proc/%d/setgroups", child_pid);
+    
+    int fd = open(path, O_WRONLY);
+    if (fd < 0) return -1;
+    
+    ssize_t written = write(fd, "deny\n", 5);
+    close(fd);
+    
+    return written == 5 ? 0 : -1;
+}
+
+// Parent-side container setup after clone3
+static int setup_container_parent(pid_t child_pid, bun_container_setup_t* setup) {
+    if (!setup) return 0;
+    
+    setup->child_pid = child_pid;
+    
+    // Setup UID/GID mappings for user namespace
+    if (setup->has_uid_mapping || setup->has_gid_mapping) {
+        // Must write mappings before child continues
+        if (setup->has_uid_mapping) {
+            if (write_id_mapping(child_pid, "uid_map", 
+                               setup->uid_inside, setup->uid_outside, setup->uid_count) != 0) {
+                return errno;
+            }
+        }
+        
+        // Deny setgroups before gid_map
+        if (deny_setgroups(child_pid) != 0) {
+            // Ignore error as it may not be supported
+        }
+        
+        if (setup->has_gid_mapping) {
+            if (write_id_mapping(child_pid, "gid_map",
+                               setup->gid_inside, setup->gid_outside, setup->gid_count) != 0) {
+                return errno;
+            }
+        }
+    }
+    
+    // Setup cgroups if needed
+    if (setup->cgroup_path && (setup->memory_limit || setup->cpu_limit_pct)) {
+        // TODO: Create cgroup and add child PID
+        // This would involve writing to cgroup.procs
+    }
+    
+    // Signal child to continue
+    char sync = '1';
+    if (write(setup->sync_pipe_write, &sync, 1) != 1) {
+        return errno;
+    }
+    
+    return 0;
+}
+
+// Child-side container setup before exec
+static int setup_container_child(bun_container_setup_t* setup) {
+    if (!setup) return 0;
+    
+    // Wait for parent to complete setup
+    char sync;
+    if (read(setup->sync_pipe_read, &sync, 1) != 1) {
+        return -1;
+    }
+    
+    // Close pipes we don't need
+    close(setup->sync_pipe_read);
+    close(setup->sync_pipe_write);
+    close(setup->error_pipe_read);
+    
+    // Child-specific setup would go here (mounts, network config, etc)
+    // Currently handled by the Zig code after spawn
+    
+    return 0;
+}
 
 extern "C" ssize_t posix_spawn_bun(
     int* pid,
@@ -91,27 +215,6 @@ extern "C" ssize_t posix_spawn_bun(
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
     
-    pid_t child = -1;
-    
-    // Use clone3 if we have namespace flags, otherwise use vfork for performance
-    if (request->namespace_flags != 0) {
-        struct clone_args cl_args = {0};
-        // Include basic clone flags needed for proper fork-like behavior
-        cl_args.flags = request->namespace_flags;
-        cl_args.exit_signal = SIGCHLD;
-        
-        child = clone3_wrapper(&cl_args, CLONE_ARGS_SIZE_VER0);
-        
-        // Fall back to vfork if clone3 fails (e.g., not supported or no permissions)
-        if (child == -1 && (errno == ENOSYS || errno == EPERM)) {
-            // Clear namespace flags since we can't use them with vfork
-            // The calling code will need to handle this error appropriately
-            child = vfork();
-        }
-    } else {
-        child = vfork();
-    }
-
     const auto childFailed = [&]() -> ssize_t {
         res = errno;
         status = res;
@@ -124,6 +227,13 @@ extern "C" ssize_t posix_spawn_bun(
 
     const auto startChild = [&]() -> ssize_t {
         sigset_t childmask = oldmask;
+        
+        // If we're in a container, wait for parent setup
+        if (request->container_setup) {
+            if (setup_container_child(request->container_setup) != 0) {
+                return childFailed();
+            }
+        }
 
         // Reset signals
         struct sigaction sa = { 0 };
@@ -231,11 +341,79 @@ extern "C" ssize_t posix_spawn_bun(
         return -1;
     };
 
+    pid_t child = -1;
+    int sync_pipe[2] = {-1, -1};
+    int error_pipe[2] = {-1, -1};
+    
+    // Use clone3 if we have namespace flags, otherwise use vfork for performance
+    if (request->namespace_flags != 0 && request->container_setup) {
+        // Create synchronization pipes
+        if (pipe2(sync_pipe, O_CLOEXEC) != 0) {
+            res = errno;
+            goto cleanup;
+        }
+        if (pipe2(error_pipe, O_CLOEXEC) != 0) {
+            res = errno;
+            goto cleanup;
+        }
+        
+        // Setup container context with pipes
+        request->container_setup->sync_pipe_read = sync_pipe[0];
+        request->container_setup->sync_pipe_write = sync_pipe[1];
+        request->container_setup->error_pipe_read = error_pipe[0];
+        request->container_setup->error_pipe_write = error_pipe[1];
+        
+        struct clone_args cl_args = {0};
+        cl_args.flags = request->namespace_flags;
+        cl_args.exit_signal = SIGCHLD;
+        
+        child = clone3_wrapper(&cl_args, CLONE_ARGS_SIZE_VER0);
+        
+        if (child == -1) {
+            res = errno;
+            // Don't fall back silently - report the error
+            goto cleanup;
+        }
+    } else if (request->namespace_flags != 0) {
+        // Container requested but no setup provided - this is an error
+        res = EINVAL;
+        goto cleanup;
+    } else {
+        child = vfork();
+    }
+
     if (child == 0) {
         return startChild();
     }
 
     if (child != -1) {
+        // Parent process - setup container if needed
+        if (request->container_setup) {
+            // Close child's ends of pipes
+            close(sync_pipe[0]);
+            close(error_pipe[1]);
+            
+            // Do parent-side container setup
+            int setup_res = setup_container_parent(child, request->container_setup);
+            if (setup_res != 0) {
+                // Setup failed - kill child and return error
+                kill(child, SIGKILL);
+                wait4(child, 0, 0, 0);
+                res = setup_res;
+                goto cleanup;
+            }
+            
+            // Check for errors from child
+            char error_buf[256];
+            ssize_t error_len = read(error_pipe[0], error_buf, sizeof(error_buf)-1);
+            if (error_len > 0) {
+                // Child reported an error
+                wait4(child, 0, 0, 0);
+                res = ECHILD; // Generic child error
+                goto cleanup;
+            }
+        }
+        
         res = status;
 
         if (!res) {
@@ -249,6 +427,13 @@ extern "C" ssize_t posix_spawn_bun(
         res = errno;
     }
 
+cleanup:
+    // Close all pipes if they were created
+    if (sync_pipe[0] != -1) close(sync_pipe[0]);
+    if (sync_pipe[1] != -1) close(sync_pipe[1]);
+    if (error_pipe[0] != -1) close(error_pipe[0]);
+    if (error_pipe[1] != -1) close(error_pipe[1]);
+    
     sigprocmask(SIG_SETMASK, &oldmask, 0);
     pthread_setcancelstate(cs, 0);
 

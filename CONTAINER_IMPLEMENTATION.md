@@ -1,8 +1,8 @@
 # Bun.spawn Container Implementation
 
-## Current Status: COMPILES BUT NOT WORKING
+## Current Status: PARTIALLY WORKING (NOT PRODUCTION READY)
 
-The container implementation successfully compiles but **crashes at runtime** due to error handling issues in the errno conversion code. The implementation needs debugging before it can be used.
+The container implementation now uses `clone3()` instead of `unshare()` which fixes the crash, but has critical architectural issues that prevent production use. See CONTAINER_FIXES_ASSESSMENT.md for details.
 
 ## What Was Implemented
 

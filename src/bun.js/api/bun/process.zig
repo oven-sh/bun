@@ -2355,16 +2355,31 @@ fn spawnWithContainer(
     envp: [*:null]?[*:0]const u8,
     container_context: *LinuxContainer.ContainerContext,
 ) bun.sys.Maybe(std.posix.pid_t) {
-    _ = container_context; // Container setup already done, cleanup handled by Process deinit
+    // Calculate namespace flags from container options
+    var namespace_flags: u32 = 0;
     
-    // Add posix_spawn file action to set PR_SET_PDEATHSIG
-    // This ensures the child gets SIGKILL if the parent (Bun) dies unexpectedly
-    // Note: This would require extending posix_spawn actions, so for now we rely on:
-    // 1. PID namespace (kills all children when namespace leader dies)
-    // 2. Process.deinit cleanup (for normal exits)
-    // 3. Cgroup freezer in cleanup (prevents new processes during cleanup)
+    if (container_context.options.namespace) |ns| {
+        // User namespace must be created first if specified
+        if (ns.user != null) {
+            namespace_flags |= std.os.linux.CLONE.NEWUSER;
+        }
+        
+        if (ns.pid != null and ns.pid.?) {
+            namespace_flags |= std.os.linux.CLONE.NEWPID;
+        }
+        
+        if (ns.network != null) {
+            namespace_flags |= std.os.linux.CLONE.NEWNET;
+        }
+    }
     
-    return PosixSpawn.spawnZ(argv0, actions, attr, argv, envp);
+    // Mount namespace if we have filesystem mounts
+    if (container_context.options.fs != null and container_context.options.fs.?.len > 0) {
+        namespace_flags |= std.os.linux.CLONE.NEWNS;
+    }
+    
+    // Use the extended spawn with namespace flags
+    return PosixSpawn.spawnZWithNamespaces(argv0, actions, attr, argv, envp, namespace_flags);
 }
 
 const std = @import("std");

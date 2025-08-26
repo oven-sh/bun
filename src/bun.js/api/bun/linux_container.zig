@@ -181,31 +181,15 @@ pub const ContainerContext = struct {
     pub fn setup(self: *Self) ContainerError!void {
         log("Setting up container environment", .{});
 
-        // Setup namespaces if requested
-        if (self.options.namespace) |ns_opts| {
-            // User namespace should be created first for rootless operation
-            if (ns_opts.user) |user_config| {
-                try self.setupUserNamespace(user_config);
-            }
+        // Namespaces are now created by clone3 in the spawn process
+        // We don't call unshare here anymore to avoid TOCTOU issues
+        // This function now only prepares the configuration
 
-            // PID namespace
-            if (ns_opts.pid) |enable_pid| {
-                if (enable_pid) {
-                    try self.setupPidNamespace();
-                }
-            }
-
-            // Network namespace
-            if (ns_opts.network) |net_config| {
-                try self.setupNetworkNamespace(net_config);
-            }
-        }
-
-        // Setup filesystem mounts
+        // Setup filesystem mounts (mount namespace created by clone3)
         if (self.options.fs) |mounts| {
-            // Create mount namespace first if we have any mounts
             if (mounts.len > 0) {
-                try self.setupMountNamespace();
+                // Mount namespace is created by clone3 with CLONE_NEWNS
+                // We can setup mounts here if running inside the namespace
                 for (mounts) |mount| {
                     try self.setupFilesystemMount(mount);
                 }

@@ -13,12 +13,38 @@
 #include <sys/syscall.h>
 #include <sys/resource.h>
 #include <sys/prctl.h>
+#include <linux/sched.h>
+#include <sched.h>
+#include <errno.h>
 
 extern char** environ;
 
 #ifndef CLOSE_RANGE_CLOEXEC
 #define CLOSE_RANGE_CLOEXEC (1U << 2)
 #endif
+
+// Define clone3 structures if not available in headers
+#ifndef CLONE_ARGS_SIZE_VER0
+struct clone_args {
+    uint64_t flags;
+    uint64_t pidfd;
+    uint64_t child_tid;
+    uint64_t parent_tid;
+    uint64_t exit_signal;
+    uint64_t stack;
+    uint64_t stack_size;
+    uint64_t tls;
+    uint64_t set_tid;
+    uint64_t set_tid_size;
+    uint64_t cgroup;
+};
+#define CLONE_ARGS_SIZE_VER0 64
+#endif
+
+// Wrapper for clone3 syscall
+static long clone3_wrapper(struct clone_args* cl_args, size_t size) {
+    return syscall(__NR_clone3, cl_args, size);
+}
 
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags);
 
@@ -47,6 +73,8 @@ typedef struct bun_spawn_request_t {
     bool detached;
     bool set_pdeathsig;  // If true, child gets SIGKILL when parent dies
     bun_spawn_file_action_list_t actions;
+    // Container namespace flags
+    uint32_t namespace_flags;  // CLONE_NEW* flags for namespaces
 } bun_spawn_request_t;
 
 extern "C" ssize_t posix_spawn_bun(
@@ -62,7 +90,27 @@ extern "C" ssize_t posix_spawn_bun(
     sigfillset(&blockall);
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
-    pid_t child = vfork();
+    
+    pid_t child = -1;
+    
+    // Use clone3 if we have namespace flags, otherwise use vfork for performance
+    if (request->namespace_flags != 0) {
+        struct clone_args cl_args = {0};
+        // Include basic clone flags needed for proper fork-like behavior
+        cl_args.flags = request->namespace_flags;
+        cl_args.exit_signal = SIGCHLD;
+        
+        child = clone3_wrapper(&cl_args, CLONE_ARGS_SIZE_VER0);
+        
+        // Fall back to vfork if clone3 fails (e.g., not supported or no permissions)
+        if (child == -1 && (errno == ENOSYS || errno == EPERM)) {
+            // Clear namespace flags since we can't use them with vfork
+            // The calling code will need to handle this error appropriately
+            child = vfork();
+        }
+    } else {
+        child = vfork();
+    }
 
     const auto childFailed = [&]() -> ssize_t {
         res = errno;

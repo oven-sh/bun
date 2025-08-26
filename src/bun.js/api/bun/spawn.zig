@@ -268,6 +268,7 @@ pub const PosixSpawn = struct {
         detached: bool = false,
         set_pdeathsig: bool = false, // If true, child gets SIGKILL when parent dies
         actions: ActionsList = .{},
+        namespace_flags: u32 = 0, // CLONE_NEW* flags for container namespaces
 
         const ActionsList = extern struct {
             ptr: ?[*]const BunSpawn.Action = null,
@@ -312,6 +313,39 @@ pub const PosixSpawn = struct {
             };
         }
     };
+
+    pub fn spawnZWithNamespaces(
+        path: [*:0]const u8,
+        actions: ?Actions,
+        attr: ?Attr,
+        argv: [*:null]?[*:0]const u8,
+        envp: [*:null]?[*:0]const u8,
+        namespace_flags: u32,
+    ) Maybe(pid_t) {
+        if (comptime Environment.isLinux) {
+            return BunSpawnRequest.spawn(
+                path,
+                .{
+                    .actions = if (actions) |act| .{
+                        .ptr = act.actions.items.ptr,
+                        .len = act.actions.items.len,
+                    } else .{
+                        .ptr = null,
+                        .len = 0,
+                    },
+                    .chdir_buf = if (actions) |a| a.chdir_buf else null,
+                    .detached = if (attr) |a| a.detached else false,
+                    .set_pdeathsig = if (attr) |a| a.set_pdeathsig else false,
+                    .namespace_flags = namespace_flags,
+                },
+                argv,
+                envp,
+            );
+        }
+        
+        // Fallback for non-Linux
+        return spawnZ(path, actions, attr, argv, envp);
+    }
 
     pub fn spawnZ(
         path: [*:0]const u8,

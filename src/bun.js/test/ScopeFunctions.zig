@@ -150,7 +150,7 @@ fn genericExtend(this: *ScopeFunctions, globalThis: *JSGlobalObject, cfg: descri
 
 fn errorInCI(globalThis: *jsc.JSGlobalObject, signature: []const u8) bun.JSError!void {
     if (!bun.FeatureFlags.breaking_changes_1_3) return; // this is a breaking change for version 1.3
-    if (ci_info.detectCI()) |_| {
+    if (bun.detectCI()) |_| {
         return globalThis.throwPretty("{s} is not allowed in CI environments.\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{signature});
     }
 }
@@ -206,6 +206,5 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const CallFrame = jsc.CallFrame;
 const VirtualMachine = jsc.VirtualMachine;
 const JSValue = jsc.JSValue;
-const ci_info = @import("../../ci_info.zig");
 
 const Strong = jsc.Strong.Safe;

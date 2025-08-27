@@ -2008,6 +2008,9 @@ pub fn clearEntryPoint(this: *VirtualMachine) bun.JSError!void {
 }
 
 fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
+    bun.jsc.Jest.describe2.group.begin(@src()); // TODO: remove this
+    defer bun.jsc.Jest.describe2.group.end();
+
     this.is_in_preload = true;
     defer this.is_in_preload = false;
 

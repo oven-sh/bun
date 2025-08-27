@@ -156,7 +156,7 @@ pub const js_fns = struct {
                 errdefer group.log("ended in error", .{});
 
                 const bunTestRoot = try getActiveTestRoot(globalThis, .{ .signature = .{ .str = @tagName(tag) ++ "()" }, .allow_in_preload = true });
-                const bunTest = bunTestRoot.getActiveFile(globalThis.bunVM()) orelse {
+                const bunTest = bunTestRoot.getActiveFileUnlessInPreload(globalThis.bunVM()) orelse {
                     @panic("TODO implement genericHook in preload");
                 };
 
@@ -185,7 +185,6 @@ pub const js_fns = struct {
 
 pub const BunTest = struct {
     gpa: std.mem.Allocator,
-    in_preload: bool,
     active_file: ?*BunTestFile,
 
     hook_scope: *DescribeScope,
@@ -202,7 +201,6 @@ pub const BunTest = struct {
         });
         return .{
             .gpa = outer_gpa,
-            .in_preload = true,
             .active_file = null,
             .hook_scope = hook_scope,
         };
@@ -214,17 +212,22 @@ pub const BunTest = struct {
     }
 
     pub fn enterFile(this: *BunTest, file_id: jsc.Jest.TestRunner.File.ID) void {
+        group.begin(@src());
+        defer group.end();
+
         bun.assert(this.active_file == null);
-        this.in_preload = false;
         this.active_file = bun.create(this.gpa, BunTestFile, .init(this.gpa, this, file_id));
     }
     pub fn exitFile(this: *BunTest) void {
+        group.begin(@src());
+        defer group.end();
+
         bun.assert(this.active_file != null);
         this.active_file.?.deinit();
         this.gpa.destroy(this.active_file.?);
         this.active_file = null;
     }
-    pub fn getActiveFile(this: *BunTest, vm: *jsc.VirtualMachine) ?*BunTestFile {
+    pub fn getActiveFileUnlessInPreload(this: *BunTest, vm: *jsc.VirtualMachine) ?*BunTestFile {
         if (vm.is_in_preload) {
             return null;
         }

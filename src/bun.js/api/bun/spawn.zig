@@ -268,54 +268,54 @@ pub const PosixSpawn = struct {
         tmpfs = 1,
         overlayfs = 2,
     };
-    
+
     pub const OverlayfsConfig = extern struct {
-        lower: ?[*:0]const u8 = null,     // Lower (readonly) layer(s), colon-separated
-        upper: ?[*:0]const u8 = null,     // Upper (read-write) layer
-        work: ?[*:0]const u8 = null,      // Work directory (must be on same filesystem as upper)
+        lower: ?[*:0]const u8 = null, // Lower (readonly) layer(s), colon-separated
+        upper: ?[*:0]const u8 = null, // Upper (read-write) layer
+        work: ?[*:0]const u8 = null, // Work directory (must be on same filesystem as upper)
     };
-    
+
     pub const MountConfig = extern struct {
         type: MountType,
-        source: ?[*:0]const u8 = null,  // For bind mounts
+        source: ?[*:0]const u8 = null, // For bind mounts
         target: [*:0]const u8,
         readonly: bool = false,
-        tmpfs_size: u64 = 0,  // For tmpfs, 0 = default
-        overlay: OverlayfsConfig = .{},  // For overlayfs
+        tmpfs_size: u64 = 0, // For tmpfs, 0 = default
+        overlay: OverlayfsConfig = .{}, // For overlayfs
     };
-    
+
     pub const ContainerSetup = extern struct {
         child_pid: pid_t = 0,
         sync_pipe_read: c_int = -1,
         sync_pipe_write: c_int = -1,
         error_pipe_read: c_int = -1,
         error_pipe_write: c_int = -1,
-        
+
         // UID/GID mapping
         has_uid_mapping: bool = false,
         uid_inside: u32 = 0,
         uid_outside: u32 = 0,
         uid_count: u32 = 0,
-        
+
         has_gid_mapping: bool = false,
         gid_inside: u32 = 0,
         gid_outside: u32 = 0,
         gid_count: u32 = 0,
-        
+
         // Network namespace
         has_network_namespace: bool = false,
-        
+
         // PID namespace
         has_pid_namespace: bool = false,
-        
+
         // Mount namespace
         has_mount_namespace: bool = false,
         mounts: ?[*]const MountConfig = null,
         mount_count: usize = 0,
-        
+
         // Root filesystem configuration
         root: ?[*:0]const u8 = null,
-        
+
         // Resource limits
         cgroup_path: ?[*:0]const u8 = null,
         memory_limit: u64 = 0,
@@ -404,7 +404,7 @@ pub const PosixSpawn = struct {
                 envp,
             );
         }
-        
+
         // Fallback for non-Linux
         return spawnZ(path, actions, attr, argv, envp);
     }

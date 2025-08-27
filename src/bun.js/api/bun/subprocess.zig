@@ -1259,14 +1259,14 @@ pub fn spawnMaybeSync(
                     if (try container_val.get(globalThis, "namespace")) |ns_val| {
                         if (ns_val.isObject()) {
                             var ns = LinuxContainer.NamespaceOptions{};
-                            
+
                             // PID namespace
                             if (try ns_val.get(globalThis, "pid")) |val| {
                                 if (val.isBoolean()) {
                                     ns.pid = val.asBoolean();
                                 }
                             }
-                            
+
                             // User namespace
                             if (try ns_val.get(globalThis, "user")) |val| {
                                 if (val.isBoolean()) {
@@ -1276,7 +1276,7 @@ pub fn spawnMaybeSync(
                                     ns.user = .{ .enable = true };
                                 }
                             }
-                            
+
                             // Network namespace
                             if (try ns_val.get(globalThis, "network")) |val| {
                                 if (val.isBoolean()) {
@@ -1286,29 +1286,29 @@ pub fn spawnMaybeSync(
                                     ns.network = .{ .enable = true };
                                 }
                             }
-                            
+
                             namespace_opts = ns;
                         }
                     }
-                    
+
                     // Parse filesystem mounts
                     if (try container_val.get(globalThis, "fs")) |fs_val| {
                         if (fs_val.isArray()) {
                             var iter = try fs_val.arrayIterator(globalThis);
                             while (try iter.next()) |mount_val| {
                                 if (!mount_val.isObject()) continue;
-                                
+
                                 const type_val = try mount_val.get(globalThis, "type") orelse continue;
                                 if (!type_val.isString()) continue;
-                                
+
                                 const type_str = (try type_val.toBunString(globalThis)).toUTF8(allocator);
                                 defer type_str.deinit();
-                                
+
                                 const to_val = try mount_val.get(globalThis, "to") orelse continue;
                                 if (!to_val.isString()) continue;
                                 const to_str = (try to_val.toBunString(globalThis)).toUTF8(allocator);
                                 const to_owned = allocator.dupeZ(u8, to_str.slice()) catch continue;
-                                
+
                                 var mount = LinuxContainer.FilesystemMount{
                                     .type = if (std.mem.eql(u8, type_str.slice(), "overlayfs"))
                                         .overlayfs
@@ -1316,10 +1316,11 @@ pub fn spawnMaybeSync(
                                         .tmpfs
                                     else if (std.mem.eql(u8, type_str.slice(), "bind"))
                                         .bind
-                                    else continue,
+                                    else
+                                        continue,
                                     .to = to_owned,
                                 };
-                                
+
                                 // Parse from field for bind mounts
                                 if (mount.type == .bind) {
                                     if (try mount_val.get(globalThis, "from")) |from_val| {
@@ -1329,7 +1330,7 @@ pub fn spawnMaybeSync(
                                         }
                                     }
                                 }
-                                
+
                                 // Parse mount-specific options
                                 if (try mount_val.get(globalThis, "options")) |options_val| {
                                     if (options_val.isObject()) {
@@ -1342,13 +1343,13 @@ pub fn spawnMaybeSync(
                                                             .work_dir = null,
                                                             .lower_dirs = &[_][]const u8{},
                                                         };
-                                                        
+
                                                         // Parse lower_dirs (required)
                                                         if (try overlay_val.get(globalThis, "lower_dirs")) |lower_val| {
                                                             if (lower_val.isArray()) {
                                                                 const len = @as(usize, @intCast(try lower_val.getLength(globalThis)));
                                                                 var lower_dirs = allocator.alloc([]const u8, len) catch continue;
-                                                                
+
                                                                 for (0..len) |i| {
                                                                     const item = lower_val.getIndex(globalThis, @intCast(i)) catch continue;
                                                                     if (item.isString()) {
@@ -1360,7 +1361,7 @@ pub fn spawnMaybeSync(
                                                                 overlay_opts.lower_dirs = lower_dirs;
                                                             }
                                                         }
-                                                        
+
                                                         // Parse upper_dir (optional)
                                                         if (try overlay_val.get(globalThis, "upper_dir")) |upper_val| {
                                                             if (upper_val.isString()) {
@@ -1369,7 +1370,7 @@ pub fn spawnMaybeSync(
                                                                 str.deinit();
                                                             }
                                                         }
-                                                        
+
                                                         // Parse work_dir (optional)
                                                         if (try overlay_val.get(globalThis, "work_dir")) |work_val| {
                                                             if (work_val.isString()) {
@@ -1378,7 +1379,7 @@ pub fn spawnMaybeSync(
                                                                 str.deinit();
                                                             }
                                                         }
-                                                        
+
                                                         mount.options = .{ .overlayfs = overlay_opts };
                                                     }
                                                 }
@@ -1387,13 +1388,13 @@ pub fn spawnMaybeSync(
                                                 if (try options_val.get(globalThis, "tmpfs")) |tmpfs_val| {
                                                     if (tmpfs_val.isObject()) {
                                                         var tmpfs_opts = LinuxContainer.TmpfsOptions{};
-                                                        
+
                                                         if (try tmpfs_val.get(globalThis, "size")) |size_val| {
                                                             if (size_val.isNumber()) {
                                                                 tmpfs_opts.size = @intFromFloat(size_val.asNumber());
                                                             }
                                                         }
-                                                        
+
                                                         mount.options = .{ .tmpfs = tmpfs_opts };
                                                     }
                                                 }
@@ -1402,13 +1403,13 @@ pub fn spawnMaybeSync(
                                                 if (try options_val.get(globalThis, "bind")) |bind_val| {
                                                     if (bind_val.isObject()) {
                                                         var bind_opts = LinuxContainer.BindOptions{};
-                                                        
+
                                                         if (try bind_val.get(globalThis, "readonly")) |ro_val| {
                                                             if (ro_val.isBoolean()) {
                                                                 bind_opts.readonly = ro_val.asBoolean();
                                                             }
                                                         }
-                                                        
+
                                                         mount.options = .{ .bind = bind_opts };
                                                     }
                                                 }
@@ -1416,17 +1417,17 @@ pub fn spawnMaybeSync(
                                         }
                                     }
                                 }
-                                
+
                                 fs_mounts.append(mount) catch continue;
                             }
                         }
                     }
-                    
+
                     // Parse resource limits
                     if (try container_val.get(globalThis, "limit")) |limit_val| {
                         if (limit_val.isObject()) {
                             var limits = LinuxContainer.ResourceLimits{};
-                            
+
                             // CPU limit
                             if (try limit_val.get(globalThis, "cpu")) |val| {
                                 if (val.isNumber()) {
@@ -1436,7 +1437,7 @@ pub fn spawnMaybeSync(
                                     }
                                 }
                             }
-                            
+
                             // RAM limit
                             if (try limit_val.get(globalThis, "ram")) |val| {
                                 if (val.isNumber()) {
@@ -1446,11 +1447,11 @@ pub fn spawnMaybeSync(
                                     }
                                 }
                             }
-                            
+
                             resource_limits = limits;
                         }
                     }
-                    
+
                     // Parse root option
                     if (try container_val.get(globalThis, "root")) |root_val| {
                         if (root_val.isString()) {
@@ -1459,7 +1460,7 @@ pub fn spawnMaybeSync(
                             root_str.deinit();
                         }
                     }
-                    
+
                     // Build final container options
                     if (namespace_opts != null or fs_mounts.items.len > 0 or resource_limits != null or container_opts.root != null) {
                         container_opts.namespace = namespace_opts;

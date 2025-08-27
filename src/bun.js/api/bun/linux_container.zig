@@ -121,7 +121,6 @@ pub const ResourceLimits = struct {
     ram: ?u64 = null,
 };
 
-
 pub const UidGidMap = struct {
     /// ID inside namespace
     inside_id: u32,
@@ -139,7 +138,7 @@ pub const ContainerContext = struct {
 
     allocator: std.mem.Allocator,
     options: ContainerOptions,
-    
+
     // Runtime state
     cgroup_path: ?[]u8 = null,
     mount_namespace_fd: ?std.posix.fd_t = null,
@@ -150,7 +149,7 @@ pub const ContainerContext = struct {
     mounted_paths: std.ArrayList([]const u8),
     // Track if cgroup needs cleanup
     cgroup_created: bool = false,
-    
+
     pub fn init(allocator: std.mem.Allocator, options: ContainerOptions) ContainerError!*Self {
         if (comptime !Environment.isLinux) {
             return ContainerError.NotLinux;
@@ -254,7 +253,7 @@ pub const ContainerContext = struct {
 
         const flags = std.os.linux.CLONE.NEWNS;
         const result = std.os.linux.unshare(flags);
-        
+
         if (result != 0) {
             const errno = bun.sys.getErrno(result);
             log("unshare(CLONE_NEWNS) failed: errno={}", .{errno});
@@ -308,7 +307,7 @@ pub const ContainerContext = struct {
         const full_path = std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ cgroup_base, cgroup_name }) catch {
             return ContainerError.OutOfMemory;
         };
-        
+
         self.cgroup_path = full_path;
 
         // Create cgroup directory
@@ -317,7 +316,7 @@ pub const ContainerContext = struct {
             error.AccessDenied => return ContainerError.InsufficientPrivileges,
             else => return ContainerError.CgroupNotSupported,
         };
-        
+
         self.cgroup_created = true;
 
         // Set memory limit if specified
@@ -380,7 +379,7 @@ pub const ContainerContext = struct {
 
         const flags = std.os.linux.CLONE.NEWUSER;
         const result = std.os.linux.unshare(flags);
-        
+
         if (result != 0) {
             const errno = bun.sys.getErrno(result);
             log("unshare(CLONE_NEWUSER) failed: errno={}", .{errno});
@@ -399,7 +398,7 @@ pub const ContainerContext = struct {
             },
             .custom => |custom| custom.uid_map,
         };
-        
+
         const gid_map: []const UidGidMap = switch (config) {
             .enable => &[_]UidGidMap{
                 UidGidMap{ .inside_id = 0, .outside_id = std.os.linux.getgid(), .length = 1 },
@@ -420,9 +419,7 @@ pub const ContainerContext = struct {
         defer file.close();
 
         for (mappings) |mapping| {
-            const line = std.fmt.allocPrint(self.allocator, "{d} {d} {d}\n", .{
-                mapping.inside_id, mapping.outside_id, mapping.length
-            }) catch {
+            const line = std.fmt.allocPrint(self.allocator, "{d} {d} {d}\n", .{ mapping.inside_id, mapping.outside_id, mapping.length }) catch {
                 return ContainerError.OutOfMemory;
             };
             defer self.allocator.free(line);
@@ -439,7 +436,7 @@ pub const ContainerContext = struct {
 
         const flags = std.os.linux.CLONE.NEWPID;
         const result = std.os.linux.unshare(flags);
-        
+
         if (result != 0) {
             const errno = bun.sys.getErrno(result);
             log("unshare(CLONE_NEWPID) failed: errno={}", .{errno});
@@ -459,7 +456,7 @@ pub const ContainerContext = struct {
 
         const flags = std.os.linux.CLONE.NEWNET;
         const result = std.os.linux.unshare(flags);
-        
+
         if (result != 0) {
             const errno = bun.sys.getErrno(result);
             log("unshare(CLONE_NEWNET) failed: errno={}", .{errno});
@@ -521,10 +518,7 @@ pub const ContainerContext = struct {
         const options = if (config.upper_dir) |upper| blk: {
             if (config.work_dir) |work| {
                 // Read-write mode with upper and work dirs
-                break :blk std.fmt.allocPrint(self.allocator, 
-                    "lowerdir={s},upperdir={s},workdir={s}", 
-                    .{ lowerdir, upper, work }
-                ) catch {
+                break :blk std.fmt.allocPrint(self.allocator, "lowerdir={s},upperdir={s},workdir={s}", .{ lowerdir, upper, work }) catch {
                     return ContainerError.OutOfMemory;
                 };
             } else {
@@ -533,10 +527,7 @@ pub const ContainerContext = struct {
             }
         } else blk: {
             // Read-only mode with just lower dirs
-            break :blk std.fmt.allocPrint(self.allocator, 
-                "lowerdir={s}", 
-                .{ lowerdir }
-            ) catch {
+            break :blk std.fmt.allocPrint(self.allocator, "lowerdir={s}", .{lowerdir}) catch {
                 return ContainerError.OutOfMemory;
             };
         };
@@ -547,7 +538,7 @@ pub const ContainerContext = struct {
         defer self.allocator.free(cstr_mount_point);
         const cstr_options = std.fmt.allocPrintZ(self.allocator, "{s}", .{options}) catch return ContainerError.OutOfMemory;
         defer self.allocator.free(cstr_options);
-        
+
         const mount_result = std.os.linux.mount("overlay", cstr_mount_point, "overlay", 0, @intFromPtr(cstr_options.ptr));
         if (mount_result != 0) {
             const errno = bun.sys.getErrno(mount_result);
@@ -585,18 +576,13 @@ pub const ContainerContext = struct {
         // Mount tmpfs
         const cstr_mount_point = std.fmt.allocPrintZ(self.allocator, "{s}", .{mount_point}) catch return ContainerError.OutOfMemory;
         defer self.allocator.free(cstr_mount_point);
-        const cstr_options = if (options.len > 0) 
+        const cstr_options = if (options.len > 0)
             std.fmt.allocPrintZ(self.allocator, "{s}", .{options}) catch return ContainerError.OutOfMemory
-        else null;
+        else
+            null;
         defer if (cstr_options) |opts| self.allocator.free(opts);
-        
-        const mount_result = std.os.linux.mount(
-            "tmpfs", 
-            cstr_mount_point, 
-            "tmpfs", 
-            0, 
-            if (cstr_options) |opts| @intFromPtr(opts.ptr) else 0
-        );
+
+        const mount_result = std.os.linux.mount("tmpfs", cstr_mount_point, "tmpfs", 0, if (cstr_options) |opts| @intFromPtr(opts.ptr) else 0);
         if (mount_result != 0) {
             const errno = bun.sys.getErrno(mount_result);
             log("tmpfs mount failed: errno={}", .{errno});
@@ -642,7 +628,7 @@ pub const ContainerContext = struct {
         defer self.allocator.free(cstr_source);
         const cstr_target = std.fmt.allocPrintZ(self.allocator, "{s}", .{target}) catch return ContainerError.OutOfMemory;
         defer self.allocator.free(cstr_target);
-        
+
         const flags: u32 = std.os.linux.MS.BIND | (if (config.readonly) @as(u32, std.os.linux.MS.RDONLY) else @as(u32, 0));
         const mount_result = std.os.linux.mount(cstr_source, cstr_target, "", flags, 0);
         if (mount_result != 0) {
@@ -676,7 +662,7 @@ pub const ContainerContext = struct {
 
         const cstr_path = std.fmt.allocPrintZ(std.heap.page_allocator, "{s}", .{path}) catch return;
         defer std.heap.page_allocator.free(cstr_path);
-        
+
         // Try unmount with MNT_DETACH flag for forceful cleanup
         const umount_result = std.os.linux.umount2(cstr_path, std.os.linux.MNT.DETACH);
         if (umount_result != 0) {
@@ -689,7 +675,7 @@ pub const ContainerContext = struct {
     fn cleanupCgroup(self: *Self) void {
         const path = self.cgroup_path orelse return;
         log("Cleaning up cgroup: {s}", .{path});
-        
+
         // Freeze the cgroup first to prevent any new processes from being created
         // This helps avoid race conditions during cleanup
         const freeze_file = std.fmt.allocPrint(self.allocator, "{s}/cgroup.freeze", .{path}) catch {
@@ -701,13 +687,13 @@ pub const ContainerContext = struct {
             return;
         };
         defer self.allocator.free(freeze_file);
-        
+
         // Try to freeze the cgroup (this prevents new processes from starting)
         if (std.fs.cwd().openFile(freeze_file, .{ .mode = .write_only })) |file| {
             _ = file.write("1") catch {};
             file.close();
         } else |_| {}
-        
+
         // If we have cgroup.kill (Linux 5.14+), use it
         const kill_file = std.fmt.allocPrint(self.allocator, "{s}/cgroup.kill", .{path}) catch {
             // Just try to remove
@@ -718,14 +704,14 @@ pub const ContainerContext = struct {
             return;
         };
         defer self.allocator.free(kill_file);
-        
+
         if (std.fs.cwd().openFile(kill_file, .{ .mode = .write_only })) |file| {
             _ = file.write("1") catch {};
             file.close();
             // Give processes a moment to die
             std.time.sleep(10 * std.time.ns_per_ms);
         } else |_| {}
-        
+
         // Try to remove the cgroup directory
         // This will succeed if all processes are gone
         std.fs.cwd().deleteDir(path) catch |err| {
@@ -733,19 +719,21 @@ pub const ContainerContext = struct {
             // The cgroup will persist but at least it's frozen and empty
             // This is the best we can do without elevated privileges
         };
-        
+
         self.cgroup_created = false;
     }
 
     /// Add current process to the container's cgroup
     pub fn addProcessToCgroup(self: *Self, pid: std.posix.pid_t) ContainerError!void {
         const path = self.cgroup_path orelse return ContainerError.InvalidConfiguration;
+        log("Adding PID {d} to cgroup path: {s}", .{ pid, path });
         const procs_file = std.fmt.allocPrint(self.allocator, "{s}/cgroup.procs", .{path}) catch {
             return ContainerError.OutOfMemory;
         };
         defer self.allocator.free(procs_file);
 
-        const file = std.fs.cwd().openFile(procs_file, .{ .mode = .write_only }) catch {
+        const file = std.fs.cwd().openFile(procs_file, .{ .mode = .write_only }) catch |err| {
+            log("Failed to open cgroup.procs file {s}: {}", .{ procs_file, err });
             return ContainerError.CgroupNotSupported;
         };
         defer file.close();

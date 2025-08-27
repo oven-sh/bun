@@ -510,7 +510,7 @@ pub const Process = struct {
                 this.container_context = null;
             }
         }
-        
+
         this.poller.deinit();
         bun.destroy(this);
     }
@@ -1265,7 +1265,7 @@ pub fn spawnProcessPosix(
 
     var attr = try PosixSpawn.Attr.init();
     defer attr.deinit();
-    
+
     // Enable PDEATHSIG when using containers for better cleanup guarantees
     if (comptime Environment.isLinux) {
         if (options.container != null) {
@@ -1515,40 +1515,6 @@ pub fn spawnProcessPosix(
                     LinuxContainer.ContainerError.NotLinux => return .{ .err = bun.sys.Error.fromCode(.NOSYS, .open) },
                     LinuxContainer.ContainerError.RequiresRoot => return .{ .err = bun.sys.Error.fromCode(.PERM, .open) },
                     LinuxContainer.ContainerError.InsufficientPrivileges => return .{ .err = bun.sys.Error.fromCode(.PERM, .open) },
-                    LinuxContainer.ContainerError.OutOfMemory => return .{ .err = bun.sys.Error.fromCode(.NOMEM, .open) },
-                    else => return .{ .err = bun.sys.Error.fromCode(.INVAL, .open) },
-                }
-            };
-            
-            container_context.?.setup() catch |err| {
-                // Clean up on error
-                defer {
-                    container_context.?.deinit();
-                    container_context = null;
-                }
-                
-                switch (err) {
-                    LinuxContainer.ContainerError.NamespaceNotSupported,
-                    LinuxContainer.ContainerError.UserNamespaceNotSupported,
-                    LinuxContainer.ContainerError.PidNamespaceNotSupported,
-                    LinuxContainer.ContainerError.NetworkNamespaceNotSupported,
-                    LinuxContainer.ContainerError.MountNamespaceNotSupported,
-                    LinuxContainer.ContainerError.Clone3NotSupported => return .{ .err = bun.sys.Error.fromCode(.NOSYS, .open) },
-                    
-                    LinuxContainer.ContainerError.CgroupNotSupported,
-                    LinuxContainer.ContainerError.CgroupV2NotAvailable => return .{ .err = bun.sys.Error.fromCode(.NOSYS, .mkdir) },
-                    
-                    LinuxContainer.ContainerError.OverlayfsNotSupported,
-                    LinuxContainer.ContainerError.TmpfsNotSupported,
-                    LinuxContainer.ContainerError.BindMountNotSupported => return .{ .err = bun.sys.Error.fromCode(.NOSYS, .open) },
-                    
-                    LinuxContainer.ContainerError.MountFailed,
-                    LinuxContainer.ContainerError.NetworkSetupFailed => return .{ .err = bun.sys.Error.fromCode(.PERM, .open) },
-                    
-                    LinuxContainer.ContainerError.InsufficientPrivileges,
-                    LinuxContainer.ContainerError.RequiresRoot => return .{ .err = bun.sys.Error.fromCode(.PERM, .open) },
-                    
-                    LinuxContainer.ContainerError.InvalidConfiguration => return .{ .err = bun.sys.Error.fromCode(.INVAL, .open) },
                     LinuxContainer.ContainerError.OutOfMemory => return .{ .err = bun.sys.Error.fromCode(.NOMEM, .open) },
                     else => return .{ .err = bun.sys.Error.fromCode(.INVAL, .open) },
                 }
@@ -2350,32 +2316,32 @@ pub const sync = struct {
 fn spawnWithContainer(
     argv0: [*:0]const u8,
     actions: PosixSpawn.Actions,
-    attr: PosixSpawn.Attr, 
+    attr: PosixSpawn.Attr,
     argv: [*:null]?[*:0]const u8,
     envp: [*:null]?[*:0]const u8,
     container_context: *LinuxContainer.ContainerContext,
 ) bun.sys.Maybe(std.posix.pid_t) {
     // Calculate namespace flags from container options
     var namespace_flags: u32 = 0;
-    
+
     // Create container setup structure
     var container_setup = PosixSpawn.ContainerSetup{};
-    
+
     if (container_context.options.namespace) |ns| {
         // User namespace must be created first if specified
         if (ns.user) |user_config| {
             namespace_flags |= std.os.linux.CLONE.NEWUSER;
-            
+
             // Setup UID/GID mappings (parent will write these)
             switch (user_config) {
                 .enable => {
                     container_setup.has_uid_mapping = true;
-                    container_setup.uid_inside = 0;  // Map to root inside
+                    container_setup.uid_inside = 0; // Map to root inside
                     container_setup.uid_outside = std.os.linux.getuid();
                     container_setup.uid_count = 1;
-                    
+
                     container_setup.has_gid_mapping = true;
-                    container_setup.gid_inside = 0;  // Map to root inside
+                    container_setup.gid_inside = 0; // Map to root inside
                     container_setup.gid_outside = std.os.linux.getgid();
                     container_setup.gid_count = 1;
                 },
@@ -2387,7 +2353,7 @@ fn spawnWithContainer(
                         container_setup.uid_outside = mapping.uid_map[0].outside_id;
                         container_setup.uid_count = mapping.uid_map[0].length;
                     }
-                    
+
                     if (mapping.gid_map.len > 0) {
                         container_setup.has_gid_mapping = true;
                         container_setup.gid_inside = mapping.gid_map[0].inside_id;
@@ -2397,7 +2363,7 @@ fn spawnWithContainer(
                 },
             }
         }
-        
+
         if (ns.pid != null and ns.pid.?) {
             namespace_flags |= std.os.linux.CLONE.NEWPID;
             container_setup.has_pid_namespace = true;
@@ -2405,28 +2371,28 @@ fn spawnWithContainer(
             namespace_flags |= std.os.linux.CLONE.NEWNS;
             container_setup.has_mount_namespace = true;
         }
-        
+
         if (ns.network != null) {
             namespace_flags |= std.os.linux.CLONE.NEWNET;
             container_setup.has_network_namespace = true;
         }
     }
-    
+
     // Mount namespace if we have filesystem mounts
     if (container_context.options.fs) |mounts| {
         if (mounts.len > 0) {
             namespace_flags |= std.os.linux.CLONE.NEWNS;
             container_setup.has_mount_namespace = true;
-            
+
             // Allocate mount configs
             var mount_configs = bun.default_allocator.alloc(PosixSpawn.MountConfig, mounts.len) catch {
                 return .{ .err = bun.sys.Error.fromCode(.NOMEM, .posix_spawn) };
             };
-            
+
             // Convert mount configurations
             for (mounts, 0..) |mount, i| {
                 var config = &mount_configs[i];
-                
+
                 // Set mount type
                 switch (mount.type) {
                     .bind => {
@@ -2446,11 +2412,11 @@ fn spawnWithContainer(
                     .overlayfs => {
                         config.type = .overlayfs;
                         config.source = null;
-                        
+
                         if (mount.options) |opts| {
                             if (opts == .overlayfs) {
                                 const overlay_opts = opts.overlayfs;
-                                
+
                                 // Process lower dirs (required)
                                 // Join multiple lower dirs with colon separator
                                 // TODO: Use arena allocator here too
@@ -2461,7 +2427,7 @@ fn spawnWithContainer(
                                 config.overlay.lower = (bun.default_allocator.dupeZ(u8, lower_str) catch {
                                     return .{ .err = bun.sys.Error.fromCode(.NOMEM, .posix_spawn) };
                                 }).ptr;
-                                
+
                                 // Process upper dir (makes it read-write)
                                 // String is already null-terminated from arena allocator
                                 if (overlay_opts.upper_dir) |upper| {
@@ -2470,7 +2436,7 @@ fn spawnWithContainer(
                                 } else {
                                     config.overlay.upper = null;
                                 }
-                                
+
                                 // Process work dir
                                 // String is already null-terminated from arena allocator
                                 if (overlay_opts.work_dir) |work| {
@@ -2482,10 +2448,10 @@ fn spawnWithContainer(
                         }
                     },
                 }
-                
+
                 // Set target (required) - already null-terminated from arena
                 config.target = @ptrCast(mount.to.ptr);
-                
+
                 // Set readonly flag for bind mounts
                 if (mount.options) |opts| {
                     if (opts == .bind) {
@@ -2493,18 +2459,18 @@ fn spawnWithContainer(
                     }
                 }
             }
-            
+
             container_setup.mounts = mount_configs.ptr;
             container_setup.mount_count = mount_configs.len;
         }
     }
-    
+
     // Root filesystem configuration
     // String is already null-terminated from arena allocator in subprocess.zig
     if (container_context.options.root) |root_path| {
         container_setup.root = @ptrCast(root_path.ptr);
     }
-    
+
     // Resource limits and cgroup setup
     if (container_context.options.limit) |limits| {
         if (limits.ram) |ram| {
@@ -2513,30 +2479,29 @@ fn spawnWithContainer(
         if (limits.cpu) |cpu| {
             container_setup.cpu_limit_pct = @intFromFloat(cpu);
         }
-        
+
         // Generate cgroup path if we have limits
         if (limits.ram != null or limits.cpu != null) {
             // Generate unique cgroup name: bun-<pid>-<timestamp>
             const pid = std.os.linux.getpid();
             const timestamp = std.time.timestamp();
-            
+
             // Allocate persistent memory for cgroup path
-            const cgroup_name = std.fmt.allocPrintZ(
-                bun.default_allocator,
-                "bun-{d}-{d}",
-                .{ pid, timestamp }
-            ) catch "bun-container";
-            
+            const cgroup_name = std.fmt.allocPrintZ(bun.default_allocator, "bun-{d}-{d}", .{ pid, timestamp }) catch "bun-container";
+
             // Store the cgroup path for parent to use
             container_setup.cgroup_path = cgroup_name.ptr;
-            
-            // Store in container context for cleanup later  
-            // Note: Container context expects ?[]u8 but we have [:0]const u8
-            // For now, just track that cgroup was created for cleanup
-            container_context.cgroup_created = true;
+
+            // Store full cgroup path in container context for adding process later
+            const full_cgroup_path = std.fmt.allocPrint(bun.default_allocator, "/sys/fs/cgroup/{s}", .{cgroup_name}) catch null;
+
+            if (full_cgroup_path) |path| {
+                container_context.cgroup_path = path;
+                container_context.cgroup_created = true;
+            }
         }
     }
-    
+
     // Use the extended spawn with namespace flags and container setup
     return PosixSpawn.spawnZWithNamespaces(argv0, actions, attr, argv, envp, namespace_flags, &container_setup);
 }

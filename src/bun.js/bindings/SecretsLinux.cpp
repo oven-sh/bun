@@ -190,19 +190,19 @@ private:
         g_free = (void (*)(gpointer))dlsym(glib_handle, "g_free");
         g_hash_table_new = (GHashTable * (*)(void*, void*)) dlsym(glib_handle, "g_hash_table_new");
         g_hash_table_destroy = (void (*)(GHashTable*))dlsym(glib_handle, "g_hash_table_destroy");
-        g_hash_table_lookup = (gpointer(*)(GHashTable*, gpointer))dlsym(glib_handle, "g_hash_table_lookup");
+        g_hash_table_lookup = (gpointer (*)(GHashTable*, gpointer))dlsym(glib_handle, "g_hash_table_lookup");
         g_hash_table_insert = (void (*)(GHashTable*, gpointer, gpointer))dlsym(glib_handle, "g_hash_table_insert");
         g_list_free = (void (*)(GList*))dlsym(glib_handle, "g_list_free");
         g_list_free_full = (void (*)(GList*, void (*)(gpointer)))dlsym(glib_handle, "g_list_free_full");
-        g_str_hash = (guint(*)(gpointer))dlsym(glib_handle, "g_str_hash");
-        g_str_equal = (gboolean(*)(gpointer, gpointer))dlsym(glib_handle, "g_str_equal");
+        g_str_hash = (guint (*)(gpointer))dlsym(glib_handle, "g_str_hash");
+        g_str_equal = (gboolean (*)(gpointer, gpointer))dlsym(glib_handle, "g_str_equal");
 
         // Load libsecret functions
-        secret_password_store_sync = (gboolean(*)(const SecretSchema*, const gchar*, const gchar*, const gchar*, void*, GError**, ...))
+        secret_password_store_sync = (gboolean (*)(const SecretSchema*, const gchar*, const gchar*, const gchar*, void*, GError**, ...))
             dlsym(secret_handle, "secret_password_store_sync");
         secret_password_lookup_sync = (gchar * (*)(const SecretSchema*, void*, GError**, ...))
             dlsym(secret_handle, "secret_password_lookup_sync");
-        secret_password_clear_sync = (gboolean(*)(const SecretSchema*, void*, GError**, ...))
+        secret_password_clear_sync = (gboolean (*)(const SecretSchema*, void*, GError**, ...))
             dlsym(secret_handle, "secret_password_clear_sync");
         secret_password_free = (void (*)(gchar*))dlsym(secret_handle, "secret_password_free");
         secret_service_search_sync = (GList * (*)(SecretService*, const SecretSchema*, GHashTable*, SecretSearchFlags, void*, GError**))
@@ -211,7 +211,7 @@ private:
         secret_value_get_text = (const gchar* (*)(SecretValue*))dlsym(secret_handle, "secret_value_get_text");
         secret_value_unref = (void (*)(gpointer))dlsym(secret_handle, "secret_value_unref");
         secret_item_get_attributes = (GHashTable * (*)(SecretItem*)) dlsym(secret_handle, "secret_item_get_attributes");
-        secret_item_load_secret_sync = (gboolean(*)(SecretItem*, void*, GError**))dlsym(secret_handle, "secret_item_load_secret_sync");
+        secret_item_load_secret_sync = (gboolean (*)(SecretItem*, void*, GError**))dlsym(secret_handle, "secret_item_load_secret_sync");
 
         // Load constants
         void* ptr = dlsym(secret_handle, "SECRET_COLLECTION_DEFAULT");

@@ -450,7 +450,6 @@ function parseOptions(
     options.db ||
     decodeIfValid((url?.pathname ?? "").slice(1)) ||
     env.PGDATABASE ||
-    env.MYSQL_DATABASE ||
     (adapter === "mysql" ? "mysql" : username); // default database;
   password ||= options.password || options.pass || env.PGPASSWORD || "";
   const connection = options.connection;

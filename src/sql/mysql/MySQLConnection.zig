@@ -1168,7 +1168,7 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
         this.status_flags,
     });
 
-    this.auth_data.clearAndFree(bun.default_allocator);
+    this.auth_data.clearAndFree();
 
     // Store auth data
     try this.auth_data.ensureTotalCapacity(handshake.auth_plugin_data_part_1.len + handshake.auth_plugin_data_part_2.len);

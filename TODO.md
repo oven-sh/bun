@@ -5,6 +5,7 @@ Complete before merge:
 - [x] fix toMatchInlineSnapshot
 - [x] make sure error.SnapshotInConcurrentGroup prints well
 - [ ] make the summary work again
+- [ ] report expect counts per-test
 - [ ] make --bail work again
 - [ ] make test filtering work again
 - [ ] make sure ScopeFunctions class can finalize (see napi_handle_scope NapiHandleScopeImpl as an example)

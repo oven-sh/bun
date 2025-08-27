@@ -858,7 +858,7 @@ fn parseSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, packa
         const pkgs = manager.lockfile.packages.slice();
         const pkg_names = pkgs.items(.name);
         const string_buf = manager.lockfile.buffers.string_bytes.items;
-        
+
         for (pkg_names, 0..) |pkg_name, j| {
             if (std.mem.eql(u8, pkg_name.slice(string_buf), name_str)) {
                 const pkg_id: PackageID = @intCast(j);
@@ -869,7 +869,7 @@ fn parseSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, packa
                 break;
             }
         }
-        
+
         const advisory = SecurityAdvisory{
             .level = level,
             .package = name_str,
@@ -888,7 +888,6 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Global = bun.Global;
 const Output = bun.Output;
 const jsc = bun.jsc;
 const logger = bun.logger;

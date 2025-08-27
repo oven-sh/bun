@@ -572,9 +572,9 @@ pub fn installWithManager(
                     var results_mut = results;
                     results_mut.deinit();
                 }
-                
+
                 security_scanner.printSecurityAdvisories(manager, &results);
-                
+
                 if (results.hasFatalAdvisories()) {
                     Output.pretty("<red>Installation aborted due to fatal security advisories<r>\n", .{});
                     Global.exit(1);

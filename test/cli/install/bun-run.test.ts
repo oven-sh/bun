@@ -126,7 +126,9 @@ for (let withRun of [false, true]) {
         it.skipIf(isWindows)("exit signal works", async () => {
           {
             const { stdout, stderr, exitCode, signalCode } = spawnSync({
-              cmd: [bunExe(), ...(silent ? ["--silent"] : []), "run", "bash", "-c", "kill -4 $$"].filter(Boolean),
+              cmd: [bunExe(), ...(silent ? ["--silent"] : []), "run", "bash", "-c", "ulimit -c 0; kill -4 $$"].filter(
+                Boolean,
+              ),
               cwd: run_dir,
               env: bunEnv,
             });
@@ -143,7 +145,7 @@ for (let withRun of [false, true]) {
           }
           {
             const { stdout, stderr, exitCode, signalCode } = spawnSync({
-              cmd: [bunExe(), ...(silent ? ["--silent"] : []), "run", "bash", "-c", "kill -9 $$"],
+              cmd: [bunExe(), ...(silent ? ["--silent"] : []), "run", "bash", "-c", "ulimit -c 0; kill -9 $$"],
               cwd: run_dir,
               env: bunEnv,
             });

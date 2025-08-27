@@ -55,12 +55,7 @@ pub const Row = struct {
                 const val: f64 = bun.parseDouble(value.slice()) catch std.math.nan(f64);
                 cell.* = SQLDataCell{ .tag = .float8, .value = .{ .float8 = val } };
             },
-            .MYSQL_TYPE_TINY => {
-                const str = value.slice();
-                const val: u8 = if (str.len > 0 and (str[0] == '1' or str[0] == 't' or str[0] == 'T')) 1 else 0;
-                cell.* = SQLDataCell{ .tag = .bool, .value = .{ .bool = val } };
-            },
-            .MYSQL_TYPE_SHORT => {
+            .MYSQL_TYPE_TINY, .MYSQL_TYPE_SHORT => {
                 if (column.flags.UNSIGNED) {
                     const val: u16 = std.fmt.parseInt(u16, value.slice(), 10) catch 0;
                     cell.* = SQLDataCell{ .tag = .uint4, .value = .{ .uint4 = val } };

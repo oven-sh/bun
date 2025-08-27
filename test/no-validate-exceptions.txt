@@ -331,3 +331,4 @@ test/cli/hot/hot.test.ts
 test/cli/install/bun-repl.test.ts
 test/bundler/esbuild/default.test.ts
 test/integration/vite-build/vite-build.test.ts
+test/cli/inspect/HTTPServerAgent.test.ts 

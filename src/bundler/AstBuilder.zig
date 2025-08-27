@@ -290,7 +290,7 @@ pub const AstBuilder = struct {
     // stub methods for ImportScanner duck typing
 
     pub fn generateTempRef(ab: *AstBuilder, name: ?[]const u8) Ref {
-        return ab.newSymbol(.other, name orelse "temp") catch bun.outOfMemory();
+        return bun.handleOom(ab.newSymbol(.other, name orelse "temp"));
     }
 
     pub fn recordExport(p: *AstBuilder, _: Logger.Loc, alias: []const u8, ref: Ref) !void {

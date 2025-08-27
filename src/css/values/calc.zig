@@ -1492,7 +1492,7 @@ pub fn Calc(comptime V: type) type {
                         continue;
                     }
                 } else {
-                    reduced.append(allocator, arg.*) catch bun.outOfMemory();
+                    bun.handleOom(reduced.append(allocator, arg.*));
                     // set to dummy value since we moved it into `reduced`
                     arg.* = This{ .number = 420 };
                     continue;
@@ -1820,7 +1820,7 @@ fn arr2(allocator: std.mem.Allocator, a: anytype, b: anytype) ArrayList(@TypeOf(
         @compileError("arr2: types must match");
     }
     var arr = ArrayList(T){};
-    arr.appendSlice(allocator, &.{ a, b }) catch bun.outOfMemory();
+    bun.handleOom(arr.appendSlice(allocator, &.{ a, b }));
     return arr;
 }
 

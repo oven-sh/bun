@@ -220,32 +220,32 @@ pub const S3Credentials = struct {
         return bun.new(S3Credentials, .{
             .ref_count = .init(),
             .accessKeyId = if (this.accessKeyId.len > 0)
-                bun.default_allocator.dupe(u8, this.accessKeyId) catch bun.outOfMemory()
+                bun.handleOom(bun.default_allocator.dupe(u8, this.accessKeyId))
             else
                 "",
 
             .secretAccessKey = if (this.secretAccessKey.len > 0)
-                bun.default_allocator.dupe(u8, this.secretAccessKey) catch bun.outOfMemory()
+                bun.handleOom(bun.default_allocator.dupe(u8, this.secretAccessKey))
             else
                 "",
 
             .region = if (this.region.len > 0)
-                bun.default_allocator.dupe(u8, this.region) catch bun.outOfMemory()
+                bun.handleOom(bun.default_allocator.dupe(u8, this.region))
             else
                 "",
 
             .endpoint = if (this.endpoint.len > 0)
-                bun.default_allocator.dupe(u8, this.endpoint) catch bun.outOfMemory()
+                bun.handleOom(bun.default_allocator.dupe(u8, this.endpoint))
             else
                 "",
 
             .bucket = if (this.bucket.len > 0)
-                bun.default_allocator.dupe(u8, this.bucket) catch bun.outOfMemory()
+                bun.handleOom(bun.default_allocator.dupe(u8, this.bucket))
             else
                 "",
 
             .sessionToken = if (this.sessionToken.len > 0)
-                bun.default_allocator.dupe(u8, this.sessionToken) catch bun.outOfMemory()
+                bun.handleOom(bun.default_allocator.dupe(u8, this.sessionToken))
             else
                 "",
 
@@ -316,7 +316,7 @@ pub const S3Credentials = struct {
                 hours,
                 minutes,
                 seconds,
-            }) catch bun.outOfMemory(),
+            }) catch |err| bun.handleOom(err),
         };
     }
 
@@ -498,7 +498,7 @@ pub const S3Credentials = struct {
 
         if (content_md5) |content_md5_val| {
             const len = bun.base64.encodeLen(content_md5_val);
-            const content_md5_as_base64 = bun.default_allocator.alloc(u8, len) catch bun.outOfMemory();
+            const content_md5_as_base64 = bun.handleOom(bun.default_allocator.alloc(u8, len));
             content_md5 = content_md5_as_base64[0..bun.base64.encode(content_md5_as_base64, content_md5_val)];
         }
 
@@ -1074,14 +1074,14 @@ pub const S3Credentials = struct {
         }
 
         if (session_token) |token| {
-            const session_token_value = bun.default_allocator.dupe(u8, token) catch bun.outOfMemory();
+            const session_token_value = bun.handleOom(bun.default_allocator.dupe(u8, token));
             result.session_token = session_token_value;
             result._headers[result._headers_len] = .{ .name = "x-amz-security-token", .value = session_token_value };
             result._headers_len += 1;
         }
 
         if (content_disposition) |cd| {
-            const content_disposition_value = bun.default_allocator.dupe(u8, cd) catch bun.outOfMemory();
+            const content_disposition_value = bun.handleOom(bun.default_allocator.dupe(u8, cd));
             result.content_disposition = content_disposition_value;
             result._headers[result._headers_len] = .{ .name = "Content-Disposition", .value = content_disposition_value };
             result._headers_len += 1;
@@ -1093,7 +1093,7 @@ pub const S3Credentials = struct {
         }
 
         if (content_md5) |c_md5| {
-            const content_md5_value = bun.default_allocator.dupe(u8, c_md5) catch bun.outOfMemory();
+            const content_md5_value = bun.handleOom(bun.default_allocator.dupe(u8, c_md5));
             result.content_md5 = content_md5_value;
             result._headers[result._headers_len] = .{ .name = "content-md5", .value = content_md5_value };
             result._headers_len += 1;

@@ -537,14 +537,14 @@ pub const FileSystem = struct {
                                 bun.default_allocator,
                                 "{s}\\Temp",
                                 .{strings.withoutTrailingSlash(windir)},
-                            ) catch bun.outOfMemory();
+                            ) catch |err| bun.handleOom(err);
                         }
 
                         if (bun.getenvZ("USERPROFILE")) |profile| {
                             var buf: bun.PathBuffer = undefined;
                             var parts = [_]string{"AppData\\Local\\Temp"};
                             const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
-                            break :brk bun.default_allocator.dupe(u8, out) catch bun.outOfMemory();
+                            break :brk bun.handleOom(bun.default_allocator.dupe(u8, out));
                         }
 
                         var tmp_buf: bun.PathBuffer = undefined;
@@ -554,7 +554,7 @@ pub const FileSystem = struct {
                             bun.default_allocator,
                             "{s}\\Windows\\Temp",
                             .{strings.withoutTrailingSlash(root)},
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     };
                     win_tempdir_cache = value;
                     return value;
@@ -1088,7 +1088,7 @@ pub const FileSystem = struct {
             };
 
             if (comptime FeatureFlags.enable_entry_cache) {
-                const entries_ptr = in_place orelse bun.fs_allocator.create(DirEntry) catch bun.outOfMemory();
+                const entries_ptr = in_place orelse bun.handleOom(bun.fs_allocator.create(DirEntry));
                 if (in_place) |original| {
                     original.data.clearAndFree(bun.fs_allocator);
                 }

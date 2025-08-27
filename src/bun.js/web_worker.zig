@@ -760,7 +760,6 @@ const WebWorkerLifecycleHandle = struct {
 comptime {
     @export(&WebWorkerLifecycleHandle.createWebWorker, .{ .name = "WebWorkerLifecycleHandle__createWebWorker" });
     @export(&setRef, .{ .name = "WebWorker__setRef" });
-    @export(&WebWorkerLifecycleHandle__release, .{ .name = "WebWorkerLifecycleHandle__release" });
 }
 
 const TerminationHandle = struct {

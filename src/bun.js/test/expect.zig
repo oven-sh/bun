@@ -731,7 +731,7 @@ pub const Expect = struct {
         }
 
         if (needs_write) {
-            if (ci_info.detectCI()) |_| {
+            if (bun.detectCI()) |_| {
                 if (!Jest.runner.?.test_options.update_snapshots) {
                     const signature = comptime getSignature(fn_name, "", true);
                     return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Inline snapshot updates are not allowed in CI environments unless --update-snapshots is used\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{});
@@ -2206,7 +2206,6 @@ test "fuzz Expect.trimLeadingWhitespaceForInlineSnapshot" {
 
 const string = []const u8;
 
-const ci_info = @import("../../ci_info.zig");
 const std = @import("std");
 const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
 

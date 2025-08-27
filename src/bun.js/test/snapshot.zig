@@ -82,7 +82,7 @@ pub const Snapshots = struct {
 
         // doesn't exist. append to file bytes and add to hashmap.
         // Prevent snapshot creation in CI environments unless --update-snapshots is used
-        if (ci_info.detectCI()) |_| {
+        if (bun.detectCI()) |_| {
             if (!this.update_snapshots) {
                 return error.SnapshotCreationNotAllowedInCI;
             }
@@ -538,7 +538,6 @@ pub const Snapshots = struct {
 
 const string = []const u8;
 
-const ci_info = @import("../../ci_info.zig");
 const std = @import("std");
 const Expect = @import("./expect.zig").Expect;
 

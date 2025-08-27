@@ -637,13 +637,6 @@ pub const ScopeMode = enum {
     skip,
     todo,
     failing,
-    fn needsCallback(this: ScopeMode) bool {
-        return switch (this) {
-            .normal, .failing => true,
-            .skip => false,
-            .todo => @panic("TODO: --todo flag should make .todo act like .failing"),
-        };
-    }
 };
 pub const BaseScope = struct {
     parent: ?*DescribeScope,

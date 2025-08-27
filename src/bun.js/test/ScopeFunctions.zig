@@ -59,7 +59,10 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
 
     const callback_mode: describe2.js_fns.CallbackMode = switch (this.cfg.self_mode) {
         .skip => .ignore,
-        .todo => @panic("TODO: check for the '--todo' flag to decide if this should be .ignore or .allow"),
+        .todo => blk: {
+            const run_todo = if (bun.jsc.Jest.Jest.runner) |runner| runner.run_todo else false;
+            break :blk if (run_todo) .allow else .ignore;
+        },
         else => .require,
     };
 

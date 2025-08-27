@@ -47,8 +47,9 @@ pub const ExecutionSequence = struct {
     started_at: bun.timespec = bun.timespec.epoch,
     expect_call_count: u32 = 0, // TODO: impl incrementExpectCallCounter to increment this number and others
 
-    fn failMeansPass(this: ExecutionSequence) bool {
-        return this.test_entry != null and this.test_entry.?.base.mode == .failing;
+    fn entryMode(this: ExecutionSequence) describe2.ScopeMode {
+        if (this.test_entry) |entry| return entry.base.mode;
+        return .normal;
     }
 };
 pub const Result = enum {
@@ -200,12 +201,22 @@ fn onSequenceCompleted(this: *Execution, sequence_index: usize) void {
     if (sequence.result == .pending) {
         sequence.result = .pass;
     }
-    if (sequence.failMeansPass()) {
-        sequence.result = switch (sequence.result) {
-            .fail => .pass,
-            .pass => .fail_because_failing_test_passed,
-            else => sequence.result,
-        };
+    switch (sequence.entryMode()) {
+        .failing => {
+            sequence.result = switch (sequence.result) {
+                .fail => .pass,
+                .pass => .fail_because_failing_test_passed,
+                else => sequence.result,
+            };
+        },
+        .todo => {
+            sequence.result = switch (sequence.result) {
+                .fail => .todo,
+                .pass => .fail_because_todo_passed,
+                else => sequence.result,
+            };
+        },
+        else => {},
     }
     if (sequence.entry_start < sequence.entry_end and (sequence.test_entry != null or sequence.result != .pass)) {
         test_command.CommandLineReporter.handleTestCompleted(this.bunTest(), sequence, sequence.test_entry orelse this._entries.items[sequence.entry_start], elapsed_ns);
@@ -251,10 +262,11 @@ pub fn handleUncaughtException(this: *Execution, user_data: ?u64) describe2.Hand
     };
 
     sequence.result = .fail;
-    if (sequence.failMeansPass()) {
-        return .consumed;
-    }
-    return .handled;
+    return switch (sequence.entryMode()) {
+        .failing => .consumed, // failing tests prevent the error from being displayed
+        .todo => .handled, // todo tests with --todo will still display the error
+        else => .handled,
+    };
 }
 
 const std = @import("std");

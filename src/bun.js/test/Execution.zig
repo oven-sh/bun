@@ -141,26 +141,21 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
                     try callback_queue.append(.{ .callback = cb.dupe(this.bunTest().gpa), .done_parameter = true, .data = sequence_index });
                     status = .execute;
                     break;
-                } else switch (next_item.base.mode) {
-                    .skip => {
-                        sequence.executing = false;
-                        sequence.entry_index += 1;
-                        if (sequence.result == .pending) sequence.result = .skip;
-                        continue;
-                    },
-                    .todo => {
-                        sequence.executing = false;
-                        sequence.entry_index += 1;
-                        if (sequence.result == .pending) sequence.result = .todo;
-                        continue;
-                    },
-                    else => {
-                        groupLog.log("runSequence: no callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.entry_index });
-                        bun.debugAssert(false);
-                        sequence.executing = false;
-                        sequence.entry_index += 1;
-                        continue;
-                    },
+                } else {
+                    switch (next_item.base.mode) {
+                        .skip => if (sequence.result == .pending) {
+                            sequence.result = .skip;
+                        },
+                        .todo => if (sequence.result == .pending) {
+                            sequence.result = .todo;
+                        },
+                        else => {
+                            groupLog.log("runSequence: no callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.entry_index });
+                            bun.debugAssert(false);
+                        },
+                    }
+                    sequence.executing = false;
+                    sequence.entry_index += 1;
                 }
             }
         }
@@ -260,6 +255,12 @@ pub fn handleUncaughtException(this: *Execution, user_data: ?u64) describe2.Hand
         groupLog.log("handleUncaughtException: there are multiple sequences in the group and user_data is not provided or invalid", .{});
         return .show_unhandled_error_between_tests;
     };
+
+    if (sequence.entry_index < sequence.entry_end and this._entries.items[sequence.entry_index] != sequence.test_entry) {
+        // error in a hook
+        // TODO: hooks should prevent further execution of the sequence and maybe shouldn't be marked as "between tests" but instead a regular failure
+        return .show_unhandled_error_between_tests;
+    }
 
     sequence.result = .fail;
     return switch (sequence.entryMode()) {

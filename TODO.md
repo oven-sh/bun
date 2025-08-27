@@ -1,11 +1,15 @@
 Complete before merge:
 
 - [ ] make sure it exits with code 1 on failure
-- [ ] add preload hooks
+- [ ] decide on preload behaviour: before first/after last?
+  - vitest/jest both do them seperately for each file, which makes sense because of isolation
+  - bun does them before the first file and after the last file
 - [x] announce results of skip/todo with no callback, eg `test.skip("abc")` or `test.todo("def")`
 - [x] fix toMatchInlineSnapshot
 - [x] make sure error.SnapshotInConcurrentGroup prints well
 - [ ] make the summary work again
+- [ ] add timeouts back
+- [ ] add retry/run-multiple-times back
 - [ ] report expect counts per-test
 - [ ] make --bail work again
 - [ ] make test filtering work again

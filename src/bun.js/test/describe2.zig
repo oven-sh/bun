@@ -173,13 +173,6 @@ pub const js_fns = struct {
                 const bunTest = bunTestRoot.getActiveFileUnlessInPreload(globalThis.bunVM()) orelse {
                     group.log("genericHook in preload", .{});
 
-                    if (tag != .beforeEach and tag != .afterEach) {
-                        // vitest, using setupFiles, runs beforeAll/afterAll for each file
-                        // jest, using --setupFilesAfterEnv, runs beforeAll/afterAll for each file
-                        // bun test runs beforeAll before the first file and afterAll after the last file
-                        return globalThis.throw("TODO: support calling beforeAll()/afterAll() during preload", .{});
-                    }
-
                     _ = try bunTestRoot.hook_scope.appendHook(bunTestRoot.gpa, tag, callback, .{
                         .line_no = 0,
                     }, .{});
@@ -463,7 +456,9 @@ pub const BunTestFile = struct {
                 // now, generate the execution order
                 this.phase = .execution;
                 try debug.dumpDescribe(this.collection.root_scope);
+                try order.generateOrderBeforeAll(&this.execution, this.buntest.hook_scope.beforeAll.items, .{ .concurrent = false });
                 try order.generateOrderDescribe(&this.execution, this.collection.root_scope);
+                try order.generateOrderAfterAll(&this.execution, this.buntest.hook_scope.afterAll.items, .{ .concurrent = false });
                 try debug.dumpOrder(&this.execution);
                 // now, allowing js execution again:
                 // - start the test execution loop

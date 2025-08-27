@@ -1279,7 +1279,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
         if (length > 0) {
             throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Out of memory"_s));
         } else {
-            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromLatin1("database does not exist or cannot be serialized")));
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, String("database does not exist or cannot be serialized"_s)));
         }
         return {};
     }

@@ -11,23 +11,8 @@ pub fn discardOrderSub(this: *Execution, current: TestScheduleEntry) bun.JSError
     _ = this;
     _ = current;
 }
-pub fn generateOrderBeforeAll(this: *Execution, beforeAll: []const *ExecutionEntry, cfg: struct { concurrent: bool }) bun.JSError!void {
-    for (beforeAll) |entry| {
-        const entries_start = this._entries.items.len;
-        try this._entries.append(entry); // add entry to sequence
-        const entries_end = this._entries.items.len;
-        const sequences_start = this._sequences.items.len;
-        try this._sequences.append(.{ .entry_start = entries_start, .entry_end = entries_end, .entry_index = entries_start, .test_entry = null }); // add sequence to concurrentgroup
-        const sequences_end = this._sequences.items.len;
-        try appendOrExtendConcurrentGroup(this, cfg.concurrent, sequences_start, sequences_end); // add or extend the concurrent group
-    }
-}
-pub fn generateOrderAfterAll(this: *Execution, afterAll: []const *ExecutionEntry, cfg: struct { concurrent: bool }) bun.JSError!void {
-    var i: usize = afterAll.len;
-    while (i > 0) {
-        i -= 1;
-        const entry = afterAll[i];
-
+pub fn generateAllOrder(this: *Execution, entries: []const *ExecutionEntry, cfg: struct { concurrent: bool }) bun.JSError!void {
+    for (entries) |entry| {
         const entries_start = this._entries.items.len;
         try this._entries.append(entry); // add entry to sequence
         const entries_end = this._entries.items.len;
@@ -41,7 +26,7 @@ pub fn generateOrderDescribe(this: *Execution, current: *DescribeScope) bun.JSEr
     if (current.failed) return; // do not schedule any tests in a failed describe scope
 
     // gather beforeAll
-    try generateOrderBeforeAll(this, current.beforeAll.items, .{ .concurrent = current.base.concurrent });
+    try generateAllOrder(this, current.beforeAll.items, .{ .concurrent = current.base.concurrent });
 
     // gather children
     for (current.entries.items) |entry| {
@@ -53,7 +38,7 @@ pub fn generateOrderDescribe(this: *Execution, current: *DescribeScope) bun.JSEr
     }
 
     // gather afterAll
-    try generateOrderAfterAll(this, current.afterAll.items, .{ .concurrent = current.base.concurrent });
+    try generateAllOrder(this, current.afterAll.items, .{ .concurrent = current.base.concurrent });
 }
 pub fn generateOrderTest(this: *Execution, current: *ExecutionEntry) bun.JSError!void {
     const entries_start = this._entries.items.len;
@@ -88,12 +73,7 @@ pub fn generateOrderTest(this: *Execution, current: *ExecutionEntry) bun.JSError
     if (use_hooks) {
         var parent: ?*DescribeScope = current.base.parent;
         while (parent) |p| : (parent = p.base.parent) {
-            var i: usize = p.afterEach.items.len;
-            while (i > 0) {
-                i -= 1;
-                const entry = p.afterEach.items[i];
-                try this._entries.append(entry); // add entry to sequence
-            }
+            try this._entries.appendSlice(p.afterEach.items); // add entry to sequence
         }
     }
 

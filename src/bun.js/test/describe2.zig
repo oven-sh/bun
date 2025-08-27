@@ -456,9 +456,9 @@ pub const BunTestFile = struct {
                 // now, generate the execution order
                 this.phase = .execution;
                 try debug.dumpDescribe(this.collection.root_scope);
-                try order.generateOrderBeforeAll(&this.execution, this.buntest.hook_scope.beforeAll.items, .{ .concurrent = false });
+                try order.generateAllOrder(&this.execution, this.buntest.hook_scope.beforeAll.items, .{ .concurrent = false });
                 try order.generateOrderDescribe(&this.execution, this.collection.root_scope);
-                try order.generateOrderAfterAll(&this.execution, this.buntest.hook_scope.afterAll.items, .{ .concurrent = false });
+                try order.generateAllOrder(&this.execution, this.buntest.hook_scope.afterAll.items, .{ .concurrent = false });
                 try debug.dumpOrder(&this.execution);
                 // now, allowing js execution again:
                 // - start the test execution loop
@@ -717,16 +717,20 @@ pub const DescribeScope = struct {
         try this.entries.append(.{ .test_callback = entry });
         return entry;
     }
-    pub fn appendHook(this: *DescribeScope, gpa: std.mem.Allocator, tag: enum { beforeAll, beforeEach, afterEach, afterAll }, callback: ?jsc.JSValue, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
+    pub const HookTag = enum { beforeAll, beforeEach, afterEach, afterAll };
+    pub fn getHookEntries(this: *DescribeScope, tag: HookTag) *std.ArrayList(*ExecutionEntry) {
+        switch (tag) {
+            .beforeAll => return &this.beforeAll,
+            .beforeEach => return &this.beforeEach,
+            .afterEach => return &this.afterEach,
+            .afterAll => return &this.afterAll,
+        }
+    }
+    pub fn appendHook(this: *DescribeScope, gpa: std.mem.Allocator, tag: HookTag, callback: ?jsc.JSValue, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
         var callback_with_args: ?CallbackWithArgs = if (callback) |c| .init(gpa, c, &.{}) else null;
         defer if (callback_with_args) |*c| c.deinit(gpa);
         const entry = try ExecutionEntry.create(gpa, null, callback_with_args, cfg, this, base);
-        switch (tag) {
-            .beforeAll => try this.beforeAll.append(entry),
-            .beforeEach => try this.beforeEach.append(entry),
-            .afterEach => try this.afterEach.append(entry),
-            .afterAll => try this.afterAll.append(entry),
-        }
+        try this.getHookEntries(tag).append(entry);
         return entry;
     }
 };

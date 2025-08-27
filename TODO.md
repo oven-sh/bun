@@ -4,6 +4,7 @@ Complete before merge:
 - [ ] decide on preload behaviour: before first/after last?
   - vitest/jest both do them seperately for each file, which makes sense because of isolation
   - bun does them before the first file and after the last file
+- [x] afterEach/afterAll behaviour: forwards order or reverse order? vitest uses reverse order but jest uses forwards order. old bun uses forwards order. we will continue to use forwards order to reduce breakage, although reverse order makes more sense to me.
 - [x] announce results of skip/todo with no callback, eg `test.skip("abc")` or `test.todo("def")`
 - [x] fix toMatchInlineSnapshot
 - [x] make sure error.SnapshotInConcurrentGroup prints well

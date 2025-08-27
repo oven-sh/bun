@@ -531,6 +531,13 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     };
   }
 
+  class TraceError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "Trace";
+    }
+  }
+
   const consoleMethods: any = {
     log(...args) {
       this[kWriteToConsole](kUseStdout, this[kFormatForStdout](args));
@@ -580,10 +587,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     },
 
     trace: function trace(...args) {
-      const err: Error = {
-        name: "Trace",
-        message: this[kFormatForStderr](args),
-      };
+      const err = new TraceError(this[kFormatForStderr](args));
       Error.captureStackTrace(err, trace);
       this.error(err.stack);
     },

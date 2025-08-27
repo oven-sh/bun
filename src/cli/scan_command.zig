@@ -41,7 +41,18 @@ pub const ScanCommand = struct {
             Global.exit(1);
         }
 
-        try security_scanner.performSecurityScanForAll(manager);
+        if (try security_scanner.performSecurityScanForAll(manager)) |results| {
+            defer {
+                var results_mut = results;
+                results_mut.deinit();
+            }
+
+            security_scanner.printSecurityAdvisories(manager, &results);
+
+            if (results.hasAdvisories()) {
+                Global.exit(1);
+            }
+        }
 
         Global.exit(0);
     }

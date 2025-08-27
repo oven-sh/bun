@@ -567,7 +567,23 @@ pub fn installWithManager(
         manager.verifyResolutions(log_level);
 
         if ((manager.subcommand == .add or manager.subcommand == .update) and manager.options.security_scanner != null) {
-            try security_scanner.performSecurityScanAfterResolution(manager);
+            if (try security_scanner.performSecurityScanAfterResolution(manager)) |results| {
+                defer {
+                    var results_mut = results;
+                    results_mut.deinit();
+                }
+                
+                security_scanner.printSecurityAdvisories(manager, &results);
+                
+                if (results.hasFatalAdvisories()) {
+                    Output.pretty("<red>Installation aborted due to fatal security advisories<r>\n", .{});
+                    Global.exit(1);
+                } else if (results.hasWarnings()) {
+                    if (!security_scanner.promptForWarnings()) {
+                        Global.exit(1);
+                    }
+                }
+            }
         }
     }
 

@@ -30,7 +30,7 @@ pub fn stringify(global: *JSGlobalObject, callFrame: *jsc.CallFrame) JSError!JSV
 
     value.ensureStillAlive();
 
-    if (value.isUndefined() or value.isSymbol()) {
+    if (value.isUndefined() or value.isSymbol() or value.isFunction()) {
         return .js_undefined;
     }
 
@@ -188,7 +188,7 @@ const Stringifier = struct {
         if (unwrapped.isArray()) {
             var iter = try unwrapped.arrayIterator(global);
             while (try iter.next()) |item| {
-                if (item.isUndefined() or item.isSymbol()) {
+                if (item.isUndefined() or item.isSymbol() or item.isFunction()) {
                     continue;
                 }
 
@@ -204,7 +204,7 @@ const Stringifier = struct {
         defer iter.deinit();
 
         while (try iter.next()) |prop_name| {
-            if (iter.value.isUndefined() or iter.value.isSymbol()) {
+            if (iter.value.isUndefined() or iter.value.isSymbol() or iter.value.isFunction()) {
                 continue;
             }
             try this.findAnchorsAndAliases(global, iter.value, .{ .prop_value = prop_name });
@@ -557,7 +557,7 @@ const Stringifier = struct {
         }
 
         var i: usize = 0;
-        while (i < str.length()) : (i += 1) {
+        while (i < str.length()) {
             switch (str.charAt(i)) {
                 // flow indicators need to be quoted always
                 '{',
@@ -589,29 +589,60 @@ const Stringifier = struct {
 
                 '-' => {
                     if (i + 2 < str.length() and str.charAt(i + 1) == '-' and str.charAt(i + 2) == '-') {
-                        // always quote '---'
-                        return true;
+                        if (i + 3 >= str.length()) {
+                            return true;
+                        }
+                        switch (str.charAt(i + 3)) {
+                            ' ',
+                            '\t',
+                            '\r',
+                            '\n',
+                            '[',
+                            ']',
+                            '{',
+                            '}',
+                            ',',
+                            => return true,
+                            else => {},
+                        }
                     }
 
                     if (i == 0 and stringIsNumber(str, &i)) {
                         return true;
                     }
+                    i += 1;
                 },
                 '.' => {
                     if (i + 2 < str.length() and str.charAt(i + 1) == '.' and str.charAt(i + 2) == '.') {
-                        // always quote '...'
-                        return true;
+                        if (i + 3 >= str.length()) {
+                            return true;
+                        }
+                        switch (str.charAt(i + 3)) {
+                            ' ',
+                            '\t',
+                            '\r',
+                            '\n',
+                            '[',
+                            ']',
+                            '{',
+                            '}',
+                            ',',
+                            => return true,
+                            else => {},
+                        }
                     }
 
                     if (i == 0 and stringIsNumber(str, &i)) {
                         return true;
                     }
+                    i += 1;
                 },
 
                 '0'...'9' => {
                     if (i == 0 and stringIsNumber(str, &i)) {
                         return true;
                     }
+                    i += 1;
                 },
 
                 0x00...0x1f,
@@ -671,7 +702,7 @@ const Stringifier = struct {
             },
 
             '-' => {
-                if (@"+") {
+                if (@"-") {
                     offset.* = i;
                     return false;
                 }

@@ -756,7 +756,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         // are not included in the help text
         .audit => shared_params ++ audit_params,
         .info => info_params,
-        .scan => pm_params,  // scan uses the same params as pm command
+        .scan => pm_params, // scan uses the same params as pm command
     };
 
     var diag = clap.Diagnostic{};

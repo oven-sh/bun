@@ -1275,8 +1275,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
     }
     sqlite3_int64 length = -1;
     unsigned char* data = sqlite3_serialize(db, attachedName.utf8().data(), &length, 0);
-    if (data == nullptr && length) [[unlikely]] {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Out of memory"_s));
+    if (data == nullptr) [[unlikely]] {
+        if (length > 0) {
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Out of memory"_s));
+        } else {
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromLatin1("database does not exist or cannot be serialized")));
+        }
         return {};
     }
 

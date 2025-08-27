@@ -111,13 +111,78 @@ database:
       });
     });
 
-    test.todo("handles circular references with anchors and aliases", () => {
+    test("handles circular references with anchors and aliases", () => {
       const yaml = `
 parent: &ref
   name: parent
   child:
     name: child
     parent: *ref
+`;
+      const result = Bun.YAML.parse(yaml);
+      expect(result.parent.name).toBe("parent");
+      expect(result.parent.child.name).toBe("child");
+      expect(result.parent.child.parent).toBe(result.parent);
+    });
+
+    test("handles complex circular references in arrays", () => {
+      const yaml = `
+nodes: &nodeList
+  - id: 1
+    name: first
+    children: *nodeList
+  - id: 2
+    name: second
+    children: *nodeList
+`;
+      const result = Bun.YAML.parse(yaml);
+      expect(result.nodes).toBeDefined();
+      expect(result.nodes.length).toBe(2);
+      expect(result.nodes[0].children).toBe(result.nodes);
+      expect(result.nodes[1].children).toBe(result.nodes);
+      // Verify referential equality
+      expect(result.nodes[0].children).toBe(result.nodes[1].children);
+    });
+
+    test("handles multiple nested circular references", () => {
+      const yaml = `
+a: &a
+  name: nodeA
+  ref_b: &b
+    name: nodeB
+    ref_a: *a
+    ref_c: &c
+      name: nodeC
+      ref_a: *a
+      ref_b: *b
+`;
+      const result = Bun.YAML.parse(yaml);
+      
+      expect(result.a.name).toBe("nodeA");
+      expect(result.a.ref_b.name).toBe("nodeB");
+      expect(result.a.ref_b.ref_c.name).toBe("nodeC");
+      
+      // Test cycles
+      expect(result.a.ref_b.ref_a).toBe(result.a);
+      expect(result.a.ref_b.ref_c.ref_a).toBe(result.a);
+      expect(result.a.ref_b.ref_c.ref_b).toBe(result.a.ref_b);
+    });
+
+    test("handles self-referencing objects", () => {
+      const yaml = `
+recursive: &self
+  name: self
+  self: *self
+`;
+      const result = Bun.YAML.parse(yaml);
+      expect(result.recursive.name).toBe("self");
+      expect(result.recursive.self).toBe(result.recursive);
+      expect(result.recursive.self.self).toBe(result.recursive);
+    });
+
+    test("handles circular references in flow style", () => {
+      const yaml = `
+parent: &parent {name: parent, child: {name: child, parent: *parent}}
 `;
       const result = Bun.YAML.parse(yaml);
       expect(result.parent.name).toBe("parent");

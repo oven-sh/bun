@@ -262,6 +262,7 @@ comptime {
     bun.assert(Line == Line);
 }
 
+
 pub fn Parser(comptime enc: Encoding) type {
     const chars = enc.chars();
 
@@ -280,20 +281,9 @@ pub fn Parser(comptime enc: Encoding) type {
 
         // anchors: Anchors,
         anchors: bun.StringHashMap(Expr),
-        // aliases: PendingAliases,
+        pending_aliases: bun.StringHashMap(std.ArrayList(*Expr)),
 
         tag_handles: bun.StringHashMap(void),
-
-        // const PendingAliases = struct {
-        //     list: std.ArrayList(State),
-
-        //     const State = struct {
-        //         name: String.Range,
-        //         index: usize,
-        //         prop: enum { key, value },
-        //         collection_node: *Node,
-        //     };
-        // };
 
         whitespace_buf: std.ArrayList(Whitespace),
 
@@ -322,7 +312,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 .block_indents = .init(allocator),
                 // .anchors = .{ .map = .init(allocator) },
                 .anchors = .init(allocator),
-                // .aliases = .{ .list = .init(allocator) },
+                .pending_aliases = .init(allocator),
                 .tag_handles = .init(allocator),
                 .whitespace_buf = .init(allocator),
                 .stack_check = .init(),
@@ -333,6 +323,14 @@ pub fn Parser(comptime enc: Encoding) type {
             self.context.list.deinit();
             self.block_indents.list.deinit();
             self.anchors.deinit();
+            
+            // Clean up pending aliases lists
+            var it = self.pending_aliases.iterator();
+            while (it.next()) |entry| {
+                entry.value_ptr.deinit();
+            }
+            self.pending_aliases.deinit();
+            
             self.tag_handles.deinit();
             self.whitespace_buf.deinit();
             // std.debug.assert(self.future == null);
@@ -677,6 +675,14 @@ pub fn Parser(comptime enc: Encoding) type {
             var directives: std.ArrayList(Directive) = .init(self.allocator);
 
             self.anchors.clearRetainingCapacity();
+            
+            // Clear pending aliases
+            var it = self.pending_aliases.iterator();
+            while (it.next()) |entry| {
+                entry.value_ptr.deinit();
+            }
+            self.pending_aliases.clearRetainingCapacity();
+            
             self.tag_handles.clearRetainingCapacity();
 
             var has_yaml_directive = false;
@@ -721,8 +727,45 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
             }
 
+
+            // Check for unresolved aliases
+            if (self.pending_aliases.count() > 0) {
+                return error.UnresolvedAlias;
+            }
+
             return .{ .root = root, .directives = directives };
         }
+
+        fn storeAnchor(self: *@This(), anchor_name: []const u8, expr: Expr) !void {
+            // Store the anchor name persistently for the anchors map
+            const persistent_anchor_name = try self.allocator.dupe(u8, anchor_name);
+            
+            // Store the anchor
+            try self.anchors.put(persistent_anchor_name, expr);
+            
+            // Resolve any pending aliases for this anchor (look for existing key)
+            var pending_key: []const u8 = undefined;
+            var found_pending = false;
+            var pending_iter = self.pending_aliases.iterator();
+            while (pending_iter.next()) |entry| {
+                if (std.mem.eql(u8, entry.key_ptr.*, anchor_name)) {
+                    pending_key = entry.key_ptr.*;
+                    found_pending = true;
+                    break;
+                }
+            }
+            
+            if (found_pending) {
+                const pending_list = self.pending_aliases.get(pending_key).?;
+                for (pending_list.items) |placeholder_ptr| {
+                    placeholder_ptr.* = expr;
+                }
+                // Clear the pending list for this anchor
+                self.pending_aliases.getPtr(pending_key).?.deinit();
+                _ = self.pending_aliases.remove(pending_key);
+            }
+        }
+
 
         fn parseFlowSequence(self: *@This()) ParseError!Expr {
             const sequence_start = self.token.start;
@@ -1277,15 +1320,26 @@ pub fn Parser(comptime enc: Encoding) type {
                         return error.UnexpectedToken;
                     }
 
-                    var copy = self.anchors.get(alias.slice(self.input)) orelse {
-                        // we failed to find the alias, but it might be cyclic and
-                        // and available later. to resolve this we need to check
-                        // nodes for parent collection types. this alias is added
-                        // to a list with a pointer to *Mapping or *Sequence, an
-                        // index (and whether is key/value), and the alias name.
-                        // then, when we actually have Node for the parent we
-                        // fill in the data pointer at the index with the node.
-                        return error.UnresolvedAlias;
+                    const alias_name = alias.slice(self.input);
+                    
+                    var copy = self.anchors.get(alias_name) orelse {
+                        // Create a placeholder for the forward reference
+                        const placeholder = try self.allocator.create(Expr);
+                        placeholder.* = Expr.empty;
+                        placeholder.loc = self.token.start.loc();
+                        
+                        // Store the alias name in the allocator so it persists
+                        const persistent_alias_name = try self.allocator.dupe(u8, alias_name);
+                        
+                        // Add this placeholder to the pending list for this alias
+                        var result = try self.pending_aliases.getOrPut(persistent_alias_name);
+                        if (!result.found_existing) {
+                            result.value_ptr.* = std.ArrayList(*Expr).init(self.allocator);
+                        }
+                        try result.value_ptr.append(placeholder);
+                        
+                        try self.scan(.{});
+                        break :node placeholder.*;
                     };
 
                     // update position from the anchor node to the alias node.
@@ -1320,7 +1374,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         const implicit_key_anchors = node_props.implicitKeyAnchors(sequence_line);
 
                         if (implicit_key_anchors.key_anchor) |key_anchor| {
-                            try self.anchors.put(key_anchor.slice(self.input), seq);
+                            try self.storeAnchor(key_anchor.slice(self.input), seq);
                         }
 
                         const map = try self.parseBlockMapping(
@@ -1331,7 +1385,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         );
 
                         if (implicit_key_anchors.mapping_anchor) |mapping_anchor| {
-                            try self.anchors.put(mapping_anchor.slice(self.input), map);
+                            try self.storeAnchor(mapping_anchor.slice(self.input), map);
                         }
 
                         return map;
@@ -1387,7 +1441,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         const implicit_key_anchors = node_props.implicitKeyAnchors(mapping_line);
 
                         if (implicit_key_anchors.key_anchor) |key_anchor| {
-                            try self.anchors.put(key_anchor.slice(self.input), map);
+                            try self.storeAnchor(key_anchor.slice(self.input), map);
                         }
 
                         const parent_map = try self.parseBlockMapping(
@@ -1398,7 +1452,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         );
 
                         if (implicit_key_anchors.mapping_anchor) |mapping_anchor| {
-                            try self.anchors.put(mapping_anchor.slice(self.input), parent_map);
+                            try self.storeAnchor(mapping_anchor.slice(self.input), parent_map);
                         }
                     }
                     break :node map;
@@ -1521,7 +1575,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         const implicit_key_anchors = node_props.implicitKeyAnchors(scalar_line);
 
                         if (implicit_key_anchors.key_anchor) |key_anchor| {
-                            try self.anchors.put(key_anchor.slice(self.input), implicit_key);
+                            try self.storeAnchor(key_anchor.slice(self.input), implicit_key);
                         }
 
                         const mapping = try self.parseBlockMapping(
@@ -1532,7 +1586,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         );
 
                         if (implicit_key_anchors.mapping_anchor) |mapping_anchor| {
-                            try self.anchors.put(mapping_anchor.slice(self.input), mapping);
+                            try self.storeAnchor(mapping_anchor.slice(self.input), mapping);
                         }
 
                         return mapping;
@@ -1559,7 +1613,7 @@ pub fn Parser(comptime enc: Encoding) type {
             }
 
             if (node_props.anchor()) |anchor| {
-                try self.anchors.put(anchor.slice(self.input), node);
+                try self.storeAnchor(anchor.slice(self.input), node);
             }
 
             return node;

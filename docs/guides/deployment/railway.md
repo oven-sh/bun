@@ -5,7 +5,7 @@ description: Deploy Bun applications to Railway with this step-by-step guide cov
 
 Railway is an infrastructure platform where you can provision infrastructure, develop with that infrastructure locally, and then deploy to the cloud. It enables instant deployments from GitHub with zero configuration, automatic SSL, and built-in database provisioning.
 
-This guide walks through deploying a Bun application with a PostgreSQL database (optional), which is exactly what the template below provides. 
+This guide walks through deploying a Bun application with a PostgreSQL database (optional), which is exactly what the template below provides.
 
 You can either follow this guide step-by-step or simply deploy the pre-configured template with one click:
 
@@ -17,15 +17,14 @@ You can either follow this guide step-by-step or simply deploy the pre-configure
 
 {% /raw %}
 
-
 ---
 
 **Prerequisites**:
+
 - A Bun application ready for deployment
 - A [Railway account](https://railway.app/)
 - Railway CLI (for CLI deployment method)
 - A GitHub account (for Dashboard deployment method)
-
 
 ---
 
@@ -45,11 +44,12 @@ bun install -g @railway/cli
 
 #### Step 2
 
-Log into your Railway account. 
+Log into your Railway account.
 
 ```bash
 railway login
 ```
+
 ---
 
 #### Step 3
@@ -68,7 +68,6 @@ bun-react-postgres$ railway init
 After initializing the project, add a new database and service.
 
 > **Note:** Step 4 is only necessary if your application uses a database. If you don't need PostgreSQL, skip to Step 5.
-
 
 ```bash
 # Add PostgreSQL database. Make sure to add this first!
@@ -103,7 +102,7 @@ bun-nextjs-starter$ railway domain
 Create a new project
 
 1. Go to [Railway Dashboard](http://railway.com/dashboard?utm_medium=integration&utm_source=docs&utm_campaign=bun)
-2. Click **"+ New"** → **"GitHub repo"** 
+2. Click **"+ New"** → **"GitHub repo"**
 3. Choose your repository
 
 ---
@@ -113,8 +112,6 @@ Create a new project
 Add a PostgreSQL database, and connect this database to the service
 
 > **Note:** Step 2 is only necessary if your application uses a database. If you don't need PostgreSQL, skip to Step 3.
-
-
 
 1. Click **"+ New"** → **"Database"** → **"Add PostgreSQL"**
 2. After the database has been created, select your service (not the database)

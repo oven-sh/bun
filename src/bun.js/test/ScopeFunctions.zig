@@ -151,7 +151,7 @@ fn genericExtend(this: *ScopeFunctions, globalThis: *JSGlobalObject, cfg: descri
     groupLog.begin(@src());
     defer groupLog.end();
 
-    if (cfg.self_concurrent and this.mode == .describe) return globalThis.throw("Cannot {s} on {f}", .{ name, this });
+    if (cfg.self_mode == .failing and this.mode == .describe) return globalThis.throw("Cannot {s} on {f}", .{ name, this });
     if (cfg.self_only) try errorInCI(globalThis, ".only");
     const extended = this.cfg.extend(cfg) orelse return globalThis.throw("Cannot {s} on {f}", .{ name, this });
     return create(globalThis, this.mode, this.each, extended);

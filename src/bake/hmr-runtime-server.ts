@@ -137,16 +137,6 @@ server_exports = {
     } catch (error) {
       // Handle Response.render() aborts
       if (error instanceof RenderAbortError) {
-        // TODO: Implement route resolution to get the new route modules
-        // For now, we'll need to get this information from the native side
-        // The native code will need to resolve the route and call handleRequest again
-
-        // Store the render error info so native code can access it
-        (globalThis as any).__lastRenderAbort = {
-          path: error.path,
-          params: error.params,
-        };
-
         // return it so the Zig code can handle it and re-render new route
         return error.response;
       }
@@ -157,6 +147,7 @@ server_exports = {
         return error.response;
       }
 
+      //return error;
       throw error;
     }
   },

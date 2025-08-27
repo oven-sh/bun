@@ -84,7 +84,14 @@ export function renderToHtml(
       pipe(stream);
 
       // Promise resolved after all data is combined.
-      return stream.finished;
+      //
+      // We need to catch this or otherwise it results in unhandled rejection, I
+      // think this is a problem with `type: "direct"` as it does not happen
+      // when that line is commented out.
+      //
+      // This is fine because the actual error will come in cancel or onError callback elsewhere
+      return stream.finished.catch(() => {});
+      // return stream.finished;
     },
     cancel(err) {
       if (!signal.aborted) {
@@ -255,9 +262,9 @@ class RscInjectionStream extends EventEmitter {
     // Ignore flush requests from React. Bun will automatically flush when reasonable.
   }
 
-  destroy() {}
+  destroy(e) {}
 
-  end() {}
+  end(e) {}
 }
 
 class StaticRscInjectionStream extends EventEmitter {

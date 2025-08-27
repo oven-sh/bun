@@ -100,7 +100,6 @@ export async function render(
   const signal: MiniAbortSignal = { aborted: undefined, abort: null! };
   ({ pipe, abort: signal.abort } = renderToPipeableStream(page, serverManifest, {
     onError: err => {
-      // console.error("onError renderToPipeableStream", !!signal.aborted);
       if (signal.aborted) return;
 
       // Mark as aborted and call the abort function
@@ -144,6 +143,7 @@ export async function render(
     if (als) {
       const store = als.getStore();
       if (store) {
+        /*
         store.renderAbort = (path: string, params: Record<string, any> | null) => {
           // Create the abort error
           const abortError = new (globalThis as any).RenderAbortError(path, params);
@@ -153,6 +153,7 @@ export async function render(
           rscPayload.destroy(abortError);
           throw abortError;
         };
+        */
       }
     }
 
@@ -168,10 +169,6 @@ export async function render(
 
         // Check if the render was aborted with an error
         if (signal.aborted) {
-          // If it's a RenderAbortError, re-throw it to be handled upstream
-          if (signal.aborted instanceof (globalThis as any).RenderAbortError) {
-            throw signal.aborted;
-          }
           // For some reason in react-server-dom the `stream.on("error")`
           // handler creates a new Error???
           if (signal.aborted.message !== "Connection closed.") {

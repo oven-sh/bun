@@ -15,10 +15,7 @@ export function wrapComponent(strongComponent, responseOptions, isRenderRedirect
         throw new RedirectAbortError(responseObject);
       }
       // Fallback if RedirectAbortError is not available
-      const error = new Error("Response.redirect() called");
-      error.name = "RedirectAbortError";
-      error.response = responseObject;
-      throw error;
+      throw new Error("RedirectAbortError not available this is a bug");
     }
 
     // For Response.render(), we need to throw a RenderAbortError
@@ -30,12 +27,7 @@ export function wrapComponent(strongComponent, responseOptions, isRenderRedirect
         throw new RenderAbortError(strongComponent, responseOptions, responseObject);
       }
       // Fallback if RenderAbortError is not available
-      const error = new Error("Response.render() called");
-      error.name = "RenderAbortError";
-      error.path = strongComponent;
-      error.params = responseOptions;
-      error.response = responseObject;
-      throw error;
+      throw new Error("RenderAbortError not available this is a bug");
     }
 
     // For new Response(<jsx />, {}), update AsyncLocalStorage

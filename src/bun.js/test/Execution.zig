@@ -36,8 +36,8 @@
 //! ```
 
 groups: []ConcurrentGroup,
-_sequences: []ExecutionSequence,
-_entries: []const *ExecutionEntry,
+@"#sequences": []ExecutionSequence,
+@"#entries": []const *ExecutionEntry,
 group_index: usize,
 
 pub const CurrentEntryRef = struct {
@@ -59,11 +59,11 @@ pub const CurrentEntryRef = struct {
     }
     pub fn sequence(this: *const CurrentEntryRef) ?*ExecutionSequence {
         const entry_data = this.entry_data orelse return null;
-        return &this.buntest.execution._sequences[entry_data.sequence_index];
+        return &this.buntest.execution.@"#sequences"[entry_data.sequence_index];
     }
     pub fn entry(this: *const CurrentEntryRef) ?*ExecutionEntry {
         const entry_data = this.entry_data orelse return null;
-        return this.buntest.execution._entries[entry_data.entry_index];
+        return this.buntest.execution.@"#entries"[entry_data.entry_index];
     }
 };
 
@@ -72,6 +72,10 @@ pub const ConcurrentGroup = struct {
     sequence_end: usize,
     executing: bool = false,
     concurrent: bool,
+
+    pub fn sequences(this: ConcurrentGroup, execution: *Execution) []ExecutionSequence {
+        return execution.@"#sequences"[this.sequence_start..this.sequence_end];
+    }
 };
 pub const ExecutionSequence = struct {
     entry_start: usize,
@@ -87,6 +91,13 @@ pub const ExecutionSequence = struct {
     fn entryMode(this: ExecutionSequence) describe2.ScopeMode {
         if (this.test_entry) |entry| return entry.base.mode;
         return .normal;
+    }
+
+    pub fn entries(this: ExecutionSequence, execution: *Execution) []const *ExecutionEntry {
+        return execution.@"#entries"[this.entry_start..this.entry_end];
+    }
+    pub fn activeEntry(this: ExecutionSequence, execution: *Execution) ?*ExecutionEntry {
+        return if (this.entry_index < this.entry_end) execution.@"#entries"[this.entry_index] else null;
     }
 };
 pub const Result = enum {
@@ -118,27 +129,27 @@ const EntryID = enum(usize) {
 pub fn init(_: std.mem.Allocator) Execution {
     return .{
         .groups = &.{},
-        ._sequences = &.{},
-        ._entries = &.{},
+        .@"#sequences" = &.{},
+        .@"#entries" = &.{},
         .group_index = 0,
     };
 }
 pub fn deinit(this: *Execution) void {
     this.bunTest().gpa.free(this.groups);
-    this.bunTest().gpa.free(this._sequences);
-    this.bunTest().gpa.free(this._entries);
+    this.bunTest().gpa.free(this.@"#sequences");
+    this.bunTest().gpa.free(this.@"#entries");
 }
 pub fn loadFromOrder(this: *Execution, order: *Order) bun.JSError!void {
     bun.assert(this.groups.len == 0);
-    bun.assert(this._sequences.len == 0);
-    bun.assert(this._entries.len == 0);
+    bun.assert(this.@"#sequences".len == 0);
+    bun.assert(this.@"#entries".len == 0);
     var allocator_safety = bun.safety.AllocPtr.init(this.bunTest().gpa);
     allocator_safety.assertEq(order.groups.allocator);
     allocator_safety.assertEq(order.sequences.allocator);
     allocator_safety.assertEq(order.entries.allocator);
     this.groups = try order.groups.toOwnedSlice();
-    this._sequences = try order.sequences.toOwnedSlice();
-    this._entries = try order.entries.toOwnedSlice();
+    this.@"#sequences" = try order.sequences.toOwnedSlice();
+    this.@"#entries" = try order.entries.toOwnedSlice();
 }
 
 fn bunTest(this: *Execution) *BunTestFile {
@@ -158,34 +169,37 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
         const group = &this.groups[this.group_index];
         if (!group.executing) this.resetGroup(this.group_index);
         var status: describe2.RunOneResult = .done;
-        for (group.sequence_start..group.sequence_end) |sequence_index| {
+        for (group.sequences(this), group.sequence_start..) |*sequence, sequence_index| {
             while (true) {
                 groupLog.begin(@src());
                 defer groupLog.end();
 
-                const sequence = &this._sequences[sequence_index];
                 if (sequence.executing) {
                     groupLog.log("runOne: can't advance; already executing", .{});
                     status = .execute; // can't advance; already executing
                     break;
                 }
-                if (sequence.entry_index >= sequence.entry_end) {
+                if (sequence.activeEntry(this) == null) {
                     groupLog.log("runOne: sequence completed; decrement repeat count", .{});
-                    this.onSequenceCompleted(sequence_index);
+                    this.onSequenceCompleted(sequence);
                     sequence.remaining_repeat_count -= 1;
                     if (sequence.remaining_repeat_count <= 0) {
                         groupLog.log("runOne: no repeats left; wait for group completion.", .{});
                         break; // done
                     }
-                    this.resetSequence(sequence_index);
+                    this.resetSequence(sequence);
                 }
 
-                const next_item = this._entries[sequence.entry_index];
+                const next_item = sequence.activeEntry(this) orelse {
+                    groupLog.log("runOne: no more entries in sequence", .{});
+                    bun.debugAssert(false);
+                    break;
+                };
                 sequence.executing = true;
-                this.onSequenceStarted(sequence_index);
+                this.onSequenceStarted(sequence);
 
                 if (next_item.callback) |cb| {
-                    groupLog.log("runSequence queued callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.entry_index });
+                    groupLog.log("runSequence queued callback", .{});
 
                     try callback_queue.append(.{ .callback = cb.dupe(this.bunTest().gpa), .done_parameter = true, .data = sequence_index });
                     status = .execute;
@@ -227,7 +241,8 @@ pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, _: ?jsc.JSValue
         bun.debugAssert(false);
         return;
     }
-    const sequence = &this._sequences[sequence_index];
+    const sequences = group.sequences(this);
+    const sequence = &sequences[sequence_index - group.sequence_start];
     bun.assert(sequence.entry_index < sequence.entry_end);
 
     sequence.executing = false;
@@ -235,12 +250,10 @@ pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, _: ?jsc.JSValue
 
     // TODO: see what vitest does when a beforeAll fails. does it still run the test?
 }
-fn onSequenceStarted(this: *Execution, sequence_index: usize) void {
-    const sequence = &this._sequences[sequence_index];
+fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     sequence.started_at = bun.timespec.now();
 }
-fn onSequenceCompleted(this: *Execution, sequence_index: usize) void {
-    const sequence = &this._sequences[sequence_index];
+fn onSequenceCompleted(this: *Execution, sequence: *ExecutionSequence) void {
     const elapsed_ns = sequence.started_at.sinceNow();
     if (sequence.result == .pending) {
         sequence.result = .pass;
@@ -262,8 +275,9 @@ fn onSequenceCompleted(this: *Execution, sequence_index: usize) void {
         },
         else => {},
     }
-    if (sequence.entry_start < sequence.entry_end and (sequence.test_entry != null or sequence.result != .pass)) {
-        test_command.CommandLineReporter.handleTestCompleted(this.bunTest(), sequence, sequence.test_entry orelse this._entries[sequence.entry_start], elapsed_ns);
+    const entries = sequence.entries(this);
+    if (entries.len > 0 and (sequence.test_entry != null or sequence.result != .pass)) {
+        test_command.CommandLineReporter.handleTestCompleted(this.bunTest(), sequence, sequence.test_entry orelse entries[0], elapsed_ns);
     }
 }
 pub fn resetGroup(this: *Execution, group_index: usize) void {
@@ -272,12 +286,11 @@ pub fn resetGroup(this: *Execution, group_index: usize) void {
 
     const group = this.groups[group_index];
     bun.assert(!group.executing);
-    for (group.sequence_start..group.sequence_end) |sequence_index| {
-        this.resetSequence(sequence_index);
+    for (group.sequences(this)) |*sequence| {
+        this.resetSequence(sequence);
     }
 }
-pub fn resetSequence(this: *Execution, sequence_index: usize) void {
-    const sequence = &this._sequences[sequence_index];
+pub fn resetSequence(_: *Execution, sequence: *ExecutionSequence) void {
     bun.assert(!sequence.executing);
     if (sequence.result.isPass()) {
         // passed or pending; run again
@@ -294,18 +307,19 @@ pub fn handleUncaughtException(this: *Execution, user_data: ?u64) describe2.Hand
     defer groupLog.end();
 
     const current_group = this.groups[this.group_index];
-    const sequence: *ExecutionSequence = if (current_group.sequence_start + 1 == current_group.sequence_end) blk: {
+    const sequences = current_group.sequences(this);
+    const sequence: *ExecutionSequence = if (sequences.len == 1) blk: {
         groupLog.log("handleUncaughtException: there is only one sequence in the group", .{});
-        break :blk &this._sequences[current_group.sequence_start];
+        break :blk &sequences[0];
     } else if (user_data != null and user_data.? >= current_group.sequence_start and user_data.? < current_group.sequence_end) blk: {
         groupLog.log("handleUncaughtException: there are multiple sequences in the group and user_data is provided", .{});
-        break :blk &this._sequences[user_data.?];
+        break :blk &sequences[user_data.? - current_group.sequence_start];
     } else {
         groupLog.log("handleUncaughtException: there are multiple sequences in the group and user_data is not provided or invalid", .{});
         return .show_unhandled_error_between_tests;
     };
 
-    if (sequence.entry_index < sequence.entry_end and this._entries[sequence.entry_index] != sequence.test_entry) {
+    if (sequence.entry_index < sequence.entry_end and sequence.activeEntry(this) != sequence.test_entry) {
         // error in a hook
         // TODO: hooks should prevent further execution of the sequence and maybe shouldn't be marked as "between tests" but instead a regular failure
         return .show_unhandled_error_between_tests;

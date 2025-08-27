@@ -26,14 +26,12 @@ pub fn dumpOrder(this: *Execution) bun.JSError!void {
         groupLog.beginMsg("{d}: ConcurrentGroup {d}-{d}", .{ group_index, group.sequence_start, group.sequence_end });
         defer groupLog.end();
 
-        for (group.sequence_start..group.sequence_end) |sequence_index| {
-            const sequence = &this._sequences[sequence_index];
-            groupLog.beginMsg("{d}: Sequence {d}-{d} ({d}x)", .{ sequence_index, sequence.entry_start, sequence.entry_end, sequence.remaining_repeat_count });
+        for (group.sequences(this)) |*sequence| {
+            groupLog.beginMsg("Sequence {d}-{d} ({d}x)", .{ sequence.entry_start, sequence.entry_end, sequence.remaining_repeat_count });
             defer groupLog.end();
 
-            for (sequence.entry_start..sequence.entry_end) |entry_index| {
-                const entry = this._entries[entry_index];
-                groupLog.log("{d}: ExecutionEntry \"{}\" (concurrent={}, mode={s}, only={s}, filter={s})", .{ entry_index, std.zig.fmtEscapes(entry.base.name orelse "undefined"), entry.base.concurrent, @tagName(entry.base.mode), @tagName(entry.base.only), @tagName(entry.base.filter) });
+            for (sequence.entries(this)) |entry| {
+                groupLog.log("ExecutionEntry \"{}\" (concurrent={}, mode={s}, only={s}, filter={s})", .{ std.zig.fmtEscapes(entry.base.name orelse "undefined"), entry.base.concurrent, @tagName(entry.base.mode), @tagName(entry.base.only), @tagName(entry.base.filter) });
             }
         }
     }

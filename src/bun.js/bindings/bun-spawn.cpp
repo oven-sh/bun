@@ -731,8 +731,14 @@ extern "C" ssize_t posix_spawn_bun(
         int current_max_fd = 0;
 
         if (request->chdir) {
+            // In a user namespace, chdir might fail due to permission issues
+            // Make it non-fatal for containers
             if (chdir(request->chdir) != 0) {
-                return childFailed();
+                if (!request->container_setup) {
+                    // Only fatal if not in a container
+                    return childFailed();
+                }
+                // For containers, ignore chdir failures
             }
         }
 

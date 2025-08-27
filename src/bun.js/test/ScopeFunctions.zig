@@ -71,9 +71,6 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
         else => 0,
     };
 
-    var callback: describe2.CallbackWithArgs = .init(bunTest.gpa, args.callback, &.{});
-    defer callback.deinit(bunTest.gpa);
-
     if (this.each != .zero) {
         if (this.each.isUndefinedOrNull() or !this.each.isArray()) {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
@@ -84,6 +81,9 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
         var test_idx: usize = 0;
         while (try iter.next()) |item| : (test_idx += 1) {
             if (item == .zero) break;
+
+            var callback: describe2.CallbackWithArgs = .init(bunTest.gpa, args.callback, &.{});
+            defer callback.deinit(bunTest.gpa);
 
             if (item.isUndefinedOrNull() and item.isArray()) {
                 // Spread array as args (matching Jest & Vitest)
@@ -104,6 +104,9 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
             try this.enqueueDescribeOrTestCallback(bunTest, callback, formatted_label, line_no);
         }
     } else {
+        var callback: describe2.CallbackWithArgs = .init(bunTest.gpa, args.callback, &.{});
+        defer callback.deinit(bunTest.gpa);
+
         try this.enqueueDescribeOrTestCallback(bunTest, callback, args.description, line_no);
     }
 

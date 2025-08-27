@@ -321,6 +321,10 @@ pub const RunCommand = struct {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, exit_code.signal.fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
 
+                    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                        bun.crash_handler.suppressReporting();
+                    }
+
                     Global.raiseIgnoringPanicHandler(exit_code.signal);
                 }
 
@@ -339,6 +343,11 @@ pub const RunCommand = struct {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, signal.fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
                 }
+
+                if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                    bun.crash_handler.suppressReporting();
+                }
+
                 Global.raiseIgnoringPanicHandler(signal);
             },
 
@@ -512,6 +521,10 @@ pub const RunCommand = struct {
                             });
                         }
 
+                        if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                            bun.crash_handler.suppressReporting();
+                        }
+
                         Global.raiseIgnoringPanicHandler(signal);
                     },
 
@@ -523,6 +536,10 @@ pub const RunCommand = struct {
                                     basenameOrBun(executable),
                                     exit_code.signal.name() orelse "unknown",
                                 });
+                            }
+
+                            if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                                bun.crash_handler.suppressReporting();
                             }
 
                             Global.raiseIgnoringPanicHandler(exit_code.signal);

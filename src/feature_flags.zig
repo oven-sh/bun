@@ -37,6 +37,8 @@ pub const RuntimeFeatureFlag = enum {
     BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT,
     /// Suppress crash reporting and creating a core dump when `process._kill()` is passed its own PID
     BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF,
+    /// Suppress crash reporting and creating a core dump when we abort due to a signal in `bun run`
+    BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN,
     BUN_NO_CODESIGN_MACHO_BINARY,
     BUN_TRACE,
     NODE_NO_WARNINGS,

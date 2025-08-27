@@ -1,4 +1,6 @@
-describe("throw in describe scope doesn't enqueue tests after thrown", () => {
+import { describe, it } from "bun:test";
+
+describe("throw in describe scope doesn't enqueue tests after thrown", async () => {
   it("test enqueued before a describe scope throws is never run", () => {
     throw new Error("This test failed");
   });

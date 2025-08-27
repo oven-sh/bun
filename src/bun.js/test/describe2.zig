@@ -540,34 +540,35 @@ pub const BunTestFile = struct {
         _ = is_rejection;
 
         const handle_status: HandleUncaughtExceptionResult = switch (this.phase) {
-            .collection, .done => .unhandled,
+            .collection => this.collection.handleUncaughtException(user_data),
+            .done => .show_unhandled_error_between_tests,
             .execution => this.execution.handleUncaughtException(user_data),
         };
 
-        if (handle_status == .consumed) return; // do not print error, it was already consumed
+        group.log("onUncaughtException -> {s}", .{@tagName(handle_status)});
 
-        if (handle_status == .unhandled) {
+        if (handle_status == .hide_error) return; // do not print error, it was already consumed
+
+        if (handle_status == .show_unhandled_error_between_tests or handle_status == .show_unhandled_error_in_describe) {
+            this.reporter.?.jest.unhandled_errors_between_tests += 1;
             bun.Output.prettyErrorln(
                 \\<r>
-                \\<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>
+                \\<b><d>#<r> <red><b>Unhandled error<r><d> {s}<r>
                 \\<d>-------------------------------<r>
                 \\
-            , .{});
+            , .{if (handle_status == .show_unhandled_error_in_describe) "in describe" else "between tests"});
+            bun.Output.flush();
         }
         globalThis.bunVM().runErrorHandlerWithDedupe(result, null);
         bun.Output.flush();
-        if (handle_status == .unhandled) {
+        if (handle_status == .show_unhandled_error_between_tests or handle_status == .show_unhandled_error_in_describe) {
             bun.Output.prettyError("<r><d>-------------------------------<r>\n\n", .{});
             bun.Output.flush();
         }
     }
 };
 
-pub const HandleUncaughtExceptionResult = enum {
-    consumed,
-    handled,
-    unhandled,
-};
+pub const HandleUncaughtExceptionResult = enum { hide_error, show_handled_error, show_unhandled_error_between_tests, show_unhandled_error_in_describe };
 
 pub const CallbackQueue = std.ArrayList(CallbackEntry);
 
@@ -674,6 +675,9 @@ pub const DescribeScope = struct {
     beforeEach: std.ArrayList(*ExecutionEntry),
     afterEach: std.ArrayList(*ExecutionEntry),
     afterAll: std.ArrayList(*ExecutionEntry),
+
+    /// if true, the describe callback threw an error. do not run any tests declared in this scope.
+    failed: bool = false,
 
     pub fn create(gpa: std.mem.Allocator, base: BaseScope) *DescribeScope {
         return bun.create(gpa, DescribeScope, .{

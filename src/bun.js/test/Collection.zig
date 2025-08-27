@@ -93,24 +93,27 @@ pub fn runOne(this: *Collection, globalThis: *jsc.JSGlobalObject, callback_queue
     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
     defer formatter.deinit();
 
-    if (this.describe_callback_queue.items.len == 0) return .done;
+    while (this.describe_callback_queue.items.len > 0) {
+        group.log("runOne -> call next", .{});
+        var first = this.describe_callback_queue.orderedRemove(0);
+        defer first.deinit(buntest.gpa);
 
-    group.log("runOne -> call next", .{});
-    var first = this.describe_callback_queue.orderedRemove(0);
-    defer first.deinit(buntest.gpa);
+        if (first.active_scope.failed) continue; // do not execute callbacks that came from a failed describe scope
 
-    const callback = first.callback;
-    const active_scope = first.active_scope;
-    const new_scope = first.new_scope;
+        const callback = first.callback;
+        const active_scope = first.active_scope;
+        const new_scope = first.new_scope;
 
-    const previous_scope = active_scope;
+        const previous_scope = active_scope;
 
-    group.log("collection:runOne set scope from {s}", .{this.active_scope.base.name orelse "undefined"});
-    this.active_scope = new_scope;
-    group.log("collection:runOne set scope to {s}", .{this.active_scope.base.name orelse "undefined"});
+        group.log("collection:runOne set scope from {s}", .{this.active_scope.base.name orelse "undefined"});
+        this.active_scope = new_scope;
+        group.log("collection:runOne set scope to {s}", .{this.active_scope.base.name orelse "undefined"});
 
-    try callback_queue.append(.{ .callback = callback.dupe(buntest.gpa), .done_parameter = false, .data = @intFromPtr(previous_scope) });
-    return .execute;
+        try callback_queue.append(.{ .callback = callback.dupe(buntest.gpa), .done_parameter = false, .data = @intFromPtr(previous_scope) });
+        return .execute;
+    }
+    return .done;
 }
 pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, _: ?jsc.JSValue, data: u64) bun.JSError!void {
     group.begin(@src());
@@ -123,6 +126,15 @@ pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, _: ?j
     group.log("collection:runOneCompleted reset scope back from {s}", .{this.active_scope.base.name orelse "undefined"});
     this.active_scope = prev_scope;
     group.log("collection:runOneCompleted reset scope back to {s}", .{this.active_scope.base.name orelse "undefined"});
+}
+
+pub fn handleUncaughtException(this: *Collection, _: ?u64) describe2.HandleUncaughtExceptionResult {
+    group.begin(@src());
+    defer group.end();
+
+    this.active_scope.failed = true;
+
+    return .show_unhandled_error_in_describe; // unhandled because it needs to exit with code 1
 }
 
 const std = @import("std");

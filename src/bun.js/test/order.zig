@@ -12,6 +12,8 @@ pub fn discardOrderSub(this: *Execution, current: TestScheduleEntry) bun.JSError
     _ = current;
 }
 pub fn generateOrderDescribe(this: *Execution, current: *DescribeScope) bun.JSError!void {
+    if (current.failed) return; // do not schedule any tests in a failed describe scope
+
     // gather beforeAll
     for (current.beforeAll.items) |entry| {
         const entries_start = this._entries.items.len;

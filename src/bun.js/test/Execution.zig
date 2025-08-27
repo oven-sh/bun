@@ -258,14 +258,14 @@ pub fn handleUncaughtException(this: *Execution, user_data: ?u64) describe2.Hand
         break :blk &this._sequences.items[user_data.?];
     } else {
         groupLog.log("handleUncaughtException: there are multiple sequences in the group and user_data is not provided or invalid", .{});
-        return .unhandled;
+        return .show_unhandled_error_between_tests;
     };
 
     sequence.result = .fail;
     return switch (sequence.entryMode()) {
-        .failing => .consumed, // failing tests prevent the error from being displayed
-        .todo => .handled, // todo tests with --todo will still display the error
-        else => .handled,
+        .failing => .hide_error, // failing tests prevent the error from being displayed
+        .todo => .show_handled_error, // todo tests with --todo will still display the error
+        else => .show_handled_error,
     };
 }
 

@@ -51,23 +51,40 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
     const pkg_resolutions = pkgs.items(.resolution);
     const pkg_dependencies = pkgs.items(.dependencies);
 
-    // If scan_all, we scan all npm packages; otherwise only those in update_requests
+    // If scan_all, we start from the root package and traverse all dependencies
     if (scan_all) {
-        for (0..pkgs.len) |_pkg_id| {
-            const pkg_id: PackageID = @intCast(_pkg_id);
+        // start with root package which is id=0
+        const root_pkg_id: PackageID = 0;
+        const root_deps = pkg_dependencies[root_pkg_id];
 
-            if (pkg_id == 0 or pkg_resolutions[pkg_id].tag != .npm) {
+        // then we queue all direct dependencies of the root package
+        for (root_deps.begin()..root_deps.end()) |_dep_id| {
+            const dep_id: DependencyID = @intCast(_dep_id);
+            const dep_pkg_id = manager.lockfile.buffers.resolutions.items[dep_id];
+
+            if (dep_pkg_id == invalid_package_id) {
+                continue;
+            }
+
+            const dep_res = pkg_resolutions[dep_pkg_id];
+            if (dep_res.tag != .npm) {
+                continue;
+            }
+
+            if ((try pkg_dedupe.getOrPut(dep_pkg_id)).found_existing) {
                 continue;
             }
 
             var pkg_path_buf = std.ArrayList(PackageID).init(manager.allocator);
-            try pkg_path_buf.append(pkg_id);
+            try pkg_path_buf.append(root_pkg_id); // Add root to path
+            try pkg_path_buf.append(dep_pkg_id);
 
-            const dep_path_buf = std.ArrayList(DependencyID).init(manager.allocator);
+            var dep_path_buf = std.ArrayList(DependencyID).init(manager.allocator);
+            try dep_path_buf.append(dep_id);
 
             try ids_queue.writeItem(.{
-                .pkg_id = pkg_id,
-                .dep_id = invalid_dependency_id,
+                .pkg_id = dep_pkg_id,
+                .dep_id = dep_id,
                 .pkg_path = pkg_path_buf,
                 .dep_path = dep_path_buf,
             });
@@ -735,7 +752,7 @@ fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, pack
 
         if (fatal_count > 0) {
             if (comptime !scan_all) {
-                Output.pretty("<red>bun install aborted due to fatal security advisories<r>\n", .{});
+                Output.pretty("<red>Installation aborted due to fatal security advisories<r>\n", .{});
             }
             Global.exit(1);
         } else if (warn_count > 0) {

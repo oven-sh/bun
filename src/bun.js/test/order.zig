@@ -1,5 +1,9 @@
 //! take Collection phase output and convert to Execution phase input
 
+groups: std.ArrayList(ConcurrentGroup),
+_sequences: std.ArrayList(ExecutionSequence),
+_entries: std.ArrayList(*ExecutionEntry),
+
 pub fn generateOrderSub(this: *Execution, current: TestScheduleEntry) bun.JSError!void {
     switch (current) {
         .describe => |describe| try generateOrderDescribe(this, describe),
@@ -86,14 +90,14 @@ pub fn generateOrderTest(this: *Execution, current: *ExecutionEntry) bun.JSError
 }
 
 pub fn appendOrExtendConcurrentGroup(this: *Execution, concurrent: bool, sequences_start: usize, sequences_end: usize) bun.JSError!void {
-    if (concurrent and this.order.items.len > 0) {
-        const previous_group = &this.order.items[this.order.items.len - 1];
+    if (concurrent and this.groups.items.len > 0) {
+        const previous_group = &this.groups.items[this.groups.items.len - 1];
         if (previous_group.concurrent and previous_group.sequence_end == sequences_start) {
             previous_group.sequence_end = sequences_end; // extend the previous group to include this sequence
             return;
         }
     }
-    try this.order.append(.{ .sequence_start = sequences_start, .sequence_end = sequences_end, .concurrent = concurrent }); // otherwise, add a new concurrentgroup to order
+    try this.groups.append(.{ .sequence_start = sequences_start, .sequence_end = sequences_end, .concurrent = concurrent }); // otherwise, add a new concurrentgroup to order
 }
 
 const bun = @import("bun");
@@ -103,3 +107,6 @@ const DescribeScope = describe2.DescribeScope;
 const Execution = describe2.Execution;
 const ExecutionEntry = describe2.ExecutionEntry;
 const TestScheduleEntry = describe2.TestScheduleEntry;
+const ConcurrentGroup = describe2.Execution.ConcurrentGroup;
+const ExecutionSequence = describe2.Execution.ExecutionSequence;
+const std = @import("std");

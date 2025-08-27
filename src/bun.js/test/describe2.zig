@@ -322,11 +322,11 @@ pub const BunTestFile = struct {
 
         const ref_value = this.ref(0);
 
-        const active_group = &this.execution.order.items[this.execution.order_index];
+        const active_group = &this.execution.groups.items[this.execution.group_index];
         if (active_group.sequence_start + 1 != active_group.sequence_end) return .{
             ._internal_ref = ref_value,
             .buntest = this,
-            .order_index = this.execution.order_index,
+            .group_index = this.execution.group_index,
             .entry_data = null, // the current execution entry is not known because we are running a concurrent test
         };
 
@@ -335,7 +335,7 @@ pub const BunTestFile = struct {
         return .{
             ._internal_ref = ref_value,
             .buntest = this,
-            .order_index = this.execution.order_index,
+            .group_index = this.execution.group_index,
             .entry_data = .{
                 .sequence_index = active_sequence_index,
                 .entry_index = sequence.entry_index,

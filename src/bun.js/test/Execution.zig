@@ -1,12 +1,49 @@
-order: std.ArrayList(ConcurrentGroup),
+//! Example:
+//!
+//! ```
+//! Execution[
+//!   ConcurrentGroup[
+//!     ExecutionSequence[
+//!       beforeAll
+//!     ]
+//!   ],
+//!   ConcurrentGroup[ <- group_index (currently running)
+//!     ExecutionSequence[
+//!       beforeEach,
+//!       test.concurrent, <- entry_index (currently running)
+//!       afterEach,
+//!     ],
+//!     ExecutionSequence[
+//!       beforeEach,
+//!       test.concurrent,
+//!       afterEach,
+//!       --- <- entry_index (done)
+//!     ],
+//!   ],
+//!   ConcurrentGroup[
+//!     ExecutionSequence[
+//!       beforeEach,
+//!       test,
+//!       afterEach,
+//!     ],
+//!   ],
+//!   ConcurrentGroup[
+//!     ExecutionSequence[
+//!       afterAll
+//!     ]
+//!   ],
+//! ]
+//! ```
+
+groups: std.ArrayList(ConcurrentGroup),
 _sequences: std.ArrayList(ExecutionSequence),
 _entries: std.ArrayList(*ExecutionEntry),
-order_index: usize,
+group_index: usize,
 
 pub const CurrentEntryRef = struct {
     _internal_ref: *bun.jsc.Jest.describe2.BunTestFile.RefData,
     buntest: *BunTestFile,
-    order_index: usize,
+    group_index: usize,
     entry_data: ?struct {
         sequence_index: usize,
         entry_index: usize,
@@ -18,7 +55,7 @@ pub const CurrentEntryRef = struct {
     }
 
     pub fn group(this: *const CurrentEntryRef) *ConcurrentGroup {
-        return &this.buntest.execution.order.items[this.order_index];
+        return &this.buntest.execution.groups.items[this.group_index];
     }
     pub fn sequence(this: *const CurrentEntryRef) ?*ExecutionSequence {
         const entry_data = this.entry_data orelse return null;
@@ -80,14 +117,14 @@ const EntryID = enum(usize) {
 
 pub fn init(gpa: std.mem.Allocator) Execution {
     return .{
-        .order = std.ArrayList(ConcurrentGroup).init(gpa),
+        .groups = std.ArrayList(ConcurrentGroup).init(gpa),
         ._sequences = std.ArrayList(ExecutionSequence).init(gpa),
         ._entries = std.ArrayList(*ExecutionEntry).init(gpa),
-        .order_index = 0,
+        .group_index = 0,
     };
 }
 pub fn deinit(this: *Execution) void {
-    this.order.deinit();
+    this.groups.deinit();
     this._sequences.deinit();
     this._entries.deinit();
 }
@@ -101,13 +138,13 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
     defer groupLog.end();
 
     while (true) {
-        if (this.order_index >= this.order.items.len) return .done;
+        if (this.group_index >= this.groups.items.len) return .done;
 
-        this.order.items[this.order_index].executing = true;
+        this.groups.items[this.group_index].executing = true;
 
         // loop over items in the group and advance their execution
-        const group = &this.order.items[this.order_index];
-        if (!group.executing) this.resetGroup(this.order_index);
+        const group = &this.groups.items[this.group_index];
+        if (!group.executing) this.resetGroup(this.group_index);
         var status: describe2.RunOneResult = .done;
         for (group.sequence_start..group.sequence_end) |sequence_index| {
             while (true) {
@@ -161,7 +198,7 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
         }
 
         if (status == .execute) return .execute;
-        this.order_index += 1;
+        this.group_index += 1;
     }
 }
 pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, _: ?jsc.JSValue, data: u64) bun.JSError!void {
@@ -171,8 +208,8 @@ pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, _: ?jsc.JSValue
     const sequence_index: usize = @intCast(data);
     groupLog.log("runOneCompleted sequence_index {d}", .{sequence_index});
 
-    bun.assert(this.order_index < this.order.items.len);
-    const group = &this.order.items[this.order_index];
+    bun.assert(this.group_index < this.groups.items.len);
+    const group = &this.groups.items[this.group_index];
 
     if (sequence_index < group.sequence_start or sequence_index >= group.sequence_end) {
         bun.debugAssert(false);
@@ -221,7 +258,7 @@ pub fn resetGroup(this: *Execution, group_index: usize) void {
     groupLog.begin(@src());
     defer groupLog.end();
 
-    const group = this.order.items[group_index];
+    const group = this.groups.items[group_index];
     bun.assert(!group.executing);
     for (group.sequence_start..group.sequence_end) |sequence_index| {
         this.resetSequence(sequence_index);
@@ -244,7 +281,7 @@ pub fn handleUncaughtException(this: *Execution, user_data: ?u64) describe2.Hand
     groupLog.begin(@src());
     defer groupLog.end();
 
-    const current_group = this.order.items[this.order_index];
+    const current_group = this.groups.items[this.group_index];
     const sequence: *ExecutionSequence = if (current_group.sequence_start + 1 == current_group.sequence_end) blk: {
         groupLog.log("handleUncaughtException: there is only one sequence in the group", .{});
         break :blk &this._sequences.items[current_group.sequence_start];

@@ -22,7 +22,7 @@ pub fn dumpOrder(this: *Execution) bun.JSError!void {
     groupLog.beginMsg("dumpOrder", .{});
     defer groupLog.end();
 
-    for (this.order.items, 0..) |group, group_index| {
+    for (this.groups.items, 0..) |group, group_index| {
         groupLog.beginMsg("{d}: ConcurrentGroup {d}-{d}", .{ group_index, group.sequence_start, group.sequence_end });
         defer groupLog.end();
 

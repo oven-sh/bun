@@ -94,7 +94,6 @@ pub const PackageManagerCommand = struct {
             \\<b>Commands:<r>
             \\
             \\  <b><green>bun pm<r> <blue>scan<r>                 scan all packages in lockfile for security vulnerabilities
-            \\  <d>└<r> <cyan>--json<r>                    output results as JSON
             \\  <b><green>bun pm<r> <blue>pack<r>                 create a tarball of the current workspace
             \\  <d>├<r> <cyan>--dry-run<r>                 do everything except for writing the tarball to disk
             \\  <d>├<r> <cyan>--destination<r>             the directory the tarball will be saved in

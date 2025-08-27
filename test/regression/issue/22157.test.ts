@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 // Regression test for https://github.com/oven-sh/bun/issues/22157
 // Compiled binaries were including executable name in process.argv
@@ -27,7 +27,7 @@ test("issue 22157: compiled binary should not include executable name in process
     stdout: "pipe",
     stderr: "pipe",
   });
-  
+
   await compileProc.exited;
 
   // Run the compiled binary - should not throw
@@ -39,18 +39,15 @@ test("issue 22157: compiled binary should not include executable name in process
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([
-    runProc.stdout.text(),
-    runProc.exited,
-  ]);
+  const [stdout, exitCode] = await Promise.all([runProc.stdout.text(), runProc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stdout).toContain("SUCCESS");
-  
+
   // Verify process.argv structure
   const argvMatch = stdout.match(/\[.*?\]/);
   expect(argvMatch).toBeTruthy();
-  
+
   const processArgv = JSON.parse(argvMatch![0]);
   expect(processArgv).toHaveLength(2);
   expect(processArgv[0]).toBe("bun");
@@ -85,21 +82,18 @@ test("issue 22157: compiled binary with user args should pass them correctly", a
     stdout: "pipe",
     stderr: "pipe",
   });
-  
+
   await compileProc.exited;
 
   await using runProc = Bun.spawn({
     cmd: ["./test-binary", "arg1", "arg2"],
-    cwd: dir, 
+    cwd: dir,
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([
-    runProc.stdout.text(),
-    runProc.exited,
-  ]);
+  const [stdout, exitCode] = await Promise.all([runProc.stdout.text(), runProc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stdout).toContain("SUCCESS");

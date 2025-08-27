@@ -71,7 +71,7 @@ function test(
       });
 
       if (options.fails) {
-        expect(out).toContain("bun install aborted due to fatal security advisories");
+        expect(out).toContain("Installation aborted due to fatal security advisories");
       }
 
       await options.expect?.({ out, err });

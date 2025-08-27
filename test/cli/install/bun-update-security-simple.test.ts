@@ -57,7 +57,7 @@ test("security scanner blocks bun update with fatal advisory", async () => {
   expect(out).toContain("Security scanner received");
   expect(out).toContain("FATAL: left-pad");
   expect(out).toContain("Security warning for update test");
-  expect(out).toContain("bun install aborted due to fatal security advisories");
+  expect(out).toContain("Installation aborted due to fatal security advisories");
   expect(exitCode).toBe(1);
 });
 

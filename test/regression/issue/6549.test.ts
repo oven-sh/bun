@@ -24,6 +24,10 @@ test("serialize with invalid argument should throw proper error (issue 6549)", (
 test("serialize with valid database name should work", () => {
   const db = new Database(":memory:");
 
+  // Create a table and insert data to make database serializable
+  db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+  db.run("INSERT INTO test (name) VALUES ('test_data')");
+
   // This should work with the default "main" database
   const result = db.serialize();
   expect(result).toBeInstanceOf(Buffer);

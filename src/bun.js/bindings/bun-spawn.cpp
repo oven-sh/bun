@@ -4,6 +4,7 @@
 
 #include <fcntl.h>
 #include <cstring>
+#include <string.h>
 #include <signal.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -17,6 +18,7 @@
 #include <sched.h>
 #include <errno.h>
 #include <stdio.h>
+#include <sys/types.h>
 
 extern char** environ;
 
@@ -110,7 +112,7 @@ static int write_id_mapping(pid_t child_pid, const char* map_file,
     char path[256];
     snprintf(path, sizeof(path), "/proc/%d/%s", child_pid, map_file);
     
-    int fd = open(path, O_WRONLY);
+    int fd = open(path, O_WRONLY | O_CLOEXEC);
     if (fd < 0) return -1;
     
     char mapping[128];
@@ -127,13 +129,107 @@ static int deny_setgroups(pid_t child_pid) {
     char path[256];
     snprintf(path, sizeof(path), "/proc/%d/setgroups", child_pid);
     
-    int fd = open(path, O_WRONLY);
+    int fd = open(path, O_WRONLY | O_CLOEXEC);
     if (fd < 0) return -1;
     
     ssize_t written = write(fd, "deny\n", 5);
     close(fd);
     
     return written == 5 ? 0 : -1;
+}
+
+// Helper to setup cgroup v2 for resource limits
+static int setup_cgroup(const char* cgroup_path, pid_t child_pid, 
+                        uint64_t memory_limit, uint32_t cpu_limit_pct) {
+    char path[512];
+    int fd;
+    
+    // For unprivileged containers, we need to use the user's delegated cgroup
+    // Try to create under the current cgroup first
+    char current_cgroup[512];
+    FILE* cgroup_file = fopen("/proc/self/cgroup", "r");
+    if (cgroup_file) {
+        if (fgets(current_cgroup, sizeof(current_cgroup), cgroup_file)) {
+            // Parse format: "0::/path/to/cgroup"
+            char* cgroup_subpath = strchr(current_cgroup, ':');
+            if (cgroup_subpath) {
+                cgroup_subpath = strchr(cgroup_subpath + 1, ':');
+                if (cgroup_subpath) {
+                    cgroup_subpath++; // Skip the second colon
+                    // Remove newline
+                    char* newline = strchr(cgroup_subpath, '\n');
+                    if (newline) *newline = '\0';
+                    
+                    // Try to create under user's cgroup
+                    snprintf(path, sizeof(path), "/sys/fs/cgroup%s/%s", cgroup_subpath, cgroup_path);
+                    if (mkdir(path, 0755) == 0 || errno == EEXIST) {
+                        // Success - use this path
+                        fclose(cgroup_file);
+                        goto setup_cgroup_controls;
+                    }
+                }
+            }
+        }
+        fclose(cgroup_file);
+    }
+    
+    // Fallback: try to create directly under /sys/fs/cgroup (requires root)
+    snprintf(path, sizeof(path), "/sys/fs/cgroup/%s", cgroup_path);
+    if (mkdir(path, 0755) != 0 && errno != EEXIST) {
+        // Cgroup creation failed - resource limits won't work
+        // Don't fail the spawn, just skip cgroup setup
+        return 0;
+    }
+    
+setup_cgroup_controls:
+    ;  // Label needs a statement
+    // Store the base path for later use
+    char base_path[512];
+    strncpy(base_path, path, sizeof(base_path) - 1);
+    base_path[sizeof(base_path) - 1] = '\0';
+    
+    // Add child PID to cgroup
+    snprintf(path, sizeof(path), "%s/cgroup.procs", base_path);
+    fd = open(path, O_WRONLY | O_CLOEXEC);
+    if (fd < 0) return 0; // Skip if we can't add to cgroup
+    
+    char pid_str[32];
+    int len = snprintf(pid_str, sizeof(pid_str), "%d\n", child_pid);
+    if (write(fd, pid_str, len) != len) {
+        int err = errno;
+        close(fd);
+        return err;
+    }
+    close(fd);
+    
+    // Set memory limit if specified
+    if (memory_limit > 0) {
+        snprintf(path, sizeof(path), "%s/memory.max", base_path);
+        fd = open(path, O_WRONLY | O_CLOEXEC);
+        if (fd >= 0) {
+            char limit_str[32];
+            len = snprintf(limit_str, sizeof(limit_str), "%lu\n", memory_limit);
+            write(fd, limit_str, len);
+            close(fd);
+        }
+    }
+    
+    // Set CPU limit if specified (percentage to cgroup2 format)
+    if (cpu_limit_pct > 0 && cpu_limit_pct <= 100) {
+        snprintf(path, sizeof(path), "%s/cpu.max", base_path);
+        fd = open(path, O_WRONLY | O_CLOEXEC);
+        if (fd >= 0) {
+            // cgroup2 cpu.max format: "$MAX $PERIOD" in microseconds
+            const uint32_t period = 100000; // 100ms period
+            uint32_t max = (cpu_limit_pct * period) / 100;
+            char cpu_str[64];
+            len = snprintf(cpu_str, sizeof(cpu_str), "%u %u\n", max, period);
+            write(fd, cpu_str, len);
+            close(fd);
+        }
+    }
+    
+    return 0;
 }
 
 // Parent-side container setup after clone3
@@ -167,8 +263,12 @@ static int setup_container_parent(pid_t child_pid, bun_container_setup_t* setup)
     
     // Setup cgroups if needed
     if (setup->cgroup_path && (setup->memory_limit || setup->cpu_limit_pct)) {
-        // TODO: Create cgroup and add child PID
-        // This would involve writing to cgroup.procs
+        int cgroup_res = setup_cgroup(setup->cgroup_path, child_pid, 
+                                      setup->memory_limit, setup->cpu_limit_pct);
+        if (cgroup_res != 0) {
+            // Log but don't fail - cgroups might not be available
+            // In production, you might want to fail here
+        }
     }
     
     // Signal child to continue

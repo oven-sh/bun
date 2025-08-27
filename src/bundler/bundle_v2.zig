@@ -964,6 +964,11 @@ pub const BundleV2 = struct {
             switch (variant) {
                 .normal => {
                     for (data) |entry_point| {
+                        if (this.enqueueEntryPointOnResolvePluginIfNeeded(entry_point, this.transpiler.options.target)) {
+                            continue;
+                        }
+
+                        // no plugins were matched
                         const resolved = this.transpiler.resolveEntryPoint(entry_point) catch
                             continue;
 
@@ -999,6 +1004,29 @@ pub const BundleV2 = struct {
                         else
                             this.transpiler;
 
+                        const targets_to_check = [_]struct {
+                            should_dispatch: bool,
+                            target: options.Target,
+                        }{
+                            .{ .should_dispatch = flags.client, .target = .browser },
+                            .{ .should_dispatch = flags.server, .target = this.transpiler.options.target },
+                            .{ .should_dispatch = flags.ssr, .target = .bake_server_components_ssr },
+                        };
+
+                        var any_plugin_matched = false;
+                        for (targets_to_check) |target_info| {
+                            if (target_info.should_dispatch) {
+                                if (this.enqueueEntryPointOnResolvePluginIfNeeded(abs_path, target_info.target)) {
+                                    any_plugin_matched = true;
+                                }
+                            }
+                        }
+
+                        if (any_plugin_matched) {
+                            continue;
+                        }
+
+                        // Fall back to normal resolution if no plugins matched
                         const resolved = transpiler.resolveEntryPoint(abs_path) catch |err| {
                             const dev = this.transpiler.options.dev_server orelse unreachable;
                             dev.handleParseTaskFailure(
@@ -1024,14 +1052,22 @@ pub const BundleV2 = struct {
                 },
                 .bake_production => {
                     for (data.files.keys()) |key| {
-                        const resolved = this.transpiler.resolveEntryPoint(key.absPath()) catch
+                        const abs_path = key.absPath();
+                        const target = switch (key.side) {
+                            .client => options.Target.browser,
+                            .server => this.transpiler.options.target,
+                        };
+
+                        if (this.enqueueEntryPointOnResolvePluginIfNeeded(abs_path, target)) {
+                            continue;
+                        }
+
+                        // no plugins matched
+                        const resolved = this.transpiler.resolveEntryPoint(abs_path) catch
                             continue;
 
                         // TODO: wrap client files so the exports arent preserved.
-                        _ = try this.enqueueEntryItem(null, resolved, true, switch (key.side) {
-                            .client => .browser,
-                            .server => this.transpiler.options.target,
-                        }) orelse continue;
+                        _ = try this.enqueueEntryItem(null, resolved, true, target) orelse continue;
                     }
                 },
             }
@@ -2224,6 +2260,22 @@ pub const BundleV2 = struct {
                 //
                 // The file could be on disk.
                 if (strings.eqlComptime(resolve.import_record.namespace, "file")) {
+                    if (resolve.import_record.kind == .entry_point_build) {
+                        const target = resolve.import_record.original_target;
+                        const resolved = this.transpilerForTarget(target).resolveEntryPoint(resolve.import_record.specifier) catch {
+                            return;
+                        };
+                        const source_index = this.enqueueEntryItem(null, resolved, true, target) catch {
+                            return;
+                        };
+
+                        // Store the original entry point name for virtual entries that fall back to file resolution
+                        if (source_index) |idx| {
+                            this.graph.entry_point_original_names.put(this.allocator(), idx, resolve.import_record.specifier) catch |err| bun.handleOom(err);
+                        }
+                        return;
+                    }
+
                     this.runResolver(resolve.import_record, resolve.import_record.original_target);
                     return;
                 }
@@ -2328,25 +2380,33 @@ pub const BundleV2 = struct {
                 }
 
                 if (out_source_index) |source_index| {
-                    const source_import_records = &this.graph.ast.items(.import_records)[resolve.import_record.importer_source_index];
-                    if (source_import_records.len <= resolve.import_record.import_record_index) {
-                        const entry = this.resolve_tasks_waiting_for_import_source_index.getOrPut(
-                            this.allocator(),
-                            resolve.import_record.importer_source_index,
-                        ) catch |err| bun.handleOom(err);
-                        if (!entry.found_existing) {
-                            entry.value_ptr.* = .{};
-                        }
-                        entry.value_ptr.push(
-                            this.allocator(),
-                            .{
-                                .to_source_index = source_index,
-                                .import_record_index = resolve.import_record.import_record_index,
-                            },
-                        ) catch |err| bun.handleOom(err);
+                    if (resolve.import_record.kind == .entry_point_build) {
+                        this.graph.entry_points.append(this.allocator(), source_index) catch |err| bun.handleOom(err);
+
+                        // Store the original entry point name for virtual entries
+                        // This preserves the original name for output file naming
+                        this.graph.entry_point_original_names.put(this.allocator(), source_index.get(), resolve.import_record.specifier) catch |err| bun.handleOom(err);
                     } else {
-                        const import_record: *ImportRecord = &source_import_records.slice()[resolve.import_record.import_record_index];
-                        import_record.source_index = source_index;
+                        const source_import_records = &this.graph.ast.items(.import_records)[resolve.import_record.importer_source_index];
+                        if (source_import_records.len <= resolve.import_record.import_record_index) {
+                            const entry = this.resolve_tasks_waiting_for_import_source_index.getOrPut(
+                                this.allocator(),
+                                resolve.import_record.importer_source_index,
+                            ) catch |err| bun.handleOom(err);
+                            if (!entry.found_existing) {
+                                entry.value_ptr.* = .{};
+                            }
+                            entry.value_ptr.push(
+                                this.allocator(),
+                                .{
+                                    .to_source_index = source_index,
+                                    .import_record_index = resolve.import_record.import_record_index,
+                                },
+                            ) catch |err| bun.handleOom(err);
+                        } else {
+                            const import_record: *ImportRecord = &source_import_records.slice()[resolve.import_record.import_record_index];
+                            import_record.source_index = source_index;
+                        }
                     }
                 }
             },
@@ -2371,8 +2431,13 @@ pub const BundleV2 = struct {
             on_parse_finalizers.deinit(bun.default_allocator);
         }
 
-        defer this.graph.ast.deinit(this.allocator());
-        defer this.graph.input_files.deinit(this.allocator());
+        defer {
+            this.graph.ast.deinit(this.allocator());
+            this.graph.input_files.deinit(this.allocator());
+            this.graph.entry_points.deinit(this.allocator());
+            this.graph.entry_point_original_names.deinit(this.allocator());
+        }
+
         if (this.graph.pool.workers_assignments.count() > 0) {
             {
                 this.graph.pool.workers_assignments_lock.lock();
@@ -2751,6 +2816,38 @@ pub const BundleV2 = struct {
             }
         }
 
+        return false;
+    }
+
+    pub fn enqueueEntryPointOnResolvePluginIfNeeded(
+        this: *BundleV2,
+        entry_point: []const u8,
+        target: options.Target,
+    ) bool {
+        if (this.plugins) |plugins| {
+            var temp_path = Fs.Path.init(entry_point);
+            temp_path.namespace = "file";
+            if (plugins.hasAnyMatches(&temp_path, false)) {
+                debug("Entry point '{s}' plugin match", .{entry_point});
+
+                var resolve: *jsc.API.JSBundler.Resolve = bun.default_allocator.create(jsc.API.JSBundler.Resolve) catch unreachable;
+                this.incrementScanCounter();
+
+                resolve.* = jsc.API.JSBundler.Resolve.init(this, .{
+                    .kind = .entry_point_build,
+                    .source_file = "", // No importer for entry points
+                    .namespace = "file",
+                    .specifier = entry_point,
+                    .importer_source_index = std.math.maxInt(u32), // Sentinel value for entry points
+                    .import_record_index = 0,
+                    .range = Logger.Range.None,
+                    .original_target = target,
+                });
+
+                resolve.dispatch();
+                return true;
+            }
+        }
         return false;
     }
 
@@ -4340,7 +4437,7 @@ pub const Loc = Logger.Loc;
 pub const bake = bun.bake;
 pub const lol = bun.LOLHTML;
 pub const DataURL = @import("../resolver/resolver.zig").DataURL;
-
+pub const IndexStringMap = @import("./IndexStringMap.zig");
 pub const DeferredBatchTask = @import("./DeferredBatchTask.zig").DeferredBatchTask;
 pub const ThreadPool = @import("./ThreadPool.zig").ThreadPool;
 pub const ParseTask = @import("./ParseTask.zig").ParseTask;

@@ -1260,6 +1260,17 @@ pub const JSValue = enum(i64) {
         return if (this.isObject()) this.uncheckedPtrCast(JSObject) else null;
     }
 
+    /// Unwraps Number, Boolean, String, and BigInt objects to their primitive forms.
+    pub fn unwrapBoxedPrimitive(this: JSValue, global: *JSGlobalObject) JSError!JSValue {
+        var scope: CatchScope = undefined;
+        scope.init(global, @src());
+        defer scope.deinit();
+        const result = JSC__JSValue__unwrapBoxedPrimitive(global, this);
+        try scope.returnIfException();
+        return result;
+    }
+    extern fn JSC__JSValue__unwrapBoxedPrimitive(*JSGlobalObject, JSValue) JSValue;
+
     extern fn JSC__JSValue__getPrototype(this: JSValue, globalObject: *JSGlobalObject) JSValue;
     pub fn getPrototype(this: JSValue, globalObject: *JSGlobalObject) JSValue {
         return JSC__JSValue__getPrototype(this, globalObject);

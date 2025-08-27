@@ -696,7 +696,9 @@ pub const DescribeScope = struct {
         return entry;
     }
     pub fn appendHook(this: *DescribeScope, buntest: *BunTestFile, tag: enum { beforeAll, beforeEach, afterEach, afterAll }, callback: ?jsc.JSValue, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
-        const entry = try ExecutionEntry.create(buntest, null, if (callback) |c| .init(buntest.gpa, c, &.{}) else null, cfg, this, base);
+        var callback_with_args: ?CallbackWithArgs = if (callback) |c| .init(buntest.gpa, c, &.{}) else null;
+        defer if (callback_with_args) |*c| c.deinit(buntest.gpa);
+        const entry = try ExecutionEntry.create(buntest, null, callback_with_args, cfg, this, base);
         switch (tag) {
             .beforeAll => try this.beforeAll.append(entry),
             .beforeEach => try this.beforeEach.append(entry),

@@ -2271,8 +2271,7 @@ pub const BundleV2 = struct {
 
                         // Store the original entry point name for virtual entries that fall back to file resolution
                         if (source_index) |idx| {
-                            const original_name = this.allocator().dupe(u8, resolve.import_record.specifier) catch |err| bun.handleOom(err);
-                            this.graph.entry_point_original_names.put(this.allocator(), idx, original_name) catch |err| bun.handleOom(err);
+                            this.graph.entry_point_original_names.put(this.allocator(), idx, resolve.import_record.specifier) catch |err| bun.handleOom(err);
                         }
                         return;
                     }
@@ -2386,8 +2385,7 @@ pub const BundleV2 = struct {
 
                         // Store the original entry point name for virtual entries
                         // This preserves the original name for output file naming
-                        const original_name = this.allocator().dupe(u8, resolve.import_record.specifier) catch |err| bun.handleOom(err);
-                        this.graph.entry_point_original_names.put(this.allocator(), source_index.get(), original_name) catch |err| bun.handleOom(err);
+                        this.graph.entry_point_original_names.put(this.allocator(), source_index.get(), resolve.import_record.specifier) catch |err| bun.handleOom(err);
                     } else {
                         const source_import_records = &this.graph.ast.items(.import_records)[resolve.import_record.importer_source_index];
                         if (source_import_records.len <= resolve.import_record.import_record_index) {

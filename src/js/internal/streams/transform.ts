@@ -48,7 +48,8 @@ const { getHighWaterMark } = require("internal/streams/state");
 const kCallback = Symbol("kCallback");
 
 function Transform(options) {
-  if (!(this instanceof Transform)) return Reflect.construct(Transform, [options]);
+  if (!(this instanceof Transform))
+    return new (Transform as unknown as typeof import("node:stream").Transform)(options);
 
   // TODO (ronag): This should preferably always be
   // applied but would be semver-major. Or even better;

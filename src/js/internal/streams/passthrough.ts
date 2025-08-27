@@ -7,7 +7,8 @@
 const Transform = require("internal/streams/transform");
 
 function PassThrough(options) {
-  if (!(this instanceof PassThrough)) return Reflect.construct(PassThrough, [options]);
+  if (!(this instanceof PassThrough))
+    return new (PassThrough as unknown as typeof import("node:stream").PassThrough)(options);
 
   Transform.$call(this, options);
 }

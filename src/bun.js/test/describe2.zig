@@ -322,7 +322,7 @@ pub const BunTestFile = struct {
 
         const ref_value = this.ref(0);
 
-        const active_group = &this.execution.groups.items[this.execution.group_index];
+        const active_group = &this.execution.groups[this.execution.group_index];
         if (active_group.sequence_start + 1 != active_group.sequence_end) return .{
             ._internal_ref = ref_value,
             .buntest = this,
@@ -331,7 +331,7 @@ pub const BunTestFile = struct {
         };
 
         const active_sequence_index = active_group.sequence_start; // if there is only one concurrent item, then this is the active sequence index
-        const sequence = &this.execution._sequences.items[active_sequence_index];
+        const sequence = &this.execution._sequences[active_sequence_index];
         return .{
             ._internal_ref = ref_value,
             .buntest = this,
@@ -456,9 +456,14 @@ pub const BunTestFile = struct {
                 // now, generate the execution order
                 this.phase = .execution;
                 try debug.dumpDescribe(this.collection.root_scope);
-                try order.generateAllOrder(&this.execution, this.buntest.hook_scope.beforeAll.items, .{ .concurrent = false });
-                try order.generateOrderDescribe(&this.execution, this.collection.root_scope);
-                try order.generateAllOrder(&this.execution, this.buntest.hook_scope.afterAll.items, .{ .concurrent = false });
+                var order = Order.init(this.gpa);
+                defer order.deinit();
+
+                try order.generateAllOrder(this.buntest.hook_scope.beforeAll.items, .{ .concurrent = false });
+                try order.generateOrderDescribe(this.collection.root_scope);
+                try order.generateAllOrder(this.buntest.hook_scope.afterAll.items, .{ .concurrent = false });
+
+                try this.execution.loadFromOrder(&order);
                 try debug.dumpOrder(&this.execution);
                 // now, allowing js execution again:
                 // - start the test execution loop
@@ -784,7 +789,6 @@ pub const RunOneResult = enum {
 
 pub const Execution = @import("./Execution.zig");
 pub const debug = @import("./debug.zig");
-pub const order = @import("./order.zig");
 
 pub const group = struct {
     fn printIndent() void {
@@ -843,3 +847,5 @@ const test_command = @import("../../cli/test_command.zig");
 const bun = @import("bun");
 const jsc = bun.jsc;
 const Strong = jsc.Strong.Safe;
+
+pub const Order = @import("./Order.zig");

@@ -63,7 +63,7 @@ Code quality:
 - [x] In Execution.zig, rename order: ..., order_index to groups, group_index for consistency.
 - [ ] In Execution.zig, change (start, end) to (start, len)
 - [ ] In Execution.zig, modify so groups has a .sequences() fn and sequences has a .entries() fn and index is 0 based
-- [ ] In Execution.zig, change order sequence and entries to be slices rather than ArrayLists. We have to rework test() in test().
+- [x] In Execution.zig, change order sequence and entries to be slices rather than ArrayLists. We have to rework test() in test() anyway.
 - [ ] Should make line_no be an enum with a none option and a function to get if line nombers are enabled
 
 Follow-up:

@@ -1,160 +1,143 @@
-# Bun.spawn Container Implementation
+# Container Implementation Status
 
-## Current Status: PARTIALLY WORKING (NOT PRODUCTION READY)
+## Current State (as of this commit)
 
-The container implementation now uses `clone3()` instead of `unshare()` which fixes the crash, but has critical architectural issues that prevent production use. See CONTAINER_FIXES_ASSESSMENT.md for details.
+### What Actually Works ✅
+- **User namespaces**: Basic functionality works with default UID/GID mapping
+- **PID namespaces**: Process isolation works correctly
+- **Network namespaces**: Basic isolation works (loopback only)
+- **Mount namespaces**: Created but limited functionality
+- **Cgroups v2**: CPU and memory limits work WITH ROOT ONLY
+- **Basic overlayfs**: Simple read-only overlays work
+- **Tmpfs**: Basic in-memory filesystems work
+- **Clone3 integration**: Properly uses clone3 for all container features
 
-## What Was Implemented
+### What's Broken or Incomplete ❌
 
-### ✅ New API Structure
-The API was successfully updated to the requested aesthetic:
+#### Major Issues
+1. **Cgroups require root**: No rootless cgroup support - fails with EACCES without sudo
+2. **Complex overlayfs fails**: Only 1/5 overlayfs tests pass - issues with work_dir and upper_dir
+3. **Pivot_root doesn't work**: Test fails, implementation likely incomplete
+4. **chdir is disabled in containers**: Had to make it non-fatal because it fails with EACCES in user namespaces
 
-```javascript
-const proc = spawn({
-  cmd: ["echo", "hello"],
-  container: {
-    namespace: {
-      pid: true,
-      user: true,
-      network: true,
-    },
-    fs: [
-      { type: "overlayfs", to: "/mnt/overlay", /* options */ },
-      { type: "tmpfs", to: "/tmp/scratch" },
-      { type: "bind", from: "/host/path", to: "/container/path" },
-    ],
-    limit: {
-      cpu: 50,  // 50% CPU
-      ram: 128 * 1024 * 1024,  // 128MB
-    },
-  },
-});
+#### Test Results (Reality Check)
+```
+container-basic.test.ts:         9/9 pass ✅
+container-cgroups-only.test.ts:  2/2 pass ✅ (BUT REQUIRES ROOT)
+container-cgroups.test.ts:       7/7 pass ✅ (BUT REQUIRES ROOT)
+container-overlayfs-simple.test.ts: 3/3 pass ✅
+container-simple.test.ts:        6/6 pass ✅
+container-working-features.test.ts: 4/5 pass (pivot_root BROKEN)
+container-overlayfs.test.ts:     1/5 pass (MOSTLY BROKEN)
 ```
 
-### ✅ Code Structure
-- `src/bun.js/api/bun/linux_container.zig` - Core container implementation
-- `src/bun.js/api/bun/subprocess.zig` - JavaScript API parsing
-- `src/bun.js/api/bun/process.zig` - Process lifecycle integration
-- `test/js/bun/spawn/container.test.ts` - Comprehensive test suite
+### Architecture Decisions Made
 
-### ✅ Features Implemented (Code Complete)
+1. **Always use clone3 for containers**: Even for cgroups-only, we use clone3 (not vfork) because we need synchronization between parent and child for proper setup timing.
 
-1. **Namespaces**
-   - User namespace with UID/GID mapping
-   - PID namespace isolation
-   - Network namespace with loopback
-   - Mount namespace for filesystem isolation
+2. **Fatal errors on container setup failure**: User explicitly requested no silent fallbacks - if cgroups fail, spawn fails.
 
-2. **Resource Limits (cgroupv2)**
-   - Memory limits
-   - CPU limits (percentage-based)
-   - Cgroup freezer for cleanup
-   - Ephemeral cgroup creation/deletion
+3. **Sync pipes for coordination**: Parent and child coordinate via pipes to ensure cgroups are set up before child executes.
 
-3. **Filesystem Mounts**
-   - Overlayfs support
-   - Tmpfs mounts
-   - Bind mounts (with readonly option)
-   - Automatic unmounting on cleanup
+### Known Bugs and Gotchas
 
-4. **Cleanup Guarantees**
-   - Process.deinit cleanup on normal exit
-   - Container context ownership tracking
-   - PR_SET_PDEATHSIG for parent death (child gets SIGKILL if Bun dies)
-   - Cgroup freezer to prevent new processes during cleanup
-   - Best-effort cgroup removal
+1. **Memory after clone3**: The child process after clone3 has copy-on-write memory, not shared like vfork. Be careful with pointers.
 
-## ❌ Current Issues
+2. **UID/GID mapping timing**: Must be done by parent after clone3 but before child continues - tricky synchronization.
 
-### 1. **Runtime Crash**
-When running with container options, the code panics with:
+3. **Cgroup path assumptions**: C++ creates cgroups at `/sys/fs/cgroup/bun-*`, Zig expects them there. Don't change one without the other.
+
+4. **SIGABRT in containers**: If you see exit code 134, it's probably chdir failing in the container. We made it non-fatal but check if that's still the case.
+
+5. **Debug output removed**: Removed all fprintf debug statements in final commits. Add them back if debugging.
+
+### What Needs To Be Done
+
+#### High Priority
+1. **Fix overlayfs tests**: Complex overlayfs with upper_dir and work_dir failing
+2. **Fix pivot_root**: Implementation exists but doesn't work
+3. **Rootless cgroups**: Investigate using systemd delegation or cgroup2 delegation for rootless
+4. **Better error messages**: Currently just returns errno, could be more descriptive
+
+#### Medium Priority
+1. **Custom UID/GID mappings**: Currently only supports default mapping
+2. **Network namespace configuration**: Only loopback works, no bridge networking
+3. **Filesystem mount error handling**: Some mount operations fail silently
+4. **Security tests**: No tests for privilege escalation or escape attempts
+
+#### Low Priority
+1. **Seccomp filters**: No syscall filtering implemented
+2. **Capabilities**: No capability dropping
+3. **AppArmor/SELinux**: No MAC integration
+4. **Cgroup v1 fallback**: Only v2 supported
+
+### File Structure
+- `src/bun.js/bindings/bun-spawn.cpp`: Main spawn implementation with clone3, container setup
+- `src/bun.js/api/bun/linux_container.zig`: Container context and Zig-side management
+- `src/bun.js/api/bun/process.zig`: Integration with Bun.spawn API
+- `test/js/bun/spawn/container-*.test.ts`: Container tests (some failing!)
+
+### Critical Code Sections
+
+#### Clone3 vs vfork decision (bun-spawn.cpp:833)
+```cpp
+// Use clone3 for ANY container features (namespaces or cgroups)
+// Only use vfork when there's no container at all
+if (request->container_setup) {
+    // ... use clone3
+} else {
+    child = vfork();
+}
 ```
-panic(main thread): reached unreachable code
+
+#### Cgroup setup (bun-spawn.cpp:187)
+```cpp
+// Always creates at /sys/fs/cgroup/bun-*
+// Fails with EACCES without root
+// No fallback to user's cgroup hierarchy
 ```
 
-The crash occurs in the thread pool code when trying to close file descriptors, likely a secondary failure from container setup issues.
+#### chdir handling (bun-spawn.cpp:733)
+```cpp
+// Made non-fatal for containers because it fails in user namespaces
+if (chdir(request->chdir) != 0) {
+    if (!request->container_setup) {
+        return childFailed();
+    }
+    // For containers, ignore chdir failures
+}
+```
 
-### 2. **Error Handling Bug**
-The errno conversion has type issues:
-- `unshare(CLONE_NEWUSER)` fails with `os.linux.E__enum_4628.INVAL`
-- The enum conversion in `bun.sys.getErrno` isn't working properly
-- This causes the error path to fail, leading to the panic
+### Testing Instructions
 
-### 3. **Root vs Non-Root Issues**
-- User namespaces behave differently when running as root (sudo)
-- The current implementation doesn't handle this distinction
-- EINVAL when trying to create user namespace as root
+```bash
+# Build first (takes ~5 minutes)
+bun bd
 
-## What Needs to Be Fixed
+# Run tests WITH ROOT (required for cgroups)
+sudo bun bd test test/js/bun/spawn/container-simple.test.ts  # Should pass
+sudo bun bd test test/js/bun/spawn/container-cgroups-only.test.ts  # Should pass
+sudo bun bd test test/js/bun/spawn/container-overlayfs.test.ts  # WILL FAIL (4/5 tests)
 
-1. **Fix errno conversion** - The `bun.sys.getErrno` usage needs to be corrected to properly convert Linux error codes
-2. **Handle root/non-root** - Different namespace setup for privileged vs unprivileged execution
-3. **Debug the panic** - Find and fix the unreachable code path that's causing the crash
-4. **Test thoroughly** - The code has never successfully run, so there are likely other issues
+# Without root - cgroups will fail
+bun bd test test/js/bun/spawn/container-cgroups-only.test.ts  # Fails with EACCES
+```
 
-## Testing Status
+### Honest Assessment
 
-- ✅ **Compiles successfully** with `bun bd`
-- ✅ **Basic spawn works** without container options
-- ❌ **Container spawn crashes** with any container options
-- ❌ **Tests cannot run** due to runtime crash
+**The Good**: Core container functionality works. Namespaces are properly implemented, basic isolation works, and the architecture is sound.
 
-## Environment
+**The Bad**: Requires root for cgroups, complex filesystem operations are broken, and there are definitely edge cases we haven't found yet.
 
-Tested on:
-- Arch Linux with kernel 6.14.7 (bare metal, not containerized)
-- Full namespace and cgroup v2 support available
-- Both regular user and root (sudo) tested
+**The Ugly**: This is NOT production-ready. It's a proof of concept that works for basic cases but needs significant hardening before real use. Don't trust it for security-critical applications.
 
-## Files Modified/Created
+### For Next Developer
 
-### New Files
-- `src/bun.js/api/bun/linux_container.zig`
-- `test/js/bun/spawn/container.test.ts`
+Start by:
+1. Running the tests to see what's actually broken
+2. Add back debug fprintf statements when debugging (grep for "fprintf.*stderr" in git history)
+3. Test with AND without root to understand permission issues
+4. Read the clone3 man page - it's complicated
+5. Expect surprises with overlayfs - it has many subtle requirements
 
-### Modified Files
-- `src/bun.js/api/bun/process.zig` - Added container context lifecycle
-- `src/bun.js/api/bun/subprocess.zig` - Added container option parsing
-- `src/bun.js/api/bun/spawn.zig` - Added PR_SET_PDEATHSIG support
-- `src/bun.js/bindings/bun-spawn.cpp` - Added prctl for death signal
-
-## Recommendations for Next Steps
-
-1. **Fix the immediate crash**
-   - Debug the errno conversion issue
-   - Fix the unreachable code panic
-   - Test basic namespace creation
-
-2. **Improve error handling**
-   - Better errno to ContainerError mapping
-   - Graceful fallback when features unavailable
-   - Clear error messages for permission issues
-
-3. **Handle privilege levels**
-   - Detect if running as root
-   - Use appropriate namespace flags for each case
-   - Document privilege requirements
-
-4. **Simplify initial implementation**
-   - Start with just PID namespace (simplest)
-   - Add features incrementally once basic case works
-   - Ensure each feature works in isolation
-
-5. **Consider alternatives**
-   - Could use `systemd-run` when available
-   - Could shell out to `unshare` command as fallback
-   - May need different approach for production readiness
-
-## Honest Assessment
-
-**The implementation is architecturally complete but practically broken.** The code structure is sound, the API is clean, and the features are well-organized. However, there's a fundamental issue with error handling that prevents any container features from working. 
-
-This needs debugging with a proper development environment where you can:
-- Step through with a debugger
-- Add logging to trace the exact failure point  
-- Test individual system calls in isolation
-- Fix the enum/error conversion issues
-
-The crash suggests the error path itself has bugs, which means even when containers fail to setup (which they currently do), the error handling also fails, causing a panic.
-
-**Bottom line**: This is a solid foundation but needs several hours of debugging to get working.
+Good luck! The foundation is solid but there's work to do.

@@ -660,6 +660,12 @@ pub export fn WebWorkerLifecycleHandle__requestTermination(handle: ?*WebWorkerLi
     }
 }
 
+pub export fn WebWorkerLifecycleHandle__release(handle: ?*WebWorkerLifecycleHandle) void {
+    if (handle) |h| {
+        h.deref();
+    }
+}
+
 /// Manages the complex timing surrounding web worker creation and destruction
 const WebWorkerLifecycleHandle = struct {
     const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", WebWorkerLifecycleHandle.deinit, .{});
@@ -700,6 +706,8 @@ const WebWorkerLifecycleHandle = struct {
         const worker = create(cpp_worker, parent, name_str, specifier_str, error_message, parent_context_id, this_context_id, mini, default_unref, eval_mode, argv_ptr, argv_len, inherit_execArgv, execArgv_ptr, execArgv_len, preload_modules_ptr, preload_modules_len, handle);
 
         handle.worker = worker;
+        // Worker.cpp holds a reference to this
+        handle.ref();
 
         return handle;
     }
@@ -737,26 +745,22 @@ const WebWorkerLifecycleHandle = struct {
     }
 
     pub fn onTermination(self: *WebWorkerLifecycleHandle) void {
-        self.ref();
         self.mutex.lock();
-        if (self.requested_terminate.swap(false, .acquire)) {
-            // we already requested to terminate, therefore this handle has
-            // already been consumed on the other thread and we are able to free
-            // it. Let the reference counting system handle deinitialization.
-            self.mutex.unlock();
-            self.deref();
-            self.deref(); // Extra deref to match the ref in requestTermination
-            return;
-        }
         self.worker = null;
+        const was_requested = self.requested_terminate.swap(false, .acquire);
         self.mutex.unlock();
-        self.deref();
+
+        // requestTermination() adds an extra ref that we need to release
+        if (was_requested) {
+            self.deref();
+        }
     }
 };
 
 comptime {
     @export(&WebWorkerLifecycleHandle.createWebWorker, .{ .name = "WebWorkerLifecycleHandle__createWebWorker" });
     @export(&setRef, .{ .name = "WebWorker__setRef" });
+    @export(&WebWorkerLifecycleHandle__release, .{ .name = "WebWorkerLifecycleHandle__release" });
 }
 
 const TerminationHandle = struct {

@@ -2,7 +2,7 @@
 name: Deploy a Bun application on Railway
 ---
 
-Railway is an infrastructure platform where you can provision infrastructure, develop with that infrastructure locally, and then deploy to the cloud. It enables instant deployments from GitHub with zero configuration, automatic SSL, and built-in database provisioning.
+Railway is an infrastructure platform where you can provision infrastructure, develop with that infrastructure locally, and then deploy to the cloud. It enables instant deployments from GitHub with zero configuration, automatic SSL, and built-in database provisioning.
 
 This guide walks through deploying a Bun application with a PostgreSQL database, which is exactly what the template below provides. You can either follow this guide step-by-step or simply deploy the pre-configured template with one click:
 

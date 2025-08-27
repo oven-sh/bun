@@ -112,7 +112,7 @@ for (let withRun of [false, true]) {
 
       it.skipIf(isWindows)("exit code message works above 128", async () => {
         const { stdout, stderr, exitCode } = spawnSync({
-          cmd: [bunExe(), "run", "bash", "-c", "exit 200"],
+          cmd: [bunExe(), "run", "bash", "-c", "ulimit -c 0; exit 200"],
           cwd: run_dir,
           env: bunEnv,
         });

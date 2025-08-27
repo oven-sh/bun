@@ -9,6 +9,16 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
     if (manager.options.dry_run or !manager.options.do.install_packages) return;
     if (manager.update_requests.len == 0) return;
 
+    try performSecurityScan(manager, security_scanner, false);
+}
+
+pub fn performSecurityScanForAll(manager: *PackageManager) !void {
+    const security_scanner = manager.options.security_scanner orelse return;
+
+    try performSecurityScan(manager, security_scanner, true);
+}
+
+fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, comptime scan_all: bool) !void {
     if (manager.options.log_level == .verbose) {
         Output.prettyErrorln("<d>[SecurityProvider]<r> Running at '{s}'", .{security_scanner});
     }
@@ -41,73 +51,96 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
     const pkg_resolutions = pkgs.items(.resolution);
     const pkg_dependencies = pkgs.items(.dependencies);
 
-    for (manager.update_requests) |req| {
-        for (0..pkgs.len) |_update_pkg_id| {
-            const update_pkg_id: PackageID = @intCast(_update_pkg_id);
+    // If scan_all, we scan all npm packages; otherwise only those in update_requests
+    if (scan_all) {
+        for (0..pkgs.len) |_pkg_id| {
+            const pkg_id: PackageID = @intCast(_pkg_id);
 
-            if (update_pkg_id != req.package_id) {
+            if (pkg_id == 0 or pkg_resolutions[pkg_id].tag != .npm) {
                 continue;
             }
 
-            if (pkg_resolutions[update_pkg_id].tag != .npm) {
-                continue;
-            }
+            var pkg_path_buf = std.ArrayList(PackageID).init(manager.allocator);
+            try pkg_path_buf.append(pkg_id);
 
-            var update_dep_id: DependencyID = invalid_dependency_id;
-            var parent_pkg_id: PackageID = invalid_package_id;
+            const dep_path_buf = std.ArrayList(DependencyID).init(manager.allocator);
 
-            for (0..pkgs.len) |_pkg_id| update_dep_id: {
-                const pkg_id: PackageID = @intCast(_pkg_id);
+            try ids_queue.writeItem(.{
+                .pkg_id = pkg_id,
+                .dep_id = invalid_dependency_id,
+                .pkg_path = pkg_path_buf,
+                .dep_path = dep_path_buf,
+            });
+        }
+    } else {
+        for (manager.update_requests) |req| {
+            for (0..pkgs.len) |_update_pkg_id| {
+                const update_pkg_id: PackageID = @intCast(_update_pkg_id);
 
-                const pkg_res = pkg_resolutions[pkg_id];
-
-                if (pkg_res.tag != .root and pkg_res.tag != .workspace) {
+                if (update_pkg_id != req.package_id) {
                     continue;
                 }
 
-                const pkg_deps = pkg_dependencies[pkg_id];
-                for (pkg_deps.begin()..pkg_deps.end()) |_dep_id| {
-                    const dep_id: DependencyID = @intCast(_dep_id);
-
-                    const dep_pkg_id = manager.lockfile.buffers.resolutions.items[dep_id];
-
-                    if (dep_pkg_id == invalid_package_id) {
-                        continue;
-                    }
-
-                    if (dep_pkg_id != update_pkg_id) {
-                        continue;
-                    }
-
-                    update_dep_id = dep_id;
-                    parent_pkg_id = pkg_id;
-                    break :update_dep_id;
+                if (pkg_resolutions[update_pkg_id].tag != .npm) {
+                    continue;
                 }
-            }
 
-            if (update_dep_id == invalid_dependency_id) {
-                continue;
-            }
+                var update_dep_id: DependencyID = invalid_dependency_id;
+                var parent_pkg_id: PackageID = invalid_package_id;
 
-            if ((try pkg_dedupe.getOrPut(update_pkg_id)).found_existing) {
-                continue;
-            }
+                for (0..pkgs.len) |_pkg_id| update_dep_id: {
+                    const pkg_id: PackageID = @intCast(_pkg_id);
 
-            var initial_pkg_path = std.ArrayList(PackageID).init(manager.allocator);
-            // If this is a direct dependency from root, start with root package
-            if (parent_pkg_id != invalid_package_id) {
-                try initial_pkg_path.append(parent_pkg_id);
-            }
-            try initial_pkg_path.append(update_pkg_id);
-            var initial_dep_path = std.ArrayList(DependencyID).init(manager.allocator);
-            try initial_dep_path.append(update_dep_id);
+                    const pkg_res = pkg_resolutions[pkg_id];
 
-            try ids_queue.writeItem(.{
-                .pkg_id = update_pkg_id,
-                .dep_id = update_dep_id,
-                .pkg_path = initial_pkg_path,
-                .dep_path = initial_dep_path,
-            });
+                    if (pkg_res.tag != .root and pkg_res.tag != .workspace) {
+                        continue;
+                    }
+
+                    const pkg_deps = pkg_dependencies[pkg_id];
+                    for (pkg_deps.begin()..pkg_deps.end()) |_dep_id| {
+                        const dep_id: DependencyID = @intCast(_dep_id);
+
+                        const dep_pkg_id = manager.lockfile.buffers.resolutions.items[dep_id];
+
+                        if (dep_pkg_id == invalid_package_id) {
+                            continue;
+                        }
+
+                        if (dep_pkg_id != update_pkg_id) {
+                            continue;
+                        }
+
+                        update_dep_id = dep_id;
+                        parent_pkg_id = pkg_id;
+                        break :update_dep_id;
+                    }
+                }
+
+                if (update_dep_id == invalid_dependency_id) {
+                    continue;
+                }
+
+                if ((try pkg_dedupe.getOrPut(update_pkg_id)).found_existing) {
+                    continue;
+                }
+
+                var initial_pkg_path = std.ArrayList(PackageID).init(manager.allocator);
+                // If this is a direct dependency from root, start with root package
+                if (parent_pkg_id != invalid_package_id) {
+                    try initial_pkg_path.append(parent_pkg_id);
+                }
+                try initial_pkg_path.append(update_pkg_id);
+                var initial_dep_path = std.ArrayList(DependencyID).init(manager.allocator);
+                try initial_dep_path.append(update_dep_id);
+
+                try ids_queue.writeItem(.{
+                    .pkg_id = update_pkg_id,
+                    .dep_id = update_dep_id,
+                    .pkg_path = initial_pkg_path,
+                    .dep_path = initial_dep_path,
+                });
+            }
         }
     }
 
@@ -144,18 +177,36 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
 
         const pkg_name = pkg_names[pkg_id];
         const pkg_res = pkg_resolutions[pkg_id];
-        const dep_version = manager.lockfile.buffers.dependencies.items[dep_id].version;
 
         if (!first) try writer.writeAll(",\n");
 
-        try writer.print(
-            \\  {{
-            \\    "name": {},
-            \\    "version": "{s}",
-            \\    "requestedRange": {},
-            \\    "tarball": {}
-            \\  }}
-        , .{ bun.fmt.formatJSONStringUTF8(pkg_name.slice(string_buf), .{}), pkg_res.value.npm.version.fmt(string_buf), bun.fmt.formatJSONStringUTF8(dep_version.literal.slice(string_buf), .{}), bun.fmt.formatJSONStringUTF8(pkg_res.value.npm.url.slice(string_buf), .{}) });
+        // When scanning all packages, we don't have a specific dependency request
+        // Use the package's own version as the requested range
+        if (dep_id == invalid_dependency_id) {
+            try writer.print(
+                \\  {{
+                \\    "name": {},
+                \\    "version": "{s}",
+                \\    "requestedRange": "{s}",
+                \\    "tarball": {}
+                \\  }}
+            , .{
+                bun.fmt.formatJSONStringUTF8(pkg_name.slice(string_buf), .{}),
+                pkg_res.value.npm.version.fmt(string_buf),
+                pkg_res.value.npm.version.fmt(string_buf), // Use the formatter directly
+                bun.fmt.formatJSONStringUTF8(pkg_res.value.npm.url.slice(string_buf), .{}),
+            });
+        } else {
+            const dep_version = manager.lockfile.buffers.dependencies.items[dep_id].version;
+            try writer.print(
+                \\  {{
+                \\    "name": {},
+                \\    "version": "{s}",
+                \\    "requestedRange": {},
+                \\    "tarball": {}
+                \\  }}
+            , .{ bun.fmt.formatJSONStringUTF8(pkg_name.slice(string_buf), .{}), pkg_res.value.npm.version.fmt(string_buf), bun.fmt.formatJSONStringUTF8(dep_version.literal.slice(string_buf), .{}), bun.fmt.formatJSONStringUTF8(pkg_res.value.npm.url.slice(string_buf), .{}) });
+        }
 
         first = false;
 
@@ -278,7 +329,7 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
     manager.sleepUntil(&closure, &@TypeOf(closure).isDone);
 
     const packages_scanned = pkg_dedupe.count();
-    try scanner.handleResults(&package_paths, start_time, packages_scanned, security_scanner);
+    try scanner.handleResults(&package_paths, start_time, packages_scanned, security_scanner, scan_all);
 }
 
 const SecurityAdvisoryLevel = enum { fatal, warn };
@@ -423,7 +474,7 @@ pub const SecurityScanSubprocess = struct {
         }
     }
 
-    pub fn handleResults(this: *SecurityScanSubprocess, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath), start_time: i64, packages_scanned: usize, security_scanner: []const u8) !void {
+    pub fn handleResults(this: *SecurityScanSubprocess, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath), start_time: i64, packages_scanned: usize, security_scanner: []const u8, comptime scan_all: bool) !void {
         defer {
             this.ipc_data.deinit();
             this.stderr_data.deinit();
@@ -477,7 +528,7 @@ pub const SecurityScanSubprocess = struct {
             }
         }
 
-        try handleSecurityAdvisories(this.manager, this.ipc_data.items, package_paths);
+        try handleSecurityAdvisories(this.manager, this.ipc_data.items, package_paths, scan_all);
 
         if (!status.isOK()) {
             switch (status) {
@@ -500,7 +551,7 @@ pub const SecurityScanSubprocess = struct {
     }
 };
 
-fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath)) !void {
+fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath), comptime scan_all: bool) !void {
     if (ipc_data.len == 0) return;
 
     const json_source = logger.Source{
@@ -607,20 +658,20 @@ fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, pack
     }
 
     if (advisories_list.items.len > 0) {
-        var has_fatal = false;
-        var has_warn = false;
+        var fatal_count: usize = 0;
+        var warn_count: usize = 0;
 
         for (advisories_list.items) |advisory| {
             Output.print("\n", .{});
 
             switch (advisory.level) {
                 .fatal => {
-                    has_fatal = true;
+                    fatal_count += 1;
                     Output.pretty("  <red>FATAL<r>: {s}\n", .{advisory.package});
                 },
                 .warn => {
-                    has_warn = true;
-                    Output.pretty("  <yellow>WARN<r>: {s}\n", .{advisory.package});
+                    warn_count += 1;
+                    Output.pretty("  <yellow>WARNING<r>: {s}\n", .{advisory.package});
                 },
             }
 
@@ -664,66 +715,89 @@ fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, pack
             }
         }
 
-        if (has_fatal) {
-            Output.pretty("\n<red>bun install aborted due to fatal security advisories<r>\n", .{});
+        Output.print("\n", .{});
+        const total = fatal_count + warn_count;
+        if (total == 1) {
+            if (fatal_count == 1) {
+                Output.pretty("<b>1 advisory (<red>1 fatal<r>)<r>\n", .{});
+            } else {
+                Output.pretty("<b>1 advisory (<yellow>1 warning<r>)<r>\n", .{});
+            }
+        } else {
+            if (fatal_count > 0 and warn_count > 0) {
+                Output.pretty("<b>{d} advisories (<red>{d} fatal<r>, <yellow>{d} warning{s}<r>)<r>\n", .{ total, fatal_count, warn_count, if (warn_count == 1) "" else "s" });
+            } else if (fatal_count > 0) {
+                Output.pretty("<b>{d} advisories (<red>{d} fatal<r>)<r>\n", .{ total, fatal_count });
+            } else {
+                Output.pretty("<b>{d} advisories (<yellow>{d} warning{s}<r>)<r>\n", .{ total, warn_count, if (warn_count == 1) "" else "s" });
+            }
+        }
+
+        if (fatal_count > 0) {
+            if (comptime !scan_all) {
+                Output.pretty("<red>bun install aborted due to fatal security advisories<r>\n", .{});
+            }
             Global.exit(1);
-        } else if (has_warn) {
-            const can_prompt = Output.enable_ansi_colors_stdout;
+        } else if (warn_count > 0) {
+            // Only prompt for warnings during install/add, not during scan
+            if (comptime !scan_all) {
+                const can_prompt = Output.enable_ansi_colors_stdout;
 
-            if (can_prompt) {
-                Output.pretty("\n<yellow>Security warnings found.<r> Continue anyway? [y/N] ", .{});
-                Output.flush();
+                if (can_prompt) {
+                    Output.pretty("\n<yellow>Security warnings found.<r> Continue anyway? [y/N] ", .{});
+                    Output.flush();
 
-                var stdin = std.io.getStdIn();
-                const unbuffered_reader = stdin.reader();
-                var buffered = std.io.bufferedReader(unbuffered_reader);
-                var reader = buffered.reader();
+                    var stdin = std.io.getStdIn();
+                    const unbuffered_reader = stdin.reader();
+                    var buffered = std.io.bufferedReader(unbuffered_reader);
+                    var reader = buffered.reader();
 
-                const first_byte = reader.readByte() catch {
-                    Output.pretty("\n<red>Installation cancelled.<r>\n", .{});
-                    Global.exit(1);
-                };
+                    const first_byte = reader.readByte() catch {
+                        Output.pretty("\n<red>Installation cancelled.<r>\n", .{});
+                        Global.exit(1);
+                    };
 
-                const should_continue = switch (first_byte) {
-                    '\n' => false,
-                    '\r' => blk: {
-                        const next_byte = reader.readByte() catch {
-                            break :blk false;
-                        };
-                        break :blk next_byte == '\n' and false;
-                    },
-                    'y', 'Y' => blk: {
-                        const next_byte = reader.readByte() catch {
-                            break :blk false;
-                        };
-                        if (next_byte == '\n') {
-                            break :blk true;
-                        } else if (next_byte == '\r') {
-                            const second_byte = reader.readByte() catch {
+                    const should_continue = switch (first_byte) {
+                        '\n' => false,
+                        '\r' => blk: {
+                            const next_byte = reader.readByte() catch {
                                 break :blk false;
                             };
-                            break :blk second_byte == '\n';
-                        }
-                        break :blk false;
-                    },
-                    else => blk: {
-                        while (reader.readByte()) |b| {
-                            if (b == '\n' or b == '\r') break;
-                        } else |_| {}
-                        break :blk false;
-                    },
-                };
+                            break :blk next_byte == '\n' and false;
+                        },
+                        'y', 'Y' => blk: {
+                            const next_byte = reader.readByte() catch {
+                                break :blk false;
+                            };
+                            if (next_byte == '\n') {
+                                break :blk true;
+                            } else if (next_byte == '\r') {
+                                const second_byte = reader.readByte() catch {
+                                    break :blk false;
+                                };
+                                break :blk second_byte == '\n';
+                            }
+                            break :blk false;
+                        },
+                        else => blk: {
+                            while (reader.readByte()) |b| {
+                                if (b == '\n' or b == '\r') break;
+                            } else |_| {}
+                            break :blk false;
+                        },
+                    };
 
-                if (!should_continue) {
-                    Output.pretty("\n<red>Installation cancelled.<r>\n", .{});
+                    if (!should_continue) {
+                        Output.pretty("\n<red>Installation cancelled.<r>\n", .{});
+                        Global.exit(1);
+                    }
+
+                    Output.pretty("\n<yellow>Continuing with installation...<r>\n\n", .{});
+                } else {
+                    Output.pretty("\n<red>Security warnings found. Cannot prompt for confirmation (no TTY).<r>\n", .{});
+                    Output.pretty("<red>Installation cancelled.<r>\n", .{});
                     Global.exit(1);
                 }
-
-                Output.pretty("\n<yellow>Continuing with installation...<r>\n\n", .{});
-            } else {
-                Output.pretty("\n<red>Security warnings found. Cannot prompt for confirmation (no TTY).<r>\n", .{});
-                Output.pretty("<red>Installation cancelled.<r>\n", .{});
-                Global.exit(1);
             }
         }
     }

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import fs from "fs";
-import { bunExe, bunEnv as env, tmpdirSync, isASAN } from "harness";
+import { bunExe, bunEnv as env, isASAN, tmpdirSync } from "harness";
 import path from "path";
 
 const ASAN_MULTIPLIER = isASAN ? 3 : 1;

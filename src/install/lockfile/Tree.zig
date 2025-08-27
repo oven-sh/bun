@@ -246,6 +246,8 @@ pub fn Builder(comptime method: BuilderMethod) type {
         sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
         workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{},
         install_root_dependencies: if (method == .filter) bool else void,
+        // Reusable set for cycle detection during hoisting to avoid repeated allocations
+        hoist_visited_packages: std.AutoHashMap(PackageID, void),
 
         pub fn maybeReportError(this: *@This(), comptime fmt: string, args: anytype) void {
             this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
@@ -557,6 +559,33 @@ fn hoistDependency(
     comptime method: BuilderMethod,
     builder: *Builder(method),
 ) !HoistDependencyResult {
+    // Clear the reusable visited set for this top-level hoisting operation
+    builder.hoist_visited_packages.clearRetainingCapacity();
+    return hoistDependencyWithVisited(this, as_defined, hoist_root_id, package_id, dependency, dependency_lists, trees, method, builder, &builder.hoist_visited_packages);
+}
+
+fn hoistDependencyWithVisited(
+    this: *Tree,
+    comptime as_defined: bool,
+    hoist_root_id: Id,
+    package_id: PackageID,
+    dependency: *const Dependency,
+    dependency_lists: []Lockfile.DependencyIDList,
+    trees: []Tree,
+    comptime method: BuilderMethod,
+    builder: *Builder(method),
+    visited_packages: *std.AutoHashMap(PackageID, void),
+) !HoistDependencyResult {
+    // Check if we've already visited this package during hoisting
+    // This prevents infinite recursion in circular dependency scenarios
+    if (visited_packages.contains(package_id)) {
+        return .dependency_loop;
+    }
+
+    // Mark this package as visited
+    try visited_packages.put(package_id, {});
+    // Ensure we remove this package from visited set when function exits
+    defer _ = visited_packages.remove(package_id);
     const this_dependencies = this.dependencies.get(dependency_lists[this.id].items);
     for (0..this_dependencies.len) |i| {
         const dep_id = this_dependencies[i];
@@ -614,7 +643,7 @@ fn hoistDependency(
 
     // this dependency was not found in this tree, try hoisting or placing in the next parent
     if (this.parent != invalid_id and this.id != hoist_root_id) {
-        const id = trees[this.parent].hoistDependency(
+        const id = trees[this.parent].hoistDependencyWithVisited(
             false,
             hoist_root_id,
             package_id,
@@ -623,6 +652,7 @@ fn hoistDependency(
             trees,
             method,
             builder,
+            visited_packages,
         ) catch unreachable;
         if (!as_defined or id != .dependency_loop) return id; // 1 or 2
     }
@@ -645,6 +675,8 @@ pub const TreeFiller = std.fifo.LinearFifo(FillItem, .Dynamic);
 const string = []const u8;
 const stringZ = [:0]const u8;
 
+pub const PackageID = install.PackageID;
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -662,7 +694,6 @@ const String = bun.Semver.String;
 const install = bun.install;
 const Dependency = install.Dependency;
 const DependencyID = install.DependencyID;
-const PackageID = install.PackageID;
 const PackageNameHash = install.PackageNameHash;
 const Resolution = install.Resolution;
 const invalid_dependency_id = install.invalid_dependency_id;

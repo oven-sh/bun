@@ -9,7 +9,7 @@
   ".stdDir()": 41,
   ".stdFile()": 18,
   "// autofix": 168,
-  ": [^=]+= undefined,$": 260,
+  ": [^=]+= undefined,$": 259,
   "== alloc.ptr": 0,
   "== allocator.ptr": 0,
   "@import(\"bun\").": 0,
@@ -37,7 +37,7 @@
   "std.fs.cwd": 104,
   "std.log": 1,
   "std.mem.indexOfAny(u8": 0,
-  "std.unicode": 33,
+  "std.unicode": 27,
   "undefined != ": 0,
   "undefined == ": 0,
   "usingnamespace": 0

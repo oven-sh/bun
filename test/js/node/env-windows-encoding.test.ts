@@ -1,6 +1,6 @@
+import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
-import { spawnSync } from "bun";
 import path from "path";
 
 // This test verifies the fix for environment variable encoding issues on Windows

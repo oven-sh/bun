@@ -79,7 +79,8 @@ function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-dns")) {
     return 90_000;
   }
-  return 10_000;
+  const isDebug = options["exec-path"].includes("-debug");
+  return !isDebug ? 10_000 : 20_000;
 }
 
 process.on("SIGTRAP", () => {
@@ -142,7 +143,7 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["retries"]: {
       type: "string",
-      default: isCI ? "3" : "0", // N retries = N+1 attempts
+      default: isCI ? "1" : "0", // N retries = N+1 attempts
     },
     ["junit"]: {
       type: "boolean",

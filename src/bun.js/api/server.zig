@@ -741,12 +741,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
         }
 
-        pub fn onUpgrade(
-            this: *ThisServer,
-            globalThis: *jsc.JSGlobalObject,
-            object: jsc.JSValue,
-            optional: ?JSValue,
-        ) bun.JSError!JSValue {
+        pub fn onUpgrade(this: *ThisServer, globalThis: *jsc.JSGlobalObject, object: jsc.JSValue, optional: ?JSValue) bun.JSError!JSValue {
             if (this.config.websocket == null) {
                 return globalThis.throwInvalidArguments("To enable websocket support, set the \"websocket\" object in Bun.serve({})", .{});
             }
@@ -1132,11 +1127,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return this.js_value.get();
         }
 
-        pub fn onFetch(
-            this: *ThisServer,
-            ctx: *jsc.JSGlobalObject,
-            callframe: *jsc.CallFrame,
-        ) bun.JSError!jsc.JSValue {
+        pub fn onFetch(this: *ThisServer, ctx: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             jsc.markBinding(@src());
 
             if (this.config.onRequest == .zero) {
@@ -1253,6 +1244,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return jsc.JSPromise.resolvedPromiseValue(ctx, response_value);
         }
 
+        pub fn closeIdleConnections(this: *ThisServer, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+            _ = globalObject;
+            _ = callframe;
+            this.app.?.closeIdleConnections();
+            return .js_undefined;
+        }
+
         pub fn stopFromJS(this: *ThisServer, abruptly: ?JSValue) jsc.JSValue {
             const rc = this.getAllClosedPromise(this.globalThis);
 
@@ -1280,10 +1278,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return .js_undefined;
         }
 
-        pub fn getPort(
-            this: *ThisServer,
-            _: *jsc.JSGlobalObject,
-        ) jsc.JSValue {
+        pub fn getPort(this: *ThisServer, _: *jsc.JSGlobalObject) jsc.JSValue {
             switch (this.config.address) {
                 .unix => return .js_undefined,
                 else => {},
@@ -1412,10 +1407,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return bun.String.static(if (ssl_enabled) "https" else "http").toJS(globalThis);
         }
 
-        pub fn getDevelopment(
-            _: *ThisServer,
-            _: *jsc.JSGlobalObject,
-        ) jsc.JSValue {
+        pub fn getDevelopment(_: *ThisServer, _: *jsc.JSGlobalObject) jsc.JSValue {
             return jsc.JSValue.jsBoolean(debug_mode);
         }
 
@@ -1989,11 +1981,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
         }
 
-        pub fn onNodeHTTPRequest(
-            this: *ThisServer,
-            req: *uws.Request,
-            resp: *App.Response,
-        ) void {
+        pub fn onNodeHTTPRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
             jsc.markBinding(@src());
             onNodeHTTPRequestWithUpgradeCtx(this, req, resp, null);
         }
@@ -2073,11 +2061,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             ctx.toAsync(req, prepared.request_object);
         }
 
-        pub fn onRequest(
-            this: *ThisServer,
-            req: *uws.Request,
-            resp: *App.Response,
-        ) void {
+        pub fn onRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
             var should_deinit_context = false;
             const prepared = this.prepareJsRequestContext(req, resp, &should_deinit_context, true, null) orelse return;
 
@@ -2094,14 +2078,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
 
-        pub fn onRequestFromSaved(
-            this: *ThisServer,
-            req: SavedRequest.Union,
-            resp: *App.Response,
-            callback: JSValue,
-            comptime arg_count: comptime_int,
-            extra_args: [arg_count]JSValue,
-        ) void {
+        pub fn onRequestFromSaved(this: *ThisServer, req: SavedRequest.Union, resp: *App.Response, callback: JSValue, comptime arg_count: comptime_int, extra_args: [arg_count]JSValue) void {
             const prepared: PreparedRequest = switch (req) {
                 .stack => |r| this.prepareJsRequestContext(r, resp, null, true, null) orelse return,
                 .saved => |data| .{
@@ -2291,13 +2268,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
 
-        pub fn onWebSocketUpgrade(
-            this: *ThisServer,
-            resp: *App.Response,
-            req: *uws.Request,
-            upgrade_ctx: *uws.SocketContext,
-            id: usize,
-        ) void {
+        pub fn onWebSocketUpgrade(this: *ThisServer, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.SocketContext, id: usize) void {
             jsc.markBinding(@src());
             if (id == 1) {
                 // This is actually a UserRoute if id is 1 so it's safe to cast

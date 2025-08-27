@@ -57,11 +57,10 @@ const { isIP } = require("node:net");
 
 const EventEmitter = require("node:events");
 
-const { deprecate } = require("node:util");
+const { deprecate } = require("internal/util/deprecate");
 
 const SymbolDispose = Symbol.dispose;
 const SymbolAsyncDispose = Symbol.asyncDispose;
-const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ObjectDefineProperty = Object.defineProperty;
 const FunctionPrototypeBind = Function.prototype.bind;
 
@@ -199,9 +198,7 @@ function Socket(type, listener) {
     });
   }
 }
-Socket.prototype = {};
-ObjectSetPrototypeOf(Socket.prototype, EventEmitter.prototype);
-ObjectSetPrototypeOf(Socket, EventEmitter);
+$toClass(Socket, "Socket", EventEmitter);
 
 function createSocket(type, listener) {
   return new Socket(type, listener);

@@ -146,11 +146,6 @@ void MessagePortChannel::takeAllMessagesForPort(const MessagePortIdentifier& por
     }
 
     ASSERT(m_pendingMessageProtectors[i]);
-    // if (!m_pendingMessageProtectors[i]) {
-    //     m_pendingMessages[i].clear();
-    //     callback({}, [] {});
-    //     return;
-    // }
 
     Vector<MessageWithMessagePorts> result;
     result.swap(m_pendingMessages[i]);

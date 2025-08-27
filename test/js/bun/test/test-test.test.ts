@@ -10,6 +10,7 @@ import { dirname, join } from "path";
 const tmp = realpathSync(tmpdir());
 
 it("shouldn't crash when async test runner callback throws", async () => {
+  console.log("it(shouldn't crash when async test runner callback throws)");
   const code = `
   beforeEach(async () => {
     await 1;
@@ -48,6 +49,7 @@ it("shouldn't crash when async test runner callback throws", async () => {
   } finally {
     await rm(test_dir, { force: true, recursive: true });
   }
+  console.log("it(shouldn't crash when async test runner callback throws) - done");
 });
 
 test("testing Bun.deepEquals() using isEqual()", () => {

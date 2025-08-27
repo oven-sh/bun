@@ -300,7 +300,7 @@ pub const BunTestFile = struct {
         pub fn deinit(this: *RefData) void {
             // TODO: ref counted
             // this.buntest.gpa.destroy(this);
-            bun.default_allocator.destroy(this);
+            bun.destroy(this);
         }
     };
     pub fn ref(this: *BunTestFile, data: u64) *RefData {

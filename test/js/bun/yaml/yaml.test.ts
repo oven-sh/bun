@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import { YAML } from "bun";
+import { describe, expect, test } from "bun:test";
 
 describe("Bun.YAML", () => {
   describe("parse", () => {

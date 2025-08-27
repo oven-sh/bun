@@ -2,10 +2,15 @@ import { $, spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync } from "fs";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv as bunEnv_, bunExe, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
 import { join } from "path";
 
 let run_dir: string;
+
+const bunEnv = {
+  ...bunEnv_,
+  BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN: "1",
+};
 
 beforeEach(async () => {
   run_dir = tmpdirSync();
@@ -270,7 +275,7 @@ it("should show the correct working directory when run with --cwd", async () => 
     stdout: "pipe",
     stderr: "pipe",
     env: {
-      ...env,
+      ...bunEnv,
       BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
     },
   });

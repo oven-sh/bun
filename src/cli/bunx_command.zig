@@ -772,6 +772,10 @@ pub const BunxCommand = struct {
         switch (spawn_result.status) {
             .exited => |exit| {
                 if (exit.signal.valid()) {
+                    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                        bun.crash_handler.suppressReporting();
+                    }
+
                     Global.raiseIgnoringPanicHandler(exit.signal);
                 }
 
@@ -780,6 +784,10 @@ pub const BunxCommand = struct {
                 }
             },
             .signaled => |signal| {
+                if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                    bun.crash_handler.suppressReporting();
+                }
+
                 Global.raiseIgnoringPanicHandler(signal);
             },
             .err => |err| {

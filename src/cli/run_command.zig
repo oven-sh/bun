@@ -622,7 +622,10 @@ pub const RunCommand = struct {
         return try allocator.dupeZ(u8, target_path_buffer[0 .. converted.len + file_name.len :0]);
     }
 
-    pub fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
+    pub fn createFakeTemporaryNodeExecutable(
+        PATH: *std.ArrayList(u8),
+        optional_bun_path: *string,
+    ) (OOM || std.fs.SelfExePathError)!void {
         // If we are already running as "node", the path should exist
         if (CLI.pretend_to_be_node) return;
 
@@ -890,11 +893,21 @@ pub const RunCommand = struct {
         var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, new_path_len);
 
         if (needs_to_force_bun) {
-            createFakeTemporaryNodeExecutable(&new_path, &optional_bun_self_path) catch bun.outOfMemory();
+            createFakeTemporaryNodeExecutable(
+                &new_path,
+                &optional_bun_self_path,
+            ) catch |err| switch (err) {
+                error.OutOfMemory => bun.outOfMemory(),
+                else => |other| std.debug.panic(
+                    "unexpected error from createFakeTemporaryNodeExecutable: {}",
+                    .{other},
+                ),
+            };
+
             if (!force_using_bun) {
-                this_transpiler.env.map.put("NODE", bun_node_exe) catch bun.outOfMemory();
-                this_transpiler.env.map.put("npm_node_execpath", bun_node_exe) catch bun.outOfMemory();
-                this_transpiler.env.map.put("npm_execpath", optional_bun_self_path) catch bun.outOfMemory();
+                bun.handleOom(this_transpiler.env.map.put("NODE", bun_node_exe));
+                bun.handleOom(this_transpiler.env.map.put("npm_node_execpath", bun_node_exe));
+                bun.handleOom(this_transpiler.env.map.put("npm_execpath", optional_bun_self_path));
             }
 
             needs_to_force_bun = false;
@@ -943,7 +956,7 @@ pub const RunCommand = struct {
         }
 
         const new_path = try configurePathForRunWithPackageJsonDir(ctx, package_json_dir, this_transpiler, ORIGINAL_PATH, cwd, force_using_bun);
-        this_transpiler.env.map.put("PATH", new_path) catch bun.outOfMemory();
+        bun.handleOom(this_transpiler.env.map.put("PATH", new_path));
     }
 
     pub fn completions(ctx: Command.Context, default_completions: ?[]const string, reject_list: []const string, comptime filter: Filter) !ShellCompletions {

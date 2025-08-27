@@ -58,7 +58,7 @@ pub fn onHTMLParseError(this: *HTMLScanner, message: []const u8) void {
         this.source,
         logger.Loc.Empty,
         message,
-    ) catch bun.outOfMemory();
+    ) catch |err| bun.handleOom(err);
 }
 
 pub fn onTag(this: *HTMLScanner, _: *lol.Element, path: []const u8, url_attribute: []const u8, kind: ImportKind) void {

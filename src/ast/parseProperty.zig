@@ -347,7 +347,7 @@ pub fn ParseProperty(
                         // Handle invalid identifiers in property names
                         // https://github.com/oven-sh/bun/issues/12039
                         if (p.lexer.token == .t_syntax_error) {
-                            p.log.addRangeErrorFmt(p.source, name_range, p.allocator, "Unexpected {}", .{bun.fmt.quote(name)}) catch bun.outOfMemory();
+                            bun.handleOom(p.log.addRangeErrorFmt(p.source, name_range, p.allocator, "Unexpected {}", .{bun.fmt.quote(name)}));
                             return error.SyntaxError;
                         }
 

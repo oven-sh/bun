@@ -1303,7 +1303,7 @@ pub const Resolver = struct {
             }
 
             return .{ .success = .{
-                .path_pair = .{ .primary = Path.init(r.fs.dirname_store.append(@TypeOf(abs_path), abs_path) catch bun.outOfMemory()) },
+                .path_pair = .{ .primary = Path.init(bun.handleOom(r.fs.dirname_store.append(@TypeOf(abs_path), abs_path))) },
                 .is_external = true,
             } };
         }
@@ -2169,13 +2169,13 @@ pub const Resolver = struct {
         const dir_path = strings.withoutTrailingSlashWindowsPath(dir_path_maybe_trail_slash);
 
         assertValidCacheKey(dir_path);
-        var dir_cache_info_result = r.dir_cache.getOrPut(dir_path) catch bun.outOfMemory();
+        var dir_cache_info_result = bun.handleOom(r.dir_cache.getOrPut(dir_path));
         if (dir_cache_info_result.status == .exists) {
             // we've already looked up this package before
             return r.dir_cache.atIndex(dir_cache_info_result.index).?;
         }
         var rfs = &r.fs.fs;
-        var cached_dir_entry_result = rfs.entries.getOrPut(dir_path) catch bun.outOfMemory();
+        var cached_dir_entry_result = bun.handleOom(rfs.entries.getOrPut(dir_path));
 
         var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
         var needs_iter = true;
@@ -3443,7 +3443,7 @@ pub const Resolver = struct {
                         root_path,
                         it.buffer[0 .. (if (it.index) |i| i + 1 else 0) + part.len],
                     },
-                ) catch bun.outOfMemory()) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err)) catch |err| bun.handleOom(err);
             }
         }
 
@@ -3454,7 +3454,7 @@ pub const Resolver = struct {
         list.append(bun.String.createFormat(
             "{s}" ++ std.fs.path.sep_str ++ "node_modules",
             .{root_path},
-        ) catch bun.outOfMemory()) catch bun.outOfMemory();
+        ) catch |err| bun.handleOom(err)) catch |err| bun.handleOom(err);
 
         return bun.String.toJSArray(globalObject, list.items) catch .zero;
     }

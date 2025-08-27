@@ -95,6 +95,8 @@ function normalizeOutput(stdout: string) {
       .replace(/\d+(\.\d+)? [km]?b/gi, data => " ".repeat(data.length))
       // normalize "Compiled successfully in Xms" timestamps
       .replace(/Compiled successfully in (\d|\.)+(ms|s)/gi, "Compiled successfully in 1000ms")
+      // normalize counter logging that may appear in different spots
+      .replaceAll("\ncounter a", "")
       .split("\n")
       .map(x => x.trim())
       .join("\n")

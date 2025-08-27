@@ -192,7 +192,7 @@ pub const ShellTouchTask = struct {
     }
 
     pub fn create(touch: *Touch, opts: Opts, filepath: [:0]const u8, cwd_path: [:0]const u8) *ShellTouchTask {
-        const task = bun.default_allocator.create(ShellTouchTask) catch bun.outOfMemory();
+        const task = bun.handleOom(bun.default_allocator.create(ShellTouchTask));
         task.* = ShellTouchTask{
             .touch = touch,
             .opts = opts,
@@ -253,12 +253,12 @@ pub const ShellTouchTask = struct {
                         break :out;
                     },
                     .err => |e| {
-                        this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
+                        this.err = e.withPath(bun.handleOom(bun.default_allocator.dupe(u8, filepath))).toShellSystemError();
                         break :out;
                     },
                 }
             }
-            this.err = err.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
+            this.err = err.withPath(bun.handleOom(bun.default_allocator.dupe(u8, filepath))).toShellSystemError();
         }
 
         if (this.event_loop == .js) {

@@ -263,6 +263,15 @@ declare module "bun:test" {
    */
   export const describe: Describe;
   /**
+   * Skips a group of related tests.
+   *
+   * This is equivalent to calling `describe.skip()`.
+   *
+   * @param label the label for the tests
+   * @param fn the function that defines the tests
+   */
+  export const xdescribe: Describe;
+  /**
    * Runs a function, once, before all the tests.
    *
    * This is useful for running set up tasks, like initializing
@@ -515,7 +524,17 @@ declare module "bun:test" {
    * @param fn the test function
    */
   export const test: Test;
-  export { test as it };
+  export { test as it, xtest as xit };
+
+  /**
+   * Skips a test.
+   *
+   * This is equivalent to calling `test.skip()`.
+   *
+   * @param label the label for the test
+   * @param fn the test function
+   */
+  export const xtest: Test;
 
   /**
    * Asserts that a value matches some criteria.

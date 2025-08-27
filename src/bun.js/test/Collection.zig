@@ -53,7 +53,7 @@ pub fn enqueueDescribeCallback(this: *Collection, callback: ?describe2.CallbackW
     bun.assert(!this.locked);
     const buntest = this.bunTest();
 
-    const new_scope = try this.active_scope.appendDescribe(buntest, name_not_owned, cfg);
+    const new_scope = try this.active_scope.appendDescribe(buntest.gpa, name_not_owned, cfg);
     if (callback) |cb| {
         group.log("enqueueDescribeCallback / {s} / in scope: {s}", .{ name_not_owned orelse "undefined", this.active_scope.base.name orelse "undefined" });
 
@@ -72,7 +72,7 @@ pub fn enqueueTestCallback(this: *Collection, name_not_owned: ?[]const u8, callb
     bun.assert(!this.locked);
     group.log("enqueueTestCallback / {s} / in scope: {s}", .{ name_not_owned orelse "undefined", this.active_scope.base.name orelse "undefined" });
 
-    _ = try this.active_scope.appendTest(this.bunTest(), name_not_owned, callback, cfg, base);
+    _ = try this.active_scope.appendTest(this.bunTest().gpa, name_not_owned, callback, cfg, base);
 }
 pub fn enqueueHookCallback(this: *Collection, comptime tag: @Type(.enum_literal), callback: ?jsc.JSValue, cfg: describe2.ExecutionEntryCfg, base: describe2.BaseScopeCfg) bun.JSError!void {
     group.begin(@src());
@@ -81,7 +81,7 @@ pub fn enqueueHookCallback(this: *Collection, comptime tag: @Type(.enum_literal)
     bun.assert(!this.locked);
     group.log("enqueueHookCallback / in scope: {s}", .{this.active_scope.base.name orelse "undefined"});
 
-    _ = try this.active_scope.appendHook(this.bunTest(), tag, callback, cfg, base);
+    _ = try this.active_scope.appendHook(this.bunTest().gpa, tag, callback, cfg, base);
 }
 
 pub fn runOne(this: *Collection, globalThis: *jsc.JSGlobalObject, callback_queue: *describe2.CallbackQueue) bun.JSError!describe2.RunOneResult {

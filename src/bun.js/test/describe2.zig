@@ -155,15 +155,19 @@ pub const js_fns = struct {
                 defer group.end();
                 errdefer group.log("ended in error", .{});
 
-                const bunTestRoot = try getActiveTestRoot(globalThis, .{ .signature = .{ .str = @tagName(tag) ++ "()" }, .allow_in_preload = true });
-                const bunTest = bunTestRoot.getActiveFileUnlessInPreload(globalThis.bunVM()) orelse {
-                    @panic("TODO implement genericHook in preload");
-                };
-
                 const callback = callFrame.argumentsAsArray(1)[0];
                 if (!callback.isFunction()) {
                     return globalThis.throw("beforeAll/beforeEach/afterEach/afterAll() expects a function as the first argument", .{});
                 }
+
+                const bunTestRoot = try getActiveTestRoot(globalThis, .{ .signature = .{ .str = @tagName(tag) ++ "()" }, .allow_in_preload = true });
+                const bunTest = bunTestRoot.getActiveFileUnlessInPreload(globalThis.bunVM()) orelse {
+                    group.log("genericHook in preload", .{});
+                    _ = try bunTestRoot.hook_scope.appendHook(bunTestRoot.gpa, tag, callback, .{
+                        .line_no = 0,
+                    }, .{});
+                    return .js_undefined;
+                };
 
                 switch (bunTest.phase) {
                     .collection => {
@@ -631,11 +635,11 @@ pub const BaseScope = struct {
     mode: ScopeMode,
     only: enum { no, contains, yes },
     filter: enum { no, contains, yes },
-    pub fn init(this: BaseScopeCfg, buntest: *BunTestFile, name_not_owned: ?[]const u8, parent: ?*DescribeScope) BaseScope {
+    pub fn init(this: BaseScopeCfg, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, parent: ?*DescribeScope) BaseScope {
         if (this.self_only and parent != null) parent.?.markContainsOnly();
         return .{
             .parent = parent,
-            .name = if (name_not_owned) |name| buntest.gpa.dupe(u8, name) catch bun.outOfMemory() else null,
+            .name = if (name_not_owned) |name| gpa.dupe(u8, name) catch bun.outOfMemory() else null,
             .concurrent = this.self_concurrent or if (parent) |p| p.base.concurrent else false,
             .mode = if (parent) |p| if (p.base.mode != .normal) p.base.mode else this.self_mode else this.self_mode,
             .only = if (this.self_only) .yes else .no,
@@ -688,20 +692,20 @@ pub const DescribeScope = struct {
             target = scope.base.parent;
         }
     }
-    pub fn appendDescribe(this: *DescribeScope, buntest: *BunTestFile, name_not_owned: ?[]const u8, base: BaseScopeCfg) bun.JSError!*DescribeScope {
-        const child = create(buntest.gpa, .init(base, buntest, name_not_owned, this));
+    pub fn appendDescribe(this: *DescribeScope, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, base: BaseScopeCfg) bun.JSError!*DescribeScope {
+        const child = create(gpa, .init(base, gpa, name_not_owned, this));
         try this.entries.append(.{ .describe = child });
         return child;
     }
-    pub fn appendTest(this: *DescribeScope, buntest: *BunTestFile, name_not_owned: ?[]const u8, callback: ?CallbackWithArgs, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
-        const entry = try ExecutionEntry.create(buntest, name_not_owned, callback, cfg, this, base);
+    pub fn appendTest(this: *DescribeScope, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, callback: ?CallbackWithArgs, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
+        const entry = try ExecutionEntry.create(gpa, name_not_owned, callback, cfg, this, base);
         try this.entries.append(.{ .test_callback = entry });
         return entry;
     }
-    pub fn appendHook(this: *DescribeScope, buntest: *BunTestFile, tag: enum { beforeAll, beforeEach, afterEach, afterAll }, callback: ?jsc.JSValue, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
-        var callback_with_args: ?CallbackWithArgs = if (callback) |c| .init(buntest.gpa, c, &.{}) else null;
-        defer if (callback_with_args) |*c| c.deinit(buntest.gpa);
-        const entry = try ExecutionEntry.create(buntest, null, callback_with_args, cfg, this, base);
+    pub fn appendHook(this: *DescribeScope, gpa: std.mem.Allocator, tag: enum { beforeAll, beforeEach, afterEach, afterAll }, callback: ?jsc.JSValue, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
+        var callback_with_args: ?CallbackWithArgs = if (callback) |c| .init(gpa, c, &.{}) else null;
+        defer if (callback_with_args) |*c| c.deinit(gpa);
+        const entry = try ExecutionEntry.create(gpa, null, callback_with_args, cfg, this, base);
         switch (tag) {
             .beforeAll => try this.beforeAll.append(entry),
             .beforeEach => try this.beforeEach.append(entry),
@@ -721,10 +725,10 @@ pub const ExecutionEntry = struct {
     line_no: u32,
     result: Execution.Result = .pending,
 
-    fn create(buntest: *BunTestFile, name_not_owned: ?[]const u8, cb: ?CallbackWithArgs, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
-        const entry = bun.create(buntest.gpa, ExecutionEntry, .{
-            .base = .init(base, buntest, name_not_owned, parent),
-            .callback = if (cb) |c| c.dupe(buntest.gpa) else null,
+    fn create(gpa: std.mem.Allocator, name_not_owned: ?[]const u8, cb: ?CallbackWithArgs, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
+        const entry = bun.create(gpa, ExecutionEntry, .{
+            .base = .init(base, gpa, name_not_owned, parent),
+            .callback = if (cb) |c| c.dupe(gpa) else null,
             .line_no = cfg.line_no,
         });
         return entry;

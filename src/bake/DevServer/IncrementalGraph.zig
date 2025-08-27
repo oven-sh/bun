@@ -1486,7 +1486,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                         .client => .browser,
                         .server => .bun,
                     },
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             }
 
             // Bust the resolution caches of the dir containing this file,

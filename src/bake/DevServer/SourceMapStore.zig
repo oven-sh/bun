@@ -491,7 +491,7 @@ pub fn getParsedSourceMap(store: *Self, script_id: Key, arena: Allocator, gpa: A
     const entry = &store.entries.values()[index];
 
     const script_id_decoded: SourceId = @bitCast(script_id.get());
-    const vlq_bytes = entry.renderMappings(script_id_decoded.kind, arena, arena) catch bun.outOfMemory();
+    const vlq_bytes = bun.handleOom(entry.renderMappings(script_id_decoded.kind, arena, arena));
 
     switch (SourceMap.Mapping.parse(
         gpa,

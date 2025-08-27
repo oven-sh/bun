@@ -323,7 +323,7 @@ pub fn doFileWrite(this: *IOWriter) Yield {
     };
     if (child.bytelist) |bl| {
         const written_slice = this.buf.items[this.total_bytes_written .. this.total_bytes_written + amt];
-        bl.append(bun.default_allocator, written_slice) catch bun.outOfMemory();
+        bun.handleOom(bl.append(bun.default_allocator, written_slice));
     }
     child.written += amt;
     if (!child.wroteEverything()) {
@@ -347,7 +347,7 @@ pub fn onWritePollable(this: *IOWriter, amount: usize, status: bun.io.WriteStatu
     } else {
         if (child.bytelist) |bl| {
             const written_slice = this.buf.items[this.total_bytes_written .. this.total_bytes_written + amount];
-            bl.append(bun.default_allocator, written_slice) catch bun.outOfMemory();
+            bun.handleOom(bl.append(bun.default_allocator, written_slice));
         }
         this.total_bytes_written += amount;
         child.written += amount;
@@ -436,7 +436,7 @@ pub fn onError(this: *IOWriter, err__: bun.sys.Error) void {
     this.err = ee;
     log("IOWriter(0x{x}, fd={}) onError errno={s} errmsg={} errsyscall={}", .{ @intFromPtr(this), this.fd, @tagName(ee.getErrno()), ee.message, ee.syscall });
     var seen_alloc = std.heap.stackFallback(@sizeOf(usize) * 64, bun.default_allocator);
-    var seen = std.ArrayList(usize).initCapacity(seen_alloc.get(), 64) catch bun.outOfMemory();
+    var seen = bun.handleOom(std.ArrayList(usize).initCapacity(seen_alloc.get(), 64));
     defer seen.deinit();
     writer_loop: for (this.writers.slice()) |w| {
         if (w.isDead()) continue;
@@ -451,7 +451,7 @@ pub fn onError(this: *IOWriter, err__: bun.sys.Error) void {
             continue :writer_loop;
         }
 
-        seen.append(@intFromPtr(ptr)) catch bun.outOfMemory();
+        bun.handleOom(seen.append(@intFromPtr(ptr)));
         // TODO: This probably shouldn't call .run()
         w.ptr.onIOWriterChunk(0, this.err).run();
     }
@@ -468,7 +468,7 @@ pub fn getBuffer(this: *IOWriter) []const u8 {
     const result = this.getBufferImpl();
     if (comptime bun.Environment.isWindows) {
         this.winbuf.clearRetainingCapacity();
-        this.winbuf.appendSlice(bun.default_allocator, result) catch bun.outOfMemory();
+        bun.handleOom(this.winbuf.appendSlice(bun.default_allocator, result));
         return this.winbuf.items;
     }
     log("IOWriter(0x{x}, fd={}) getBuffer = {d} bytes", .{ @intFromPtr(this), this.fd, result.len });
@@ -602,7 +602,7 @@ pub fn enqueue(this: *IOWriter, ptr: anytype, bytelist: ?*bun.ByteList, buf: []c
         .bytelist = bytelist,
     };
     log("IOWriter(0x{x}, fd={}) enqueue(0x{x} {s}, buf_len={d}, buf={s}, writer_len={d})", .{ @intFromPtr(this), this.fd, @intFromPtr(writer.rawPtr()), @tagName(writer.ptr.ptr.tag()), buf.len, buf[0..@min(128, buf.len)], this.writers.len() + 1 });
-    this.buf.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
+    bun.handleOom(this.buf.appendSlice(bun.default_allocator, buf));
     this.writers.append(writer);
     return this.enqueueInternal();
 }
@@ -629,7 +629,7 @@ pub fn enqueueFmt(
 ) Yield {
     var buf_writer = this.buf.writer(bun.default_allocator);
     const start = this.buf.items.len;
-    buf_writer.print(fmt, args) catch bun.outOfMemory();
+    bun.handleOom(buf_writer.print(fmt, args));
 
     const childptr = if (@TypeOf(ptr) == ChildPtr) ptr else ChildPtr.init(ptr);
     if (this.handleBrokenPipe(childptr)) |yield| return yield;

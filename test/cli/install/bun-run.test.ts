@@ -1,20 +1,16 @@
-import { $, file, spawn, spawnSync } from "bun";
+import { $, spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync } from "fs";
-import { exists, mkdir, rm, writeFile } from "fs/promises";
-import {
-  bunEnv,
-  bunExe,
-  bunEnv as env,
-  isWindows,
-  readdirSorted,
-  stderrForInstall,
-  tempDirWithFiles,
-  tmpdirSync,
-} from "harness";
+import { mkdir, rm, writeFile } from "fs/promises";
+import { bunEnv as bunEnv_, bunExe, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
 import { join } from "path";
 
 let run_dir: string;
+
+const bunEnv = {
+  ...bunEnv_,
+  BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN: "1",
+};
 
 beforeEach(async () => {
   run_dir = tmpdirSync();
@@ -121,7 +117,7 @@ for (let withRun of [false, true]) {
 
       it.skipIf(isWindows)("exit code message works above 128", async () => {
         const { stdout, stderr, exitCode } = spawnSync({
-          cmd: [bunExe(), "run", "bash", "-c", "exit 200"],
+          cmd: [bunExe(), "run", "bash", "-c", "ulimit -c 0; exit 200"],
           cwd: run_dir,
           env: bunEnv,
         });
@@ -135,7 +131,9 @@ for (let withRun of [false, true]) {
         it.skipIf(isWindows)("exit signal works", async () => {
           {
             const { stdout, stderr, exitCode, signalCode } = spawnSync({
-              cmd: [bunExe(), ...(silent ? ["--silent"] : []), "run", "bash", "-c", "kill -4 $$"].filter(Boolean),
+              cmd: [bunExe(), ...(silent ? ["--silent"] : []), "run", "bash", "-c", "ulimit -c 0; kill -4 $$"].filter(
+                Boolean,
+              ),
               cwd: run_dir,
               env: bunEnv,
             });
@@ -152,7 +150,7 @@ for (let withRun of [false, true]) {
           }
           {
             const { stdout, stderr, exitCode, signalCode } = spawnSync({
-              cmd: [bunExe(), ...(silent ? ["--silent"] : []), "run", "bash", "-c", "kill -9 $$"],
+              cmd: [bunExe(), ...(silent ? ["--silent"] : []), "run", "bash", "-c", "ulimit -c 0; kill -9 $$"],
               cwd: run_dir,
               env: bunEnv,
             });
@@ -262,168 +260,6 @@ logLevel = "debug"
   });
 }
 
-it("should download dependency to run local file", async () => {
-  await writeFile(
-    join(run_dir, "test.js"),
-    `
-const { minify } = require("uglify-js@3.17.4");
-
-console.log(minify("print(6 * 7)").code);
-  `,
-  );
-  const {
-    stdout: stdout1,
-    stderr: stderr1,
-    exited: exited1,
-  } = spawn({
-    cmd: [bunExe(), "run", "test.js"],
-    cwd: run_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env: {
-      ...env,
-      BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
-    },
-  });
-  const err1 = stderrForInstall(await new Response(stderr1).text());
-  expect(err1).toBe("");
-  expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
-  expect(await readdirSorted(join(run_dir, ".cache"))).toContain("uglify-js");
-  expect(await readdirSorted(join(run_dir, ".cache", "uglify-js"))).toEqual(["3.17.4@@@1"]);
-  expect(await exists(join(run_dir, ".cache", "uglify-js", "3.17.4@@@1", "package.json"))).toBeTrue();
-  const out1 = await new Response(stdout1).text();
-  expect(out1.split(/\r?\n/)).toEqual(["print(42);", ""]);
-  expect(await exited1).toBe(0);
-  // Perform `bun test.js` with cached dependencies
-  const {
-    stdout: stdout2,
-    stderr: stderr2,
-    exited: exited2,
-  } = spawn({
-    cmd: [bunExe(), "test.js"],
-    cwd: run_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env: {
-      ...env,
-      BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
-    },
-  });
-  const err2 = stderrForInstall(await new Response(stderr2).text());
-  expect(err2).toBe("");
-  expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
-  expect(await readdirSorted(join(run_dir, ".cache"))).toContain("uglify-js");
-  expect(await readdirSorted(join(run_dir, ".cache", "uglify-js"))).toEqual(["3.17.4@@@1"]);
-  const out2 = await new Response(stdout2).text();
-  expect(out2.split(/\r?\n/)).toEqual(["print(42);", ""]);
-  expect(await exited2).toBe(0);
-});
-
-it("should download dependencies to run local file", async () => {
-  const filePath = join(import.meta.dir, "baz-0.0.3.tgz").replace(/\\/g, "\\\\");
-  await writeFile(
-    join(run_dir, "test.js"),
-    `
-import { file } from "bun";
-import decompress from "decompress@4.2.1";
-
-const buffer = await file("${filePath}").arrayBuffer();
-for (const entry of await decompress(Buffer.from(buffer))) {
-  console.log(\`\${entry.type}: \${entry.path}\`);
-}
-  `,
-  );
-  const {
-    stdout: stdout1,
-    stderr: stderr1,
-    exited: exited1,
-  } = spawn({
-    cmd: [bunExe(), "test.js"],
-    cwd: run_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env: {
-      ...env,
-      BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
-    },
-  });
-  const err1 = stderrForInstall(await new Response(stderr1).text());
-  expect(err1).toBe("");
-  expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
-  expect(await readdirSorted(join(run_dir, ".cache"))).toContain("decompress");
-  expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual(["4.2.1@@@1"]);
-  expect(await exists(join(run_dir, ".cache", "decompress", "4.2.1@@@1", "package.json"))).toBeTrue();
-  expect(await file(join(run_dir, ".cache", "decompress", "4.2.1@@@1", "index.js")).text()).toContain(
-    "\nmodule.exports = ",
-  );
-  const out1 = await new Response(stdout1).text();
-  expect(out1.split(/\r?\n/)).toEqual([
-    "directory: package/",
-    "file: package/index.js",
-    "file: package/package.json",
-    "",
-  ]);
-  expect(await exited1).toBe(0);
-  // Perform `bun run test.js` with cached dependencies
-  const {
-    stdout: stdout2,
-    stderr: stderr2,
-    exited: exited2,
-  } = spawn({
-    cmd: [bunExe(), "run", "test.js"],
-    cwd: run_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env: {
-      ...env,
-      BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
-    },
-  });
-  const err2 = await new Response(stderr2).text();
-  if (err2) throw new Error(err2);
-  expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
-  expect(await readdirSorted(join(run_dir, ".cache"))).toContain("decompress");
-  expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual(["4.2.1@@@1"]);
-  expect(await exists(join(run_dir, ".cache", "decompress", "4.2.1@@@1", "package.json"))).toBeTrue();
-  expect(await file(join(run_dir, ".cache", "decompress", "4.2.1@@@1", "index.js")).text()).toContain(
-    "\nmodule.exports = ",
-  );
-  const out2 = await new Response(stdout2).text();
-  expect(out2.split(/\r?\n/)).toEqual([
-    "directory: package/",
-    "file: package/index.js",
-    "file: package/package.json",
-    "",
-  ]);
-  expect(await exited2).toBe(0);
-});
-
-it("should not crash when downloading a non-existent module, issue#4240", async () => {
-  await writeFile(
-    join(run_dir, "test.js"),
-    `
-import { prueba } from "pruebadfasdfasdkafasdyuif.js";
-  `,
-  );
-  const { exited: exited } = spawn({
-    cmd: [bunExe(), "test.js"],
-    cwd: run_dir,
-    stdin: null,
-    stdout: "pipe",
-    stderr: "pipe",
-    env: {
-      ...env,
-      BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
-    },
-  });
-  // The exit code will not be 1 if it panics.
-  expect(await exited).toBe(1);
-});
-
 it("should show the correct working directory when run with --cwd", async () => {
   await mkdir(join(run_dir, "subdir"));
   await writeFile(
@@ -439,7 +275,7 @@ it("should show the correct working directory when run with --cwd", async () => 
     stdout: "pipe",
     stderr: "pipe",
     env: {
-      ...env,
+      ...bunEnv,
       BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
     },
   });

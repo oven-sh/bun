@@ -352,7 +352,7 @@ pub fn getQueriesArray(this: *const @This()) JSValue {
     return js.queriesGetCached(this.js_value) orelse .zero;
 }
 pub fn failFmt(this: *@This(), error_code: AnyMySQLError.Error, comptime fmt: [:0]const u8, args: anytype) void {
-    const message = std.fmt.allocPrint(bun.default_allocator, fmt, args) catch bun.outOfMemory();
+    const message = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, fmt, args));
     defer bun.default_allocator.free(message);
 
     const err = AnyMySQLError.mysqlErrorToJS(this.globalObject, message, error_code);
@@ -658,7 +658,12 @@ fn advance(this: *@This()) void {
                 }
             },
             .binding, .running, .partial_response => {
-                offset += 1;
+                const total_requests_running = this.pipelined_requests + this.nonpipelinable_requests;
+                if (offset < total_requests_running) {
+                    offset += total_requests_running;
+                } else {
+                    offset += 1;
+                }
                 continue;
             },
             .success => {

@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import { readFile, writeFile, stat, mkdir } from "node:fs/promises";
+import { expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "path";
 
 test("fs/promises methods return actual Promise instances", async () => {
@@ -15,17 +15,17 @@ test("fs/promises methods return actual Promise instances", async () => {
   expect(readResult instanceof Promise).toBe(true);
   expect(readResult.constructor).toBe(Promise);
   expect(Object.prototype.toString.call(readResult)).toBe("[object Promise]");
-  
+
   // Test writeFile
   const writeResult = writeFile(join(dir, "write-test.txt"), "content");
   expect(writeResult instanceof Promise).toBe(true);
   expect(writeResult.constructor).toBe(Promise);
-  
+
   // Test stat
   const statResult = stat(testFile);
   expect(statResult instanceof Promise).toBe(true);
   expect(statResult.constructor).toBe(Promise);
-  
+
   // Test mkdir
   const mkdirResult = mkdir(join(dir, "new-dir"));
   expect(mkdirResult instanceof Promise).toBe(true);

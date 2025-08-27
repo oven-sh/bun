@@ -70,6 +70,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Worker);
 
 extern "C" void WebWorkerLifecycleHandle__requestTermination(WebWorkerLifecycleHandle* worker);
+extern "C" void WebWorkerLifecycleHandle__release(WebWorkerLifecycleHandle* worker);
 
 static Lock allWorkersLock;
 static HashMap<ScriptExecutionContextIdentifier, Worker*>& allWorkers() WTF_REQUIRES_LOCK(allWorkersLock)
@@ -232,6 +233,8 @@ Worker::~Worker()
         auto* impl = lifecycleHandle_;
         lifecycleHandle_ = nullptr;
         WebWorkerLifecycleHandle__requestTermination(impl);
+        // release our reference back in web_worker.zig
+        WebWorkerLifecycleHandle__release(impl);
     }
     // m_contextProxy.workerObjectDestroyed();
 }

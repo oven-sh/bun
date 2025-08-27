@@ -248,8 +248,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         pub const toOptional = if (!info.isOptional()) struct {
             pub fn toOptional(self: Self) OwnedOptional {
                 return .{
-                    .#unsafe_raw_pointer =
-                    self.#unsafe_raw_pointer,
+                    .#unsafe_raw_pointer = self.#unsafe_raw_pointer,
                     .unsafe_allocator = self.unsafe_allocator,
                 };
             }

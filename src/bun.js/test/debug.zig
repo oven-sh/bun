@@ -28,18 +28,19 @@ pub fn dumpOrder(this: *Execution) bun.JSError!void {
 
         for (group.sequence_start..group.sequence_end) |sequence_index| {
             const sequence = &this._sequences.items[sequence_index];
-            groupLog.beginMsg("{d}: Sequence {d}-{d}", .{ sequence_index, sequence.entry_start, sequence.entry_end });
+            groupLog.beginMsg("{d}: Sequence {d}-{d} ({d}x)", .{ sequence_index, sequence.entry_start, sequence.entry_end, sequence.remaining_repeat_count });
             defer groupLog.end();
 
             for (sequence.entry_start..sequence.entry_end) |entry_index| {
                 const entry = this._entries.items[entry_index];
-                groupLog.log("{d}: ExecutionEntry {d}: {s}", .{ entry_index, entry_index, entry.base.name orelse "undefined" });
+                groupLog.log("{d}: ExecutionEntry \"{}\" (concurrent={}, mode={s}, only={s}, filter={s})", .{ entry_index, std.zig.fmtEscapes(entry.base.name orelse "undefined"), entry.base.concurrent, @tagName(entry.base.mode), @tagName(entry.base.only), @tagName(entry.base.filter) });
             }
         }
     }
 }
 
 const bun = @import("bun");
+const std = @import("std");
 
 const describe2 = @import("./describe2.zig");
 const DescribeScope = describe2.DescribeScope;

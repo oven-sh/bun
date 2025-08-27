@@ -57,10 +57,13 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
 
     const bunTest = try describe2.js_fns.getActive(globalThis, .{ .signature = .{ .scope_functions = this }, .allow_in_preload = false });
 
-    var args = try describe2.js_fns.parseArguments(globalThis, callFrame, .{ .scope_functions = this }, bunTest, .{ .require_callback = switch (this.cfg.self_mode) {
-        .skip, .todo => false,
-        else => true,
-    } });
+    const callback_mode: describe2.js_fns.CallbackMode = switch (this.cfg.self_mode) {
+        .skip => .ignore,
+        .todo => @panic("TODO: check for the '--todo' flag to decide if this should be .ignore or .allow"),
+        else => .require,
+    };
+
+    var args = try describe2.js_fns.parseArguments(globalThis, callFrame, .{ .scope_functions = this }, bunTest, .{ .callback = callback_mode });
     defer args.deinit(bunTest.gpa);
 
     switch (bunTest.phase) {

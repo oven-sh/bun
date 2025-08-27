@@ -70,7 +70,8 @@ pub const js_fns = struct {
             if (this.description) |str| gpa.free(str);
         }
     };
-    pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, bunTest: *BunTestFile, cfg: struct { require_callback: bool }) bun.JSError!ParseArgumentsResult {
+    pub const CallbackMode = enum { require, allow, ignore };
+    pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, bunTest: *BunTestFile, cfg: struct { callback: CallbackMode }) bun.JSError!ParseArgumentsResult {
         var a1, var a2, var a3 = callframe.argumentsAsArray(3);
 
         if (a1.isFunction()) {
@@ -86,7 +87,9 @@ pub const js_fns = struct {
 
         const description, const callback, const options = .{ a1, a2, a3 };
 
-        const result_callback: ?jsc.JSValue = if (!cfg.require_callback and callback.isUndefinedOrNull()) blk: {
+        const result_callback: ?jsc.JSValue = if (cfg.callback == .ignore) blk: {
+            break :blk null;
+        } else if (cfg.callback != .require and callback.isUndefinedOrNull()) blk: {
             break :blk null;
         } else if (callback.isFunction()) blk: {
             break :blk callback.withAsyncContextIfNeeded(globalThis);

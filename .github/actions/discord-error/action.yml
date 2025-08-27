@@ -13,10 +13,6 @@ inputs:
   webhook-url:
     description: Discord webhook URL
     required: true
-  extra-fields:
-    description: Additional fields for the Discord embed (JSON string)
-    required: false
-    default: "[]"
 
 runs:
   using: composite
@@ -27,33 +23,31 @@ runs:
         # Generate timestamp
         TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
         
-        # Send notification
-        curl -X POST "${{ inputs.webhook-url }}" \
+        # Send notification silently (no output to prevent webhook URL exposure)
+        curl -s -X POST "${{ inputs.webhook-url }}" \
           -H "Content-Type: application/json" \
-          -d @- << 'EOF'
-        {
-          "embeds": [{
-            "title": "❌ Release Workflow Failed",
-            "description": "**Job:** ${{ inputs.job-name }}\n**Step:** ${{ inputs.step-name }}\n**Version:** ${{ inputs.version }}",
-            "color": 15158332,
-            "fields": [
-              {
-                "name": "Workflow",
-                "value": "${{ github.workflow }}",
-                "inline": true
-              },
-              {
-                "name": "Run",
-                "value": "[#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})",
-                "inline": true
-              },
-              {
-                "name": "Triggered By",
-                "value": "${{ github.event_name }}",
-                "inline": true
-              }
-            ],
-            "timestamp": "'"${TIMESTAMP}"'"
-          }]
-        }
-        EOF
+          -d '{
+            "embeds": [{
+              "title": "❌ Release Workflow Failed",
+              "description": "**Job:** ${{ inputs.job-name }}\n**Step:** ${{ inputs.step-name }}\n**Version:** ${{ inputs.version }}",
+              "color": 15158332,
+              "fields": [
+                {
+                  "name": "Workflow",
+                  "value": "${{ github.workflow }}",
+                  "inline": true
+                },
+                {
+                  "name": "Run",
+                  "value": "[#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})",
+                  "inline": true
+                },
+                {
+                  "name": "Triggered By",
+                  "value": "${{ github.event_name }}",
+                  "inline": true
+                }
+              ],
+              "timestamp": "'"$TIMESTAMP"'"
+            }]
+          }' 2>/dev/null

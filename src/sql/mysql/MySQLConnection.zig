@@ -1168,10 +1168,7 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
         this.status_flags,
     });
 
-    if (this.auth_data.items.len > 0) {
-        this.auth_data.deinit();
-        this.auth_data = std.ArrayList(u8).init(bun.default_allocator);
-    }
+    this.auth_data.clearAndFree(bun.default_allocator);
 
     // Store auth data
     try this.auth_data.ensureTotalCapacity(handshake.auth_plugin_data_part_1.len + handshake.auth_plugin_data_part_2.len);

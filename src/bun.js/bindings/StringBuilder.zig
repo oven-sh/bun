@@ -82,10 +82,10 @@ pub fn ensureUnusedCapacity(this: *StringBuilder, additional: usize) void {
 }
 extern fn StringBuilder__ensureUnusedCapacity(*anyopaque, usize) void;
 
-const std = @import("std");
 const bun = @import("bun");
-const jsc = bun.jsc;
-const String = bun.String;
-const JSValue = jsc.JSValue;
 const JSError = bun.JSError;
+const String = bun.String;
+
+const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

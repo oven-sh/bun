@@ -915,7 +915,9 @@ const ParserCtx = struct {
 const std = @import("std");
 
 const bun = @import("bun");
+const Environment = bun.Environment;
 const JSError = bun.JSError;
+const String = bun.String;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const YAML = bun.interchange.yaml.YAML;
@@ -924,11 +926,8 @@ const ast = bun.ast;
 const Expr = ast.Expr;
 
 const jsc = bun.jsc;
-const wtf = bun.jsc.wtf;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const MarkedArgumentBuffer = jsc.MarkedArgumentBuffer;
 const ZigString = jsc.ZigString;
-const String = bun.String;
-const OOM = bun.OOM;
-const Environment = bun.Environment;
+const wtf = bun.jsc.wtf;

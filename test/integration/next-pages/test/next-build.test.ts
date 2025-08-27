@@ -96,7 +96,7 @@ function normalizeOutput(stdout: string) {
       // normalize "Compiled successfully in Xms" timestamps
       .replace(/Compiled successfully in (\d|\.)+(ms|s)/gi, "Compiled successfully in 1000ms")
       // normalize counter logging that may appear in different spots
-      .replace(/^\s?counter a$/gim, "")
+      .replaceAll("\ncounter a", "")
       .split("\n")
       .map(x => x.trim())
       .join("\n")

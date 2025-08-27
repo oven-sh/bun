@@ -619,6 +619,39 @@ production:
       });
     });
 
+    test("strings are properly referenced", () => {
+      const config = {
+        version: "1.0",
+        services: {
+          web: {
+            image: "nginx:latest",
+            ports: ["80:80", "443:443"],
+            environment: {
+              NODE_ENV: "production",
+              DEBUG: false,
+            },
+          },
+          db: {
+            image: "postgres:13",
+            environment: {
+              POSTGRES_PASSWORD: "secret",
+              POSTGRES_DB: "myapp",
+            },
+            volumes: ["./data:/var/lib/postgresql/data"],
+          },
+        },
+        networks: {
+          default: {
+            driver: "bridge",
+          },
+        },
+      };
+
+      for (let i = 0; i < 1000000; i++) {
+        expect(Bun.YAML.stringify(config)).toBeString();
+      }
+    });
+
     // Anchor and alias tests (reference handling)
     describe("reference handling", () => {
       test("handles object references with anchors and aliases", () => {
@@ -667,7 +700,7 @@ production:
         expect(parsed.shared.host).toBe("localhost");
       });
 
-      test.skip("handles self-referencing objects", () => {
+      test.todo("handles self-referencing objects", () => {
         // Skipping as this causes build issues with circular references
         const obj = { name: "root" };
         obj.self = obj;
@@ -1088,7 +1121,7 @@ production:
         // Create deeply nested structure approaching stack limit
         let deep = {};
         let current = deep;
-        for (let i = 0; i < 10000; i++) {
+        for (let i = 0; i < 1000000; i++) {
           current.next = {};
           current = current.next;
         }

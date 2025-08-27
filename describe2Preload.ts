@@ -1,12 +1,12 @@
 import { beforeAll, afterAll, beforeEach, afterEach } from "bun:test";
 
-beforeAll(() => {
-  console.log("preload beforeAll");
-});
+// beforeAll(() => {
+//   console.log("preload beforeAll");
+// });
 
-afterAll(() => {
-  console.log("preload afterAll");
-});
+// afterAll(() => {
+//   console.log("preload afterAll");
+// });
 
 beforeEach(() => {
   console.log("preload beforeEach");

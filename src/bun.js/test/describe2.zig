@@ -163,6 +163,14 @@ pub const js_fns = struct {
                 const bunTestRoot = try getActiveTestRoot(globalThis, .{ .signature = .{ .str = @tagName(tag) ++ "()" }, .allow_in_preload = true });
                 const bunTest = bunTestRoot.getActiveFileUnlessInPreload(globalThis.bunVM()) orelse {
                     group.log("genericHook in preload", .{});
+
+                    if (tag != .beforeEach and tag != .afterEach) {
+                        // vitest, using setupFiles, runs beforeAll/afterAll for each file
+                        // jest, using --setupFilesAfterEnv, runs beforeAll/afterAll for each file
+                        // bun test runs beforeAll before the first file and afterAll after the last file
+                        return globalThis.throw("TODO: support calling beforeAll()/afterAll() during preload", .{});
+                    }
+
                     _ = try bunTestRoot.hook_scope.appendHook(bunTestRoot.gpa, tag, callback, .{
                         .line_no = 0,
                     }, .{});

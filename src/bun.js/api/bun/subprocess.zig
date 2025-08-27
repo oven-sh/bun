@@ -1366,17 +1366,17 @@ pub fn spawnMaybeSync(
                         }
                     }
                     
-                    // Parse pivot_root option
-                    if (try container_val.get(globalThis, "pivot_root")) |pivot_val| {
-                        if (pivot_val.isString()) {
-                            const pivot_str = (try pivot_val.toBunString(globalThis)).toUTF8(bun.default_allocator);
-                            container_opts.pivot_root = bun.default_allocator.dupe(u8, pivot_str.slice()) catch null;
-                            pivot_str.deinit();
+                    // Parse root option
+                    if (try container_val.get(globalThis, "root")) |root_val| {
+                        if (root_val.isString()) {
+                            const root_str = (try root_val.toBunString(globalThis)).toUTF8(bun.default_allocator);
+                            container_opts.root = bun.default_allocator.dupe(u8, root_str.slice()) catch null;
+                            root_str.deinit();
                         }
                     }
                     
                     // Build final container options
-                    if (namespace_opts != null or fs_mounts.items.len > 0 or resource_limits != null or container_opts.pivot_root != null) {
+                    if (namespace_opts != null or fs_mounts.items.len > 0 or resource_limits != null or container_opts.root != null) {
                         container_opts.namespace = namespace_opts;
                         container_opts.fs = if (fs_mounts.items.len > 0) fs_mounts.items else null;
                         container_opts.limit = resource_limits;

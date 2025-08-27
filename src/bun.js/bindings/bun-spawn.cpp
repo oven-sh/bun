@@ -129,8 +129,8 @@ typedef struct bun_container_setup_t {
     const bun_mount_config_t* mounts;
     size_t mount_count;
     
-    // Pivot root configuration
-    const char* pivot_root_to;  // New root directory (must be a mount point)
+    // Root filesystem configuration
+    const char* root;  // New root directory (must be a mount point)
     
     // Cgroup path if resource limits are set
     const char* cgroup_path;
@@ -652,11 +652,11 @@ static int setup_container_child(bun_container_setup_t* setup) {
     }
     
     // Perform pivot_root if requested
-    if (setup->pivot_root_to && setup->has_mount_namespace) {
-        if (perform_pivot_root(setup->pivot_root_to) != 0) {
+    if (setup->root && setup->has_mount_namespace) {
+        if (perform_pivot_root(setup->root) != 0) {
             char error_msg[256];
             snprintf(error_msg, sizeof(error_msg), 
-                "Failed to pivot_root to %s: %s", setup->pivot_root_to, strerror(errno));
+                "Failed to pivot_root to %s: %s", setup->root, strerror(errno));
             write_error_to_pipe(setup->error_pipe_write, error_msg);
             close(setup->error_pipe_write);
             return -1;

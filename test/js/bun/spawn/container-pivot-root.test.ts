@@ -3,14 +3,14 @@ import { bunExe, bunEnv, tempDirWithFiles, tmpdirSync } from "harness";
 import path from "node:path";
 import fs from "node:fs";
 
-describe("container pivot_root", () => {
+describe("container root", () => {
   // Skip all tests if not Linux
   if (process.platform !== "linux") {
-    test.skip("pivot_root tests are Linux-only", () => {});
+    test.skip("root tests are Linux-only", () => {});
     return;
   }
 
-  test("pivot_root changes filesystem root", async () => {
+  test("root changes filesystem root", async () => {
     // Create a new root filesystem
     const newRoot = tempDirWithFiles("pivot-root-test", {
       "bin/echo": fs.readFileSync("/bin/echo"),
@@ -28,10 +28,10 @@ describe("container pivot_root", () => {
       cmd: [bunExe(), "-e", `
         const fs = require('fs');
         
-        // Before pivot_root, we're in the host filesystem
+        // Before root change, we're in the host filesystem
         console.log('Current root contents:', fs.readdirSync('/').join(', '));
         
-        // After pivot_root, we should be in the new root
+        // After root change, we should be in the new root
         // Check if we can see our test file
         try {
           const content = fs.readFileSync('/home/test.txt', 'utf8');
@@ -61,7 +61,7 @@ describe("container pivot_root", () => {
             to: "/newroot",
           },
         ],
-        pivot_root: "/newroot",
+        root: "/newroot",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -80,7 +80,7 @@ describe("container pivot_root", () => {
     expect(stdout).not.toContain("ERROR: Old root is still accessible");
   });
 
-  test("pivot_root with tmpfs as new root", async () => {
+  test("root with tmpfs as new root", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `
         const fs = require('fs');
@@ -115,7 +115,7 @@ describe("container pivot_root", () => {
             options: { tmpfs: { size: 10 * 1024 * 1024 } },
           },
         ],
-        pivot_root: "/tmproot",
+        root: "/tmproot",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -134,7 +134,7 @@ describe("container pivot_root", () => {
     expect(stdout).toContain("Has host dirs: false");
   });
 
-  test("pivot_root with overlayfs", async () => {
+  test("root with overlayfs", async () => {
     // Create lower layer with base system files
     const lowerDir = tempDirWithFiles("pivot-overlay-lower", {
       "bin/sh": fs.readFileSync("/bin/sh"),
@@ -187,7 +187,7 @@ describe("container pivot_root", () => {
             },
           },
         ],
-        pivot_root: "/overlay",
+        root: "/overlay",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -208,8 +208,8 @@ describe("container pivot_root", () => {
     expect(stdout).toContain("usr");
   });
 
-  test("pivot_root requires mount namespace", async () => {
-    // Try to pivot_root without mount namespace - should fail
+  test("root requires mount namespace", async () => {
+    // Try to change root without mount namespace - should fail
     const newRoot = tempDirWithFiles("pivot-no-mount-ns", {
       "test.txt": "test",
     });
@@ -223,18 +223,18 @@ describe("container pivot_root", () => {
             pid: true,
             // Note: no mount namespace
           },
-          pivot_root: newRoot,
+          root: newRoot,
         },
         stdout: "pipe",
         stderr: "pipe",
       });
 
       const exitCode = await proc.exited;
-      // Should fail because pivot_root requires mount namespace
+      // Should fail because root change requires mount namespace
       expect(exitCode).not.toBe(0);
     } catch (e: any) {
       // Expected to fail
-      expect(e.message).toContain("pivot_root");
+      expect(e.message).toContain("root");
     }
   });
 });

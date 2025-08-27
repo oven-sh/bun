@@ -2491,9 +2491,9 @@ fn spawnWithContainer(
         }
     }
     
-    // Pivot root configuration
-    if (container_context.options.pivot_root) |pivot_root_path| {
-        container_setup.pivot_root_to = (bun.default_allocator.dupeZ(u8, pivot_root_path) catch {
+    // Root filesystem configuration
+    if (container_context.options.root) |root_path| {
+        container_setup.root = (bun.default_allocator.dupeZ(u8, root_path) catch {
             return .{ .err = bun.sys.Error.fromCode(.NOMEM, .posix_spawn) };
         }).ptr;
     }

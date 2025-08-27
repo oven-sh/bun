@@ -1760,10 +1760,6 @@ pub const TestCommand = struct {
         const file_title = bun.path.relative(FileSystem.instance.top_level_dir, file_path);
         const file_id = bun.jsc.Jest.Jest.runner.?.getOrPutFile(file_path).file_id;
 
-        var describe2Root = &jest.Jest.runner.?.describe2Root;
-        describe2Root.enterFile(file_id);
-        defer describe2Root.exitFile();
-
         // In Github Actions, append a special prefix that will group
         // subsequent log lines into a collapsable group.
         // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#grouping-log-lines
@@ -1777,6 +1773,10 @@ pub const TestCommand = struct {
         while (repeat_index < repeat_count) : (repeat_index += 1) {
             bun.jsc.Jest.describe2.group.begin(@src()); // TODO: remove this
             defer bun.jsc.Jest.describe2.group.end();
+
+            var describe2Root = &jest.Jest.runner.?.describe2Root;
+            describe2Root.enterFile(file_id);
+            defer describe2Root.exitFile();
 
             reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index);
 

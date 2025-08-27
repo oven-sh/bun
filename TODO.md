@@ -2,6 +2,7 @@ Complete before merge:
 
 - [ ] make sure it exits with code 1 on failure
 - [ ] add preload hooks
+- [x] announce results of skip/todo with no callback, eg `test.skip("abc")` or `test.todo("def")`
 - [x] fix toMatchInlineSnapshot
 - [x] make sure error.SnapshotInConcurrentGroup prints well
 - [ ] make the summary work again

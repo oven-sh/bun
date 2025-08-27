@@ -65,7 +65,7 @@ pub fn enqueueDescribeCallback(this: *Collection, callback: ?describe2.CallbackW
     }
 }
 
-pub fn enqueueTestCallback(this: *Collection, name_not_owned: ?[]const u8, callback: describe2.CallbackWithArgs, cfg: describe2.ExecutionEntryCfg, base: describe2.BaseScopeCfg) bun.JSError!void {
+pub fn enqueueTestCallback(this: *Collection, name_not_owned: ?[]const u8, callback: ?describe2.CallbackWithArgs, cfg: describe2.ExecutionEntryCfg, base: describe2.BaseScopeCfg) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 

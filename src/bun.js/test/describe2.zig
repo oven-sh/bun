@@ -60,7 +60,7 @@ pub const js_fns = struct {
     }
     const ParseArgumentsResult = struct {
         description: ?[]const u8,
-        callback: jsc.JSValue,
+        callback: ?jsc.JSValue,
         options: struct {
             timeout: ?f64 = null, // TODO: use this value
             retry: ?f64 = null, // TODO: use this value
@@ -70,7 +70,7 @@ pub const js_fns = struct {
             if (this.description) |str| gpa.free(str);
         }
     };
-    pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, bunTest: *BunTestFile) bun.JSError!ParseArgumentsResult {
+    pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, bunTest: *BunTestFile, cfg: struct { require_callback: bool }) bun.JSError!ParseArgumentsResult {
         var a1, var a2, var a3 = callframe.argumentsAsArray(3);
 
         if (a1.isFunction()) {
@@ -86,11 +86,17 @@ pub const js_fns = struct {
 
         const description, const callback, const options = .{ a1, a2, a3 };
 
-        if (!callback.isFunction()) return globalThis.throw("{s} expects a function as the second argument", .{signature});
+        const result_callback: ?jsc.JSValue = if (!cfg.require_callback and callback.isUndefinedOrNull()) blk: {
+            break :blk null;
+        } else if (callback.isFunction()) blk: {
+            break :blk callback.withAsyncContextIfNeeded(globalThis);
+        } else {
+            return globalThis.throw("{s} expects a function as the second argument", .{signature});
+        };
 
         var result: ParseArgumentsResult = .{
             .description = null,
-            .callback = callback.withAsyncContextIfNeeded(globalThis),
+            .callback = result_callback,
             .options = .{},
         };
         errdefer result.deinit(bunTest.gpa);

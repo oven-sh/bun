@@ -74,7 +74,7 @@ pub const Optional = struct {
         if (result == .zero) return null;
         return result;
     }
-    pub fn dupe(this: *Optional, gpa: std.mem.Allocator) Optional {
+    pub fn dupe(this: Optional, gpa: std.mem.Allocator) Optional {
         return .{ ._backing = this._backing.dupe(gpa) };
     }
     pub fn has(this: Optional) bool {

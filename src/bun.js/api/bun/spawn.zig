@@ -310,6 +310,9 @@ pub const PosixSpawn = struct {
         mounts: ?[*]const MountConfig = null,
         mount_count: usize = 0,
         
+        // Pivot root configuration
+        pivot_root_to: ?[*:0]const u8 = null,
+        
         // Resource limits
         cgroup_path: ?[*:0]const u8 = null,
         memory_limit: u64 = 0,

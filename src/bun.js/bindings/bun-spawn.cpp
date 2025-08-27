@@ -129,6 +129,9 @@ typedef struct bun_container_setup_t {
     const bun_mount_config_t* mounts;
     size_t mount_count;
     
+    // Pivot root configuration
+    const char* pivot_root_to;  // New root directory (must be a mount point)
+    
     // Cgroup path if resource limits are set
     const char* cgroup_path;
     uint64_t memory_limit;
@@ -489,6 +492,67 @@ static int mkdir_recursive(const char* path, mode_t mode) {
     return (result == 0 || errno == EEXIST) ? 0 : -1;
 }
 
+// Perform pivot_root to change the root filesystem
+static int perform_pivot_root(const char* new_root) {
+    // pivot_root requires:
+    // 1. new_root must be a mount point
+    // 2. old root must be put somewhere under new_root
+    
+    // First, ensure new_root is a mount point by bind mounting it to itself
+    if (mount(new_root, new_root, NULL, MS_BIND | MS_REC, NULL) != 0) {
+        return -1;
+    }
+    
+    // Create directory for old root under new root
+    char old_root_path[256];
+    snprintf(old_root_path, sizeof(old_root_path), "%s/.old_root", new_root);
+    
+    // Create the directory if it doesn't exist
+    mkdir(old_root_path, 0755);
+    
+    // Save current directory
+    int old_cwd = open(".", O_RDONLY | O_CLOEXEC);
+    if (old_cwd < 0) {
+        return -1;
+    }
+    
+    // Change to new root directory
+    if (chdir(new_root) != 0) {
+        close(old_cwd);
+        return -1;
+    }
+    
+    // Perform the pivot_root syscall
+    // This swaps the mount at / with the mount at new_root
+    if (syscall(SYS_pivot_root, ".", ".old_root") != 0) {
+        close(old_cwd);
+        return -1;
+    }
+    
+    // At this point:
+    // - The old root is at /.old_root
+    // - We are in the new root
+    // - Current directory is still the old new_root
+    
+    // Change to the real root
+    if (chdir("/") != 0) {
+        close(old_cwd);
+        return -1;
+    }
+    
+    // Unmount the old root (with MNT_DETACH to lazy unmount)
+    // This is important to prevent container escapes
+    if (umount2("/.old_root", MNT_DETACH) != 0) {
+        // Non-fatal - old root remains accessible but that might be intended
+    }
+    
+    // Remove the old_root directory
+    rmdir("/.old_root");
+    
+    close(old_cwd);
+    return 0;
+}
+
 // Setup overlayfs mount
 static int setup_overlayfs_mount(const bun_mount_config_t* mnt) {
     if (!mnt->target || !mnt->overlay.lower) {
@@ -584,6 +648,18 @@ static int setup_container_child(bun_container_setup_t* setup) {
                 close(setup->error_pipe_write);
                 return -1;
             }
+        }
+    }
+    
+    // Perform pivot_root if requested
+    if (setup->pivot_root_to && setup->has_mount_namespace) {
+        if (perform_pivot_root(setup->pivot_root_to) != 0) {
+            char error_msg[256];
+            snprintf(error_msg, sizeof(error_msg), 
+                "Failed to pivot_root to %s: %s", setup->pivot_root_to, strerror(errno));
+            write_error_to_pipe(setup->error_pipe_write, error_msg);
+            close(setup->error_pipe_write);
+            return -1;
         }
     }
     

@@ -37,6 +37,9 @@ pub const ContainerOptions = struct {
     /// Filesystem mounts
     fs: ?[]const FilesystemMount = null,
 
+    /// Pivot root to new filesystem root (requires mount namespace)
+    pivot_root: ?[]const u8 = null,
+
     /// Resource limits
     limit: ?ResourceLimits = null,
 };

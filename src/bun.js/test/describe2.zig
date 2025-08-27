@@ -232,19 +232,20 @@ pub const BunTest = struct {
         bun.assert(this.active_file == null);
     }
 
-    pub fn enterFile(this: *BunTest, file_id: jsc.Jest.TestRunner.File.ID) void {
+    pub fn enterFile(this: *BunTest, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter) void {
         group.begin(@src());
         defer group.end();
 
         bun.assert(this.active_file == null);
-        this.active_file = bun.create(this.gpa, BunTestFile, .init(this.gpa, this, file_id));
+        this.active_file = bun.create(this.gpa, BunTestFile, .init(this.gpa, this, file_id, reporter));
     }
     pub fn exitFile(this: *BunTest) void {
         group.begin(@src());
         defer group.end();
 
         bun.assert(this.active_file != null);
-        this.active_file.?.deinit();
+        this.active_file.?.reporter = null;
+        this.active_file.?.deinit(); // TODO: deref rather than deinit
         this.gpa.destroy(this.active_file.?);
         this.active_file = null;
     }
@@ -256,14 +257,18 @@ pub const BunTest = struct {
     }
 };
 
-/// TODO: this will be a JSValue (returned by `Bun.jest(...)`). there will be one per file. they will be gc objects and cleaned up when no longer used.
 pub const BunTestFile = struct {
+    // const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    // ref_count: RefCount, // TODO: add ref count & hide the deinit function (deinit->deinitFromUnref())
+
     buntest: *BunTest,
     in_run_loop: bool,
     allocation_scope: *bun.AllocationScope,
     gpa: std.mem.Allocator,
     done_promise: Strong.Optional = .empty,
     file_id: jsc.Jest.TestRunner.File.ID,
+    /// null if the runner has moved on to the next file
+    reporter: ?*test_command.CommandLineReporter,
 
     phase: enum {
         collection,
@@ -273,7 +278,7 @@ pub const BunTestFile = struct {
     collection: Collection,
     execution: Execution,
 
-    pub fn init(outer_gpa: std.mem.Allocator, bunTest: *BunTest, file_id: jsc.Jest.TestRunner.File.ID) BunTestFile {
+    pub fn init(outer_gpa: std.mem.Allocator, bunTest: *BunTest, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter) BunTestFile {
         group.begin(@src());
         defer group.end();
 
@@ -288,6 +293,7 @@ pub const BunTestFile = struct {
             .file_id = file_id,
             .collection = .init(gpa, bunTest),
             .execution = .init(gpa),
+            .reporter = reporter,
         };
     }
     pub fn deinit(this: *BunTestFile) void {

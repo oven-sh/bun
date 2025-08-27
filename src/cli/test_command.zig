@@ -822,52 +822,24 @@ pub const CommandLineReporter = struct {
 
         const output_writer = Output.errorWriter(); // unbuffered. buffered is errorWriterBuffered() / Output.flush()
         output_writer.writeAll(output_buf.items[initial_length..]) catch {};
-    }
 
-    pub fn handleTestFilteredOut(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
+        var this: *CommandLineReporter = buntest.reporter orelse return; // command line reporter is missing! uh oh!
+        switch (sequence.result) {
+            .pending => {},
+            .pass => this.summary().pass += 1,
+            .skip => this.summary().skip += 1,
+            .todo => this.summary().todo += 1,
+            .skipped_because_label => this.summary().skipped_because_label += 1, // TODO: when a file_reporter is set, it's supposed to log these maybe? ??
 
-        if (this.file_reporter) |_| {
-            var writer_ = Output.errorWriterBuffered();
-            defer Output.flush();
-
-            const initial_length = this.skips_to_repeat_buf.items.len;
-            var writer = this.skips_to_repeat_buf.writer(bun.default_allocator);
-
-            writeTestStatusLine(.skipped_because_label, &writer);
-            const line_number = this.jest.tests.items(.line_number)[id];
-            printTestLine(.skipped_because_label, label, elapsed_ns, parent, expectations, true, writer, file, this.file_reporter, line_number);
-
-            writer_.writeAll(this.skips_to_repeat_buf.items[initial_length..]) catch {};
+            .fail,
+            .fail_because_failing_test_passed,
+            .fail_because_todo_passed,
+            .fail_because_expected_has_assertions,
+            .fail_because_expected_assertion_count,
+            .timeout,
+            => this.summary().fail += 1,
         }
-
-        // this.updateDots();
-        this.summary().skipped_because_label += 1;
-        this.summary().expectations += expectations;
-        this.jest.tests.items(.status)[id] = TestRunner.Test.Status.skipped_because_label;
-    }
-
-    pub fn handleTestTodo(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        var writer_ = Output.errorWriterBuffered();
-
-        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
-
-        // when the tests skip, we want to repeat the failures at the end
-        // so that you can see them better when there are lots of tests that ran
-        const initial_length = this.todos_to_repeat_buf.items.len;
-        var writer = this.todos_to_repeat_buf.writer(bun.default_allocator);
-
-        writeTestStatusLine(.todo, &writer);
-        const line_number = this.jest.tests.items(.line_number)[id];
-        printTestLine(.todo, label, elapsed_ns, parent, expectations, true, writer, file, this.file_reporter, line_number);
-
-        writer_.writeAll(this.todos_to_repeat_buf.items[initial_length..]) catch {};
-        Output.flush();
-
-        // this.updateDots();
-        this.summary().todo += 1;
-        this.summary().expectations += expectations;
-        this.jest.tests.items(.status)[id] = TestRunner.Test.Status.todo;
+        this.summary().expectations +|= sequence.expect_call_count;
     }
 
     pub fn printSummary(this: *CommandLineReporter) void {
@@ -1775,7 +1747,7 @@ pub const TestCommand = struct {
             defer bun.jsc.Jest.describe2.group.end();
 
             var describe2Root = &jest.Jest.runner.?.describe2Root;
-            describe2Root.enterFile(file_id);
+            describe2Root.enterFile(file_id, reporter);
             defer describe2Root.exitFile();
 
             reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index);

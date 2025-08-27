@@ -94,10 +94,10 @@ pub const FilesystemOptions = union(enum) {
 };
 
 pub const OverlayfsOptions = struct {
-    /// Upper directory (read-write layer)
-    upper_dir: []const u8,
-    /// Work directory (required by overlayfs)
-    work_dir: []const u8,
+    /// Upper directory (read-write layer, optional - makes it read-only if not provided)
+    upper_dir: ?[]const u8 = null,
+    /// Work directory (required by overlayfs if upper_dir is provided)
+    work_dir: ?[]const u8 = null,
     /// Lower directories (read-only layers)
     lower_dirs: []const []const u8,
 };
@@ -502,8 +502,12 @@ pub const ContainerContext = struct {
         log("Setting up overlayfs mount at {s}", .{mount_point});
 
         // Create directories if they don't exist
-        std.fs.cwd().makePath(config.upper_dir) catch {};
-        std.fs.cwd().makePath(config.work_dir) catch {};
+        if (config.upper_dir) |upper| {
+            std.fs.cwd().makePath(upper) catch {};
+        }
+        if (config.work_dir) |work| {
+            std.fs.cwd().makePath(work) catch {};
+        }
         std.fs.cwd().makePath(mount_point) catch {};
 
         // Build lowerdir string
@@ -513,11 +517,28 @@ pub const ContainerContext = struct {
         defer self.allocator.free(lowerdir);
 
         // Build mount options
-        const options = std.fmt.allocPrint(self.allocator, 
-            "lowerdir={s},upperdir={s},workdir={s}", 
-            .{ lowerdir, config.upper_dir, config.work_dir }
-        ) catch {
-            return ContainerError.OutOfMemory;
+        // Build options string based on what's available
+        const options = if (config.upper_dir) |upper| blk: {
+            if (config.work_dir) |work| {
+                // Read-write mode with upper and work dirs
+                break :blk std.fmt.allocPrint(self.allocator, 
+                    "lowerdir={s},upperdir={s},workdir={s}", 
+                    .{ lowerdir, upper, work }
+                ) catch {
+                    return ContainerError.OutOfMemory;
+                };
+            } else {
+                // Invalid: upper without work
+                return ContainerError.InvalidConfiguration;
+            }
+        } else blk: {
+            // Read-only mode with just lower dirs
+            break :blk std.fmt.allocPrint(self.allocator, 
+                "lowerdir={s}", 
+                .{ lowerdir }
+            ) catch {
+                return ContainerError.OutOfMemory;
+            };
         };
         defer self.allocator.free(options);
 

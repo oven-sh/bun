@@ -1301,13 +1301,13 @@ pub fn spawnMaybeSync(
                                 const type_val = try mount_val.get(globalThis, "type") orelse continue;
                                 if (!type_val.isString()) continue;
                                 
-                                const type_str = (try type_val.toBunString(globalThis)).toUTF8(bun.default_allocator);
+                                const type_str = (try type_val.toBunString(globalThis)).toUTF8(allocator);
                                 defer type_str.deinit();
                                 
                                 const to_val = try mount_val.get(globalThis, "to") orelse continue;
                                 if (!to_val.isString()) continue;
-                                const to_str = (try to_val.toBunString(globalThis)).toUTF8(bun.default_allocator);
-                                const to_owned = bun.default_allocator.dupe(u8, to_str.slice()) catch continue;
+                                const to_str = (try to_val.toBunString(globalThis)).toUTF8(allocator);
+                                const to_owned = allocator.dupeZ(u8, to_str.slice()) catch continue;
                                 
                                 var mount = LinuxContainer.FilesystemMount{
                                     .type = if (std.mem.eql(u8, type_str.slice(), "overlayfs"))
@@ -1324,13 +1324,98 @@ pub fn spawnMaybeSync(
                                 if (mount.type == .bind) {
                                     if (try mount_val.get(globalThis, "from")) |from_val| {
                                         if (from_val.isString()) {
-                                            const from_str = (try from_val.toBunString(globalThis)).toUTF8(bun.default_allocator);
-                                            mount.from = bun.default_allocator.dupe(u8, from_str.slice()) catch continue;
+                                            const from_str = (try from_val.toBunString(globalThis)).toUTF8(allocator);
+                                            mount.from = allocator.dupeZ(u8, from_str.slice()) catch continue;
                                         }
                                     }
                                 }
                                 
-                                // TODO: Parse mount-specific options
+                                // Parse mount-specific options
+                                if (try mount_val.get(globalThis, "options")) |options_val| {
+                                    if (options_val.isObject()) {
+                                        switch (mount.type) {
+                                            .overlayfs => {
+                                                if (try options_val.get(globalThis, "overlayfs")) |overlay_val| {
+                                                    if (overlay_val.isObject()) {
+                                                        var overlay_opts = LinuxContainer.OverlayfsOptions{
+                                                            .upper_dir = null,
+                                                            .work_dir = null,
+                                                            .lower_dirs = &[_][]const u8{},
+                                                        };
+                                                        
+                                                        // Parse lower_dirs (required)
+                                                        if (try overlay_val.get(globalThis, "lower_dirs")) |lower_val| {
+                                                            if (lower_val.isArray()) {
+                                                                const len = @as(usize, @intCast(try lower_val.getLength(globalThis)));
+                                                                var lower_dirs = allocator.alloc([]const u8, len) catch continue;
+                                                                
+                                                                for (0..len) |i| {
+                                                                    const item = lower_val.getIndex(globalThis, @intCast(i)) catch continue;
+                                                                    if (item.isString()) {
+                                                                        const str = (try item.toBunString(globalThis)).toUTF8(allocator);
+                                                                        lower_dirs[i] = allocator.dupeZ(u8, str.slice()) catch continue;
+                                                                        str.deinit();
+                                                                    }
+                                                                }
+                                                                overlay_opts.lower_dirs = lower_dirs;
+                                                            }
+                                                        }
+                                                        
+                                                        // Parse upper_dir (optional)
+                                                        if (try overlay_val.get(globalThis, "upper_dir")) |upper_val| {
+                                                            if (upper_val.isString()) {
+                                                                const str = (try upper_val.toBunString(globalThis)).toUTF8(allocator);
+                                                                overlay_opts.upper_dir = allocator.dupeZ(u8, str.slice()) catch null;
+                                                                str.deinit();
+                                                            }
+                                                        }
+                                                        
+                                                        // Parse work_dir (optional)
+                                                        if (try overlay_val.get(globalThis, "work_dir")) |work_val| {
+                                                            if (work_val.isString()) {
+                                                                const str = (try work_val.toBunString(globalThis)).toUTF8(allocator);
+                                                                overlay_opts.work_dir = allocator.dupeZ(u8, str.slice()) catch null;
+                                                                str.deinit();
+                                                            }
+                                                        }
+                                                        
+                                                        mount.options = .{ .overlayfs = overlay_opts };
+                                                    }
+                                                }
+                                            },
+                                            .tmpfs => {
+                                                if (try options_val.get(globalThis, "tmpfs")) |tmpfs_val| {
+                                                    if (tmpfs_val.isObject()) {
+                                                        var tmpfs_opts = LinuxContainer.TmpfsOptions{};
+                                                        
+                                                        if (try tmpfs_val.get(globalThis, "size")) |size_val| {
+                                                            if (size_val.isNumber()) {
+                                                                tmpfs_opts.size = @intFromFloat(size_val.asNumber());
+                                                            }
+                                                        }
+                                                        
+                                                        mount.options = .{ .tmpfs = tmpfs_opts };
+                                                    }
+                                                }
+                                            },
+                                            .bind => {
+                                                if (try options_val.get(globalThis, "bind")) |bind_val| {
+                                                    if (bind_val.isObject()) {
+                                                        var bind_opts = LinuxContainer.BindOptions{};
+                                                        
+                                                        if (try bind_val.get(globalThis, "readonly")) |ro_val| {
+                                                            if (ro_val.isBoolean()) {
+                                                                bind_opts.readonly = ro_val.asBoolean();
+                                                            }
+                                                        }
+                                                        
+                                                        mount.options = .{ .bind = bind_opts };
+                                                    }
+                                                }
+                                            },
+                                        }
+                                    }
+                                }
                                 
                                 fs_mounts.append(mount) catch continue;
                             }
@@ -1369,8 +1454,8 @@ pub fn spawnMaybeSync(
                     // Parse root option
                     if (try container_val.get(globalThis, "root")) |root_val| {
                         if (root_val.isString()) {
-                            const root_str = (try root_val.toBunString(globalThis)).toUTF8(bun.default_allocator);
-                            container_opts.root = bun.default_allocator.dupe(u8, root_str.slice()) catch null;
+                            const root_str = (try root_val.toBunString(globalThis)).toUTF8(allocator);
+                            container_opts.root = allocator.dupeZ(u8, root_str.slice()) catch null;
                             root_str.deinit();
                         }
                     }

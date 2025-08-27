@@ -124,6 +124,9 @@ typedef struct bun_container_setup_t {
     // Network namespace flag
     bool has_network_namespace;
     
+    // PID namespace flag
+    bool has_pid_namespace;
+    
     // Mount namespace configuration
     bool has_mount_namespace;
     const bun_mount_config_t* mounts;
@@ -619,6 +622,19 @@ static int setup_container_child(bun_container_setup_t* setup) {
             write_error_to_pipe(setup->error_pipe_write, 
                 "Warning: Failed to configure loopback interface in network namespace");
             // Don't return error - let the process continue
+        }
+    }
+    
+    // Mount /proc if we have PID namespace (requires mount namespace too)
+    if (setup->has_pid_namespace && setup->has_mount_namespace) {
+        // Mount new /proc to see only processes in this namespace
+        if (mount("proc", "/proc", "proc", 0, NULL) != 0) {
+            // Non-fatal - some containers might not need /proc
+            // Just log a warning
+            char warn_msg[256];
+            snprintf(warn_msg, sizeof(warn_msg), 
+                "Warning: Could not mount /proc in PID namespace: %s", strerror(errno));
+            write_error_to_pipe(setup->error_pipe_write, warn_msg);
         }
     }
     

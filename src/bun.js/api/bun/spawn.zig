@@ -305,6 +305,9 @@ pub const PosixSpawn = struct {
         // Network namespace
         has_network_namespace: bool = false,
         
+        // PID namespace
+        has_pid_namespace: bool = false,
+        
         // Mount namespace
         has_mount_namespace: bool = false,
         mounts: ?[*]const MountConfig = null,

@@ -2400,6 +2400,10 @@ fn spawnWithContainer(
         
         if (ns.pid != null and ns.pid.?) {
             namespace_flags |= std.os.linux.CLONE.NEWPID;
+            container_setup.has_pid_namespace = true;
+            // PID namespace requires mount namespace to mount /proc
+            namespace_flags |= std.os.linux.CLONE.NEWNS;
+            container_setup.has_mount_namespace = true;
         }
         
         if (ns.network != null) {
@@ -2427,9 +2431,8 @@ fn spawnWithContainer(
                 switch (mount.type) {
                     .bind => {
                         config.type = .bind;
-                        config.source = if (mount.from) |from| 
-                            (bun.default_allocator.dupeZ(u8, from) catch null) 
-                        else null;
+                        // Already null-terminated from arena
+                        config.source = if (mount.from) |from| @ptrCast(from.ptr) else null;
                     },
                     .tmpfs => {
                         config.type = .tmpfs;
@@ -2450,33 +2453,38 @@ fn spawnWithContainer(
                                 
                                 // Process lower dirs (required)
                                 // Join multiple lower dirs with colon separator
+                                // TODO: Use arena allocator here too
                                 const lower_str = std.mem.join(bun.default_allocator, ":", overlay_opts.lower_dirs) catch {
                                     return .{ .err = bun.sys.Error.fromCode(.NOMEM, .posix_spawn) };
                                 };
+                                defer bun.default_allocator.free(lower_str);
                                 config.overlay.lower = (bun.default_allocator.dupeZ(u8, lower_str) catch {
-                                    bun.default_allocator.free(lower_str);
                                     return .{ .err = bun.sys.Error.fromCode(.NOMEM, .posix_spawn) };
                                 }).ptr;
-                                bun.default_allocator.free(lower_str);
                                 
                                 // Process upper dir (makes it read-write)
-                                config.overlay.upper = (bun.default_allocator.dupeZ(u8, overlay_opts.upper_dir) catch {
-                                    return .{ .err = bun.sys.Error.fromCode(.NOMEM, .posix_spawn) };
-                                }).ptr;
+                                // String is already null-terminated from arena allocator
+                                if (overlay_opts.upper_dir) |upper| {
+                                    // dupeZ ensures null termination
+                                    config.overlay.upper = @ptrCast(upper.ptr);
+                                } else {
+                                    config.overlay.upper = null;
+                                }
                                 
                                 // Process work dir
-                                config.overlay.work = (bun.default_allocator.dupeZ(u8, overlay_opts.work_dir) catch {
-                                    return .{ .err = bun.sys.Error.fromCode(.NOMEM, .posix_spawn) };
-                                }).ptr;
+                                // String is already null-terminated from arena allocator
+                                if (overlay_opts.work_dir) |work| {
+                                    config.overlay.work = @ptrCast(work.ptr);
+                                } else {
+                                    config.overlay.work = null;
+                                }
                             }
                         }
                     },
                 }
                 
-                // Set target (required)
-                config.target = bun.default_allocator.dupeZ(u8, mount.to) catch {
-                    return .{ .err = bun.sys.Error.fromCode(.NOMEM, .posix_spawn) };
-                };
+                // Set target (required) - already null-terminated from arena
+                config.target = @ptrCast(mount.to.ptr);
                 
                 // Set readonly flag for bind mounts
                 if (mount.options) |opts| {
@@ -2492,10 +2500,9 @@ fn spawnWithContainer(
     }
     
     // Root filesystem configuration
+    // String is already null-terminated from arena allocator in subprocess.zig
     if (container_context.options.root) |root_path| {
-        container_setup.root = (bun.default_allocator.dupeZ(u8, root_path) catch {
-            return .{ .err = bun.sys.Error.fromCode(.NOMEM, .posix_spawn) };
-        }).ptr;
+        container_setup.root = @ptrCast(root_path.ptr);
     }
     
     // Resource limits and cgroup setup

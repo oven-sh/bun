@@ -2441,8 +2441,35 @@ fn spawnWithContainer(
                         }
                     },
                     .overlayfs => {
-                        // TODO: Support overlayfs (more complex)
-                        continue;
+                        config.type = .overlayfs;
+                        config.source = null;
+                        
+                        if (mount.options) |opts| {
+                            if (opts == .overlayfs) {
+                                const overlay_opts = opts.overlayfs;
+                                
+                                // Process lower dirs (required)
+                                // Join multiple lower dirs with colon separator
+                                const lower_str = std.mem.join(bun.default_allocator, ":", overlay_opts.lower_dirs) catch {
+                                    return .{ .err = bun.sys.Error.fromCode(.NOMEM, .posix_spawn) };
+                                };
+                                config.overlay.lower = (bun.default_allocator.dupeZ(u8, lower_str) catch {
+                                    bun.default_allocator.free(lower_str);
+                                    return .{ .err = bun.sys.Error.fromCode(.NOMEM, .posix_spawn) };
+                                }).ptr;
+                                bun.default_allocator.free(lower_str);
+                                
+                                // Process upper dir (makes it read-write)
+                                config.overlay.upper = (bun.default_allocator.dupeZ(u8, overlay_opts.upper_dir) catch {
+                                    return .{ .err = bun.sys.Error.fromCode(.NOMEM, .posix_spawn) };
+                                }).ptr;
+                                
+                                // Process work dir
+                                config.overlay.work = (bun.default_allocator.dupeZ(u8, overlay_opts.work_dir) catch {
+                                    return .{ .err = bun.sys.Error.fromCode(.NOMEM, .posix_spawn) };
+                                }).ptr;
+                            }
+                        }
                     },
                 }
                 

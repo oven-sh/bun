@@ -266,6 +266,13 @@ pub const PosixSpawn = struct {
     pub const MountType = enum(u32) {
         bind = 0,
         tmpfs = 1,
+        overlayfs = 2,
+    };
+    
+    pub const OverlayfsConfig = extern struct {
+        lower: ?[*:0]const u8 = null,     // Lower (readonly) layer(s), colon-separated
+        upper: ?[*:0]const u8 = null,     // Upper (read-write) layer
+        work: ?[*:0]const u8 = null,      // Work directory (must be on same filesystem as upper)
     };
     
     pub const MountConfig = extern struct {
@@ -274,6 +281,7 @@ pub const PosixSpawn = struct {
         target: [*:0]const u8,
         readonly: bool = false,
         tmpfs_size: u64 = 0,  // For tmpfs, 0 = default
+        overlay: OverlayfsConfig = .{},  // For overlayfs
     };
     
     pub const ContainerSetup = extern struct {

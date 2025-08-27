@@ -82,7 +82,15 @@ typedef struct bun_spawn_file_action_list_t {
 enum bun_mount_type {
     MOUNT_TYPE_BIND = 0,
     MOUNT_TYPE_TMPFS = 1,
+    MOUNT_TYPE_OVERLAYFS = 2,
 };
+
+// Overlayfs configuration
+typedef struct bun_overlayfs_config_t {
+    const char* lower;     // Lower (readonly) layer(s), colon-separated
+    const char* upper;     // Upper (read-write) layer
+    const char* work;      // Work directory (must be on same filesystem as upper)
+} bun_overlayfs_config_t;
 
 // Single mount configuration
 typedef struct bun_mount_config_t {
@@ -91,6 +99,7 @@ typedef struct bun_mount_config_t {
     const char* target;
     bool readonly;
     uint64_t tmpfs_size;  // For tmpfs, 0 = default
+    bun_overlayfs_config_t overlay;  // For overlayfs
 } bun_mount_config_t;
 
 // Container setup context passed between parent and child
@@ -455,6 +464,72 @@ static int setup_tmpfs_mount(const bun_mount_config_t* mnt) {
     return 0;
 }
 
+// Helper to create directory recursively
+static int mkdir_recursive(const char* path, mode_t mode) {
+    char* path_copy = strdup(path);
+    if (!path_copy) {
+        errno = ENOMEM;
+        return -1;
+    }
+    
+    char* p = path_copy;
+    while (*p) {
+        if (*p == '/') {
+            *p = '\0';
+            if (strlen(path_copy) > 0) {
+                mkdir(path_copy, mode); // Ignore errors
+            }
+            *p = '/';
+        }
+        p++;
+    }
+    
+    int result = mkdir(path_copy, mode);
+    free(path_copy);
+    return (result == 0 || errno == EEXIST) ? 0 : -1;
+}
+
+// Setup overlayfs mount
+static int setup_overlayfs_mount(const bun_mount_config_t* mnt) {
+    if (!mnt->target || !mnt->overlay.lower) {
+        errno = EINVAL;
+        return -1;
+    }
+    
+    // Create target directory
+    if (mkdir(mnt->target, 0755) != 0 && errno != EEXIST) {
+        return -1;
+    }
+    
+    // Build overlayfs options string
+    char options[4096];
+    int offset = 0;
+    
+    // Add lower dirs (required)
+    offset = snprintf(options, sizeof(options), "lowerdir=%s", mnt->overlay.lower);
+    
+    // Add upper dir if provided (makes it read-write)
+    if (mnt->overlay.upper && mnt->overlay.work) {
+        // Create upper and work directories if they don't exist
+        mkdir_recursive(mnt->overlay.upper, 0755);
+        mkdir_recursive(mnt->overlay.work, 0755);
+        
+        offset += snprintf(options + offset, sizeof(options) - offset, 
+                          ",upperdir=%s,workdir=%s", 
+                          mnt->overlay.upper, mnt->overlay.work);
+    }
+    
+    // Mount overlayfs
+    if (mount("overlay", mnt->target, "overlay", 0, options) != 0) {
+        // If overlay fails, try overlay2 (older systems)
+        if (mount("overlay2", mnt->target, "overlay2", 0, options) != 0) {
+            return -1;
+        }
+    }
+    
+    return 0;
+}
+
 // Child-side container setup before exec
 static int setup_container_child(bun_container_setup_t* setup) {
     if (!setup) return 0;
@@ -495,6 +570,9 @@ static int setup_container_child(bun_container_setup_t* setup) {
                     break;
                 case MOUNT_TYPE_TMPFS:
                     mount_result = setup_tmpfs_mount(mnt);
+                    break;
+                case MOUNT_TYPE_OVERLAYFS:
+                    mount_result = setup_overlayfs_mount(mnt);
                     break;
             }
             

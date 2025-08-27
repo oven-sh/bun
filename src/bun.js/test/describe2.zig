@@ -553,10 +553,10 @@ pub const BunTestFile = struct {
             this.reporter.?.jest.unhandled_errors_between_tests += 1;
             bun.Output.prettyErrorln(
                 \\<r>
-                \\<b><d>#<r> <red><b>Unhandled error<r><d> {s}<r>
+                \\<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>
                 \\<d>-------------------------------<r>
                 \\
-            , .{if (handle_status == .show_unhandled_error_in_describe) "in describe" else "between tests"});
+            , .{});
             bun.Output.flush();
         }
         globalThis.bunVM().runErrorHandlerWithDedupe(result, null);

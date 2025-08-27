@@ -263,6 +263,19 @@ pub const PosixSpawn = struct {
     pub const Actions = if (Environment.isLinux) BunSpawn.Actions else PosixSpawnActions;
     pub const Attr = if (Environment.isLinux) BunSpawn.Attr else PosixSpawnAttr;
 
+    pub const MountType = enum(u32) {
+        bind = 0,
+        tmpfs = 1,
+    };
+    
+    pub const MountConfig = extern struct {
+        type: MountType,
+        source: ?[*:0]const u8 = null,  // For bind mounts
+        target: [*:0]const u8,
+        readonly: bool = false,
+        tmpfs_size: u64 = 0,  // For tmpfs, 0 = default
+    };
+    
     pub const ContainerSetup = extern struct {
         child_pid: pid_t = 0,
         sync_pipe_read: c_int = -1,
@@ -283,6 +296,11 @@ pub const PosixSpawn = struct {
         
         // Network namespace
         has_network_namespace: bool = false,
+        
+        // Mount namespace
+        has_mount_namespace: bool = false,
+        mounts: ?[*]const MountConfig = null,
+        mount_count: usize = 0,
         
         // Resource limits
         cgroup_path: ?[*:0]const u8 = null,

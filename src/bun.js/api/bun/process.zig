@@ -2409,8 +2409,59 @@ fn spawnWithContainer(
     }
     
     // Mount namespace if we have filesystem mounts
-    if (container_context.options.fs != null and container_context.options.fs.?.len > 0) {
-        namespace_flags |= std.os.linux.CLONE.NEWNS;
+    if (container_context.options.fs) |mounts| {
+        if (mounts.len > 0) {
+            namespace_flags |= std.os.linux.CLONE.NEWNS;
+            container_setup.has_mount_namespace = true;
+            
+            // Allocate mount configs
+            var mount_configs = bun.default_allocator.alloc(PosixSpawn.MountConfig, mounts.len) catch {
+                return .{ .err = bun.sys.Error.fromCode(.NOMEM, .posix_spawn) };
+            };
+            
+            // Convert mount configurations
+            for (mounts, 0..) |mount, i| {
+                var config = &mount_configs[i];
+                
+                // Set mount type
+                switch (mount.type) {
+                    .bind => {
+                        config.type = .bind;
+                        config.source = if (mount.from) |from| 
+                            (bun.default_allocator.dupeZ(u8, from) catch null) 
+                        else null;
+                    },
+                    .tmpfs => {
+                        config.type = .tmpfs;
+                        config.source = null;
+                        if (mount.options) |opts| {
+                            if (opts == .tmpfs) {
+                                config.tmpfs_size = opts.tmpfs.size orelse 0;
+                            }
+                        }
+                    },
+                    .overlayfs => {
+                        // TODO: Support overlayfs (more complex)
+                        continue;
+                    },
+                }
+                
+                // Set target (required)
+                config.target = bun.default_allocator.dupeZ(u8, mount.to) catch {
+                    return .{ .err = bun.sys.Error.fromCode(.NOMEM, .posix_spawn) };
+                };
+                
+                // Set readonly flag for bind mounts
+                if (mount.options) |opts| {
+                    if (opts == .bind) {
+                        config.readonly = opts.bind.readonly;
+                    }
+                }
+            }
+            
+            container_setup.mounts = mount_configs.ptr;
+            container_setup.mount_count = mount_configs.len;
+        }
     }
     
     // Resource limits and cgroup setup

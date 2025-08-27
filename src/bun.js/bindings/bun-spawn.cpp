@@ -21,6 +21,8 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
+#include <sys/mount.h>
+#include <libgen.h>
 #include <net/if.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
@@ -76,6 +78,21 @@ typedef struct bun_spawn_file_action_list_t {
     size_t len;
 } bun_spawn_file_action_list_t;
 
+// Mount types for container filesystem isolation
+enum bun_mount_type {
+    MOUNT_TYPE_BIND = 0,
+    MOUNT_TYPE_TMPFS = 1,
+};
+
+// Single mount configuration
+typedef struct bun_mount_config_t {
+    enum bun_mount_type type;
+    const char* source;  // For bind mounts
+    const char* target;
+    bool readonly;
+    uint64_t tmpfs_size;  // For tmpfs, 0 = default
+} bun_mount_config_t;
+
 // Container setup context passed between parent and child
 typedef struct bun_container_setup_t {
     pid_t child_pid;  // Set by parent after clone3
@@ -97,6 +114,11 @@ typedef struct bun_container_setup_t {
     
     // Network namespace flag
     bool has_network_namespace;
+    
+    // Mount namespace configuration
+    bool has_mount_namespace;
+    const bun_mount_config_t* mounts;
+    size_t mount_count;
     
     // Cgroup path if resource limits are set
     const char* cgroup_path;
@@ -337,6 +359,102 @@ static void write_error_to_pipe(int error_pipe_fd, const char* error_msg) {
     write(error_pipe_fd, error_msg, len);
 }
 
+// Setup bind mount
+static int setup_bind_mount(const bun_mount_config_t* mnt) {
+    if (!mnt->source || !mnt->target) {
+        errno = EINVAL;
+        return -1;
+    }
+    
+    // Check if source exists
+    struct stat st;
+    if (stat(mnt->source, &st) != 0) {
+        return -1;
+    }
+    
+    // Create target if needed
+    if (S_ISDIR(st.st_mode)) {
+        // Create directory
+        if (mkdir(mnt->target, 0755) != 0 && errno != EEXIST) {
+            return -1;
+        }
+    } else {
+        // For files, create parent directory and touch the file
+        char* target_copy = strdup(mnt->target);
+        if (!target_copy) {
+            errno = ENOMEM;
+            return -1;
+        }
+        
+        char* parent = dirname(target_copy);
+        // Create parent directories recursively
+        char* p = parent;
+        while (*p) {
+            if (*p == '/') {
+                *p = '\0';
+                if (strlen(parent) > 0) {
+                    mkdir(parent, 0755); // Ignore errors
+                }
+                *p = '/';
+            }
+            p++;
+        }
+        if (strlen(parent) > 0) {
+            mkdir(parent, 0755); // Ignore errors
+        }
+        free(target_copy);
+        
+        // Touch the file
+        int fd = open(mnt->target, O_CREAT | O_WRONLY | O_CLOEXEC, 0644);
+        if (fd >= 0) {
+            close(fd);
+        }
+    }
+    
+    // Perform the bind mount
+    unsigned long flags = MS_BIND;
+    if (mount(mnt->source, mnt->target, NULL, flags, NULL) != 0) {
+        return -1;
+    }
+    
+    // If readonly, remount with MS_RDONLY
+    if (mnt->readonly) {
+        flags = MS_BIND | MS_REMOUNT | MS_RDONLY;
+        if (mount(NULL, mnt->target, NULL, flags, NULL) != 0) {
+            // Non-fatal, mount succeeded but couldn't make it readonly
+        }
+    }
+    
+    return 0;
+}
+
+// Setup tmpfs mount
+static int setup_tmpfs_mount(const bun_mount_config_t* mnt) {
+    if (!mnt->target) {
+        errno = EINVAL;
+        return -1;
+    }
+    
+    // Create target directory
+    if (mkdir(mnt->target, 0755) != 0 && errno != EEXIST) {
+        return -1;
+    }
+    
+    // Prepare mount options
+    char options[256] = "mode=0755";
+    if (mnt->tmpfs_size > 0) {
+        size_t len = strlen(options);
+        snprintf(options + len, sizeof(options) - len, ",size=%lu", mnt->tmpfs_size);
+    }
+    
+    // Mount tmpfs
+    if (mount(NULL, mnt->target, "tmpfs", 0, options) != 0) {
+        return -1;
+    }
+    
+    return 0;
+}
+
 // Child-side container setup before exec
 static int setup_container_child(bun_container_setup_t* setup) {
     if (!setup) return 0;
@@ -365,8 +483,31 @@ static int setup_container_child(bun_container_setup_t* setup) {
         }
     }
     
-    // TODO: Mount namespace operations
-    // TODO: Pivot root if requested
+    // Setup filesystem mounts if we have a mount namespace
+    if (setup->has_mount_namespace && setup->mounts && setup->mount_count > 0) {
+        for (size_t i = 0; i < setup->mount_count; i++) {
+            const bun_mount_config_t* mnt = &setup->mounts[i];
+            int mount_result = 0;
+            
+            switch (mnt->type) {
+                case MOUNT_TYPE_BIND:
+                    mount_result = setup_bind_mount(mnt);
+                    break;
+                case MOUNT_TYPE_TMPFS:
+                    mount_result = setup_tmpfs_mount(mnt);
+                    break;
+            }
+            
+            if (mount_result != 0) {
+                char error_msg[256];
+                snprintf(error_msg, sizeof(error_msg), 
+                    "Failed to mount %s: %s", mnt->target, strerror(errno));
+                write_error_to_pipe(setup->error_pipe_write, error_msg);
+                close(setup->error_pipe_write);
+                return -1;
+            }
+        }
+    }
     
     // Close error pipe if no errors
     close(setup->error_pipe_write);

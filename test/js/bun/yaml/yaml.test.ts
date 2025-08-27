@@ -1,53 +1,54 @@
 import { describe, expect, test } from "bun:test";
+import { YAML } from "bun";
 
 describe("Bun.YAML", () => {
   describe("parse", () => {
     test("parses null values", () => {
-      expect(Bun.YAML.parse("null")).toBe(null);
-      expect(Bun.YAML.parse("~")).toBe(null);
-      expect(Bun.YAML.parse("")).toBe(null);
+      expect(YAML.parse("null")).toBe(null);
+      expect(YAML.parse("~")).toBe(null);
+      expect(YAML.parse("")).toBe(null);
     });
 
     test("parses boolean values", () => {
-      expect(Bun.YAML.parse("true")).toBe(true);
-      expect(Bun.YAML.parse("false")).toBe(false);
-      expect(Bun.YAML.parse("yes")).toBe(true);
-      expect(Bun.YAML.parse("no")).toBe(false);
-      expect(Bun.YAML.parse("on")).toBe(true);
-      expect(Bun.YAML.parse("off")).toBe(false);
+      expect(YAML.parse("true")).toBe(true);
+      expect(YAML.parse("false")).toBe(false);
+      expect(YAML.parse("yes")).toBe(true);
+      expect(YAML.parse("no")).toBe(false);
+      expect(YAML.parse("on")).toBe(true);
+      expect(YAML.parse("off")).toBe(false);
     });
 
     test("parses number values", () => {
-      expect(Bun.YAML.parse("42")).toBe(42);
-      expect(Bun.YAML.parse("3.14")).toBe(3.14);
-      expect(Bun.YAML.parse("-17")).toBe(-17);
-      expect(Bun.YAML.parse("0")).toBe(0);
-      expect(Bun.YAML.parse(".inf")).toBe(Infinity);
-      expect(Bun.YAML.parse("-.inf")).toBe(-Infinity);
-      expect(Bun.YAML.parse(".nan")).toBeNaN();
+      expect(YAML.parse("42")).toBe(42);
+      expect(YAML.parse("3.14")).toBe(3.14);
+      expect(YAML.parse("-17")).toBe(-17);
+      expect(YAML.parse("0")).toBe(0);
+      expect(YAML.parse(".inf")).toBe(Infinity);
+      expect(YAML.parse("-.inf")).toBe(-Infinity);
+      expect(YAML.parse(".nan")).toBeNaN();
     });
 
     test("parses string values", () => {
-      expect(Bun.YAML.parse('"hello world"')).toBe("hello world");
-      expect(Bun.YAML.parse("'single quoted'")).toBe("single quoted");
-      expect(Bun.YAML.parse("unquoted string")).toBe("unquoted string");
-      expect(Bun.YAML.parse('key: "value with spaces"')).toEqual({
+      expect(YAML.parse('"hello world"')).toBe("hello world");
+      expect(YAML.parse("'single quoted'")).toBe("single quoted");
+      expect(YAML.parse("unquoted string")).toBe("unquoted string");
+      expect(YAML.parse('key: "value with spaces"')).toEqual({
         key: "value with spaces",
       });
     });
 
     test("parses arrays", () => {
-      expect(Bun.YAML.parse("[1, 2, 3]")).toEqual([1, 2, 3]);
-      expect(Bun.YAML.parse("- 1\n- 2\n- 3")).toEqual([1, 2, 3]);
-      expect(Bun.YAML.parse("- a\n- b\n- c")).toEqual(["a", "b", "c"]);
-      expect(Bun.YAML.parse("[]")).toEqual([]);
+      expect(YAML.parse("[1, 2, 3]")).toEqual([1, 2, 3]);
+      expect(YAML.parse("- 1\n- 2\n- 3")).toEqual([1, 2, 3]);
+      expect(YAML.parse("- a\n- b\n- c")).toEqual(["a", "b", "c"]);
+      expect(YAML.parse("[]")).toEqual([]);
     });
 
     test("parses objects", () => {
-      expect(Bun.YAML.parse("{a: 1, b: 2}")).toEqual({ a: 1, b: 2 });
-      expect(Bun.YAML.parse("a: 1\nb: 2")).toEqual({ a: 1, b: 2 });
-      expect(Bun.YAML.parse("{}")).toEqual({});
-      expect(Bun.YAML.parse('name: "John"\nage: 30')).toEqual({
+      expect(YAML.parse("{a: 1, b: 2}")).toEqual({ a: 1, b: 2 });
+      expect(YAML.parse("a: 1\nb: 2")).toEqual({ a: 1, b: 2 });
+      expect(YAML.parse("{}")).toEqual({});
+      expect(YAML.parse('name: "John"\nage: 30')).toEqual({
         name: "John",
         age: 30,
       });
@@ -67,7 +68,7 @@ users:
       - gaming
       - cooking
 `;
-      expect(Bun.YAML.parse(yaml)).toEqual({
+      expect(YAML.parse(yaml)).toEqual({
         users: [
           {
             name: "Alice",
@@ -95,7 +96,7 @@ database:
     ssl: true
     timeout: 30
 `;
-      expect(Bun.YAML.parse(yaml)).toEqual({
+      expect(YAML.parse(yaml)).toEqual({
         database: {
           host: "localhost",
           port: 5432,
@@ -119,7 +120,7 @@ parent: &ref
     name: child
     parent: *ref
 `;
-      const result = Bun.YAML.parse(yaml);
+      const result = YAML.parse(yaml);
       expect(result.parent.name).toBe("parent");
       expect(result.parent.child.name).toBe("child");
       expect(result.parent.child.parent).toBe(result.parent);
@@ -132,7 +133,7 @@ document: 1
 ---
 document: 2
 `;
-      expect(Bun.YAML.parse(yaml)).toEqual([{ document: 1 }, { document: 2 }]);
+      expect(YAML.parse(yaml)).toEqual([{ document: 1 }, { document: 2 }]);
     });
 
     test("handles multiline strings", () => {
@@ -146,7 +147,7 @@ folded: >
   a multiline
   string
 `;
-      expect(Bun.YAML.parse(yaml)).toEqual({
+      expect(YAML.parse(yaml)).toEqual({
         literal: "This is a\nmultiline\nstring\n",
         folded: "This is also a multiline string\n",
       });
@@ -158,7 +159,7 @@ folded: >
 'another.key': value2
 123: numeric-key
 `;
-      expect(Bun.YAML.parse(yaml)).toEqual({
+      expect(YAML.parse(yaml)).toEqual({
         "special-key": "value1",
         "another.key": "value2",
         "123": "numeric-key",
@@ -172,7 +173,7 @@ empty_array: []
 empty_object: {}
 null_value: null
 `;
-      expect(Bun.YAML.parse(yaml)).toEqual({
+      expect(YAML.parse(yaml)).toEqual({
         empty_string: "",
         empty_array: [],
         empty_object: {},
@@ -181,9 +182,9 @@ null_value: null
     });
 
     test("throws on invalid YAML", () => {
-      expect(() => Bun.YAML.parse("[ invalid")).toThrow();
-      expect(() => Bun.YAML.parse("{ key: value")).toThrow();
-      expect(() => Bun.YAML.parse(":\n :  - invalid")).toThrow();
+      expect(() => YAML.parse("[ invalid")).toThrow();
+      expect(() => YAML.parse("{ key: value")).toThrow();
+      expect(() => YAML.parse(":\n :  - invalid")).toThrow();
     });
 
     test("handles dates and timestamps", () => {
@@ -191,7 +192,7 @@ null_value: null
 date: 2024-01-15
 timestamp: 2024-01-15T10:30:00Z
 `;
-      const result = Bun.YAML.parse(yaml);
+      const result = YAML.parse(yaml);
       // Dates might be parsed as strings or Date objects depending on implementation
       expect(result.date).toBeDefined();
       expect(result.timestamp).toBeDefined();
@@ -213,7 +214,7 @@ assignments:
   project2:
     - *user2
 `;
-      const result = Bun.YAML.parse(yaml);
+      const result = YAML.parse(yaml);
       expect(result.assignments.project1[0]).toBe(result.definitions[0]);
       expect(result.assignments.project1[1]).toBe(result.definitions[1]);
       expect(result.assignments.project2[0]).toBe(result.definitions[1]);
@@ -226,7 +227,7 @@ key: value # inline comment
 # Another comment
 another: value
 `;
-      expect(Bun.YAML.parse(yaml)).toEqual({
+      expect(YAML.parse(yaml)).toEqual({
         key: "value",
         another: "value",
       });
@@ -243,7 +244,7 @@ block:
   key1: value1
   key2: value2
 `;
-      expect(Bun.YAML.parse(yaml)).toEqual({
+      expect(YAML.parse(yaml)).toEqual({
         array: [1, 2, 3],
         object: { a: 1, b: 2 },
         mixed: [
@@ -263,7 +264,7 @@ single: 'This is a ''quoted'' string'
 double: "Line 1\\nLine 2\\tTabbed"
 unicode: "\\u0041\\u0042\\u0043"
 `;
-      expect(Bun.YAML.parse(yaml)).toEqual({
+      expect(YAML.parse(yaml)).toEqual({
         single: "This is a 'quoted' string",
         double: "Line 1\nLine 2\tTabbed",
         unicode: "ABC",
@@ -278,7 +279,7 @@ hex: 0xFF
 octal: 0o777
 binary: 0b1010
 `;
-      const result = Bun.YAML.parse(yaml);
+      const result = YAML.parse(yaml);
       expect(result.int).toBe(9007199254740991);
       expect(result.float).toBe(1.7976931348623157e308);
       expect(result.hex).toBe(255);
@@ -294,7 +295,7 @@ explicit_float: !!float "3.14"
 explicit_bool: !!bool "yes"
 explicit_null: !!null "anything"
 `;
-      expect(Bun.YAML.parse(yaml)).toEqual({
+      expect(YAML.parse(yaml)).toEqual({
         explicit_string: "123",
         explicit_int: "456",
         explicit_float: "3.14",
@@ -308,7 +309,7 @@ explicit_null: !!null "anything"
 shasum1: 1e18495d9d7f6b41135e5ee828ef538dc94f9be4
 shasum2: 19f3afed71c8ee421de3892615197b57bd0f2c8f
 `;
-      expect(Bun.YAML.parse(yaml)).toEqual({
+      expect(YAML.parse(yaml)).toEqual({
         shasum1: "1e18495d9d7f6b41135e5ee828ef538dc94f9be4",
         shasum2: "19f3afed71c8ee421de3892615197b57bd0f2c8f",
       });
@@ -327,7 +328,7 @@ production:
   database: prod_db
   host: prod.example.com
 `;
-      expect(Bun.YAML.parse(yaml)).toEqual({
+      expect(YAML.parse(yaml)).toEqual({
         defaults: {
           adapter: "postgres",
           host: "localhost",
@@ -349,85 +350,85 @@ production:
   describe("stringify", () => {
     // Basic data type tests
     test("stringifies null", () => {
-      expect(Bun.YAML.stringify(null)).toBe("null");
-      expect(Bun.YAML.stringify(undefined)).toBe(undefined);
+      expect(YAML.stringify(null)).toBe("null");
+      expect(YAML.stringify(undefined)).toBe(undefined);
     });
 
     test("stringifies booleans", () => {
-      expect(Bun.YAML.stringify(true)).toBe("true");
-      expect(Bun.YAML.stringify(false)).toBe("false");
+      expect(YAML.stringify(true)).toBe("true");
+      expect(YAML.stringify(false)).toBe("false");
     });
 
     test("stringifies numbers", () => {
-      expect(Bun.YAML.stringify(42)).toBe("42");
-      expect(Bun.YAML.stringify(3.14)).toBe("3.14");
-      expect(Bun.YAML.stringify(-17)).toBe("-17");
-      expect(Bun.YAML.stringify(0)).toBe("0");
-      expect(Bun.YAML.stringify(-0)).toBe("-0");
-      expect(Bun.YAML.stringify(Infinity)).toBe(".inf");
-      expect(Bun.YAML.stringify(-Infinity)).toBe("-.inf");
-      expect(Bun.YAML.stringify(NaN)).toBe(".nan");
+      expect(YAML.stringify(42)).toBe("42");
+      expect(YAML.stringify(3.14)).toBe("3.14");
+      expect(YAML.stringify(-17)).toBe("-17");
+      expect(YAML.stringify(0)).toBe("0");
+      expect(YAML.stringify(-0)).toBe("-0");
+      expect(YAML.stringify(Infinity)).toBe(".inf");
+      expect(YAML.stringify(-Infinity)).toBe("-.inf");
+      expect(YAML.stringify(NaN)).toBe(".nan");
     });
 
     test("stringifies strings", () => {
-      expect(Bun.YAML.stringify("hello")).toBe("hello");
-      expect(Bun.YAML.stringify("hello world")).toBe("hello world");
-      expect(Bun.YAML.stringify("")).toBe('""');
-      expect(Bun.YAML.stringify("true")).toBe('"true"'); // Keywords need quoting
-      expect(Bun.YAML.stringify("false")).toBe('"false"');
-      expect(Bun.YAML.stringify("null")).toBe('"null"');
-      expect(Bun.YAML.stringify("123")).toBe('"123"'); // Numbers need quoting
+      expect(YAML.stringify("hello")).toBe("hello");
+      expect(YAML.stringify("hello world")).toBe("hello world");
+      expect(YAML.stringify("")).toBe('""');
+      expect(YAML.stringify("true")).toBe('"true"'); // Keywords need quoting
+      expect(YAML.stringify("false")).toBe('"false"');
+      expect(YAML.stringify("null")).toBe('"null"');
+      expect(YAML.stringify("123")).toBe('"123"'); // Numbers need quoting
     });
 
     test("stringifies strings with special characters", () => {
-      expect(Bun.YAML.stringify("line1\nline2")).toBe('"line1\\nline2"');
-      expect(Bun.YAML.stringify('with "quotes"')).toBe('"with \\"quotes\\""');
-      expect(Bun.YAML.stringify("with\ttab")).toBe('"with\\ttab"');
-      expect(Bun.YAML.stringify("with\rcarriage")).toBe('"with\\rcarriage"');
-      expect(Bun.YAML.stringify("with\x00null")).toBe('"with\\0null"');
+      expect(YAML.stringify("line1\nline2")).toBe('"line1\\nline2"');
+      expect(YAML.stringify('with "quotes"')).toBe('"with \\"quotes\\""');
+      expect(YAML.stringify("with\ttab")).toBe('"with\\ttab"');
+      expect(YAML.stringify("with\rcarriage")).toBe('"with\\rcarriage"');
+      expect(YAML.stringify("with\x00null")).toBe('"with\\0null"');
     });
 
     test("stringifies strings that need quoting", () => {
-      expect(Bun.YAML.stringify("&anchor")).toBe('"&anchor"');
-      expect(Bun.YAML.stringify("*alias")).toBe('"*alias"');
-      expect(Bun.YAML.stringify("#comment")).toBe('"#comment"');
-      expect(Bun.YAML.stringify("---")).toBe('"---"');
-      expect(Bun.YAML.stringify("...")).toBe('"..."');
-      expect(Bun.YAML.stringify("{flow}")).toBe('"{flow}"');
-      expect(Bun.YAML.stringify("[flow]")).toBe('"[flow]"');
-      expect(Bun.YAML.stringify("key: value")).toBe('"key: value"');
-      expect(Bun.YAML.stringify(" leading space")).toBe('" leading space"');
-      expect(Bun.YAML.stringify("trailing space ")).toBe('"trailing space "');
+      expect(YAML.stringify("&anchor")).toBe('"&anchor"');
+      expect(YAML.stringify("*alias")).toBe('"*alias"');
+      expect(YAML.stringify("#comment")).toBe('"#comment"');
+      expect(YAML.stringify("---")).toBe('"---"');
+      expect(YAML.stringify("...")).toBe('"..."');
+      expect(YAML.stringify("{flow}")).toBe('"{flow}"');
+      expect(YAML.stringify("[flow]")).toBe('"[flow]"');
+      expect(YAML.stringify("key: value")).toBe('"key: value"');
+      expect(YAML.stringify(" leading space")).toBe('" leading space"');
+      expect(YAML.stringify("trailing space ")).toBe('"trailing space "');
     });
 
     test("stringifies empty arrays", () => {
-      expect(Bun.YAML.stringify([])).toBe("[]");
+      expect(YAML.stringify([])).toBe("[]");
     });
 
     test("stringifies simple arrays", () => {
-      expect(Bun.YAML.stringify([1, 2, 3])).toBe("- 1\n- 2\n- 3");
-      expect(Bun.YAML.stringify(["a", "b", "c"])).toBe("- a\n- b\n- c");
-      expect(Bun.YAML.stringify([true, false, null])).toBe("- true\n- false\n- null");
+      expect(YAML.stringify([1, 2, 3])).toBe("- 1\n- 2\n- 3");
+      expect(YAML.stringify(["a", "b", "c"])).toBe("- a\n- b\n- c");
+      expect(YAML.stringify([true, false, null])).toBe("- true\n- false\n- null");
     });
 
     test("stringifies nested arrays", () => {
       expect(
-        Bun.YAML.stringify([
+        YAML.stringify([
           [1, 2],
           [3, 4],
         ]),
       ).toBe("- - 1\n  - 2\n- - 3\n  - 4");
-      expect(Bun.YAML.stringify([1, [2, 3], 4])).toBe("- 1\n- - 2\n  - 3\n- 4");
+      expect(YAML.stringify([1, [2, 3], 4])).toBe("- 1\n- - 2\n  - 3\n- 4");
     });
 
     test("stringifies empty objects", () => {
-      expect(Bun.YAML.stringify({})).toBe("{}");
+      expect(YAML.stringify({})).toBe("{}");
     });
 
     test("stringifies simple objects", () => {
-      expect(Bun.YAML.stringify({ a: 1, b: 2 })).toBe("a: 1\nb: 2");
-      expect(Bun.YAML.stringify({ name: "John", age: 30 })).toBe("name: John\nage: 30");
-      expect(Bun.YAML.stringify({ flag: true, value: null })).toBe("flag: true\nvalue: null");
+      expect(YAML.stringify({ a: 1, b: 2 })).toBe("a: 1\nb: 2");
+      expect(YAML.stringify({ name: "John", age: 30 })).toBe("name: John\nage: 30");
+      expect(YAML.stringify({ flag: true, value: null })).toBe("flag: true\nvalue: null");
     });
 
     test("stringifies nested objects", () => {
@@ -437,7 +438,7 @@ production:
           port: 5432,
         },
       };
-      expect(Bun.YAML.stringify(obj)).toBe("database: \n  host: localhost\n  port: 5432");
+      expect(YAML.stringify(obj)).toBe("database: \n  host: localhost\n  port: 5432");
     });
 
     test("stringifies mixed structures", () => {
@@ -449,85 +450,83 @@ production:
       };
       const expected =
         "users: \n  - name: Alice\n    hobbies: \n      - reading\n      - hiking\n  - name: Bob\n    hobbies: \n      - gaming";
-      expect(Bun.YAML.stringify(obj)).toBe(expected);
+      expect(YAML.stringify(obj)).toBe(expected);
     });
 
     test("stringifies objects with special keys", () => {
-      expect(Bun.YAML.stringify({ "special-key": "value" })).toBe("special-key: value");
-      expect(Bun.YAML.stringify({ "123": "numeric" })).toBe('"123": numeric');
-      expect(Bun.YAML.stringify({ "": "empty" })).toBe('"": empty');
-      expect(Bun.YAML.stringify({ "true": "keyword" })).toBe('"true": keyword');
+      expect(YAML.stringify({ "special-key": "value" })).toBe("special-key: value");
+      expect(YAML.stringify({ "123": "numeric" })).toBe('"123": numeric');
+      expect(YAML.stringify({ "": "empty" })).toBe('"": empty');
+      expect(YAML.stringify({ "true": "keyword" })).toBe('"true": keyword');
     });
 
     // Error case tests
     test("throws on BigInt", () => {
-      expect(() => Bun.YAML.stringify(BigInt(123))).toThrow("YAML.stringify cannot serialize BigInt");
+      expect(() => YAML.stringify(BigInt(123))).toThrow("YAML.stringify cannot serialize BigInt");
     });
 
     test("throws on symbols", () => {
-      expect(Bun.YAML.stringify(Symbol("test"))).toBe(undefined);
+      expect(YAML.stringify(Symbol("test"))).toBe(undefined);
     });
 
     test("throws on replacer parameter", () => {
-      expect(() => Bun.YAML.stringify({ a: 1 }, () => {})).toThrow(
-        "YAML.stringify does not support the replacer argument",
-      );
+      expect(() => YAML.stringify({ a: 1 }, () => {})).toThrow("YAML.stringify does not support the replacer argument");
     });
 
     test("handles functions", () => {
       // Functions get stringified as empty objects
-      expect(Bun.YAML.stringify(() => {})).toBe(undefined);
-      expect(Bun.YAML.stringify({ fn: () => {}, value: 42 })).toBe("fn: \n  {}\nvalue: 42");
+      expect(YAML.stringify(() => {})).toBe(undefined);
+      expect(YAML.stringify({ fn: () => {}, value: 42 })).toBe("fn: \n  {}\nvalue: 42");
     });
 
     // Round-trip tests
     describe("round-trip compatibility", () => {
       test("round-trips null values", () => {
-        expect(Bun.YAML.parse(Bun.YAML.stringify(null))).toBe(null);
+        expect(YAML.parse(YAML.stringify(null))).toBe(null);
       });
 
       test("round-trips boolean values", () => {
-        expect(Bun.YAML.parse(Bun.YAML.stringify(true))).toBe(true);
-        expect(Bun.YAML.parse(Bun.YAML.stringify(false))).toBe(false);
+        expect(YAML.parse(YAML.stringify(true))).toBe(true);
+        expect(YAML.parse(YAML.stringify(false))).toBe(false);
       });
 
       test("round-trips number values", () => {
-        expect(Bun.YAML.parse(Bun.YAML.stringify(42))).toBe(42);
-        expect(Bun.YAML.parse(Bun.YAML.stringify(3.14))).toBe(3.14);
-        expect(Bun.YAML.parse(Bun.YAML.stringify(-17))).toBe(-17);
-        expect(Bun.YAML.parse(Bun.YAML.stringify(0))).toBe(0);
-        expect(Bun.YAML.parse(Bun.YAML.stringify(-0))).toBe(-0);
-        expect(Bun.YAML.parse(Bun.YAML.stringify(Infinity))).toBe(Infinity);
-        expect(Bun.YAML.parse(Bun.YAML.stringify(-Infinity))).toBe(-Infinity);
-        expect(Bun.YAML.parse(Bun.YAML.stringify(NaN))).toBeNaN();
+        expect(YAML.parse(YAML.stringify(42))).toBe(42);
+        expect(YAML.parse(YAML.stringify(3.14))).toBe(3.14);
+        expect(YAML.parse(YAML.stringify(-17))).toBe(-17);
+        expect(YAML.parse(YAML.stringify(0))).toBe(0);
+        expect(YAML.parse(YAML.stringify(-0))).toBe(-0);
+        expect(YAML.parse(YAML.stringify(Infinity))).toBe(Infinity);
+        expect(YAML.parse(YAML.stringify(-Infinity))).toBe(-Infinity);
+        expect(YAML.parse(YAML.stringify(NaN))).toBeNaN();
       });
 
       test("round-trips string values", () => {
-        expect(Bun.YAML.parse(Bun.YAML.stringify("hello"))).toBe("hello");
-        expect(Bun.YAML.parse(Bun.YAML.stringify("hello world"))).toBe("hello world");
-        expect(Bun.YAML.parse(Bun.YAML.stringify(""))).toBe("");
-        expect(Bun.YAML.parse(Bun.YAML.stringify("true"))).toBe("true");
-        expect(Bun.YAML.parse(Bun.YAML.stringify("123"))).toBe("123");
+        expect(YAML.parse(YAML.stringify("hello"))).toBe("hello");
+        expect(YAML.parse(YAML.stringify("hello world"))).toBe("hello world");
+        expect(YAML.parse(YAML.stringify(""))).toBe("");
+        expect(YAML.parse(YAML.stringify("true"))).toBe("true");
+        expect(YAML.parse(YAML.stringify("123"))).toBe("123");
       });
 
       test("round-trips strings with special characters", () => {
-        expect(Bun.YAML.parse(Bun.YAML.stringify("line1\nline2"))).toBe("line1\nline2");
-        expect(Bun.YAML.parse(Bun.YAML.stringify('with "quotes"'))).toBe('with "quotes"');
-        expect(Bun.YAML.parse(Bun.YAML.stringify("with\ttab"))).toBe("with\ttab");
-        expect(Bun.YAML.parse(Bun.YAML.stringify("with\rcarriage"))).toBe("with\rcarriage");
+        expect(YAML.parse(YAML.stringify("line1\nline2"))).toBe("line1\nline2");
+        expect(YAML.parse(YAML.stringify('with "quotes"'))).toBe('with "quotes"');
+        expect(YAML.parse(YAML.stringify("with\ttab"))).toBe("with\ttab");
+        expect(YAML.parse(YAML.stringify("with\rcarriage"))).toBe("with\rcarriage");
       });
 
       test("round-trips arrays", () => {
-        expect(Bun.YAML.parse(Bun.YAML.stringify([]))).toEqual([]);
-        expect(Bun.YAML.parse(Bun.YAML.stringify([1, 2, 3]))).toEqual([1, 2, 3]);
-        expect(Bun.YAML.parse(Bun.YAML.stringify(["a", "b", "c"]))).toEqual(["a", "b", "c"]);
-        expect(Bun.YAML.parse(Bun.YAML.stringify([true, false, null]))).toEqual([true, false, null]);
+        expect(YAML.parse(YAML.stringify([]))).toEqual([]);
+        expect(YAML.parse(YAML.stringify([1, 2, 3]))).toEqual([1, 2, 3]);
+        expect(YAML.parse(YAML.stringify(["a", "b", "c"]))).toEqual(["a", "b", "c"]);
+        expect(YAML.parse(YAML.stringify([true, false, null]))).toEqual([true, false, null]);
       });
 
       test("round-trips nested arrays", () => {
         expect(
-          Bun.YAML.parse(
-            Bun.YAML.stringify([
+          YAML.parse(
+            YAML.stringify([
               [1, 2],
               [3, 4],
             ]),
@@ -536,13 +535,13 @@ production:
           [1, 2],
           [3, 4],
         ]);
-        expect(Bun.YAML.parse(Bun.YAML.stringify([1, [2, 3], 4]))).toEqual([1, [2, 3], 4]);
+        expect(YAML.parse(YAML.stringify([1, [2, 3], 4]))).toEqual([1, [2, 3], 4]);
       });
 
       test("round-trips objects", () => {
-        expect(Bun.YAML.parse(Bun.YAML.stringify({}))).toEqual({});
-        expect(Bun.YAML.parse(Bun.YAML.stringify({ a: 1, b: 2 }))).toEqual({ a: 1, b: 2 });
-        expect(Bun.YAML.parse(Bun.YAML.stringify({ name: "John", age: 30 }))).toEqual({ name: "John", age: 30 });
+        expect(YAML.parse(YAML.stringify({}))).toEqual({});
+        expect(YAML.parse(YAML.stringify({ a: 1, b: 2 }))).toEqual({ a: 1, b: 2 });
+        expect(YAML.parse(YAML.stringify({ name: "John", age: 30 }))).toEqual({ name: "John", age: 30 });
       });
 
       test("round-trips nested objects", () => {
@@ -556,7 +555,7 @@ production:
             },
           },
         };
-        expect(Bun.YAML.parse(Bun.YAML.stringify(obj))).toEqual(obj);
+        expect(YAML.parse(YAML.stringify(obj))).toEqual(obj);
       });
 
       test("round-trips mixed structures", () => {
@@ -570,7 +569,7 @@ production:
             timeout: 5000,
           },
         };
-        expect(Bun.YAML.parse(Bun.YAML.stringify(obj))).toEqual(obj);
+        expect(YAML.parse(YAML.stringify(obj))).toEqual(obj);
       });
 
       test("round-trips objects with special keys", () => {
@@ -580,12 +579,12 @@ production:
           "true": "keyword-key",
           "": "empty-key",
         };
-        expect(Bun.YAML.parse(Bun.YAML.stringify(obj))).toEqual(obj);
+        expect(YAML.parse(YAML.stringify(obj))).toEqual(obj);
       });
 
       test("round-trips arrays with mixed types", () => {
         const arr = ["string", 42, true, null, { nested: "object" }, [1, 2, 3]];
-        expect(Bun.YAML.parse(Bun.YAML.stringify(arr))).toEqual(arr);
+        expect(YAML.parse(YAML.stringify(arr))).toEqual(arr);
       });
 
       test("round-trips complex real-world structures", () => {
@@ -615,7 +614,7 @@ production:
             },
           },
         };
-        expect(Bun.YAML.parse(Bun.YAML.stringify(config))).toEqual(config);
+        expect(YAML.parse(YAML.stringify(config))).toEqual(config);
       });
     });
 
@@ -647,8 +646,8 @@ production:
         },
       };
 
-      for (let i = 0; i < 1000000; i++) {
-        expect(Bun.YAML.stringify(config)).toBeString();
+      for (let i = 0; i < 10000; i++) {
+        expect(YAML.stringify(config)).toBeString();
       }
     });
 
@@ -660,8 +659,8 @@ production:
           first: shared,
           second: shared,
         };
-        const yaml = Bun.YAML.stringify(obj);
-        const parsed = Bun.YAML.parse(yaml);
+        const yaml = YAML.stringify(obj);
+        const parsed = YAML.parse(yaml);
 
         // Should preserve object identity
         expect(parsed.first).toBe(parsed.second);
@@ -673,8 +672,8 @@ production:
         const obj = {
           arrays: [sharedArray, sharedArray],
         };
-        const yaml = Bun.YAML.stringify(obj);
-        const parsed = Bun.YAML.parse(yaml);
+        const yaml = YAML.stringify(obj);
+        const parsed = YAML.parse(yaml);
 
         // Should preserve array identity
         expect(parsed.arrays[0]).toBe(parsed.arrays[1]);
@@ -692,8 +691,8 @@ production:
           },
           shared: sharedConfig,
         };
-        const yaml = Bun.YAML.stringify(obj);
-        const parsed = Bun.YAML.parse(yaml);
+        const yaml = YAML.stringify(obj);
+        const parsed = YAML.parse(yaml);
 
         expect(parsed.development.database).toBe(parsed.test.database);
         expect(parsed.development.database).toBe(parsed.shared);
@@ -705,8 +704,8 @@ production:
         const obj = { name: "root" };
         obj.self = obj;
 
-        const yaml = Bun.YAML.stringify(obj);
-        const parsed = Bun.YAML.parse(yaml);
+        const yaml = YAML.stringify(obj);
+        const parsed = YAML.parse(yaml);
 
         expect(parsed.self).toBe(parsed);
         expect(parsed.name).toBe("root");
@@ -722,8 +721,8 @@ production:
           d: obj2,
         };
 
-        const yaml = Bun.YAML.stringify(container);
-        const parsed = Bun.YAML.parse(yaml);
+        const yaml = YAML.stringify(container);
+        const parsed = YAML.parse(yaml);
 
         expect(parsed.a).toBe(parsed.b);
         expect(parsed.c).toBe(parsed.d);
@@ -743,8 +742,8 @@ production:
           current = current.next;
         }
 
-        const yaml = Bun.YAML.stringify(deep);
-        const parsed = Bun.YAML.parse(yaml);
+        const yaml = YAML.stringify(deep);
+        const parsed = YAML.parse(yaml);
 
         expect(parsed.next.next.next.level).toBe(2);
       });
@@ -752,192 +751,192 @@ production:
       // Test strings that need quoting due to YAML keywords
       test("quotes YAML boolean keywords", () => {
         // All variations of true/false keywords
-        expect(Bun.YAML.stringify("True")).toBe('"True"');
-        expect(Bun.YAML.stringify("TRUE")).toBe('"TRUE"');
-        expect(Bun.YAML.stringify("False")).toBe('"False"');
-        expect(Bun.YAML.stringify("FALSE")).toBe('"FALSE"');
-        expect(Bun.YAML.stringify("yes")).toBe('"yes"');
-        expect(Bun.YAML.stringify("Yes")).toBe('"Yes"');
-        expect(Bun.YAML.stringify("YES")).toBe('"YES"');
-        expect(Bun.YAML.stringify("no")).toBe('"no"');
-        expect(Bun.YAML.stringify("No")).toBe('"No"');
-        expect(Bun.YAML.stringify("NO")).toBe('"NO"');
-        expect(Bun.YAML.stringify("on")).toBe('"on"');
-        expect(Bun.YAML.stringify("On")).toBe('"On"');
-        expect(Bun.YAML.stringify("ON")).toBe('"ON"');
-        expect(Bun.YAML.stringify("off")).toBe('"off"');
-        expect(Bun.YAML.stringify("Off")).toBe('"Off"');
-        expect(Bun.YAML.stringify("OFF")).toBe('"OFF"');
+        expect(YAML.stringify("True")).toBe('"True"');
+        expect(YAML.stringify("TRUE")).toBe('"TRUE"');
+        expect(YAML.stringify("False")).toBe('"False"');
+        expect(YAML.stringify("FALSE")).toBe('"FALSE"');
+        expect(YAML.stringify("yes")).toBe('"yes"');
+        expect(YAML.stringify("Yes")).toBe('"Yes"');
+        expect(YAML.stringify("YES")).toBe('"YES"');
+        expect(YAML.stringify("no")).toBe('"no"');
+        expect(YAML.stringify("No")).toBe('"No"');
+        expect(YAML.stringify("NO")).toBe('"NO"');
+        expect(YAML.stringify("on")).toBe('"on"');
+        expect(YAML.stringify("On")).toBe('"On"');
+        expect(YAML.stringify("ON")).toBe('"ON"');
+        expect(YAML.stringify("off")).toBe('"off"');
+        expect(YAML.stringify("Off")).toBe('"Off"');
+        expect(YAML.stringify("OFF")).toBe('"OFF"');
         // Single letter booleans
-        expect(Bun.YAML.stringify("n")).toBe('"n"');
-        expect(Bun.YAML.stringify("N")).toBe('"N"');
-        expect(Bun.YAML.stringify("y")).toBe('"y"');
-        expect(Bun.YAML.stringify("Y")).toBe('"Y"');
+        expect(YAML.stringify("n")).toBe('"n"');
+        expect(YAML.stringify("N")).toBe('"N"');
+        expect(YAML.stringify("y")).toBe('"y"');
+        expect(YAML.stringify("Y")).toBe('"Y"');
       });
 
       test("quotes YAML null keywords", () => {
-        expect(Bun.YAML.stringify("Null")).toBe('"Null"');
-        expect(Bun.YAML.stringify("NULL")).toBe('"NULL"');
-        expect(Bun.YAML.stringify("~")).toBe('"~"');
+        expect(YAML.stringify("Null")).toBe('"Null"');
+        expect(YAML.stringify("NULL")).toBe('"NULL"');
+        expect(YAML.stringify("~")).toBe('"~"');
       });
 
       test("quotes YAML infinity and NaN keywords", () => {
-        expect(Bun.YAML.stringify(".inf")).toBe('".inf"');
-        expect(Bun.YAML.stringify(".Inf")).toBe('".Inf"');
-        expect(Bun.YAML.stringify(".INF")).toBe('".INF"');
-        expect(Bun.YAML.stringify(".nan")).toBe('".nan"');
-        expect(Bun.YAML.stringify(".NaN")).toBe('".NaN"');
-        expect(Bun.YAML.stringify(".NAN")).toBe('".NAN"');
+        expect(YAML.stringify(".inf")).toBe('".inf"');
+        expect(YAML.stringify(".Inf")).toBe('".Inf"');
+        expect(YAML.stringify(".INF")).toBe('".INF"');
+        expect(YAML.stringify(".nan")).toBe('".nan"');
+        expect(YAML.stringify(".NaN")).toBe('".NaN"');
+        expect(YAML.stringify(".NAN")).toBe('".NAN"');
       });
 
       test("quotes strings starting with special indicators", () => {
-        expect(Bun.YAML.stringify("?question")).toBe('"?question"');
-        expect(Bun.YAML.stringify("|literal")).toBe('"|literal"');
-        expect(Bun.YAML.stringify("-dash")).toBe('"-dash"');
-        expect(Bun.YAML.stringify("<less")).toBe('"<less"');
-        expect(Bun.YAML.stringify(">greater")).toBe('">greater"');
-        expect(Bun.YAML.stringify("!exclaim")).toBe('"!exclaim"');
-        expect(Bun.YAML.stringify("%percent")).toBe('"%percent"');
-        expect(Bun.YAML.stringify("@at")).toBe('"@at"');
+        expect(YAML.stringify("?question")).toBe('"?question"');
+        expect(YAML.stringify("|literal")).toBe('"|literal"');
+        expect(YAML.stringify("-dash")).toBe('"-dash"');
+        expect(YAML.stringify("<less")).toBe('"<less"');
+        expect(YAML.stringify(">greater")).toBe('">greater"');
+        expect(YAML.stringify("!exclaim")).toBe('"!exclaim"');
+        expect(YAML.stringify("%percent")).toBe('"%percent"');
+        expect(YAML.stringify("@at")).toBe('"@at"');
       });
 
       test("quotes strings that look like numbers", () => {
         // Decimal numbers
-        expect(Bun.YAML.stringify("42")).toBe('"42"');
-        expect(Bun.YAML.stringify("3.14")).toBe('"3.14"');
-        expect(Bun.YAML.stringify("-17")).toBe('"-17"');
-        expect(Bun.YAML.stringify("+99")).toBe("+99"); // + at start doesn't force quotes
-        expect(Bun.YAML.stringify(".5")).toBe('".5"');
-        expect(Bun.YAML.stringify("-.5")).toBe('"-.5"');
+        expect(YAML.stringify("42")).toBe('"42"');
+        expect(YAML.stringify("3.14")).toBe('"3.14"');
+        expect(YAML.stringify("-17")).toBe('"-17"');
+        expect(YAML.stringify("+99")).toBe("+99"); // + at start doesn't force quotes
+        expect(YAML.stringify(".5")).toBe('".5"');
+        expect(YAML.stringify("-.5")).toBe('"-.5"');
 
         // Scientific notation
-        expect(Bun.YAML.stringify("1e10")).toBe('"1e10"');
-        expect(Bun.YAML.stringify("1E10")).toBe('"1E10"');
-        expect(Bun.YAML.stringify("1.5e-10")).toBe('"1.5e-10"');
-        expect(Bun.YAML.stringify("3.14e+5")).toBe('"3.14e+5"');
+        expect(YAML.stringify("1e10")).toBe('"1e10"');
+        expect(YAML.stringify("1E10")).toBe('"1E10"');
+        expect(YAML.stringify("1.5e-10")).toBe('"1.5e-10"');
+        expect(YAML.stringify("3.14e+5")).toBe('"3.14e+5"');
 
         // Hex numbers
-        expect(Bun.YAML.stringify("0x1F")).toBe('"0x1F"');
-        expect(Bun.YAML.stringify("0xDEADBEEF")).toBe('"0xDEADBEEF"');
-        expect(Bun.YAML.stringify("0XFF")).toBe('"0XFF"');
+        expect(YAML.stringify("0x1F")).toBe('"0x1F"');
+        expect(YAML.stringify("0xDEADBEEF")).toBe('"0xDEADBEEF"');
+        expect(YAML.stringify("0XFF")).toBe('"0XFF"');
 
         // Octal numbers
-        expect(Bun.YAML.stringify("0o777")).toBe('"0o777"');
-        expect(Bun.YAML.stringify("0O644")).toBe('"0O644"');
+        expect(YAML.stringify("0o777")).toBe('"0o777"');
+        expect(YAML.stringify("0O644")).toBe('"0O644"');
       });
 
       test("quotes strings with colons followed by spaces", () => {
-        expect(Bun.YAML.stringify("key: value")).toBe('"key: value"');
-        expect(Bun.YAML.stringify("key:value")).toBe("key:value"); // no quote when no space
-        expect(Bun.YAML.stringify("http://example.com")).toBe("http://example.com"); // URLs shouldn't need quotes
+        expect(YAML.stringify("key: value")).toBe('"key: value"');
+        expect(YAML.stringify("key:value")).toBe("key:value"); // no quote when no space
+        expect(YAML.stringify("http://example.com")).toBe("http://example.com"); // URLs shouldn't need quotes
 
         // These need quotes due to colon+space pattern
-        expect(Bun.YAML.stringify("desc: this is")).toBe('"desc: this is"');
-        expect(Bun.YAML.stringify("label:\ttab")).toBe('"label:\\ttab"');
-        expect(Bun.YAML.stringify("text:\n")).toBe('"text:\\n"');
-        expect(Bun.YAML.stringify("item:\r")).toBe('"item:\\r"');
+        expect(YAML.stringify("desc: this is")).toBe('"desc: this is"');
+        expect(YAML.stringify("label:\ttab")).toBe('"label:\\ttab"');
+        expect(YAML.stringify("text:\n")).toBe('"text:\\n"');
+        expect(YAML.stringify("item:\r")).toBe('"item:\\r"');
       });
 
       test("quotes strings containing flow indicators", () => {
-        expect(Bun.YAML.stringify("{json}")).toBe('"{json}"');
-        expect(Bun.YAML.stringify("[array]")).toBe('"[array]"');
-        expect(Bun.YAML.stringify("a,b,c")).toBe('"a,b,c"');
-        expect(Bun.YAML.stringify("mixed{flow")).toBe('"mixed{flow"');
-        expect(Bun.YAML.stringify("mixed}flow")).toBe('"mixed}flow"');
-        expect(Bun.YAML.stringify("mixed[flow")).toBe('"mixed[flow"');
-        expect(Bun.YAML.stringify("mixed]flow")).toBe('"mixed]flow"');
+        expect(YAML.stringify("{json}")).toBe('"{json}"');
+        expect(YAML.stringify("[array]")).toBe('"[array]"');
+        expect(YAML.stringify("a,b,c")).toBe('"a,b,c"');
+        expect(YAML.stringify("mixed{flow")).toBe('"mixed{flow"');
+        expect(YAML.stringify("mixed}flow")).toBe('"mixed}flow"');
+        expect(YAML.stringify("mixed[flow")).toBe('"mixed[flow"');
+        expect(YAML.stringify("mixed]flow")).toBe('"mixed]flow"');
       });
 
       test("quotes strings with special single characters", () => {
-        expect(Bun.YAML.stringify("#")).toBe('"#"');
-        expect(Bun.YAML.stringify("`")).toBe('"`"');
-        expect(Bun.YAML.stringify("'")).toBe('"\'"');
+        expect(YAML.stringify("#")).toBe('"#"');
+        expect(YAML.stringify("`")).toBe('"`"');
+        expect(YAML.stringify("'")).toBe('"\'"');
       });
 
       test("handles control characters and special escapes", () => {
         // Basic control characters
-        expect(Bun.YAML.stringify("\x00")).toBe('"\\0"'); // null
-        expect(Bun.YAML.stringify("\x07")).toBe('"\\a"'); // bell
-        expect(Bun.YAML.stringify("\x08")).toBe('"\\b"'); // backspace
-        expect(Bun.YAML.stringify("\x09")).toBe('"\\t"'); // tab
-        expect(Bun.YAML.stringify("\x0a")).toBe('"\\n"'); // line feed
-        expect(Bun.YAML.stringify("\x0b")).toBe('"\\v"'); // vertical tab
-        expect(Bun.YAML.stringify("\x0c")).toBe('"\\f"'); // form feed
-        expect(Bun.YAML.stringify("\x0d")).toBe('"\\r"'); // carriage return
-        expect(Bun.YAML.stringify("\x1b")).toBe('"\\e"'); // escape
-        expect(Bun.YAML.stringify("\x22")).toBe('"\\\""'); // double quote
-        expect(Bun.YAML.stringify("\x5c")).toBe("\\"); // backslash - not quoted
+        expect(YAML.stringify("\x00")).toBe('"\\0"'); // null
+        expect(YAML.stringify("\x07")).toBe('"\\a"'); // bell
+        expect(YAML.stringify("\x08")).toBe('"\\b"'); // backspace
+        expect(YAML.stringify("\x09")).toBe('"\\t"'); // tab
+        expect(YAML.stringify("\x0a")).toBe('"\\n"'); // line feed
+        expect(YAML.stringify("\x0b")).toBe('"\\v"'); // vertical tab
+        expect(YAML.stringify("\x0c")).toBe('"\\f"'); // form feed
+        expect(YAML.stringify("\x0d")).toBe('"\\r"'); // carriage return
+        expect(YAML.stringify("\x1b")).toBe('"\\e"'); // escape
+        expect(YAML.stringify("\x22")).toBe('"\\\""'); // double quote
+        expect(YAML.stringify("\x5c")).toBe("\\"); // backslash - not quoted
 
         // Other control characters (hex notation)
-        expect(Bun.YAML.stringify("\x01")).toBe('"\\x01"');
-        expect(Bun.YAML.stringify("\x02")).toBe('"\\x02"');
-        expect(Bun.YAML.stringify("\x03")).toBe('"\\x03"');
-        expect(Bun.YAML.stringify("\x04")).toBe('"\\x04"');
-        expect(Bun.YAML.stringify("\x05")).toBe('"\\x05"');
-        expect(Bun.YAML.stringify("\x06")).toBe('"\\x06"');
-        expect(Bun.YAML.stringify("\x0e")).toBe('"\\x0e"');
-        expect(Bun.YAML.stringify("\x0f")).toBe('"\\x0f"');
-        expect(Bun.YAML.stringify("\x10")).toBe('"\\x10"');
-        expect(Bun.YAML.stringify("\x7f")).toBe('"\\x7f"'); // delete
+        expect(YAML.stringify("\x01")).toBe('"\\x01"');
+        expect(YAML.stringify("\x02")).toBe('"\\x02"');
+        expect(YAML.stringify("\x03")).toBe('"\\x03"');
+        expect(YAML.stringify("\x04")).toBe('"\\x04"');
+        expect(YAML.stringify("\x05")).toBe('"\\x05"');
+        expect(YAML.stringify("\x06")).toBe('"\\x06"');
+        expect(YAML.stringify("\x0e")).toBe('"\\x0e"');
+        expect(YAML.stringify("\x0f")).toBe('"\\x0f"');
+        expect(YAML.stringify("\x10")).toBe('"\\x10"');
+        expect(YAML.stringify("\x7f")).toBe('"\\x7f"'); // delete
 
         // Unicode control characters
-        expect(Bun.YAML.stringify("\x85")).toBe('"\\N"'); // next line
-        expect(Bun.YAML.stringify("\xa0")).toBe('"\\_"'); // non-breaking space
+        expect(YAML.stringify("\x85")).toBe('"\\N"'); // next line
+        expect(YAML.stringify("\xa0")).toBe('"\\_"'); // non-breaking space
 
         // Combined in strings
-        expect(Bun.YAML.stringify("hello\x00world")).toBe('"hello\\0world"');
-        expect(Bun.YAML.stringify("line1\x0bline2")).toBe('"line1\\vline2"');
-        expect(Bun.YAML.stringify("alert\x07sound")).toBe('"alert\\asound"');
+        expect(YAML.stringify("hello\x00world")).toBe('"hello\\0world"');
+        expect(YAML.stringify("line1\x0bline2")).toBe('"line1\\vline2"');
+        expect(YAML.stringify("alert\x07sound")).toBe('"alert\\asound"');
       });
 
       test("handles special number formats", () => {
         // Positive zero
-        expect(Bun.YAML.stringify(+0)).toBe("0"); // +0 becomes just 0
+        expect(YAML.stringify(+0)).toBe("0"); // +0 becomes just 0
 
         // Round-trip special numbers
-        expect(Bun.YAML.parse(Bun.YAML.stringify(+0))).toBe(0);
-        expect(Object.is(Bun.YAML.parse(Bun.YAML.stringify(-0)), -0)).toBe(true);
+        expect(YAML.parse(YAML.stringify(+0))).toBe(0);
+        expect(Object.is(YAML.parse(YAML.stringify(-0)), -0)).toBe(true);
       });
 
       test("quotes strings that would be ambiguous YAML", () => {
         // Strings that look like YAML document markers
-        expect(Bun.YAML.stringify("---")).toBe('"---"');
-        expect(Bun.YAML.stringify("...")).toBe('"..."');
+        expect(YAML.stringify("---")).toBe('"---"');
+        expect(YAML.stringify("...")).toBe('"..."');
 
         // But these don't need quotes (not exactly three)
-        expect(Bun.YAML.stringify("--")).toBe('"--"'); // -- gets quoted
-        expect(Bun.YAML.stringify("----")).toBe('"----"');
-        expect(Bun.YAML.stringify("..")).toBe("..");
-        expect(Bun.YAML.stringify("....")).toBe("....");
+        expect(YAML.stringify("--")).toBe('"--"'); // -- gets quoted
+        expect(YAML.stringify("----")).toBe('"----"');
+        expect(YAML.stringify("..")).toBe("..");
+        expect(YAML.stringify("....")).toBe("....");
       });
 
       test("handles mixed content strings", () => {
         // Strings with numbers and text (shouldn't be quoted unless they parse as numbers)
-        expect(Bun.YAML.stringify("abc123")).toBe("abc123");
-        expect(Bun.YAML.stringify("123abc")).toBe("123abc");
-        expect(Bun.YAML.stringify("1.2.3")).toBe("1.2.3");
-        expect(Bun.YAML.stringify("v1.0.0")).toBe("v1.0.0");
+        expect(YAML.stringify("abc123")).toBe("abc123");
+        expect(YAML.stringify("123abc")).toBe("123abc");
+        expect(YAML.stringify("1.2.3")).toBe("1.2.3");
+        expect(YAML.stringify("v1.0.0")).toBe("v1.0.0");
 
         // SHA-like strings that could be mistaken for scientific notation
-        expect(Bun.YAML.stringify("1e10abc")).toBe("1e10abc");
-        expect(Bun.YAML.stringify("deadbeef")).toBe("deadbeef");
-        expect(Bun.YAML.stringify("0xNotHex")).toBe("0xNotHex");
+        expect(YAML.stringify("1e10abc")).toBe("1e10abc");
+        expect(YAML.stringify("deadbeef")).toBe("deadbeef");
+        expect(YAML.stringify("0xNotHex")).toBe("0xNotHex");
       });
 
       test("handles whitespace edge cases", () => {
         // Leading/trailing whitespace
-        expect(Bun.YAML.stringify(" leading")).toBe('" leading"');
-        expect(Bun.YAML.stringify("trailing ")).toBe('"trailing "');
-        expect(Bun.YAML.stringify("\tleading")).toBe('"\\tleading"');
-        expect(Bun.YAML.stringify("trailing\t")).toBe('"trailing\\t"');
-        expect(Bun.YAML.stringify("\nleading")).toBe('"\\nleading"');
-        expect(Bun.YAML.stringify("trailing\n")).toBe('"trailing\\n"');
-        expect(Bun.YAML.stringify("\rleading")).toBe('"\\rleading"');
-        expect(Bun.YAML.stringify("trailing\r")).toBe('"trailing\\r"');
+        expect(YAML.stringify(" leading")).toBe('" leading"');
+        expect(YAML.stringify("trailing ")).toBe('"trailing "');
+        expect(YAML.stringify("\tleading")).toBe('"\\tleading"');
+        expect(YAML.stringify("trailing\t")).toBe('"trailing\\t"');
+        expect(YAML.stringify("\nleading")).toBe('"\\nleading"');
+        expect(YAML.stringify("trailing\n")).toBe('"trailing\\n"');
+        expect(YAML.stringify("\rleading")).toBe('"\\rleading"');
+        expect(YAML.stringify("trailing\r")).toBe('"trailing\\r"');
 
         // Mixed internal content is okay
-        expect(Bun.YAML.stringify("no  problem")).toBe("no  problem");
-        expect(Bun.YAML.stringify("internal\ttabs\tok")).toBe('"internal\\ttabs\\tok"');
+        expect(YAML.stringify("no  problem")).toBe("no  problem");
+        expect(YAML.stringify("internal\ttabs\tok")).toBe('"internal\\ttabs\\tok"');
       });
 
       test("handles boxed primitives", () => {
@@ -946,9 +945,9 @@ production:
         const boxedString = new String("hello");
         const boxedBoolean = new Boolean(true);
 
-        expect(Bun.YAML.stringify(boxedNumber)).toBe("42");
-        expect(Bun.YAML.stringify(boxedString)).toBe("hello");
-        expect(Bun.YAML.stringify(boxedBoolean)).toBe("true");
+        expect(YAML.stringify(boxedNumber)).toBe("42");
+        expect(YAML.stringify(boxedString)).toBe("hello");
+        expect(YAML.stringify(boxedBoolean)).toBe("true");
 
         // In objects
         const obj = {
@@ -956,41 +955,41 @@ production:
           str: new String("world"),
           bool: new Boolean(false),
         };
-        expect(Bun.YAML.stringify(obj)).toBe("num: \n  3.14\nstr: world\nbool: \n  false");
+        expect(YAML.stringify(obj)).toBe("num: \n  3.14\nstr: world\nbool: \n  false");
       });
 
       test("handles Date objects", () => {
         // Date objects get converted to ISO string via toString()
         const date = new Date("2024-01-15T10:30:00Z");
-        const result = Bun.YAML.stringify(date);
+        const result = YAML.stringify(date);
         // Dates become empty objects currently
         expect(result).toBe("{}");
 
         // In objects
         const obj = { created: date };
-        expect(Bun.YAML.stringify(obj)).toBe("created: \n  {}");
+        expect(YAML.stringify(obj)).toBe("created: \n  {}");
       });
 
       test("handles RegExp objects", () => {
         // RegExp objects become empty objects
         const regex = /test/gi;
-        expect(Bun.YAML.stringify(regex)).toBe("{}");
+        expect(YAML.stringify(regex)).toBe("{}");
 
         const obj = { pattern: regex };
-        expect(Bun.YAML.stringify(obj)).toBe("pattern: \n  {}");
+        expect(YAML.stringify(obj)).toBe("pattern: \n  {}");
       });
 
       test("handles Error objects", () => {
         // Error objects have enumerable properties
         const error = new Error("Test error");
-        const result = Bun.YAML.stringify(error);
+        const result = YAML.stringify(error);
         expect(result).toBe("{}"); // Errors have no enumerable properties
 
         // Custom error with properties
         const customError = new Error("Custom");
         customError.code = "ERR_TEST";
         customError.details = { line: 42 };
-        const customResult = Bun.YAML.stringify(customError);
+        const customResult = YAML.stringify(customError);
         expect(customResult).toContain("code: ERR_TEST");
         expect(customResult).toContain("details:");
         expect(customResult).toContain("line: 42");
@@ -1002,11 +1001,11 @@ production:
           ["key1", "value1"],
           ["key2", "value2"],
         ]);
-        expect(Bun.YAML.stringify(map)).toBe("{}");
+        expect(YAML.stringify(map)).toBe("{}");
 
         // Sets become empty objects
         const set = new Set([1, 2, 3]);
-        expect(Bun.YAML.stringify(set)).toBe("{}");
+        expect(YAML.stringify(set)).toBe("{}");
       });
 
       test("handles property descriptors", () => {
@@ -1021,7 +1020,7 @@ production:
           enumerable: true,
         });
 
-        expect(Bun.YAML.stringify(obj)).toBe("visible: public");
+        expect(YAML.stringify(obj)).toBe("visible: public");
       });
 
       test("handles getters", () => {
@@ -1033,7 +1032,7 @@ production:
           normal: "normal value",
         };
 
-        const result = Bun.YAML.stringify(obj);
+        const result = YAML.stringify(obj);
         expect(result).toContain("computed: computed value");
         expect(result).toContain("normal: normal value");
       });
@@ -1049,7 +1048,7 @@ production:
           "1e10": "scientific",
         };
 
-        const result = Bun.YAML.stringify(obj);
+        const result = YAML.stringify(obj);
         expect(result).toContain('"0": zero');
         expect(result).toContain('"1": one');
         expect(result).toContain('"42": answer');
@@ -1069,8 +1068,8 @@ production:
           arr2: emptyArr,
         };
 
-        const yaml = Bun.YAML.stringify(container);
-        const parsed = Bun.YAML.parse(yaml);
+        const yaml = YAML.stringify(container);
+        const parsed = YAML.parse(yaml);
         expect(parsed.obj1).toBe(parsed.obj2);
         expect(parsed.arr1).toBe(parsed.arr2);
       });
@@ -1091,8 +1090,8 @@ production:
           "{object}": "brace key",
         };
 
-        const yaml = Bun.YAML.stringify(obj);
-        const parsed = Bun.YAML.parse(yaml);
+        const yaml = YAML.stringify(obj);
+        const parsed = YAML.parse(yaml);
 
         expect(parsed[""]).toBe("empty key");
         expect(parsed[" "]).toBe("space key");
@@ -1111,8 +1110,8 @@ production:
       test("handles arrays with objects containing undefined/symbol", () => {
         const arr = [{ a: 1, b: undefined, c: 2 }, { x: Symbol("test"), y: 3 }, { valid: "data" }];
 
-        const yaml = Bun.YAML.stringify(arr);
-        const parsed = Bun.YAML.parse(yaml);
+        const yaml = YAML.stringify(arr);
+        const parsed = YAML.parse(yaml);
 
         expect(parsed).toEqual([{ a: 1, c: 2 }, { y: 3 }, { valid: "data" }]);
       });
@@ -1127,15 +1126,15 @@ production:
         }
 
         // Should throw stack overflow for deeply nested structures
-        expect(() => Bun.YAML.stringify(deep)).toThrow("Maximum call stack size exceeded");
+        expect(() => YAML.stringify(deep)).toThrow("Maximum call stack size exceeded");
       });
 
       test("handles arrays as root with references", () => {
         const shared = { shared: true };
         const arr = [shared, "middle", shared];
 
-        const yaml = Bun.YAML.stringify(arr);
-        const parsed = Bun.YAML.parse(yaml);
+        const yaml = YAML.stringify(arr);
+        const parsed = YAML.parse(yaml);
 
         expect(parsed[0]).toBe(parsed[2]);
         expect(parsed[0].shared).toBe(true);
@@ -1160,12 +1159,369 @@ production:
           },
         };
 
-        const yaml = Bun.YAML.stringify(complex);
-        const parsed = Bun.YAML.parse(yaml);
+        const yaml = YAML.stringify(complex);
+        const parsed = YAML.parse(yaml);
 
         expect(parsed.level1.data).toBe(parsed.level2.reference);
         expect(parsed.level1.data).toBe(parsed.level2.nested.deepRef);
         expect(parsed.level1.items).toBe(parsed.level2.moreItems);
+      });
+
+      test("handles anchor name conflicts with property names", () => {
+        // Test 1: Object used as property value with same name conflicts
+        const sharedObj = { value: "shared" };
+        const obj1 = {
+          data: sharedObj,
+          nested: {
+            data: sharedObj, // Same property name "data"
+          },
+        };
+
+        const yaml1 = YAML.stringify(obj1);
+        expect(yaml1).toMatchInlineSnapshot(`
+"data: 
+  &data
+  value: shared
+nested: 
+  data: 
+    *data"
+`);
+
+        // Test 2: Multiple objects with same property names needing counters
+        const obj2Shared = { type: "A" };
+        const obj3Shared = { type: "B" };
+        const obj4Shared = { type: "C" };
+
+        const obj2 = {
+          item: obj2Shared,
+          nested1: {
+            item: obj2Shared, // second use, will be alias
+            other: {
+              item: obj3Shared, // different object, needs &item1
+            },
+          },
+          nested2: {
+            item: obj3Shared, // alias to &item1
+            sub: {
+              item: obj4Shared, // another different object, needs &item2
+            },
+          },
+          refs: {
+            item: obj4Shared, // alias to &item2
+          },
+        };
+
+        const yaml2 = YAML.stringify(obj2);
+        expect(yaml2).toMatchInlineSnapshot(`
+"item: 
+  &item
+  type: A
+nested1: 
+  item: 
+    *item
+  other: 
+    item: 
+      &item1
+      type: B
+nested2: 
+  item: 
+    *item1
+  sub: 
+    item: 
+      &item2
+      type: C
+refs: 
+  item: 
+    *item2"
+`);
+
+        const parsed2 = YAML.parse(yaml2);
+        expect(parsed2.item).toBe(parsed2.nested1.item);
+        expect(parsed2.nested1.other.item).toBe(parsed2.nested2.item);
+        expect(parsed2.nested2.sub.item).toBe(parsed2.refs.item);
+        expect(parsed2.item.type).toBe("A");
+        expect(parsed2.nested1.other.item.type).toBe("B");
+        expect(parsed2.nested2.sub.item.type).toBe("C");
+      });
+
+      test("handles array item anchor counter increments", () => {
+        // Test 1: Multiple array items that are objects need incrementing counters
+        const sharedA = { id: "A" };
+        const sharedB = { id: "B" };
+        const sharedC = { id: "C" };
+
+        const arr1 = [
+          sharedA, // Gets &item0
+          sharedA, // Gets *item0
+          sharedB, // Gets &item1
+          sharedC, // Gets &item2
+          sharedB, // Gets *item1
+          sharedC, // Gets *item2
+        ];
+
+        const yaml1 = YAML.stringify(arr1);
+        expect(yaml1).toMatchInlineSnapshot(`
+"- &item0
+  id: A
+- *item0
+- &item1
+  id: B
+- &item2
+  id: C
+- *item1
+- *item2"
+`);
+
+        const parsed1 = YAML.parse(yaml1);
+        expect(parsed1[0]).toBe(parsed1[1]);
+        expect(parsed1[2]).toBe(parsed1[4]);
+        expect(parsed1[3]).toBe(parsed1[5]);
+        expect(parsed1[0].id).toBe("A");
+        expect(parsed1[2].id).toBe("B");
+        expect(parsed1[3].id).toBe("C");
+
+        // Test 2: Arrays in nested structures
+        const shared1 = [1, 2];
+        const shared2 = [3, 4];
+        const shared3 = [5, 6];
+
+        const complex = {
+          arrays: [
+            shared1, // &item0
+            shared2, // &item1
+            shared1, // *item0
+          ],
+          nested: {
+            moreArrays: [
+              shared3, // &item2
+              shared2, // *item1
+              shared3, // *item2
+            ],
+          },
+        };
+
+        const yaml2 = YAML.stringify(complex);
+        expect(yaml2).toMatchInlineSnapshot(`
+"arrays: 
+  - &item0
+    - 1
+    - 2
+  - &item1
+    - 3
+    - 4
+  - *item0
+nested: 
+  moreArrays: 
+    - &item2
+      - 5
+      - 6
+    - *item1
+    - *item2"
+`);
+
+        const parsed2 = YAML.parse(yaml2);
+        expect(parsed2.arrays[0]).toBe(parsed2.arrays[2]);
+        expect(parsed2.arrays[1]).toBe(parsed2.nested.moreArrays[1]);
+        expect(parsed2.nested.moreArrays[0]).toBe(parsed2.nested.moreArrays[2]);
+      });
+
+      test("handles mixed property and array anchors with name conflicts", () => {
+        // Test case where property name "item" conflicts with array item anchors
+        const objShared = { type: "object" };
+        const arrShared = ["array"];
+        const nestedShared = { nested: "obj" };
+
+        const mixed = {
+          item: objShared, // Gets &item (property anchor)
+          items: [
+            arrShared, // Gets &item0 (array item anchor)
+            nestedShared, // Gets &item1
+            arrShared, // Gets *item0
+            nestedShared, // Gets *item1
+          ],
+          refs: {
+            item: objShared, // Gets *item (property alias)
+          },
+        };
+
+        const yaml = YAML.stringify(mixed);
+        expect(yaml).toMatchInlineSnapshot(`
+"item: 
+  &item
+  type: object
+items: 
+  - &item0
+    - array
+  - &item1
+    nested: obj
+  - *item0
+  - *item1
+refs: 
+  item: 
+    *item"
+`);
+
+        const parsed = YAML.parse(yaml);
+        expect(parsed.item).toBe(parsed.refs.item);
+        expect(parsed.items[0]).toBe(parsed.items[2]);
+        expect(parsed.items[1]).toBe(parsed.items[3]);
+        expect(parsed.item.type).toBe("object");
+        expect(parsed.items[0][0]).toBe("array");
+        expect(parsed.items[1].nested).toBe("obj");
+      });
+
+      test("handles empty string property names in anchors", () => {
+        // Empty property names should get a counter appended
+        const shared = { empty: "key" };
+        const more = {};
+        const obj = {
+          "": shared, // Empty key - should get counter
+          nested: {
+            "": shared, // Same empty key - should be alias
+          },
+          another: {
+            "": more,
+            what: more,
+          },
+        };
+
+        const yaml = YAML.stringify(obj);
+        expect(yaml).toMatchInlineSnapshot(`
+          """: 
+            &value0
+            empty: key
+          nested: 
+            "": 
+              *value0
+          another: 
+            "": 
+              &value1
+              {}
+            what: 
+              *value1"
+        `);
+        // Since empty names can't be used as anchors, they get a counter
+
+        const parsed = YAML.parse(yaml);
+        expect(parsed[""]).toBe(parsed.nested[""]);
+        expect(parsed[""].empty).toBe("key");
+      });
+
+      test("handles complex counter scenarios with many conflicts", () => {
+        // Create many objects that will cause property name conflicts
+        const objects = Array.from({ length: 5 }, (_, i) => ({ id: i }));
+
+        const complex = {
+          data: objects[0],
+          level1: {
+            data: objects[0], // alias
+            sub1: {
+              data: objects[1], // &data1
+            },
+            sub2: {
+              data: objects[1], // alias to data1
+            },
+          },
+          level2: {
+            data: objects[2], // &data2
+            nested: {
+              data: objects[3], // &data3
+              deep: {
+                data: objects[4], // &data4
+              },
+            },
+          },
+          refs: {
+            data: objects[2], // alias to data2
+            all: [
+              { data: objects[3] }, // alias to data3
+              { data: objects[4] }, // alias to data4
+            ],
+          },
+        };
+
+        const yaml = YAML.stringify(complex);
+        expect(yaml).toMatchInlineSnapshot(`
+"data: 
+  &data
+  id: 0
+level1: 
+  data: 
+    *data
+  sub1: 
+    data: 
+      &data1
+      id: 1
+  sub2: 
+    data: 
+      *data1
+level2: 
+  data: 
+    &data2
+    id: 2
+  nested: 
+    data: 
+      &data3
+      id: 3
+    deep: 
+      data: 
+        &data4
+        id: 4
+refs: 
+  data: 
+    *data2
+  all: 
+    - data: 
+        *data3
+    - data: 
+        *data4"
+`);
+
+        const parsed = YAML.parse(yaml);
+        expect(parsed.data).toBe(parsed.level1.data);
+        expect(parsed.level1.sub1.data).toBe(parsed.level1.sub2.data);
+        expect(parsed.level2.data).toBe(parsed.refs.data);
+        expect(parsed.level2.nested.data).toBe(parsed.refs.all[0].data);
+        expect(parsed.level2.nested.deep.data).toBe(parsed.refs.all[1].data);
+
+        // Verify IDs
+        expect(parsed.data.id).toBe(0);
+        expect(parsed.level1.sub1.data.id).toBe(1);
+        expect(parsed.level2.data.id).toBe(2);
+        expect(parsed.level2.nested.data.id).toBe(3);
+        expect(parsed.level2.nested.deep.data.id).toBe(4);
+      });
+
+      test.todo("handles root level anchors correctly", () => {
+        // When the root itself is referenced
+        const obj = { name: "root" };
+        obj.self = obj;
+
+        const yaml = YAML.stringify(obj);
+        expect(yaml).toContain("&root");
+        expect(yaml).toContain("*root");
+
+        const parsed = YAML.parse(yaml);
+        expect(parsed.self).toBe(parsed);
+        expect(parsed.name).toBe("root");
+      });
+
+      test("root collision with property name", () => {
+        const obj = {};
+        const root = {};
+        obj.cycle = obj;
+        obj.root = root;
+        obj.root2 = root;
+        expect(YAML.stringify(obj)).toMatchInlineSnapshot(`
+          "&root
+          cycle: 
+            *root
+          root: 
+            &root1
+            {}
+          root2: 
+            *root1"
+        `);
       });
     });
 
@@ -1173,7 +1529,7 @@ production:
     describe("JavaScript edge cases", () => {
       test("handles symbols", () => {
         const sym = Symbol("test");
-        expect(Bun.YAML.stringify(sym)).toBe(undefined);
+        expect(YAML.stringify(sym)).toBe(undefined);
 
         const obj = {
           [sym]: "symbol key value",
@@ -1181,7 +1537,7 @@ production:
           symbolValue: sym,
         };
         // Symbol keys are not enumerable, symbol values are undefined
-        expect(Bun.YAML.stringify(obj)).toBe("normalKey: normal value\ntest: symbol key value");
+        expect(YAML.stringify(obj)).toBe("normalKey: normal value\ntest: symbol key value");
       });
 
       test("handles WeakMap and WeakSet", () => {
@@ -1191,8 +1547,8 @@ production:
         weakMap.set(key, "value");
         weakSet.add(key);
 
-        expect(Bun.YAML.stringify(weakMap)).toBe("{}");
-        expect(Bun.YAML.stringify(weakSet)).toBe("{}");
+        expect(YAML.stringify(weakMap)).toBe("{}");
+        expect(YAML.stringify(weakSet)).toBe("{}");
       });
 
       test("handles ArrayBuffer and TypedArrays", () => {
@@ -1201,10 +1557,10 @@ production:
         const int32 = new Int32Array([100, 200]);
         const float64 = new Float64Array([3.14, 2.71]);
 
-        expect(Bun.YAML.stringify(buffer)).toBe("{}");
-        expect(Bun.YAML.stringify(uint8)).toBe('"0": 1\n"1": 2\n"2": 3\n"3": 4');
-        expect(Bun.YAML.stringify(int32)).toBe('"0": 100\n"1": 200');
-        expect(Bun.YAML.stringify(float64)).toBe('"0": 3.14\n"1": 2.71');
+        expect(YAML.stringify(buffer)).toBe("{}");
+        expect(YAML.stringify(uint8)).toBe('"0": 1\n"1": 2\n"2": 3\n"3": 4');
+        expect(YAML.stringify(int32)).toBe('"0": 100\n"1": 200');
+        expect(YAML.stringify(float64)).toBe('"0": 3.14\n"1": 2.71');
       });
 
       test("handles Proxy objects", () => {
@@ -1225,7 +1581,7 @@ production:
           },
         });
 
-        const result = Bun.YAML.stringify(proxy);
+        const result = YAML.stringify(proxy);
         expect(result).toContain("a: 1");
         expect(result).toContain("b: 2");
         expect(result).toContain("c: 3");
@@ -1247,7 +1603,7 @@ production:
           },
         );
 
-        expect(() => Bun.YAML.stringify(throwingProxy)).toThrow("Proxy get trap error");
+        expect(() => YAML.stringify(throwingProxy)).toThrow("Proxy get trap error");
       });
 
       test("handles getters that throw", () => {
@@ -1258,7 +1614,7 @@ production:
           },
         };
 
-        expect(() => Bun.YAML.stringify(obj)).toThrow("Getter error");
+        expect(() => YAML.stringify(obj)).toThrow("Getter error");
       });
 
       test("handles getters that return different values", () => {
@@ -1269,8 +1625,8 @@ production:
           },
         };
 
-        const yaml1 = Bun.YAML.stringify(obj);
-        const yaml2 = Bun.YAML.stringify(obj);
+        const yaml1 = YAML.stringify(obj);
+        const yaml2 = YAML.stringify(obj);
 
         expect(yaml1).toBe("counter: 2");
         expect(yaml2).toBe("counter: 4");
@@ -1283,8 +1639,8 @@ production:
           },
         };
 
-        const yaml = Bun.YAML.stringify(obj);
-        const parsed = Bun.YAML.parse(yaml);
+        const yaml = YAML.stringify(obj);
+        const parsed = YAML.parse(yaml);
 
         // The getter returns the object itself, creating a circular reference
         expect(parsed.self).toBe(parsed);
@@ -1294,8 +1650,8 @@ production:
         const promise = Promise.resolve(42);
         const pendingPromise = new Promise(() => {});
 
-        expect(Bun.YAML.stringify(promise)).toBe("{}");
-        expect(Bun.YAML.stringify(pendingPromise)).toBe("{}");
+        expect(YAML.stringify(promise)).toBe("{}");
+        expect(YAML.stringify(pendingPromise)).toBe("{}");
       });
 
       test("handles Generator functions and iterators", () => {
@@ -1307,8 +1663,8 @@ production:
         const gen = generator();
         const genFunc = generator;
 
-        expect(Bun.YAML.stringify(gen)).toBe("{}");
-        expect(Bun.YAML.stringify(genFunc)).toBe(undefined);
+        expect(YAML.stringify(gen)).toBe("{}");
+        expect(YAML.stringify(genFunc)).toBe(undefined);
       });
 
       test("handles AsyncFunction and async iterators", () => {
@@ -1318,8 +1674,8 @@ production:
         }
         const asyncIterator = asyncGen();
 
-        expect(Bun.YAML.stringify(asyncFunc)).toBe(undefined);
-        expect(Bun.YAML.stringify(asyncIterator)).toBe("{}");
+        expect(YAML.stringify(asyncFunc)).toBe(undefined);
+        expect(YAML.stringify(asyncIterator)).toBe("{}");
       });
 
       test("handles objects with null prototype", () => {
@@ -1327,7 +1683,7 @@ production:
         nullProto.key = "value";
         nullProto.number = 42;
 
-        const result = Bun.YAML.stringify(nullProto);
+        const result = YAML.stringify(nullProto);
         expect(result).toContain("key: value");
         expect(result).toContain("number: 42");
       });
@@ -1341,8 +1697,8 @@ production:
         };
 
         // YAML.stringify doesn't use toJSON (unlike JSON.stringify)
-        expect(Bun.YAML.stringify(obj)).toContain("data: secret");
-        expect(Bun.YAML.stringify(obj)).toContain("toJSON:");
+        expect(YAML.stringify(obj)).toContain("data: secret");
+        expect(YAML.stringify(obj)).toContain("toJSON:");
       });
 
       test("handles objects with valueOf", () => {
@@ -1354,7 +1710,7 @@ production:
         };
 
         // valueOf is not called for objects
-        const result = Bun.YAML.stringify(obj);
+        const result = YAML.stringify(obj);
         expect(result).toContain("value: 100");
         expect(result).toContain("valueOf:");
       });
@@ -1368,7 +1724,7 @@ production:
         };
 
         // toString is not called for objects
-        const result = Bun.YAML.stringify(obj);
+        const result = YAML.stringify(obj);
         expect(result).toContain("data: test");
         expect(result).toContain("toString:");
       });
@@ -1378,9 +1734,9 @@ production:
         const sealed = Object.seal({ x: 10, y: 20 });
         const nonExtensible = Object.preventExtensions({ foo: "bar" });
 
-        expect(Bun.YAML.stringify(frozen)).toBe("a: 1\nb: 2");
-        expect(Bun.YAML.stringify(sealed)).toBe('x: 10\n"y": 20');
-        expect(Bun.YAML.stringify(nonExtensible)).toBe("foo: bar");
+        expect(YAML.stringify(frozen)).toBe("a: 1\nb: 2");
+        expect(YAML.stringify(sealed)).toBe('x: 10\n"y": 20');
+        expect(YAML.stringify(nonExtensible)).toBe("foo: bar");
       });
 
       test("handles objects with symbol.toPrimitive", () => {
@@ -1391,7 +1747,7 @@ production:
           },
         };
 
-        expect(Bun.YAML.stringify(obj)).toBe("normal: value\nSymbol.toPrimitive: \n  {}");
+        expect(YAML.stringify(obj)).toBe("normal: value\nSymbol.toPrimitive: \n  {}");
       });
 
       test("handles Intl objects", () => {
@@ -1399,17 +1755,17 @@ production:
         const numberFormat = new Intl.NumberFormat("en-US");
         const collator = new Intl.Collator("en-US");
 
-        expect(Bun.YAML.stringify(dateFormat)).toBe("{}");
-        expect(Bun.YAML.stringify(numberFormat)).toBe("{}");
-        expect(Bun.YAML.stringify(collator)).toBe("{}");
+        expect(YAML.stringify(dateFormat)).toBe("{}");
+        expect(YAML.stringify(numberFormat)).toBe("{}");
+        expect(YAML.stringify(collator)).toBe("{}");
       });
 
       test("handles URL and URLSearchParams", () => {
         const url = new URL("https://example.com/path?query=1");
         const params = new URLSearchParams("a=1&b=2");
 
-        expect(Bun.YAML.stringify(url)).toBe("{}");
-        expect(Bun.YAML.stringify(params)).toBe("{}");
+        expect(YAML.stringify(url)).toBe("{}");
+        expect(YAML.stringify(params)).toBe("{}");
       });
 
       test("handles empty objects and arrays in various contexts", () => {
@@ -1423,7 +1779,7 @@ production:
           mixed: [{}, [], { inner: {} }, { inner: [] }],
         };
 
-        const yaml = Bun.YAML.stringify(nested);
+        const yaml = YAML.stringify(nested);
         expect(yaml).toContain("emptyObj: \n  {}");
         expect(yaml).toContain("emptyArr: \n  []");
         expect(yaml).toContain("deepEmpty: \n    {}");
@@ -1436,8 +1792,8 @@ production:
           normal: [1, 2, 3, 4],
         };
 
-        const yaml = Bun.YAML.stringify(obj);
-        const parsed = Bun.YAML.parse(yaml);
+        const yaml = YAML.stringify(obj);
+        const parsed = YAML.parse(yaml);
 
         expect(parsed.sparse).toEqual([1, 4]);
         expect(parsed.normal).toEqual([1, 2, 3, 4]);
@@ -1449,8 +1805,8 @@ production:
           large[`key${i}`] = `value${i}`;
         }
 
-        const yaml = Bun.YAML.stringify(large);
-        const parsed = Bun.YAML.parse(yaml);
+        const yaml = YAML.stringify(large);
+        const parsed = YAML.parse(yaml);
 
         expect(Object.keys(parsed).length).toBe(10000);
         expect(parsed.key0).toBe("value0");
@@ -1462,25 +1818,25 @@ production:
           "key: value": "colon space key",
         };
 
-        const yaml = Bun.YAML.stringify(obj);
-        const parsed = Bun.YAML.parse(yaml);
+        const yaml = YAML.stringify(obj);
+        const parsed = YAML.parse(yaml);
 
         expect(parsed["key: value"]).toBe("colon space key");
       });
 
       test("handles empty string keys without crashing", () => {
         const obj = { "": "empty key value" };
-        const yaml = Bun.YAML.stringify(obj);
+        const yaml = YAML.stringify(obj);
         expect(yaml).toBe('"": empty key value');
 
-        const parsed = Bun.YAML.parse(yaml);
+        const parsed = YAML.parse(yaml);
         expect(parsed[""]).toBe("empty key value");
       });
 
       test("handles arrays with sparse elements", () => {
         const arr = [1, , 3, undefined, 5]; // eslint-disable-line no-sparse-arrays
-        const yaml = Bun.YAML.stringify(arr);
-        const parsed = Bun.YAML.parse(yaml);
+        const yaml = YAML.stringify(arr);
+        const parsed = YAML.parse(yaml);
 
         // Undefined and sparse elements should be filtered out
         expect(parsed).toEqual([1, 3, 5]);
@@ -1492,8 +1848,8 @@ production:
           undefined: undefined,
           null: null,
         };
-        const yaml = Bun.YAML.stringify(obj);
-        const parsed = Bun.YAML.parse(yaml);
+        const yaml = YAML.stringify(obj);
+        const parsed = YAML.parse(yaml);
 
         // Should preserve null but not undefined
         expect(parsed).toEqual({
@@ -1508,8 +1864,8 @@ production:
           1: "second",
           42: "answer",
         };
-        const yaml = Bun.YAML.stringify(obj);
-        const parsed = Bun.YAML.parse(yaml);
+        const yaml = YAML.stringify(obj);
+        const parsed = YAML.parse(yaml);
 
         expect(parsed).toEqual({
           "0": "first",

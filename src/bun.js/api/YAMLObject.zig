@@ -41,7 +41,7 @@ pub fn stringify(global: *JSGlobalObject, callFrame: *jsc.CallFrame) JSError!JSV
     var scope: bun.AllocationScope = .init(bun.default_allocator);
     defer scope.deinit();
 
-    var stringifier: Stringifier = .init(scope.allocator());
+    var stringifier: Stringifier = try .init(scope.allocator());
     defer stringifier.deinit();
 
     try stringifier.findAnchorsAndAliases(global, value, .root);
@@ -95,14 +95,18 @@ const Stringifier = struct {
         };
     };
 
-    pub fn init(allocator: std.mem.Allocator) Stringifier {
+    pub fn init(allocator: std.mem.Allocator) OOM!Stringifier {
+        var prop_names: bun.StringHashMap(usize) = .init(allocator);
+        // always rename anchors named "root" to avoid collision with
+        // root anchor/alias
+        try prop_names.put("root", 0);
         return .{
             .stack_check = .init(),
             .builder = .init(),
             .indent = 0,
             .known_collections = .init(allocator),
             .array_item_counter = 0,
-            .prop_names = .init(allocator),
+            .prop_names = prop_names,
         };
     }
 
@@ -170,8 +174,7 @@ const Stringifier = struct {
                 },
                 .prop_value => |*prop_value| {
                     const name_entry = try this.prop_names.getOrPut(prop_value.prop_name.byteSlice());
-                    if (name_entry.found_existing or prop_value.prop_name.isEmpty()) {
-                        // name.isEmpty because anchor/alias cannot be an empty name
+                    if (name_entry.found_existing) {
                         name_entry.value_ptr.* += 1;
                     } else {
                         name_entry.value_ptr.* = 0;
@@ -286,29 +289,8 @@ const Stringifier = struct {
         };
 
         if (has_anchor) |anchor| {
-            if (anchor.anchored) {
-                // write the alias and return
-                this.builder.append(.lchar, '*');
-                switch (anchor.name) {
-                    .root => {
-                        this.builder.append(.latin1, "root");
-                    },
-                    .array_item => {
-                        this.builder.append(.latin1, "item");
-                        this.builder.append(.usize, anchor.name.array_item);
-                    },
-                    .prop_value => {
-                        this.builder.append(.string, anchor.name.prop_value.prop_name);
-                        if (anchor.name.prop_value.counter != 0) {
-                            this.builder.append(.usize, anchor.name.prop_value.counter);
-                        }
-                    },
-                }
+            this.builder.append(.lchar, if (anchor.anchored) '*' else '&');
 
-                return;
-            }
-
-            this.builder.append(.lchar, '&');
             switch (anchor.name) {
                 .root => {
                     this.builder.append(.latin1, "root");
@@ -317,13 +299,23 @@ const Stringifier = struct {
                     this.builder.append(.latin1, "item");
                     this.builder.append(.usize, anchor.name.array_item);
                 },
-                .prop_value => {
-                    this.builder.append(.string, anchor.name.prop_value.prop_name);
-                    if (anchor.name.prop_value.counter != 0) {
-                        this.builder.append(.usize, anchor.name.prop_value.counter);
+                .prop_value => |prop_value| {
+                    if (prop_value.prop_name.length() == 0) {
+                        this.builder.append(.latin1, "value");
+                        this.builder.append(.usize, prop_value.counter);
+                    } else {
+                        this.builder.append(.string, anchor.name.prop_value.prop_name);
+                        if (anchor.name.prop_value.counter != 0) {
+                            this.builder.append(.usize, anchor.name.prop_value.counter);
+                        }
                     }
                 },
             }
+
+            if (anchor.anchored) {
+                return;
+            }
+
             this.newline();
             anchor.anchored = true;
         }
@@ -931,3 +923,4 @@ const JSValue = jsc.JSValue;
 const MarkedArgumentBuffer = jsc.MarkedArgumentBuffer;
 const ZigString = jsc.ZigString;
 const wtf = bun.jsc.wtf;
+const OOM = bun.OOM;

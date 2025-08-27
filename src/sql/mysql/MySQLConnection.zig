@@ -352,7 +352,7 @@ pub fn getQueriesArray(this: *const @This()) JSValue {
     return js.queriesGetCached(this.js_value) orelse .zero;
 }
 pub fn failFmt(this: *@This(), error_code: AnyMySQLError.Error, comptime fmt: [:0]const u8, args: anytype) void {
-    const message = std.fmt.allocPrint(bun.default_allocator, fmt, args) catch bun.outOfMemory();
+    const message = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, fmt, args));
     defer bun.default_allocator.free(message);
 
     const err = AnyMySQLError.mysqlErrorToJS(this.globalObject, message, error_code);

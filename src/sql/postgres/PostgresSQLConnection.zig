@@ -333,7 +333,7 @@ pub fn failWithJSValue(this: *PostgresSQLConnection, value: JSValue) void {
 }
 
 pub fn failFmt(this: *PostgresSQLConnection, code: []const u8, comptime fmt: [:0]const u8, args: anytype) void {
-    const message = std.fmt.allocPrint(bun.default_allocator, fmt, args) catch bun.outOfMemory();
+    const message = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, fmt, args));
     defer bun.default_allocator.free(message);
 
     const err = createPostgresError(this.globalObject, message, .{ .code = code }) catch |e| this.globalObject.takeError(e);

@@ -1,12 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Output = bun.Output;
-const Global = bun.Global;
-const strings = bun.strings;
-const Command = @import("../cli.zig").Command;
-const PackageManager = @import("../install/install.zig").PackageManager;
-const security_scanner = @import("../install/PackageManager/security_scanner.zig");
-
 pub const ScanCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .scan);
@@ -55,3 +46,11 @@ pub const ScanCommand = struct {
         Global.exit(0);
     }
 };
+
+const security_scanner = @import("../install/PackageManager/security_scanner.zig");
+const Command = @import("../cli.zig").Command;
+const PackageManager = @import("../install/install.zig").PackageManager;
+
+const bun = @import("bun");
+const Global = bun.Global;
+const Output = bun.Output;

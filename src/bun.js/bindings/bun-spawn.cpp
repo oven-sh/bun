@@ -19,6 +19,11 @@
 #include <errno.h>
 #include <stdio.h>
 #include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
 
 extern char** environ;
 
@@ -89,6 +94,9 @@ typedef struct bun_container_setup_t {
     uint32_t gid_inside;
     uint32_t gid_outside; 
     uint32_t gid_count;
+    
+    // Network namespace flag
+    bool has_network_namespace;
     
     // Cgroup path if resource limits are set
     const char* cgroup_path;
@@ -280,6 +288,55 @@ static int setup_container_parent(pid_t child_pid, bun_container_setup_t* setup)
     return 0;
 }
 
+// Setup network namespace - bring up loopback interface
+static int setup_network_namespace() {
+    // Try with a regular AF_INET socket first (more compatible)
+    int sock = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    if (sock < 0) {
+        // Fallback to netlink socket
+        sock = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
+        if (sock < 0) {
+            return -1;
+        }
+    }
+    
+    // Bring up loopback interface using ioctl
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    // Use strncpy for safety, ensuring null termination
+    strncpy(ifr.ifr_name, "lo", IFNAMSIZ - 1);
+    ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+    
+    // Get current flags
+    if (ioctl(sock, SIOCGIFFLAGS, &ifr) < 0) {
+        close(sock);
+        return -1;
+    }
+    
+    // Set the UP flag
+    ifr.ifr_flags |= IFF_UP | IFF_RUNNING;
+    if (ioctl(sock, SIOCSIFFLAGS, &ifr) < 0) {
+        close(sock);
+        return -1;
+    }
+    
+    close(sock);
+    return 0;
+}
+
+// Helper to write error message to error pipe
+static void write_error_to_pipe(int error_pipe_fd, const char* error_msg) {
+    if (error_pipe_fd < 0) return;
+    
+    size_t len = strlen(error_msg);
+    if (len > 255) len = 255; // Limit error message length
+    
+    // Write length byte followed by message
+    unsigned char msg_len = (unsigned char)len;
+    write(error_pipe_fd, &msg_len, 1);
+    write(error_pipe_fd, error_msg, len);
+}
+
 // Child-side container setup before exec
 static int setup_container_child(bun_container_setup_t* setup) {
     if (!setup) return 0;
@@ -287,17 +344,32 @@ static int setup_container_child(bun_container_setup_t* setup) {
     // Wait for parent to complete setup
     char sync;
     if (read(setup->sync_pipe_read, &sync, 1) != 1) {
+        write_error_to_pipe(setup->error_pipe_write, "Failed to sync with parent process");
+        close(setup->error_pipe_write);
         return -1;
     }
     
-    // Close pipes we don't need
+    // Close pipes we don't need anymore
     close(setup->sync_pipe_read);
     close(setup->sync_pipe_write);
     close(setup->error_pipe_read);
     
-    // Child-specific setup would go here (mounts, network config, etc)
-    // Currently handled by the Zig code after spawn
+    // Setup network if we have a network namespace
+    if (setup->has_network_namespace) {
+        int net_result = setup_network_namespace();
+        if (net_result != 0) {
+            // Write warning to error pipe but continue - network issues are non-fatal
+            write_error_to_pipe(setup->error_pipe_write, 
+                "Warning: Failed to configure loopback interface in network namespace");
+            // Don't return error - let the process continue
+        }
+    }
     
+    // TODO: Mount namespace operations
+    // TODO: Pivot root if requested
+    
+    // Close error pipe if no errors
+    close(setup->error_pipe_write);
     return 0;
 }
 
@@ -503,14 +575,25 @@ extern "C" ssize_t posix_spawn_bun(
                 goto cleanup;
             }
             
-            // Check for errors from child
-            char error_buf[256];
-            ssize_t error_len = read(error_pipe[0], error_buf, sizeof(error_buf)-1);
-            if (error_len > 0) {
-                // Child reported an error
-                wait4(child, 0, 0, 0);
-                res = ECHILD; // Generic child error
-                goto cleanup;
+            // Check for errors/warnings from child
+            unsigned char msg_len;
+            ssize_t len_read = read(error_pipe[0], &msg_len, 1);
+            if (len_read == 1 && msg_len > 0) {
+                char error_buf[256];
+                ssize_t error_len = read(error_pipe[0], error_buf, msg_len);
+                if (error_len > 0) {
+                    error_buf[error_len] = '\0';
+                    // Check if it's a warning (non-fatal) or error
+                    if (strncmp(error_buf, "Warning:", 8) == 0) {
+                        // Log warning but don't fail - this could be logged to stderr
+                        // For now, we'll just continue
+                    } else {
+                        // Fatal error - child setup failed
+                        wait4(child, 0, 0, 0);
+                        res = ECHILD; // Generic child error
+                        goto cleanup;
+                    }
+                }
             }
         }
         

@@ -2404,6 +2404,7 @@ fn spawnWithContainer(
         
         if (ns.network != null) {
             namespace_flags |= std.os.linux.CLONE.NEWNET;
+            container_setup.has_network_namespace = true;
         }
     }
     

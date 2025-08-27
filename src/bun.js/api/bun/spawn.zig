@@ -281,6 +281,9 @@ pub const PosixSpawn = struct {
         gid_outside: u32 = 0,
         gid_count: u32 = 0,
         
+        // Network namespace
+        has_network_namespace: bool = false,
+        
         // Resource limits
         cgroup_path: ?[*:0]const u8 = null,
         memory_limit: u64 = 0,

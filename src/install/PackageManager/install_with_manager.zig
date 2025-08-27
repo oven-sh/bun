@@ -584,6 +584,9 @@ pub fn installWithManager(
                     }
                 }
             }
+        } else if (manager.subcommand == .install and manager.options.security_scanner != null) {
+            Output.pretty("\n<d>Note: Security scanning is not performed during 'bun install' without adding packages.\n", .{});
+            Output.pretty("To scan your dependencies, run '<cyan>bun pm scan<r><d>' after installation.<r>\n", .{});
         }
     }
 

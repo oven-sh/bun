@@ -51,6 +51,8 @@ pub const ScanCommand = struct {
 
             if (results.hasAdvisories()) {
                 Global.exit(1);
+            } else {
+                Output.pretty("<green>No advisories found<r>\n", .{});
             }
         }
 

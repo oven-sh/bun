@@ -238,7 +238,7 @@ pub fn create(
     }
 
     var worker = bun.handleOom(bun.default_allocator.create(WebWorker));
-    worker.* = WebWorker.new(.{
+    worker.* = WebWorker{
         .lifecycle_handle = lifecycle_handle,
         .ref_count = .init(),
         .cpp_worker = cpp_worker,
@@ -260,7 +260,7 @@ pub fn create(
         .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else &.{},
         .execArgv = if (inherit_execArgv) null else (if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else &.{}),
         .preloads = preloads.items,
-    });
+    };
 
     worker.parent_poll_ref.ref(parent);
     worker.ref();

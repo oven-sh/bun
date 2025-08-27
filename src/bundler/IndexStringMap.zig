@@ -16,7 +16,8 @@ pub fn get(self: *const IndexStringMap, index: Index.Int) ?[]const u8 {
 }
 
 pub fn put(self: *IndexStringMap, allocator: std.mem.Allocator, index: Index.Int, value: []const u8) !void {
-    const duped = allocator.dupe(u8, value) catch |err| bun.handleOom(err);
+    const duped = try allocator.dupe(u8, value);
+    errdefer allocator.free(duped);
     try self.map.put(allocator, index, duped);
 }
 

@@ -155,6 +155,7 @@ pub const Subcommand = enum {
     audit,
     info,
     why,
+    scan,
 
     // bin,
     // hash,
@@ -580,7 +581,10 @@ pub fn init(
     if (comptime Environment.isWindows) {
         _ = Path.pathToPosixBuf(u8, top_level_dir_no_trailing_slash, &cwd_buf);
     } else {
-        @memcpy(cwd_buf[0..top_level_dir_no_trailing_slash.len], top_level_dir_no_trailing_slash);
+        // Avoid memcpy alias when source and dest are the same
+        if (cwd_buf[0..].ptr != top_level_dir_no_trailing_slash.ptr) {
+            @memcpy(cwd_buf[0..top_level_dir_no_trailing_slash.len], top_level_dir_no_trailing_slash);
+        }
     }
 
     var original_package_json_path_buf = bun.handleOom(std.ArrayListUnmanaged(u8).initCapacity(ctx.allocator, top_level_dir_no_trailing_slash.len + "/package.json".len + 1));

@@ -566,7 +566,7 @@ pub fn installWithManager(
 
         manager.verifyResolutions(log_level);
 
-        if (manager.subcommand == .add and manager.options.security_scanner != null) {
+        if ((manager.subcommand == .add or manager.subcommand == .update) and manager.options.security_scanner != null) {
             try security_scanner.performSecurityScanAfterResolution(manager);
         }
     }

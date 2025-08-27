@@ -7,10 +7,7 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
     const security_scanner = manager.options.security_scanner orelse return;
 
     if (manager.options.dry_run or !manager.options.do.install_packages) return;
-    if (manager.update_requests.len == 0) {
-        Output.prettyErrorln("No update requests to scan", .{});
-        return;
-    }
+    if (manager.update_requests.len == 0) return;
 
     if (manager.options.log_level == .verbose) {
         Output.prettyErrorln("<d>[SecurityProvider]<r> Running at '{s}'", .{security_scanner});

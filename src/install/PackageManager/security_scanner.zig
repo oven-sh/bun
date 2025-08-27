@@ -3,22 +3,195 @@ const PackagePath = struct {
     dep_path: []DependencyID,
 };
 
-pub fn performSecurityScanAfterResolution(manager: *PackageManager) !void {
-    const security_scanner = manager.options.security_scanner orelse return;
+pub const SecurityAdvisoryLevel = enum { fatal, warn };
 
-    if (manager.options.dry_run or !manager.options.do.install_packages) return;
-    if (manager.update_requests.len == 0) return;
+pub const SecurityAdvisory = struct {
+    level: SecurityAdvisoryLevel,
+    package: []const u8,
+    url: ?[]const u8,
+    description: ?[]const u8,
+    pkg_path: ?[]const PackageID = null,
+};
 
-    try performSecurityScan(manager, security_scanner, false);
+pub const SecurityScanResults = struct {
+    advisories: []SecurityAdvisory,
+    fatal_count: usize,
+    warn_count: usize,
+    packages_scanned: usize,
+    duration_ms: i64,
+    security_scanner: []const u8,
+    allocator: std.mem.Allocator,
+
+    pub fn deinit(this: *SecurityScanResults) void {
+        for (this.advisories) |advisory| {
+            this.allocator.free(advisory.package);
+            if (advisory.description) |desc| this.allocator.free(desc);
+            if (advisory.url) |url| this.allocator.free(url);
+            if (advisory.pkg_path) |path| this.allocator.free(path);
+        }
+        this.allocator.free(this.advisories);
+    }
+
+    pub fn hasFatalAdvisories(this: *const SecurityScanResults) bool {
+        return this.fatal_count > 0;
+    }
+
+    pub fn hasWarnings(this: *const SecurityScanResults) bool {
+        return this.warn_count > 0;
+    }
+
+    pub fn hasAdvisories(this: *const SecurityScanResults) bool {
+        return this.advisories.len > 0;
+    }
+};
+
+pub fn performSecurityScanAfterResolution(manager: *PackageManager) !?SecurityScanResults {
+    const security_scanner = manager.options.security_scanner orelse return null;
+
+    if (manager.options.dry_run or !manager.options.do.install_packages) return null;
+
+    // For bun update without arguments, scan all packages
+    if (manager.subcommand == .update and manager.update_requests.len == 0) {
+        return try performSecurityScan(manager, security_scanner, true);
+    }
+
+    if (manager.update_requests.len == 0) return null;
+
+    return try performSecurityScan(manager, security_scanner, false);
 }
 
-pub fn performSecurityScanForAll(manager: *PackageManager) !void {
-    const security_scanner = manager.options.security_scanner orelse return;
+pub fn performSecurityScanForAll(manager: *PackageManager) !?SecurityScanResults {
+    const security_scanner = manager.options.security_scanner orelse return null;
 
-    try performSecurityScan(manager, security_scanner, true);
+    return try performSecurityScan(manager, security_scanner, true);
 }
 
-fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, comptime scan_all: bool) !void {
+pub fn printSecurityAdvisories(manager: *PackageManager, results: *const SecurityScanResults) void {
+    if (!results.hasAdvisories()) return;
+
+    const pkgs = manager.lockfile.packages.slice();
+    const pkg_names = pkgs.items(.name);
+    const string_buf = manager.lockfile.buffers.string_bytes.items;
+
+    for (results.advisories) |advisory| {
+        Output.print("\n", .{});
+
+        switch (advisory.level) {
+            .fatal => {
+                Output.pretty("  <red>FATAL<r>: {s}\n", .{advisory.package});
+            },
+            .warn => {
+                Output.pretty("  <yellow>WARNING<r>: {s}\n", .{advisory.package});
+            },
+        }
+
+        if (advisory.pkg_path) |pkg_path| {
+            if (pkg_path.len > 1) {
+                Output.pretty("    <d>via ", .{});
+                for (pkg_path[0 .. pkg_path.len - 1], 0..) |ancestor_id, idx| {
+                    if (idx > 0) Output.pretty(" › ", .{});
+                    const ancestor_name = pkg_names[ancestor_id].slice(string_buf);
+                    Output.pretty("{s}", .{ancestor_name});
+                }
+                Output.pretty(" › <red>{s}<r>\n", .{advisory.package});
+            } else {
+                Output.pretty("    <d>(direct dependency)<r>\n", .{});
+            }
+        }
+
+        if (advisory.description) |desc| {
+            if (desc.len > 0) {
+                Output.pretty("    {s}\n", .{desc});
+            }
+        }
+        if (advisory.url) |url| {
+            if (url.len > 0) {
+                Output.pretty("    <cyan>{s}<r>\n", .{url});
+            }
+        }
+    }
+
+    Output.print("\n", .{});
+    const total = results.fatal_count + results.warn_count;
+    if (total == 1) {
+        if (results.fatal_count == 1) {
+            Output.pretty("<b>1 advisory (<red>1 fatal<r>)<r>\n", .{});
+        } else {
+            Output.pretty("<b>1 advisory (<yellow>1 warning<r>)<r>\n", .{});
+        }
+    } else {
+        if (results.fatal_count > 0 and results.warn_count > 0) {
+            Output.pretty("<b>{d} advisories (<red>{d} fatal<r>, <yellow>{d} warning{s}<r>)<r>\n", .{ total, results.fatal_count, results.warn_count, if (results.warn_count == 1) "" else "s" });
+        } else if (results.fatal_count > 0) {
+            Output.pretty("<b>{d} advisories (<red>{d} fatal<r>)<r>\n", .{ total, results.fatal_count });
+        } else {
+            Output.pretty("<b>{d} advisories (<yellow>{d} warning{s}<r>)<r>\n", .{ total, results.warn_count, if (results.warn_count == 1) "" else "s" });
+        }
+    }
+}
+
+pub fn promptForWarnings() bool {
+    const can_prompt = Output.enable_ansi_colors_stdout;
+
+    if (!can_prompt) {
+        Output.pretty("\n<red>Security warnings found. Cannot prompt for confirmation (no TTY).<r>\n", .{});
+        Output.pretty("<red>Installation cancelled.<r>\n", .{});
+        return false;
+    }
+
+    Output.pretty("\n<yellow>Security warnings found.<r> Continue anyway? [y/N] ", .{});
+    Output.flush();
+
+    var stdin = std.io.getStdIn();
+    const unbuffered_reader = stdin.reader();
+    var buffered = std.io.bufferedReader(unbuffered_reader);
+    var reader = buffered.reader();
+
+    const first_byte = reader.readByte() catch {
+        Output.pretty("\n<red>Installation cancelled.<r>\n", .{});
+        return false;
+    };
+
+    const should_continue = switch (first_byte) {
+        '\n' => false,
+        '\r' => blk: {
+            const next_byte = reader.readByte() catch {
+                break :blk false;
+            };
+            break :blk next_byte == '\n' and false;
+        },
+        'y', 'Y' => blk: {
+            const next_byte = reader.readByte() catch {
+                break :blk false;
+            };
+            if (next_byte == '\n') {
+                break :blk true;
+            } else if (next_byte == '\r') {
+                const second_byte = reader.readByte() catch {
+                    break :blk false;
+                };
+                break :blk second_byte == '\n';
+            }
+            break :blk false;
+        },
+        else => blk: {
+            while (reader.readByte()) |b| {
+                if (b == '\n' or b == '\r') break;
+            } else |_| {}
+            break :blk false;
+        },
+    };
+
+    if (!should_continue) {
+        Output.pretty("\n<red>Installation cancelled.<r>\n", .{});
+        return false;
+    }
+
+    Output.pretty("\n<yellow>Continuing with installation...<r>\n\n", .{});
+    return true;
+}
+
+fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, comptime scan_all: bool) !SecurityScanResults {
     if (manager.options.log_level == .verbose) {
         Output.prettyErrorln("<d>[SecurityProvider]<r> Running at '{s}'", .{security_scanner});
     }
@@ -346,17 +519,8 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
     manager.sleepUntil(&closure, &@TypeOf(closure).isDone);
 
     const packages_scanned = pkg_dedupe.count();
-    try scanner.handleResults(&package_paths, start_time, packages_scanned, security_scanner, scan_all);
+    return try scanner.handleResults(&package_paths, start_time, packages_scanned, security_scanner);
 }
-
-const SecurityAdvisoryLevel = enum { fatal, warn };
-
-const SecurityAdvisory = struct {
-    level: SecurityAdvisoryLevel,
-    package: []const u8,
-    url: ?[]const u8,
-    description: ?[]const u8,
-};
 
 pub const SecurityScanSubprocess = struct {
     manager: *PackageManager,
@@ -380,9 +544,8 @@ pub const SecurityScanSubprocess = struct {
 
         const pipe_result = bun.sys.pipe();
         const pipe_fds = switch (pipe_result) {
-            .err => |err| {
-                Output.errGeneric("Failed to create IPC pipe: {s}", .{@tagName(err.getErrno())});
-                Global.exit(1);
+            .err => {
+                return error.IPCPipeFailed;
             },
             .result => |fds| fds,
         };
@@ -431,9 +594,8 @@ pub const SecurityScanSubprocess = struct {
         process.setExitHandler(this);
 
         switch (process.watchOrReap()) {
-            .err => |err| {
-                Output.errGeneric("Failed to watch security scanner process: {}", .{err});
-                Global.exit(1);
+            .err => {
+                return error.ProcessWatchFailed;
             },
             .result => {},
         }
@@ -491,7 +653,7 @@ pub const SecurityScanSubprocess = struct {
         }
     }
 
-    pub fn handleResults(this: *SecurityScanSubprocess, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath), start_time: i64, packages_scanned: usize, security_scanner: []const u8, comptime scan_all: bool) !void {
+    pub fn handleResults(this: *SecurityScanSubprocess, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath), start_time: i64, packages_scanned: usize, security_scanner: []const u8) !SecurityScanResults {
         defer {
             this.ipc_data.deinit();
             this.stderr_data.deinit();
@@ -515,7 +677,7 @@ pub const SecurityScanSubprocess = struct {
                     Output.errGeneric("Security scanner terminated abnormally without sending data", .{});
                 },
             }
-            Global.exit(1);
+            return error.NoSecurityScanData;
         }
 
         const duration = std.time.milliTimestamp() - start_time;
@@ -545,31 +707,50 @@ pub const SecurityScanSubprocess = struct {
             }
         }
 
-        try handleSecurityAdvisories(this.manager, this.ipc_data.items, package_paths, scan_all);
+        const advisories = try parseSecurityAdvisories(this.manager, this.ipc_data.items, package_paths);
 
         if (!status.isOK()) {
             switch (status) {
                 .exited => |exited| {
                     if (exited.code != 0) {
                         Output.errGeneric("Security scanner failed with exit code: {d}", .{exited.code});
-                        Global.exit(1);
+                        return error.SecurityScannerFailed;
                     }
                 },
                 .signaled => |signal| {
                     Output.errGeneric("Security scanner was terminated by signal: {s}", .{@tagName(signal)});
-                    Global.exit(1);
+                    return error.SecurityScannerTerminated;
                 },
                 else => {
                     Output.errGeneric("Security scanner failed", .{});
-                    Global.exit(1);
+                    return error.SecurityScannerFailed;
                 },
             }
         }
+
+        var fatal_count: usize = 0;
+        var warn_count: usize = 0;
+        for (advisories) |advisory| {
+            switch (advisory.level) {
+                .fatal => fatal_count += 1,
+                .warn => warn_count += 1,
+            }
+        }
+
+        return SecurityScanResults{
+            .advisories = advisories,
+            .fatal_count = fatal_count,
+            .warn_count = warn_count,
+            .packages_scanned = packages_scanned,
+            .duration_ms = duration,
+            .security_scanner = security_scanner,
+            .allocator = this.manager.allocator,
+        };
     }
 };
 
-fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath), comptime scan_all: bool) !void {
-    if (ipc_data.len == 0) return;
+fn parseSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath)) ![]SecurityAdvisory {
+    if (ipc_data.len == 0) return &[_]SecurityAdvisory{};
 
     const json_source = logger.Source{
         .contents = ipc_data,
@@ -588,7 +769,7 @@ fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, pack
         if (temp_log.errors > 0) {
             temp_log.print(Output.errorWriter()) catch {};
         }
-        Global.exit(1);
+        return error.InvalidJSON;
     };
 
     var advisories_list = std.ArrayList(SecurityAdvisory).init(manager.allocator);
@@ -596,64 +777,72 @@ fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, pack
 
     if (json_expr.data != .e_object) {
         Output.errGeneric("Security scanner response must be a JSON object, got: {s}", .{@tagName(json_expr.data)});
-        Global.exit(1);
+        return error.InvalidJSONFormat;
     }
 
     const obj = json_expr.data.e_object;
 
     const advisories_expr = obj.get("advisories") orelse {
         Output.errGeneric("Security scanner response missing required 'advisories' field", .{});
-        Global.exit(1);
+        return error.MissingAdvisoriesField;
     };
 
     if (advisories_expr.data != .e_array) {
         Output.errGeneric("Security scanner 'advisories' field must be an array, got: {s}", .{@tagName(advisories_expr.data)});
-        Global.exit(1);
+        return error.InvalidAdvisoriesFormat;
     }
 
     const array = advisories_expr.data.e_array;
     for (array.items.slice(), 0..) |item, i| {
         if (item.data != .e_object) {
             Output.errGeneric("Security advisory at index {d} must be an object, got: {s}", .{ i, @tagName(item.data) });
-            Global.exit(1);
+            return error.InvalidAdvisoryFormat;
         }
 
         const item_obj = item.data.e_object;
 
         const name_expr = item_obj.get("package") orelse {
             Output.errGeneric("Security advisory at index {d} missing required 'package' field", .{i});
-            Global.exit(1);
+            return error.MissingPackageField;
         };
-        const name_str = name_expr.asString(manager.allocator) orelse {
+        const name_str_temp = name_expr.asString(manager.allocator) orelse {
             Output.errGeneric("Security advisory at index {d} 'package' field must be a string", .{i});
-            Global.exit(1);
+            return error.InvalidPackageField;
         };
-        if (name_str.len == 0) {
+        if (name_str_temp.len == 0) {
             Output.errGeneric("Security advisory at index {d} 'package' field cannot be empty", .{i});
-            Global.exit(1);
+            return error.EmptyPackageField;
         }
+        // Duplicate the string since asString returns temporary memory
+        const name_str = try manager.allocator.dupe(u8, name_str_temp);
 
         const desc_str: ?[]const u8 = if (item_obj.get("description")) |desc_expr| blk: {
-            if (desc_expr.asString(manager.allocator)) |str| break :blk str;
+            if (desc_expr.asString(manager.allocator)) |str| {
+                // Duplicate the string since asString returns temporary memory
+                break :blk try manager.allocator.dupe(u8, str);
+            }
             if (desc_expr.data == .e_null) break :blk null;
             Output.errGeneric("Security advisory at index {d} 'description' field must be a string or null", .{i});
-            Global.exit(1);
+            return error.InvalidDescriptionField;
         } else null;
 
         const url_str: ?[]const u8 = if (item_obj.get("url")) |url_expr| blk: {
-            if (url_expr.asString(manager.allocator)) |str| break :blk str;
+            if (url_expr.asString(manager.allocator)) |str| {
+                // Duplicate the string since asString returns temporary memory
+                break :blk try manager.allocator.dupe(u8, str);
+            }
             if (url_expr.data == .e_null) break :blk null;
             Output.errGeneric("Security advisory at index {d} 'url' field must be a string or null", .{i});
-            Global.exit(1);
+            return error.InvalidUrlField;
         } else null;
 
         const level_expr = item_obj.get("level") orelse {
             Output.errGeneric("Security advisory at index {d} missing required 'level' field", .{i});
-            Global.exit(1);
+            return error.MissingLevelField;
         };
         const level_str = level_expr.asString(manager.allocator) orelse {
             Output.errGeneric("Security advisory at index {d} 'level' field must be a string", .{i});
-            Global.exit(1);
+            return error.InvalidLevelField;
         };
         const level = if (std.mem.eql(u8, level_str, "fatal"))
             SecurityAdvisoryLevel.fatal
@@ -661,163 +850,38 @@ fn handleSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, pack
             SecurityAdvisoryLevel.warn
         else {
             Output.errGeneric("Security advisory at index {d} 'level' field must be 'fatal' or 'warn', got: '{s}'", .{ i, level_str });
-            Global.exit(1);
+            return error.InvalidLevelValue;
         };
 
+        // Look up the package path for this advisory
+        var pkg_path: ?[]const PackageID = null;
+        const pkgs = manager.lockfile.packages.slice();
+        const pkg_names = pkgs.items(.name);
+        const string_buf = manager.lockfile.buffers.string_bytes.items;
+        
+        for (pkg_names, 0..) |pkg_name, j| {
+            if (std.mem.eql(u8, pkg_name.slice(string_buf), name_str)) {
+                const pkg_id: PackageID = @intCast(j);
+                if (package_paths.get(pkg_id)) |paths| {
+                    // Duplicate the path so it outlives the package_paths HashMap
+                    pkg_path = try manager.allocator.dupe(PackageID, paths.pkg_path);
+                }
+                break;
+            }
+        }
+        
         const advisory = SecurityAdvisory{
             .level = level,
             .package = name_str,
             .url = url_str,
             .description = desc_str,
+            .pkg_path = pkg_path,
         };
 
         try advisories_list.append(advisory);
     }
 
-    if (advisories_list.items.len > 0) {
-        var fatal_count: usize = 0;
-        var warn_count: usize = 0;
-
-        for (advisories_list.items) |advisory| {
-            Output.print("\n", .{});
-
-            switch (advisory.level) {
-                .fatal => {
-                    fatal_count += 1;
-                    Output.pretty("  <red>FATAL<r>: {s}\n", .{advisory.package});
-                },
-                .warn => {
-                    warn_count += 1;
-                    Output.pretty("  <yellow>WARNING<r>: {s}\n", .{advisory.package});
-                },
-            }
-
-            const pkgs = manager.lockfile.packages.slice();
-            const pkg_names = pkgs.items(.name);
-            const string_buf = manager.lockfile.buffers.string_bytes.items;
-
-            var found_pkg_id: ?PackageID = null;
-            for (pkg_names, 0..) |pkg_name, i| {
-                if (std.mem.eql(u8, pkg_name.slice(string_buf), advisory.package)) {
-                    found_pkg_id = @intCast(i);
-                    break;
-                }
-            }
-
-            if (found_pkg_id) |pkg_id| {
-                if (package_paths.get(pkg_id)) |paths| {
-                    if (paths.pkg_path.len > 1) {
-                        Output.pretty("    <d>via ", .{});
-                        for (paths.pkg_path[0 .. paths.pkg_path.len - 1], 0..) |ancestor_id, idx| {
-                            if (idx > 0) Output.pretty(" › ", .{});
-                            const ancestor_name = pkg_names[ancestor_id].slice(string_buf);
-                            Output.pretty("{s}", .{ancestor_name});
-                        }
-                        Output.pretty(" › <red>{s}<r>\n", .{advisory.package});
-                    } else {
-                        Output.pretty("    <d>(direct dependency)<r>\n", .{});
-                    }
-                }
-            }
-
-            if (advisory.description) |desc| {
-                if (desc.len > 0) {
-                    Output.pretty("    {s}\n", .{desc});
-                }
-            }
-            if (advisory.url) |url| {
-                if (url.len > 0) {
-                    Output.pretty("    <cyan>{s}<r>\n", .{url});
-                }
-            }
-        }
-
-        Output.print("\n", .{});
-        const total = fatal_count + warn_count;
-        if (total == 1) {
-            if (fatal_count == 1) {
-                Output.pretty("<b>1 advisory (<red>1 fatal<r>)<r>\n", .{});
-            } else {
-                Output.pretty("<b>1 advisory (<yellow>1 warning<r>)<r>\n", .{});
-            }
-        } else {
-            if (fatal_count > 0 and warn_count > 0) {
-                Output.pretty("<b>{d} advisories (<red>{d} fatal<r>, <yellow>{d} warning{s}<r>)<r>\n", .{ total, fatal_count, warn_count, if (warn_count == 1) "" else "s" });
-            } else if (fatal_count > 0) {
-                Output.pretty("<b>{d} advisories (<red>{d} fatal<r>)<r>\n", .{ total, fatal_count });
-            } else {
-                Output.pretty("<b>{d} advisories (<yellow>{d} warning{s}<r>)<r>\n", .{ total, warn_count, if (warn_count == 1) "" else "s" });
-            }
-        }
-
-        if (fatal_count > 0) {
-            if (comptime !scan_all) {
-                Output.pretty("<red>Installation aborted due to fatal security advisories<r>\n", .{});
-            }
-            Global.exit(1);
-        } else if (warn_count > 0) {
-            // Only prompt for warnings during install/add, not during scan
-            if (comptime !scan_all) {
-                const can_prompt = Output.enable_ansi_colors_stdout;
-
-                if (can_prompt) {
-                    Output.pretty("\n<yellow>Security warnings found.<r> Continue anyway? [y/N] ", .{});
-                    Output.flush();
-
-                    var stdin = std.io.getStdIn();
-                    const unbuffered_reader = stdin.reader();
-                    var buffered = std.io.bufferedReader(unbuffered_reader);
-                    var reader = buffered.reader();
-
-                    const first_byte = reader.readByte() catch {
-                        Output.pretty("\n<red>Installation cancelled.<r>\n", .{});
-                        Global.exit(1);
-                    };
-
-                    const should_continue = switch (first_byte) {
-                        '\n' => false,
-                        '\r' => blk: {
-                            const next_byte = reader.readByte() catch {
-                                break :blk false;
-                            };
-                            break :blk next_byte == '\n' and false;
-                        },
-                        'y', 'Y' => blk: {
-                            const next_byte = reader.readByte() catch {
-                                break :blk false;
-                            };
-                            if (next_byte == '\n') {
-                                break :blk true;
-                            } else if (next_byte == '\r') {
-                                const second_byte = reader.readByte() catch {
-                                    break :blk false;
-                                };
-                                break :blk second_byte == '\n';
-                            }
-                            break :blk false;
-                        },
-                        else => blk: {
-                            while (reader.readByte()) |b| {
-                                if (b == '\n' or b == '\r') break;
-                            } else |_| {}
-                            break :blk false;
-                        },
-                    };
-
-                    if (!should_continue) {
-                        Output.pretty("\n<red>Installation cancelled.<r>\n", .{});
-                        Global.exit(1);
-                    }
-
-                    Output.pretty("\n<yellow>Continuing with installation...<r>\n\n", .{});
-                } else {
-                    Output.pretty("\n<red>Security warnings found. Cannot prompt for confirmation (no TTY).<r>\n", .{});
-                    Output.pretty("<red>Installation cancelled.<r>\n", .{});
-                    Global.exit(1);
-                }
-            }
-        }
-    }
+    return try advisories_list.toOwnedSlice();
 }
 
 const std = @import("std");

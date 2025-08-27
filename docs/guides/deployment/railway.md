@@ -1,11 +1,13 @@
 ---
 name: Deploy a Bun application on Railway
+description: Deploy Bun applications to Railway with this step-by-step guide covering CLI and dashboard methods, optional PostgreSQL setup, and automatic SSL configuration.
 ---
 
 Railway is an infrastructure platform where you can provision infrastructure, develop with that infrastructure locally, and then deploy to the cloud. It enables instant deployments from GitHub with zero configuration, automatic SSL, and built-in database provisioning.
 
-This guide walks through deploying a Bun application with a PostgreSQL database, which is exactly what the template below provides. You can either follow this guide step-by-step or simply deploy the pre-configured template with one click:
+This guide walks through deploying a Bun application with a PostgreSQL database (optional), which is exactly what the template below provides. 
 
+You can either follow this guide step-by-step or simply deploy the pre-configured template with one click:
 
 {% raw %}
 
@@ -31,6 +33,8 @@ This guide walks through deploying a Bun application with a PostgreSQL database,
 
 ---
 
+#### Step 1
+
 Ensure sure you have the Railway CLI installed.
 
 ```bash
@@ -39,12 +43,16 @@ bun install -g @railway/cli
 
 ---
 
+#### Step 2
+
 Log into your Railway account. 
 
 ```bash
 railway login
 ```
 ---
+
+#### Step 3
 
 After successfully authenticating, initialize a new project.
 
@@ -55,7 +63,12 @@ bun-react-postgres$ railway init
 
 ---
 
+#### Step 4
+
 After initializing the project, add a new database and service.
+
+> **Note:** Step 4 is only necessary if your application uses a database. If you don't need PostgreSQL, skip to Step 5.
+
 
 ```bash
 # Add PostgreSQL database. Make sure to add this first!
@@ -66,6 +79,8 @@ bun-react-postgres$ railway add --service bun-react-db --variables DATABASE_URL=
 ```
 
 ---
+
+#### Step 5
 
 After the services have been created and connected, deploy the application to Railway. By default, services are only accessible within Railway's private network. To make your app publicly accessible, you need to generate a public domain.
 
@@ -83,6 +98,8 @@ bun-nextjs-starter$ railway domain
 
 ---
 
+#### Step 1
+
 Create a new project
 
 1. Go to [Railway Dashboard](http://railway.com/dashboard?utm_medium=integration&utm_source=docs&utm_campaign=bun)
@@ -91,20 +108,23 @@ Create a new project
 
 ---
 
-Add a PostgreSQL database
+#### Step 2
+
+Add a PostgreSQL database, and connect this database to the service
+
+> **Note:** Step 2 is only necessary if your application uses a database. If you don't need PostgreSQL, skip to Step 3.
+
+
 
 1. Click **"+ New"** → **"Database"** → **"Add PostgreSQL"**
+2. After the database has been created, select your service (not the database)
+3. Go to **"Variables"** tab
+4. Click **"+ New Variable"** → **"Add Reference"**
+5. Select `DATABASE_URL` from postgres
 
 ---
 
-Connect this database to the service
-
-1. Click your service (not the database)
-2. Go to **"Variables"** tab
-3. Click **"+ New Variable"** → **"Add Reference"**
-4. Select `DATABASE_URL` from postgres
-
----
+#### Step 3
 
 Generate a public domain
 

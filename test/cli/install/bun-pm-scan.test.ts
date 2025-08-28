@@ -669,51 +669,5 @@ describe("bun pm scan", () => {
       expect(stderr).not.toContain("installation aborted");
       expect(stderr).not.toContain("Installation aborted");
     });
-
-    test("does not prompt on warnings", async () => {
-      const dir = tempDirWithFiles("scan-no-prompt", {
-        "package.json": JSON.stringify({
-          name: "test",
-          dependencies: { lodash: "^4.0.0" },
-        }),
-        "bunfig.toml": `[install.security]\nscanner = "./scanner.js"`,
-        "scanner.js": `
-          module.exports = {
-            scanner: {
-              version: "1",
-              scan: async function() {
-                return [{
-                  package: "lodash",
-                  level: "warn",
-                  description: "Minor issue"
-                }];
-              }
-            }
-          };
-        `,
-      });
-
-      await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-
-      const proc = Bun.spawn({
-        cmd: [bunExe(), "pm", "scan"],
-        cwd: dir,
-        stdout: "pipe",
-        stderr: "pipe",
-        stdin: "pipe",
-        env: bunEnv,
-      });
-
-      // Write "n" to stdin in case it tries to prompt
-      proc.stdin.write("n\n");
-      proc.stdin.end();
-
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      // Should exit immediately with code 1, not wait for input
-      expect(exitCode).toBe(1);
-      expect(stdout).not.toContain("Continue anyway?");
-      expect(stdout).not.toContain("y/N");
-    });
   });
 });

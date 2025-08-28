@@ -140,6 +140,15 @@ pub const GraphVisualizer = struct {
         imports_and_exports: ImportsExports,
         chunks: ?[]ChunkData,
         dependency_graph: DependencyGraph,
+        runtime_meta: RuntimeMeta,
+    };
+    
+    const RuntimeMeta = struct {
+        memory_usage_mb: f64,
+        parse_graph_file_count: usize,
+        estimated_file_loader_count: usize,
+        has_css: bool,
+        has_html: bool,
     };
     
     const Metadata = struct {
@@ -182,6 +191,20 @@ pub const GraphVisualizer = struct {
         force_tree_shaking: bool,
         symbol_uses: []SymbolUse,
         dependencies: []PartDependency,
+        import_records: []ImportRecordInfo,
+        declared_symbols: []DeclaredSymbolInfo,
+    };
+    
+    const ImportRecordInfo = struct {
+        index: usize,
+        kind: []const u8,
+        path: []const u8,
+        is_internal: bool,
+    };
+    
+    const DeclaredSymbolInfo = struct {
+        ref: []const u8,
+        is_top_level: bool,
     };
     
     const SymbolUse = struct {
@@ -210,6 +233,17 @@ pub const GraphVisualizer = struct {
         kind: []const u8,
         original_name: []const u8,
         link: ?[]const u8,
+        use_count_estimate: u32,
+        chunk_index: ?u32,
+        nested_scope_slot: ?u32,
+        flags: SymbolFlags,
+    };
+    
+    const SymbolFlags = struct {
+        must_not_be_renamed: bool,
+        did_keep_name: bool,
+        has_been_assigned_to: bool,
+        import_item_status: []const u8,
     };
     
     const EntryPointData = struct {
@@ -244,6 +278,15 @@ pub const GraphVisualizer = struct {
         source_index: u32,
         files_in_chunk: []u32,
         cross_chunk_import_count: usize,
+        cross_chunk_imports: []CrossChunkImportInfo,
+        unique_key: []const u8,
+        final_path: []const u8,
+        content_type: []const u8,
+    };
+    
+    const CrossChunkImportInfo = struct {
+        chunk_index: u32,
+        import_kind: []const u8,
     };
     
     const DependencyGraph = struct {
@@ -315,6 +358,42 @@ pub const GraphVisualizer = struct {
                             };
                         }
                         
+                        // Build import records info
+                        var import_records = try allocator.alloc(ImportRecordInfo, part.import_record_indices.len);
+                        const ast_import_records = if (i < ast_list.items(.import_records).len) 
+                            ast_list.items(.import_records)[i].slice() 
+                        else 
+                            &[_]ImportRecord{};
+                        
+                        for (part.import_record_indices.slice(), 0..) |record_idx, k| {
+                            if (record_idx < ast_import_records.len) {
+                                const record = ast_import_records[record_idx];
+                                import_records[k] = .{
+                                    .index = record_idx,
+                                    .kind = @tagName(record.kind),
+                                    .path = record.path.text,
+                                    .is_internal = record.source_index.isValid(),
+                                };
+                            } else {
+                                import_records[k] = .{
+                                    .index = record_idx,
+                                    .kind = "unknown",
+                                    .path = "",
+                                    .is_internal = false,
+                                };
+                            }
+                        }
+                        
+                        // Build declared symbols info
+                        var declared_symbols = try allocator.alloc(DeclaredSymbolInfo, part.declared_symbols.entries.len);
+                        const decl_entries = part.declared_symbols.entries.slice();
+                        for (decl_entries.items(.ref), decl_entries.items(.is_top_level), 0..) |ref, is_top_level, k| {
+                            declared_symbols[k] = .{
+                                .ref = try std.fmt.allocPrint(allocator, "{}", .{ref}),
+                                .is_top_level = is_top_level,
+                            };
+                        }
+                        
                         parts_data.?[j] = .{
                             .index = j,
                             .stmt_count = part.stmts.len,
@@ -324,6 +403,8 @@ pub const GraphVisualizer = struct {
                             .force_tree_shaking = part.force_tree_shaking,
                             .symbol_uses = symbol_uses,
                             .dependencies = deps,
+                            .import_records = import_records,
+                            .declared_symbols = declared_symbols,
                         };
                     }
                 }
@@ -379,6 +460,9 @@ pub const GraphVisualizer = struct {
             
             var symbol_infos = try allocator.alloc(SymbolInfo, symbols.len);
             for (symbols.slice(), 0..) |symbol, j| {
+                const invalid_chunk_index = std.math.maxInt(u32);
+                const invalid_nested_scope_slot = std.math.maxInt(u32);
+                
                 symbol_infos[j] = .{
                     .inner_index = j,
                     .kind = @tagName(symbol.kind),
@@ -386,6 +470,15 @@ pub const GraphVisualizer = struct {
                     .link = if (symbol.link.isValid()) 
                         try std.fmt.allocPrint(allocator, "{}", .{symbol.link}) 
                     else null,
+                    .use_count_estimate = symbol.use_count_estimate,
+                    .chunk_index = if (symbol.chunk_index != invalid_chunk_index) symbol.chunk_index else null,
+                    .nested_scope_slot = if (symbol.nested_scope_slot != invalid_nested_scope_slot) symbol.nested_scope_slot else null,
+                    .flags = .{
+                        .must_not_be_renamed = symbol.must_not_be_renamed,
+                        .did_keep_name = symbol.did_keep_name,
+                        .has_been_assigned_to = symbol.has_been_assigned_to,
+                        .import_item_status = @tagName(symbol.import_item_status),
+                    },
                 };
             }
             
@@ -488,12 +581,25 @@ pub const GraphVisualizer = struct {
                     files_in_chunk[j] = entry.key_ptr.*;
                 }
                 
+                // Build cross-chunk imports info
+                var cross_chunk_imports = try allocator.alloc(CrossChunkImportInfo, chunk.cross_chunk_imports.len);
+                for (chunk.cross_chunk_imports.slice(), 0..) |import, k| {
+                    cross_chunk_imports[k] = .{
+                        .chunk_index = import.chunk_index,
+                        .import_kind = @tagName(import.import_kind),
+                    };
+                }
+                
                 chunks_data.?[i] = .{
                     .index = i,
                     .is_entry_point = chunk.entry_point.is_entry_point,
                     .source_index = chunk.entry_point.source_index,
                     .files_in_chunk = files_in_chunk,
                     .cross_chunk_import_count = chunk.cross_chunk_imports.len,
+                    .cross_chunk_imports = cross_chunk_imports,
+                    .unique_key = chunk.unique_key,
+                    .final_path = chunk.final_rel_path,
+                    .content_type = @tagName(chunk.content),
                 };
             }
         }
@@ -521,6 +627,23 @@ pub const GraphVisualizer = struct {
             .edges = edges.items,
         };
         
+        // Build runtime meta
+        const has_css = ctx.parse_graph.css_file_count > 0;
+        const has_html = blk: {
+            for (loaders) |loader| {
+                if (loader == .html) break :blk true;
+            }
+            break :blk false;
+        };
+        
+        const runtime_meta = RuntimeMeta{
+            .memory_usage_mb = 0, // TODO: calculate actual memory usage
+            .parse_graph_file_count = ctx.parse_graph.input_files.len,
+            .estimated_file_loader_count = ctx.parse_graph.estimated_file_loader_count,
+            .has_css = has_css,
+            .has_html = has_html,
+        };
+        
         return GraphData{
             .stage = stage,
             .timestamp = timestamp,
@@ -531,6 +654,7 @@ pub const GraphVisualizer = struct {
             .imports_and_exports = imports_exports,
             .chunks = chunks_data,
             .dependency_graph = dependency_graph,
+            .runtime_meta = runtime_meta,
         };
     }
     

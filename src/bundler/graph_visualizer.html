@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bun Bundler Graph Visualizer</title>
     <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dagre-d3@0.6.4/dist/dagre-d3.min.js"></script>
     <style>
         * {
@@ -490,7 +491,7 @@
                 <div class="file-item" data-index="${idx}">
                     <strong>${file.path || `File ${idx}`}</strong>
                     <div style="font-size: 11px; color: #808080;">
-                        ${file.loader || 'unknown'} | ${file.partCount || 0} parts
+                        ${file.loader || 'unknown'} | ${file.part_count || 0} parts
                     </div>
                 </div>
             `).join('');
@@ -501,9 +502,9 @@
                 .flatMap(source => 
                     (source.samples || []).map(symbol => `
                         <div class="symbol-item">
-                            <strong>${symbol.originalName}</strong>
+                            <strong>${symbol.original_name}</strong>
                             <div style="font-size: 11px; color: #808080;">
-                                ${symbol.kind} | Source ${source.sourceIndex}
+                                ${symbol.kind} | Source ${source.source_index}
                             </div>
                         </div>
                     `)
@@ -772,8 +773,8 @@
                 .append('g')
                 .attr('class', d => {
                     let classes = 'node';
-                    if (d.data?.entryPointKind === 'user_specified') classes += ' entry-point';
-                    if (d.data?.namedExportsCount > 0) classes += ' has-exports';
+                    if (d.data?.entry_point_kind === 'user_specified') classes += ' entry-point';
+                    if (d.data?.named_exports_count > 0) classes += ' has-exports';
                     if (d.data?.loader === 'css') classes += ' css-file';
                     return classes;
                 })
@@ -849,8 +850,8 @@
                 .append('g')
                 .attr('class', d => {
                     let classes = 'node';
-                    if (d.data?.entryPointKind === 'user_specified') classes += ' entry-point';
-                    if (d.data?.namedExportsCount > 0) classes += ' has-exports';
+                    if (d.data?.entry_point_kind === 'user_specified') classes += ' entry-point';
+                    if (d.data?.named_exports_count > 0) classes += ' has-exports';
                     if (d.data?.loader === 'css') classes += ' css-file';
                     return classes;
                 })
@@ -946,8 +947,8 @@
                 .append('g')
                 .attr('class', d => {
                     let classes = 'node';
-                    if (d.data?.entryPointKind === 'user_specified') classes += ' entry-point';
-                    if (d.data?.namedExportsCount > 0) classes += ' has-exports';
+                    if (d.data?.entry_point_kind === 'user_specified') classes += ' entry-point';
+                    if (d.data?.named_exports_count > 0) classes += ' has-exports';
                     if (d.data?.loader === 'css') classes += ' css-file';
                     return classes;
                 })

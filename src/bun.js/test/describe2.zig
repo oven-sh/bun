@@ -211,6 +211,7 @@ pub const BunTest = struct {
             .concurrent = false,
             .mode = .normal,
             .only = .no,
+            .has_callback = false,
         });
         return .{
             .gpa = outer_gpa,
@@ -647,14 +648,19 @@ pub const BaseScope = struct {
     concurrent: bool,
     mode: ScopeMode,
     only: enum { no, contains, yes },
-    pub fn init(this: BaseScopeCfg, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, parent: ?*DescribeScope) BaseScope {
-        if (this.self_only and parent != null) parent.?.markContainsOnly(); // TODO: this is a bad thing to have in an init function.
+    has_callback: bool,
+    pub fn init(this: BaseScopeCfg, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, parent: ?*DescribeScope, has_callback: bool, allow_update_parent: bool) BaseScope {
+        if (allow_update_parent) {
+            if (this.self_only and parent != null) parent.?.markContainsOnly(); // TODO: this is a bad thing to have in an init function.
+            if (has_callback and parent != null) parent.?.markHasCallback(); // TODO: these should be moved to their own pass rather than in an init function.
+        }
         return .{
             .parent = parent,
             .name = if (name_not_owned) |name| gpa.dupe(u8, name) catch bun.outOfMemory() else null,
             .concurrent = this.self_concurrent or if (parent) |p| p.base.concurrent else false,
             .mode = if (parent) |p| if (p.base.mode != .normal) p.base.mode else this.self_mode else this.self_mode,
             .only = if (this.self_only) .yes else .no,
+            .has_callback = has_callback,
         };
     }
     pub fn deinit(this: BaseScope, gpa: std.mem.Allocator) void {
@@ -706,13 +712,21 @@ pub const DescribeScope = struct {
             target = scope.base.parent;
         }
     }
+    fn markHasCallback(this: *DescribeScope) void {
+        var target: ?*DescribeScope = this;
+        while (target) |scope| {
+            if (scope.base.has_callback) return; // already marked
+            scope.base.has_callback = true;
+            target = scope.base.parent;
+        }
+    }
     pub fn appendDescribe(this: *DescribeScope, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, base: BaseScopeCfg) bun.JSError!*DescribeScope {
-        const child = create(gpa, .init(base, gpa, name_not_owned, this));
+        const child = create(gpa, .init(base, gpa, name_not_owned, this, false, true));
         try this.entries.append(.{ .describe = child });
         return child;
     }
     pub fn appendTest(this: *DescribeScope, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, callback: ?CallbackWithArgs, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
-        const entry = try ExecutionEntry.create(gpa, name_not_owned, callback, cfg, this, base);
+        const entry = try ExecutionEntry.create(gpa, name_not_owned, callback, cfg, this, base, true);
         try this.entries.append(.{ .test_callback = entry });
         return entry;
     }
@@ -728,7 +742,7 @@ pub const DescribeScope = struct {
     pub fn appendHook(this: *DescribeScope, gpa: std.mem.Allocator, tag: HookTag, callback: ?jsc.JSValue, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
         var callback_with_args: ?CallbackWithArgs = if (callback) |c| .init(gpa, c, &.{}) else null;
         defer if (callback_with_args) |*c| c.deinit(gpa);
-        const entry = try ExecutionEntry.create(gpa, null, callback_with_args, cfg, this, base);
+        const entry = try ExecutionEntry.create(gpa, null, callback_with_args, cfg, this, base, false);
         try this.getHookEntries(tag).append(entry);
         return entry;
     }
@@ -743,9 +757,9 @@ pub const ExecutionEntry = struct {
     line_no: u32,
     result: Execution.Result = .pending,
 
-    fn create(gpa: std.mem.Allocator, name_not_owned: ?[]const u8, cb: ?CallbackWithArgs, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
+    fn create(gpa: std.mem.Allocator, name_not_owned: ?[]const u8, cb: ?CallbackWithArgs, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg, allow_update_parent: bool) bun.JSError!*ExecutionEntry {
         const entry = bun.create(gpa, ExecutionEntry, .{
-            .base = .init(base, gpa, name_not_owned, parent),
+            .base = .init(base, gpa, name_not_owned, parent, cb != null, allow_update_parent),
             .callback = if (cb) |c| c.dupe(gpa) else null,
             .line_no = cfg.line_no,
         });

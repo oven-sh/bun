@@ -27,6 +27,7 @@ pub fn init(gpa: std.mem.Allocator, bun_test_root: *describe2.BunTest) Collectio
         .concurrent = false,
         .mode = .normal,
         .only = .no,
+        .has_callback = false,
     });
 
     return .{

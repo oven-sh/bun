@@ -37,12 +37,10 @@ pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry) bun.JSEr
 }
 pub fn generateOrderDescribe(this: *Order, current: *DescribeScope) bun.JSError!void {
     if (current.failed) return; // do not schedule any tests in a failed describe scope
-
-    // TODO: do not gather beforeAll and afterAll if no sub-tests have a callback
-    // this will work for filter, skip, and todo
+    const use_hooks = current.base.has_callback;
 
     // gather beforeAll
-    try generateAllOrder(this, current.beforeAll.items);
+    if (use_hooks) try generateAllOrder(this, current.beforeAll.items);
 
     // gather children
     for (current.entries.items) |entry| {
@@ -51,11 +49,12 @@ pub fn generateOrderDescribe(this: *Order, current: *DescribeScope) bun.JSError!
     }
 
     // gather afterAll
-    try generateAllOrder(this, current.afterAll.items);
+    if (use_hooks) try generateAllOrder(this, current.afterAll.items);
 }
 pub fn generateOrderTest(this: *Order, current: *ExecutionEntry) bun.JSError!void {
     const entries_start = this.entries.items.len;
-    const use_hooks = current.callback != null;
+    const use_hooks = current.base.has_callback;
+    bun.assert(current.base.has_callback == (current.callback != null));
 
     // gather beforeEach (alternatively, this could be implemented recursively to make it less complicated)
     if (use_hooks) {

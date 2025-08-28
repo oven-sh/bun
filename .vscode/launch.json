@@ -16,7 +16,7 @@
       "request": "launch",
       "name": "bun test [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["test", "--timeout=3600000", "${file}"],
+      "args": ["test", "--timeout=3600000", "${file}", "-t", "ABC"],
       "cwd": "${workspaceFolder}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",

@@ -60,7 +60,8 @@ Add tests:
 
 Code quality:
 
-- [ ] In Collection.zig, inline enqueueDescribeCallback/enqueueTestCallback/enqueueHookCallback to their callsites maybe?
+- [ ] Add a phase before ordering results that inherits properties to the parents. (eg inherit only from the child and inherit has_callback from the child. and has_callback can be on describe/test individually rather than on base). then we won't have that happening in an init() function (terrible!)
+- [ ] In Collection.zig, consider inlining enqueueDescribeCallback/enqueueTestCallback/enqueueHookCallback to their callsites?
 - [x] In Execution.zig, rename order: ..., order_index to groups, group_index for consistency.
 - [ ] In Execution.zig, change (start, end) to (start, len)
 - [x] In Execution.zig, modify so groups has a .sequences() fn and sequences has a .entries() fn and index is 0 based

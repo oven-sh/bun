@@ -466,10 +466,9 @@ pub const GraphVisualizer = struct {
             const part_count = if (i < ast_list.items(.parts).len)
                 ast_list.items(.parts)[i].len else 0;
             
-            // Get source code snippet (first 500 chars)
+            // Get full source code
             const source_snippet = if (i < sources.len and sources[i].contents.len > 0) blk: {
-                const max_len = @min(sources[i].contents.len, 500);
-                break :blk try allocator.dupe(u8, sources[i].contents[0..max_len]);
+                break :blk try allocator.dupe(u8, sources[i].contents);
             } else null;
             
             file_data_list[i] = .{
@@ -626,17 +625,30 @@ pub const GraphVisualizer = struct {
                     };
                 }
                 
-                // Get output code snippet from compile results
+                // Get full output code from compile results
                 var output_snippet: ?[]const u8 = null;
                 if (chunk.compile_results_for_chunk.len > 0 and chunk.content == .javascript) {
-                    // Get first JavaScript compile result
-                    const first_result = chunk.compile_results_for_chunk[0];
-                    if (first_result == .javascript) {
-                        const js_code = first_result.javascript.code();
-                        if (js_code.len > 0) {
-                            const max_len = @min(js_code.len, 1000);
-                            output_snippet = try allocator.dupe(u8, js_code[0..max_len]);
+                    // Concatenate all JavaScript compile results
+                    var total_len: usize = 0;
+                    for (chunk.compile_results_for_chunk) |result| {
+                        if (result == .javascript) {
+                            total_len += result.javascript.code().len;
                         }
+                    }
+                    
+                    if (total_len > 0) {
+                        var output_buf = try allocator.alloc(u8, total_len);
+                        var offset: usize = 0;
+                        
+                        for (chunk.compile_results_for_chunk) |result| {
+                            if (result == .javascript) {
+                                const code = result.javascript.code();
+                                @memcpy(output_buf[offset..][0..code.len], code);
+                                offset += code.len;
+                            }
+                        }
+                        
+                        output_snippet = output_buf;
                     }
                 }
                 

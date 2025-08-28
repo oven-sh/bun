@@ -359,9 +359,10 @@
     </div>
     
     <script>
-        let sourceEditor, outputEditor;
+        let sourceEditor = null;
+        let outputEditor = null;
         let graphData = {};
-        let currentStage = 'after_link';
+        let currentStage = 'after_generation';  // Default to stage with output
         let currentSourceFile = 0;
         let currentOutputFile = 0;
         let symbolMappings = [];
@@ -461,11 +462,8 @@
             let sourceCode = '';
             if (file.source_snippet) {
                 sourceCode = `// File: ${file.path}\n// Loader: ${file.loader}\n\n${file.source_snippet}`;
-                if (file.source_snippet.length === 500) {
-                    sourceCode += '\n\n// ... (truncated at 500 chars)';
-                }
             } else {
-                sourceCode = generateMockSource(file);
+                sourceCode = `// File: ${file.path}\n// No source code available\n\n// To see source code, ensure BUN_BUNDLER_GRAPH_DUMP=1 is set\n// and the bundler has captured source snippets.`;
             }
             
             sourceEditor.setValue(sourceCode);
@@ -488,11 +486,8 @@
                 outputCode += `// Entry point: ${chunk.is_entry_point}\n`;
                 outputCode += `// Output path: ${chunk.final_path || 'unknown'}\n\n`;
                 outputCode += chunk.output_snippet;
-                if (chunk.output_snippet.length === 1000) {
-                    outputCode += '\n\n// ... (truncated at 1000 chars)';
-                }
             } else {
-                outputCode = generateMockOutput(chunk, data);
+                outputCode = `// Chunk ${chunk.index}\n// No output code available\n\n// Output code is only available in the 'after_generation' stage\n// after the bundler has completed code generation.`;
             }
             
             outputEditor.setValue(outputCode);
@@ -501,63 +496,6 @@
             highlightOutputSymbols(data, chunk);
         }
         
-        function generateMockSource(file) {
-            let code = `// File: ${file.path}\n`;
-            code += `// Loader: ${file.loader}\n`;
-            code += `// Parts: ${file.part_count}\n\n`;
-            
-            // Show imports
-            if (file.parts?.[0]?.import_records?.length > 0) {
-                code += '// Imports:\n';
-                file.parts[0].import_records.forEach(imp => {
-                    code += `import { something } from '${imp.path}'; // ${imp.kind}\n`;
-                });
-                code += '\n';
-            }
-            
-            // Show exports based on metadata
-            code += '// Exports:\n';
-            code += `export function myFunction() {\n`;
-            code += `    return "transformed";\n`;
-            code += `}\n\n`;
-            
-            // Show symbols
-            if (file.parts?.[0]?.declared_symbols?.length > 0) {
-                code += '// Declared symbols:\n';
-                file.parts[0].declared_symbols.forEach(sym => {
-                    code += `const symbol_${sym.ref} = "value"; // top_level: ${sym.is_top_level}\n`;
-                });
-            }
-            
-            return code;
-        }
-        
-        function generateMockOutput(chunk, data) {
-            let code = `// Chunk ${chunk.index}\n`;
-            code += `// Entry point: ${chunk.is_entry_point}\n`;
-            code += `// Content type: ${chunk.content_type}\n`;
-            code += `// Files in chunk: ${chunk.files_in_chunk?.length || 0}\n\n`;
-            
-            // Show cross-chunk imports
-            if (chunk.cross_chunk_imports?.length > 0) {
-                code += '// Cross-chunk imports:\n';
-                chunk.cross_chunk_imports.forEach(imp => {
-                    code += `import { chunk_${imp.chunk_index}_exports } from './chunk_${imp.chunk_index}.js';\n`;
-                });
-                code += '\n';
-            }
-            
-            // Show transformed code
-            code += '// Transformed code:\n';
-            code += `(function() {\n`;
-            code += `    // Minified and bundled content\n`;
-            code += `    var a = "transformed_symbol";\n`;
-            code += `    function b() { return a; }\n`;
-            code += `    exports.myFunction = b;\n`;
-            code += `})();\n`;
-            
-            return code;
-        }
         
         function highlightSourceSymbols(data, file) {
             // This would mark symbols in the source code

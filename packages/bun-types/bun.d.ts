@@ -677,7 +677,7 @@ declare module "bun" {
      */
     export function stringify(
       input: unknown,
-      replacer?: (this: any, key: string, value: any) => any,
+      replacer?: ((this: any, key: string, value: any) => any) | null,
       space?: string | number,
     ): string;
   }

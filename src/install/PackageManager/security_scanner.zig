@@ -45,43 +45,6 @@ pub const SecurityScanResults = struct {
     }
 };
 
-fn collectAllDependencies(
-    manager: *PackageManager,
-    root_pkg_id: PackageID,
-    allocator: std.mem.Allocator,
-) ![]const PackageID {
-    var pkg_list = std.ArrayList(PackageID).init(allocator);
-    var pkg_set = std.AutoHashMap(PackageID, void).init(allocator);
-    defer pkg_set.deinit();
-
-    // Add root package
-    try pkg_list.append(root_pkg_id);
-    try pkg_set.put(root_pkg_id, {});
-
-    // BFS to collect all transitive dependencies
-    var i: usize = 0;
-    while (i < pkg_list.items.len) : (i += 1) {
-        const pkg_id = pkg_list.items[i];
-        const pkg_deps = manager.lockfile.packages.items(.dependencies)[pkg_id];
-
-        for (pkg_deps.begin()..pkg_deps.end()) |_dep_id| {
-            const dep_id: DependencyID = @intCast(_dep_id);
-            const dep_pkg_id = manager.lockfile.buffers.resolutions.items[dep_id];
-
-            if (dep_pkg_id == invalid_package_id) {
-                continue;
-            }
-
-            // Only add if we haven't seen this package before
-            if (!(try pkg_set.getOrPut(dep_pkg_id)).found_existing) {
-                try pkg_list.append(dep_pkg_id);
-            }
-        }
-    }
-
-    return pkg_list.toOwnedSlice();
-}
-
 pub fn doPartialInstallOfSecurityScanner(
     manager: *PackageManager,
     ctx: bun.cli.Command.Context,
@@ -95,16 +58,7 @@ pub fn doPartialInstallOfSecurityScanner(
         return;
     }
 
-    const packages_to_install: ?[]const PackageID = if (security_scanner_pkg_id == invalid_package_id)
-        null
-    else
-        try collectAllDependencies(manager, security_scanner_pkg_id, manager.allocator);
-
-    if (packages_to_install) |packages| {
-        if (log_level == .verbose) {
-            Output.prettyErrorln("<d>[SecurityScanner]<r> Installing security scanner and {d} dependencies", .{packages.len - 1});
-        }
-    }
+    const packages_to_install: ?[]const PackageID = if (security_scanner_pkg_id == invalid_package_id) null else &[_]PackageID{security_scanner_pkg_id};
 
     _ = switch (manager.options.node_linker) {
         .hoisted,
@@ -279,6 +233,27 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
     }
     const start_time = std.time.milliTimestamp();
 
+    const pkgs_check = manager.lockfile.packages.slice();
+    const pkg_deps_check = pkgs_check.items(.dependencies);
+    const pkg_res_check = pkgs_check.items(.resolution);
+    const string_buf_check = manager.lockfile.buffers.string_bytes.items;
+
+    for (0..pkgs_check.len) |pkg_idx| {
+        const pkg_res = pkg_res_check[pkg_idx];
+        if (pkg_res.tag != .workspace) continue;
+
+        const pkg_deps = pkg_deps_check[pkg_idx];
+        for (pkg_deps.begin()..pkg_deps.end()) |_dep_id| {
+            const dep_id: DependencyID = @intCast(_dep_id);
+            const dep = manager.lockfile.buffers.dependencies.items[dep_id];
+
+            if (std.mem.eql(u8, dep.name.slice(string_buf_check), security_scanner)) {
+                Output.errGeneric("Security scanner '{s}' cannot be a dependency of a workspace package. It must be a direct dependency of the root package.", .{security_scanner});
+                return error.SecurityScannerInWorkspace;
+            }
+        }
+    }
+
     var pkg_dedupe: std.AutoArrayHashMap(PackageID, void) = .init(bun.default_allocator);
     defer pkg_dedupe.deinit();
 
@@ -314,7 +289,7 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
         const root_pkg_id: PackageID = 0;
         const root_deps = pkg_dependencies[root_pkg_id];
 
-        // then we queue all direct dependencies of the root package
+        // Security scanner must be a direct dependency of the root package only
         for (root_deps.begin()..root_deps.end()) |_dep_id| {
             const dep_id: DependencyID = @intCast(_dep_id);
             const dep_pkg_id = manager.lockfile.buffers.resolutions.items[dep_id];
@@ -333,7 +308,6 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
                 if (security_scanner_pkg_id == null) {
                     security_scanner_pkg_id = dep_pkg_id;
                 }
-                // else should we log or do something here?
             }
 
             if ((try pkg_dedupe.getOrPut(dep_pkg_id)).found_existing) {
@@ -375,7 +349,8 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
 
                     const pkg_res = pkg_resolutions[pkg_id];
 
-                    if (pkg_res.tag != .root and pkg_res.tag != .workspace) {
+                    // Only check root package, not workspaces
+                    if (pkg_res.tag != .root) {
                         continue;
                     }
 
@@ -398,7 +373,6 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
                             if (security_scanner_pkg_id == null) {
                                 security_scanner_pkg_id = update_pkg_id;
                             }
-                            // else should we log or do something here?
                         }
 
                         update_dep_id = dep_id;
@@ -552,7 +526,7 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
         \\try {{
         \\  scanner = (await import(scannerModuleName)).scanner;
         \\}} catch (error) {{
-        \\  const msg = `\x1b[31merror: \x1b[0mFailed to import security scanner: \x1b[1m'${{scannerModuleName}}'\x1b[0m - if you use a security scanner from npm, please run '\x1b[36mbun install\x1b[0m' before adding other packages.`;
+        \\  const msg = `\x1b[31merror: \x1b[0mFailed to import security scanner: \x1b[1m'${{scannerModuleName}}'`;
         \\  console.error(msg);
         \\  process.exit(2);
         \\}}

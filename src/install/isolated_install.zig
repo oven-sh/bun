@@ -10,11 +10,6 @@ pub fn installIsolatedPackages(
 ) OOM!PackageInstall.Summary {
     bun.analytics.Features.isolated_bun_install += 1;
 
-    if (packages_to_install) |_| {
-        Output.prettyErrorln("<r><red>NOOOOOOOOO", .{});
-        Global.exit(1);
-    }
-
     const lockfile = manager.lockfile;
 
     const store: Store = store: {
@@ -175,7 +170,7 @@ pub fn installIsolatedPackages(
 
             queue_deps: {
                 if (packages_to_install) |packages| {
-                    if (node_id == .root) {
+                    if (node_id == .root) { // TODO: print an error when scanner is actually a dependency of a workspace (we should not support this)
                         for (dep_ids_sort_buf.items) |dep_id| {
                             const pkg_id = resolutions[dep_id];
                             if (pkg_id == invalid_package_id) {

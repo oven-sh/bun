@@ -569,28 +569,34 @@ pub fn installWithManager(
         if (manager.options.security_scanner != null) {
             const is_subcommand_to_run_scanner = manager.subcommand == .add or manager.subcommand == .update or manager.subcommand == .install;
 
-            Output.pretty("\n<d><b>Note: Security scanning is not null.</b><r>\n", .{});
-
             if (is_subcommand_to_run_scanner) {
-                Output.pretty("\n<d><b>Note: Running security scanner...</b><r>\n", .{});
+                const results = (security_scanner.performSecurityScanAfterResolution(manager, ctx, original_cwd) catch |err| {
+                    switch (err) {
+                        error.SecurityScannerInWorkspace => {
+                            Output.pretty("<red>Security scanner cannot be a dependency of a workspace package. It must be a direct dependency of the root package.<r>\n", .{});
+                        },
 
-                if (try security_scanner.performSecurityScanAfterResolution(manager, ctx, original_cwd)) |results| {
-                    Output.pretty("\n<d><b>Note: Security scanning results</b><r>\n", .{});
-
-                    defer {
-                        var results_mut = results;
-                        results_mut.deinit();
+                        else => {
+                            Output.pretty("<red>Failed to run security scanner: {s}<r>\n", .{@errorName(err)});
+                        },
                     }
 
-                    security_scanner.printSecurityAdvisories(manager, &results);
+                    Global.exit(1);
+                }) orelse return;
 
-                    if (results.hasFatalAdvisories()) {
-                        Output.pretty("<red>Installation aborted due to fatal security advisories<r>\n", .{});
+                defer {
+                    var results_mut = results;
+                    results_mut.deinit();
+                }
+
+                security_scanner.printSecurityAdvisories(manager, &results);
+
+                if (results.hasFatalAdvisories()) {
+                    Output.pretty("<red>Installation aborted due to fatal security advisories<r>\n", .{});
+                    Global.exit(1);
+                } else if (results.hasWarnings()) {
+                    if (!security_scanner.promptForWarnings()) {
                         Global.exit(1);
-                    } else if (results.hasWarnings()) {
-                        if (!security_scanner.promptForWarnings()) {
-                            Global.exit(1);
-                        }
                     }
                 }
             }

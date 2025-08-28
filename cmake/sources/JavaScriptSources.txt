@@ -1,3 +1,4 @@
+src/install/PackageManager/scanner-entry.ts
 src/js/builtins.d.ts
 src/js/builtins/Bake.ts
 src/js/builtins/BundlerPlugin.ts

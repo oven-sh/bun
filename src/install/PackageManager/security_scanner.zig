@@ -85,22 +85,110 @@ pub fn doPartialInstallOfSecurityScanner(
     };
 }
 
+pub const ScanAttemptResult = union(enum) {
+    success: SecurityScanResults,
+    needs_install: PackageID,
+    @"error": anyerror,
+};
+
+const ScannerFinder = struct {
+    manager: *PackageManager,
+    scanner_name: []const u8,
+
+    pub fn findInRootDependencies(this: ScannerFinder) ?PackageID {
+        const pkgs = this.manager.lockfile.packages.slice();
+        const pkg_dependencies = pkgs.items(.dependencies);
+        const pkg_resolutions = pkgs.items(.resolution);
+        const string_buf = this.manager.lockfile.buffers.string_bytes.items;
+
+        const root_pkg_id: PackageID = 0;
+        const root_deps = pkg_dependencies[root_pkg_id];
+
+        for (root_deps.begin()..root_deps.end()) |_dep_id| {
+            const dep_id: DependencyID = @intCast(_dep_id);
+            const dep_pkg_id = this.manager.lockfile.buffers.resolutions.items[dep_id];
+
+            if (dep_pkg_id == invalid_package_id) continue;
+
+            const dep_res = pkg_resolutions[dep_pkg_id];
+            if (dep_res.tag != .npm) continue;
+
+            const dep_name = this.manager.lockfile.buffers.dependencies.items[dep_id].name;
+            if (std.mem.eql(u8, dep_name.slice(string_buf), this.scanner_name)) {
+                return dep_pkg_id;
+            }
+        }
+
+        return null;
+    }
+
+    pub fn validateNotInWorkspaces(this: ScannerFinder) !void {
+        const pkgs = this.manager.lockfile.packages.slice();
+        const pkg_deps = pkgs.items(.dependencies);
+        const pkg_res = pkgs.items(.resolution);
+        const string_buf = this.manager.lockfile.buffers.string_bytes.items;
+
+        for (0..pkgs.len) |pkg_idx| {
+            if (pkg_res[pkg_idx].tag != .workspace) continue;
+
+            const deps = pkg_deps[pkg_idx];
+            for (deps.begin()..deps.end()) |_dep_id| {
+                const dep_id: DependencyID = @intCast(_dep_id);
+                const dep = this.manager.lockfile.buffers.dependencies.items[dep_id];
+
+                if (std.mem.eql(u8, dep.name.slice(string_buf), this.scanner_name)) {
+                    Output.errGeneric("Security scanner '{s}' cannot be a dependency of a workspace package. It must be a direct dependency of the root package.", .{this.scanner_name});
+                    return error.SecurityScannerInWorkspace;
+                }
+            }
+        }
+    }
+};
+
 pub fn performSecurityScanAfterResolution(manager: *PackageManager, command_ctx: bun.cli.Command.Context, original_cwd: []const u8) !?SecurityScanResults {
     const security_scanner = manager.options.security_scanner orelse return null;
 
     if (manager.options.dry_run or !manager.options.do.install_packages) return null;
 
-    if (manager.update_requests.len == 0) {
-        return try performSecurityScan(manager, security_scanner, true, command_ctx, original_cwd);
-    } else {
-        return try performSecurityScan(manager, security_scanner, false, command_ctx, original_cwd);
+    const scan_all = manager.update_requests.len == 0;
+    const result = try attemptSecurityScan(manager, security_scanner, scan_all, command_ctx, original_cwd);
+
+    switch (result) {
+        .success => |scan_results| return scan_results,
+        .needs_install => |pkg_id| {
+            Output.prettyln("<r><yellow>Attempting to install security scanner from npm...<r>", .{});
+            try doPartialInstallOfSecurityScanner(manager, command_ctx, manager.options.log_level, pkg_id, original_cwd);
+            Output.prettyln("<r><green><b>Security scanner installed successfully.<r>", .{});
+
+            const retry_result = try attemptSecurityScan(manager, security_scanner, scan_all, command_ctx, original_cwd);
+            switch (retry_result) {
+                .success => |scan_results| return scan_results,
+                else => return error.SecurityScannerRetryFailed,
+            }
+        },
+        .@"error" => |err| return err,
     }
 }
 
 pub fn performSecurityScanForAll(manager: *PackageManager, command_ctx: bun.cli.Command.Context, original_cwd: []const u8) !?SecurityScanResults {
     const security_scanner = manager.options.security_scanner orelse return null;
 
-    return try performSecurityScan(manager, security_scanner, true, command_ctx, original_cwd);
+    const result = try attemptSecurityScan(manager, security_scanner, true, command_ctx, original_cwd);
+    switch (result) {
+        .success => |scan_results| return scan_results,
+        .needs_install => |pkg_id| {
+            Output.prettyln("<r><yellow>Attempting to install security scanner from npm...<r>", .{});
+            try doPartialInstallOfSecurityScanner(manager, command_ctx, manager.options.log_level, pkg_id, original_cwd);
+            Output.prettyln("<r><green><b>Security scanner installed successfully.<r>", .{});
+
+            const retry_result = try attemptSecurityScan(manager, security_scanner, true, command_ctx, original_cwd);
+            switch (retry_result) {
+                .success => |scan_results| return scan_results,
+                else => return error.SecurityScannerRetryFailed,
+            }
+        },
+        .@"error" => |err| return err,
+    }
 }
 
 pub fn printSecurityAdvisories(manager: *PackageManager, results: *const SecurityScanResults) void {
@@ -227,35 +315,11 @@ pub fn promptForWarnings() bool {
     return true;
 }
 
-fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, comptime scan_all: bool, command_ctx: bun.cli.Command.Context, original_cwd: []const u8) !SecurityScanResults {
-    if (manager.options.log_level == .verbose) {
-        Output.prettyErrorln("<d>[SecurityProvider]<r> Running at '{s}'", .{security_scanner});
-    }
-    const start_time = std.time.milliTimestamp();
-
-    const pkgs_check = manager.lockfile.packages.slice();
-    const pkg_deps_check = pkgs_check.items(.dependencies);
-    const pkg_res_check = pkgs_check.items(.resolution);
-    const string_buf_check = manager.lockfile.buffers.string_bytes.items;
-
-    for (0..pkgs_check.len) |pkg_idx| {
-        const pkg_res = pkg_res_check[pkg_idx];
-        if (pkg_res.tag != .workspace) continue;
-
-        const pkg_deps = pkg_deps_check[pkg_idx];
-        for (pkg_deps.begin()..pkg_deps.end()) |_dep_id| {
-            const dep_id: DependencyID = @intCast(_dep_id);
-            const dep = manager.lockfile.buffers.dependencies.items[dep_id];
-
-            if (std.mem.eql(u8, dep.name.slice(string_buf_check), security_scanner)) {
-                Output.errGeneric("Security scanner '{s}' cannot be a dependency of a workspace package. It must be a direct dependency of the root package.", .{security_scanner});
-                return error.SecurityScannerInWorkspace;
-            }
-        }
-    }
-
-    var pkg_dedupe: std.AutoArrayHashMap(PackageID, void) = .init(bun.default_allocator);
-    defer pkg_dedupe.deinit();
+const PackageCollector = struct {
+    manager: *PackageManager,
+    dedupe: std.AutoArrayHashMap(PackageID, void),
+    queue: std.fifo.LinearFifo(QueueItem, .Dynamic),
+    package_paths: std.AutoArrayHashMap(PackageID, PackagePath),
 
     const QueueItem = struct {
         pkg_id: PackageID,
@@ -263,123 +327,88 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
         pkg_path: std.ArrayList(PackageID),
         dep_path: std.ArrayList(DependencyID),
     };
-    var ids_queue: std.fifo.LinearFifo(QueueItem, .Dynamic) = .init(bun.default_allocator);
-    defer ids_queue.deinit();
 
-    var package_paths = std.AutoArrayHashMap(PackageID, PackagePath).init(manager.allocator);
-    defer {
-        var iter = package_paths.iterator();
+    pub fn init(manager: *PackageManager) PackageCollector {
+        return .{
+            .manager = manager,
+            .dedupe = std.AutoArrayHashMap(PackageID, void).init(bun.default_allocator),
+            .queue = std.fifo.LinearFifo(QueueItem, .Dynamic).init(bun.default_allocator),
+            .package_paths = std.AutoArrayHashMap(PackageID, PackagePath).init(manager.allocator),
+        };
+    }
+
+    pub fn deinit(this: *PackageCollector) void {
+        this.dedupe.deinit();
+        this.queue.deinit();
+
+        var iter = this.package_paths.iterator();
         while (iter.next()) |entry| {
-            manager.allocator.free(entry.value_ptr.pkg_path);
-            manager.allocator.free(entry.value_ptr.dep_path);
+            this.manager.allocator.free(entry.value_ptr.pkg_path);
+            this.manager.allocator.free(entry.value_ptr.dep_path);
         }
-        package_paths.deinit();
+        this.package_paths.deinit();
     }
 
-    const pkgs = manager.lockfile.packages.slice();
-    const pkg_names = pkgs.items(.name);
-    const pkg_resolutions = pkgs.items(.resolution);
-    const pkg_dependencies = pkgs.items(.dependencies);
+    pub fn collectAllPackages(this: *PackageCollector) !void {
+        const pkgs = this.manager.lockfile.packages.slice();
+        const pkg_dependencies = pkgs.items(.dependencies);
+        const pkg_resolutions = pkgs.items(.resolution);
 
-    var security_scanner_pkg_id: ?PackageID = null;
+        const root_pkg_id: PackageID = 0;
+        const root_deps = pkg_dependencies[root_pkg_id];
 
-    // Always look for the security scanner in root dependencies first
-    const root_pkg_id: PackageID = 0;
-    const root_deps = pkg_dependencies[root_pkg_id];
-
-    // Security scanner must be a direct dependency of the root package only
-    for (root_deps.begin()..root_deps.end()) |_dep_id| {
-        const dep_id: DependencyID = @intCast(_dep_id);
-        const dep_pkg_id = manager.lockfile.buffers.resolutions.items[dep_id];
-
-        if (dep_pkg_id == invalid_package_id) {
-            continue;
-        }
-
-        const dep_res = pkg_resolutions[dep_pkg_id];
-        if (dep_res.tag != .npm) {
-            continue;
-        }
-
-        const dep_name = manager.lockfile.buffers.dependencies.items[dep_id].name;
-        if (std.mem.eql(u8, dep_name.slice(manager.lockfile.buffers.string_bytes.items), security_scanner)) {
-            if (security_scanner_pkg_id == null) {
-                security_scanner_pkg_id = dep_pkg_id;
-            }
-        }
-    }
-
-    if (scan_all) {
         for (root_deps.begin()..root_deps.end()) |_dep_id| {
             const dep_id: DependencyID = @intCast(_dep_id);
-            const dep_pkg_id = manager.lockfile.buffers.resolutions.items[dep_id];
+            const dep_pkg_id = this.manager.lockfile.buffers.resolutions.items[dep_id];
 
-            if (dep_pkg_id == invalid_package_id) {
-                continue;
-            }
+            if (dep_pkg_id == invalid_package_id) continue;
 
             const dep_res = pkg_resolutions[dep_pkg_id];
-            if (dep_res.tag != .npm) {
-                continue;
-            }
+            if (dep_res.tag != .npm) continue;
 
-            if ((try pkg_dedupe.getOrPut(dep_pkg_id)).found_existing) {
-                continue;
-            }
+            if ((try this.dedupe.getOrPut(dep_pkg_id)).found_existing) continue;
 
-            var pkg_path_buf = std.ArrayList(PackageID).init(manager.allocator);
-            try pkg_path_buf.append(root_pkg_id); // Add root to path
+            var pkg_path_buf = std.ArrayList(PackageID).init(this.manager.allocator);
+            try pkg_path_buf.append(root_pkg_id);
             try pkg_path_buf.append(dep_pkg_id);
 
-            var dep_path_buf = std.ArrayList(DependencyID).init(manager.allocator);
+            var dep_path_buf = std.ArrayList(DependencyID).init(this.manager.allocator);
             try dep_path_buf.append(dep_id);
 
-            try ids_queue.writeItem(.{
+            try this.queue.writeItem(.{
                 .pkg_id = dep_pkg_id,
                 .dep_id = dep_id,
                 .pkg_path = pkg_path_buf,
                 .dep_path = dep_path_buf,
             });
         }
-    } else {
-        for (manager.update_requests) |req| {
+    }
+
+    pub fn collectUpdatePackages(this: *PackageCollector) !void {
+        const pkgs = this.manager.lockfile.packages.slice();
+        const pkg_resolutions = pkgs.items(.resolution);
+        const pkg_dependencies = pkgs.items(.dependencies);
+
+        for (this.manager.update_requests) |req| {
             for (0..pkgs.len) |_update_pkg_id| {
                 const update_pkg_id: PackageID = @intCast(_update_pkg_id);
-
-                if (update_pkg_id != req.package_id) {
-                    continue;
-                }
-
-                if (pkg_resolutions[update_pkg_id].tag != .npm) {
-                    continue;
-                }
+                if (update_pkg_id != req.package_id) continue;
+                if (pkg_resolutions[update_pkg_id].tag != .npm) continue;
 
                 var update_dep_id: DependencyID = invalid_dependency_id;
                 var parent_pkg_id: PackageID = invalid_package_id;
 
                 for (0..pkgs.len) |_pkg_id| update_dep_id: {
                     const pkg_id: PackageID = @intCast(_pkg_id);
-
                     const pkg_res = pkg_resolutions[pkg_id];
-
-                    // Only check root package, not workspaces
-                    if (pkg_res.tag != .root) {
-                        continue;
-                    }
+                    if (pkg_res.tag != .root) continue;
 
                     const pkg_deps = pkg_dependencies[pkg_id];
                     for (pkg_deps.begin()..pkg_deps.end()) |_dep_id| {
                         const dep_id: DependencyID = @intCast(_dep_id);
-
-                        const dep_pkg_id = manager.lockfile.buffers.resolutions.items[dep_id];
-
-                        if (dep_pkg_id == invalid_package_id) {
-                            continue;
-                        }
-
-                        if (dep_pkg_id != update_pkg_id) {
-                            continue;
-                        }
+                        const dep_pkg_id = this.manager.lockfile.buffers.resolutions.items[dep_id];
+                        if (dep_pkg_id == invalid_package_id) continue;
+                        if (dep_pkg_id != update_pkg_id) continue;
 
                         update_dep_id = dep_id;
                         parent_pkg_id = pkg_id;
@@ -387,24 +416,19 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
                     }
                 }
 
-                if (update_dep_id == invalid_dependency_id) {
-                    continue;
-                }
+                if (update_dep_id == invalid_dependency_id) continue;
+                if ((try this.dedupe.getOrPut(update_pkg_id)).found_existing) continue;
 
-                if ((try pkg_dedupe.getOrPut(update_pkg_id)).found_existing) {
-                    continue;
-                }
-
-                var initial_pkg_path = std.ArrayList(PackageID).init(manager.allocator);
-                // If this is a direct dependency from root, start with root package
+                var initial_pkg_path = std.ArrayList(PackageID).init(this.manager.allocator);
                 if (parent_pkg_id != invalid_package_id) {
                     try initial_pkg_path.append(parent_pkg_id);
                 }
                 try initial_pkg_path.append(update_pkg_id);
-                var initial_dep_path = std.ArrayList(DependencyID).init(manager.allocator);
+
+                var initial_dep_path = std.ArrayList(DependencyID).init(this.manager.allocator);
                 try initial_dep_path.append(update_dep_id);
 
-                try ids_queue.writeItem(.{
+                try this.queue.writeItem(.{
                     .pkg_id = update_pkg_id,
                     .dep_id = update_dep_id,
                     .pkg_path = initial_pkg_path,
@@ -414,111 +438,152 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
         }
     }
 
-    // For new packages being added via 'bun add', we just scan the update requests directly
-    // since they haven't been added to the lockfile yet
+    pub fn processQueue(this: *PackageCollector) !void {
+        const pkgs = this.manager.lockfile.packages.slice();
+        const pkg_resolutions = pkgs.items(.resolution);
+        const pkg_dependencies = pkgs.items(.dependencies);
 
-    var json_buf = std.ArrayList(u8).init(manager.allocator);
-    var writer = json_buf.writer();
-    defer json_buf.deinit();
+        while (this.queue.readItem()) |item| {
+            defer item.pkg_path.deinit();
+            defer item.dep_path.deinit();
 
-    const string_buf = manager.lockfile.buffers.string_bytes.items;
+            const pkg_id = item.pkg_id;
+            _ = item.dep_id; // Could be useful in the future for dependency-specific processing
 
-    try writer.writeAll("[\n");
+            const pkg_path_copy = try this.manager.allocator.alloc(PackageID, item.pkg_path.items.len);
+            @memcpy(pkg_path_copy, item.pkg_path.items);
 
-    var first = true;
+            const dep_path_copy = try this.manager.allocator.alloc(DependencyID, item.dep_path.items.len);
+            @memcpy(dep_path_copy, item.dep_path.items);
 
-    while (ids_queue.readItem()) |item| {
-        defer item.pkg_path.deinit();
-        defer item.dep_path.deinit();
-
-        const pkg_id = item.pkg_id;
-        const dep_id = item.dep_id;
-
-        const pkg_path_copy = try manager.allocator.alloc(PackageID, item.pkg_path.items.len);
-        @memcpy(pkg_path_copy, item.pkg_path.items);
-
-        const dep_path_copy = try manager.allocator.alloc(DependencyID, item.dep_path.items.len);
-        @memcpy(dep_path_copy, item.dep_path.items);
-
-        try package_paths.put(pkg_id, .{
-            .pkg_path = pkg_path_copy,
-            .dep_path = dep_path_copy,
-        });
-
-        const pkg_name = pkg_names[pkg_id];
-        const pkg_res = pkg_resolutions[pkg_id];
-
-        if (!first) try writer.writeAll(",\n");
-
-        // When scanning all packages, we don't have a specific dependency request
-        // Use the package's own version as the requested range
-        if (dep_id == invalid_dependency_id) {
-            try writer.print(
-                \\  {{
-                \\    "name": {},
-                \\    "version": "{s}",
-                \\    "requestedRange": "{s}",
-                \\    "tarball": {}
-                \\  }}
-            , .{
-                bun.fmt.formatJSONStringUTF8(pkg_name.slice(string_buf), .{}),
-                pkg_res.value.npm.version.fmt(string_buf),
-                pkg_res.value.npm.version.fmt(string_buf), // Use the formatter directly
-                bun.fmt.formatJSONStringUTF8(pkg_res.value.npm.url.slice(string_buf), .{}),
+            try this.package_paths.put(pkg_id, .{
+                .pkg_path = pkg_path_copy,
+                .dep_path = dep_path_copy,
             });
-        } else {
-            const dep_version = manager.lockfile.buffers.dependencies.items[dep_id].version;
-            try writer.print(
-                \\  {{
-                \\    "name": {},
-                \\    "version": "{s}",
-                \\    "requestedRange": {},
-                \\    "tarball": {}
-                \\  }}
-            , .{ bun.fmt.formatJSONStringUTF8(pkg_name.slice(string_buf), .{}), pkg_res.value.npm.version.fmt(string_buf), bun.fmt.formatJSONStringUTF8(dep_version.literal.slice(string_buf), .{}), bun.fmt.formatJSONStringUTF8(pkg_res.value.npm.url.slice(string_buf), .{}) });
-        }
 
-        first = false;
+            const pkg_deps = pkg_dependencies[pkg_id];
+            for (pkg_deps.begin()..pkg_deps.end()) |_next_dep_id| {
+                const next_dep_id: DependencyID = @intCast(_next_dep_id);
+                const next_pkg_id = this.manager.lockfile.buffers.resolutions.items[next_dep_id];
 
-        // then go through it's dependencies and queue them up if
-        // valid and first time we've seen them
-        const pkg_deps = pkg_dependencies[pkg_id];
+                if (next_pkg_id == invalid_package_id) continue;
 
-        for (pkg_deps.begin()..pkg_deps.end()) |_next_dep_id| {
-            const next_dep_id: DependencyID = @intCast(_next_dep_id);
+                const next_pkg_res = pkg_resolutions[next_pkg_id];
+                if (next_pkg_res.tag != .npm) continue;
 
-            const next_pkg_id = manager.lockfile.buffers.resolutions.items[next_dep_id];
-            if (next_pkg_id == invalid_package_id) {
-                continue;
+                if ((try this.dedupe.getOrPut(next_pkg_id)).found_existing) continue;
+
+                var extended_pkg_path = std.ArrayList(PackageID).init(this.manager.allocator);
+                try extended_pkg_path.appendSlice(item.pkg_path.items);
+                try extended_pkg_path.append(next_pkg_id);
+
+                var extended_dep_path = std.ArrayList(DependencyID).init(this.manager.allocator);
+                try extended_dep_path.appendSlice(item.dep_path.items);
+                try extended_dep_path.append(next_dep_id);
+
+                try this.queue.writeItem(.{
+                    .pkg_id = next_pkg_id,
+                    .dep_id = next_dep_id,
+                    .pkg_path = extended_pkg_path,
+                    .dep_path = extended_dep_path,
+                });
             }
-
-            const next_pkg_res = pkg_resolutions[next_pkg_id];
-            if (next_pkg_res.tag != .npm) {
-                continue;
-            }
-
-            if ((try pkg_dedupe.getOrPut(next_pkg_id)).found_existing) {
-                continue;
-            }
-
-            var extended_pkg_path = std.ArrayList(PackageID).init(manager.allocator);
-            try extended_pkg_path.appendSlice(item.pkg_path.items);
-            try extended_pkg_path.append(next_pkg_id);
-
-            var extended_dep_path = std.ArrayList(DependencyID).init(manager.allocator);
-            try extended_dep_path.appendSlice(item.dep_path.items);
-            try extended_dep_path.append(next_dep_id);
-
-            try ids_queue.writeItem(.{
-                .pkg_id = next_pkg_id,
-                .dep_id = next_dep_id,
-                .pkg_path = extended_pkg_path,
-                .dep_path = extended_dep_path,
-            });
         }
     }
+};
 
-    try writer.writeAll("\n]");
+const JSONBuilder = struct {
+    manager: *PackageManager,
+    collector: *PackageCollector,
+
+    pub fn buildPackageJSON(this: JSONBuilder) ![]const u8 {
+        var json_buf = std.ArrayList(u8).init(this.manager.allocator);
+        var writer = json_buf.writer();
+        
+        const pkgs = this.manager.lockfile.packages.slice();
+        const pkg_names = pkgs.items(.name);
+        const pkg_resolutions = pkgs.items(.resolution);
+        const string_buf = this.manager.lockfile.buffers.string_bytes.items;
+
+        try writer.writeAll("[\n");
+
+        var first = true;
+        var iter = this.collector.package_paths.iterator();
+        while (iter.next()) |entry| {
+            const pkg_id = entry.key_ptr.*;
+            const paths = entry.value_ptr.*;
+            
+            const dep_id = if (paths.dep_path.len > 0) paths.dep_path[paths.dep_path.len - 1] else invalid_dependency_id;
+            
+            const pkg_name = pkg_names[pkg_id];
+            const pkg_res = pkg_resolutions[pkg_id];
+
+            if (!first) try writer.writeAll(",\n");
+
+            if (dep_id == invalid_dependency_id) {
+                try writer.print(
+                    \\  {{
+                    \\    "name": {},
+                    \\    "version": "{s}",
+                    \\    "requestedRange": "{s}",
+                    \\    "tarball": {}
+                    \\  }}
+                , .{
+                    bun.fmt.formatJSONStringUTF8(pkg_name.slice(string_buf), .{}),
+                    pkg_res.value.npm.version.fmt(string_buf),
+                    pkg_res.value.npm.version.fmt(string_buf),
+                    bun.fmt.formatJSONStringUTF8(pkg_res.value.npm.url.slice(string_buf), .{}),
+                });
+            } else {
+                const dep_version = this.manager.lockfile.buffers.dependencies.items[dep_id].version;
+                try writer.print(
+                    \\  {{
+                    \\    "name": {},
+                    \\    "version": "{s}",
+                    \\    "requestedRange": {},
+                    \\    "tarball": {}
+                    \\  }}
+                , .{
+                    bun.fmt.formatJSONStringUTF8(pkg_name.slice(string_buf), .{}),
+                    pkg_res.value.npm.version.fmt(string_buf),
+                    bun.fmt.formatJSONStringUTF8(dep_version.literal.slice(string_buf), .{}),
+                    bun.fmt.formatJSONStringUTF8(pkg_res.value.npm.url.slice(string_buf), .{}),
+                });
+            }
+
+            first = false;
+        }
+
+        try writer.writeAll("\n]");
+        return json_buf.toOwnedSlice();
+    }
+};
+
+fn attemptSecurityScan(manager: *PackageManager, security_scanner: []const u8, scan_all: bool, command_ctx: bun.cli.Command.Context, original_cwd: []const u8) !ScanAttemptResult {
+    if (manager.options.log_level == .verbose) {
+        Output.prettyErrorln("<d>[SecurityProvider]<r> Running at '{s}'", .{security_scanner});
+    }
+    const start_time = std.time.milliTimestamp();
+
+    const finder = ScannerFinder{ .manager = manager, .scanner_name = security_scanner };
+    try finder.validateNotInWorkspaces();
+    
+    const security_scanner_pkg_id = finder.findInRootDependencies();
+
+    var collector = PackageCollector.init(manager);
+    defer collector.deinit();
+    
+    if (scan_all) {
+        try collector.collectAllPackages();
+    } else {
+        try collector.collectUpdatePackages();
+    }
+    
+    try collector.processQueue();
+
+    const json_builder = JSONBuilder{ .manager = manager, .collector = &collector };
+    const json_data = try json_builder.buildPackageJSON();
+    defer manager.allocator.free(json_data);
 
     var code_buf = std.ArrayList(u8).init(manager.allocator);
     defer code_buf.deinit();
@@ -570,12 +635,12 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
         \\  console.error(error);
         \\  process.exit(1);
         \\}}
-    , .{ security_scanner, json_buf.items });
+    , .{ security_scanner, json_data });
 
     var scanner = SecurityScanSubprocess.new(.{
         .manager = manager,
         .code = try manager.allocator.dupe(u8, code_buf.items),
-        .json_data = try manager.allocator.dupe(u8, json_buf.items),
+        .json_data = try manager.allocator.dupe(u8, json_data),
         .ipc_data = undefined,
         .stderr_data = undefined,
     });
@@ -598,8 +663,9 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
 
     manager.sleepUntil(&closure, &@TypeOf(closure).isDone);
 
-    const packages_scanned = pkg_dedupe.count();
-    return try scanner.handleResults(&package_paths, start_time, packages_scanned, security_scanner, security_scanner_pkg_id, command_ctx, original_cwd);
+    const packages_scanned = collector.dedupe.count();
+    const result = try scanner.handleResults(&collector.package_paths, start_time, packages_scanned, security_scanner, security_scanner_pkg_id, command_ctx, original_cwd);
+    return result;
 }
 
 pub const SecurityScanSubprocess = struct {
@@ -733,7 +799,9 @@ pub const SecurityScanSubprocess = struct {
         }
     }
 
-    pub fn handleResults(this: *SecurityScanSubprocess, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath), start_time: i64, packages_scanned: usize, security_scanner: []const u8, security_scanner_pkg_id: ?PackageID, command_ctx: bun.cli.Command.Context, original_cwd: []const u8) !SecurityScanResults {
+    pub fn handleResults(this: *SecurityScanSubprocess, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath), start_time: i64, packages_scanned: usize, security_scanner: []const u8, security_scanner_pkg_id: ?PackageID, command_ctx: bun.cli.Command.Context, original_cwd: []const u8) !ScanAttemptResult {
+        _ = command_ctx; // Reserved for future use
+        _ = original_cwd; // Reserved for future use
         defer {
             this.ipc_data.deinit();
             this.stderr_data.deinit();
@@ -755,18 +823,7 @@ pub const SecurityScanSubprocess = struct {
                         },
                         2 => {
                             if (security_scanner_pkg_id) |pkg_id| {
-                                Output.prettyln("<r><yellow>Attempting to install security scanner from npm...<r>", .{});
-
-                                doPartialInstallOfSecurityScanner(this.manager, command_ctx, this.manager.options.log_level, pkg_id, original_cwd) catch |err| {
-                                    Output.errGeneric("Failed to install security scanner: {s}", .{@errorName(err)});
-                                    return err;
-                                };
-
-                                Output.prettyln("<r><green><b>Security scanner installed successfully.<r>", .{});
-
-                                // TODO
-
-                                unreachable;
+                                return ScanAttemptResult{ .needs_install = pkg_id };
                             } else {
                                 Output.errGeneric("Security scanner exited with code {d} without sending data", .{exit.code});
                             }
@@ -843,7 +900,7 @@ pub const SecurityScanSubprocess = struct {
             }
         }
 
-        return SecurityScanResults{
+        return ScanAttemptResult{ .success = SecurityScanResults{
             .advisories = advisories,
             .fatal_count = fatal_count,
             .warn_count = warn_count,
@@ -851,7 +908,7 @@ pub const SecurityScanSubprocess = struct {
             .duration_ms = duration,
             .security_scanner = security_scanner,
             .allocator = this.manager.allocator,
-        };
+        } };
     }
 };
 

@@ -1919,6 +1919,8 @@ const debug = bun.Output.scoped(.MySQLConnection, .visible);
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 const Queue = std.fifo.LinearFifo(*MySQLQuery, .Dynamic);
 
+extern "C" fn JSC__addSQLQueryPerformanceEntry(globalObject: *jsc.JSGlobalObject, name: [*:0]const u8, description: [*:0]const u8, startTime: f64, endTime: f64) void;
+
 const AnyMySQLError = @import("./protocol/AnyMySQLError.zig");
 const Auth = @import("./protocol/Auth.zig");
 const AuthSwitchRequest = @import("./protocol/AuthSwitchRequest.zig");
@@ -1963,5 +1965,3 @@ const AutoFlusher = jsc.WebCore.AutoFlusher;
 
 const uws = bun.uws;
 const Socket = uws.AnySocket;
-
-extern "C" fn JSC__addSQLQueryPerformanceEntry(globalObject: *jsc.JSGlobalObject, name: [*:0]const u8, description: [*:0]const u8, startTime: f64, endTime: f64) void;

@@ -1,8 +1,6 @@
 const MySQLQuery = @This();
 const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
 
-const std = @import("std");
-
 extern "C" fn JSC__addSQLQueryPerformanceEntry(globalObject: *jsc.JSGlobalObject, name: [*:0]const u8, description: [*:0]const u8, startTime: f64, endTime: f64) void;
 
 statement: ?*MySQLStatement = null,
@@ -56,23 +54,23 @@ pub fn hasPendingActivity(this: *@This()) bool {
 /// Extract the SQL command from the query string (e.g., "SELECT", "INSERT", etc.)
 fn extractSQLCommand(query: []const u8) []const u8 {
     if (query.len == 0) return "UNKNOWN";
-    
+
     var i: usize = 0;
     // Skip leading whitespace
     while (i < query.len and std.ascii.isWhitespace(query[i])) {
         i += 1;
     }
-    
+
     const start = i;
     // Find the end of the first word
     while (i < query.len and !std.ascii.isWhitespace(query[i])) {
         i += 1;
     }
-    
+
     if (i <= start) return "UNKNOWN";
-    
+
     const command = query[start..i];
-    
+
     // Convert common commands to uppercase
     if (std.ascii.eqlIgnoreCase(command, "select")) return "SELECT";
     if (std.ascii.eqlIgnoreCase(command, "insert")) return "INSERT";
@@ -84,7 +82,7 @@ fn extractSQLCommand(query: []const u8) []const u8 {
     if (std.ascii.eqlIgnoreCase(command, "show")) return "SHOW";
     if (std.ascii.eqlIgnoreCase(command, "describe") or std.ascii.eqlIgnoreCase(command, "desc")) return "DESCRIBE";
     if (std.ascii.eqlIgnoreCase(command, "explain")) return "EXPLAIN";
-    
+
     return "UNKNOWN";
 }
 
@@ -96,24 +94,24 @@ pub fn startPerformanceTracking(this: *@This()) void {
 /// End performance tracking and report to the performance API
 pub fn endPerformanceTracking(this: *@This(), connection: anytype, globalObject: *jsc.JSGlobalObject) void {
     if (!connection.performance_entries_enabled or this.start_time_ns == 0) return;
-    
+
     const end_time_ns = @as(u64, @intCast(@max(0, std.time.nanoTimestamp())));
     const start_time_ms = @as(f64, @floatFromInt(this.start_time_ns)) / 1_000_000.0;
     const end_time_ms = @as(f64, @floatFromInt(end_time_ns)) / 1_000_000.0;
-    
+
     // Get the SQL command and query string
     var query_utf8 = this.query.toUTF8(bun.default_allocator);
     defer query_utf8.deinit();
-    
+
     const command = extractSQLCommand(query_utf8.slice());
-    
+
     // Create null-terminated strings for the C function
     const command_cstr = bun.default_allocator.dupeZ(u8, command) catch return;
     defer bun.default_allocator.free(command_cstr);
-    
+
     const query_cstr = bun.default_allocator.dupeZ(u8, query_utf8.slice()) catch return;
     defer bun.default_allocator.free(query_cstr);
-    
+
     // Call the C++ binding to add the performance entry
     JSC__addSQLQueryPerformanceEntry(globalObject, command_cstr.ptr, query_cstr.ptr, start_time_ms, end_time_ms);
 }
@@ -606,6 +604,7 @@ const MySQLStatement = @import("./MySQLStatement.zig");
 const PreparedStatement = @import("./protocol/PreparedStatement.zig");
 const Signature = @import("./protocol/Signature.zig");
 const bun = @import("bun");
+const std = @import("std");
 const CommandTag = @import("../postgres/CommandTag.zig").CommandTag;
 const QueryBindingIterator = @import("../shared/QueryBindingIterator.zig").QueryBindingIterator;
 const SQLQueryResultMode = @import("../shared/SQLQueryResultMode.zig").SQLQueryResultMode;

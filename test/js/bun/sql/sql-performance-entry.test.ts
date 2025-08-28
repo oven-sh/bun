@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 // Test the C++ binding directly
 test("JSC__addSQLQueryPerformanceEntry function creates performance entries", () => {
@@ -27,7 +27,6 @@ test("JSC__addSQLQueryPerformanceEntry function creates performance entries", ()
     const invalidEntries = performance.getEntriesByType("invalid-type");
     expect(Array.isArray(invalidEntries)).toBe(true);
     expect(invalidEntries.length).toBe(0);
-
   } catch (error) {
     // If direct binding access fails, just verify the type is recognized
     const sqlEntries = performance.getEntriesByType("sql-query");
@@ -38,14 +37,14 @@ test("JSC__addSQLQueryPerformanceEntry function creates performance entries", ()
 test("Performance API maintains backwards compatibility", () => {
   // Ensure existing performance API functionality still works
   performance.mark("compatibility-test");
-  
+
   const markEntries = performance.getEntriesByType("mark");
   expect(markEntries.length).toBeGreaterThan(0);
-  
+
   const specificMark = performance.getEntriesByName("compatibility-test");
   expect(specificMark.length).toBeGreaterThan(0);
   expect(specificMark[0].entryType).toBe("mark");
   expect(specificMark[0].name).toBe("compatibility-test");
-  
+
   performance.clearMarks();
 });

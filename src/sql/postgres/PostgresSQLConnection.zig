@@ -1836,6 +1836,8 @@ pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 pub const toJS = js.toJS;
 
+extern "C" fn JSC__addSQLQueryPerformanceEntry(globalObject: *jsc.JSGlobalObject, name: [*:0]const u8, description: [*:0]const u8, startTime: f64, endTime: f64) void;
+
 const DataCell = @import("./DataCell.zig");
 const PostgresCachedStructure = @import("../shared/CachedStructure.zig");
 const PostgresRequest = @import("./PostgresRequest.zig");
@@ -1865,5 +1867,3 @@ const AutoFlusher = jsc.WebCore.AutoFlusher;
 
 const uws = bun.uws;
 const Socket = uws.AnySocket;
-
-extern "C" fn JSC__addSQLQueryPerformanceEntry(globalObject: *jsc.JSGlobalObject, name: [*:0]const u8, description: [*:0]const u8, startTime: f64, endTime: f64) void;

@@ -462,17 +462,17 @@
             
             // Update stats
             document.getElementById('stat-files').textContent = 
-                graphData.metadata?.totalFiles || '-';
+                graphData.metadata?.total_files || '-';
             document.getElementById('stat-reachable').textContent = 
-                graphData.metadata?.reachableFiles || '-';
+                graphData.metadata?.reachable_files || '-';
             document.getElementById('stat-chunks').textContent = 
                 graphData.chunks?.length || '-';
             document.getElementById('stat-symbols').textContent = 
-                graphData.symbols?.totalSymbols || '-';
+                graphData.symbols?.total_symbols || '-';
             document.getElementById('stat-exports').textContent = 
-                graphData.importsAndExports?.totalExports || '-';
+                graphData.imports_and_exports?.total_exports || '-';
             document.getElementById('stat-imports').textContent = 
-                graphData.importsAndExports?.totalImports || '-';
+                graphData.imports_and_exports?.total_imports || '-';
             
             // Update metadata
             const metadataHtml = Object.entries(graphData.metadata || {})
@@ -497,7 +497,7 @@
             document.getElementById('files-list').innerHTML = filesHtml;
             
             // Update symbols list
-            const symbolsHtml = (graphData.symbols?.bySource || [])
+            const symbolsHtml = (graphData.symbols?.by_source || [])
                 .flatMap(source => 
                     (source.samples || []).map(symbol => `
                         <div class="symbol-item">
@@ -515,8 +515,8 @@
                 <div class="chunk-item" data-index="${idx}">
                     <strong>Chunk ${idx}</strong>
                     <div style="font-size: 11px; color: #808080;">
-                        ${chunk.isEntryPoint ? 'Entry Point | ' : ''}
-                        ${chunk.filesInChunkCount || 0} files
+                        ${chunk.is_entry_point ? 'Entry Point | ' : ''}
+                        ${chunk.files_in_chunk?.length || 0} files
                     </div>
                 </div>
             `).join('');
@@ -582,7 +582,7 @@
         
         function renderFilesGraph() {
             const files = graphData.files || [];
-            const edges = graphData.dependencyGraph?.edges || [];
+            const edges = graphData.dependency_graph?.edges || [];
             
             // Create nodes
             const nodes = files.map((file, idx) => ({
@@ -628,7 +628,7 @@
             // Create edges based on cross-chunk imports
             const edges = [];
             chunks.forEach((chunk, idx) => {
-                if (chunk.crossChunkImports) {
+                if (chunk.cross_chunk_imports) {
                     // This would need actual cross-chunk import data
                     // For now, we'll create synthetic edges
                 }
@@ -644,7 +644,7 @@
         }
         
         function renderDependencyGraph() {
-            const edges = graphData.dependencyGraph?.edges || [];
+            const edges = graphData.dependency_graph?.edges || [];
             const files = graphData.files || [];
             
             // Create unique nodes from edges
@@ -688,9 +688,9 @@
         }
         
         function renderSymbolsGraph() {
-            const symbols = graphData.importsAndExports || {};
-            const exports = symbols.exportSamples || [];
-            const imports = symbols.importSamples || [];
+            const symbols = graphData.imports_and_exports || {};
+            const exports = symbols.exports || [];
+            const imports = symbols.imports || [];
             
             // Create nodes for files with exports/imports
             const nodeMap = new Map();
@@ -719,10 +719,10 @@
                 }
                 nodeMap.get(nodeId).data.imports.push(imp);
                 
-                if (imp.targetSource !== undefined) {
+                if (imp.target_source !== undefined && imp.target_source !== null) {
                     edges.push({
                         source: nodeId,
-                        target: `file-${imp.targetSource}`
+                        target: `file-${imp.target_source}`
                     });
                 }
             });

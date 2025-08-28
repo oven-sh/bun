@@ -150,7 +150,9 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager, command_ctx:
 
     if (manager.options.dry_run or !manager.options.do.install_packages) return null;
 
-    const scan_all = manager.update_requests.len == 0;
+    // For remove/uninstall, scan all remaining packages after removal
+    // For other commands, scan all if no update requests, otherwise scan update packages
+    const scan_all = manager.subcommand == .remove or manager.update_requests.len == 0;
     const result = try attemptSecurityScan(manager, security_scanner, scan_all, command_ctx, original_cwd);
 
     switch (result) {

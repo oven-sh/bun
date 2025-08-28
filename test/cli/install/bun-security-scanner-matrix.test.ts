@@ -49,8 +49,9 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
   } = options;
 
   // Create scanner code based on configuration
-  const scannerCode = `
-    ${scannerType === "npm" ? "module.exports = {" : "export const"} scanner = {
+  const scannerCode =
+    scannerType === "local" || scannerType === "npm"
+      ? `"export const scanner = {
       version: "1",
       scan: async function(payload) {
         console.error("SCANNER_RAN: " + payload.packages.length + " packages");
@@ -84,8 +85,8 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
         }
         return results;
       }
-    }${scannerType === "npm" ? "};" : ";"}
-  ` as const;
+    }`
+      : `throw new Error("Should not have been loaded")`;
 
   // Base files for the test directory
   const files: Record<string, string> = {
@@ -94,6 +95,13 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
       version: "1.0.0",
       dependencies: {
         "left-pad": "1.3.0",
+        // For remove/uninstall commands, add the packages we're trying to remove
+        ...(command === "remove" || command === "uninstall"
+          ? {
+              "is-even": "1.0.0",
+              "is-odd": "1.0.0",
+            }
+          : {}),
         ...additionalDependencies,
       },
     }),
@@ -111,6 +119,7 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
       main: "index.js",
     });
     files["scanner-npm-package/index.js"] = scannerCode;
+    // TODO: add npm scanner tests
 
     // Add to dependencies if not bunfig-only
     if (scannerType === "npm") {
@@ -231,20 +240,6 @@ scanner = "${scannerPath}"
   return { stdout, stderr, exitCode, dir };
 }
 
-function generateTestName(options: SecurityScannerTestOptions): string {
-  const parts = [
-    `${options.command}`,
-    options.args?.length ? `with ${options.args.join(",")}` : "no args",
-    options.hasExistingNodeModules ? "existing node_modules" : "clean install",
-    `${options.linker || "hoisted"} linker`,
-    `${options.scannerType} scanner`,
-    options.scannerReturns !== "clean" ? `returns ${options.scannerReturns}` : "",
-    options.shouldFail ? "should fail" : "",
-  ].filter(Boolean);
-
-  return parts.join(" - ");
-}
-
 beforeAll(async () => {
   registryUrl = await startRegistry();
 });
@@ -254,139 +249,7 @@ afterAll(() => {
 });
 
 describe("Security Scanner Matrix Tests", () => {
-  // describe("Commands", () => {
-  //   test("install with local scanner", async () => {
-  //     await runSecurityScannerTest({
-  //       command: "install",
-  //       scannerType: "local",
-  //       scannerReturns: "clean",
-  //       expectedOutput: ["SCANNER_RAN"],
-  //     });
-  //   });
-
-  //   test("update with local scanner", async () => {
-  //     await runSecurityScannerTest({
-  //       command: "update",
-  //       scannerType: "local",
-  //       scannerReturns: "clean",
-  //       hasExistingNodeModules: true,
-  //       expectedOutput: ["SCANNER_RAN"],
-  //     });
-  //   });
-
-  //   test("add with local scanner", async () => {
-  //     await runSecurityScannerTest({
-  //       command: "add",
-  //       args: ["is-even"],
-  //       scannerType: "local",
-  //       scannerReturns: "clean",
-  //       expectedOutput: ["SCANNER_RAN"],
-  //     });
-  //   });
-  // });
-
-  // // Test scanner types
-  // describe("Scanner Types", () => {
-  //   test.todo("npm scanner package", async () => {
-  //     // TODO: This test requires proper npm package setup
-  //     // For now, focusing on local scanners which cover most functionality
-  //     await runSecurityScannerTest({
-  //       command: "install",
-  //       scannerType: "npm",
-  //       scannerPackageName: "my-security-scanner",
-  //       scannerReturns: "clean",
-  //       expectedOutput: ["SCANNER_RAN"],
-  //     });
-  //   });
-
-  //   test("bunfig-only scanner should fail", async () => {
-  //     await runSecurityScannerTest({
-  //       command: "install",
-  //       scannerType: "bunfig-only",
-  //       shouldFail: true,
-  //       expectedError: "Security scanner",
-  //     });
-  //   });
-  // });
-
-  // // Test scanner returns
-  // describe("Scanner Returns", () => {
-  //   test("scanner returns warning", async () => {
-  //     await runSecurityScannerTest({
-  //       command: "install",
-  //       scannerType: "local",
-  //       scannerReturns: "warn",
-  //       expectedOutput: ["SCANNER_RAN", "WARNING:"],
-  //       shouldFail: true, // Without TTY, warnings cause failure
-  //     });
-  //   });
-
-  //   test("scanner returns fatal", async () => {
-  //     await runSecurityScannerTest({
-  //       command: "install",
-  //       scannerType: "local",
-  //       scannerReturns: "fatal",
-  //       expectedOutput: ["SCANNER_RAN", "FATAL:"],
-  //       shouldFail: true,
-  //     });
-  //   });
-
-  //   test("scanner throws error", async () => {
-  //     await runSecurityScannerTest({
-  //       command: "install",
-  //       scannerType: "local",
-  //       scannerError: true,
-  //       expectedOutput: ["SCANNER_RAN"],
-  //       expectedError: "Scanner error!",
-  //       shouldFail: true,
-  //     });
-  //   });
-  // });
-
-  // // Test linker modes
-  // describe("Linker Modes", () => {
-  //   test("hoisted linker with scanner", async () => {
-  //     await runSecurityScannerTest({
-  //       command: "install",
-  //       linker: "hoisted",
-  //       scannerType: "local",
-  //       scannerReturns: "clean",
-  //       expectedOutput: ["SCANNER_RAN"],
-  //     });
-  //   });
-
-  //   test.todo("isolated linker with scanner", async () => {
-  //     await runSecurityScannerTest({
-  //       command: "install",
-  //       linker: "isolated",
-  //       scannerType: "local",
-  //       scannerReturns: "clean",
-  //       expectedOutput: ["SCANNER_RAN"],
-  //     });
-  //   });
-  // });
-
-  // describe("Node Modules State", () => {
-  //   test("update with existing node_modules", async () => {
-  //     await runSecurityScannerTest({
-  //       command: "update",
-  //       hasExistingNodeModules: true,
-  //       scannerType: "local",
-  //       scannerReturns: "clean",
-  //       expectedOutput: ["SCANNER_RAN"],
-  //     });
-  //   });
-
-  //   test("update without existing node_modules", async () => {
-  //     await runSecurityScannerTest({
-  //       command: "update",
-  //       hasExistingNodeModules: false,
-  //       scannerType: "local",
-  //       scannerReturns: "clean",
-  //       expectedOutput: ["SCANNER_RAN"],
-  //     });
-  //   });
-  // });
+  let i = 0;
 
   describe.each(["install", "update", "add", "remove", "uninstall"] as const)("bun %s", command => {
     const argConfigs: Array<{ args: string[]; name: string }> =
@@ -413,22 +276,25 @@ describe("Security Scanner Matrix Tests", () => {
                 return;
               }
 
+              const testName = String(++i);
+
               if (command === "install" && args.length > 0) {
+                test.todo(testName, async () => {});
                 return;
               }
 
               if (scannerType === "npm") {
-                test.todo(
-                  generateTestName({ command, args, hasExistingNodeModules, linker, scannerType, scannerReturns }),
-                  async () => {
-                    // TODO: Properly set up npm scanner tests
-                  },
-                );
+                test.todo(testName, async () => {});
                 return;
               }
 
+              // For remove/uninstall commands, only bunfig-only should fail
+              // Warnings and fatal advisories are printed but don't block removal
               const shouldFail =
-                scannerType === "bunfig-only" || scannerReturns === "warn" || scannerReturns === "fatal";
+                scannerType === "bunfig-only" ||
+                (command !== "remove" &&
+                  command !== "uninstall" &&
+                  (scannerReturns === "warn" || scannerReturns === "fatal"));
               const expectedOutput = scannerType === "bunfig-only" ? [] : ["SCANNER_RAN"];
               const expectedError = scannerType === "bunfig-only" ? "Security scanner" : undefined;
 
@@ -441,22 +307,19 @@ describe("Security Scanner Matrix Tests", () => {
                 }
               }
 
-              test(
-                generateTestName({ command, args, hasExistingNodeModules, linker, scannerType, scannerReturns }),
-                async () => {
-                  await runSecurityScannerTest({
-                    command,
-                    args,
-                    hasExistingNodeModules,
-                    linker,
-                    scannerType,
-                    scannerReturns,
-                    expectedOutput,
-                    shouldFail,
-                    expectedError,
-                  });
-                },
-              );
+              test(testName, async () => {
+                await runSecurityScannerTest({
+                  command,
+                  args,
+                  hasExistingNodeModules,
+                  linker,
+                  scannerType,
+                  scannerReturns,
+                  expectedOutput,
+                  shouldFail,
+                  expectedError,
+                });
+              });
             });
           });
         });

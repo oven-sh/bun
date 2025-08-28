@@ -38,7 +38,8 @@ pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry) bun.JSEr
 pub fn generateOrderDescribe(this: *Order, current: *DescribeScope) bun.JSError!void {
     if (current.failed) return; // do not schedule any tests in a failed describe scope
 
-    // TODO: do not gather beforeAll and afterAll if all sub-tests are filtered out
+    // TODO: do not gather beforeAll and afterAll if no sub-tests have a callback
+    // this will work for filter, skip, and todo
 
     // gather beforeAll
     try generateAllOrder(this, current.beforeAll.items);

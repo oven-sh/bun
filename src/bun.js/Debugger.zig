@@ -152,7 +152,7 @@ pub fn startJSDebuggerThread(other_vm: *VirtualMachine) void {
     env_map.* = DotEnv.Map.init(thread_allocator);
     const env_loader = thread_allocator.create(DotEnv.Loader) catch @panic("Failed to create debugger env loader");
     env_loader.* = DotEnv.Loader.init(env_map, thread_allocator);
-    
+
     var vm = VirtualMachine.init(.{
         .allocator = thread_allocator,
         .args = std.mem.zeroes(bun.schema.api.TransformOptions),
@@ -434,13 +434,13 @@ pub const DebuggerId = bun.GenericIndex(i32, Debugger);
 pub const BunFrontendDevServerAgent = @import("./api/server/InspectorBunFrontendDevServerAgent.zig").BunFrontendDevServerAgent;
 pub const HTTPServerAgent = @import("./bindings/HTTPServerAgent.zig");
 
+const DotEnv = @import("../env_loader.zig");
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const uv = bun.windows.libuv;
-const DotEnv = @import("../env_loader.zig");
 
 const jsc = bun.jsc;
 const Debugger = jsc.Debugger;

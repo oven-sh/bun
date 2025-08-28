@@ -375,7 +375,7 @@ export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Databa
           values && values.length > 0
             ? ` [${values.map(v => (v === null ? "null" : typeof v === "string" ? `"${v}"` : String(v))).join(", ")}]`
             : "";
-        console.log(`[\x1b[1;36m**SQLITE**\x1b[0m] \x1b[33m(${duration.toFixed(1)}ms)\x1b[0m ${sql}${valuesStr}`);
+        console.log(`[\x1b[1;32mSQLITE\x1b[0m] \x1b[33m(${duration.toFixed(1)}ms)\x1b[0m ${sql}${valuesStr}`);
       }
     } catch (err) {
       // Log failed query
@@ -386,7 +386,7 @@ export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Databa
             ? ` [${values.map(v => (v === null ? "null" : typeof v === "string" ? `"${v}"` : String(v))).join(", ")}]`
             : "";
         console.log(
-          `[\x1b[1;36m**SQLITE**\x1b[0m] \x1b[33m(${duration.toFixed(1)}ms)\x1b[0m ${sql}${valuesStr} \x1b[31mERROR: ${err instanceof Error ? err.message : String(err)}\x1b[0m`,
+          `[\x1b[1;32mSQLITE\x1b[0m] \x1b[33m(${duration.toFixed(1)}ms)\x1b[0m ${sql}${valuesStr} \x1b[31mERROR: ${err instanceof Error ? err.message : String(err)}\x1b[0m`,
         );
       }
       // Convert bun:sqlite errors to SQLiteError

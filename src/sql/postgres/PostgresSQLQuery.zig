@@ -94,7 +94,7 @@ pub fn onWriteFail(
         var query_str = this.query.toUTF8(bun.default_allocator);
         defer query_str.deinit();
 
-        bun.Output.prettyln("[<b><cyan>**POSTGRES**<r>] <yellow>({d:.1}ms)<r> {s} <red>ERROR<r>", .{ duration_ms, query_str.slice() });
+        bun.Output.prettyln("[<b><blue>POSTGRES<r>] <yellow>({d:.1}ms)<r> {s} <red>ERROR<r>", .{ duration_ms, query_str.slice() });
     }
 
     const thisValue = this.thisValue.get();
@@ -171,7 +171,7 @@ pub fn onResult(this: *@This(), command_tag_str: []const u8, globalObject: *jsc.
             var query_str = this.query.toUTF8(bun.default_allocator);
             defer query_str.deinit();
 
-            bun.Output.prettyln("[<b><cyan>**POSTGRES**<r>] <yellow>({d:.1}ms)<r> {s}", .{ duration_ms, query_str.slice() });
+            bun.Output.prettyln("[<b><blue>POSTGRES<r>] <yellow>({d:.1}ms)<r> {s}", .{ duration_ms, query_str.slice() });
         }
     } else {
         this.status = .partial_response;

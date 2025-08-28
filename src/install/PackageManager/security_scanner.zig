@@ -45,6 +45,43 @@ pub const SecurityScanResults = struct {
     }
 };
 
+fn collectAllDependencies(
+    manager: *PackageManager,
+    root_pkg_id: PackageID,
+    allocator: std.mem.Allocator,
+) ![]const PackageID {
+    var pkg_list = std.ArrayList(PackageID).init(allocator);
+    var pkg_set = std.AutoHashMap(PackageID, void).init(allocator);
+    defer pkg_set.deinit();
+
+    // Add root package
+    try pkg_list.append(root_pkg_id);
+    try pkg_set.put(root_pkg_id, {});
+
+    // BFS to collect all transitive dependencies
+    var i: usize = 0;
+    while (i < pkg_list.items.len) : (i += 1) {
+        const pkg_id = pkg_list.items[i];
+        const pkg_deps = manager.lockfile.packages.items(.dependencies)[pkg_id];
+
+        for (pkg_deps.begin()..pkg_deps.end()) |_dep_id| {
+            const dep_id: DependencyID = @intCast(_dep_id);
+            const dep_pkg_id = manager.lockfile.buffers.resolutions.items[dep_id];
+
+            if (dep_pkg_id == invalid_package_id) {
+                continue;
+            }
+
+            // Only add if we haven't seen this package before
+            if (!(try pkg_set.getOrPut(dep_pkg_id)).found_existing) {
+                try pkg_list.append(dep_pkg_id);
+            }
+        }
+    }
+
+    return pkg_list.toOwnedSlice();
+}
+
 pub fn doPartialInstallOfSecurityScanner(
     manager: *PackageManager,
     ctx: bun.cli.Command.Context,
@@ -58,7 +95,16 @@ pub fn doPartialInstallOfSecurityScanner(
         return;
     }
 
-    const packages_to_install: ?[]const PackageID = if (security_scanner_pkg_id == invalid_package_id) null else &[_]PackageID{security_scanner_pkg_id};
+    const packages_to_install: ?[]const PackageID = if (security_scanner_pkg_id == invalid_package_id)
+        null
+    else
+        try collectAllDependencies(manager, security_scanner_pkg_id, manager.allocator);
+
+    if (packages_to_install) |packages| {
+        if (log_level == .verbose) {
+            Output.prettyErrorln("<d>[SecurityScanner]<r> Installing security scanner and {d} dependencies", .{packages.len - 1});
+        }
+    }
 
     _ = switch (manager.options.node_linker) {
         .hoisted,

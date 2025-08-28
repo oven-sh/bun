@@ -43,6 +43,9 @@ connection_timeout_ms: u32 = 0,
 
 flags: ConnectionFlags = .{},
 
+/// Whether to track SQL query performance entries
+performance_entries_enabled: bool = false,
+
 /// Before being connected, this is a connection timeout timer.
 /// After being connected, this is an idle timeout timer.
 timer: bun.api.Timer.EventLoopTimer = .{
@@ -695,6 +698,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     const connection_timeout = arguments[12].toInt32();
     const max_lifetime = arguments[13].toInt32();
     const use_unnamed_prepared_statements = arguments[14].asBoolean();
+    const performance_entries_enabled = arguments[15].asBoolean();
 
     const ptr: *PostgresSQLConnection = try bun.default_allocator.create(PostgresSQLConnection);
 
@@ -720,6 +724,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         .flags = .{
             .use_unnamed_prepared_statements = use_unnamed_prepared_statements,
         },
+        .performance_entries_enabled = performance_entries_enabled,
     };
 
     {
@@ -1130,6 +1135,7 @@ fn advance(this: *PostgresSQLConnection) void {
                     this.nonpipelinable_requests += 1;
                     this.flags.is_ready_for_query = false;
                     req.status = .running;
+                    req.startPerformanceTracking();
                     return;
                 } else {
                     const stmt = req.statement orelse {
@@ -1150,6 +1156,7 @@ fn advance(this: *PostgresSQLConnection) void {
                             } else if (this.flags.waiting_to_prepare) {
                                 this.flags.waiting_to_prepare = false;
                             }
+                            req.endPerformanceTracking(this, this.globalObject);
                             req.onError(stmt.error_response.?, this.globalObject);
                             if (offset == 0) {
                                 req.deref();
@@ -1435,6 +1442,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             if (this.current()) |request| {
                 if (request.status == .partial_response) {
                     // if is a partial response, just signal that the query is now complete
+                    request.endPerformanceTracking(this, this.globalObject);
                     request.onResult("", this.globalObject, this.js_value, true);
                 }
             }
@@ -1455,8 +1463,10 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
 
             if (request.flags.simple) {
                 // simple queries can have multiple commands
+                if (false) request.endPerformanceTracking(this, this.globalObject); // Only end on final result for simple queries
                 request.onResult(cmd.command_tag.slice(), this.globalObject, this.js_value, false);
             } else {
+                request.endPerformanceTracking(this, this.globalObject);
                 request.onResult(cmd.command_tag.slice(), this.globalObject, this.js_value, true);
             }
         },
@@ -1465,6 +1475,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             var request = this.current() orelse return error.ExpectedRequest;
             if (request.status == .binding) {
                 request.status = .running;
+                request.startPerformanceTracking();
             }
         },
         .ParseComplete => {
@@ -1688,6 +1699,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             var request = this.current() orelse return error.ExpectedRequest;
             if (request.status == .binding) {
                 request.status = .running;
+                request.startPerformanceTracking();
             }
         },
         .BackendKeyData => {
@@ -1731,6 +1743,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             }
             this.updateRef();
 
+            request.endPerformanceTracking(this, this.globalObject);
             request.onError(.{ .protocol = err }, this.globalObject);
         },
         .PortalSuspended => {
@@ -1852,3 +1865,5 @@ const AutoFlusher = jsc.WebCore.AutoFlusher;
 
 const uws = bun.uws;
 const Socket = uws.AnySocket;
+
+extern "C" fn JSC__addSQLQueryPerformanceEntry(globalObject: *jsc.JSGlobalObject, name: [*:0]const u8, description: [*:0]const u8, startTime: f64, endTime: f64) void;

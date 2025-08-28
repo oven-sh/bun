@@ -50,6 +50,9 @@ connection_timeout_ms: u32 = 0,
 
 flags: ConnectionFlags = .{},
 
+/// Whether to track SQL query performance entries
+performance_entries_enabled: bool = false,
+
 /// Before being connected, this is a connection timeout timer.
 /// After being connected, this is an idle timeout timer.
 timer: bun.api.Timer.EventLoopTimer = .{
@@ -568,6 +571,7 @@ fn advance(this: *@This()) void {
                     this.nonpipelinable_requests += 1;
                     this.flags.is_ready_for_query = false;
                     req.status = .running;
+                    req.startPerformanceTracking();
                     this.flushDataAndResetTimeout();
                     return;
                 } else {
@@ -575,6 +579,7 @@ fn advance(this: *@This()) void {
                         switch (statement.status) {
                             .failed => {
                                 debug("stmt failed", .{});
+                                req.endPerformanceTracking(this, this.globalObject);
                                 req.onError(statement.error_response, this.globalObject);
                                 if (offset == 0) {
                                     req.deref();
@@ -869,6 +874,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     const connection_timeout = arguments[12].toInt32();
     const max_lifetime = arguments[13].toInt32();
     const use_unnamed_prepared_statements = arguments[14].asBoolean();
+    const performance_entries_enabled = arguments[15].asBoolean();
 
     var ptr = try bun.default_allocator.create(MySQLConnection);
 
@@ -894,6 +900,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         .flags = .{
             .use_unnamed_prepared_statements = use_unnamed_prepared_statements,
         },
+        .performance_entries_enabled = performance_entries_enabled,
     };
 
     {
@@ -1419,6 +1426,7 @@ pub fn handleCommand(this: *MySQLConnection, comptime Context: type, reader: New
                 this.flags.is_ready_for_query = true;
                 this.finishRequest(request);
                 // Statement failed, clean up
+                request.endPerformanceTracking(this, this.globalObject);
                 request.onError(statement.error_response, this.globalObject);
             },
         }
@@ -1674,6 +1682,7 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
             this.finishRequest(request);
             statement.status = .failed;
             statement.error_response = err;
+            request.endPerformanceTracking(this, this.globalObject);
             request.onError(err, this.globalObject);
         },
 
@@ -1695,6 +1704,7 @@ fn handleResultSetOK(this: *MySQLConnection, request: *MySQLQuery, statement: *M
     if (this.flags.is_ready_for_query) {
         this.finishRequest(request);
     }
+    request.endPerformanceTracking(this, this.globalObject);
     request.onResult(statement.result_count, this.globalObject, this.js_value, this.flags.is_ready_for_query);
     statement.reset();
 }
@@ -1727,6 +1737,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
 
             this.flags.is_ready_for_query = true;
             this.finishRequest(request);
+            request.endPerformanceTracking(this, this.globalObject);
             request.onError(err, this.globalObject);
         },
 
@@ -1952,3 +1963,5 @@ const AutoFlusher = jsc.WebCore.AutoFlusher;
 
 const uws = bun.uws;
 const Socket = uws.AnySocket;
+
+extern "C" fn JSC__addSQLQueryPerformanceEntry(globalObject: *jsc.JSGlobalObject, name: [*:0]const u8, description: [*:0]const u8, startTime: f64, endTime: f64) void;

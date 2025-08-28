@@ -138,6 +138,7 @@ export interface PostgresDotZig {
     connectionTimeout: number,
     maxLifetime: number,
     useUnnamedPreparedStatements: boolean,
+    performanceEntries: boolean,
   ) => $ZigGeneratedClasses.PostgresSQLConnection;
   createQuery: (
     sql: string,
@@ -312,6 +313,7 @@ class PooledPostgresConnection {
       connectionTimeout = 30 * 1000,
       maxLifetime = 0,
       prepare = true,
+      performanceEntries = false,
 
       // @ts-expect-error path is currently removed from the types
       path,
@@ -348,6 +350,7 @@ class PooledPostgresConnection {
         connectionTimeout,
         maxLifetime,
         !prepare,
+        performanceEntries,
       );
     } catch (e) {
       onClose(e as Error);

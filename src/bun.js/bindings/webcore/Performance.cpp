@@ -51,6 +51,7 @@
 #include "PerformanceUserTiming.h"
 // #include "ResourceResponse.h"
 #include "ScriptExecutionContext.h"
+#include "SQLQueryPerformanceEntry.h"
 #include <wtf/TZoneMallocInlines.h>
 #include "BunClientData.h"
 
@@ -158,6 +159,9 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntries() const
         entries.appendVector(m_userTiming->getMeasures());
     }
 
+    for (auto& sqlEntry : m_sqlQueryBuffer)
+        entries.append(sqlEntry);
+
     // if (m_firstContentfulPaint)
     //     entries.append(m_firstContentfulPaint);
 
@@ -183,6 +187,11 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntriesByType(const String& ent
             entries.appendVector(m_userTiming->getMarks());
         else if (entryType == "measure"_s)
             entries.appendVector(m_userTiming->getMeasures());
+    }
+
+    if (entryType == "sql-query"_s) {
+        for (auto& sqlEntry : m_sqlQueryBuffer)
+            entries.append(sqlEntry);
     }
 
     std::sort(entries.begin(), entries.end(), PerformanceEntry::startTimeCompareLessThan);
@@ -223,6 +232,13 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntriesByName(const String& nam
             entries.appendVector(m_userTiming->getMeasures(name));
     }
 
+    if (entryType.isNull() || entryType == "sql-query"_s) {
+        for (auto& sqlEntry : m_sqlQueryBuffer) {
+            if (sqlEntry->name() == name)
+                entries.append(sqlEntry);
+        }
+    }
+
     std::sort(entries.begin(), entries.end(), PerformanceEntry::startTimeCompareLessThan);
     return entries;
 }
@@ -247,6 +263,11 @@ void Performance::appendBufferedEntriesByType(const String& entryType, Vector<Re
             entries.appendVector(m_userTiming->getMarks());
         if (entryType.isNull() || entryType == "measure"_s)
             entries.appendVector(m_userTiming->getMeasures());
+    }
+
+    if (entryType == "sql-query"_s) {
+        for (auto& sqlEntry : m_sqlQueryBuffer)
+            entries.append(sqlEntry);
     }
 }
 
@@ -312,6 +333,13 @@ void Performance::addResourceTiming(ResourceTiming&& resourceTiming)
 
     queueEntry(entry.get());
     m_resourceTimingBuffer.append(WTFMove(entry));
+}
+
+void Performance::addSQLQueryEntry(const String& name, const String& description, double startTime, double endTime)
+{
+    auto entry = SQLQueryPerformanceEntry::create(name, description, startTime, endTime);
+    m_sqlQueryBuffer.append(entry.copyRef());
+    queueEntry(entry.get());
 }
 
 bool Performance::isResourceTimingBufferFull() const

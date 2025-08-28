@@ -400,6 +400,7 @@ src/bun.js/bindings/webcore/RFC7230.cpp
 src/bun.js/bindings/webcore/SerializedScriptValue.cpp
 src/bun.js/bindings/webcore/ServerTiming.cpp
 src/bun.js/bindings/webcore/ServerTimingParser.cpp
+src/bun.js/bindings/webcore/SQLQueryPerformanceEntry.cpp
 src/bun.js/bindings/webcore/StructuredClone.cpp
 src/bun.js/bindings/webcore/TextEncoder.cpp
 src/bun.js/bindings/webcore/WebCoreTypedArrayController.cpp

@@ -21,7 +21,9 @@ declare module "bun" {
     /**
      * Represents the result of the `parseOptions()` function in the sqlite path
      */
-    type DefinedSQLiteOptions = Define<Bun.SQL.SQLiteOptions, "filename">;
+    type DefinedSQLiteOptions = Define<Bun.SQL.SQLiteOptions, "filename"> & {
+      performanceEntries: boolean;
+    };
 
     /**
      * Represents the result of the `parseOptions()` function in the postgres path
@@ -29,6 +31,7 @@ declare module "bun" {
     type DefinedPostgresOptions = Define<Bun.SQL.PostgresOptions, "max" | "prepare" | "max"> & {
       sslMode: import("internal/sql/shared").SSLMode;
       query: string;
+      performanceEntries: boolean;
     };
 
     type DefinedMySQLOptions = DefinedPostgresOptions;

@@ -34,6 +34,7 @@
 #include "PerformanceMark.h"
 #include "PerformanceMeasure.h"
 #include "PerformanceResourceTiming.h"
+#include "SQLQueryPerformanceEntry.h"
 
 // #include "DeprecatedGlobalSettings.h"
 
@@ -66,6 +67,10 @@ size_t PerformanceEntry::memoryCost() const
         const PerformanceResourceTiming* resource = static_cast<const PerformanceResourceTiming*>(this);
         return resource->memoryCost() + baseCost;
     }
+    case Type::SQLQuery: {
+        const SQLQueryPerformanceEntry* sqlQuery = static_cast<const SQLQueryPerformanceEntry*>(this);
+        return sqlQuery->memoryCost() + baseCost;
+    }
     default: {
         return sizeof(PerformanceEntry) + baseCost;
     }
@@ -84,6 +89,9 @@ std::optional<PerformanceEntry::Type> PerformanceEntry::parseEntryTypeString(con
 
     if (entryType == "resource"_s)
         return std::optional<Type>(Type::Resource);
+
+    if (entryType == "sql-query"_s)
+        return std::optional<Type>(Type::SQLQuery);
 
     // if (DeprecatedGlobalSettings::paintTimingEnabled()) {
     //     if (entryType == "paint"_s)

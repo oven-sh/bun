@@ -1,0 +1,456 @@
+import { $ } from "bun";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { join } from "node:path";
+
+interface SecurityScannerTestOptions {
+  // Command configuration
+  command: "install" | "update" | "add";
+  args?: string[]; // Package names for update/add
+
+  // Environment configuration
+  hasExistingNodeModules?: boolean;
+  linker?: "hoisted" | "isolated";
+
+  // Scanner configuration
+  scannerType: "local" | "npm" | "bunfig-only";
+  scannerPackageName?: string; // For npm scanner
+
+  // Scanner behavior
+  scannerReturns?: "clean" | "warn" | "fatal";
+  scannerError?: boolean; // Scanner throws an error
+
+  // Expected outcomes
+  shouldFail?: boolean;
+  expectedExitCode?: number;
+  expectedOutput?: string[];
+  unexpectedOutput?: string[];
+  expectedError?: string;
+
+  // Test metadata
+  testName?: string;
+  skipTest?: boolean;
+
+  // Additional package.json dependencies
+  additionalDependencies?: Record<string, string>;
+}
+
+async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
+  const {
+    command,
+    args = [],
+    hasExistingNodeModules = false,
+    linker = "hoisted",
+    scannerType,
+    scannerPackageName = "test-security-scanner",
+    scannerReturns = "clean",
+    scannerError = false,
+    shouldFail = false,
+    expectedExitCode = shouldFail ? 1 : 0,
+    expectedOutput = [],
+    unexpectedOutput = [],
+    expectedError,
+    additionalDependencies = {},
+  } = options;
+
+  // Create scanner code based on configuration
+  const scannerCode = `
+    ${scannerType === "npm" ? "module.exports = {" : "export const"} scanner = {
+      version: "1",
+      scan: async function(payload) {
+        console.error("SCANNER_RAN: " + payload.packages.length + " packages");
+        
+        ${scannerError ? "throw new Error('Scanner error!');" : ""}
+        
+        const results = [];
+        ${
+          scannerReturns === "warn"
+            ? `
+        if (payload.packages.length > 0) {
+          results.push({
+            package: payload.packages[0].name,
+            level: "warn",
+            description: "Test warning"
+          });
+        }`
+            : ""
+        }
+        ${
+          scannerReturns === "fatal"
+            ? `
+        if (payload.packages.length > 0) {
+          results.push({
+            package: payload.packages[0].name,
+            level: "fatal",
+            description: "Test fatal error"
+          });
+        }`
+            : ""
+        }
+        return results;
+      }
+    }${scannerType === "npm" ? "};" : ";"}
+  ` as const;
+
+  // Base files for the test directory
+  const files: Record<string, string> = {
+    "package.json": JSON.stringify({
+      name: "test-app",
+      version: "1.0.0",
+      dependencies: {
+        "left-pad": "1.3.0",
+        ...additionalDependencies,
+      },
+    }),
+  };
+
+  // Add scanner based on type
+  if (scannerType === "local") {
+    files["scanner.js"] = scannerCode;
+  } else if (scannerType === "npm" || scannerType === "bunfig-only") {
+    // For npm scanner, create a local package that simulates an npm package
+    // We'll use the file: protocol to reference it
+    files["scanner-npm-package/package.json"] = JSON.stringify({
+      name: scannerPackageName,
+      version: "1.0.0",
+      main: "index.js",
+    });
+    files["scanner-npm-package/index.js"] = scannerCode;
+
+    // Add to dependencies if not bunfig-only
+    if (scannerType === "npm") {
+      const pkg = JSON.parse(files["package.json"]);
+      pkg.dependencies[scannerPackageName] = "file:./scanner-npm-package";
+      files["package.json"] = JSON.stringify(pkg);
+    }
+  }
+
+  // Create the test directory
+  const dir = tempDirWithFiles("scanner-matrix", files);
+
+  // Special handling for npm scanner - install it first without security config
+  let skipMainCommand = false;
+  if (scannerType === "npm") {
+    // First install without scanner to get the npm package installed
+    await $`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
+
+    // If this is an install command with npm scanner, we'll run it again with the scanner
+    // But for now, let's mark that we already installed
+    if (command === "install") {
+      skipMainCommand = false; // We still want to run install again with scanner
+    }
+  } else if (hasExistingNodeModules && command !== "install") {
+    // For update/add commands, do initial install without scanner
+    await $`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
+  }
+
+  // Now add bunfig with scanner configuration
+  const scannerPath = scannerType === "local" ? "./scanner.js" : scannerPackageName;
+
+  await Bun.write(
+    join(dir, "bunfig.toml"),
+    `
+[install]
+cache = false
+linker = "${linker}"
+
+[install.security]
+scanner = "${scannerPath}"
+`,
+  );
+
+  // Prepare the command
+  let cmd = [bunExe(), command];
+  if (args.length > 0) {
+    cmd = [...cmd, ...args];
+  }
+
+  let stdout = "";
+  let stderr = "";
+  let exitCode = 0;
+
+  if (!skipMainCommand) {
+    // Run the command
+    const proc = Bun.spawn({
+      cmd,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  }
+
+  // Debug output for failures
+  if (exitCode !== expectedExitCode) {
+    console.log("Command:", cmd.join(" "));
+    console.log("Expected exit code:", expectedExitCode, "Got:", exitCode);
+    console.log("Stdout:", stdout);
+    console.log("Stderr:", stderr);
+  }
+
+  // Verify expectations
+  expect(exitCode).toBe(expectedExitCode);
+
+  // Check expected output
+  for (const expected of expectedOutput) {
+    expect(stdout + stderr).toContain(expected);
+  }
+
+  // Check unexpected output
+  for (const unexpected of unexpectedOutput) {
+    expect(stdout + stderr).not.toContain(unexpected);
+  }
+
+  // Check for specific error
+  if (expectedError) {
+    expect(stderr).toContain(expectedError);
+  }
+
+  // Return results for additional assertions if needed
+  return { stdout, stderr, exitCode, dir };
+}
+
+// Helper to generate test name
+function generateTestName(options: SecurityScannerTestOptions): string {
+  if (options.testName) return options.testName;
+
+  const parts = [
+    `${options.command}`,
+    options.args?.length ? `with ${options.args.join(",")}` : "no args",
+    options.hasExistingNodeModules ? "existing node_modules" : "clean install",
+    `${options.linker || "hoisted"} linker`,
+    `${options.scannerType} scanner`,
+    options.scannerReturns !== "clean" ? `returns ${options.scannerReturns}` : "",
+    options.shouldFail ? "should fail" : "",
+  ].filter(Boolean);
+
+  return parts.join(" - ");
+}
+
+describe("Security Scanner Matrix Tests", () => {
+  // describe("Commands", () => {
+  //   test("install with local scanner", async () => {
+  //     await runSecurityScannerTest({
+  //       command: "install",
+  //       scannerType: "local",
+  //       scannerReturns: "clean",
+  //       expectedOutput: ["SCANNER_RAN"],
+  //     });
+  //   });
+
+  //   test("update with local scanner", async () => {
+  //     await runSecurityScannerTest({
+  //       command: "update",
+  //       scannerType: "local",
+  //       scannerReturns: "clean",
+  //       hasExistingNodeModules: true,
+  //       expectedOutput: ["SCANNER_RAN"],
+  //     });
+  //   });
+
+  //   test("add with local scanner", async () => {
+  //     await runSecurityScannerTest({
+  //       command: "add",
+  //       args: ["is-even"],
+  //       scannerType: "local",
+  //       scannerReturns: "clean",
+  //       expectedOutput: ["SCANNER_RAN"],
+  //     });
+  //   });
+  // });
+
+  // // Test scanner types
+  // describe("Scanner Types", () => {
+  //   test.todo("npm scanner package", async () => {
+  //     // TODO: This test requires proper npm package setup
+  //     // For now, focusing on local scanners which cover most functionality
+  //     await runSecurityScannerTest({
+  //       command: "install",
+  //       scannerType: "npm",
+  //       scannerPackageName: "my-security-scanner",
+  //       scannerReturns: "clean",
+  //       expectedOutput: ["SCANNER_RAN"],
+  //     });
+  //   });
+
+  //   test("bunfig-only scanner should fail", async () => {
+  //     await runSecurityScannerTest({
+  //       command: "install",
+  //       scannerType: "bunfig-only",
+  //       shouldFail: true,
+  //       expectedError: "Security scanner",
+  //     });
+  //   });
+  // });
+
+  // // Test scanner returns
+  // describe("Scanner Returns", () => {
+  //   test("scanner returns warning", async () => {
+  //     await runSecurityScannerTest({
+  //       command: "install",
+  //       scannerType: "local",
+  //       scannerReturns: "warn",
+  //       expectedOutput: ["SCANNER_RAN", "WARNING:"],
+  //       shouldFail: true, // Without TTY, warnings cause failure
+  //     });
+  //   });
+
+  //   test("scanner returns fatal", async () => {
+  //     await runSecurityScannerTest({
+  //       command: "install",
+  //       scannerType: "local",
+  //       scannerReturns: "fatal",
+  //       expectedOutput: ["SCANNER_RAN", "FATAL:"],
+  //       shouldFail: true,
+  //     });
+  //   });
+
+  //   test("scanner throws error", async () => {
+  //     await runSecurityScannerTest({
+  //       command: "install",
+  //       scannerType: "local",
+  //       scannerError: true,
+  //       expectedOutput: ["SCANNER_RAN"],
+  //       expectedError: "Scanner error!",
+  //       shouldFail: true,
+  //     });
+  //   });
+  // });
+
+  // // Test linker modes
+  // describe("Linker Modes", () => {
+  //   test("hoisted linker with scanner", async () => {
+  //     await runSecurityScannerTest({
+  //       command: "install",
+  //       linker: "hoisted",
+  //       scannerType: "local",
+  //       scannerReturns: "clean",
+  //       expectedOutput: ["SCANNER_RAN"],
+  //     });
+  //   });
+
+  //   test.todo("isolated linker with scanner", async () => {
+  //     await runSecurityScannerTest({
+  //       command: "install",
+  //       linker: "isolated",
+  //       scannerType: "local",
+  //       scannerReturns: "clean",
+  //       expectedOutput: ["SCANNER_RAN"],
+  //     });
+  //   });
+  // });
+
+  // describe("Node Modules State", () => {
+  //   test("update with existing node_modules", async () => {
+  //     await runSecurityScannerTest({
+  //       command: "update",
+  //       hasExistingNodeModules: true,
+  //       scannerType: "local",
+  //       scannerReturns: "clean",
+  //       expectedOutput: ["SCANNER_RAN"],
+  //     });
+  //   });
+
+  //   test("update without existing node_modules", async () => {
+  //     await runSecurityScannerTest({
+  //       command: "update",
+  //       hasExistingNodeModules: false,
+  //       scannerType: "local",
+  //       scannerReturns: "clean",
+  //       expectedOutput: ["SCANNER_RAN"],
+  //     });
+  //   });
+  // });
+
+  describe.each(["install", "update", "add"] as const)("Full Matrix - Command: %s", command => {
+    const argConfigs: Array<{ args: string[]; name: string }> =
+      command === "install"
+        ? [{ args: [], name: "no args" }]
+        : command === "update"
+          ? [
+              { args: [], name: "no args" },
+              { args: ["left-pad"], name: "left-pad" },
+            ]
+          : [
+              { args: ["is-even"], name: "is-even" },
+              { args: ["left-pad", "is-even"], name: "left-pad,is-even" },
+            ];
+
+    describe.each(argConfigs)("Args: $name", ({ args }) => {
+      describe.each(["true", "false"] as const)("Has node_modules: %s", _hasNodeModules => {
+        const hasNodeModules = _hasNodeModules === "true";
+
+        describe.each(["hoisted", "isolated"] as const)("Linker: %s", linker => {
+          describe.each(["local", "npm", "bunfig-only"] as const)("Scanner: %s", scannerType => {
+            describe.each(["clean", "warn", "fatal"] as const)("Scanner returns: %s", scannerReturns => {
+              if (command === "install" && hasNodeModules) {
+                return;
+              }
+
+              if (command === "install" && args.length > 0) {
+                return;
+              }
+
+              if (scannerType === "npm") {
+                test.todo(
+                  generateTestName({
+                    command,
+                    args,
+                    hasExistingNodeModules: hasNodeModules,
+                    linker,
+                    scannerType,
+                    scannerReturns,
+                  }),
+                  async () => {
+                    // TODO: Properly set up npm scanner tests
+                  },
+                );
+                return;
+              }
+
+              const shouldFail =
+                scannerType === "bunfig-only" || scannerReturns === "warn" || scannerReturns === "fatal";
+              const expectedOutput = scannerType === "bunfig-only" ? [] : ["SCANNER_RAN"];
+              const expectedError = scannerType === "bunfig-only" ? "Security scanner" : undefined;
+
+              if (scannerType !== "bunfig-only") {
+                if (scannerReturns === "warn") {
+                  expectedOutput.push("WARNING:");
+                }
+                if (scannerReturns === "fatal") {
+                  expectedOutput.push("FATAL:");
+                }
+              }
+
+              test(
+                generateTestName({
+                  command,
+                  args,
+                  hasExistingNodeModules: hasNodeModules,
+                  linker,
+                  scannerType,
+                  scannerReturns,
+                }),
+                async () => {
+                  await runSecurityScannerTest({
+                    command,
+                    args,
+                    hasExistingNodeModules: hasNodeModules,
+                    linker,
+                    scannerType,
+                    scannerReturns,
+                    expectedOutput,
+                    shouldFail,
+                    expectedError,
+                  });
+                },
+              );
+            });
+          });
+        });
+      });
+    });
+  });
+});

@@ -500,7 +500,7 @@
             // Update symbols list
             const symbolsHtml = (graphData.symbols?.by_source || [])
                 .flatMap(source => 
-                    (source.samples || []).map(symbol => `
+                    (source.symbols || []).map(symbol => `
                         <div class="symbol-item">
                             <strong>${symbol.original_name}</strong>
                             <div style="font-size: 11px; color: #808080;">
@@ -523,8 +523,11 @@
             `).join('');
             document.getElementById('chunks-list').innerHTML = chunksHtml;
             
-            // Add search functionality
-            document.getElementById('files-search').addEventListener('input', (e) => {
+            // Remove old search listeners and add new ones
+            const filesSearch = document.getElementById('files-search');
+            const newFilesSearch = filesSearch.cloneNode(true);
+            filesSearch.parentNode.replaceChild(newFilesSearch, filesSearch);
+            newFilesSearch.addEventListener('input', (e) => {
                 const search = e.target.value.toLowerCase();
                 document.querySelectorAll('.file-item').forEach(item => {
                     const visible = item.textContent.toLowerCase().includes(search);
@@ -532,7 +535,10 @@
                 });
             });
             
-            document.getElementById('symbols-search').addEventListener('input', (e) => {
+            const symbolsSearch = document.getElementById('symbols-search');
+            const newSymbolsSearch = symbolsSearch.cloneNode(true);
+            symbolsSearch.parentNode.replaceChild(newSymbolsSearch, symbolsSearch);
+            newSymbolsSearch.addEventListener('input', (e) => {
                 const search = e.target.value.toLowerCase();
                 document.querySelectorAll('.symbol-item').forEach(item => {
                     const visible = item.textContent.toLowerCase().includes(search);
@@ -629,9 +635,13 @@
             // Create edges based on cross-chunk imports
             const edges = [];
             chunks.forEach((chunk, idx) => {
-                if (chunk.cross_chunk_imports) {
-                    // This would need actual cross-chunk import data
-                    // For now, we'll create synthetic edges
+                if (chunk.cross_chunk_imports && Array.isArray(chunk.cross_chunk_imports)) {
+                    chunk.cross_chunk_imports.forEach(importInfo => {
+                        edges.push({
+                            source: `chunk-${idx}`,
+                            target: `chunk-${importInfo.chunk_index}`
+                        });
+                    });
                 }
             });
             

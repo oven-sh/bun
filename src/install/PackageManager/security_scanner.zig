@@ -926,7 +926,6 @@ fn parseSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, packa
     const json_expr = bun.json.parseUTF8(&json_source, &temp_log, manager.allocator) catch |err| {
         Output.errGeneric("Security scanner returned invalid JSON: {s}", .{@errorName(err)});
         if (ipc_data.len < 1000) {
-            // If the response is reasonably small, show it to help debugging
             Output.errGeneric("Response: {s}", .{ipc_data});
         }
         if (temp_log.errors > 0) {

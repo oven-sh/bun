@@ -18,7 +18,12 @@ afterEach(dummyAfterEach);
 
 test("security scanner blocks bun update on fatal advisory", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  setHandler(
+    dummyRegistry(urls, {
+      "0.1.0": {},
+      "0.2.0": {},
+    }),
+  );
 
   const scannerCode = `
     export const scanner = {
@@ -27,7 +32,7 @@ test("security scanner blocks bun update on fatal advisory", async () => {
         if (packages.length === 0) return [];
         return [
           {
-            package: "bar",
+            package: "moo",
             description: "Fatal security issue detected",
             level: "fatal",
             url: "https://example.com/critical",
@@ -38,12 +43,11 @@ test("security scanner blocks bun update on fatal advisory", async () => {
   `;
 
   await write("./scanner.ts", scannerCode);
-  await write("./bunfig.toml", `[install.security]\nscanner = "./scanner.ts"`);
   await write("package.json", {
     name: "my-app",
     version: "1.0.0",
     dependencies: {
-      bar: "^0.0.1",
+      moo: "0.1.0",
     },
   });
 
@@ -60,8 +64,19 @@ test("security scanner blocks bun update on fatal advisory", async () => {
   await installProc.stderr.text();
   await installProc.exited;
 
+  await write(
+    "./bunfig.toml",
+    `
+[install]
+saveTextLockfile = false
+
+[install.security]
+scanner = "./scanner.ts"
+`,
+  );
+
   await using updateProc = Bun.spawn({
-    cmd: [bunExe(), "update", "bar"],
+    cmd: [bunExe(), "update", "moo"],
     env: bunEnv,
     cwd: package_dir,
     stdout: "pipe",
@@ -74,7 +89,7 @@ test("security scanner blocks bun update on fatal advisory", async () => {
     updateProc.exited,
   ]);
 
-  expect(updateOut).toContain("FATAL: bar");
+  expect(updateOut).toContain("FATAL: moo");
   expect(updateOut).toContain("Fatal security issue detected");
   expect(updateOut).toContain("Installation aborted due to fatal security advisories");
 
@@ -83,13 +98,18 @@ test("security scanner blocks bun update on fatal advisory", async () => {
 
 test("security scanner does not run on bun update when disabled", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
+  setHandler(
+    dummyRegistry(urls, {
+      "0.1.0": {},
+      "0.2.0": {},
+    }),
+  );
 
   await write("package.json", {
     name: "my-app",
     version: "1.0.0",
     dependencies: {
-      bar: "^0.0.1",
+      moo: "0.1.0",
     },
   });
 
@@ -109,7 +129,7 @@ test("security scanner does not run on bun update when disabled", async () => {
   await installProc.exited;
 
   await using updateProc = Bun.spawn({
-    cmd: [bunExe(), "update", "bar"],
+    cmd: [bunExe(), "update", "moo"],
     env: bunEnv,
     cwd: package_dir,
     stdout: "pipe",

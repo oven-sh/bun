@@ -9,20 +9,29 @@ Run `bun init` to scaffold a new project. It's an interactive tool; for this tut
 
 ```bash
 $ bun init
-bun init helps you get started with a minimal project and tries to
-guess sensible defaults. Press ^C anytime to quit.
 
-package name (quickstart):
-entry point (index.ts):
+? Select a project template - Press return to submit.
+❯ Blank
+  React
+  Library
 
-Done! A package.json file was saved in the current directory.
- + index.ts
- + .gitignore
- + tsconfig.json (for editor auto-complete)
- + README.md
+✓ Select a project template: Blank
+
++ .gitignore
++ index.ts
++ tsconfig.json (for editor autocomplete)
++ README.md
 
 To get started, run:
-  bun run index.ts
+
+    bun run index.ts
+    
+bun install v1.2.21
+
++ @types/bun@1.2.21
++ typescript@5.9.2
+
+7 packages installed
 ```
 
 Since our entry point is a `*.ts` file, Bun generates a `tsconfig.json` for you. If you're using plain JavaScript, it will generate a [`jsconfig.json`](https://code.visualstudio.com/docs/languages/jsconfig) instead.
@@ -88,6 +97,7 @@ Bun can also execute `"scripts"` from your `package.json`. Add the following scr
     "name": "quickstart",
     "module": "index.ts",
     "type": "module",
+    "private": true,
 +   "scripts": {
 +     "start": "bun run index.ts"
 +   },
@@ -101,8 +111,8 @@ Then run it with `bun run start`.
 
 ```bash
 $ bun run start
-  $ bun run index.ts
-  Listening on http://localhost:3000 ...
+$ bun run index.ts
+Listening on http://localhost:3000 ...
 ```
 
 {% callout %}

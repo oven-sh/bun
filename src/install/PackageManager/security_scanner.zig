@@ -255,7 +255,7 @@ pub fn printSecurityAdvisories(manager: *PackageManager, results: *const Securit
     }
 }
 pub fn promptForWarnings() bool {
-    const can_prompt = Output.enable_ansi_colors_stdout;
+    const can_prompt = Output.isStdinTTY();
 
     if (!can_prompt) {
         Output.pretty("\n<red>Security warnings found. Cannot prompt for confirmation (no TTY).<r>\n", .{});

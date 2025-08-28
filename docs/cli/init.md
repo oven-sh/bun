@@ -19,9 +19,9 @@ To get started, run:
 
     bun run index.ts
     
-bun install v1.2.21
+bun install v$BUN_LATEST_VERSION
 
-+ @types/bun@1.2.21
++ @types/bun@$BUN_LATEST_VERSION
 + typescript@5.9.2
 
 7 packages installed

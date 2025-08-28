@@ -60,8 +60,10 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
         /// `data` is transferred into the returned string, and must be freed with
         /// `.deinit()` when the string and its borrows are done being used.
         pub fn initOwned(data: []T, allocator: Allocator) Self {
-            if (AllocationScope.downcast(allocator)) |scope|
+            if (comptime AllocationScope.enabled) {
+                const scope = AllocationScope.Borrowed.downcast(allocator);
                 scope.assertOwned(data);
+            }
 
             return .{
                 .ptr = data.ptr,

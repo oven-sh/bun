@@ -394,7 +394,7 @@ pub fn RefPtr(T: type) type {
             scope.trackExternalAllocation(
                 std.mem.asBytes(ref.data),
                 ret_addr,
-                .{ .ref_count = debug },
+                .{ .ptr = debug, .vtable = debug.getScopeExtraVTable() },
             );
         }
 
@@ -498,17 +498,25 @@ pub fn DebugData(thread_safe: bool) type {
             debug.map.clearAndFree(bun.default_allocator);
             debug.frees.clearAndFree(bun.default_allocator);
             if (debug.allocation_scope) |scope| {
-                _ = scope.trackExternalFree(data, ret_addr);
+                scope.trackExternalFree(data, ret_addr) catch {};
             }
         }
 
-        // Trait function for AllocationScope
-        pub fn onAllocationLeak(debug: *@This(), data: []u8) void {
+        fn onAllocationLeak(ptr: *anyopaque, data: []u8) void {
+            const debug: *@This() = @ptrCast(@alignCast(ptr));
             debug.lock.lock();
             defer debug.lock.unlock();
             const count = debug.count_pointer.?;
             debug.dump(null, data.ptr, if (thread_safe) count.load(.seq_cst) else count.*);
         }
+
+        fn getScopeExtraVTable(_: *@This()) *const allocation_scope.Extra.VTable {
+            return &scope_extra_vtable;
+        }
+
+        const scope_extra_vtable: allocation_scope.Extra.VTable = .{
+            .onAllocationLeak = onAllocationLeak,
+        };
     };
 }
 
@@ -561,6 +569,8 @@ const unique_symbol = opaque {};
 const std = @import("std");
 
 const bun = @import("bun");
-const AllocationScope = bun.AllocationScope;
 const assert = bun.assert;
 const enable_debug = bun.Environment.isDebug;
+
+const allocation_scope = bun.allocators.allocation_scope;
+const AllocationScope = allocation_scope.AllocationScope;

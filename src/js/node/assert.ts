@@ -22,7 +22,6 @@
 "use strict";
 
 const { SafeMap, SafeSet, SafeWeakSet } = require("internal/primordials");
-const { Buffer } = require("node:buffer");
 const {
   isKeyObject,
   isPromise,

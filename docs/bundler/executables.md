@@ -391,13 +391,13 @@ console.log(embeddedFiles[0].type); // MIME type (e.g., "image/png")
 `Bun.embeddedFiles` returns a read-only array of `Blob` objects sorted lexicographically by filename. Each `Blob` provides access to the embedded file's contents and metadata.
 
 ```ts
-const embeddedFiles: ReadonlyArray<Blob>
+const embeddedFiles: ReadonlyArray<Blob>;
 ```
 
 **Properties of embedded file `Blob`s:**
 
 - `name` (`string`): The filename with hash suffix (e.g., `icon-a1b2c3.png`)
-- `size` (`number`): File size in bytes  
+- `size` (`number`): File size in bytes
 - `type` (`string`): MIME type automatically detected from file extension
 - Standard `Blob` methods: `text()`, `arrayBuffer()`, `bytes()`, `stream()`, `slice()`
 
@@ -418,9 +418,9 @@ if (logo) {
 // Process all embedded files
 for (const file of embeddedFiles) {
   console.log(`File: ${file.name}`);
-  console.log(`  Size: ${file.size} bytes`);  
+  console.log(`  Size: ${file.size} bytes`);
   console.log(`  Type: ${file.type}`);
-  
+
   // Read file content based on type
   if (file.type.startsWith("text/") || file.type === "application/json") {
     const content = await file.text();
@@ -451,31 +451,31 @@ const server = Bun.serve({
   fetch(req) {
     const url = new URL(req.url);
     const filename = url.pathname.slice(1); // Remove leading slash
-    
+
     // Find embedded file by filename (ignoring hash)
-    const file = embeddedFiles.find(f => 
-      f.name.includes(filename.split('.')[0])
+    const file = embeddedFiles.find(f =>
+      f.name.includes(filename.split(".")[0]),
     );
-    
+
     if (file) {
       return new Response(file, {
         headers: {
           "Content-Type": file.type,
           "Content-Length": file.size.toString(),
-          "Cache-Control": "public, max-age=31536000" // 1 year cache
-        }
+          "Cache-Control": "public, max-age=31536000", // 1 year cache
+        },
       });
     }
-    
+
     return new Response("Not found", { status: 404 });
-  }
+  },
 });
 ```
 
 ### Important notes
 
 - **Read-only**: The `embeddedFiles` array and individual files cannot be modified at runtime
-- **Empty when not compiled**: Returns an empty array when running with `bun run` (not compiled)  
+- **Empty when not compiled**: Returns an empty array when running with `bun run` (not compiled)
 - **Hash suffixes**: Filenames include content hashes for cache busting (e.g., `style-a1b2c3.css`)
 - **MIME type detection**: File types are automatically detected from file extensions
 - **Memory efficient**: Files are lazily loaded - accessing content triggers reading from the embedded data

@@ -413,8 +413,8 @@ Each hash class has a static `byteLength` property indicating the output size:
 
 ```ts
 console.log(Bun.SHA256.byteLength); // => 32
-console.log(Bun.SHA1.byteLength);   // => 20
-console.log(Bun.MD5.byteLength);    // => 16
+console.log(Bun.SHA1.byteLength); // => 20
+console.log(Bun.MD5.byteLength); // => 16
 ```
 
 ### Security Considerations
@@ -451,7 +451,10 @@ hasher.update("jumps over the lazy dog");
 const hash = hasher.digest("hex");
 
 // Using static method for one-shot hashing
-const quickHash = Bun.SHA256.hash("The quick brown fox jumps over the lazy dog", "hex");
+const quickHash = Bun.SHA256.hash(
+  "The quick brown fox jumps over the lazy dog",
+  "hex",
+);
 
 // Both produce the same result
 console.log(hash === quickHash); // => true
@@ -470,7 +473,9 @@ const hash1 = Bun.SHA256.hash(data, "hex");
 // Method 2: Write into existing buffer (avoids allocation)
 const output = new Uint8Array(32);
 Bun.SHA256.hash(data, output);
-const hash2 = Array.from(output, byte => byte.toString(16).padStart(2, '0')).join('');
+const hash2 = Array.from(output, byte =>
+  byte.toString(16).padStart(2, "0"),
+).join("");
 
 console.log(hash1 === hash2); // => true
 ```
@@ -480,11 +485,11 @@ console.log(hash1 === hash2); // => true
 ```ts
 const data = "hello world";
 
-console.log("MD5:        ", Bun.MD5.hash(data, "hex"));        // 16 bytes
-console.log("SHA1:       ", Bun.SHA1.hash(data, "hex"));       // 20 bytes  
-console.log("SHA224:     ", Bun.SHA224.hash(data, "hex"));     // 28 bytes
-console.log("SHA256:     ", Bun.SHA256.hash(data, "hex"));     // 32 bytes
-console.log("SHA384:     ", Bun.SHA384.hash(data, "hex"));     // 48 bytes
-console.log("SHA512:     ", Bun.SHA512.hash(data, "hex"));     // 64 bytes
+console.log("MD5:        ", Bun.MD5.hash(data, "hex")); // 16 bytes
+console.log("SHA1:       ", Bun.SHA1.hash(data, "hex")); // 20 bytes
+console.log("SHA224:     ", Bun.SHA224.hash(data, "hex")); // 28 bytes
+console.log("SHA256:     ", Bun.SHA256.hash(data, "hex")); // 32 bytes
+console.log("SHA384:     ", Bun.SHA384.hash(data, "hex")); // 48 bytes
+console.log("SHA512:     ", Bun.SHA512.hash(data, "hex")); // 64 bytes
 console.log("SHA512/256: ", Bun.SHA512_256.hash(data, "hex")); // 32 bytes
 ```

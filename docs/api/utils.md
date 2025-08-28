@@ -631,7 +631,7 @@ const input = "hello world".repeat(100);
 const compressed = Bun.zstdCompressSync(input);
 // => Buffer
 
-console.log(input.length);     // => 1100
+console.log(input.length); // => 1100
 console.log(compressed.length); // => 25 (significantly smaller!)
 ```
 
@@ -653,7 +653,11 @@ const balanced = Bun.zstdCompressSync(data, { level: 3 });
 // Maximum compression, slower but smallest output
 const small = Bun.zstdCompressSync(data, { level: 22 });
 
-console.log({ fast: fast.length, balanced: balanced.length, small: small.length });
+console.log({
+  fast: fast.length,
+  balanced: balanced.length,
+  small: small.length,
+});
 // => { fast: 2776, balanced: 1064, small: 1049 }
 ```
 
@@ -683,7 +687,9 @@ The function automatically detects the format and decompresses accordingly:
 // Works with any input type that was compressed
 const stringCompressed = Bun.zstdCompressSync("text data");
 const bufferCompressed = Bun.zstdCompressSync(Buffer.from("binary data"));
-const uint8Compressed = Bun.zstdCompressSync(new TextEncoder().encode("encoded data"));
+const uint8Compressed = Bun.zstdCompressSync(
+  new TextEncoder().encode("encoded data"),
+);
 
 console.log(new TextDecoder().decode(Bun.zstdDecompressSync(stringCompressed)));
 console.log(new TextDecoder().decode(Bun.zstdDecompressSync(bufferCompressed)));
@@ -699,14 +705,16 @@ const largeData = "large dataset ".repeat(100000);
 
 // Won't block the event loop
 const compressed = await Bun.zstdCompress(largeData, { level: 9 });
-console.log(`Compressed ${largeData.length} bytes to ${compressed.length} bytes`);
+console.log(
+  `Compressed ${largeData.length} bytes to ${compressed.length} bytes`,
+);
 ```
 
 The async version accepts the same compression levels and options as the sync version:
 
 ```ts
 // Different compression levels
-const level1 = await Bun.zstdCompress(data, { level: 1 });  // Fast
+const level1 = await Bun.zstdCompress(data, { level: 1 }); // Fast
 const level12 = await Bun.zstdCompress(data, { level: 12 }); // Balanced
 const level22 = await Bun.zstdCompress(data, { level: 22 }); // Maximum compression
 ```
@@ -801,7 +809,7 @@ const server = Bun.serve({
   async fetch(req) {
     const acceptEncoding = req.headers.get("Accept-Encoding") || "";
     const responseData = "Large response content...".repeat(1000);
-    
+
     if (acceptEncoding.includes("zstd")) {
       const compressed = await Bun.zstdCompress(responseData, { level: 6 });
       return new Response(compressed, {
@@ -809,13 +817,13 @@ const server = Bun.serve({
           "Content-Encoding": "zstd",
           "Content-Type": "text/plain",
           "Content-Length": compressed.length.toString(),
-        }
+        },
       });
     }
-    
+
     // Fallback to uncompressed
     return new Response(responseData, {
-      headers: { "Content-Type": "text/plain" }
+      headers: { "Content-Type": "text/plain" },
     });
   },
   port: 3000,
@@ -897,7 +905,7 @@ console.log(lineStart); // => 6 (start of "World" line)
 
 // The character at index 8 is 'r' in "World"
 console.log(text[8]); // => 'r'
-console.log(text.slice(lineStart, text.indexOf('\n', lineStart)));
+console.log(text.slice(lineStart, text.indexOf("\n", lineStart)));
 // => "World"
 ```
 
@@ -911,7 +919,9 @@ console.log(lineStart); // => 7 (start of "Line 2")
 // Convert back to string to verify
 const decoder = new TextDecoder();
 const lineEnd = buffer.indexOf(0x0a, lineStart); // 0x0a is '\n'
-const line = decoder.decode(buffer.slice(lineStart, lineEnd === -1 ? undefined : lineEnd));
+const line = decoder.decode(
+  buffer.slice(lineStart, lineEnd === -1 ? undefined : lineEnd),
+);
 console.log(line); // => "Line 2"
 ```
 
@@ -920,7 +930,7 @@ Useful for building development tools like linters, formatters, or language serv
 ```ts
 function getLineAndColumn(text: string, index: number) {
   const lineStart = Bun.indexOfLine(text, index);
-  const lineNumber = text.slice(0, lineStart).split('\n').length;
+  const lineNumber = text.slice(0, lineStart).split("\n").length;
   const column = index - lineStart + 1;
   return { line: lineNumber, column };
 }
@@ -952,7 +962,7 @@ It handles various special characters that have meaning in shells:
 Bun.shellEscape("hello; rm -rf /"); // => 'hello; rm -rf /'
 Bun.shellEscape("$HOME/file"); // => '$HOME/file'
 Bun.shellEscape("`whoami`"); // => '`whoami`'
-Bun.shellEscape("a\"quote\""); // => 'a"quote"'
+Bun.shellEscape('a"quote"'); // => 'a"quote"'
 
 // Already safe strings pass through unchanged
 Bun.shellEscape("simple-filename.txt"); // => simple-filename.txt
@@ -964,13 +974,13 @@ Essential for safely constructing shell commands with user input:
 function safeCopy(source: string, destination: string) {
   const safeSource = Bun.shellEscape(source);
   const safeDest = Bun.shellEscape(destination);
-  
+
   // Now safe to execute
   const proc = Bun.spawn({
     cmd: ["sh", "-c", `cp ${safeSource} ${safeDest}`],
-    stderr: "pipe"
+    stderr: "pipe",
   });
-  
+
   return proc;
 }
 
@@ -1002,14 +1012,14 @@ Best used when you'll immediately fill the entire buffer:
 function readFileToBuffer(path: string): Uint8Array {
   const file = Bun.file(path);
   const size = file.size;
-  
+
   // Safe to use allocUnsafe since we'll overwrite everything
   const buffer = Bun.allocUnsafe(size);
-  
+
   // Fill the entire buffer with file data
   const bytes = file.bytes();
   buffer.set(bytes);
-  
+
   return buffer;
 }
 ```
@@ -1048,6 +1058,7 @@ Bun.gc(true);
 ```
 
 **Parameters:**
+
 - `force` (`boolean`, optional): If `true`, runs garbage collection synchronously (blocking). Default is asynchronous.
 
 **Note**: Manual garbage collection is generally not recommended in production applications. The JavaScript engine's automatic GC is typically more efficient.
@@ -1076,12 +1087,14 @@ await Bun.write("heap.heapsnapshot", snapshot);
 ```
 
 **Formats:**
+
 - `"jsc"` (default): Returns a `HeapSnapshot` object compatible with Safari Web Inspector and `bun --inspect`
 - `"v8"`: Returns a JSON string compatible with Chrome DevTools
 
 **Usage in development:**
+
 1. Generate snapshot: `const snap = Bun.generateHeapSnapshot("v8")`
-2. Save to file: `await Bun.write("memory.heapsnapshot", snap)`  
+2. Save to file: `await Bun.write("memory.heapsnapshot", snap)`
 3. Open in Chrome DevTools > Memory tab > Load snapshot
 4. Analyze memory usage, object references, and potential leaks
 
@@ -1097,7 +1110,7 @@ const mapped = Bun.mmap("/path/to/large-file.bin");
 
 // Access file contents directly
 console.log(mapped.length); // File size in bytes
-console.log(mapped[0]);     // First byte
+console.log(mapped[0]); // First byte
 console.log(mapped.slice(0, 100)); // First 100 bytes
 
 // No explicit cleanup needed - GC will handle unmapping
@@ -1123,10 +1136,11 @@ Great for processing large data files:
 function processLogFile(path: string) {
   const data = Bun.mmap(path);
   const decoder = new TextDecoder();
-  
+
   let lineStart = 0;
   for (let i = 0; i < data.length; i++) {
-    if (data[i] === 0x0a) { // newline
+    if (data[i] === 0x0a) {
+      // newline
       const line = decoder.decode(data.slice(lineStart, i));
       processLine(line);
       lineStart = i + 1;
@@ -1140,11 +1154,11 @@ function processLine(line: string) {
 ```
 
 **Important considerations:**
+
 - The mapped memory is read-only
 - Changes to the underlying file may or may not be reflected in the mapped data
 - The mapping is automatically unmapped when the Uint8Array is garbage collected
 - Very large files may hit system memory mapping limits
-
 
 ## `Bun.inspect.table(tabularData, properties, options)`
 
@@ -1228,7 +1242,7 @@ This is significantly more precise than `Date.now()` which returns milliseconds,
 
 ```ts
 // Comparing precision
-Date.now();        // milliseconds (e.g. 1703123456789)
+Date.now(); // milliseconds (e.g. 1703123456789)
 performance.now(); // milliseconds with sub-millisecond precision (e.g. 123.456)
 Bun.nanoseconds(); // nanoseconds (e.g. 1703123456789123456)
 ```
@@ -1314,10 +1328,10 @@ Useful for building tools that need to understand module resolution:
 function findDependencies(entryPoint: string): string[] {
   const dependencies: string[] = [];
   const source = Bun.file(entryPoint).text();
-  
+
   // Simple regex to find import statements (real implementation would use a parser)
   const imports = source.match(/import .* from ["']([^"']+)["']/g) || [];
-  
+
   for (const importStmt of imports) {
     const specifier = importStmt.match(/from ["']([^"']+)["']/)?.[1];
     if (specifier) {
@@ -1329,7 +1343,7 @@ function findDependencies(entryPoint: string): string[] {
       }
     }
   }
-  
+
   return dependencies;
 }
 ```
@@ -1361,6 +1375,7 @@ try {
 ```
 
 Both functions respect:
+
 - `package.json` `exports` and `main` fields
 - `node_modules` resolution algorithm
 - TypeScript-style path mapping
@@ -1480,6 +1495,7 @@ console.log(str); // => "hello"
 ```
 
 **⚠️ Critical warnings:**
+
 - **Only use this for ASCII strings**. Non-ASCII characters may crash your application or cause confusing bugs like `"foo" !== "foo"`
 - **The input buffer must not be garbage collected**. Hold a reference to the buffer for the string's entire lifetime
 - **Memory corruption risk**: Incorrect usage can lead to security vulnerabilities
@@ -1500,8 +1516,9 @@ Bun.unsafe.gcAggressionLevel(previousLevel);
 ```
 
 **Levels:**
+
 - `0`: Default, disabled
-- `1`: Asynchronously call GC more often  
+- `1`: Asynchronously call GC more often
 - `2`: Synchronously call GC more often (most aggressive)
 
 **Environment variable**: `BUN_GARBAGE_COLLECTOR_LEVEL` is also supported.
@@ -1549,22 +1566,25 @@ console.log(tokenWithSecret); // => "base64url-encoded-token"
 const customToken = CSRF.generate("my-secret", {
   encoding: "hex",
   expiresIn: 60 * 60 * 1000, // 1 hour in milliseconds
-  algorithm: "sha256"
+  algorithm: "sha256",
 });
 ```
 
 **Parameters:**
+
 - `secret` (`string`, optional): Secret key for token generation. If not provided, uses a default internal secret
 - `options` (`CSRFGenerateOptions`, optional): Configuration options
 
 **Options:**
+
 - `encoding` (`"base64url" | "base64" | "hex"`): Output encoding format (default: `"base64url"`)
 - `expiresIn` (`number`): Token expiration time in milliseconds (default: 24 hours)
 - `algorithm` (`CSRFAlgorithm`): Hash algorithm to use (default: `"sha256"`)
 
 **Supported algorithms:**
+
 - `"blake2b256"` - BLAKE2b with 256-bit output
-- `"blake2b512"` - BLAKE2b with 512-bit output  
+- `"blake2b512"` - BLAKE2b with 512-bit output
 - `"sha256"` - SHA-256 (default)
 - `"sha384"` - SHA-384
 - `"sha512"` - SHA-512
@@ -1591,18 +1611,20 @@ const isInvalid = CSRF.verify(token, { secret: "wrong-secret" });
 console.log(isInvalid); // => false
 
 // Verify with maxAge constraint
-const isExpired = CSRF.verify(token, { 
-  secret, 
-  maxAge: 1000 // 1 second
+const isExpired = CSRF.verify(token, {
+  secret,
+  maxAge: 1000, // 1 second
 });
 // If more than 1 second has passed, this will return false
 ```
 
 **Parameters:**
+
 - `token` (`string`): The CSRF token to verify
 - `options` (`CSRFVerifyOptions`, optional): Verification options
 
 **Options:**
+
 - `secret` (`string`, optional): Secret key used for verification. If not provided, uses the default internal secret
 - `encoding` (`"base64url" | "base64" | "hex"`): Token encoding format (default: `"base64url"`)
 - `maxAge` (`number`, optional): Maximum age in milliseconds. If specified, tokens older than this will be rejected
@@ -1638,7 +1660,7 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
   if (["POST", "PUT", "DELETE", "PATCH"].includes(req.method)) {
     const token = req.body._csrf || req.headers["x-csrf-token"];
-    
+
     if (!token || !CSRF.verify(token, { secret })) {
       return res.status(403).json({ error: "Invalid CSRF token" });
     }
@@ -1658,8 +1680,8 @@ app.post("/api/data", (req, res) => {
 ```html
 <!-- In your HTML template -->
 <form method="POST" action="/submit">
-  <input type="hidden" name="_csrf" value="${csrfToken}">
-  <input type="text" name="data" required>
+  <input type="hidden" name="_csrf" value="${csrfToken}" />
+  <input type="text" name="data" required />
   <button type="submit">Submit</button>
 </form>
 ```
@@ -1672,7 +1694,7 @@ import { CSRF } from "bun";
 try {
   // Generate token
   const token = CSRF.generate("my-secret");
-  
+
   // Verify token
   const isValid = CSRF.verify(token, { secret: "my-secret" });
 } catch (error) {
@@ -1685,6 +1707,7 @@ try {
 ```
 
 Common error scenarios:
+
 - Empty or invalid token strings throw verification errors
 - Empty secret strings throw generation/verification errors
 - Invalid encoding options are handled gracefully

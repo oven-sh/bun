@@ -1099,7 +1099,7 @@ The following cryptographic hash algorithms are supported:
 ```ts
 // SHA family
 new CryptoHasher("sha1");
-new CryptoHasher("sha224"); 
+new CryptoHasher("sha224");
 new CryptoHasher("sha256");
 new CryptoHasher("sha384");
 new CryptoHasher("sha512");
@@ -1141,14 +1141,14 @@ For processing large files efficiently:
 async function hashFile(path: string, algorithm = "sha256"): Promise<string> {
   const hasher = new CryptoHasher(algorithm);
   const file = Bun.file(path);
-  
+
   // Process file in chunks using async iteration
   const stream = file.stream();
-  
+
   for await (const chunk of stream) {
     hasher.update(chunk);
   }
-  
+
   return hasher.digest("hex");
 }
 

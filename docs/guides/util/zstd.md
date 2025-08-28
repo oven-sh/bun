@@ -15,7 +15,9 @@ const compressed = Bun.zstdCompressSync(data);
 
 console.log(`Original: ${data.length} bytes`);
 console.log(`Compressed: ${compressed.length} bytes`);
-console.log(`Compression ratio: ${(data.length / compressed.length).toFixed(2)}x`);
+console.log(
+  `Compression ratio: ${(data.length / compressed.length).toFixed(2)}x`,
+);
 ```
 
 The function accepts strings, `Uint8Array`, `ArrayBuffer`, `Buffer`, and other binary data types:
@@ -28,7 +30,9 @@ const textCompressed = Bun.zstdCompressSync("Hello, world!");
 const bufferCompressed = Bun.zstdCompressSync(Buffer.from("Hello, world!"));
 
 // Uint8Array
-const uint8Compressed = Bun.zstdCompressSync(new TextEncoder().encode("Hello, world!"));
+const uint8Compressed = Bun.zstdCompressSync(
+  new TextEncoder().encode("Hello, world!"),
+);
 ```
 
 ## Synchronous decompression
@@ -71,8 +75,9 @@ console.log(text); // => "Hello, world!"
 ## Compression levels
 
 Zstandard supports compression levels from 1 to 22, where:
+
 - **Level 1**: Fastest compression, larger file size
-- **Level 3**: Default level (good balance of speed and compression)  
+- **Level 3**: Default level (good balance of speed and compression)
 - **Level 19**: Very high compression, slower
 - **Level 22**: Maximum compression, slowest
 
@@ -182,19 +187,19 @@ const server = Bun.serve({
   async fetch(req) {
     const acceptEncoding = req.headers.get("Accept-Encoding") || "";
     const content = "Large response content...";
-    
+
     if (acceptEncoding.includes("zstd")) {
       const compressed = await Bun.zstdCompress(content, { level: 6 });
       return new Response(compressed, {
         headers: {
           "Content-Encoding": "zstd",
-          "Content-Type": "text/plain"
-        }
+          "Content-Type": "text/plain",
+        },
       });
     }
-    
+
     return new Response(content);
-  }
+  },
 });
 ```
 

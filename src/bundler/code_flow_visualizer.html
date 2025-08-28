@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bun Bundler Code Flow Visualizer</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/material-darker.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/javascript/javascript.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        #header {
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        
+        #header h1 {
+            font-size: 18px;
+            font-weight: 600;
+        }
+        
+        #controls {
+            display: flex;
+            gap: 10px;
+            margin-left: auto;
+        }
+        
+        #controls button, #controls select {
+            background: #21262d;
+            color: #c9d1d9;
+            border: 1px solid #30363d;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        #controls button:hover, #controls select:hover {
+            background: #30363d;
+            border-color: #8b949e;
+        }
+        
+        #stage-selector {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        #stage-selector label {
+            font-size: 14px;
+            color: #8b949e;
+        }
+        
+        #main-container {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .code-pane {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #30363d;
+        }
+        
+        .code-pane:last-child {
+            border-right: none;
+        }
+        
+        .pane-header {
+            background: #161b22;
+            padding: 10px 15px;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .pane-title {
+            font-weight: 600;
+            font-size: 14px;
+        }
+        
+        .file-selector {
+            margin-left: auto;
+            background: #21262d;
+            color: #c9d1d9;
+            border: 1px solid #30363d;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+        
+        .code-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .CodeMirror {
+            height: 100%;
+            font-size: 13px;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+        
+        /* Symbol highlights */
+        .symbol-highlight {
+            position: relative;
+            background: rgba(139, 148, 158, 0.15);
+            border-bottom: 2px solid #58a6ff;
+            cursor: pointer;
+        }
+        
+        .symbol-renamed {
+            background: rgba(251, 143, 68, 0.15);
+            border-bottom: 2px solid #fb8f44;
+        }
+        
+        .symbol-removed {
+            background: rgba(248, 81, 73, 0.15);
+            border-bottom: 2px solid #f85149;
+            text-decoration: line-through;
+        }
+        
+        .symbol-added {
+            background: rgba(63, 185, 80, 0.15);
+            border-bottom: 2px solid #3fb950;
+        }
+        
+        /* Flow arrows overlay */
+        #flow-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1000;
+        }
+        
+        .flow-line {
+            stroke: #58a6ff;
+            stroke-width: 2;
+            fill: none;
+            opacity: 0.6;
+        }
+        
+        .flow-line.import {
+            stroke: #a371f7;
+        }
+        
+        .flow-line.export {
+            stroke: #3fb950;
+        }
+        
+        .flow-line.renamed {
+            stroke: #fb8f44;
+        }
+        
+        .flow-arrow {
+            fill: #58a6ff;
+        }
+        
+        /* Symbol info panel */
+        #symbol-panel {
+            position: absolute;
+            right: 20px;
+            top: 20px;
+            width: 300px;
+            max-height: 400px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 15px;
+            display: none;
+            z-index: 1001;
+            overflow-y: auto;
+        }
+        
+        #symbol-panel h3 {
+            font-size: 14px;
+            margin-bottom: 10px;
+            color: #f0f6fc;
+        }
+        
+        .symbol-info {
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        
+        .symbol-info-row {
+            display: flex;
+            margin: 5px 0;
+        }
+        
+        .symbol-info-label {
+            color: #8b949e;
+            min-width: 80px;
+        }
+        
+        .symbol-info-value {
+            color: #c9d1d9;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+        
+        /* Stage diff panel */
+        #diff-panel {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 200px;
+            background: #0d1117;
+            border-top: 1px solid #30363d;
+            display: none;
+            overflow-y: auto;
+        }
+        
+        .diff-header {
+            background: #161b22;
+            padding: 10px 15px;
+            border-bottom: 1px solid #30363d;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        
+        .diff-content {
+            padding: 15px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+        }
+        
+        .diff-item {
+            margin: 10px 0;
+            padding: 8px;
+            background: #161b22;
+            border-radius: 4px;
+        }
+        
+        .diff-added {
+            border-left: 3px solid #3fb950;
+        }
+        
+        .diff-removed {
+            border-left: 3px solid #f85149;
+        }
+        
+        .diff-modified {
+            border-left: 3px solid #fb8f44;
+        }
+        
+        /* Loading state */
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 18px;
+            color: #8b949e;
+        }
+        
+        /* Split handle */
+        .split-handle {
+            position: absolute;
+            width: 3px;
+            height: 100%;
+            background: #30363d;
+            cursor: col-resize;
+            z-index: 999;
+        }
+        
+        .split-handle:hover {
+            background: #58a6ff;
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>🔍 Code Flow Visualizer</h1>
+        <div id="stage-selector">
+            <label>Stage:</label>
+            <select id="stage-select">
+                <option value="after_scan">After Scan</option>
+                <option value="after_compute">After Compute</option>
+                <option value="after_chunks">After Chunks</option>
+                <option value="after_link">After Link</option>
+            </select>
+            <button id="compare-btn">📊 Compare Stages</button>
+        </div>
+        <div id="controls">
+            <input type="file" id="file-input" accept=".json" multiple style="display: none;">
+            <button onclick="document.getElementById('file-input').click()">📁 Load Dumps</button>
+            <button id="show-symbols">🔤 Symbols</button>
+            <button id="show-imports">📥 Imports</button>
+            <button id="show-exports">📤 Exports</button>
+            <button id="show-renames">✏️ Renames</button>
+        </div>
+    </div>
+    
+    <div id="main-container">
+        <div id="loading">Loading visualizer...</div>
+        
+        <div class="code-pane" id="source-pane" style="display: none;">
+            <div class="pane-header">
+                <span class="pane-title">📄 Source Code</span>
+                <select class="file-selector" id="source-file-select"></select>
+            </div>
+            <div class="code-container">
+                <textarea id="source-editor"></textarea>
+            </div>
+        </div>
+        
+        <div class="split-handle" style="display: none;"></div>
+        
+        <div class="code-pane" id="output-pane" style="display: none;">
+            <div class="pane-header">
+                <span class="pane-title">📦 Output Code</span>
+                <select class="file-selector" id="output-file-select"></select>
+            </div>
+            <div class="code-container">
+                <textarea id="output-editor"></textarea>
+            </div>
+        </div>
+        
+        <svg id="flow-overlay"></svg>
+        
+        <div id="symbol-panel">
+            <h3>Symbol Information</h3>
+            <div class="symbol-info"></div>
+        </div>
+        
+        <div id="diff-panel">
+            <div class="diff-header">Stage Differences</div>
+            <div class="diff-content"></div>
+        </div>
+    </div>
+    
+    <script>
+        let sourceEditor, outputEditor;
+        let graphData = {};
+        let currentStage = 'after_link';
+        let currentSourceFile = 0;
+        let currentOutputFile = 0;
+        let symbolMappings = [];
+        let showSymbols = true;
+        let showImports = true;
+        let showExports = true;
+        let showRenames = true;
+        
+        // Initialize CodeMirror editors
+        function initEditors() {
+            sourceEditor = CodeMirror.fromTextArea(document.getElementById('source-editor'), {
+                mode: 'javascript',
+                theme: 'material-darker',
+                lineNumbers: true,
+                readOnly: true,
+                lineWrapping: false
+            });
+            
+            outputEditor = CodeMirror.fromTextArea(document.getElementById('output-editor'), {
+                mode: 'javascript',
+                theme: 'material-darker',
+                lineNumbers: true,
+                readOnly: true,
+                lineWrapping: false
+            });
+            
+            // Show panes
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('source-pane').style.display = 'flex';
+            document.getElementById('output-pane').style.display = 'flex';
+            document.querySelector('.split-handle').style.display = 'block';
+        }
+        
+        // Load graph data from files
+        document.getElementById('file-input').addEventListener('change', async (event) => {
+            const files = Array.from(event.target.files);
+            
+            for (const file of files) {
+                const text = await file.text();
+                const data = JSON.parse(text);
+                const stage = data.stage;
+                graphData[stage] = data;
+            }
+            
+            updateUI();
+        });
+        
+        // Update UI with loaded data
+        function updateUI() {
+            const data = graphData[currentStage];
+            if (!data) return;
+            
+            // Update file selectors
+            updateFileSelectors(data);
+            
+            // Load source and output code
+            loadSourceCode(data);
+            loadOutputCode(data);
+            
+            // Analyze and visualize symbol flow
+            analyzeSymbolFlow(data);
+            visualizeFlow();
+        }
+        
+        function updateFileSelectors(data) {
+            const sourceSelect = document.getElementById('source-file-select');
+            const outputSelect = document.getElementById('output-file-select');
+            
+            sourceSelect.innerHTML = '';
+            outputSelect.innerHTML = '';
+            
+            // Add source files
+            (data.files || []).forEach((file, idx) => {
+                const option = document.createElement('option');
+                option.value = idx;
+                option.textContent = file.path || `File ${idx}`;
+                sourceSelect.appendChild(option);
+            });
+            
+            // Add output chunks
+            (data.chunks || []).forEach((chunk, idx) => {
+                const option = document.createElement('option');
+                option.value = idx;
+                option.textContent = `Chunk ${idx} (${chunk.final_path || 'unnamed'})`;
+                outputSelect.appendChild(option);
+            });
+        }
+        
+        function loadSourceCode(data) {
+            const file = data.files?.[currentSourceFile];
+            if (!file) {
+                sourceEditor.setValue('// No source code available');
+                return;
+            }
+            
+            // For now, show mock source code with file metadata
+            // In real implementation, we'd load actual source
+            const mockSource = generateMockSource(file);
+            sourceEditor.setValue(mockSource);
+            
+            // Highlight symbols
+            highlightSourceSymbols(data, file);
+        }
+        
+        function loadOutputCode(data) {
+            const chunk = data.chunks?.[currentOutputFile];
+            if (!chunk) {
+                outputEditor.setValue('// No output code available');
+                return;
+            }
+            
+            // For now, show mock output with chunk metadata
+            const mockOutput = generateMockOutput(chunk, data);
+            outputEditor.setValue(mockOutput);
+            
+            // Highlight transformed symbols
+            highlightOutputSymbols(data, chunk);
+        }
+        
+        function generateMockSource(file) {
+            let code = `// File: ${file.path}\n`;
+            code += `// Loader: ${file.loader}\n`;
+            code += `// Parts: ${file.part_count}\n\n`;
+            
+            // Show imports
+            if (file.parts?.[0]?.import_records?.length > 0) {
+                code += '// Imports:\n';
+                file.parts[0].import_records.forEach(imp => {
+                    code += `import { something } from '${imp.path}'; // ${imp.kind}\n`;
+                });
+                code += '\n';
+            }
+            
+            // Show exports based on metadata
+            code += '// Exports:\n';
+            code += `export function myFunction() {\n`;
+            code += `    return "transformed";\n`;
+            code += `}\n\n`;
+            
+            // Show symbols
+            if (file.parts?.[0]?.declared_symbols?.length > 0) {
+                code += '// Declared symbols:\n';
+                file.parts[0].declared_symbols.forEach(sym => {
+                    code += `const symbol_${sym.ref} = "value"; // top_level: ${sym.is_top_level}\n`;
+                });
+            }
+            
+            return code;
+        }
+        
+        function generateMockOutput(chunk, data) {
+            let code = `// Chunk ${chunk.index}\n`;
+            code += `// Entry point: ${chunk.is_entry_point}\n`;
+            code += `// Content type: ${chunk.content_type}\n`;
+            code += `// Files in chunk: ${chunk.files_in_chunk?.length || 0}\n\n`;
+            
+            // Show cross-chunk imports
+            if (chunk.cross_chunk_imports?.length > 0) {
+                code += '// Cross-chunk imports:\n';
+                chunk.cross_chunk_imports.forEach(imp => {
+                    code += `import { chunk_${imp.chunk_index}_exports } from './chunk_${imp.chunk_index}.js';\n`;
+                });
+                code += '\n';
+            }
+            
+            // Show transformed code
+            code += '// Transformed code:\n';
+            code += `(function() {\n`;
+            code += `    // Minified and bundled content\n`;
+            code += `    var a = "transformed_symbol";\n`;
+            code += `    function b() { return a; }\n`;
+            code += `    exports.myFunction = b;\n`;
+            code += `})();\n`;
+            
+            return code;
+        }
+        
+        function highlightSourceSymbols(data, file) {
+            // This would mark symbols in the source code
+            // For real implementation, we'd use CodeMirror's markText
+        }
+        
+        function highlightOutputSymbols(data, chunk) {
+            // This would mark transformed symbols in output
+        }
+        
+        function analyzeSymbolFlow(data) {
+            symbolMappings = [];
+            
+            // Analyze how symbols flow from source to output
+            const symbols = data.symbols?.by_source || [];
+            
+            symbols.forEach(source => {
+                source.symbols?.forEach(symbol => {
+                    if (symbol.link) {
+                        // Track symbol transformation
+                        symbolMappings.push({
+                            source: symbol,
+                            sourceFile: source.source_index,
+                            transformed: symbol.link,
+                            type: symbol.kind
+                        });
+                    }
+                });
+            });
+        }
+        
+        function visualizeFlow() {
+            const svg = d3.select('#flow-overlay');
+            svg.selectAll('*').remove();
+            
+            // Draw flow arrows between source and output
+            // This would connect highlighted symbols
+            
+            if (!showSymbols) return;
+            
+            // For now, just show we're ready to draw
+            console.log('Ready to visualize', symbolMappings.length, 'symbol flows');
+        }
+        
+        // Stage selector
+        document.getElementById('stage-select').addEventListener('change', (e) => {
+            currentStage = e.target.value;
+            updateUI();
+        });
+        
+        // File selectors
+        document.getElementById('source-file-select').addEventListener('change', (e) => {
+            currentSourceFile = parseInt(e.target.value);
+            loadSourceCode(graphData[currentStage]);
+        });
+        
+        document.getElementById('output-file-select').addEventListener('change', (e) => {
+            currentOutputFile = parseInt(e.target.value);
+            loadOutputCode(graphData[currentStage]);
+        });
+        
+        // Toggle buttons
+        document.getElementById('show-symbols').addEventListener('click', () => {
+            showSymbols = !showSymbols;
+            document.getElementById('show-symbols').style.opacity = showSymbols ? '1' : '0.5';
+            visualizeFlow();
+        });
+        
+        document.getElementById('show-imports').addEventListener('click', () => {
+            showImports = !showImports;
+            document.getElementById('show-imports').style.opacity = showImports ? '1' : '0.5';
+            visualizeFlow();
+        });
+        
+        document.getElementById('show-exports').addEventListener('click', () => {
+            showExports = !showExports;
+            document.getElementById('show-exports').style.opacity = showExports ? '1' : '0.5';
+            visualizeFlow();
+        });
+        
+        document.getElementById('show-renames').addEventListener('click', () => {
+            showRenames = !showRenames;
+            document.getElementById('show-renames').style.opacity = showRenames ? '1' : '0.5';
+            visualizeFlow();
+        });
+        
+        // Compare stages
+        document.getElementById('compare-btn').addEventListener('click', () => {
+            const diffPanel = document.getElementById('diff-panel');
+            diffPanel.style.display = diffPanel.style.display === 'none' ? 'block' : 'none';
+            
+            if (diffPanel.style.display === 'block') {
+                compareStages();
+            }
+        });
+        
+        function compareStages() {
+            const stages = Object.keys(graphData).sort();
+            if (stages.length < 2) return;
+            
+            const diffContent = document.querySelector('.diff-content');
+            diffContent.innerHTML = '';
+            
+            for (let i = 1; i < stages.length; i++) {
+                const prev = graphData[stages[i-1]];
+                const curr = graphData[stages[i]];
+                
+                const diff = document.createElement('div');
+                diff.className = 'diff-item';
+                diff.innerHTML = `
+                    <strong>${stages[i-1]} → ${stages[i]}</strong><br>
+                    Files: ${prev.metadata?.total_files} → ${curr.metadata?.total_files}<br>
+                    Symbols: ${prev.symbols?.total_symbols} → ${curr.symbols?.total_symbols}<br>
+                    Chunks: ${(prev.chunks?.length || 0)} → ${(curr.chunks?.length || 0)}
+                `;
+                
+                if (curr.metadata?.total_files > prev.metadata?.total_files) {
+                    diff.classList.add('diff-added');
+                } else if (curr.metadata?.total_files < prev.metadata?.total_files) {
+                    diff.classList.add('diff-removed');
+                } else {
+                    diff.classList.add('diff-modified');
+                }
+                
+                diffContent.appendChild(diff);
+            }
+        }
+        
+        // Initialize on load
+        window.addEventListener('load', () => {
+            initEditors();
+        });
+        
+        // Handle split pane resizing
+        const splitHandle = document.querySelector('.split-handle');
+        let isResizing = false;
+        
+        splitHandle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            document.body.style.cursor = 'col-resize';
+        });
+        
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            
+            const container = document.getElementById('main-container');
+            const x = e.clientX - container.offsetLeft;
+            const width = container.offsetWidth;
+            const percentage = (x / width) * 100;
+            
+            document.getElementById('source-pane').style.flex = `0 0 ${percentage}%`;
+            document.getElementById('output-pane').style.flex = `0 0 ${100 - percentage}%`;
+            
+            splitHandle.style.left = `${percentage}%`;
+        });
+        
+        document.addEventListener('mouseup', () => {
+            isResizing = false;
+            document.body.style.cursor = '';
+        });
+    </script>
+</body>
+</html>

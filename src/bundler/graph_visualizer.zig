@@ -173,6 +173,8 @@ pub const GraphVisualizer = struct {
         named_exports_count: usize,
         named_imports_count: usize,
         flags: FileFlags,
+        source_snippet: ?[]const u8,  // First 500 chars of source
+        transformed_code: ?[]const u8, // Transformed output for this file
     };
     
     const FileFlags = struct {
@@ -282,6 +284,17 @@ pub const GraphVisualizer = struct {
         unique_key: []const u8,
         final_path: []const u8,
         content_type: []const u8,
+        output_snippet: ?[]const u8, // First 1000 chars of output
+        source_mappings: []SourceMapping,
+    };
+    
+    const SourceMapping = struct {
+        output_line: u32,
+        output_column: u32,
+        source_index: u32,
+        source_line: u32,
+        source_column: u32,
+        symbol_name: ?[]const u8,
     };
     
     const CrossChunkImportInfo = struct {
@@ -438,6 +451,12 @@ pub const GraphVisualizer = struct {
             const part_count = if (i < ast_list.items(.parts).len)
                 ast_list.items(.parts)[i].len else 0;
             
+            // Get source code snippet (first 500 chars)
+            const source_snippet = if (i < sources.len and sources[i].contents.len > 0) blk: {
+                const max_len = @min(sources[i].contents.len, 500);
+                break :blk try allocator.dupe(u8, sources[i].contents[0..max_len]);
+            } else null;
+            
             file_data_list[i] = .{
                 .index = i,
                 .path = path,
@@ -449,6 +468,8 @@ pub const GraphVisualizer = struct {
                 .named_exports_count = named_exports_count,
                 .named_imports_count = named_imports_count,
                 .flags = flags,
+                .source_snippet = source_snippet,
+                .transformed_code = null, // TODO: get from compile results
             };
         }
         
@@ -600,6 +621,8 @@ pub const GraphVisualizer = struct {
                     .unique_key = chunk.unique_key,
                     .final_path = chunk.final_rel_path,
                     .content_type = @tagName(chunk.content),
+                    .output_snippet = null, // TODO: get actual output
+                    .source_mappings = &.{}, // TODO: extract from source maps
                 };
             }
         }
@@ -659,17 +682,30 @@ pub const GraphVisualizer = struct {
     }
     
     fn generateVisualizerHTML(allocator: std.mem.Allocator, output_dir: []const u8, timestamp: i64) !void {
-        const html_content = @embedFile("./graph_visualizer.html");
-        
-        const filename = try std.fmt.allocPrint(allocator, "{s}/visualizer_{d}.html", .{
+        // Generate original graph visualizer
+        const graph_html = @embedFile("./graph_visualizer.html");
+        const graph_filename = try std.fmt.allocPrint(allocator, "{s}/visualizer_{d}.html", .{
             output_dir,
             timestamp,
         });
         
-        const file = try std.fs.cwd().createFile(filename, .{});
-        defer file.close();
-        try file.writeAll(html_content);
+        const graph_file = try std.fs.cwd().createFile(graph_filename, .{});
+        defer graph_file.close();
+        try graph_file.writeAll(graph_html);
         
-        debug("Visualizer HTML written to: {s}", .{filename});
+        debug("Graph visualizer HTML written to: {s}", .{graph_filename});
+        
+        // Generate code flow visualizer
+        const flow_html = @embedFile("./code_flow_visualizer.html");
+        const flow_filename = try std.fmt.allocPrint(allocator, "{s}/code_flow_{d}.html", .{
+            output_dir,
+            timestamp,
+        });
+        
+        const flow_file = try std.fs.cwd().createFile(flow_filename, .{});
+        defer flow_file.close();
+        try flow_file.writeAll(flow_html);
+        
+        debug("Code flow visualizer HTML written to: {s}", .{flow_filename});
     }
 };

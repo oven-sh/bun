@@ -21,37 +21,49 @@ The bundler consists of several key components that work together:
 One of Bun's most sophisticated features is seamless ES6/CommonJS interoperability. The bundler uses a 6-step analysis process to ensure correct module behavior:
 
 ### Step 1: CommonJS Module Classification
+
 The bundler analyzes import patterns to determine if a module should be treated as CommonJS:
+
 - Detection of `require()` calls and `module.exports` usage
 - Analysis of export patterns to determine module type
 - Wrapper function necessity determination
 
 ### Step 2: Dependency Wrapper Propagation
+
 When a CommonJS module imports an ES6 module (or vice versa), wrapper functions are inserted:
+
 - `__toESM()` - Converts CommonJS exports to ES6 format
 - `__toCommonJS()` - Converts ES6 exports to CommonJS format
 - `__reExport()` - Handles re-export scenarios
 
 ### Step 3: Export Star Resolution
+
 Complex resolution of `export * from` statements:
+
 - Cycle detection to prevent infinite loops
 - Conflict resolution when multiple modules export the same name
 - Performance optimization for commonly used patterns
 
 ### Step 4: Import-to-Export Binding
+
 Direct linking of import statements to their corresponding exports:
+
 - Cross-module symbol binding
 - Re-export chain following
 - Dead code elimination based on actual usage
 
 ### Step 5: Namespace Export Creation
+
 Creation of namespace objects for mixed module compatibility:
+
 - Dynamic property access preservation
 - Static analysis limitations handling
 - Runtime compatibility with different module loaders
 
 ### Step 6: Runtime Helper Binding
+
 Injection and optimization of runtime helper functions:
+
 - Conditional helper inclusion based on actual usage
 - Cross-chunk helper sharing for code splitting scenarios
 - Performance optimization for hot paths
@@ -61,21 +73,27 @@ Injection and optimization of runtime helper functions:
 Bun's bundler uses a sophisticated "parts" system for granular tree shaking and dependency tracking:
 
 ### File Parts Division
+
 Each file is divided into logical parts based on:
+
 - Top-level statements and declarations
 - Import/export statements
 - Function and class declarations
 - Variable declarations and assignments
 
 ### Cross-File Dependencies
+
 Parts can depend on parts in other files:
+
 - Import statements create explicit dependencies
 - Export references create implicit dependencies
 - Dynamic imports create conditional dependencies
 - Type-only imports are tracked separately
 
 ### Dead Code Elimination
+
 The part system enables aggressive dead code elimination:
+
 - Unused parts are completely removed
 - Unused exports are eliminated even if the file is imported
 - Conditional dependencies allow for dynamic import optimization
@@ -86,11 +104,12 @@ The part system enables aggressive dead code elimination:
 The bundler uses a packed 64-bit reference system for efficient symbol management:
 
 ### Ref Structure
+
 ```zig
 pub const Ref = struct {
     source_index: u32,
     inner_index: u32,
-    
+
     // Packs both indices into a single u64 for efficiency
     pub fn pack(self: Ref) u64 { ... }
     pub fn unpack(packed: u64) Ref { ... }
@@ -98,14 +117,18 @@ pub const Ref = struct {
 ```
 
 ### Symbol Tables
+
 Two-dimensional symbol tables enable parallel processing:
+
 - First dimension: source files
 - Second dimension: symbols within each file
 - Parallel symbol processing without locks
 - Cross-file symbol resolution
 
 ### Symbol Linking
+
 The linking process coordinates symbols across the entire bundle:
+
 - Local symbol renaming for minification
 - Cross-chunk symbol sharing for code splitting
 - Reserved name computation for different output formats
@@ -114,13 +137,17 @@ The linking process coordinates symbols across the entire bundle:
 ## Memory Management Architecture
 
 ### Threading Model
+
 The bundler uses a sophisticated multi-threading approach:
+
 - **Parse threads**: Handle file parsing and AST generation
 - **Main thread**: Orchestrates bundling and linking
 - **IO threads**: Handle file system operations separately
 
 ### Arena Allocators
+
 Memory management uses mimalloc threadlocal heaps as arena allocators:
+
 ```zig
 // Each thread gets its own heap for temporary allocations
 var arena = mimalloc.threadlocal_heap();
@@ -128,6 +155,7 @@ defer arena.reset(); // Automatically cleanup when done
 ```
 
 ### Memory Lifecycle
+
 - **Parse phase**: Threadlocal arenas for AST storage
 - **Link phase**: Global allocators for cross-file data structures
 - **Output phase**: Streaming allocators for efficient file writing
@@ -136,21 +164,27 @@ defer arena.reset(); // Automatically cleanup when done
 ## CSS Integration Architecture
 
 ### CSS Module Processing
+
 Advanced CSS Modules support includes:
+
 - Scoped class name generation with collision detection
 - Cross-file `composes` validation and resolution
 - Source map preservation through CSS transformations
 - Integration with JavaScript chunking strategies
 
 ### CSS Chunking
+
 CSS code splitting uses hash-based deduplication:
+
 - Import order analysis to determine chunk boundaries
 - Hash computation to detect duplicate CSS
 - Cross-chunk CSS dependency resolution
 - Optimal chunk size balancing
 
 ### CSS-in-JS Integration
+
 Seamless integration with CSS-in-JS libraries:
+
 - Build-time CSS extraction when possible
 - Runtime CSS injection optimization
 - Source map coordination between CSS and JS
@@ -159,6 +193,7 @@ Seamless integration with CSS-in-JS libraries:
 ## Code Splitting Internals
 
 ### Chunking Algorithm
+
 The bundler uses an entry point-based chunking strategy:
 
 1. **Dependency Analysis**: Build complete dependency graph
@@ -167,14 +202,18 @@ The bundler uses an entry point-based chunking strategy:
 4. **Symbol Coordination**: Ensure symbols are available across chunks
 
 ### Cross-Chunk Dependencies
+
 When chunks depend on each other:
+
 - Dynamic imports for chunk loading
 - Symbol reference coordination
 - Runtime chunk loading optimization
 - Circular dependency detection and resolution
 
 ### Chunk Naming
+
 Template-based naming with multiple token types:
+
 - `[name]` - Original file name
 - `[hash]` - Content hash for caching
 - `[dir]` - Directory structure preservation
@@ -183,21 +222,27 @@ Template-based naming with multiple token types:
 ## Advanced Optimizations
 
 ### Frequency-Based Minification
+
 Symbol renaming uses frequency analysis:
+
 - Most frequently used symbols get shortest names
 - Cross-chunk frequency coordination
 - Reserved name avoidance for different output formats
 - Scope-aware renaming that preserves behavior
 
 ### Dead Code Elimination Enhancements
+
 Beyond simple tree shaking:
+
 - Side effect analysis with escape detection
 - Cross-module usage analysis
 - Conditional dependency elimination
 - Template literal optimization
 
 ### Bundle Splitting Strategies
+
 Intelligent bundle splitting for optimal loading:
+
 - Vendor chunk separation for better caching
 - Route-based splitting for SPAs
 - Priority-based chunk loading
@@ -206,21 +251,27 @@ Intelligent bundle splitting for optimal loading:
 ## Performance Considerations
 
 ### Parallel Processing
+
 The bundler maximizes parallelism:
+
 - File parsing happens in parallel across all CPU cores
 - Symbol processing uses lock-free algorithms where possible
 - IO operations are separated from CPU-intensive tasks
 - Memory allocation is optimized for parallel access
 
 ### Incremental Compilation
+
 For development builds:
+
 - File change detection with efficient cache invalidation
 - Partial graph rebuilding when dependencies change
 - Source map preservation across incremental builds
 - Hot module replacement integration
 
 ### Memory Efficiency
+
 Optimizations to minimize memory usage:
+
 - Streaming file processing for large bundles
 - Temporary data cleanup during long-running builds
 - Shared data structures for common patterns
@@ -229,14 +280,18 @@ Optimizations to minimize memory usage:
 ## Debugging and Diagnostics
 
 ### Build Analysis
+
 Tools for understanding bundle composition:
+
 - Dependency graph visualization data
 - Chunk size analysis and optimization suggestions
 - Module usage statistics
 - Performance timing breakdowns
 
 ### Error Reporting
+
 Sophisticated error reporting system:
+
 - Source location preservation through transformations
 - Contextual error messages with suggestions
 - Build warning categorization and filtering
@@ -245,14 +300,18 @@ Sophisticated error reporting system:
 ## Extending the Bundler
 
 ### Plugin Architecture
+
 The plugin system provides deep integration points:
+
 - Parse-time hooks for custom syntax support
 - Resolution hooks for custom module loading
 - Transform hooks for code modification
 - Output hooks for custom file generation
 
 ### Native Extensions
+
 For performance-critical plugins:
+
 - Native addon integration through NAPI
 - Zero-copy data structures for large files
 - Direct AST manipulation APIs

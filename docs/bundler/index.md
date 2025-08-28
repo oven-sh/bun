@@ -1678,7 +1678,7 @@ await Bun.build({
 await Bun.build({
   entrypoints: ["./src/index.ts"],
   outdir: "./dist/node",
-  target: "node", 
+  target: "node",
   format: "cjs",
 });
 
@@ -1790,8 +1790,9 @@ Control tree shaking behavior:
 
 ```json
 {
-  "sideEffects": false,  // Enable aggressive tree shaking
-  "sideEffects": [       // Only these files have side effects
+  "sideEffects": false, // Enable aggressive tree shaking
+  "sideEffects": [
+    // Only these files have side effects
     "./src/polyfills.js",
     "**/*.css"
   ]
@@ -1806,9 +1807,9 @@ Minification with granular control:
 await Bun.build({
   entrypoints: ["./src/index.ts"],
   minify: {
-    whitespace: true,    // Remove whitespace and comments
-    identifiers: true,   // Rename variables to shorter names
-    syntax: true,        // Optimize syntax patterns
+    whitespace: true, // Remove whitespace and comments
+    identifiers: true, // Rename variables to shorter names
+    syntax: true, // Optimize syntax patterns
   },
 });
 ```
@@ -1866,7 +1867,7 @@ await Bun.build({
   entrypoints: ["./src/index.ts"],
   loader: {
     ".png": "dataurl", // Inline small images
-    ".jpg": "file",    // Keep large images as files
+    ".jpg": "file", // Keep large images as files
   },
   naming: {
     asset: "assets/[name]-[hash].[ext]",

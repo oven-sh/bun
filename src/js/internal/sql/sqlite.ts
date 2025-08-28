@@ -401,20 +401,14 @@ export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Databa
       // Log successful query completion
       if (shouldLog && startTime > 0) {
         const duration = performance.now() - startTime;
-        const valuesStr =
-          values && values.length > 0
-            ? ` [${values.map(v => this.formatValue(v)).join(", ")}]`
-            : "";
+        const valuesStr = values && values.length > 0 ? ` [${values.map(v => this.formatValue(v)).join(", ")}]` : "";
         console.log(`[\x1b[1;32mSQLITE\x1b[0m] \x1b[33m(${duration.toFixed(1)}ms)\x1b[0m ${sql}${valuesStr}`);
       }
     } catch (err) {
       // Log failed query
       if (shouldLog && startTime > 0) {
         const duration = performance.now() - startTime;
-        const valuesStr =
-          values && values.length > 0
-            ? ` [${values.map(v => this.formatValue(v)).join(", ")}]`
-            : "";
+        const valuesStr = values && values.length > 0 ? ` [${values.map(v => this.formatValue(v)).join(", ")}]` : "";
         console.log(
           `[\x1b[1;32mSQLITE\x1b[0m] \x1b[33m(${duration.toFixed(1)}ms)\x1b[0m ${sql}${valuesStr} \x1b[31mERROR: ${err instanceof Error ? err.message : String(err)}\x1b[0m`,
         );

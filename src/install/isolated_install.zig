@@ -6,8 +6,14 @@ pub fn installIsolatedPackages(
     command_ctx: Command.Context,
     install_root_dependencies: bool,
     workspace_filters: []const WorkspaceFilter,
+    packages_to_install: ?[]const PackageID,
 ) OOM!PackageInstall.Summary {
     bun.analytics.Features.isolated_bun_install += 1;
+
+    if (packages_to_install) |_| {
+        Output.prettyErrorln("<r><red>NOOOOOOOOO", .{});
+        Global.exit(1);
+    }
 
     const lockfile = manager.lockfile;
 

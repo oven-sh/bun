@@ -45,25 +45,62 @@ pub const SecurityScanResults = struct {
     }
 };
 
-pub fn performSecurityScanAfterResolution(manager: *PackageManager) !?SecurityScanResults {
+pub fn doPartialInstallOfSecurityScanner(
+    manager: *PackageManager,
+    ctx: bun.cli.Command.Context,
+    log_level: bun.install.PackageManager.Options.LogLevel,
+    security_scanner_pkg_id: PackageID,
+    original_cwd: []const u8,
+) !void {
+    const workspace_filters, const install_root_dependencies = try InstallWithManager.getWorkspaceFilters(manager, original_cwd);
+
+    if (!manager.options.do.install_packages) {
+        return;
+    }
+
+    const packages_to_install: ?[]const PackageID = if (security_scanner_pkg_id == invalid_package_id) null else &[_]PackageID{security_scanner_pkg_id};
+
+    _ = switch (manager.options.node_linker) {
+        .hoisted,
+        // TODO
+        .auto,
+        => try HoistedInstall.installHoistedPackages(
+            manager,
+            ctx,
+            workspace_filters,
+            install_root_dependencies,
+            log_level,
+            packages_to_install,
+        ),
+
+        .isolated => IsolatedInstall.installIsolatedPackages(
+            manager,
+            ctx,
+            install_root_dependencies,
+            workspace_filters,
+            packages_to_install,
+        ) catch |err| switch (err) {
+            error.OutOfMemory => bun.outOfMemory(),
+        },
+    };
+}
+
+pub fn performSecurityScanAfterResolution(manager: *PackageManager, command_ctx: bun.cli.Command.Context, original_cwd: []const u8) !?SecurityScanResults {
     const security_scanner = manager.options.security_scanner orelse return null;
 
     if (manager.options.dry_run or !manager.options.do.install_packages) return null;
 
-    // For bun update without arguments, scan all packages
-    if (manager.subcommand == .update and manager.update_requests.len == 0) {
-        return try performSecurityScan(manager, security_scanner, true);
+    if (manager.update_requests.len == 0) {
+        return try performSecurityScan(manager, security_scanner, true, command_ctx, original_cwd);
+    } else {
+        return try performSecurityScan(manager, security_scanner, false, command_ctx, original_cwd);
     }
-
-    if (manager.update_requests.len == 0) return null;
-
-    return try performSecurityScan(manager, security_scanner, false);
 }
 
-pub fn performSecurityScanForAll(manager: *PackageManager) !?SecurityScanResults {
+pub fn performSecurityScanForAll(manager: *PackageManager, command_ctx: bun.cli.Command.Context, original_cwd: []const u8) !?SecurityScanResults {
     const security_scanner = manager.options.security_scanner orelse return null;
 
-    return try performSecurityScan(manager, security_scanner, true);
+    return try performSecurityScan(manager, security_scanner, true, command_ctx, original_cwd);
 }
 
 pub fn printSecurityAdvisories(manager: *PackageManager, results: *const SecurityScanResults) void {
@@ -129,7 +166,6 @@ pub fn printSecurityAdvisories(manager: *PackageManager, results: *const Securit
         }
     }
 }
-
 pub fn promptForWarnings() bool {
     const can_prompt = Output.enable_ansi_colors_stdout;
 
@@ -191,7 +227,7 @@ pub fn promptForWarnings() bool {
     return true;
 }
 
-fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, comptime scan_all: bool) !SecurityScanResults {
+fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, comptime scan_all: bool, command_ctx: bun.cli.Command.Context, original_cwd: []const u8) !SecurityScanResults {
     if (manager.options.log_level == .verbose) {
         Output.prettyErrorln("<d>[SecurityProvider]<r> Running at '{s}'", .{security_scanner});
     }
@@ -224,6 +260,8 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
     const pkg_resolutions = pkgs.items(.resolution);
     const pkg_dependencies = pkgs.items(.dependencies);
 
+    var security_scanner_pkg_id: ?PackageID = null;
+
     // If scan_all, we start from the root package and traverse all dependencies
     if (scan_all) {
         // start with root package which is id=0
@@ -242,6 +280,14 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
             const dep_res = pkg_resolutions[dep_pkg_id];
             if (dep_res.tag != .npm) {
                 continue;
+            }
+
+            const dep_name = manager.lockfile.buffers.dependencies.items[dep_id].name;
+            if (std.mem.eql(u8, dep_name.slice(manager.lockfile.buffers.string_bytes.items), security_scanner)) {
+                if (security_scanner_pkg_id == null) {
+                    security_scanner_pkg_id = dep_pkg_id;
+                }
+                // else should we log or do something here?
             }
 
             if ((try pkg_dedupe.getOrPut(dep_pkg_id)).found_existing) {
@@ -299,6 +345,14 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
 
                         if (dep_pkg_id != update_pkg_id) {
                             continue;
+                        }
+
+                        const dep_name = manager.lockfile.buffers.dependencies.items[dep_id].name;
+                        if (std.mem.eql(u8, dep_name.slice(manager.lockfile.buffers.string_bytes.items), security_scanner)) {
+                            if (security_scanner_pkg_id == null) {
+                                security_scanner_pkg_id = update_pkg_id;
+                            }
+                            // else should we log or do something here?
                         }
 
                         update_dep_id = dep_id;
@@ -454,7 +508,7 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
         \\}} catch (error) {{
         \\  const msg = `\x1b[31merror: \x1b[0mFailed to import security scanner: \x1b[1m'${{scannerModuleName}}'\x1b[0m - if you use a security scanner from npm, please run '\x1b[36mbun install\x1b[0m' before adding other packages.`;
         \\  console.error(msg);
-        \\  process.exit(1);
+        \\  process.exit(2);
         \\}}
         \\
         \\try {{
@@ -519,7 +573,7 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
     manager.sleepUntil(&closure, &@TypeOf(closure).isDone);
 
     const packages_scanned = pkg_dedupe.count();
-    return try scanner.handleResults(&package_paths, start_time, packages_scanned, security_scanner);
+    return try scanner.handleResults(&package_paths, start_time, packages_scanned, security_scanner, security_scanner_pkg_id, command_ctx, original_cwd);
 }
 
 pub const SecurityScanSubprocess = struct {
@@ -653,21 +707,45 @@ pub const SecurityScanSubprocess = struct {
         }
     }
 
-    pub fn handleResults(this: *SecurityScanSubprocess, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath), start_time: i64, packages_scanned: usize, security_scanner: []const u8) !SecurityScanResults {
+    pub fn handleResults(this: *SecurityScanSubprocess, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath), start_time: i64, packages_scanned: usize, security_scanner: []const u8, security_scanner_pkg_id: ?PackageID, command_ctx: bun.cli.Command.Context, original_cwd: []const u8) !SecurityScanResults {
         defer {
             this.ipc_data.deinit();
             this.stderr_data.deinit();
         }
 
-        const status = this.exit_status orelse bun.spawn.Status{ .exited = .{ .code = 0 } };
+        if (this.exit_status == null) {
+            Output.errGeneric("Security scanner terminated without an exit status. This is a bug in Bun.", .{});
+            return error.SecurityScannerProcessFailedWithoutExitStatus;
+        }
+
+        const status = this.exit_status.?;
 
         if (this.ipc_data.items.len == 0) {
             switch (status) {
                 .exited => |exit| {
-                    if (exit.code != 0) {
-                        Output.errGeneric("Security scanner exited with code {d} without sending data", .{exit.code});
-                    } else {
-                        Output.errGeneric("Security scanner exited without sending any data", .{});
+                    switch (exit.code) {
+                        0 => {
+                            Output.errGeneric("Security scanner exited with code {d} without sending data", .{exit.code});
+                        },
+                        2 => {
+                            Output.println("Found security scanner as id {d}", .{if (security_scanner_pkg_id) |pkg_id| pkg_id else 0});
+
+                            if (security_scanner_pkg_id) |pkg_id| {
+                                doPartialInstallOfSecurityScanner(this.manager, command_ctx, this.manager.options.log_level, pkg_id, original_cwd) catch |err| {
+                                    Output.errGeneric("Failed to install security scanner: {s}", .{@errorName(err)});
+                                    bun.Global.exit(1);
+                                };
+
+                                Output.pretty("\n<d><b>Note: Security scanner installed successfully.</b><r>\n", .{});
+                                Output.flush();
+                                bun.Global.exit(0);
+                            } else {
+                                Output.errGeneric("Security scanner exited with code {d} without sending data", .{exit.code});
+                            }
+                        },
+                        else => {
+                            Output.errGeneric("Security scanner exited without sending any data", .{});
+                        },
                     }
                 },
                 .signaled => |sig| {
@@ -898,3 +976,7 @@ const PackageID = bun.install.PackageID;
 const PackageManager = bun.install.PackageManager;
 const invalid_dependency_id = bun.install.invalid_dependency_id;
 const invalid_package_id = bun.install.invalid_package_id;
+const PackageInstall = bun.install.PackageInstall;
+const HoistedInstall = @import("../hoisted_install.zig");
+const IsolatedInstall = @import("../isolated_install.zig");
+const InstallWithManager = @import("./install_with_manager.zig");

@@ -43,9 +43,15 @@ pub fn stringify(global: *JSGlobalObject, callFrame: *jsc.CallFrame) JSError!JSV
     var stringifier: Stringifier = try .init(scope.allocator(), global, space_value);
     defer stringifier.deinit();
 
-    try stringifier.findAnchorsAndAliases(global, value, .root);
+    stringifier.findAnchorsAndAliases(global, value, .root) catch |err| return switch (err) {
+        error.OutOfMemory, error.JSError => |js_err| js_err,
+        error.StackOverflow => global.throwStackOverflow(),
+    };
 
-    try stringifier.stringify(global, value);
+    stringifier.stringify(global, value) catch |err| return switch (err) {
+        error.OutOfMemory, error.JSError => |js_err| js_err,
+        error.StackOverflow => global.throwStackOverflow(),
+    };
 
     return stringifier.builder.toString(global);
 }
@@ -158,9 +164,9 @@ const Stringifier = struct {
         prop_value: String,
     };
 
-    pub fn findAnchorsAndAliases(this: *Stringifier, global: *JSGlobalObject, value: JSValue, origin: ValueOrigin) JSError!void {
+    pub fn findAnchorsAndAliases(this: *Stringifier, global: *JSGlobalObject, value: JSValue, origin: ValueOrigin) StringifyError!void {
         if (!this.stack_check.isSafeToRecurse()) {
-            return global.throwStackOverflow();
+            return error.StackOverflow;
         }
 
         const unwrapped = try value.unwrapBoxedPrimitive(global);
@@ -250,9 +256,11 @@ const Stringifier = struct {
         }
     }
 
-    pub fn stringify(this: *Stringifier, global: *JSGlobalObject, value: JSValue) JSError!void {
+    const StringifyError = JSError || bun.StackOverflow;
+
+    pub fn stringify(this: *Stringifier, global: *JSGlobalObject, value: JSValue) StringifyError!void {
         if (!this.stack_check.isSafeToRecurse()) {
-            return global.throwStackOverflow();
+            return error.StackOverflow;
         }
 
         const unwrapped = try value.unwrapBoxedPrimitive(global);
@@ -920,12 +928,18 @@ const ParserCtx = struct {
                 ctx.result = .zero;
                 return;
             },
+            error.StackOverflow => {
+                ctx.result = ctx.global.throwStackOverflow() catch .zero;
+                return;
+            },
         };
     }
 
-    pub fn toJS(ctx: *ParserCtx, args: *MarkedArgumentBuffer, expr: Expr) JSError!JSValue {
+    const ToJSError = JSError || bun.StackOverflow;
+
+    pub fn toJS(ctx: *ParserCtx, args: *MarkedArgumentBuffer, expr: Expr) ToJSError!JSValue {
         if (!ctx.stack_check.isSafeToRecurse()) {
-            return ctx.global.throwStackOverflow();
+            return error.StackOverflow;
         }
         switch (expr.data) {
             .e_null => return .null,

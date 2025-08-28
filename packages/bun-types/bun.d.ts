@@ -644,7 +644,7 @@ declare module "bun" {
      *
      * // Basic usage
      * console.log(TOML.stringify(obj));
-     * 
+     *
      * // JSON.stringify-style indentation
      * TOML.stringify(obj, null, 2);      // 2 spaces
      * TOML.stringify(obj, null, "\t");   // tab indentation
@@ -656,23 +656,26 @@ declare module "bun" {
     export function stringify(
       value: any,
       replacer?: undefined | null,
-      space?: string | number | {
-        /**
-         * Whether to format objects as inline tables
-         * @default false
-         */
-        inlineTables?: boolean;
-        /**
-         * Whether to format arrays across multiple lines when they have more than 3 elements
-         * @default true
-         */
-        arraysMultiline?: boolean;
-        /**
-         * The indentation string to use for multiline arrays
-         * @default "  "
-         */
-        indent?: string;
-      }
+      space?:
+        | string
+        | number
+        | {
+            /**
+             * Whether to format objects as inline tables
+             * @default false
+             */
+            inlineTables?: boolean;
+            /**
+             * Whether to format arrays across multiple lines when they have more than 3 elements
+             * @default true
+             */
+            arraysMultiline?: boolean;
+            /**
+             * The indentation string to use for multiline arrays
+             * @default "  "
+             */
+            indent?: string;
+          },
     ): string;
   }
 

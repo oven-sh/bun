@@ -76,14 +76,14 @@ pub fn stringify(
     }
 
     const value = arguments[0];
-    
+
     // Note: replacer parameter is not supported (like YAML.stringify)
-    
+
     // Parse options if provided - support both JSON.stringify style and object style
     var options = toml_stringify.TOMLStringifyOptions{};
     if (arguments.len > 2 and !arguments[2].isEmptyOrUndefinedOrNull()) {
         const third_arg = arguments[2];
-        
+
         // Support JSON.stringify-style: number or string for indentation
         if (third_arg.isNumber()) {
             const spaces = third_arg.asNumber();
@@ -111,7 +111,7 @@ pub fn stringify(
                     }
                 }
             } else |_| {}
-            
+
             if (third_arg.get(globalThis, "arraysMultiline")) |maybe_arrays_multiline| {
                 if (maybe_arrays_multiline) |arrays_multiline| {
                     if (arrays_multiline.isBoolean()) {
@@ -119,7 +119,7 @@ pub fn stringify(
                     }
                 }
             } else |_| {}
-            
+
             if (third_arg.get(globalThis, "indent")) |maybe_indent| {
                 if (maybe_indent) |indent| {
                     if (indent.isString()) {
@@ -133,7 +133,7 @@ pub fn stringify(
             } else |_| {}
         }
     }
-    
+
     const result = toml_stringify.stringify(globalThis, value, options) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.InvalidValue => return globalThis.throwInvalidArguments("Invalid value for TOML stringification", .{}),
@@ -142,18 +142,19 @@ pub fn stringify(
         error.UnsupportedType => return globalThis.throwInvalidArguments("Unsupported type for TOML stringification", .{}),
         error.JSError => return globalThis.throwInvalidArguments("JavaScript error occurred", .{}),
     };
-    
+
     var out = bun.String.borrowUTF8(result);
     defer out.deref();
     return out.toJS(globalThis);
 }
+
+const toml_stringify = @import("../../interchange/toml_stringify.zig");
 
 const bun = @import("bun");
 const default_allocator = bun.default_allocator;
 const js_printer = bun.js_printer;
 const logger = bun.logger;
 const TOML = bun.interchange.toml.TOML;
-const toml_stringify = @import("../../interchange/toml_stringify.zig");
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

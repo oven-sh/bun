@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 describe("Bun.TOML.stringify", () => {
   test("empty object", () => {
@@ -42,7 +42,7 @@ describe("Bun.TOML.stringify", () => {
     expect(Bun.TOML.stringify({ nums: [1, 2, 3] })).toBe("nums = [1, 2, 3]\n");
     expect(Bun.TOML.stringify({ strings: ["a", "b"] })).toBe('strings = ["a", "b"]\n');
     expect(Bun.TOML.stringify({ mixed: [1, "two", true] })).toBe('mixed = [1, "two", true]\n');
-    expect(Bun.TOML.stringify({ bools: [true, false, true] })).toBe('bools = [true, false, true]\n');
+    expect(Bun.TOML.stringify({ bools: [true, false, true] })).toBe("bools = [true, false, true]\n");
   });
 
   test("multiline arrays", () => {
@@ -65,11 +65,13 @@ describe("Bun.TOML.stringify", () => {
   test("regular tables", () => {
     const obj = { database: { server: "192.168.1.1", port: 5432 } };
     const result = Bun.TOML.stringify(obj);
-    expect(result).toBe(`
+    expect(result).toBe(
+      `
 [database]
 server = "192.168.1.1"
 port = 5432
-`.trim() + "\n");
+`.trim() + "\n",
+    );
   });
 
   test("mixed simple and table values", () => {
@@ -138,7 +140,7 @@ key4 = true
 
     const tomlString = Bun.TOML.stringify(original);
     const parsed = Bun.TOML.parse(tomlString);
-    
+
     expect(parsed).toEqual(original);
   });
 

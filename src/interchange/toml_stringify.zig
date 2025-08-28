@@ -1,11 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const JSGlobalObject = jsc.JSGlobalObject;
-const ZigString = jsc.ZigString;
-const JSObject = jsc.JSObject;
-
 pub const TOMLStringifyOptions = struct {
     inline_tables: bool = false,
     arrays_multiline: bool = true,
@@ -109,9 +101,9 @@ pub const TOMLStringifier = struct {
             try self.stringifyKey(key);
             try self.writer.appendSlice(" = ");
         }
-        
+
         const num = value.asNumber();
-        
+
         // Handle special float values
         if (std.math.isNan(num)) {
             try self.writer.appendSlice("nan");
@@ -126,7 +118,7 @@ pub const TOMLStringifier = struct {
             // Float
             try self.writer.writer().print("{d}", .{num});
         }
-        
+
         if (!is_root) try self.writer.append('\n');
     }
 
@@ -135,12 +127,12 @@ pub const TOMLStringifier = struct {
             try self.stringifyKey(key);
             try self.writer.appendSlice(" = ");
         }
-        
+
         const str = value.toBunString(globalThis) catch return error.JSError;
         defer str.deref();
         const slice = str.toSlice(self.allocator);
         defer slice.deinit();
-        
+
         try self.stringifyQuotedString(slice.slice());
         if (!is_root) try self.writer.append('\n');
     }
@@ -150,16 +142,16 @@ pub const TOMLStringifier = struct {
             try self.stringifyKey(key);
             try self.writer.appendSlice(" = ");
         }
-        
+
         const length = array.getLength(globalThis) catch return error.JSError;
-        
+
         try self.writer.append('[');
-        
+
         const is_multiline = self.options.arrays_multiline and length > 3;
         if (is_multiline) {
             try self.writer.append('\n');
         }
-        
+
         for (0..length) |i| {
             if (i > 0) {
                 try self.writer.appendSlice(", ");
@@ -167,145 +159,145 @@ pub const TOMLStringifier = struct {
                     try self.writer.append('\n');
                 }
             }
-            
+
             if (is_multiline) {
                 try self.writer.appendSlice(self.options.indent);
             }
-            
+
             const item = array.getIndex(globalThis, @intCast(i)) catch return error.JSError;
             try self.stringifyValue(globalThis, item, "", true);
         }
-        
+
         if (is_multiline) {
             try self.writer.append('\n');
         }
-        
+
         try self.writer.append(']');
         if (!is_root) try self.writer.append('\n');
     }
 
     fn stringifyInlineObject(self: *TOMLStringifier, globalThis: *JSGlobalObject, obj: JSValue) anyerror!void {
         // TODO: Implement proper circular reference detection
-        
+
         try self.writer.appendSlice("{ ");
-        
+
         const obj_val = obj.getObject() orelse return error.InvalidValue;
         var iterator = jsc.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
         }).init(globalThis, obj_val) catch return error.JSError;
         defer iterator.deinit();
-        
+
         var first = true;
         while (try iterator.next()) |prop| {
             const value = iterator.value;
             if (value.isNull() or value.isUndefined()) continue;
-            
+
             if (!first) {
                 try self.writer.appendSlice(", ");
             }
             first = false;
-            
+
             const name = prop.toSlice(self.allocator);
             defer name.deinit();
-            
+
             try self.stringifyKey(name.slice());
             try self.writer.appendSlice(" = ");
             try self.stringifyValue(globalThis, value, "", true);
         }
-        
+
         try self.writer.appendSlice(" }");
     }
 
     fn stringifyRootObject(self: *TOMLStringifier, globalThis: *JSGlobalObject, obj: JSValue) anyerror!void {
         // TODO: Implement proper circular reference detection
-        
+
         const obj_val = obj.getObject() orelse return error.InvalidValue;
-        
+
         // First pass: write simple key-value pairs
         var iterator = jsc.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
         }).init(globalThis, obj_val) catch return error.JSError;
         defer iterator.deinit();
-        
+
         while (try iterator.next()) |prop| {
             const value = iterator.value;
             if (value.isNull() or value.isUndefined()) continue;
-            
+
             const name = prop.toSlice(self.allocator);
             defer name.deinit();
-            
+
             // Skip objects for second pass unless using inline tables
             if (value.isObject() and value.jsType() != .Array and !self.options.inline_tables) continue;
-            
+
             try self.stringifyValue(globalThis, value, name.slice(), false);
         }
-        
+
         // Second pass: write tables (non-inline objects)
         var iterator2 = jsc.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
         }).init(globalThis, obj_val) catch return error.JSError;
         defer iterator2.deinit();
-        
+
         var has_written_table = false;
         while (try iterator2.next()) |prop| {
             const value = iterator2.value;
             if (!value.isObject() or value.jsType() == .Array or self.options.inline_tables) continue;
-            
+
             if (has_written_table or self.writer.items.len > 0) {
                 try self.writer.append('\n');
             }
             has_written_table = true;
-            
+
             const name = prop.toSlice(self.allocator);
             defer name.deinit();
-            
+
             try self.writer.appendSlice("[");
             try self.stringifyKey(name.slice());
             try self.writer.appendSlice("]\n");
-            
+
             try self.stringifyTableContent(globalThis, value);
         }
     }
 
     fn stringifyTableContent(self: *TOMLStringifier, globalThis: *JSGlobalObject, obj: JSValue) anyerror!void {
         const obj_val = obj.getObject() orelse return error.InvalidValue;
-        
+
         var iterator = jsc.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
         }).init(globalThis, obj_val) catch return error.JSError;
         defer iterator.deinit();
-        
+
         while (try iterator.next()) |prop| {
             const value = iterator.value;
             if (value.isNull() or value.isUndefined()) continue;
-            
+
             const name = prop.toSlice(self.allocator);
             defer name.deinit();
-            
+
             // For simplicity, only handle simple values in tables for now
             // Nested tables would require more complex path tracking
             if (value.isObject() and value.jsType() != .Array and !self.options.inline_tables) {
                 // Skip nested objects for now - would need proper table path handling
                 continue;
             }
-            
+
             try self.stringifyValue(globalThis, value, name.slice(), false);
         }
     }
 
     fn stringifyKey(self: *TOMLStringifier, key: []const u8) anyerror!void {
         if (key.len == 0) return error.InvalidKey;
-        
+
         // Check if key needs quoting
         var needs_quotes = false;
-        
+
         // Empty key always needs quotes
         if (key.len == 0) needs_quotes = true;
-        
+
         // Check for characters that require quoting
         for (key) |ch| {
             if (!std.ascii.isAlphanumeric(ch) and ch != '_' and ch != '-') {
@@ -313,12 +305,12 @@ pub const TOMLStringifier = struct {
                 break;
             }
         }
-        
+
         // Check if it starts with a number (bare keys can't start with numbers in some contexts)
         if (key.len > 0 and std.ascii.isDigit(key[0])) {
             needs_quotes = true;
         }
-        
+
         if (needs_quotes) {
             try self.stringifyQuotedString(key);
         } else {
@@ -354,3 +346,10 @@ pub fn stringify(globalThis: *JSGlobalObject, value: JSValue, options: TOMLStrin
     const owned_result = bun.default_allocator.dupe(u8, result) catch return error.OutOfMemory;
     return owned_result;
 }
+
+const bun = @import("bun");
+const std = @import("std");
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

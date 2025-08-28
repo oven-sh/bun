@@ -22,12 +22,12 @@ pub fn dumpOrder(this: *Execution) bun.JSError!void {
     groupLog.beginMsg("dumpOrder", .{});
     defer groupLog.end();
 
-    for (this.groups, 0..) |group, group_index| {
-        groupLog.beginMsg("{d}: ConcurrentGroup {d}-{d}", .{ group_index, group.sequence_start, group.sequence_end });
+    for (this.groups) |group| {
+        groupLog.beginMsg("ConcurrentGroup", .{});
         defer groupLog.end();
 
         for (group.sequences(this)) |*sequence| {
-            groupLog.beginMsg("Sequence {d}-{d} ({d}x)", .{ sequence.entry_start, sequence.entry_end, sequence.remaining_repeat_count });
+            groupLog.beginMsg("Sequence ({d}x)", .{sequence.remaining_repeat_count});
             defer groupLog.end();
 
             for (sequence.entries(this)) |entry| {

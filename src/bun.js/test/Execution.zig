@@ -68,19 +68,18 @@ pub const CurrentEntryRef = struct {
 };
 
 pub const ConcurrentGroup = struct {
-    sequence_start: usize,
-    sequence_end: usize,
+    @"#sequence_start": usize,
+    @"#sequence_end": usize,
     executing: bool = false,
-    concurrent: bool,
 
     pub fn sequences(this: ConcurrentGroup, execution: *Execution) []ExecutionSequence {
-        return execution.@"#sequences"[this.sequence_start..this.sequence_end];
+        return execution.@"#sequences"[this.@"#sequence_start"..this.@"#sequence_end"];
     }
 };
 pub const ExecutionSequence = struct {
-    entry_start: usize,
-    entry_end: usize,
-    entry_index: usize,
+    @"#entries_start": usize,
+    @"#entries_end": usize,
+    index: usize,
     test_entry: ?*ExecutionEntry,
     remaining_repeat_count: f64 = 1,
     result: Result = .pending,
@@ -94,10 +93,12 @@ pub const ExecutionSequence = struct {
     }
 
     pub fn entries(this: ExecutionSequence, execution: *Execution) []const *ExecutionEntry {
-        return execution.@"#entries"[this.entry_start..this.entry_end];
+        return execution.@"#entries"[this.@"#entries_start"..this.@"#entries_end"];
     }
     pub fn activeEntry(this: ExecutionSequence, execution: *Execution) ?*ExecutionEntry {
-        return if (this.entry_index < this.entry_end) execution.@"#entries"[this.entry_index] else null;
+        const entries_value = this.entries(execution);
+        if (this.index >= entries_value.len) return null;
+        return entries_value[this.index];
     }
 };
 pub const Result = enum {
@@ -169,7 +170,7 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
         const group = &this.groups[this.group_index];
         if (!group.executing) this.resetGroup(this.group_index);
         var status: describe2.RunOneResult = .done;
-        for (group.sequences(this), group.sequence_start..) |*sequence, sequence_index| {
+        for (group.sequences(this), group.@"#sequence_start"..) |*sequence, sequence_raw_index| {
             while (true) {
                 groupLog.begin(@src());
                 defer groupLog.end();
@@ -201,7 +202,7 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
                 if (next_item.callback) |cb| {
                     groupLog.log("runSequence queued callback", .{});
 
-                    try callback_queue.append(.{ .callback = cb.dupe(this.bunTest().gpa), .done_parameter = true, .data = sequence_index });
+                    try callback_queue.append(.{ .callback = cb.dupe(this.bunTest().gpa), .done_parameter = true, .data = sequence_raw_index });
                     status = .execute;
                     break;
                 } else {
@@ -213,12 +214,12 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
                             sequence.result = .todo;
                         },
                         else => {
-                            groupLog.log("runSequence: no callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.entry_index });
+                            groupLog.log("runSequence: no callback for sequence_index {d} (entry_index {d})", .{ sequence_raw_index, sequence.index });
                             bun.debugAssert(false);
                         },
                     }
                     sequence.executing = false;
-                    sequence.entry_index += 1;
+                    sequence.index += 1;
                 }
             }
         }
@@ -231,22 +232,22 @@ pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, _: ?jsc.JSValue
     groupLog.begin(@src());
     defer groupLog.end();
 
-    const sequence_index: usize = @intCast(data);
+    const sequence_index: usize = @intCast(data); // TODO: ??????????? validate
     groupLog.log("runOneCompleted sequence_index {d}", .{sequence_index});
 
     bun.assert(this.group_index < this.groups.len);
     const group = &this.groups[this.group_index];
 
-    if (sequence_index < group.sequence_start or sequence_index >= group.sequence_end) {
+    if (sequence_index < group.@"#sequence_start" or sequence_index >= group.@"#sequence_end") {
         bun.debugAssert(false);
         return;
     }
     const sequences = group.sequences(this);
-    const sequence = &sequences[sequence_index - group.sequence_start];
-    bun.assert(sequence.entry_index < sequence.entry_end);
+    const sequence = &sequences[sequence_index - group.@"#sequence_start"];
+    bun.assert(sequence.index < sequence.entries(this).len);
 
     sequence.executing = false;
-    sequence.entry_index += 1;
+    sequence.index += 1;
 
     // TODO: see what vitest does when a beforeAll fails. does it still run the test?
 }
@@ -290,15 +291,15 @@ pub fn resetGroup(this: *Execution, group_index: usize) void {
         this.resetSequence(sequence);
     }
 }
-pub fn resetSequence(_: *Execution, sequence: *ExecutionSequence) void {
+pub fn resetSequence(this: *Execution, sequence: *ExecutionSequence) void {
     bun.assert(!sequence.executing);
     if (sequence.result.isPass()) {
         // passed or pending; run again
-        sequence.entry_index = sequence.entry_start;
+        sequence.index = 0;
         sequence.result = .pending;
     } else {
-        // already failed or skipped; don't run
-        sequence.entry_index = sequence.entry_end;
+        // already failed or skipped; don't run again
+        sequence.index = sequence.entries(this).len;
     }
 }
 
@@ -311,15 +312,15 @@ pub fn handleUncaughtException(this: *Execution, user_data: ?u64) describe2.Hand
     const sequence: *ExecutionSequence = if (sequences.len == 1) blk: {
         groupLog.log("handleUncaughtException: there is only one sequence in the group", .{});
         break :blk &sequences[0];
-    } else if (user_data != null and user_data.? >= current_group.sequence_start and user_data.? < current_group.sequence_end) blk: {
+    } else if (user_data != null and user_data.? >= current_group.@"#sequence_start" and user_data.? < current_group.@"#sequence_end") blk: {
         groupLog.log("handleUncaughtException: there are multiple sequences in the group and user_data is provided", .{});
-        break :blk &sequences[user_data.? - current_group.sequence_start];
+        break :blk &sequences[user_data.? - current_group.@"#sequence_start"];
     } else {
         groupLog.log("handleUncaughtException: there are multiple sequences in the group and user_data is not provided or invalid", .{});
         return .show_unhandled_error_between_tests;
     };
 
-    if (sequence.entry_index < sequence.entry_end and sequence.activeEntry(this) != sequence.test_entry) {
+    if (sequence.activeEntry(this) != sequence.test_entry) {
         // error in a hook
         // TODO: hooks should prevent further execution of the sequence and maybe shouldn't be marked as "between tests" but instead a regular failure
         return .show_unhandled_error_between_tests;

@@ -331,15 +331,15 @@ pub const BunTestFile = struct {
             .entry_data = null, // the current execution entry is not known because we are running a concurrent test
         };
 
-        const active_sequence_index = active_group.sequence_start;
-        const sequence = &sequences[0];
+        const active_sequence_index = 0;
+        const sequence = &sequences[active_sequence_index];
         return .{
             ._internal_ref = ref_value,
             .buntest = this,
             .group_index = this.execution.group_index,
             .entry_data = .{
                 .sequence_index = active_sequence_index,
-                .entry_index = sequence.entry_index,
+                .entry_index = sequence.index,
             },
         };
     }

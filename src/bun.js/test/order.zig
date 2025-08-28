@@ -3,6 +3,7 @@
 groups: std.ArrayList(ConcurrentGroup),
 sequences: std.ArrayList(ExecutionSequence),
 entries: std.ArrayList(*ExecutionEntry),
+previous_group_was_concurrent: bool = false,
 
 pub fn init(gpa: std.mem.Allocator) Order {
     return .{
@@ -34,7 +35,7 @@ pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry, cfg: str
         try this.entries.append(entry); // add entry to sequence
         const entries_end = this.entries.items.len;
         const sequences_start = this.sequences.items.len;
-        try this.sequences.append(.{ .entry_start = entries_start, .entry_end = entries_end, .entry_index = entries_start, .test_entry = null }); // add sequence to concurrentgroup
+        try this.sequences.append(.{ .@"#entries_start" = entries_start, .@"#entries_end" = entries_end, .index = 0, .test_entry = null }); // add sequence to concurrentgroup
         const sequences_end = this.sequences.items.len;
         try appendOrExtendConcurrentGroup(this, cfg.concurrent, sequences_start, sequences_end); // add or extend the concurrent group
     }
@@ -97,20 +98,21 @@ pub fn generateOrderTest(this: *Order, current: *ExecutionEntry) bun.JSError!voi
     // add these as a single sequence
     const entries_end = this.entries.items.len;
     const sequences_start = this.sequences.items.len;
-    try this.sequences.append(.{ .entry_start = entries_start, .entry_end = entries_end, .entry_index = entries_start, .test_entry = current }); // add sequence to concurrentgroup
+    try this.sequences.append(.{ .@"#entries_start" = entries_start, .@"#entries_end" = entries_end, .index = 0, .test_entry = current }); // add sequence to concurrentgroup
     const sequences_end = this.sequences.items.len;
     try appendOrExtendConcurrentGroup(this, current.base.concurrent, sequences_start, sequences_end); // add or extend the concurrent group
 }
 
 pub fn appendOrExtendConcurrentGroup(this: *Order, concurrent: bool, sequences_start: usize, sequences_end: usize) bun.JSError!void {
+    defer this.previous_group_was_concurrent = concurrent;
     if (concurrent and this.groups.items.len > 0) {
         const previous_group = &this.groups.items[this.groups.items.len - 1];
-        if (previous_group.concurrent and previous_group.sequence_end == sequences_start) {
-            previous_group.sequence_end = sequences_end; // extend the previous group to include this sequence
+        if (this.previous_group_was_concurrent and previous_group.@"#sequence_end" == sequences_start) {
+            previous_group.@"#sequence_end" = sequences_end; // extend the previous group to include this sequence
             return;
         }
     }
-    try this.groups.append(.{ .sequence_start = sequences_start, .sequence_end = sequences_end, .concurrent = concurrent }); // otherwise, add a new concurrentgroup to order
+    try this.groups.append(.{ .@"#sequence_start" = sequences_start, .@"#sequence_end" = sequences_end }); // otherwise, add a new concurrentgroup to order
 }
 
 const bun = @import("bun");

@@ -152,7 +152,7 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
             }
         },
         else => {
-            var data = try reader.rawEncodeLenData();
+            var data = try reader.read(column_length);
             defer data.deinit();
             return SQLDataCell.raw(&data);
         },

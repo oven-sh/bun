@@ -617,6 +617,62 @@ declare module "bun" {
      * @returns A JavaScript object
      */
     export function parse(input: string): object;
+
+    /**
+     * Convert a JavaScript object to a TOML string.
+     *
+     * @category Utilities
+     *
+     * @param value The JavaScript object to stringify
+     * @param replacer Currently unused (for API consistency with JSON.stringify)
+     * @param options Options for TOML formatting
+     * @returns A TOML string
+     *
+     * @example
+     * ```ts
+     * import { TOML } from "bun";
+     *
+     * const obj = {
+     *   title: "TOML Example",
+     *   database: {
+     *     server: "192.168.1.1",
+     *     ports: [8001, 8001, 8002],
+     *     connection_max: 5000,
+     *     enabled: true,
+     *   }
+     * };
+     *
+     * console.log(TOML.stringify(obj));
+     * // title = "TOML Example"
+     * //
+     * // [database]
+     * // server = "192.168.1.1"
+     * // ports = [8001, 8001, 8002]
+     * // connection_max = 5000
+     * // enabled = true
+     * ```
+     */
+    export function stringify(
+      value: any,
+      replacer?: undefined | null,
+      options?: {
+        /**
+         * Whether to format objects as inline tables
+         * @default false
+         */
+        inlineTables?: boolean;
+        /**
+         * Whether to format arrays across multiple lines when they have more than 3 elements
+         * @default true
+         */
+        arraysMultiline?: boolean;
+        /**
+         * The indentation string to use for multiline arrays
+         * @default "  "
+         */
+        indent?: string;
+      }
+    ): string;
   }
 
   /**

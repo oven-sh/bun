@@ -752,6 +752,7 @@ src/install/windows-shim/bun_shim_impl.zig
 src/install/yarn.zig
 src/interchange.zig
 src/interchange/json.zig
+src/interchange/toml_stringify.zig
 src/interchange/toml.zig
 src/interchange/toml/lexer.zig
 src/interchange/yaml.zig

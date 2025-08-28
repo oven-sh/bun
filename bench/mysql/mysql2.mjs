@@ -4,10 +4,10 @@ const pool = createPool({
   user: "root",
   password: "bun",
   database: "mysql",
-  port: 55002,
+  port: 55034,
   waitForConnections: true,
   connectionLimit: 10,
-  idleTimeout: 60000, // idle connections timeout, in milliseconds, the default value 60000
+  idleTimeout: 60000,
   queueLimit: 0,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
@@ -49,7 +49,11 @@ if (+(existingUsers?.[0]?.count ?? existingUsers?.count) < 100) {
 
 console.time("mysql2");
 let promises = [];
+<<<<<<< Updated upstream
 for (let i = 0; i < 100_000; i++) {
+=======
+for (let i = 0; i < 1_000_000; i++) {
+>>>>>>> Stashed changes
   promises.push(pool.execute(`SELECT * FROM users_bun_bench LIMIT 100`));
 }
 await Promise.all(promises);

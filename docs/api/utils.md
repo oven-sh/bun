@@ -1033,67 +1033,6 @@ console.log(`Unsafe allocation: ${unsafeTime} ns`);
 // Unsafe is typically 2-10x faster for large allocations
 ```
 
-## `Bun.shrink()`
-
-`Bun.shrink(object: object): object`
-
-Optimizes the memory layout of an object by shrinking its internal representation. This is most effective after adding and removing many properties, which can leave gaps in the object's property storage.
-
-```ts
-const obj = { a: 1, b: 2, c: 3, d: 4, e: 5 };
-
-// Add and remove many properties (creates fragmentation)
-for (let i = 0; i < 1000; i++) {
-  obj[`temp${i}`] = i;
-}
-
-for (let i = 0; i < 1000; i++) {
-  delete obj[`temp${i}`];
-}
-
-// Object now has fragmented memory layout
-console.log(Object.keys(obj)); // => ["a", "b", "c", "d", "e"]
-
-// Optimize memory layout
-Bun.shrink(obj);
-// Returns the same object, but with optimized internal structure
-```
-
-Useful for long-lived objects that undergo many property changes:
-
-```ts
-class Cache {
-  private data = {};
-  
-  set(key: string, value: any) {
-    this.data[key] = value;
-  }
-  
-  delete(key: string) {
-    delete this.data[key];
-  }
-  
-  // Optimize after batch operations
-  optimize() {
-    return Bun.shrink(this.data);
-  }
-}
-
-const cache = new Cache();
-// ... many set/delete operations
-cache.optimize(); // Reclaim fragmented memory
-```
-
-The function returns the same object (doesn't create a copy):
-
-```ts
-const original = { foo: "bar" };
-const shrunk = Bun.shrink(original);
-console.log(original === shrunk); // => true
-```
-
-**Note**: This is a performance optimization hint. The JavaScript engine may ignore it if the object is already optimally laid out or if shrinking wouldn't provide benefits.
-
 ## `Bun.gc()`
 
 `Bun.gc(force?: boolean): void`

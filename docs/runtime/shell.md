@@ -600,60 +600,6 @@ user-provided input before passing it as an argument to an external command.
 The responsibility for validating arguments rests with your application code.
 {% /callout %}
 
-## Advanced APIs
-
-### `Bun.createParsedShellScript(script, args)`
-
-Creates a pre-parsed shell script object that can be used with `Bun.createShellInterpreter()` for more advanced shell execution control.
-
-```js
-import { createParsedShellScript } from "bun";
-
-// Parse a shell script
-const parsed = createParsedShellScript("echo hello", ["world"]);
-```
-
-**Parameters:**
-- `script` (`string`): The shell script string to parse
-- `args` (`string[]`): Array of arguments to interpolate into the script
-
-**Returns:** `ParsedShellScript` - A parsed shell script object
-
-This API is primarily used internally by the `$` template literal, but can be useful for cases where you want to pre-parse shell commands or build custom shell execution workflows.
-
-### `Bun.createShellInterpreter(options)`
-
-Creates a shell interpreter instance for executing parsed shell scripts with custom resolve/reject handlers.
-
-```js
-import { createParsedShellScript, createShellInterpreter } from "bun";
-
-const parsed = createParsedShellScript("echo hello", ["world"]);
-
-const interpreter = createShellInterpreter(
-  (exitCode, stdout, stderr) => {
-    // Handle successful completion
-    console.log(`Exit code: ${exitCode}`);
-    console.log(`Stdout: ${stdout.toString()}`);
-  },
-  (exitCode, stdout, stderr) => {
-    // Handle errors
-    console.error(`Command failed with code: ${exitCode}`);
-    console.error(`Stderr: ${stderr.toString()}`);
-  },
-  parsed
-);
-```
-
-**Parameters:**
-- `resolve` (`(exitCode: number, stdout: Buffer, stderr: Buffer) => void`): Callback for successful execution
-- `reject` (`(exitCode: number, stdout: Buffer, stderr: Buffer) => void`): Callback for failed execution  
-- `parsedScript` (`ParsedShellScript`): The parsed shell script to execute
-
-**Returns:** `ShellInterpreter` - A shell interpreter instance
-
-This low-level API gives you direct control over shell execution and is primarily used internally by Bun Shell. Most users should use the `$` template literal instead, which provides a higher-level interface.
-
 ## Credits
 
 Large parts of this API were inspired by [zx](https://github.com/google/zx), [dax](https://github.com/dsherret/dax), and [bnx](https://github.com/wobsoriano/bnx). Thank you to the authors of those projects.

@@ -5,7 +5,7 @@ pub fn dumpSub(current: TestScheduleEntry) bun.JSError!void {
     }
 }
 pub fn dumpDescribe(describe: *DescribeScope) bun.JSError!void {
-    groupLog.beginMsg("describe {s} (concurrent={}, filter={s}, only={s})", .{ describe.base.name orelse "undefined", describe.base.concurrent, @tagName(describe.base.filter), @tagName(describe.base.only) });
+    groupLog.beginMsg("describe {s} (concurrent={}, mode={s}, only={s})", .{ describe.base.name orelse "undefined", describe.base.concurrent, @tagName(describe.base.mode), @tagName(describe.base.only) });
     defer groupLog.end();
 
     for (describe.beforeAll.items) |entry| try dumpTest(entry, "beforeAll");
@@ -31,7 +31,7 @@ pub fn dumpOrder(this: *Execution) bun.JSError!void {
             defer groupLog.end();
 
             for (sequence.entries(this), sequence.@"#entries_start"..) |entry, entry_index| {
-                groupLog.log("{d} ExecutionEntry \"{}\" (concurrent={}, mode={s}, only={s}, filter={s})", .{ entry_index, std.zig.fmtEscapes(entry.base.name orelse "undefined"), entry.base.concurrent, @tagName(entry.base.mode), @tagName(entry.base.only), @tagName(entry.base.filter) });
+                groupLog.log("{d} ExecutionEntry \"{}\" (concurrent={}, mode={s}, only={s})", .{ entry_index, std.zig.fmtEscapes(entry.base.name orelse "undefined"), entry.base.concurrent, @tagName(entry.base.mode), @tagName(entry.base.only) });
             }
         }
     }

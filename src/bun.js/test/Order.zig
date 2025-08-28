@@ -24,11 +24,6 @@ pub fn generateOrderSub(this: *Order, current: TestScheduleEntry) bun.JSError!vo
         .test_callback => |test_callback| try generateOrderTest(this, test_callback),
     }
 }
-pub fn discardOrderSub(this: *Order, current: TestScheduleEntry) bun.JSError!void {
-    // TODO: here we can swap the callbacks with zero to allow them to be GC'd
-    _ = this;
-    _ = current;
-}
 pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry) bun.JSError!void {
     for (entries) |entry| {
         const entries_start = this.entries.items.len;
@@ -43,15 +38,14 @@ pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry) bun.JSEr
 pub fn generateOrderDescribe(this: *Order, current: *DescribeScope) bun.JSError!void {
     if (current.failed) return; // do not schedule any tests in a failed describe scope
 
+    // TODO: do not gather beforeAll and afterAll if all sub-tests are filtered out
+
     // gather beforeAll
     try generateAllOrder(this, current.beforeAll.items);
 
     // gather children
     for (current.entries.items) |entry| {
-        if (current.base.only == .contains and !entry.isOrContainsOnly()) {
-            try discardOrderSub(this, entry);
-            continue;
-        }
+        if (current.base.only == .contains and entry.base().only == .no) continue;
         try generateOrderSub(this, entry);
     }
 

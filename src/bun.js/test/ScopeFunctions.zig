@@ -174,7 +174,6 @@ pub fn format(this: ScopeFunctions, comptime _: []const u8, _: std.fmt.FormatOpt
     if (this.cfg.self_concurrent) try writer.print(".concurrent", .{});
     if (this.cfg.self_mode != .normal) try writer.print(".{s}", .{@tagName(this.cfg.self_mode)});
     if (this.cfg.self_only) try writer.print(".only", .{});
-    if (this.cfg.self_filter) try writer.print(".filter", .{});
     if (this.each != .zero) try writer.print(".each()", .{});
 }
 

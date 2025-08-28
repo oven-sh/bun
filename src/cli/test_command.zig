@@ -815,8 +815,10 @@ pub const CommandLineReporter = struct {
 
         switch (sequence.result) {
             inline else => |result| {
-                writeTestStatusLine(result, &writer);
-                printTestLine(result, buntest, sequence, test_entry, elapsed_ns, &writer);
+                if (result != .skipped_because_label or buntest.reporter != null and buntest.reporter.?.file_reporter != null) {
+                    writeTestStatusLine(result, &writer);
+                    printTestLine(result, buntest, sequence, test_entry, elapsed_ns, &writer);
+                }
             },
         }
 

@@ -203,13 +203,15 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
                         .todo => if (sequence.result == .pending) {
                             sequence.result = .todo;
                         },
+                        .filtered_out => if (sequence.result == .pending) {
+                            sequence.result = .skipped_because_label;
+                        },
                         else => {
                             groupLog.log("runSequence: no callback for sequence_index {d} (entry_index {d})", .{ sequence_raw_index, sequence.index });
                             bun.debugAssert(false);
                         },
                     }
-                    sequence.executing = false;
-                    sequence.index += 1;
+                    this.advanceSequence(sequence);
                     continue;
                 }
                 comptime unreachable;
@@ -238,6 +240,10 @@ pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, _: ?jsc.JSValue
     const sequence = &sequences[sequence_index - group.@"#sequence_start"];
     bun.assert(sequence.index < sequence.entries(this).len);
 
+    this.advanceSequence(sequence);
+}
+fn advanceSequence(this: *Execution, sequence: *ExecutionSequence) void {
+    bun.assert(sequence.executing);
     sequence.executing = false;
     sequence.index += 1;
 
@@ -251,8 +257,6 @@ pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, _: ?jsc.JSValue
             this.resetSequence(sequence);
         }
     }
-
-    // TODO: see what vitest does when a beforeAll fails. does it still run the test?
 }
 fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     sequence.started_at = bun.timespec.now();

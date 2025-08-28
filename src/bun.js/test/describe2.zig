@@ -211,7 +211,6 @@ pub const BunTest = struct {
             .concurrent = false,
             .mode = .normal,
             .only = .no,
-            .filter = .no,
         });
         return .{
             .gpa = outer_gpa,
@@ -617,7 +616,6 @@ pub const BaseScopeCfg = struct {
     self_concurrent: bool = false,
     self_mode: ScopeMode = .normal,
     self_only: bool = false,
-    self_filter: bool = false,
     /// returns null if the other already has the value
     pub fn extend(this: BaseScopeCfg, other: BaseScopeCfg) ?BaseScopeCfg {
         var result = this;
@@ -633,10 +631,6 @@ pub const BaseScopeCfg = struct {
             if (result.self_only) return null;
             result.self_only = true;
         }
-        if (other.self_filter) {
-            if (result.self_filter) return null;
-            result.self_filter = true;
-        }
         return result;
     }
 };
@@ -645,6 +639,7 @@ pub const ScopeMode = enum {
     skip,
     todo,
     failing,
+    filtered_out,
 };
 pub const BaseScope = struct {
     parent: ?*DescribeScope,
@@ -652,16 +647,14 @@ pub const BaseScope = struct {
     concurrent: bool,
     mode: ScopeMode,
     only: enum { no, contains, yes },
-    filter: enum { no, contains, yes },
     pub fn init(this: BaseScopeCfg, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, parent: ?*DescribeScope) BaseScope {
-        if (this.self_only and parent != null) parent.?.markContainsOnly();
+        if (this.self_only and parent != null) parent.?.markContainsOnly(); // TODO: this is a bad thing to have in an init function.
         return .{
             .parent = parent,
             .name = if (name_not_owned) |name| gpa.dupe(u8, name) catch bun.outOfMemory() else null,
             .concurrent = this.self_concurrent or if (parent) |p| p.base.concurrent else false,
             .mode = if (parent) |p| if (p.base.mode != .normal) p.base.mode else this.self_mode else this.self_mode,
             .only = if (this.self_only) .yes else .no,
-            .filter = if (this.self_filter) .yes else .no,
         };
     }
     pub fn deinit(this: BaseScope, gpa: std.mem.Allocator) void {
@@ -776,10 +769,10 @@ pub const TestScheduleEntry = union(enum) {
             .test_callback => |test_scope| test_scope.destroy(gpa),
         }
     }
-    pub fn isOrContainsOnly(this: TestScheduleEntry) bool {
+    pub fn base(this: TestScheduleEntry) *BaseScope {
         switch (this) {
-            .describe => |describe| return describe.base.only != .no,
-            .test_callback => |test_callback| return test_callback.base.only != .no,
+            .describe => |describe| return &describe.base,
+            .test_callback => |test_callback| return &test_callback.base,
         }
     }
 };

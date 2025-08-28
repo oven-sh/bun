@@ -4,6 +4,7 @@ pub const LinkerContext = struct {
 
     pub const OutputFileListBuilder = @import("./linker_context/OutputFileListBuilder.zig");
     pub const StaticRouteVisitor = @import("./linker_context/StaticRouteVisitor.zig");
+    pub const GraphVisualizer = @import("./graph_visualizer.zig").GraphVisualizer;
 
     parse_graph: *Graph = undefined,
     graph: LinkerGraph = undefined,
@@ -392,6 +393,13 @@ pub const LinkerContext = struct {
         }
 
         try this.scanImportsAndExports();
+        
+        // Dump graph state after scan
+        if (comptime Environment.isDebug) {
+            GraphVisualizer.dumpGraphState(this, "after_scan", null) catch |err| {
+                debug("Failed to dump graph after scan: {}", .{err});
+            };
+        }
 
         // Stop now if there were errors
         if (this.log.hasErrors()) {
@@ -409,18 +417,39 @@ pub const LinkerContext = struct {
         }
 
         const chunks = try this.computeChunks(bundle.unique_key);
+        
+        // Dump graph state after computing chunks
+        if (comptime Environment.isDebug) {
+            GraphVisualizer.dumpGraphState(this, "after_chunks", chunks) catch |err| {
+                debug("Failed to dump graph after chunks: {}", .{err});
+            };
+        }
 
         if (comptime FeatureFlags.help_catch_memory_issues) {
             this.checkForMemoryCorruption();
         }
 
         try this.computeCrossChunkDependencies(chunks);
+        
+        // Dump graph state after computing dependencies
+        if (comptime Environment.isDebug) {
+            GraphVisualizer.dumpGraphState(this, "after_compute", chunks) catch |err| {
+                debug("Failed to dump graph after compute: {}", .{err});
+            };
+        }
 
         if (comptime FeatureFlags.help_catch_memory_issues) {
             this.checkForMemoryCorruption();
         }
 
         this.graph.symbols.followAll();
+        
+        // Final dump after linking
+        if (comptime Environment.isDebug) {
+            GraphVisualizer.dumpGraphState(this, "after_link", chunks) catch |err| {
+                debug("Failed to dump graph after link: {}", .{err});
+            };
+        }
 
         return chunks;
     }

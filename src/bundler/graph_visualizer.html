@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bun Bundler Graph Visualizer</title>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dagre-d3@0.6.4/dist/dagre-d3.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        #header {
+            background: #2d2d30;
+            padding: 10px 20px;
+            border-bottom: 1px solid #3e3e42;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex-shrink: 0;
+        }
+        
+        #header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            color: #fff;
+        }
+        
+        #controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        #controls button, #controls select, #controls input {
+            background: #3e3e42;
+            color: #cccccc;
+            border: 1px solid #555;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        
+        #controls button:hover, #controls select:hover {
+            background: #4e4e52;
+        }
+        
+        #container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        #sidebar {
+            width: 350px;
+            background: #252526;
+            border-right: 1px solid #3e3e42;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        #tabs {
+            display: flex;
+            background: #2d2d30;
+            border-bottom: 1px solid #3e3e42;
+        }
+        
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            border-right: 1px solid #3e3e42;
+            font-size: 13px;
+            user-select: none;
+        }
+        
+        .tab.active {
+            background: #1e1e1e;
+            color: #fff;
+        }
+        
+        #tab-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+        }
+        
+        #main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        #graph-container {
+            flex: 1;
+            background: #1e1e1e;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        #graph-svg {
+            width: 100%;
+            height: 100%;
+        }
+        
+        #details {
+            height: 200px;
+            background: #252526;
+            border-top: 1px solid #3e3e42;
+            overflow-y: auto;
+            padding: 15px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+        }
+        
+        .file-item, .symbol-item, .chunk-item {
+            padding: 8px;
+            margin: 2px 0;
+            background: #2d2d30;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            word-break: break-all;
+        }
+        
+        .file-item:hover, .symbol-item:hover, .chunk-item:hover {
+            background: #3e3e42;
+        }
+        
+        .file-item.selected, .symbol-item.selected, .chunk-item.selected {
+            background: #094771;
+            border: 1px solid #007ACC;
+        }
+        
+        .search-box {
+            width: 100%;
+            padding: 8px;
+            background: #3e3e42;
+            border: 1px solid #555;
+            color: #cccccc;
+            margin-bottom: 10px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        
+        .node {
+            cursor: pointer;
+        }
+        
+        .node rect {
+            stroke: #333;
+            stroke-width: 1.5px;
+        }
+        
+        .node.entry-point rect {
+            stroke: #4EC9B0;
+            stroke-width: 2px;
+            fill: #2d5a4e !important;
+        }
+        
+        .node.has-exports rect {
+            stroke: #569CD6;
+            stroke-width: 2px;
+        }
+        
+        .node.css-file rect {
+            fill: #4e3a5a !important;
+        }
+        
+        .edge {
+            stroke: #555;
+            stroke-width: 1.5px;
+            fill: none;
+            marker-end: url(#arrowhead);
+        }
+        
+        .edge.dynamic-import {
+            stroke-dasharray: 5, 5;
+            stroke: #CE9178;
+        }
+        
+        .edge.css-import {
+            stroke: #b267e6;
+        }
+        
+        #legend {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(30, 30, 30, 0.95);
+            border: 1px solid #3e3e42;
+            padding: 10px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        
+        .legend-item {
+            margin: 5px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .legend-color {
+            width: 20px;
+            height: 14px;
+            border-radius: 2px;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .stat-item {
+            background: #2d2d30;
+            padding: 10px;
+            border-radius: 3px;
+        }
+        
+        .stat-value {
+            font-size: 20px;
+            font-weight: bold;
+            color: #4EC9B0;
+        }
+        
+        .stat-label {
+            font-size: 11px;
+            color: #808080;
+            margin-top: 3px;
+        }
+        
+        pre {
+            background: #2d2d30;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+        }
+        
+        .highlight {
+            background: #3e5c1e;
+            animation: pulse 1s;
+        }
+        
+        @keyframes pulse {
+            0% { background: #5e8c2e; }
+            100% { background: #3e5c1e; }
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>🚀 Bun Bundler Graph Visualizer</h1>
+        <div id="controls">
+            <input type="file" id="file-input" accept=".json" style="display: none;">
+            <button onclick="document.getElementById('file-input').click()">📁 Load JSON</button>
+            <select id="view-mode">
+                <option value="files">Files View</option>
+                <option value="chunks">Chunks View</option>
+                <option value="dependencies">Dependencies View</option>
+                <option value="symbols">Symbols View</option>
+            </select>
+            <select id="layout-mode">
+                <option value="dagre">Hierarchical</option>
+                <option value="force">Force-Directed</option>
+                <option value="circular">Circular</option>
+            </select>
+            <button id="zoom-fit">🔍 Fit</button>
+            <button id="zoom-in">➕</button>
+            <button id="zoom-out">➖</button>
+            <button id="export-svg">💾 Export SVG</button>
+        </div>
+    </div>
+    
+    <div id="container">
+        <div id="sidebar">
+            <div id="tabs">
+                <div class="tab active" data-tab="overview">Overview</div>
+                <div class="tab" data-tab="files">Files</div>
+                <div class="tab" data-tab="symbols">Symbols</div>
+                <div class="tab" data-tab="chunks">Chunks</div>
+            </div>
+            <div id="tab-content">
+                <div id="overview-content" class="tab-pane">
+                    <h3 style="margin-bottom: 15px;">Graph Statistics</h3>
+                    <div class="stats">
+                        <div class="stat-item">
+                            <div class="stat-value" id="stat-files">-</div>
+                            <div class="stat-label">Total Files</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="stat-reachable">-</div>
+                            <div class="stat-label">Reachable Files</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="stat-chunks">-</div>
+                            <div class="stat-label">Chunks</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="stat-symbols">-</div>
+                            <div class="stat-label">Symbols</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="stat-exports">-</div>
+                            <div class="stat-label">Exports</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="stat-imports">-</div>
+                            <div class="stat-label">Imports</div>
+                        </div>
+                    </div>
+                    <h3 style="margin: 15px 0;">Metadata</h3>
+                    <div id="metadata-content"></div>
+                </div>
+                <div id="files-content" class="tab-pane" style="display: none;">
+                    <input type="text" class="search-box" placeholder="Search files..." id="files-search">
+                    <div id="files-list"></div>
+                </div>
+                <div id="symbols-content" class="tab-pane" style="display: none;">
+                    <input type="text" class="search-box" placeholder="Search symbols..." id="symbols-search">
+                    <div id="symbols-list"></div>
+                </div>
+                <div id="chunks-content" class="tab-pane" style="display: none;">
+                    <div id="chunks-list"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="main">
+            <div id="graph-container">
+                <svg id="graph-svg">
+                    <defs>
+                        <marker id="arrowhead" markerWidth="10" markerHeight="7" 
+                                refX="9" refY="3.5" orient="auto">
+                            <polygon points="0 0, 10 3.5, 0 7" fill="#666" />
+                        </marker>
+                    </defs>
+                </svg>
+                <div id="legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #2d5a4e; border: 2px solid #4EC9B0;"></div>
+                        <span>Entry Point</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #3e3e42; border: 2px solid #569CD6;"></div>
+                        <span>Has Exports</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #4e3a5a;"></div>
+                        <span>CSS File</span>
+                    </div>
+                    <div class="legend-item">
+                        <div style="width: 20px; height: 2px; background: #CE9178; border-bottom: 2px dashed #CE9178;"></div>
+                        <span>Dynamic Import</span>
+                    </div>
+                </div>
+            </div>
+            <div id="details">
+                <div style="color: #808080;">Select a node to view details...</div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let graphData = null;
+        let currentView = 'files';
+        let currentLayout = 'dagre';
+        let svg = d3.select('#graph-svg');
+        let g = svg.append('g');
+        let zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on('zoom', (event) => {
+                g.attr('transform', event.transform);
+            });
+        
+        svg.call(zoom);
+        
+        // Tab switching
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-pane').forEach(p => p.style.display = 'none');
+                tab.classList.add('active');
+                document.getElementById(tab.dataset.tab + '-content').style.display = 'block';
+            });
+        });
+        
+        // File input handler
+        document.getElementById('file-input').addEventListener('change', async (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                const text = await file.text();
+                graphData = JSON.parse(text);
+                updateUI();
+                renderGraph();
+            }
+        });
+        
+        // View mode change
+        document.getElementById('view-mode').addEventListener('change', (event) => {
+            currentView = event.target.value;
+            renderGraph();
+        });
+        
+        // Layout mode change
+        document.getElementById('layout-mode').addEventListener('change', (event) => {
+            currentLayout = event.target.value;
+            renderGraph();
+        });
+        
+        // Zoom controls
+        document.getElementById('zoom-fit').addEventListener('click', () => {
+            const bounds = g.node().getBBox();
+            const width = svg.node().clientWidth;
+            const height = svg.node().clientHeight;
+            const scale = 0.9 * Math.min(width / bounds.width, height / bounds.height);
+            const transform = d3.zoomIdentity
+                .translate(width / 2 - scale * (bounds.x + bounds.width / 2),
+                          height / 2 - scale * (bounds.y + bounds.height / 2))
+                .scale(scale);
+            svg.transition().duration(750).call(zoom.transform, transform);
+        });
+        
+        document.getElementById('zoom-in').addEventListener('click', () => {
+            svg.transition().duration(300).call(zoom.scaleBy, 1.3);
+        });
+        
+        document.getElementById('zoom-out').addEventListener('click', () => {
+            svg.transition().duration(300).call(zoom.scaleBy, 0.7);
+        });
+        
+        // Export SVG
+        document.getElementById('export-svg').addEventListener('click', () => {
+            const svgData = svg.node().outerHTML;
+            const blob = new Blob([svgData], { type: 'image/svg+xml' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `bundler-graph-${Date.now()}.svg`;
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+        
+        function updateUI() {
+            if (!graphData) return;
+            
+            // Update stats
+            document.getElementById('stat-files').textContent = 
+                graphData.metadata?.totalFiles || '-';
+            document.getElementById('stat-reachable').textContent = 
+                graphData.metadata?.reachableFiles || '-';
+            document.getElementById('stat-chunks').textContent = 
+                graphData.chunks?.length || '-';
+            document.getElementById('stat-symbols').textContent = 
+                graphData.symbols?.totalSymbols || '-';
+            document.getElementById('stat-exports').textContent = 
+                graphData.importsAndExports?.totalExports || '-';
+            document.getElementById('stat-imports').textContent = 
+                graphData.importsAndExports?.totalImports || '-';
+            
+            // Update metadata
+            const metadataHtml = Object.entries(graphData.metadata || {})
+                .filter(([key]) => !key.startsWith('total'))
+                .map(([key, value]) => `
+                    <div style="margin: 5px 0;">
+                        <strong>${key}:</strong> ${value}
+                    </div>
+                `).join('');
+            document.getElementById('metadata-content').innerHTML = metadataHtml;
+            
+            // Update files list
+            const filesList = graphData.files || [];
+            const filesHtml = filesList.map((file, idx) => `
+                <div class="file-item" data-index="${idx}">
+                    <strong>${file.path || `File ${idx}`}</strong>
+                    <div style="font-size: 11px; color: #808080;">
+                        ${file.loader || 'unknown'} | ${file.partCount || 0} parts
+                    </div>
+                </div>
+            `).join('');
+            document.getElementById('files-list').innerHTML = filesHtml;
+            
+            // Update symbols list
+            const symbolsHtml = (graphData.symbols?.bySource || [])
+                .flatMap(source => 
+                    (source.samples || []).map(symbol => `
+                        <div class="symbol-item">
+                            <strong>${symbol.originalName}</strong>
+                            <div style="font-size: 11px; color: #808080;">
+                                ${symbol.kind} | Source ${source.sourceIndex}
+                            </div>
+                        </div>
+                    `)
+                ).join('');
+            document.getElementById('symbols-list').innerHTML = symbolsHtml;
+            
+            // Update chunks list
+            const chunksHtml = (graphData.chunks || []).map((chunk, idx) => `
+                <div class="chunk-item" data-index="${idx}">
+                    <strong>Chunk ${idx}</strong>
+                    <div style="font-size: 11px; color: #808080;">
+                        ${chunk.isEntryPoint ? 'Entry Point | ' : ''}
+                        ${chunk.filesInChunkCount || 0} files
+                    </div>
+                </div>
+            `).join('');
+            document.getElementById('chunks-list').innerHTML = chunksHtml;
+            
+            // Add search functionality
+            document.getElementById('files-search').addEventListener('input', (e) => {
+                const search = e.target.value.toLowerCase();
+                document.querySelectorAll('.file-item').forEach(item => {
+                    const visible = item.textContent.toLowerCase().includes(search);
+                    item.style.display = visible ? 'block' : 'none';
+                });
+            });
+            
+            document.getElementById('symbols-search').addEventListener('input', (e) => {
+                const search = e.target.value.toLowerCase();
+                document.querySelectorAll('.symbol-item').forEach(item => {
+                    const visible = item.textContent.toLowerCase().includes(search);
+                    item.style.display = visible ? 'block' : 'none';
+                });
+            });
+            
+            // Add click handlers for selection
+            document.querySelectorAll('.file-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    document.querySelectorAll('.file-item').forEach(i => i.classList.remove('selected'));
+                    item.classList.add('selected');
+                    const idx = parseInt(item.dataset.index);
+                    showFileDetails(graphData.files[idx], idx);
+                });
+            });
+        }
+        
+        function showFileDetails(file, index) {
+            const detailsHtml = `
+                <h3>File: ${file.path || `File ${index}`}</h3>
+                <pre>${JSON.stringify(file, null, 2)}</pre>
+            `;
+            document.getElementById('details').innerHTML = detailsHtml;
+        }
+        
+        function renderGraph() {
+            if (!graphData) return;
+            
+            // Clear existing graph
+            g.selectAll('*').remove();
+            
+            switch (currentView) {
+                case 'files':
+                    renderFilesGraph();
+                    break;
+                case 'chunks':
+                    renderChunksGraph();
+                    break;
+                case 'dependencies':
+                    renderDependencyGraph();
+                    break;
+                case 'symbols':
+                    renderSymbolsGraph();
+                    break;
+            }
+        }
+        
+        function renderFilesGraph() {
+            const files = graphData.files || [];
+            const edges = graphData.dependencyGraph?.edges || [];
+            
+            // Create nodes
+            const nodes = files.map((file, idx) => ({
+                id: `file-${idx}`,
+                label: file.path?.split('/').pop() || `File ${idx}`,
+                data: file,
+                index: idx
+            }));
+            
+            // Create edges from dependency graph
+            const edgeMap = new Map();
+            edges.forEach(edge => {
+                const key = `${edge.from.source}-${edge.to.source}`;
+                if (!edgeMap.has(key) && edge.from.source !== edge.to.source) {
+                    edgeMap.set(key, {
+                        source: `file-${edge.from.source}`,
+                        target: `file-${edge.to.source}`
+                    });
+                }
+            });
+            
+            const uniqueEdges = Array.from(edgeMap.values());
+            
+            if (currentLayout === 'dagre') {
+                renderDagreLayout(nodes, uniqueEdges);
+            } else if (currentLayout === 'force') {
+                renderForceLayout(nodes, uniqueEdges);
+            } else {
+                renderCircularLayout(nodes, uniqueEdges);
+            }
+        }
+        
+        function renderChunksGraph() {
+            const chunks = graphData.chunks || [];
+            
+            const nodes = chunks.map((chunk, idx) => ({
+                id: `chunk-${idx}`,
+                label: `Chunk ${idx}`,
+                data: chunk,
+                index: idx
+            }));
+            
+            // Create edges based on cross-chunk imports
+            const edges = [];
+            chunks.forEach((chunk, idx) => {
+                if (chunk.crossChunkImports) {
+                    // This would need actual cross-chunk import data
+                    // For now, we'll create synthetic edges
+                }
+            });
+            
+            if (currentLayout === 'dagre') {
+                renderDagreLayout(nodes, edges);
+            } else if (currentLayout === 'force') {
+                renderForceLayout(nodes, edges);
+            } else {
+                renderCircularLayout(nodes, edges);
+            }
+        }
+        
+        function renderDependencyGraph() {
+            const edges = graphData.dependencyGraph?.edges || [];
+            const files = graphData.files || [];
+            
+            // Create unique nodes from edges
+            const nodeMap = new Map();
+            edges.forEach(edge => {
+                const fromId = `${edge.from.source}-${edge.from.part}`;
+                const toId = `${edge.to.source}-${edge.to.part}`;
+                
+                if (!nodeMap.has(fromId)) {
+                    const file = files[edge.from.source];
+                    nodeMap.set(fromId, {
+                        id: fromId,
+                        label: `${file?.path?.split('/').pop() || edge.from.source}:${edge.from.part}`,
+                        data: { source: edge.from.source, part: edge.from.part }
+                    });
+                }
+                
+                if (!nodeMap.has(toId)) {
+                    const file = files[edge.to.source];
+                    nodeMap.set(toId, {
+                        id: toId,
+                        label: `${file?.path?.split('/').pop() || edge.to.source}:${edge.to.part}`,
+                        data: { source: edge.to.source, part: edge.to.part }
+                    });
+                }
+            });
+            
+            const nodes = Array.from(nodeMap.values());
+            const graphEdges = edges.slice(0, 500).map(edge => ({
+                source: `${edge.from.source}-${edge.from.part}`,
+                target: `${edge.to.source}-${edge.to.part}`
+            }));
+            
+            if (currentLayout === 'dagre') {
+                renderDagreLayout(nodes, graphEdges);
+            } else if (currentLayout === 'force') {
+                renderForceLayout(nodes, graphEdges);
+            } else {
+                renderCircularLayout(nodes, graphEdges);
+            }
+        }
+        
+        function renderSymbolsGraph() {
+            const symbols = graphData.importsAndExports || {};
+            const exports = symbols.exportSamples || [];
+            const imports = symbols.importSamples || [];
+            
+            // Create nodes for files with exports/imports
+            const nodeMap = new Map();
+            const edges = [];
+            
+            exports.forEach(exp => {
+                const nodeId = `file-${exp.source}`;
+                if (!nodeMap.has(nodeId)) {
+                    nodeMap.set(nodeId, {
+                        id: nodeId,
+                        label: `Source ${exp.source}`,
+                        data: { exports: [], imports: [] }
+                    });
+                }
+                nodeMap.get(nodeId).data.exports.push(exp);
+            });
+            
+            imports.forEach(imp => {
+                const nodeId = `file-${imp.source}`;
+                if (!nodeMap.has(nodeId)) {
+                    nodeMap.set(nodeId, {
+                        id: nodeId,
+                        label: `Source ${imp.source}`,
+                        data: { exports: [], imports: [] }
+                    });
+                }
+                nodeMap.get(nodeId).data.imports.push(imp);
+                
+                if (imp.targetSource !== undefined) {
+                    edges.push({
+                        source: nodeId,
+                        target: `file-${imp.targetSource}`
+                    });
+                }
+            });
+            
+            const nodes = Array.from(nodeMap.values());
+            
+            if (currentLayout === 'dagre') {
+                renderDagreLayout(nodes, edges);
+            } else if (currentLayout === 'force') {
+                renderForceLayout(nodes, edges);
+            } else {
+                renderCircularLayout(nodes, edges);
+            }
+        }
+        
+        function renderDagreLayout(nodes, edges) {
+            // Create a new directed graph
+            const dagreGraph = new dagreD3.graphlib.Graph()
+                .setGraph({ rankdir: 'TB', nodesep: 50, ranksep: 50 })
+                .setDefaultEdgeLabel(() => ({}));
+            
+            // Add nodes
+            nodes.forEach(node => {
+                dagreGraph.setNode(node.id, {
+                    label: node.label,
+                    width: Math.max(node.label.length * 7, 100),
+                    height: 40,
+                    rx: 5,
+                    ry: 5
+                });
+            });
+            
+            // Add edges
+            edges.forEach(edge => {
+                if (dagreGraph.hasNode(edge.source) && dagreGraph.hasNode(edge.target)) {
+                    dagreGraph.setEdge(edge.source, edge.target);
+                }
+            });
+            
+            // Layout
+            dagre.layout(dagreGraph);
+            
+            // Render nodes
+            const nodeSelection = g.selectAll('.node')
+                .data(nodes)
+                .enter()
+                .append('g')
+                .attr('class', d => {
+                    let classes = 'node';
+                    if (d.data?.entryPointKind === 'user_specified') classes += ' entry-point';
+                    if (d.data?.namedExportsCount > 0) classes += ' has-exports';
+                    if (d.data?.loader === 'css') classes += ' css-file';
+                    return classes;
+                })
+                .attr('transform', d => {
+                    const node = dagreGraph.node(d.id);
+                    return `translate(${node.x},${node.y})`;
+                });
+            
+            nodeSelection.append('rect')
+                .attr('x', d => -dagreGraph.node(d.id).width / 2)
+                .attr('y', -20)
+                .attr('width', d => dagreGraph.node(d.id).width)
+                .attr('height', 40)
+                .attr('rx', 5)
+                .attr('fill', '#3e3e42');
+            
+            nodeSelection.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('dominant-baseline', 'central')
+                .attr('fill', '#d4d4d4')
+                .style('font-size', '12px')
+                .text(d => d.label);
+            
+            // Render edges
+            g.selectAll('.edge')
+                .data(edges)
+                .enter()
+                .append('path')
+                .attr('class', 'edge')
+                .attr('d', d => {
+                    const edge = dagreGraph.edge(d.source, d.target);
+                    if (!edge || !edge.points) return '';
+                    const line = d3.line()
+                        .x(p => p.x)
+                        .y(p => p.y)
+                        .curve(d3.curveBasis);
+                    return line(edge.points);
+                });
+            
+            // Add interactivity
+            nodeSelection.on('click', (event, d) => {
+                showFileDetails(d.data, d.index);
+                // Highlight connected edges
+                g.selectAll('.edge')
+                    .style('stroke', e => 
+                        (e.source === d.id || e.target === d.id) ? '#4EC9B0' : '#555')
+                    .style('stroke-width', e => 
+                        (e.source === d.id || e.target === d.id) ? 2.5 : 1.5);
+            });
+        }
+        
+        function renderForceLayout(nodes, edges) {
+            const width = svg.node().clientWidth;
+            const height = svg.node().clientHeight;
+            
+            const simulation = d3.forceSimulation(nodes)
+                .force('link', d3.forceLink(edges).id(d => d.id).distance(100))
+                .force('charge', d3.forceManyBody().strength(-300))
+                .force('center', d3.forceCenter(width / 2, height / 2))
+                .force('collision', d3.forceCollide().radius(50));
+            
+            // Render edges
+            const link = g.selectAll('.edge')
+                .data(edges)
+                .enter()
+                .append('line')
+                .attr('class', 'edge');
+            
+            // Render nodes
+            const node = g.selectAll('.node')
+                .data(nodes)
+                .enter()
+                .append('g')
+                .attr('class', d => {
+                    let classes = 'node';
+                    if (d.data?.entryPointKind === 'user_specified') classes += ' entry-point';
+                    if (d.data?.namedExportsCount > 0) classes += ' has-exports';
+                    if (d.data?.loader === 'css') classes += ' css-file';
+                    return classes;
+                })
+                .call(d3.drag()
+                    .on('start', dragstarted)
+                    .on('drag', dragged)
+                    .on('end', dragended));
+            
+            node.append('rect')
+                .attr('x', -40)
+                .attr('y', -20)
+                .attr('width', 80)
+                .attr('height', 40)
+                .attr('rx', 5)
+                .attr('fill', '#3e3e42');
+            
+            node.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('dominant-baseline', 'central')
+                .attr('fill', '#d4d4d4')
+                .style('font-size', '11px')
+                .text(d => d.label.length > 12 ? d.label.substring(0, 12) + '...' : d.label);
+            
+            simulation.on('tick', () => {
+                link
+                    .attr('x1', d => d.source.x)
+                    .attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x)
+                    .attr('y2', d => d.target.y);
+                
+                node.attr('transform', d => `translate(${d.x},${d.y})`);
+            });
+            
+            function dragstarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+            
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+            
+            function dragended(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                d.fx = null;
+                d.fy = null;
+            }
+            
+            node.on('click', (event, d) => {
+                showFileDetails(d.data, d.index);
+            });
+        }
+        
+        function renderCircularLayout(nodes, edges) {
+            const width = svg.node().clientWidth;
+            const height = svg.node().clientHeight;
+            const radius = Math.min(width, height) / 2 - 100;
+            const centerX = width / 2;
+            const centerY = height / 2;
+            
+            // Position nodes in a circle
+            nodes.forEach((node, i) => {
+                const angle = (i / nodes.length) * 2 * Math.PI;
+                node.x = centerX + radius * Math.cos(angle);
+                node.y = centerY + radius * Math.sin(angle);
+            });
+            
+            // Render edges
+            const link = g.selectAll('.edge')
+                .data(edges)
+                .enter()
+                .append('path')
+                .attr('class', 'edge')
+                .attr('d', d => {
+                    const source = nodes.find(n => n.id === d.source);
+                    const target = nodes.find(n => n.id === d.target);
+                    if (!source || !target) return '';
+                    
+                    // Create curved path for better visibility
+                    const dx = target.x - source.x;
+                    const dy = target.y - source.y;
+                    const dr = Math.sqrt(dx * dx + dy * dy);
+                    return `M${source.x},${source.y}A${dr},${dr} 0 0,1 ${target.x},${target.y}`;
+                })
+                .style('fill', 'none');
+            
+            // Render nodes
+            const node = g.selectAll('.node')
+                .data(nodes)
+                .enter()
+                .append('g')
+                .attr('class', d => {
+                    let classes = 'node';
+                    if (d.data?.entryPointKind === 'user_specified') classes += ' entry-point';
+                    if (d.data?.namedExportsCount > 0) classes += ' has-exports';
+                    if (d.data?.loader === 'css') classes += ' css-file';
+                    return classes;
+                })
+                .attr('transform', d => `translate(${d.x},${d.y})`);
+            
+            node.append('circle')
+                .attr('r', 25)
+                .attr('fill', '#3e3e42');
+            
+            node.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('dominant-baseline', 'central')
+                .attr('fill', '#d4d4d4')
+                .style('font-size', '10px')
+                .text(d => {
+                    const label = d.label.split('/').pop();
+                    return label.length > 10 ? label.substring(0, 10) + '...' : label;
+                });
+            
+            node.on('click', (event, d) => {
+                showFileDetails(d.data, d.index);
+            });
+        }
+        
+        // Auto-load if URL has a graph parameter
+        const urlParams = new URLSearchParams(window.location.search);
+        const graphFile = urlParams.get('graph');
+        if (graphFile) {
+            fetch(graphFile)
+                .then(res => res.json())
+                .then(data => {
+                    graphData = data;
+                    updateUI();
+                    renderGraph();
+                })
+                .catch(err => console.error('Failed to load graph:', err));
+        }
+    </script>
+</body>
+</html>

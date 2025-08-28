@@ -414,6 +414,7 @@ src/bundler/BundleThread.zig
 src/bundler/Chunk.zig
 src/bundler/DeferredBatchTask.zig
 src/bundler/entry_points.zig
+src/bundler/graph_visualizer.zig
 src/bundler/Graph.zig
 src/bundler/HTMLImportManifest.zig
 src/bundler/linker_context/computeChunks.zig

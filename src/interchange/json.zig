@@ -488,6 +488,16 @@ pub fn toAST(
     value: Type,
 ) anyerror!js_ast.Expr {
     const type_info: std.builtin.Type = @typeInfo(Type);
+    
+    // Check if type has custom toExprForJSON method (only for structs, unions, and enums)
+    switch (type_info) {
+        .@"struct", .@"union", .@"enum" => {
+            if (comptime @hasDecl(Type, "toExprForJSON")) {
+                return try Type.toExprForJSON(&value, allocator);
+            }
+        },
+        else => {},
+    }
 
     switch (type_info) {
         .bool => {
@@ -536,7 +546,7 @@ pub fn toAST(
                 const exprs = try allocator.alloc(Expr, value.len);
                 for (exprs, 0..) |*ex, i| ex.* = try toAST(allocator, @TypeOf(value[i]), value[i]);
 
-                return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = exprs }, logger.Loc.Empty);
+                return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = .init(exprs) }, logger.Loc.Empty);
             },
             else => @compileError("Unable to stringify type '" ++ @typeName(T) ++ "'"),
         },
@@ -548,9 +558,20 @@ pub fn toAST(
             const exprs = try allocator.alloc(Expr, value.len);
             for (exprs, 0..) |*ex, i| ex.* = try toAST(allocator, @TypeOf(value[i]), value[i]);
 
-            return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = exprs }, logger.Loc.Empty);
+            return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = .init(exprs) }, logger.Loc.Empty);
         },
         .@"struct" => |Struct| {
+            // Check if struct has a slice() method - treat it as an array
+            if (comptime @hasField(Type, "ptr") and @hasField(Type, "len")) {
+                // This looks like it might be array-like, check for slice method
+                if (comptime @hasDecl(Type, "slice")) {
+                    const slice = value.slice();
+                    const exprs = try allocator.alloc(Expr, slice.len);
+                    for (exprs, 0..) |*ex, i| ex.* = try toAST(allocator, @TypeOf(slice[i]), slice[i]);
+                    return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = .init(exprs) }, logger.Loc.Empty);
+                }
+            }
+            
             const fields: []const std.builtin.Type.StructField = Struct.fields;
             var properties = try allocator.alloc(js_ast.G.Property, fields.len);
             var property_i: usize = 0;

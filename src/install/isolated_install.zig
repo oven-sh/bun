@@ -679,7 +679,6 @@ pub fn installIsolatedPackages(
 
         // add the pending task count upfront
         manager.incrementPendingTasks(@intCast(store.entries.len));
-
         for (0..store.entries.len) |_entry_id| {
             const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
 
@@ -832,6 +831,28 @@ pub fn installIsolatedPackages(
 
                     const dep_id = node_dep_ids[node_id.get()];
                     const dep = lockfile.buffers.dependencies.items[dep_id];
+
+                    const should_install = should_install: {
+                        if (manager.options.do.prefetch_resolved_tarballs) break :should_install true;
+
+                        // we only want to consider this package for download if it's in the packages_to_install array
+                        if (packages_to_install) |_pkgs| {
+                            for (_pkgs) |pkg_to_install| {
+                                if (pkg_to_install == pkg_id) {
+                                    break :should_install true;
+                                }
+                            }
+                        }
+
+                        break :should_install false;
+                    };
+
+                    if (!should_install) {
+                        entry_steps[entry_id.get()].store(.done, .monotonic);
+                        installer.onTaskComplete(entry_id, .skipped);
+                        continue;
+                    }
+
                     switch (pkg_res_tag) {
                         .npm => {
                             manager.enqueuePackageForDownload(

@@ -184,7 +184,12 @@ pub fn performSecurityScanForAll(manager: *PackageManager, command_ctx: bun.cli.
             const retry_result = try attemptSecurityScanWithRetry(manager, security_scanner, true, command_ctx, original_cwd, true);
             switch (retry_result) {
                 .success => |scan_results| return scan_results,
-                else => return error.SecurityScannerRetryFailed,
+                .needs_install => {
+                    // Should not happen after retry - we just installed it
+                    Output.errGeneric("Security scanner still required installation after partial install. This is probably a bug in Bun. Please report it to https://github.com/oven-sh/bun/issues", .{});
+                    return error.SecurityScannerRetryFailed;
+                },
+                .@"error" => |err| return err,
             }
         },
         .@"error" => |err| return err,
@@ -876,13 +881,19 @@ pub const SecurityScanSubprocess = struct {
                 return error.UnknownErrorCode;
             }) {
                 .MODULE_NOT_FOUND => {
+                    // If this is a retry after partial install, the scanner should exist now
+                    // If it still doesn't, it's likely a local file that doesn't exist
+                    if (is_retry) {
+                        Output.errGeneric("Security scanner '{s}' could not be found after installation attempt.\n  <d>If this is a local file, please check that the file exists and the path is correct.<r>", .{security_scanner});
+                        return error.SecurityScannerNotFound;
+                    }
+
+                    // First attempt - only try to install if we have a package ID
                     if (security_scanner_pkg_id) |pkg_id| {
                         return ScanAttemptResult{ .needs_install = pkg_id };
                     } else {
-                        // Only show error on first attempt, not on retry
-                        if (!is_retry) {
-                            Output.errGeneric("Security scanner '{s}' is configured in bunfig.toml but could not be resolved\n  <d>Did you mean to run: bun add --dev {s}<r>", .{ security_scanner, security_scanner });
-                        }
+                        // No package ID means it's not in dependencies - probably a local file
+                        Output.errGeneric("Security scanner '{s}' is configured in bunfig.toml but could not be resolved.\n  <d>If this is a local file, please check that the file exists.\n  If this is an npm package, add it to your dependencies: bun add --dev {s}<r>", .{ security_scanner, security_scanner });
                         return error.SecurityScannerNotInDependencies;
                     }
                 },

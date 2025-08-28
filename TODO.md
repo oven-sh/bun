@@ -1,5 +1,6 @@
 Complete before merge:
 
+- [x] sometimes error messages aren't printing!
 - [ ] make sure it exits with code 1 on failure
 - [ ] decide on preload behaviour: before first/after last?
   - vitest/jest both do them seperately for each file, which makes sense because of isolation
@@ -63,7 +64,7 @@ Code quality:
 - [ ] Add a phase before ordering results that inherits properties to the parents. (eg inherit only from the child and inherit has_callback from the child. and has_callback can be on describe/test individually rather than on base). then we won't have that happening in an init() function (terrible!)
 - [ ] In Collection.zig, consider inlining enqueueDescribeCallback/enqueueTestCallback/enqueueHookCallback to their callsites?
 - [x] In Execution.zig, rename order: ..., order_index to groups, group_index for consistency.
-- [ ] In Execution.zig, change (start, end) to (start, len)
+- [x] ~~In Execution.zig, change (start, end) to (start, len)~~ did not do this, (start, end) works better for this use-case
 - [x] In Execution.zig, modify so groups has a .sequences() fn and sequences has a .entries() fn and index is 0 based
 - [x] In Execution.zig, change order sequence and entries to be slices rather than ArrayLists. We have to rework test() in test() anyway.
 - [ ] Should make line_no be an enum with a none option and a function to get if line nombers are enabled

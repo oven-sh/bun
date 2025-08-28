@@ -622,6 +622,7 @@ pub const BunTestFile = struct {
             , .{});
             bun.Output.flush();
         }
+        globalThis.bunVM().last_reported_error_for_dedupe = .zero;
         globalThis.bunVM().runErrorHandlerWithDedupe(result, null);
         bun.Output.flush();
         if (handle_status == .show_unhandled_error_between_tests or handle_status == .show_unhandled_error_in_describe) {

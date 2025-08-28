@@ -188,8 +188,8 @@
             position: absolute;
             right: 20px;
             top: 20px;
-            width: 300px;
-            max-height: 400px;
+            width: 400px;
+            max-height: 600px;
             background: #161b22;
             border: 1px solid #30363d;
             border-radius: 6px;
@@ -350,6 +350,9 @@
         <div id="symbol-panel">
             <h3>Symbol Information</h3>
             <div class="symbol-info"></div>
+            <div id="duplicate-exports" style="margin-top: 20px;"></div>
+            <div id="symbol-chains" style="margin-top: 20px;"></div>
+            <div id="export-details" style="margin-top: 20px;"></div>
         </div>
         
         <div id="diff-panel">
@@ -509,13 +512,106 @@
         function analyzeSymbolFlow(data) {
             symbolMappings = [];
             
-            // Analyze how symbols flow from source to output
-            const symbols = data.symbols?.by_source || [];
+            // Clear panels
+            document.getElementById('duplicate-exports').innerHTML = '';
+            document.getElementById('symbol-chains').innerHTML = '';
+            document.getElementById('export-details').innerHTML = '';
             
+            // Analyze symbol chains for duplicates
+            if (data.symbol_chains && data.symbol_chains.length > 0) {
+                const exportNames = {};
+                data.symbol_chains.forEach(chain => {
+                    if (!exportNames[chain.export_name]) {
+                        exportNames[chain.export_name] = [];
+                    }
+                    exportNames[chain.export_name].push({
+                        file: chain.source_file,
+                        hasConflicts: chain.has_conflicts
+                    });
+                });
+                
+                // Show duplicate exports prominently
+                const duplicates = Object.entries(exportNames).filter(([_, sources]) => sources.length > 1);
+                if (duplicates.length > 0) {
+                    const dupPanel = document.getElementById('duplicate-exports');
+                    dupPanel.innerHTML = '<h4 style="color: red;">⚠️ DUPLICATE EXPORTS DETECTED</h4>';
+                    duplicates.forEach(([name, sources]) => {
+                        dupPanel.innerHTML += `
+                            <div style="background: rgba(255,0,0,0.1); padding: 8px; margin: 5px 0; border-left: 3px solid red;">
+                                <strong>"${name}"</strong> exported from files: ${sources.map(s => s.file).join(', ')}
+                            </div>
+                        `;
+                    });
+                }
+                
+                // Show symbol chains
+                const chainsPanel = document.getElementById('symbol-chains');
+                if (data.symbol_chains.length > 0) {
+                    chainsPanel.innerHTML = '<h4>Symbol Resolution Chains</h4>';
+                    const chainList = document.createElement('div');
+                    chainList.style.cssText = 'max-height: 250px; overflow-y: auto; font-size: 12px;';
+                    
+                    data.symbol_chains.slice(0, 30).forEach(chain => {
+                        const isDuplicate = exportNames[chain.export_name]?.length > 1;
+                        const chainDiv = document.createElement('div');
+                        chainDiv.style.cssText = `
+                            margin: 8px 0; 
+                            padding: 6px; 
+                            border-left: 3px solid ${chain.has_conflicts || isDuplicate ? 'orange' : '#4a5568'};
+                            background: rgba(255,255,255,0.02);
+                        `;
+                        
+                        let html = `<strong style="${isDuplicate ? 'color: orange;' : ''}">${chain.export_name}</strong> (file ${chain.source_file})`;
+                        if (chain.chain && chain.chain.length > 0) {
+                            chain.chain.forEach(link => {
+                                const color = link.link_type === 're-export' ? '#9f7aea' : 
+                                             link.link_type === 'import' ? '#4299e1' : 
+                                             '#48bb78';
+                                html += `<br>  → <span style="color: ${color};">${link.link_type}</span>: ${link.symbol_name} @ file ${link.file_index}`;
+                            });
+                        }
+                        if (chain.has_conflicts) {
+                            html += `<br><span style="color: orange;">⚠️ Has conflicts with ${chain.conflict_sources?.length || 0} sources</span>`;
+                        }
+                        
+                        chainDiv.innerHTML = html;
+                        chainList.appendChild(chainDiv);
+                    });
+                    
+                    chainsPanel.appendChild(chainList);
+                }
+            }
+            
+            // Show resolved exports with details
+            if (data.imports_and_exports?.resolved_exports) {
+                const resolved = data.imports_and_exports.resolved_exports;
+                const ambiguous = resolved.filter(e => e.potentially_ambiguous);
+                
+                if (ambiguous.length > 0) {
+                    const exportPanel = document.getElementById('export-details');
+                    exportPanel.innerHTML = '<h4 style="color: orange;">Ambiguous Exports</h4>';
+                    const ambList = document.createElement('div');
+                    ambList.style.cssText = 'max-height: 150px; overflow-y: auto; font-size: 12px;';
+                    
+                    ambiguous.forEach(exp => {
+                        ambList.innerHTML += `
+                            <div style="background: rgba(255,165,0,0.1); padding: 6px; margin: 4px 0;">
+                                <strong>${exp.export_alias}</strong> (file ${exp.source})<br>
+                                Target: ${exp.target_source !== null ? `file ${exp.target_source}` : 'unresolved'}<br>
+                                Ambiguous: ${exp.ambiguous_count} sources
+                            </div>
+                        `;
+                    });
+                    
+                    exportPanel.appendChild(ambList);
+                }
+            }
+            
+            // Analyze regular symbol mappings
+            const symbols = data.symbols?.by_source || [];
             symbols.forEach(source => {
                 source.symbols?.forEach(symbol => {
                     if (symbol.link) {
-                        // Track symbol transformation
                         symbolMappings.push({
                             source: symbol,
                             sourceFile: source.source_index,

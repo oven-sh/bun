@@ -712,27 +712,37 @@ pub const GraphVisualizer = struct {
                 // Get full output code from compile results
                 var output_snippet: ?[]const u8 = null;
                 if (chunk.compile_results_for_chunk.len > 0 and chunk.content == .javascript) {
-                    // Concatenate all JavaScript compile results
+                    // Safely collect JavaScript compile results
+                    var code_parts = std.ArrayList([]const u8).init(allocator);
+                    defer code_parts.deinit();
+                    
                     var total_len: usize = 0;
                     for (chunk.compile_results_for_chunk) |result| {
                         if (result == .javascript) {
-                            total_len += result.javascript.code().len;
+                            const code = result.javascript.code();
+                            // Make a defensive copy immediately to avoid use-after-free
+                            const code_copy = try allocator.dupe(u8, code);
+                            try code_parts.append(code_copy);
+                            total_len += code_copy.len;
                         }
                     }
                     
-                    if (total_len > 0) {
-                        var output_buf = try allocator.alloc(u8, total_len);
-                        var offset: usize = 0;
-                        
-                        for (chunk.compile_results_for_chunk) |result| {
-                            if (result == .javascript) {
-                                const code = result.javascript.code();
-                                @memcpy(output_buf[offset..][0..code.len], code);
-                                offset += code.len;
+                    if (total_len > 0 and code_parts.items.len > 0) {
+                        if (code_parts.items.len == 1) {
+                            // Single part, just use it directly
+                            output_snippet = code_parts.items[0];
+                        } else {
+                            // Multiple parts, concatenate safely
+                            var output_buf = try allocator.alloc(u8, total_len);
+                            var offset: usize = 0;
+                            
+                            for (code_parts.items) |part| {
+                                @memcpy(output_buf[offset..][0..part.len], part);
+                                offset += part.len;
                             }
+                            
+                            output_snippet = output_buf;
                         }
-                        
-                        output_snippet = output_buf;
                     }
                 }
                 

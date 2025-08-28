@@ -956,7 +956,6 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const JSError = bun.JSError;
-const OOM = bun.OOM;
 const String = bun.String;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;

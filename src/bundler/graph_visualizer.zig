@@ -156,6 +156,22 @@ pub const GraphVisualizer = struct {
         chunks: ?[]ChunkData,
         dependency_graph: DependencyGraph,
         runtime_meta: RuntimeMeta,
+        symbol_chains: []SymbolChain,
+    };
+    
+    const SymbolChain = struct {
+        export_name: []const u8,
+        source_file: u32,
+        chain: []ChainLink,
+        has_conflicts: bool,
+        conflict_sources: ?[]u32,
+    };
+    
+    const ChainLink = struct {
+        file_index: u32,
+        symbol_name: []const u8,
+        symbol_ref: []const u8,
+        link_type: []const u8, // "export", "import", "re-export", "namespace"
     };
     
     const RuntimeMeta = struct {
@@ -254,12 +270,19 @@ pub const GraphVisualizer = struct {
         chunk_index: ?u32,
         nested_scope_slot: ?u32,
         flags: SymbolFlags,
+        namespace_alias: ?struct {
+            namespace_ref: []const u8,
+            alias: []const u8,
+        },
     };
     
     const SymbolFlags = struct {
         must_not_be_renamed: bool,
         did_keep_name: bool,
         has_been_assigned_to: bool,
+        must_start_with_capital_letter_for_jsx: bool,
+        private_symbol_must_be_lowered: bool,
+        remove_overwritten_function_declaration: bool,
         import_item_status: []const u8,
     };
     
@@ -273,6 +296,7 @@ pub const GraphVisualizer = struct {
         total_imports: usize,
         total_import_records: usize,
         exports: []ExportInfo,
+        resolved_exports: []ResolvedExportInfo,
         imports: []ImportInfo,
     };
     
@@ -280,6 +304,17 @@ pub const GraphVisualizer = struct {
         source: u32,
         name: []const u8,
         ref: []const u8,
+        original_symbol_name: ?[]const u8,
+        alias_loc: i32,
+    };
+    
+    const ResolvedExportInfo = struct {
+        source: u32,
+        export_alias: []const u8,
+        target_source: ?u32,
+        target_ref: ?[]const u8,
+        potentially_ambiguous: bool,
+        ambiguous_count: usize,
     };
     
     const ImportInfo = struct {
@@ -503,7 +538,7 @@ pub const GraphVisualizer = struct {
                     .kind = @tagName(symbol.kind),
                     .original_name = symbol.original_name,
                     .link = if (symbol.link.isValid()) 
-                        try std.fmt.allocPrint(allocator, "{}", .{symbol.link}) 
+                        try std.fmt.allocPrint(allocator, "Ref[inner={}, src={}, .symbol]", .{symbol.link.innerIndex(), symbol.link.sourceIndex()}) 
                     else null,
                     .use_count_estimate = symbol.use_count_estimate,
                     .chunk_index = if (symbol.chunk_index != invalid_chunk_index) symbol.chunk_index else null,
@@ -512,8 +547,15 @@ pub const GraphVisualizer = struct {
                         .must_not_be_renamed = symbol.must_not_be_renamed,
                         .did_keep_name = symbol.did_keep_name,
                         .has_been_assigned_to = symbol.has_been_assigned_to,
+                        .must_start_with_capital_letter_for_jsx = symbol.must_start_with_capital_letter_for_jsx,
+                        .private_symbol_must_be_lowered = symbol.private_symbol_must_be_lowered,
+                        .remove_overwritten_function_declaration = symbol.remove_overwritten_function_declaration,
                         .import_item_status = @tagName(symbol.import_item_status),
                     },
+                    .namespace_alias = if (symbol.namespace_alias) |alias| .{
+                        .namespace_ref = try std.fmt.allocPrint(allocator, "Ref[inner={}, src={}, .symbol]", .{alias.namespace_ref.innerIndex(), alias.namespace_ref.sourceIndex()}),
+                        .alias = alias.alias,
+                    } else null,
                 };
             }
             
@@ -559,7 +601,7 @@ pub const GraphVisualizer = struct {
             total_import_records += records.len;
         }
         
-        // Collect all exports
+        // Collect all exports with symbol resolution
         var exports_list = try std.ArrayList(ExportInfo).initCapacity(allocator, @min(total_exports, 1000));
         for (ast_named_exports, 0..) |exports, source_idx| {
             if (exports.count() == 0) continue;
@@ -568,13 +610,54 @@ pub const GraphVisualizer = struct {
             while (iter.next()) |entry| {
                 if (exports_list.items.len >= 1000) break; // Limit for performance
                 
+                const export_name = entry.key_ptr.*;
+                const export_ref = entry.value_ptr.ref;
+                
+                // Get the actual symbol name
+                var original_symbol_name: ?[]const u8 = null;
+                if (export_ref.isValid() and source_idx < ctx.graph.symbols.symbols_for_source.len) {
+                    const symbols = ctx.graph.symbols.symbols_for_source.at(export_ref.sourceIndex());
+                    if (export_ref.innerIndex() < symbols.len) {
+                        original_symbol_name = symbols.at(export_ref.innerIndex()).original_name;
+                    }
+                }
+                
                 try exports_list.append(.{
                     .source = @intCast(source_idx),
-                    .name = entry.key_ptr.*,
-                    .ref = try std.fmt.allocPrint(allocator, "{}", .{entry.value_ptr.ref}),
+                    .name = export_name,
+                    .ref = try std.fmt.allocPrint(allocator, "Ref[inner={}, src={}, .symbol]", .{export_ref.innerIndex(), export_ref.sourceIndex()}),
+                    .original_symbol_name = original_symbol_name,
+                    .alias_loc = entry.value_ptr.alias_loc.start,
                 });
             }
             if (exports_list.items.len >= 1000) break;
+        }
+        
+        // Also track resolved exports if available
+        const meta_resolved_exports = meta_list.items(.resolved_exports);
+        var resolved_exports_list = try std.ArrayList(ResolvedExportInfo).initCapacity(allocator, 1000);
+        for (meta_resolved_exports, 0..) |resolved, source_idx| {
+            if (resolved.count() == 0) continue;
+            
+            var iter = resolved.iterator();
+            while (iter.next()) |entry| {
+                if (resolved_exports_list.items.len >= 1000) break;
+                
+                const export_alias = entry.key_ptr.*;
+                const export_data = entry.value_ptr.*;
+                
+                try resolved_exports_list.append(.{
+                    .source = @intCast(source_idx),
+                    .export_alias = export_alias,
+                    .target_source = if (export_data.data.source_index.isValid()) export_data.data.source_index.get() else null,
+                    .target_ref = if (export_data.data.import_ref.isValid()) 
+                        try std.fmt.allocPrint(allocator, "Ref[inner={}, src={}, .symbol]", .{export_data.data.import_ref.innerIndex(), export_data.data.import_ref.sourceIndex()}) 
+                    else null,
+                    .potentially_ambiguous = export_data.potentially_ambiguous_export_star_refs.len > 0,
+                    .ambiguous_count = export_data.potentially_ambiguous_export_star_refs.len,
+                });
+            }
+            if (resolved_exports_list.items.len >= 1000) break;
         }
         
         // Collect all imports
@@ -600,6 +683,7 @@ pub const GraphVisualizer = struct {
             .total_imports = total_imports,
             .total_import_records = total_import_records,
             .exports = exports_list.items,
+            .resolved_exports = resolved_exports_list.items,
             .imports = imports_list.items,
         };
         
@@ -712,6 +796,9 @@ pub const GraphVisualizer = struct {
             .has_html = has_html,
         };
         
+        // Build symbol resolution chains
+        const symbol_chains = try buildSymbolChains(allocator, ctx, exports_list.items, resolved_exports_list.items);
+        
         return GraphData{
             .stage = stage,
             .timestamp = timestamp,
@@ -723,7 +810,100 @@ pub const GraphVisualizer = struct {
             .chunks = chunks_data,
             .dependency_graph = dependency_graph,
             .runtime_meta = runtime_meta,
+            .symbol_chains = symbol_chains,
         };
+    }
+    
+    fn buildSymbolChains(
+        allocator: std.mem.Allocator, 
+        ctx: anytype, 
+        exports: []const ExportInfo,
+        resolved_exports: []const ResolvedExportInfo,
+    ) ![]SymbolChain {
+        _ = ctx; // Will use for more detailed symbol lookups
+        var chains = std.ArrayList(SymbolChain).init(allocator);
+        defer chains.deinit();
+        
+        // Track each unique export and build its resolution chain
+        var seen = std.StringHashMap(void).init(allocator);
+        defer seen.deinit();
+        
+        // Process resolved exports (these have full resolution info)
+        for (resolved_exports) |resolved| {
+            const key = try std.fmt.allocPrint(allocator, "{s}@{}", .{resolved.export_alias, resolved.source});
+            if (seen.contains(key)) continue;
+            try seen.put(key, {});
+            
+            var chain_links = std.ArrayList(ChainLink).init(allocator);
+            
+            // Add export link
+            try chain_links.append(.{
+                .file_index = resolved.source,
+                .symbol_name = resolved.export_alias,
+                .symbol_ref = resolved.target_ref orelse "unresolved",
+                .link_type = if (resolved.target_source != null and resolved.target_source.? != resolved.source) "re-export" else "export",
+            });
+            
+            // If it's a re-export, trace to the target
+            if (resolved.target_source) |target| {
+                if (target != resolved.source) {
+                    // Find the original symbol name at target
+                    const original_name = resolved.export_alias;
+                    if (resolved.target_ref) |ref| {
+                        // Parse ref to get indices
+                        // Format: "Ref[inner=X, src=Y, .symbol]"
+                        // This is a simplified extraction - in production would need proper parsing
+                        if (std.mem.indexOf(u8, ref, "inner=")) |inner_start| {
+                            if (std.mem.indexOf(u8, ref[inner_start..], ",")) |_| {
+                                // Get symbol from graph if possible
+                                // For now, just mark it as imported
+                                try chain_links.append(.{
+                                    .file_index = target,
+                                    .symbol_name = original_name,
+                                    .symbol_ref = ref,
+                                    .link_type = "import",
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            
+            try chains.append(.{
+                .export_name = resolved.export_alias,
+                .source_file = resolved.source,
+                .chain = try chain_links.toOwnedSlice(),
+                .has_conflicts = resolved.potentially_ambiguous,
+                .conflict_sources = if (resolved.potentially_ambiguous) 
+                    try allocator.dupe(u32, &[_]u32{resolved.source}) 
+                else null,
+            });
+        }
+        
+        // Also process direct exports that might not be in resolved
+        for (exports) |exp| {
+            const key = try std.fmt.allocPrint(allocator, "{s}@{}", .{exp.name, exp.source});
+            if (seen.contains(key)) continue;
+            try seen.put(key, {});
+            
+            var chain_links = std.ArrayList(ChainLink).init(allocator);
+            try chain_links.append(.{
+                .file_index = exp.source,
+                .symbol_name = exp.original_symbol_name orelse exp.name,
+                .symbol_ref = exp.ref,
+                .link_type = "export",
+            });
+            
+            try chains.append(.{
+                .export_name = exp.name,
+                .source_file = exp.source,
+                .chain = try chain_links.toOwnedSlice(),
+                .has_conflicts = false,
+                .conflict_sources = null,
+            });
+        }
+        
+        return try chains.toOwnedSlice();
     }
     
     fn generateVisualizerHTML(allocator: std.mem.Allocator, output_dir: []const u8, timestamp: i64) !void {

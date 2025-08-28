@@ -357,7 +357,7 @@ WritableState.prototype[kOnConstructed] = function onConstructed(stream) {
 };
 
 function Writable(options) {
-  if (!(this instanceof Writable)) return Reflect.construct(Writable, [options]);
+  if (!(this instanceof Writable)) return new (Writable as unknown as typeof import("node:stream").Writable)(options);
 
   this._events ??= {
     close: undefined,

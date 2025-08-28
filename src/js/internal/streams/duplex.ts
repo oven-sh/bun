@@ -17,7 +17,7 @@ const ObjectDefineProperties = Object.defineProperties;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 
 function Duplex(options) {
-  if (!(this instanceof Duplex)) return Reflect.construct(Duplex, [options]);
+  if (!(this instanceof Duplex)) return new (Duplex as unknown as typeof import("node:stream").Duplex)(options);
 
   this._events ??= {
     close: undefined,

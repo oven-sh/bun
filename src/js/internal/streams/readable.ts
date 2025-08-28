@@ -261,7 +261,7 @@ ReadableState.prototype[kOnConstructed] = function onConstructed(stream) {
 };
 
 function Readable(options) {
-  if (!(this instanceof Readable)) return Reflect.construct(Readable, [options]);
+  if (!(this instanceof Readable)) return new (Readable as unknown as typeof import("node:stream").Readable)(options);
 
   this._events ??= {
     close: undefined,

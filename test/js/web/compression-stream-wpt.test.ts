@@ -3,7 +3,7 @@
  * Based on WebKit's WPT tests from LayoutTests/imported/w3c/web-platform-tests/compression/
  */
 
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 // Helper functions
 function stringToBytes(str: string): Uint8Array {
@@ -322,7 +322,7 @@ describe("Decompression - Corrupt input", () => {
 
     // Write invalid gzip data
     const corruptData = new Uint8Array([0x1f, 0x8b, 0xff, 0xff, 0xff, 0xff]);
-    
+
     try {
       await writer.write(corruptData);
       await writer.close();
@@ -348,7 +348,7 @@ describe("Decompression - Corrupt input", () => {
     try {
       await writer.write(truncated);
       await writer.close();
-      
+
       // Try to read the data
       const result = await readableStreamToArray(ds.readable);
       // If it doesn't throw, the result should be incomplete

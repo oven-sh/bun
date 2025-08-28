@@ -84,8 +84,16 @@ export function initializeDecompressionStream(format) {
   // Create decoder BEFORE creating transform stream
   const decoder = new $DecompressionStreamDecoder(index);
   $putByIdDirectPrivate(this, "decompressionStreamDecoder", decoder);
-  
-  const transform = $createTransformStream(startAlgorithm, transformAlgorithm, flushAlgorithm, 1, undefined, 16, undefined);
+
+  const transform = $createTransformStream(
+    startAlgorithm,
+    transformAlgorithm,
+    flushAlgorithm,
+    1,
+    undefined,
+    16,
+    undefined,
+  );
   $putByIdDirectPrivate(this, "decompressionStreamTransform", transform);
   return this;
 }

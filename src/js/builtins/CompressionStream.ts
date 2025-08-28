@@ -51,7 +51,7 @@ export function initializeCompressionStream(format) {
 
     try {
       const encoder = $getByIdDirectPrivate(this, "compressionStreamEncoder");
-      
+
       let buffer = encoder.encode(chunk);
       if (buffer) {
         const transformStream = $getByIdDirectPrivate(this, "compressionStreamTransform");
@@ -85,8 +85,16 @@ export function initializeCompressionStream(format) {
   // Create encoder BEFORE creating transform stream
   const encoder = new $CompressionStreamEncoder(index);
   $putByIdDirectPrivate(this, "compressionStreamEncoder", encoder);
-  
-  const transform = $createTransformStream(startAlgorithm, transformAlgorithm, flushAlgorithm, 1, undefined, 16, undefined);
+
+  const transform = $createTransformStream(
+    startAlgorithm,
+    transformAlgorithm,
+    flushAlgorithm,
+    1,
+    undefined,
+    16,
+    undefined,
+  );
   $putByIdDirectPrivate(this, "compressionStreamTransform", transform);
   return this;
 }

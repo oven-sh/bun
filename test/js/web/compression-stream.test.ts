@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 // Test data
 const TEST_STRING = "Hello, World! This is a test string for compression and decompression.";
@@ -230,7 +230,7 @@ test("DecompressionStream handles invalid compressed data", async () => {
 
   // Write invalid data
   const invalidData = new Uint8Array([1, 2, 3, 4, 5]);
-  
+
   // The error can be thrown either during write or close
   try {
     await writer.write(invalidData);
@@ -360,9 +360,9 @@ test("DataView works as input", async () => {
 test("write after close throws error", async () => {
   const cs = new CompressionStream("gzip");
   const writer = cs.writable.getWriter();
-  
+
   await writer.close();
-  
+
   // Writing after close should reject
   await expect(writer.write(stringToBytes("test"))).rejects.toThrow();
 });
@@ -370,7 +370,7 @@ test("write after close throws error", async () => {
 test("double close is idempotent", async () => {
   const cs = new CompressionStream("gzip");
   const writer = cs.writable.getWriter();
-  
+
   await writer.close();
   // Second close should be a no-op or rejected promise - both are acceptable
   try {
@@ -387,11 +387,11 @@ test("incremental output - data is produced before close", async () => {
   const cs = new CompressionStream("gzip");
   const writer = cs.writable.getWriter();
   const reader = cs.readable.getReader();
-  
+
   // Write a large chunk
   const largeData = "x".repeat(100000);
   await writer.write(stringToBytes(largeData));
-  
+
   // Should be able to read some compressed data before closing
   const { done, value } = await reader.read();
   expect(done).toBe(false);
@@ -399,7 +399,7 @@ test("incremental output - data is produced before close", async () => {
     expect(value).toBeInstanceOf(Uint8Array);
     expect(value.length).toBeGreaterThan(0);
   }
-  
+
   reader.releaseLock();
   await writer.close();
 });
@@ -408,21 +408,21 @@ test("very small chunks compression", async () => {
   const cs = new CompressionStream("gzip");
   const writer = cs.writable.getWriter();
   const reader = cs.readable.getReader();
-  
+
   // Write single bytes
   const text = "Hello";
   for (const char of text) {
     await writer.write(stringToBytes(char));
   }
   await writer.close();
-  
+
   const chunks: Uint8Array[] = [];
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     chunks.push(value);
   }
-  
+
   // Decompress and verify
   const compressed = new Uint8Array(chunks.reduce((acc, chunk) => acc + chunk.length, 0));
   let offset = 0;
@@ -430,21 +430,21 @@ test("very small chunks compression", async () => {
     compressed.set(chunk, offset);
     offset += chunk.length;
   }
-  
+
   const ds = new DecompressionStream("gzip");
   const dsWriter = ds.writable.getWriter();
   const dsReader = ds.readable.getReader();
-  
+
   dsWriter.write(compressed);
   dsWriter.close();
-  
+
   const decompressedChunks: Uint8Array[] = [];
   while (true) {
     const { done, value } = await dsReader.read();
     if (done) break;
     decompressedChunks.push(value);
   }
-  
+
   const result = bytesToString(
     new Uint8Array(
       decompressedChunks.reduce((acc, chunk) => {
@@ -455,7 +455,7 @@ test("very small chunks compression", async () => {
       }, new Uint8Array(0)),
     ),
   );
-  
+
   expect(result).toBe(text);
 });
 
@@ -463,29 +463,29 @@ test("zero-length chunk in middle of stream", async () => {
   const cs = new CompressionStream("deflate");
   const writer = cs.writable.getWriter();
   const reader = cs.readable.getReader();
-  
+
   await writer.write(stringToBytes("Hello"));
   await writer.write(new Uint8Array(0)); // Zero-length chunk
   await writer.write(stringToBytes(" World"));
   await writer.close();
-  
+
   const chunks: Uint8Array[] = [];
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     chunks.push(value);
   }
-  
+
   expect(chunks.length).toBeGreaterThan(0);
 });
 
 test("abort signal handling", async () => {
   const cs = new CompressionStream("gzip");
   const writer = cs.writable.getWriter();
-  
+
   // Abort the writer
   await writer.abort("Test abort");
-  
+
   // Further operations should fail
   await expect(writer.write(stringToBytes("more data"))).rejects.toThrow();
 });
@@ -493,14 +493,14 @@ test("abort signal handling", async () => {
 test("memory management - multiple streams", () => {
   // Create many streams to test memory handling
   const streams: CompressionStream[] = [];
-  
+
   for (let i = 0; i < 100; i++) {
     streams.push(new CompressionStream("gzip"));
   }
-  
+
   // All streams should be created successfully
   expect(streams.length).toBe(100);
-  
+
   // Verify each has readable and writable
   for (const stream of streams) {
     expect(stream.readable).toBeInstanceOf(ReadableStream);
@@ -511,45 +511,45 @@ test("memory management - multiple streams", () => {
 test("Node.js zlib compatibility roundtrip", async () => {
   const zlib = require("node:zlib");
   const text = "Test compatibility with Node.js zlib";
-  
+
   // Compress with CompressionStream
   const cs = new CompressionStream("gzip");
   const writer = cs.writable.getWriter();
   const reader = cs.readable.getReader();
-  
+
   writer.write(stringToBytes(text));
   writer.close();
-  
+
   const chunks: Uint8Array[] = [];
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     chunks.push(value);
   }
-  
+
   const compressed = Buffer.concat(chunks);
-  
+
   // Decompress with Node.js zlib
   const decompressed = zlib.gunzipSync(compressed);
   expect(decompressed.toString()).toBe(text);
-  
+
   // Also test the reverse: compress with Node.js, decompress with DecompressionStream
   const nodeCompressed = zlib.gzipSync(text);
-  
+
   const ds = new DecompressionStream("gzip");
   const dsWriter = ds.writable.getWriter();
   const dsReader = ds.readable.getReader();
-  
+
   dsWriter.write(new Uint8Array(nodeCompressed));
   dsWriter.close();
-  
+
   const dsChunks: Uint8Array[] = [];
   while (true) {
     const { done, value } = await dsReader.read();
     if (done) break;
     dsChunks.push(value);
   }
-  
+
   const dsResult = bytesToString(
     new Uint8Array(
       dsChunks.reduce((acc, chunk) => {
@@ -560,79 +560,79 @@ test("Node.js zlib compatibility roundtrip", async () => {
       }, new Uint8Array(0)),
     ),
   );
-  
+
   expect(dsResult).toBe(text);
 });
 
 test("chaining multiple compression streams", async () => {
   const text = "Chain multiple compressions";
   const input = stringToBytes(text);
-  
+
   // First compression (gzip)
   const cs1 = new CompressionStream("gzip");
   const writer1 = cs1.writable.getWriter();
   const reader1 = cs1.readable.getReader();
-  
+
   writer1.write(input);
   writer1.close();
-  
+
   const compressed1: Uint8Array[] = [];
   while (true) {
     const { done, value } = await reader1.read();
     if (done) break;
     compressed1.push(value);
   }
-  
+
   // Second compression (deflate) - compress the already compressed data
   const cs2 = new CompressionStream("deflate");
   const writer2 = cs2.writable.getWriter();
   const reader2 = cs2.readable.getReader();
-  
+
   for (const chunk of compressed1) {
     await writer2.write(chunk);
   }
   writer2.close();
-  
+
   const compressed2: Uint8Array[] = [];
   while (true) {
     const { done, value } = await reader2.read();
     if (done) break;
     compressed2.push(value);
   }
-  
+
   // Now decompress in reverse order
   const ds1 = new DecompressionStream("deflate");
   const dsWriter1 = ds1.writable.getWriter();
   const dsReader1 = ds1.readable.getReader();
-  
+
   for (const chunk of compressed2) {
     await dsWriter1.write(chunk);
   }
   dsWriter1.close();
-  
+
   const decompressed1: Uint8Array[] = [];
   while (true) {
     const { done, value } = await dsReader1.read();
     if (done) break;
     decompressed1.push(value);
   }
-  
+
   const ds2 = new DecompressionStream("gzip");
   const dsWriter2 = ds2.writable.getWriter();
   const dsReader2 = ds2.readable.getReader();
-  
+
   for (const chunk of decompressed1) {
     await dsWriter2.write(chunk);
   }
   dsWriter2.close();
-  
+
   const finalChunks: Uint8Array[] = [];
   while (true) {
     const { done, value } = await dsReader2.read();
     if (done) break;
     finalChunks.push(value);
   }
-  
+
   const result = bytesToString(
     new Uint8Array(
       finalChunks.reduce((acc, chunk) => {
@@ -643,6 +643,6 @@ test("chaining multiple compression streams", async () => {
       }, new Uint8Array(0)),
     ),
   );
-  
+
   expect(result).toBe(text);
 });

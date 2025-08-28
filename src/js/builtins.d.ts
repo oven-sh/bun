@@ -144,7 +144,7 @@ declare function $createTransformStream(
   writableHighWaterMark?: number,
   writableSizeAlgorithm?: (chunk: any) => number,
   readableHighWaterMark?: number,
-  readableSizeAlgorithm?: (chunk: any) => number
+  readableSizeAlgorithm?: (chunk: any) => number,
 ): TransformStream;
 
 interface Console {

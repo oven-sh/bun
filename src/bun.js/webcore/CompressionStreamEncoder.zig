@@ -1,13 +1,5 @@
 const CompressionStreamEncoder = @This();
 
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.jsc;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const zlib = bun.zlib;
-const zstd = @import("../../deps/zstd.zig");
-
 // Compression state - maintains compressor across multiple encode calls
 state: union(enum) {
     uninitialized,
@@ -278,7 +270,7 @@ pub fn encode(this: *CompressionStreamEncoder, globalObject: *JSGlobalObject, ca
         };
         return JSC.ArrayBuffer.fromBytes(result, .Uint8Array).toJS(globalObject);
     }
-    
+
     return JSValue.jsNull();
 }
 
@@ -379,3 +371,13 @@ pub fn flush(this: *CompressionStreamEncoder, globalObject: *JSGlobalObject, _: 
 
     return JSC.ArrayBuffer.fromBytes(result, .Uint8Array).toJS(globalObject);
 }
+
+const std = @import("std");
+const zstd = @import("../../deps/zstd.zig");
+
+const bun = @import("bun");
+const zlib = bun.zlib;
+
+const JSC = bun.jsc;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

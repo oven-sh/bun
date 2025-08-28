@@ -1,13 +1,5 @@
 const DecompressionStreamDecoder = @This();
 
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.jsc;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const zlib = bun.zlib;
-const zstd = @import("../../deps/zstd.zig");
-
 // Decompression state - maintains decompressor across multiple decode calls
 state: union(enum) {
     uninitialized,
@@ -371,7 +363,7 @@ pub fn flush(this: *DecompressionStreamDecoder, globalObject: *JSGlobalObject, _
 
                 this.input_buffer.clearRetainingCapacity();
             }
-            
+
             // Final validation - check if stream is properly finished
             if (!decoder.isFinished()) {
                 return globalObject.throwValue(globalObject.createErrorInstance("Incomplete Brotli stream - not properly finished", .{}));
@@ -471,3 +463,13 @@ pub fn flush(this: *DecompressionStreamDecoder, globalObject: *JSGlobalObject, _
 
     return JSC.ArrayBuffer.fromBytes(result, .Uint8Array).toJS(globalObject);
 }
+
+const std = @import("std");
+const zstd = @import("../../deps/zstd.zig");
+
+const bun = @import("bun");
+const zlib = bun.zlib;
+
+const JSC = bun.jsc;
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSValue = JSC.JSValue;

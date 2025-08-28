@@ -9,25 +9,25 @@ describe("bun update security edge cases", () => {
       "package.json": JSON.stringify({
         name: "test-app",
         dependencies: {
-          "lodash": "4.17.20",  // Exact version that's safe
+          "lodash": "4.17.20", // Exact version that's safe
         },
       }),
     });
 
     // First install - should be safe (no scanner yet)
     await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-    
+
     // Now add scanner and update package.json to allow updates
     await Bun.write(
       join(dir, "package.json"),
       JSON.stringify({
         name: "test-app",
         dependencies: {
-          "lodash": "^4.17.0",  // Now allow updates
+          "lodash": "^4.17.0", // Now allow updates
         },
       }),
     );
-    
+
     await Bun.write(
       join(dir, "bunfig.toml"),
       `
@@ -35,7 +35,7 @@ describe("bun update security edge cases", () => {
 scanner = "./scanner.js"
 `,
     );
-    
+
     await Bun.write(
       join(dir, "scanner.js"),
       `

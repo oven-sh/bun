@@ -1,41 +1,36 @@
 import { $ } from "bun";
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "node:path";
+import { getRegistry, startRegistry, stopRegistry } from "./simple-dummy-registry";
 
 interface SecurityScannerTestOptions {
-  // Command configuration
-  command: "install" | "update" | "add";
-  args?: string[]; // Package names for update/add
-
-  // Environment configuration
+  command: "install" | "update" | "add" | "remove" | "uninstall";
+  args?: string[];
   hasExistingNodeModules?: boolean;
   linker?: "hoisted" | "isolated";
-
-  // Scanner configuration
   scannerType: "local" | "npm" | "bunfig-only";
-  scannerPackageName?: string; // For npm scanner
-
-  // Scanner behavior
+  scannerPackageName?: string;
   scannerReturns?: "clean" | "warn" | "fatal";
-  scannerError?: boolean; // Scanner throws an error
-
-  // Expected outcomes
+  scannerError?: boolean;
   shouldFail?: boolean;
   expectedExitCode?: number;
   expectedOutput?: string[];
   unexpectedOutput?: string[];
   expectedError?: string;
 
-  // Test metadata
-  testName?: string;
-  skipTest?: boolean;
-
-  // Additional package.json dependencies
   additionalDependencies?: Record<string, string>;
 }
 
+let registryUrl: string;
+
 async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
+  // Clear registry request log before test
+  const registry = getRegistry();
+  if (registry) {
+    registry.clearRequestLog();
+  }
+
   const {
     command,
     args = [],
@@ -153,6 +148,7 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
 [install]
 cache = false
 linker = "${linker}"
+registry = "${registryUrl}/"
 
 [install.security]
 scanner = "${scannerPath}"
@@ -208,14 +204,34 @@ scanner = "${scannerPath}"
     expect(stderr).toContain(expectedError);
   }
 
-  // Return results for additional assertions if needed
+  if (registry) {
+    const requestedPackages = registry.getRequestedPackages();
+    const requestedTarballs = registry.getRequestedTarballs();
+
+    if (command === "install") {
+      expect(requestedPackages).toMatchSnapshot("requested-packages: install");
+      expect(requestedTarballs).toMatchSnapshot("requested-tarballs: install");
+    } else if (command === "add") {
+      expect(requestedPackages).toMatchSnapshot("requested-packages: add");
+      expect(requestedTarballs).toMatchSnapshot("requested-tarballs: add");
+    } else if (command === "update") {
+      if (args.length > 0) {
+        expect(requestedPackages).toMatchSnapshot("requested-packages: update with args");
+        expect(requestedTarballs).toMatchSnapshot("requested-tarballs: update with args");
+      } else {
+        expect(requestedPackages).toMatchSnapshot("requested-packages: update without args");
+        expect(requestedTarballs).toMatchSnapshot("requested-tarballs: update without args");
+      }
+    } else {
+      expect(requestedPackages).toMatchSnapshot("requested-packages: unknown command");
+      expect(requestedTarballs).toMatchSnapshot("requested-tarballs: unknown command");
+    }
+  }
+
   return { stdout, stderr, exitCode, dir };
 }
 
-// Helper to generate test name
 function generateTestName(options: SecurityScannerTestOptions): string {
-  if (options.testName) return options.testName;
-
   const parts = [
     `${options.command}`,
     options.args?.length ? `with ${options.args.join(",")}` : "no args",
@@ -228,6 +244,14 @@ function generateTestName(options: SecurityScannerTestOptions): string {
 
   return parts.join(" - ");
 }
+
+beforeAll(async () => {
+  registryUrl = await startRegistry();
+});
+
+afterAll(() => {
+  stopRegistry();
+});
 
 describe("Security Scanner Matrix Tests", () => {
   // describe("Commands", () => {
@@ -364,7 +388,7 @@ describe("Security Scanner Matrix Tests", () => {
   //   });
   // });
 
-  describe.each(["install", "update", "add"] as const)("Full Matrix - Command: %s", command => {
+  describe.each(["install", "update", "add", "remove", "uninstall"] as const)("bun %s", command => {
     const argConfigs: Array<{ args: string[]; name: string }> =
       command === "install"
         ? [{ args: [], name: "no args" }]
@@ -378,14 +402,14 @@ describe("Security Scanner Matrix Tests", () => {
               { args: ["left-pad", "is-even"], name: "left-pad,is-even" },
             ];
 
-    describe.each(argConfigs)("Args: $name", ({ args }) => {
-      describe.each(["true", "false"] as const)("Has node_modules: %s", _hasNodeModules => {
-        const hasNodeModules = _hasNodeModules === "true";
+    describe.each(argConfigs)("$name", ({ args }) => {
+      describe.each(["true", "false"] as const)("(node_modules: %s)", _hasNodeModules => {
+        const hasExistingNodeModules = _hasNodeModules === "true";
 
-        describe.each(["hoisted", "isolated"] as const)("Linker: %s", linker => {
-          describe.each(["local", "npm", "bunfig-only"] as const)("Scanner: %s", scannerType => {
-            describe.each(["clean", "warn", "fatal"] as const)("Scanner returns: %s", scannerReturns => {
-              if (command === "install" && hasNodeModules) {
+        describe.each(["hoisted", "isolated"] as const)("--linker=%s", linker => {
+          describe.each(["local", "npm", "bunfig-only"] as const)("(scanner: %s)", scannerType => {
+            describe.each(["clean", "warn", "fatal"] as const)("(returns: %s)", scannerReturns => {
+              if (command === "install" && hasExistingNodeModules) {
                 return;
               }
 
@@ -395,14 +419,7 @@ describe("Security Scanner Matrix Tests", () => {
 
               if (scannerType === "npm") {
                 test.todo(
-                  generateTestName({
-                    command,
-                    args,
-                    hasExistingNodeModules: hasNodeModules,
-                    linker,
-                    scannerType,
-                    scannerReturns,
-                  }),
+                  generateTestName({ command, args, hasExistingNodeModules, linker, scannerType, scannerReturns }),
                   async () => {
                     // TODO: Properly set up npm scanner tests
                   },
@@ -425,19 +442,12 @@ describe("Security Scanner Matrix Tests", () => {
               }
 
               test(
-                generateTestName({
-                  command,
-                  args,
-                  hasExistingNodeModules: hasNodeModules,
-                  linker,
-                  scannerType,
-                  scannerReturns,
-                }),
+                generateTestName({ command, args, hasExistingNodeModules, linker, scannerType, scannerReturns }),
                 async () => {
                   await runSecurityScannerTest({
                     command,
                     args,
-                    hasExistingNodeModules: hasNodeModules,
+                    hasExistingNodeModules,
                     linker,
                     scannerType,
                     scannerReturns,

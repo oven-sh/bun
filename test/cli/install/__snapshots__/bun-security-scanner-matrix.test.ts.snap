@@ -947,3 +947,323 @@ exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules:
 `;
 
 exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: fatal) add - with left-pad,is-even - clean install - isolated linker - bunfig-only scanner - returns fatal: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: clean) remove - with is-even - existing node_modules - hoisted linker - local scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: clean) remove - with is-even - existing node_modules - hoisted linker - local scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) remove - with is-even - existing node_modules - hoisted linker - bunfig-only scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) remove - with is-even - existing node_modules - hoisted linker - bunfig-only scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: warn) remove - with is-even - existing node_modules - hoisted linker - bunfig-only scanner - returns warn: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: warn) remove - with is-even - existing node_modules - hoisted linker - bunfig-only scanner - returns warn: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: fatal) remove - with is-even - existing node_modules - hoisted linker - bunfig-only scanner - returns fatal: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: fatal) remove - with is-even - existing node_modules - hoisted linker - bunfig-only scanner - returns fatal: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: clean) remove - with is-even - existing node_modules - isolated linker - local scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: clean) remove - with is-even - existing node_modules - isolated linker - local scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) remove - with is-even - existing node_modules - isolated linker - bunfig-only scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) remove - with is-even - existing node_modules - isolated linker - bunfig-only scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: warn) remove - with is-even - existing node_modules - isolated linker - bunfig-only scanner - returns warn: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: warn) remove - with is-even - existing node_modules - isolated linker - bunfig-only scanner - returns warn: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: fatal) remove - with is-even - existing node_modules - isolated linker - bunfig-only scanner - returns fatal: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: fatal) remove - with is-even - existing node_modules - isolated linker - bunfig-only scanner - returns fatal: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: clean) remove - with is-even - clean install - hoisted linker - local scanner: requested-packages: unknown command 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: clean) remove - with is-even - clean install - hoisted linker - local scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: clean) remove - with is-even - clean install - hoisted linker - bunfig-only scanner: requested-packages: unknown command 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: clean) remove - with is-even - clean install - hoisted linker - bunfig-only scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: warn) remove - with is-even - clean install - hoisted linker - bunfig-only scanner - returns warn: requested-packages: unknown command 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: warn) remove - with is-even - clean install - hoisted linker - bunfig-only scanner - returns warn: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: fatal) remove - with is-even - clean install - hoisted linker - bunfig-only scanner - returns fatal: requested-packages: unknown command 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: fatal) remove - with is-even - clean install - hoisted linker - bunfig-only scanner - returns fatal: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: clean) remove - with is-even - clean install - isolated linker - local scanner: requested-packages: unknown command 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: clean) remove - with is-even - clean install - isolated linker - local scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: clean) remove - with is-even - clean install - isolated linker - bunfig-only scanner: requested-packages: unknown command 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: clean) remove - with is-even - clean install - isolated linker - bunfig-only scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: warn) remove - with is-even - clean install - isolated linker - bunfig-only scanner - returns warn: requested-packages: unknown command 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: warn) remove - with is-even - clean install - isolated linker - bunfig-only scanner - returns warn: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: fatal) remove - with is-even - clean install - isolated linker - bunfig-only scanner - returns fatal: requested-packages: unknown command 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: fatal) remove - with is-even - clean install - isolated linker - bunfig-only scanner - returns fatal: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: clean) remove - with left-pad,is-even - existing node_modules - hoisted linker - local scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: clean) remove - with left-pad,is-even - existing node_modules - hoisted linker - local scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) remove - with left-pad,is-even - existing node_modules - hoisted linker - bunfig-only scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) remove - with left-pad,is-even - existing node_modules - hoisted linker - bunfig-only scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: warn) remove - with left-pad,is-even - existing node_modules - hoisted linker - bunfig-only scanner - returns warn: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: warn) remove - with left-pad,is-even - existing node_modules - hoisted linker - bunfig-only scanner - returns warn: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: fatal) remove - with left-pad,is-even - existing node_modules - hoisted linker - bunfig-only scanner - returns fatal: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: fatal) remove - with left-pad,is-even - existing node_modules - hoisted linker - bunfig-only scanner - returns fatal: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: clean) remove - with left-pad,is-even - existing node_modules - isolated linker - local scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: clean) remove - with left-pad,is-even - existing node_modules - isolated linker - local scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) remove - with left-pad,is-even - existing node_modules - isolated linker - bunfig-only scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) remove - with left-pad,is-even - existing node_modules - isolated linker - bunfig-only scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: warn) remove - with left-pad,is-even - existing node_modules - isolated linker - bunfig-only scanner - returns warn: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: warn) remove - with left-pad,is-even - existing node_modules - isolated linker - bunfig-only scanner - returns warn: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: fatal) remove - with left-pad,is-even - existing node_modules - isolated linker - bunfig-only scanner - returns fatal: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: fatal) remove - with left-pad,is-even - existing node_modules - isolated linker - bunfig-only scanner - returns fatal: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: clean) remove - with left-pad,is-even - clean install - hoisted linker - local scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: clean) remove - with left-pad,is-even - clean install - hoisted linker - local scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: clean) remove - with left-pad,is-even - clean install - hoisted linker - bunfig-only scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: clean) remove - with left-pad,is-even - clean install - hoisted linker - bunfig-only scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: warn) remove - with left-pad,is-even - clean install - hoisted linker - bunfig-only scanner - returns warn: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: warn) remove - with left-pad,is-even - clean install - hoisted linker - bunfig-only scanner - returns warn: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: fatal) remove - with left-pad,is-even - clean install - hoisted linker - bunfig-only scanner - returns fatal: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: fatal) remove - with left-pad,is-even - clean install - hoisted linker - bunfig-only scanner - returns fatal: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: clean) remove - with left-pad,is-even - clean install - isolated linker - local scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: clean) remove - with left-pad,is-even - clean install - isolated linker - local scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: clean) remove - with left-pad,is-even - clean install - isolated linker - bunfig-only scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: clean) remove - with left-pad,is-even - clean install - isolated linker - bunfig-only scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: warn) remove - with left-pad,is-even - clean install - isolated linker - bunfig-only scanner - returns warn: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: warn) remove - with left-pad,is-even - clean install - isolated linker - bunfig-only scanner - returns warn: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: fatal) remove - with left-pad,is-even - clean install - isolated linker - bunfig-only scanner - returns fatal: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: fatal) remove - with left-pad,is-even - clean install - isolated linker - bunfig-only scanner - returns fatal: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: clean) uninstall - with is-even - existing node_modules - hoisted linker - local scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: clean) uninstall - with is-even - existing node_modules - hoisted linker - local scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) uninstall - with is-even - existing node_modules - hoisted linker - bunfig-only scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) uninstall - with is-even - existing node_modules - hoisted linker - bunfig-only scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: warn) uninstall - with is-even - existing node_modules - hoisted linker - bunfig-only scanner - returns warn: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: warn) uninstall - with is-even - existing node_modules - hoisted linker - bunfig-only scanner - returns warn: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: fatal) uninstall - with is-even - existing node_modules - hoisted linker - bunfig-only scanner - returns fatal: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: fatal) uninstall - with is-even - existing node_modules - hoisted linker - bunfig-only scanner - returns fatal: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: clean) uninstall - with is-even - existing node_modules - isolated linker - local scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: clean) uninstall - with is-even - existing node_modules - isolated linker - local scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) uninstall - with is-even - existing node_modules - isolated linker - bunfig-only scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) uninstall - with is-even - existing node_modules - isolated linker - bunfig-only scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: warn) uninstall - with is-even - existing node_modules - isolated linker - bunfig-only scanner - returns warn: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: warn) uninstall - with is-even - existing node_modules - isolated linker - bunfig-only scanner - returns warn: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: fatal) uninstall - with is-even - existing node_modules - isolated linker - bunfig-only scanner - returns fatal: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: fatal) uninstall - with is-even - existing node_modules - isolated linker - bunfig-only scanner - returns fatal: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: clean) uninstall - with is-even - clean install - hoisted linker - local scanner: requested-packages: unknown command 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: clean) uninstall - with is-even - clean install - hoisted linker - local scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: clean) uninstall - with is-even - clean install - hoisted linker - bunfig-only scanner: requested-packages: unknown command 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: clean) uninstall - with is-even - clean install - hoisted linker - bunfig-only scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: warn) uninstall - with is-even - clean install - hoisted linker - bunfig-only scanner - returns warn: requested-packages: unknown command 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: warn) uninstall - with is-even - clean install - hoisted linker - bunfig-only scanner - returns warn: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: fatal) uninstall - with is-even - clean install - hoisted linker - bunfig-only scanner - returns fatal: requested-packages: unknown command 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: fatal) uninstall - with is-even - clean install - hoisted linker - bunfig-only scanner - returns fatal: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: clean) uninstall - with is-even - clean install - isolated linker - local scanner: requested-packages: unknown command 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: clean) uninstall - with is-even - clean install - isolated linker - local scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: clean) uninstall - with is-even - clean install - isolated linker - bunfig-only scanner: requested-packages: unknown command 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: clean) uninstall - with is-even - clean install - isolated linker - bunfig-only scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: warn) uninstall - with is-even - clean install - isolated linker - bunfig-only scanner - returns warn: requested-packages: unknown command 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: warn) uninstall - with is-even - clean install - isolated linker - bunfig-only scanner - returns warn: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: fatal) uninstall - with is-even - clean install - isolated linker - bunfig-only scanner - returns fatal: requested-packages: unknown command 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: fatal) uninstall - with is-even - clean install - isolated linker - bunfig-only scanner - returns fatal: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: clean) uninstall - with left-pad,is-even - existing node_modules - hoisted linker - local scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: clean) uninstall - with left-pad,is-even - existing node_modules - hoisted linker - local scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) uninstall - with left-pad,is-even - existing node_modules - hoisted linker - bunfig-only scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) uninstall - with left-pad,is-even - existing node_modules - hoisted linker - bunfig-only scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: warn) uninstall - with left-pad,is-even - existing node_modules - hoisted linker - bunfig-only scanner - returns warn: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: warn) uninstall - with left-pad,is-even - existing node_modules - hoisted linker - bunfig-only scanner - returns warn: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: fatal) uninstall - with left-pad,is-even - existing node_modules - hoisted linker - bunfig-only scanner - returns fatal: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: fatal) uninstall - with left-pad,is-even - existing node_modules - hoisted linker - bunfig-only scanner - returns fatal: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: clean) uninstall - with left-pad,is-even - existing node_modules - isolated linker - local scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: clean) uninstall - with left-pad,is-even - existing node_modules - isolated linker - local scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) uninstall - with left-pad,is-even - existing node_modules - isolated linker - bunfig-only scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) uninstall - with left-pad,is-even - existing node_modules - isolated linker - bunfig-only scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: warn) uninstall - with left-pad,is-even - existing node_modules - isolated linker - bunfig-only scanner - returns warn: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: warn) uninstall - with left-pad,is-even - existing node_modules - isolated linker - bunfig-only scanner - returns warn: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: fatal) uninstall - with left-pad,is-even - existing node_modules - isolated linker - bunfig-only scanner - returns fatal: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: fatal) uninstall - with left-pad,is-even - existing node_modules - isolated linker - bunfig-only scanner - returns fatal: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: clean) uninstall - with left-pad,is-even - clean install - hoisted linker - local scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: clean) uninstall - with left-pad,is-even - clean install - hoisted linker - local scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: clean) uninstall - with left-pad,is-even - clean install - hoisted linker - bunfig-only scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: clean) uninstall - with left-pad,is-even - clean install - hoisted linker - bunfig-only scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: warn) uninstall - with left-pad,is-even - clean install - hoisted linker - bunfig-only scanner - returns warn: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: warn) uninstall - with left-pad,is-even - clean install - hoisted linker - bunfig-only scanner - returns warn: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: fatal) uninstall - with left-pad,is-even - clean install - hoisted linker - bunfig-only scanner - returns fatal: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: fatal) uninstall - with left-pad,is-even - clean install - hoisted linker - bunfig-only scanner - returns fatal: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: clean) uninstall - with left-pad,is-even - clean install - isolated linker - local scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: clean) uninstall - with left-pad,is-even - clean install - isolated linker - local scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: clean) uninstall - with left-pad,is-even - clean install - isolated linker - bunfig-only scanner: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: clean) uninstall - with left-pad,is-even - clean install - isolated linker - bunfig-only scanner: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: warn) uninstall - with left-pad,is-even - clean install - isolated linker - bunfig-only scanner - returns warn: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: warn) uninstall - with left-pad,is-even - clean install - isolated linker - bunfig-only scanner - returns warn: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: fatal) uninstall - with left-pad,is-even - clean install - isolated linker - bunfig-only scanner - returns fatal: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: fatal) uninstall - with left-pad,is-even - clean install - isolated linker - bunfig-only scanner - returns fatal: requested-tarballs: unknown command 1`] = `[]`;

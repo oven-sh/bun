@@ -567,7 +567,7 @@ pub fn installWithManager(
         manager.verifyResolutions(log_level);
 
         if (manager.options.security_scanner != null) {
-            const is_subcommand_to_run_scanner = manager.subcommand == .add or manager.subcommand == .update or manager.subcommand == .install;
+            const is_subcommand_to_run_scanner = manager.subcommand == .add or manager.subcommand == .update or manager.subcommand == .install or manager.subcommand == .remove;
 
             if (is_subcommand_to_run_scanner) {
                 const results = (security_scanner.performSecurityScanAfterResolution(manager, ctx, original_cwd) catch |err| {

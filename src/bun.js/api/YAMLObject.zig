@@ -26,7 +26,6 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
 
 pub fn stringify(global: *JSGlobalObject, callFrame: *jsc.CallFrame) JSError!JSValue {
     const value, const replacer, const space_value = callFrame.argumentsAsArray(3);
-    _ = space_value;
 
     value.ensureStillAlive();
 
@@ -41,7 +40,7 @@ pub fn stringify(global: *JSGlobalObject, callFrame: *jsc.CallFrame) JSError!JSV
     var scope: bun.AllocationScope = .init(bun.default_allocator);
     defer scope.deinit();
 
-    var stringifier: Stringifier = try .init(scope.allocator());
+    var stringifier: Stringifier = try .init(scope.allocator(), global, space_value);
     defer stringifier.deinit();
 
     try stringifier.findAnchorsAndAliases(global, value, .root);
@@ -59,6 +58,40 @@ const Stringifier = struct {
     known_collections: std.AutoHashMap(JSValue, AnchorAlias),
     array_item_counter: usize,
     prop_names: bun.StringHashMap(usize),
+
+    space: Space,
+
+    pub const Space = union(enum) {
+        number: u32,
+        str: String,
+
+        pub fn init(global: *JSGlobalObject, space_value: JSValue) JSError!Space {
+            if (space_value.isUndefinedOrNull()) {
+                return .{ .number = 2 };
+            }
+
+            if (space_value.isNumber()) {
+                var num = space_value.toInt32();
+                if (num <= 0) {
+                    // default is 2.
+                    num = 2;
+                }
+                return .{ .number = @intCast(num) };
+            }
+
+            const str = try space_value.toBunString(global);
+            return .{ .str = str };
+        }
+
+        pub fn deinit(this: *const Space) void {
+            switch (this.*) {
+                .number => {},
+                .str => |str| {
+                    str.deref();
+                },
+            }
+        }
+    };
 
     const AnchorOrigin = enum {
         root,
@@ -95,11 +128,12 @@ const Stringifier = struct {
         };
     };
 
-    pub fn init(allocator: std.mem.Allocator) OOM!Stringifier {
+    pub fn init(allocator: std.mem.Allocator, global: *JSGlobalObject, space_value: JSValue) JSError!Stringifier {
         var prop_names: bun.StringHashMap(usize) = .init(allocator);
         // always rename anchors named "root" to avoid collision with
         // root anchor/alias
         try prop_names.put("root", 0);
+
         return .{
             .stack_check = .init(),
             .builder = .init(),
@@ -107,6 +141,7 @@ const Stringifier = struct {
             .known_collections = .init(allocator),
             .array_item_counter = 0,
             .prop_names = prop_names,
+            .space = try .init(global, space_value),
         };
     }
 
@@ -114,6 +149,7 @@ const Stringifier = struct {
         this.builder.deinit();
         this.known_collections.deinit();
         this.prop_names.deinit();
+        this.space.deinit();
     }
 
     const ValueOrigin = union(AnchorOrigin) {
@@ -392,12 +428,23 @@ const Stringifier = struct {
     }
 
     fn newline(this: *Stringifier) void {
-        const indent_count = this.indent * 2;
-        this.builder.ensureUnusedCapacity(indent_count + "\n".len);
+        const indent_count = this.indent;
 
         this.builder.append(.lchar, '\n');
-        for (0..indent_count) |_| {
-            this.builder.append(.lchar, ' ');
+
+        switch (this.space) {
+            .number => |space_num| {
+                this.builder.ensureUnusedCapacity(indent_count * space_num);
+                for (0..indent_count * space_num) |_| {
+                    this.builder.append(.lchar, ' ');
+                }
+            },
+            .str => |space_str| {
+                this.builder.ensureUnusedCapacity(indent_count * space_str.length());
+                for (0..indent_count) |_| {
+                    this.builder.append(.string, space_str);
+                }
+            },
         }
     }
 

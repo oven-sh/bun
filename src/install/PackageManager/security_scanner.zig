@@ -595,49 +595,43 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
     const json_data = try json_builder.buildPackageJSON();
     defer manager.allocator.free(json_data);
 
-    // Replace placeholders in the embedded scanner entry script
-    var code_buf = std.ArrayList(u8).init(manager.allocator);
-    defer code_buf.deinit();
+    var code = std.ArrayList(u8).init(manager.allocator);
+    defer code.deinit();
 
-    var temp_source = try manager.allocator.dupe(u8, scanner_entry_source);
+    var temp_source: []const u8 = scanner_entry_source;
 
-    // Replace __SCANNER_MODULE__ with actual scanner name
     const scanner_placeholder = "__SCANNER_MODULE__";
     if (std.mem.indexOf(u8, temp_source, scanner_placeholder)) |index| {
-        try code_buf.appendSlice(temp_source[0..index]);
-        try code_buf.appendSlice(security_scanner);
-        try code_buf.appendSlice(temp_source[index + scanner_placeholder.len ..]);
-        manager.allocator.free(temp_source);
-        temp_source = try code_buf.toOwnedSlice();
-        code_buf = std.ArrayList(u8).init(manager.allocator);
+        try code.appendSlice(temp_source[0..index]);
+        try code.appendSlice(security_scanner);
+        try code.appendSlice(temp_source[index + scanner_placeholder.len ..]);
+        temp_source = code.items;
     }
 
-    // Replace __PACKAGES_JSON__ with actual JSON data
     const packages_placeholder = "__PACKAGES_JSON__";
     if (std.mem.indexOf(u8, temp_source, packages_placeholder)) |index| {
-        try code_buf.appendSlice(temp_source[0..index]);
-        try code_buf.appendSlice(json_data);
-        try code_buf.appendSlice(temp_source[index + packages_placeholder.len ..]);
-        manager.allocator.free(temp_source);
-        temp_source = try code_buf.toOwnedSlice();
-        code_buf = std.ArrayList(u8).init(manager.allocator);
+        var new_code = std.ArrayList(u8).init(manager.allocator);
+        try new_code.appendSlice(temp_source[0..index]);
+        try new_code.appendSlice(json_data);
+        try new_code.appendSlice(temp_source[index + packages_placeholder.len ..]);
+        code.deinit();
+        code = new_code;
+        temp_source = code.items;
     }
 
-    // Replace __SUPPRESS_ERROR__ with boolean value
     const suppress_placeholder = "__SUPPRESS_ERROR__";
     if (std.mem.indexOf(u8, temp_source, suppress_placeholder)) |index| {
-        try code_buf.appendSlice(temp_source[0..index]);
-        try code_buf.appendSlice(if (suppress_import_error) "true" else "false");
-        try code_buf.appendSlice(temp_source[index + suppress_placeholder.len ..]);
-        manager.allocator.free(temp_source);
-    } else {
-        code_buf.deinit();
-        code_buf = std.ArrayList(u8).fromOwnedSlice(manager.allocator, temp_source);
+        var new_code = std.ArrayList(u8).init(manager.allocator);
+        try new_code.appendSlice(temp_source[0..index]);
+        try new_code.appendSlice(if (suppress_import_error) "true" else "false");
+        try new_code.appendSlice(temp_source[index + suppress_placeholder.len ..]);
+        code.deinit();
+        code = new_code;
     }
 
     var scanner = SecurityScanSubprocess.new(.{
         .manager = manager,
-        .code = try manager.allocator.dupe(u8, code_buf.items),
+        .code = try manager.allocator.dupe(u8, code.items),
         .json_data = try manager.allocator.dupe(u8, json_data),
         .ipc_data = undefined,
         .stderr_data = undefined,

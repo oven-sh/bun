@@ -1359,7 +1359,7 @@ pub fn jsFunctionProcessLoadEnvFile(globalObject: *jsc.JSGlobalObject, callframe
     var value_buffer = std.ArrayList(u8).init(bun.default_allocator);
     defer value_buffer.deinit();
 
-    Parser.parse(&source, vm.allocator, &env_map, &value_buffer, false, false, true) catch |err| {
+    Parser.parse(&source, vm.allocator, &env_map, &value_buffer, false, false, false) catch |err| {
         return globalObject.throwPretty("Failed to parse env file '{s}': {s}", .{ path_slice, @errorName(err) });
     };
 

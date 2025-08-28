@@ -1002,6 +1002,7 @@ src/sql/shared/ObjectIterator.zig
 src/sql/shared/QueryBindingIterator.zig
 src/sql/shared/SQLDataCell.zig
 src/sql/shared/SQLQueryResultMode.zig
+src/sql/SQLPerformanceEntryLogger.zig
 src/StandaloneModuleGraph.zig
 src/StaticHashMap.zig
 src/string.zig

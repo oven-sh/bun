@@ -26,7 +26,7 @@ pub const Expect = struct {
     pub const fromJSDirect = js.fromJSDirect;
 
     flags: Flags = .{},
-    parent: ?bun.jsc.Jest.describe2.Execution.CurrentEntryRef,
+    parent: ?*bun.jsc.Jest.describe2.BunTestFile.RefData,
     custom_label: bun.String = bun.String.empty,
 
     pub const TestScope = struct {
@@ -265,7 +265,7 @@ pub const Expect = struct {
 
     pub fn getSnapshotName(this: *Expect, allocator: std.mem.Allocator, hint: string) ![]const u8 {
         const parent = this.parent orelse return error.NoTest;
-        const execution_entry = parent.entry() orelse return error.SnapshotInConcurrentGroup;
+        const execution_entry = parent.phase.entry(parent.buntest) orelse return error.SnapshotInConcurrentGroup;
 
         const test_name = execution_entry.base.name orelse "(unnamed)";
 
@@ -313,7 +313,7 @@ pub const Expect = struct {
         this: *Expect,
     ) callconv(.C) void {
         this.custom_label.deref();
-        if (this.parent) |*parent| parent.deinit();
+        if (this.parent) |parent| parent.deinit();
         VirtualMachine.get().allocator.destroy(this);
     }
 
@@ -335,7 +335,7 @@ pub const Expect = struct {
             return globalThis.throwOutOfMemory();
         };
 
-        const active_execution_entry_ref = if (bun.jsc.Jest.describe2.getActive()) |buntest| buntest.refActiveExecutionEntry() else null;
+        const active_execution_entry_ref = if (bun.jsc.Jest.describe2.getActive()) |buntest| buntest.ref(buntest.getCurrentStateData()) else null;
         errdefer if (active_execution_entry_ref) |entry_ref| entry_ref.deinit();
 
         expect.* = .{

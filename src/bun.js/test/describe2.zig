@@ -302,46 +302,103 @@ pub const BunTestFile = struct {
         backing.destroy(this.allocation_scope);
     }
 
-    pub const RefData = struct {
-        buntest: *BunTestFile,
-        data: u64,
-        pub fn deinit(this: *RefData) void {
-            // TODO: ref counted
-            // this.buntest.gpa.destroy(this);
-            bun.destroy(this);
+    pub const RefDataValue = union(enum) {
+        collection: struct {
+            active_scope: *DescribeScope,
+        },
+        execution: struct {
+            group_index: usize,
+            entry_data: ?struct {
+                sequence_index: usize,
+                entry_index: usize,
+                remaining_repeat_count: i64,
+            },
+        },
+        done: struct {},
+
+        pub fn group(this: *const RefDataValue, buntest: *BunTestFile) ?*Execution.ConcurrentGroup {
+            if (this.* != .execution) return null;
+            return &buntest.execution.groups[this.execution.group_index];
+        }
+        pub fn sequence(this: *const RefDataValue, buntest: *BunTestFile) ?*Execution.ExecutionSequence {
+            if (this.* != .execution) return null;
+            const group_item = this.group(buntest) orelse return null;
+            const entry_data = this.execution.entry_data orelse return null;
+            return &group_item.sequences(&buntest.execution)[entry_data.sequence_index];
+        }
+        pub fn entry(this: *const RefDataValue, buntest: *BunTestFile) ?*ExecutionEntry {
+            if (this.* != .execution) return null;
+            const sequence_item = this.sequence(buntest) orelse return null;
+            const entry_data = this.execution.entry_data orelse return null;
+            return sequence_item.entries(&buntest.execution)[entry_data.entry_index];
+        }
+
+        pub fn format(this: *const RefDataValue, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            switch (this.*) {
+                .collection => try writer.print("collection: active_scope={?s}", .{this.collection.active_scope.base.name}),
+                .execution => if (this.execution.entry_data) |entry_data| {
+                    try writer.print("execution: group_index={d},sequence_index={d},entry_index={d},remaining_repeat_count={d}", .{ this.execution.group_index, entry_data.sequence_index, entry_data.entry_index, entry_data.remaining_repeat_count });
+                } else try writer.print("execution: group_index={d}", .{this.execution.group_index}),
+                .done => try writer.print("done", .{}),
+            }
         }
     };
-    pub fn ref(this: *BunTestFile, data: u64) *RefData {
-        // TODO: BunTestFile must be ref-counted to prevent UAF
-        // return bun.create(this.gpa, RefData, .{ .buntest = this, .data = data });
-        return bun.new(RefData, .{ .buntest = this, .data = data });
-    }
+    pub const RefData = struct {
+        buntest: *BunTestFile,
+        phase: RefDataValue,
 
-    pub fn refActiveExecutionEntry(this: *BunTestFile) ?Execution.CurrentEntryRef {
-        if (this.phase != .execution) return null;
+        pub fn deinit(this: *RefData) void {
+            group.begin(@src());
+            defer group.end();
+            group.log("refData: {}", .{this.phase});
 
-        const ref_value = this.ref(0);
+            const buntest = this.buntest;
+            // buntest.gpa.destroy(this); // need to destroy the RefDataValue before unref'ing the buntest because it may free the allocator
+            // TODO: use buntest.gpa to destroy the RefDataValue. this can't be done right now because RefData is stored in expect which needs BunTestFile to be ref-counted
+            bun.destroy(this);
+            _ = buntest;
+            // TODO: unref buntest here
+        }
+    };
+    pub fn getCurrentStateData(this: *BunTestFile) RefDataValue {
+        return switch (this.phase) {
+            .collection => .{ .collection = .{ .active_scope = this.collection.active_scope } },
+            .execution => blk: {
+                const active_group = &this.execution.groups[this.execution.group_index];
+                const sequences = active_group.sequences(&this.execution);
+                if (sequences.len != 1) break :blk .{
+                    .execution = .{
+                        .group_index = this.execution.group_index,
+                        .entry_data = null, // the current execution entry is not known because we are running a concurrent test
+                    },
+                };
 
-        const active_group = &this.execution.groups[this.execution.group_index];
-        const sequences = active_group.sequences(&this.execution);
-        if (sequences.len != 1) return .{
-            ._internal_ref = ref_value,
-            .buntest = this,
-            .group_index = this.execution.group_index,
-            .entry_data = null, // the current execution entry is not known because we are running a concurrent test
-        };
+                const active_sequence_index = 0;
+                const sequence = &sequences[active_sequence_index];
 
-        const active_sequence_index = 0;
-        const sequence = &sequences[active_sequence_index];
-        return .{
-            ._internal_ref = ref_value,
-            .buntest = this,
-            .group_index = this.execution.group_index,
-            .entry_data = .{
-                .sequence_index = active_sequence_index,
-                .entry_index = sequence.index,
+                break :blk .{ .execution = .{
+                    .group_index = this.execution.group_index,
+                    .entry_data = .{
+                        .sequence_index = active_sequence_index,
+                        .entry_index = sequence.index,
+                        .remaining_repeat_count = sequence.remaining_repeat_count,
+                    },
+                } };
             },
+            .done => .{ .done = .{} },
         };
+    }
+    pub fn ref(this: *BunTestFile, phase: RefDataValue) *RefData {
+        group.begin(@src());
+        defer group.end();
+        group.log("ref: {}", .{phase});
+
+        // TODO this.ref()
+        // TODO: allocate with bun.create(this.gpa). this can't be done right now because RefData is stored in expect which needs BunTestFile to be ref-counted
+        return bun.new(RefData, .{
+            .buntest = this,
+            .phase = phase,
+        });
     }
 
     pub fn getFile(_: *BunTestFile) []const u8 {
@@ -365,10 +422,10 @@ pub const BunTestFile = struct {
         const this = refdata.buntest;
 
         if (is_catch) {
-            this.onUncaughtException(globalThis, result, true, refdata.data);
+            this.onUncaughtException(globalThis, result, true, refdata.phase);
         }
 
-        try this.runOneCompleted(globalThis, if (is_catch) null else result, refdata.data);
+        try this.runOneCompleted(globalThis, if (is_catch) null else result, refdata.phase);
         try this.run(globalThis);
         return .js_undefined;
     }
@@ -378,7 +435,11 @@ pub const BunTestFile = struct {
     fn bunTestCatch(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         return bunTestThenOrCatch(globalThis, callframe, true);
     }
-    fn addThen(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, promise: jsc.JSValue, data: u64) void {
+    fn addThen(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, promise: jsc.JSValue, data: RefDataValue) void {
+        group.begin(@src());
+        defer group.end();
+        group.log("addThen: data: {}", .{data});
+
         promise.then(globalThis, this.ref(data), bunTestThen, bunTestCatch); // TODO: this function is odd. it requires manually exporting the describeCallbackThen as a toJSHostFn and also adding logic in c++
     }
 
@@ -487,7 +548,8 @@ pub const BunTestFile = struct {
         }
     }
 
-    fn runOneCompleted(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, result_value: ?jsc.JSValue, data: u64) bun.JSError!void {
+    fn runOneCompleted(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, result_value: ?jsc.JSValue, data: RefDataValue) bun.JSError!void {
+        group.log("runOneCompleted: phase: {}", .{this.phase});
         switch (this.phase) {
             .collection => try this.collection.runOneCompleted(globalThis, result_value, data),
             .execution => try this.execution.runOneCompleted(globalThis, result_value, data),
@@ -534,7 +596,7 @@ pub const BunTestFile = struct {
     }
 
     /// called from the uncaught exception handler, or if a test callback rejects or throws an error
-    pub fn onUncaughtException(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, result: jsc.JSValue, is_rejection: bool, user_data: ?u64) void {
+    pub fn onUncaughtException(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, result: jsc.JSValue, is_rejection: bool, user_data: RefDataValue) void {
         group.begin(@src());
         defer group.end();
 
@@ -576,8 +638,8 @@ pub const CallbackQueue = std.ArrayList(CallbackEntry);
 pub const CallbackEntry = struct {
     callback: CallbackWithArgs,
     done_parameter: bool,
-    data: u64,
-    pub fn init(gpa: std.mem.Allocator, callback: CallbackWithArgs, done_parameter: bool, data: u64) CallbackEntry {
+    data: BunTestFile.RefDataValue,
+    pub fn init(gpa: std.mem.Allocator, callback: CallbackWithArgs, done_parameter: bool, data: BunTestFile.RefDataValue) CallbackEntry {
         return .{
             .callback = callback.dupe(gpa),
             .done_parameter = done_parameter,

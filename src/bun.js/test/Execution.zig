@@ -40,33 +40,6 @@ groups: []ConcurrentGroup,
 @"#entries": []const *ExecutionEntry,
 group_index: usize,
 
-pub const CurrentEntryRef = struct {
-    _internal_ref: *bun.jsc.Jest.describe2.BunTestFile.RefData,
-    buntest: *BunTestFile,
-    group_index: usize,
-    entry_data: ?struct {
-        sequence_index: usize,
-        entry_index: usize,
-    },
-
-    pub fn deinit(this: *CurrentEntryRef) void {
-        this._internal_ref.deinit();
-        this.buntest = undefined;
-    }
-
-    pub fn group(this: *const CurrentEntryRef) *ConcurrentGroup {
-        return &this.buntest.execution.groups[this.group_index];
-    }
-    pub fn sequence(this: *const CurrentEntryRef) ?*ExecutionSequence {
-        const entry_data = this.entry_data orelse return null;
-        return &this.buntest.execution.@"#sequences"[entry_data.sequence_index];
-    }
-    pub fn entry(this: *const CurrentEntryRef) ?*ExecutionEntry {
-        const entry_data = this.entry_data orelse return null;
-        return this.buntest.execution.@"#entries"[entry_data.entry_index];
-    }
-};
-
 pub const ConcurrentGroup = struct {
     @"#sequence_start": usize,
     @"#sequence_end": usize,
@@ -81,7 +54,7 @@ pub const ExecutionSequence = struct {
     @"#entries_end": usize,
     index: usize,
     test_entry: ?*ExecutionEntry,
-    remaining_repeat_count: f64 = 1,
+    remaining_repeat_count: i64 = 1,
     result: Result = .pending,
     executing: bool = false,
     started_at: bun.timespec = bun.timespec.epoch,
@@ -170,7 +143,7 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
         const group = &this.groups[this.group_index];
         if (!group.executing) this.resetGroup(this.group_index);
         var status: describe2.RunOneResult = .done;
-        for (group.sequences(this), group.@"#sequence_start"..) |*sequence, sequence_raw_index| {
+        for (group.sequences(this), 0..) |*sequence, sequence_index| {
             while (true) {
                 groupLog.begin(@src());
                 defer groupLog.end();
@@ -192,7 +165,18 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
                 if (next_item.callback) |cb| {
                     groupLog.log("runSequence queued callback", .{});
 
-                    try callback_queue.append(.{ .callback = cb.dupe(this.bunTest().gpa), .done_parameter = true, .data = sequence_raw_index });
+                    const callback_data: describe2.BunTestFile.RefDataValue = .{
+                        .execution = .{
+                            .group_index = this.group_index,
+                            .entry_data = .{
+                                .sequence_index = sequence_index,
+                                .entry_index = sequence.index,
+                                .remaining_repeat_count = sequence.remaining_repeat_count,
+                            },
+                        },
+                    };
+                    groupLog.log("runSequence queued callback: {}", .{callback_data});
+                    try callback_queue.append(.{ .callback = cb.dupe(this.bunTest().gpa), .done_parameter = true, .data = callback_data });
                     status = .execute;
                     break;
                 } else {
@@ -207,7 +191,7 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
                             sequence.result = .skipped_because_label;
                         },
                         else => {
-                            groupLog.log("runSequence: no callback for sequence_index {d} (entry_index {d})", .{ sequence_raw_index, sequence.index });
+                            groupLog.log("runSequence: no callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.index });
                             bun.debugAssert(false);
                         },
                     }
@@ -222,27 +206,63 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
         this.group_index += 1;
     }
 }
-pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, _: ?jsc.JSValue, data: u64) bun.JSError!void {
+pub fn activeGroup(this: *Execution) ?*ConcurrentGroup {
+    if (this.group_index >= this.groups.len) return null;
+    return &this.groups[this.group_index];
+}
+pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, _: ?jsc.JSValue, data: describe2.BunTestFile.RefDataValue) bun.JSError!void {
     groupLog.begin(@src());
     defer groupLog.end();
 
-    const sequence_index: usize = @intCast(data); // TODO: ??????????? validate
-    groupLog.log("runOneCompleted sequence_index {d}", .{sequence_index});
+    groupLog.log("runOneCompleted", .{});
 
     bun.assert(this.group_index < this.groups.len);
-    const group = &this.groups[this.group_index];
 
-    if (sequence_index < group.@"#sequence_start" or sequence_index >= group.@"#sequence_end") {
-        bun.debugAssert(false);
+    const sequence = this.getCurrentAndValidExecutionSequence(data) orelse {
+        groupLog.log("runOneCompleted: the data is outdated, invalid, or did not know the sequence", .{});
         return;
-    }
-    const sequences = group.sequences(this);
-    const sequence = &sequences[sequence_index - group.@"#sequence_start"];
-    bun.assert(sequence.index < sequence.entries(this).len);
+    };
 
+    bun.assert(sequence.index < sequence.entries(this).len);
     this.advanceSequence(sequence);
 }
+fn getCurrentAndValidExecutionSequence(this: *Execution, data: describe2.BunTestFile.RefDataValue) ?*ExecutionSequence {
+    groupLog.begin(@src());
+    defer groupLog.end();
+
+    groupLog.log("runOneCompleted: data: {}", .{data});
+
+    if (data != .execution) {
+        groupLog.log("runOneCompleted: the data is not execution", .{});
+        return null;
+    }
+    if (data.execution.entry_data == null) {
+        groupLog.log("runOneCompleted: the data did not know which entry was active in the group", .{});
+        return null;
+    }
+    if (this.activeGroup() != data.group(this.bunTest())) {
+        groupLog.log("runOneCompleted: the data is for a different group", .{});
+        return null;
+    }
+    const sequence = data.sequence(this.bunTest()) orelse {
+        groupLog.log("runOneCompleted: the data did not know the sequence", .{});
+        return null;
+    };
+    if (sequence.remaining_repeat_count != data.execution.entry_data.?.remaining_repeat_count) {
+        groupLog.log("runOneCompleted: the data is for a previous repeat count (outdated)", .{});
+        return null;
+    }
+    if (sequence.index != data.execution.entry_data.?.entry_index) {
+        groupLog.log("runOneCompleted: the data is for a different sequence index (outdated)", .{});
+        return null;
+    }
+    groupLog.log("runOneCompleted: the data is valid and current", .{});
+    return sequence;
+}
 fn advanceSequence(this: *Execution, sequence: *ExecutionSequence) void {
+    groupLog.begin(@src());
+    defer groupLog.end();
+
     bun.assert(sequence.executing);
     sequence.executing = false;
     sequence.index += 1;
@@ -310,22 +330,11 @@ pub fn resetSequence(this: *Execution, sequence: *ExecutionSequence) void {
     }
 }
 
-pub fn handleUncaughtException(this: *Execution, user_data: ?u64) describe2.HandleUncaughtExceptionResult {
+pub fn handleUncaughtException(this: *Execution, user_data: describe2.BunTestFile.RefDataValue) describe2.HandleUncaughtExceptionResult {
     groupLog.begin(@src());
     defer groupLog.end();
 
-    const current_group = this.groups[this.group_index];
-    const sequences = current_group.sequences(this);
-    const sequence: *ExecutionSequence = if (sequences.len == 1) blk: {
-        groupLog.log("handleUncaughtException: there is only one sequence in the group", .{});
-        break :blk &sequences[0];
-    } else if (user_data != null and user_data.? >= current_group.@"#sequence_start" and user_data.? < current_group.@"#sequence_end") blk: {
-        groupLog.log("handleUncaughtException: there are multiple sequences in the group and user_data is provided", .{});
-        break :blk &sequences[user_data.? - current_group.@"#sequence_start"];
-    } else {
-        groupLog.log("handleUncaughtException: there are multiple sequences in the group and user_data is not provided or invalid", .{});
-        return .show_unhandled_error_between_tests;
-    };
+    const sequence = this.getCurrentAndValidExecutionSequence(user_data) orelse return .show_unhandled_error_between_tests;
 
     if (sequence.activeEntry(this) != sequence.test_entry) {
         // error in a hook

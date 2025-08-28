@@ -816,7 +816,7 @@ pub fn insert(
 pub const MatchedParams = struct {
     pub const max_count = 64;
 
-    params: std.BoundedArray(Entry, max_count),
+    params: bun.BoundedArray(Entry, max_count),
 
     pub const Entry = struct {
         key: []const u8,
@@ -874,7 +874,7 @@ const PatternParseError = error{InvalidRoutePattern};
 /// Non-allocating single message log, specialized for the messages from the route pattern parsers.
 /// DevServer uses this to special-case the printing of these messages to highlight the offending part of the filename
 pub const TinyLog = struct {
-    msg: std.BoundedArray(u8, 512 + std.fs.max_path_bytes),
+    msg: bun.BoundedArray(u8, 512 + @min(std.fs.max_path_bytes, 4096)),
     cursor_at: u32,
     cursor_len: u32,
 

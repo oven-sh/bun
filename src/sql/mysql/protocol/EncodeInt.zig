@@ -1,6 +1,6 @@
 // Length-encoded integer encoding/decoding
-pub fn encodeLengthInt(value: u64) std.BoundedArray(u8, 9) {
-    var array: std.BoundedArray(u8, 9) = .{};
+pub fn encodeLengthInt(value: u64) bun.BoundedArray(u8, 9) {
+    var array: bun.BoundedArray(u8, 9) = .{};
     if (value < 0xfb) {
         array.len = 1;
         array.buffer[0] = @intCast(value);
@@ -71,3 +71,4 @@ pub fn decodeLengthInt(bytes: []const u8) ?struct { value: u64, bytes_read: usiz
 }
 
 const std = @import("std");
+const bun = @import("bun");

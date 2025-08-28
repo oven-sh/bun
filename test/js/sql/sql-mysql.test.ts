@@ -264,7 +264,7 @@ describeWithContainer(
       expect((await sql`select ${"hello"} as x`)[0].x).toBe("hello");
     });
 
-    test("Boolean/TinyInt", async () => {
+    test("Boolean/TinyInt/BIT", async () => {
       // Protocol will always return 0 or 1 for TRUE and FALSE when not using a table.
       expect((await sql`select ${false} as x`)[0].x).toBe(0);
       expect((await sql`select ${true} as x`)[0].x).toBe(1);
@@ -293,6 +293,28 @@ describeWithContainer(
         await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
         const [[a]] = await sql`select * from ${sql(random_name)}`.values();
         expect(a).toBe(255);
+      }
+
+      {
+        random_name += "3";
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a bit(1), b bit(2))`;
+        const values = [
+          { a: true, b: 1 },
+          { a: false, b: 2 },
+        ];
+        await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
+        const results = await sql`select * from ${sql(random_name)}`;
+        // return true or false for BIT(1) and buffer for BIT(n)
+        expect(results[0].a).toBe(true);
+        expect(results[0].b).toEqual(Buffer.from([1]));
+        expect(results[1].a).toBe(false);
+        expect(results[1].b).toEqual(Buffer.from([2]));
+        // text protocol should behave the same
+        const results2 = await sql`select * from ${sql(random_name)}`.simple();
+        expect(results2[0].a).toBe(true);
+        expect(results2[0].b).toEqual(Buffer.from([1]));
+        expect(results2[1].a).toBe(false);
+        expect(results2[1].b).toEqual(Buffer.from([2]));
       }
     });
 

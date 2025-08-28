@@ -16,7 +16,7 @@
 /// var a_clone = a; // creates a copy - the structure doesn't use any internal pointers
 /// ```
 pub fn BoundedArray(comptime T: type, comptime buffer_capacity: usize) type {
-    return BoundedArrayAligned(T, std.mem.Alignment.fromByteUnits(@alignOf(T)), buffer_capacity);
+    return BoundedArrayAligned(T, .fromByteUnits(@alignOf(T)), buffer_capacity);
 }
 
 /// A structure with an array, length and alignment, that can be used as a

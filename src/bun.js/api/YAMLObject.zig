@@ -835,6 +835,7 @@ pub fn parse(
     const input_value = callFrame.argumentsAsArray(1)[0];
 
     const input_str = try input_value.toBunString(global);
+    defer input_str.deref();
     const input = input_str.toSlice(arena.allocator());
     defer input.deinit();
 

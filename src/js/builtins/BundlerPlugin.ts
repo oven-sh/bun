@@ -404,32 +404,45 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
 
     for (let [filter, callback] of results) {
       if (filter.test(inputPath)) {
-        var result = callback({
-          path: inputPath,
-          importer,
-          namespace: inputNamespace,
-          resolveDir: inputNamespace === "file" ? require("node:path").dirname(importer) : undefined,
-          kind,
-          // pluginData
-        });
+        var result;
+        try {
+          result = callback({
+            path: inputPath,
+            importer,
+            namespace: inputNamespace,
+            resolveDir: inputNamespace === "file" ? require("node:path").dirname(importer) : undefined,
+            kind,
+            // pluginData
+          });
 
-        while (
-          result &&
-          $isPromise(result) &&
-          ($getPromiseInternalField(result, $promiseFieldFlags) & $promiseStateMask) === $promiseStateFulfilled
-        ) {
-          result = $getPromiseInternalField(result, $promiseFieldReactionsOrResult);
-        }
-
-        if (result && $isPromise(result)) {
-          result = await result;
-        }
-
-        if (!result || !$isObject(result)) {
+          // Handle promise resolution carefully with explicit undefined handling
+          if ($isPromise(result)) {
+            try {
+              const promiseResult = await result;
+              // Explicitly handle undefined/null promise results
+              if (promiseResult === undefined || promiseResult === null) {
+                continue;
+              }
+              result = promiseResult;
+            } catch (e) {
+              // If promise rejection, continue to next plugin
+              continue;
+            }
+          }
+        } catch (e) {
+          // If callback throws or causes internal error, continue to next plugin
           continue;
         }
 
-        var { path, namespace: userNamespace = inputNamespace, external } = result;
+        // Explicitly handle undefined return values from plugins
+        if (result === undefined || result === null || !$isObject(result)) {
+          continue;
+        }
+
+        // Safely extract properties with explicit undefined checks
+        var path = result.path;
+        var userNamespace = result.namespace !== undefined ? result.namespace : inputNamespace;
+        var external = result.external;
         if (path !== undefined && typeof path !== "string") {
           throw new TypeError("onResolve plugins 'path' field must be a string if provided");
         }

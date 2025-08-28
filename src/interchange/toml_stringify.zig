@@ -1,7 +1,5 @@
 pub const TOMLStringifyOptions = struct {
     inline_tables: bool = false,
-    arrays_multiline: bool = true,
-    indent: []const u8 = "  ",
 };
 
 pub const TOMLStringifyError = error{
@@ -147,7 +145,7 @@ pub const TOMLStringifier = struct {
 
         try self.writer.append('[');
 
-        const is_multiline = self.options.arrays_multiline and length > 3;
+        const is_multiline = length > 3;
         if (is_multiline) {
             try self.writer.append('\n');
         }
@@ -161,7 +159,7 @@ pub const TOMLStringifier = struct {
             }
 
             if (is_multiline) {
-                try self.writer.appendSlice(self.options.indent);
+                try self.writer.appendSlice("  ");
             }
 
             const item = array.getIndex(globalThis, @intCast(i)) catch return error.JSError;
@@ -338,12 +336,12 @@ pub const TOMLStringifier = struct {
     }
 };
 
-pub fn stringify(globalThis: *JSGlobalObject, value: JSValue, options: TOMLStringifyOptions) TOMLStringifyError![]const u8 {
-    var stringifier = TOMLStringifier.init(bun.default_allocator, options);
+pub fn stringify(globalThis: *JSGlobalObject, value: JSValue, options: TOMLStringifyOptions, allocator: std.mem.Allocator) TOMLStringifyError![]const u8 {
+    var stringifier = TOMLStringifier.init(allocator, options);
     defer stringifier.deinit();
     const result = try stringifier.stringify(globalThis, value);
     // Make a copy since the stringifier will be deinitialized
-    const owned_result = bun.default_allocator.dupe(u8, result) catch return error.OutOfMemory;
+    const owned_result = allocator.dupe(u8, result) catch return error.OutOfMemory;
     return owned_result;
 }
 

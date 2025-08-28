@@ -51,10 +51,11 @@ describe("Bun.TOML.stringify", () => {
     expect(result).toBe("long = [\n  1, \n  2, \n  3, \n  4, \n  5\n]\n");
   });
 
-  test("arrays with arraysMultiline option", () => {
-    const arr = [1, 2, 3, 4];
-    expect(Bun.TOML.stringify({ arr }, null, { arraysMultiline: false })).toBe("arr = [1, 2, 3, 4]\n");
-    expect(Bun.TOML.stringify({ arr }, null, { arraysMultiline: true })).toBe("arr = [\n  1, \n  2, \n  3, \n  4\n]\n");
+  test("arrays always use consistent multiline formatting for long arrays", () => {
+    const shortArr = [1, 2, 3];
+    const longArr = [1, 2, 3, 4, 5];
+    expect(Bun.TOML.stringify({ shortArr })).toBe("shortArr = [1, 2, 3]\n");
+    expect(Bun.TOML.stringify({ longArr })).toBe("longArr = [\n  1, \n  2, \n  3, \n  4, \n  5\n]\n");
   });
 
   test("inline tables", () => {
@@ -86,17 +87,14 @@ port = 5432
     };
     const result = Bun.TOML.stringify(obj);
     expect(result).toMatchInlineSnapshot(`
-title = "TOML Example"
+"title = "TOML Example"
 
 [database]
 server = "192.168.1.1"
-ports = [
-  8001, 
-  8001, 
-  8002
-]
+ports = [8001, 8001, 8002]
 connection_max = 5000
 enabled = true
+"
 `);
   });
 
@@ -114,7 +112,7 @@ enabled = true
     };
     const result = Bun.TOML.stringify(obj);
     expect(result).toMatchInlineSnapshot(`
-global = "value"
+"global = "value"
 
 [section1]
 key1 = "value1"
@@ -123,6 +121,7 @@ key2 = 42
 [section2]
 key3 = "value3"
 key4 = true
+"
 `);
   });
 
@@ -189,7 +188,7 @@ key4 = true
 
     const result = Bun.TOML.stringify(obj);
     expect(result).toMatchInlineSnapshot(`
-title = "Complex TOML Example"
+"title = "Complex TOML Example"
 
 [owner]
 name = "Tom Preston-Werner"
@@ -197,11 +196,7 @@ dob = "1979-05-27T00:00:00-08:00"
 
 [database]
 server = "192.168.1.1"
-ports = [
-  8001, 
-  8001, 
-  8002
-]
+ports = [8001, 8001, 8002]
 connection_max = 5000
 enabled = true
 
@@ -214,6 +209,7 @@ dc = "eqdc10"
 [servers.beta]
 ip = "10.0.0.2"
 dc = "eqdc10"
+"
 `);
 
     // Verify round-trip

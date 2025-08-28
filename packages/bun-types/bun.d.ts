@@ -624,8 +624,6 @@ declare module "bun" {
      * @category Utilities
      *
      * @param value The JavaScript object to stringify
-     * @param replacer Currently unused (for API consistency with JSON.stringify)
-     * @param space A string or number for indentation, or an options object
      * @returns A TOML string
      *
      * @example
@@ -644,38 +642,86 @@ declare module "bun" {
      *
      * // Basic usage
      * console.log(TOML.stringify(obj));
+     * // Output:
+     * // title = "TOML Example"
+     * // 
+     * // [database]
+     * // server = "192.168.1.1"
+     * // ports = [
+     * //   8001, 
+     * //   8001, 
+     * //   8002
+     * // ]
+     * // connection_max = 5000
+     * // enabled = true
+     * ```
+     */
+    export function stringify(value: any): string;
+
+    /**
+     * Convert a JavaScript object to a TOML string with JSON.stringify-style indentation.
      *
+     * @category Utilities
+     *
+     * @param value The JavaScript object to stringify
+     * @param replacer Currently unused (for API consistency with JSON.stringify)
+     * @param space A string or number for indentation
+     * @returns A TOML string
+     *
+     * @example
+     * ```ts
      * // JSON.stringify-style indentation
      * TOML.stringify(obj, null, 2);      // 2 spaces
      * TOML.stringify(obj, null, "\t");   // tab indentation
-     *
-     * // Advanced options
-     * TOML.stringify(obj, null, { inlineTables: true });
      * ```
      */
     export function stringify(
       value: any,
-      replacer?: undefined | null,
-      space?:
-        | string
-        | number
-        | {
-            /**
-             * Whether to format objects as inline tables
-             * @default false
-             */
-            inlineTables?: boolean;
-            /**
-             * Whether to format arrays across multiple lines when they have more than 3 elements
-             * @default true
-             */
-            arraysMultiline?: boolean;
-            /**
-             * The indentation string to use for multiline arrays
-             * @default "  "
-             */
-            indent?: string;
-          },
+      replacer: undefined | null,
+      space: string | number,
+    ): string;
+
+    /**
+     * Convert a JavaScript object to a TOML string with advanced TOML-specific options.
+     *
+     * @category Utilities
+     *
+     * @param value The JavaScript object to stringify
+     * @param replacer Currently unused (for API consistency with JSON.stringify)
+     * @param options Advanced TOML formatting options
+     * @returns A TOML string
+     *
+     * @example
+     * ```ts
+     * // Advanced TOML-specific options
+     * TOML.stringify(obj, null, { 
+     *   inlineTables: true 
+     * });
+     * ```
+     */
+    export function stringify(
+      value: any,
+      replacer: undefined | null,
+      options: {
+        /**
+         * Whether to format objects as inline tables instead of separate [table] sections
+         * @default false
+         * 
+         * @example
+         * ```ts
+         * const obj = { server: { host: "localhost", port: 3000 } };
+         * 
+         * // With inlineTables: false (default)
+         * // [server]
+         * // host = "localhost"
+         * // port = 3000
+         * 
+         * // With inlineTables: true  
+         * // server = { host = "localhost", port = 3000 }
+         * ```
+         */
+        inlineTables?: boolean;
+      },
     ): string;
   }
 

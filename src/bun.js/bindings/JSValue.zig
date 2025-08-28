@@ -68,8 +68,8 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__transformToReactElementWithOptions(responseValue: JSValue, componentValue: JSValue, responseOptions: JSValue, globalObject: *JSGlobalObject) void;
-    pub fn transformToReactElementWithOptions(responseValue: JSValue, componentValue: JSValue, responseOptions: JSValue, globalThis: *jsc.JSGlobalObject) void {
-        JSC__JSValue__transformToReactElementWithOptions(responseValue, componentValue, responseOptions, globalThis);
+    pub fn transformToReactElementWithOptions(responseValue: JSValue, componentValue: JSValue, responseOptions: JSValue, globalThis: *jsc.JSGlobalObject) JSError!void {
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__transformToReactElementWithOptions, .{ responseValue, componentValue, responseOptions, globalThis });
     }
 
     extern fn JSC__JSValue__getDirectIndex(JSValue, *JSGlobalObject, u32) JSValue;

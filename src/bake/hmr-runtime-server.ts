@@ -12,6 +12,7 @@ if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
 
 export type RequestContext = {
   responseOptions: ResponseInit;
+  streaming: boolean;
   streamingStarted?: boolean;
   renderAbort?: (path: string, params: Record<string, any> | null) => never;
 };
@@ -73,7 +74,7 @@ server_exports = {
     setAsyncLocalStorage,
     getAsyncLocalStorage,
   ) {
-    // FIXME: We should only have to do this once
+    // FIXME: We should only have to create an AsyncLocalStorage instance once
     // Set the AsyncLocalStorage instance in the VM
     setAsyncLocalStorage(responseOptionsALS);
 
@@ -107,6 +108,7 @@ server_exports = {
 
     let storeValue: RequestContext = {
       responseOptions: {},
+      streaming: pageModule.streaming ?? false,
     };
 
     try {
@@ -147,7 +149,6 @@ server_exports = {
         return error.response;
       }
 
-      //return error;
       throw error;
     }
   },

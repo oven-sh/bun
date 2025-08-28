@@ -306,6 +306,7 @@
                 <option value="after_compute">After Compute</option>
                 <option value="after_chunks">After Chunks</option>
                 <option value="after_link">After Link</option>
+                <option value="after_generation">After Generation (with output)</option>
             </select>
             <button id="compare-btn">📊 Compare Stages</button>
         </div>
@@ -456,10 +457,18 @@
                 return;
             }
             
-            // For now, show mock source code with file metadata
-            // In real implementation, we'd load actual source
-            const mockSource = generateMockSource(file);
-            sourceEditor.setValue(mockSource);
+            // Use actual source snippet if available
+            let sourceCode = '';
+            if (file.source_snippet) {
+                sourceCode = `// File: ${file.path}\n// Loader: ${file.loader}\n\n${file.source_snippet}`;
+                if (file.source_snippet.length === 500) {
+                    sourceCode += '\n\n// ... (truncated at 500 chars)';
+                }
+            } else {
+                sourceCode = generateMockSource(file);
+            }
+            
+            sourceEditor.setValue(sourceCode);
             
             // Highlight symbols
             highlightSourceSymbols(data, file);
@@ -472,9 +481,21 @@
                 return;
             }
             
-            // For now, show mock output with chunk metadata
-            const mockOutput = generateMockOutput(chunk, data);
-            outputEditor.setValue(mockOutput);
+            // Use actual output snippet if available
+            let outputCode = '';
+            if (chunk.output_snippet) {
+                outputCode = `// Chunk ${chunk.index}\n`;
+                outputCode += `// Entry point: ${chunk.is_entry_point}\n`;
+                outputCode += `// Output path: ${chunk.final_path || 'unknown'}\n\n`;
+                outputCode += chunk.output_snippet;
+                if (chunk.output_snippet.length === 1000) {
+                    outputCode += '\n\n// ... (truncated at 1000 chars)';
+                }
+            } else {
+                outputCode = generateMockOutput(chunk, data);
+            }
+            
+            outputEditor.setValue(outputCode);
             
             // Highlight transformed symbols
             highlightOutputSymbols(data, chunk);

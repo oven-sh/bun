@@ -40,6 +40,7 @@ pub const GraphVisualizer = struct {
         if (strings.eqlComptime(env_val, "compute")) return .after_compute;
         if (strings.eqlComptime(env_val, "chunks")) return .after_chunks;
         if (strings.eqlComptime(env_val, "link")) return .after_link;
+        if (strings.eqlComptime(env_val, "generation")) return .after_generation;
         
         return .all; // Default to all if set but not recognized
     }
@@ -50,6 +51,7 @@ pub const GraphVisualizer = struct {
         after_compute, 
         after_chunks,
         after_link,
+        after_generation,
         all,
     };
 
@@ -58,9 +60,16 @@ pub const GraphVisualizer = struct {
         stage: []const u8,
         chunks: ?[]const Chunk,
     ) !void {
-        if (!shouldDump()) return;
+        debug("dumpGraphState called for stage: {s}", .{stage});
+        
+        if (!shouldDump()) {
+            debug("shouldDump() returned false", .{});
+            return;
+        }
         
         const dump_stage = getDumpStage();
+        debug("dump_stage: {}", .{dump_stage});
+        
         const should_dump_now = switch (dump_stage) {
             .none => false,
             .all => true,
@@ -68,9 +77,15 @@ pub const GraphVisualizer = struct {
             .after_compute => strings.eqlComptime(stage, "after_compute"),
             .after_chunks => strings.eqlComptime(stage, "after_chunks"),
             .after_link => strings.eqlComptime(stage, "after_link"),
+            .after_generation => strings.eqlComptime(stage, "after_generation"),
         };
         
-        if (!should_dump_now) return;
+        if (!should_dump_now) {
+            debug("should_dump_now is false for stage {s}", .{stage});
+            return;
+        }
+        
+        debug("Proceeding with dump for stage: {s}", .{stage});
         
         debug("Dumping graph state: {s}", .{stage});
         

@@ -575,10 +575,7 @@ pub fn installWithManager(
                         error.SecurityScannerInWorkspace => {
                             Output.pretty("<red>Security scanner cannot be a dependency of a workspace package. It must be a direct dependency of the root package.<r>\n", .{});
                         },
-
-                        else => {
-                            Output.pretty("<red>Failed to run security scanner: {s}<r>\n", .{@errorName(err)});
-                        },
+                        else => {},
                     }
 
                     Global.exit(1);

@@ -578,7 +578,8 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
     try finder.validateNotInWorkspaces();
 
     const security_scanner_pkg_id = finder.findInRootDependencies();
-    const suppress_import_error = !is_retry and security_scanner_pkg_id == null;
+    // Suppress JavaScript error output unless in verbose mode
+    const suppress_error_output = manager.options.log_level != .verbose;
 
     var collector = PackageCollector.init(manager);
     defer collector.deinit();
@@ -623,7 +624,7 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
     if (std.mem.indexOf(u8, temp_source, suppress_placeholder)) |index| {
         var new_code = std.ArrayList(u8).init(manager.allocator);
         try new_code.appendSlice(temp_source[0..index]);
-        try new_code.appendSlice(if (suppress_import_error) "true" else "false");
+        try new_code.appendSlice(if (suppress_error_output) "true" else "false");
         try new_code.appendSlice(temp_source[index + suppress_placeholder.len ..]);
         code.deinit();
         code = new_code;
@@ -656,7 +657,7 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
     manager.sleepUntil(&closure, &@TypeOf(closure).isDone);
 
     const packages_scanned = collector.dedupe.count();
-    const result = try scanner.handleResults(&collector.package_paths, start_time, packages_scanned, security_scanner, security_scanner_pkg_id, command_ctx, original_cwd);
+    const result = try scanner.handleResults(&collector.package_paths, start_time, packages_scanned, security_scanner, security_scanner_pkg_id, command_ctx, original_cwd, is_retry);
     return result;
 }
 
@@ -791,7 +792,7 @@ pub const SecurityScanSubprocess = struct {
         }
     }
 
-    pub fn handleResults(this: *SecurityScanSubprocess, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath), start_time: i64, packages_scanned: usize, security_scanner: []const u8, security_scanner_pkg_id: ?PackageID, command_ctx: bun.cli.Command.Context, original_cwd: []const u8) !ScanAttemptResult {
+    pub fn handleResults(this: *SecurityScanSubprocess, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath), start_time: i64, packages_scanned: usize, security_scanner: []const u8, security_scanner_pkg_id: ?PackageID, command_ctx: bun.cli.Command.Context, original_cwd: []const u8, is_retry: bool) !ScanAttemptResult {
         _ = command_ctx; // Reserved for future use
         _ = original_cwd; // Reserved for future use
         defer {
@@ -878,7 +879,10 @@ pub const SecurityScanSubprocess = struct {
                     if (security_scanner_pkg_id) |pkg_id| {
                         return ScanAttemptResult{ .needs_install = pkg_id };
                     } else {
-                        Output.errGeneric("Security scanner '{s}' is configured in bunfig.toml but could not be resolved\n  <d>Did you mean to run: bun add --dev {s}<r>", .{ security_scanner, security_scanner });
+                        // Only show error on first attempt, not on retry
+                        if (!is_retry) {
+                            Output.errGeneric("Security scanner '{s}' is configured in bunfig.toml but could not be resolved\n  <d>Did you mean to run: bun add --dev {s}<r>", .{ security_scanner, security_scanner });
+                        }
                         return error.SecurityScannerNotInDependencies;
                     }
                 },

@@ -748,17 +748,19 @@ pub const SecurityScanSubprocess = struct {
                             Output.errGeneric("Security scanner exited with code {d} without sending data", .{exit.code});
                         },
                         2 => {
-                            Output.println("Found security scanner as id {d}", .{if (security_scanner_pkg_id) |pkg_id| pkg_id else 0});
-
                             if (security_scanner_pkg_id) |pkg_id| {
+                                Output.prettyln("<r><yellow>Attempting to install security scanner from npm...<r>", .{});
+
                                 doPartialInstallOfSecurityScanner(this.manager, command_ctx, this.manager.options.log_level, pkg_id, original_cwd) catch |err| {
                                     Output.errGeneric("Failed to install security scanner: {s}", .{@errorName(err)});
-                                    bun.Global.exit(1);
+                                    return err;
                                 };
 
-                                Output.pretty("\n<d><b>Note: Security scanner installed successfully.</b><r>\n", .{});
-                                Output.flush();
-                                bun.Global.exit(0);
+                                Output.prettyln("<r><green><b>Security scanner installed successfully.<r>", .{});
+
+                                // TODO
+
+                                unreachable;
                             } else {
                                 Output.errGeneric("Security scanner exited with code {d} without sending data", .{exit.code});
                             }

@@ -69,6 +69,7 @@ Code quality:
 - [ ] Should make line_no be an enum with a none option and a function to get if line nombers are enabled
 - [ ] make Data type-safe. in Execution.zig, it should be a CurrentEntryRef
   - this will help for when we cancel tests due to timeout, because they still might resolve in the future
+  - this will help for the done callback, which could be called multiple times by the user. it can be stored as a js value and gc'd.
 
 Follow-up:
 

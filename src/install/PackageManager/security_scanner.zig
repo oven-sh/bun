@@ -283,13 +283,33 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
 
     var security_scanner_pkg_id: ?PackageID = null;
 
-    // If scan_all, we start from the root package and traverse all dependencies
-    if (scan_all) {
-        // start with root package which is id=0
-        const root_pkg_id: PackageID = 0;
-        const root_deps = pkg_dependencies[root_pkg_id];
+    // Always look for the security scanner in root dependencies first
+    const root_pkg_id: PackageID = 0;
+    const root_deps = pkg_dependencies[root_pkg_id];
 
-        // Security scanner must be a direct dependency of the root package only
+    // Security scanner must be a direct dependency of the root package only
+    for (root_deps.begin()..root_deps.end()) |_dep_id| {
+        const dep_id: DependencyID = @intCast(_dep_id);
+        const dep_pkg_id = manager.lockfile.buffers.resolutions.items[dep_id];
+
+        if (dep_pkg_id == invalid_package_id) {
+            continue;
+        }
+
+        const dep_res = pkg_resolutions[dep_pkg_id];
+        if (dep_res.tag != .npm) {
+            continue;
+        }
+
+        const dep_name = manager.lockfile.buffers.dependencies.items[dep_id].name;
+        if (std.mem.eql(u8, dep_name.slice(manager.lockfile.buffers.string_bytes.items), security_scanner)) {
+            if (security_scanner_pkg_id == null) {
+                security_scanner_pkg_id = dep_pkg_id;
+            }
+        }
+    }
+
+    if (scan_all) {
         for (root_deps.begin()..root_deps.end()) |_dep_id| {
             const dep_id: DependencyID = @intCast(_dep_id);
             const dep_pkg_id = manager.lockfile.buffers.resolutions.items[dep_id];
@@ -301,13 +321,6 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
             const dep_res = pkg_resolutions[dep_pkg_id];
             if (dep_res.tag != .npm) {
                 continue;
-            }
-
-            const dep_name = manager.lockfile.buffers.dependencies.items[dep_id].name;
-            if (std.mem.eql(u8, dep_name.slice(manager.lockfile.buffers.string_bytes.items), security_scanner)) {
-                if (security_scanner_pkg_id == null) {
-                    security_scanner_pkg_id = dep_pkg_id;
-                }
             }
 
             if ((try pkg_dedupe.getOrPut(dep_pkg_id)).found_existing) {
@@ -366,13 +379,6 @@ fn performSecurityScan(manager: *PackageManager, security_scanner: []const u8, c
 
                         if (dep_pkg_id != update_pkg_id) {
                             continue;
-                        }
-
-                        const dep_name = manager.lockfile.buffers.dependencies.items[dep_id].name;
-                        if (std.mem.eql(u8, dep_name.slice(manager.lockfile.buffers.string_bytes.items), security_scanner)) {
-                            if (security_scanner_pkg_id == null) {
-                                security_scanner_pkg_id = update_pkg_id;
-                            }
                         }
 
                         update_dep_id = dep_id;

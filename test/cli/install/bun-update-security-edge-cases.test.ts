@@ -4,31 +4,53 @@ import { join } from "path";
 
 describe("bun update security edge cases", () => {
   test("bun update detects vulnerability in updated version that was safe before", async () => {
-    // Simulate: lodash 4.17.20 is safe, but 4.17.21 has a vulnerability
+    // Start with an exact version that's "safe"
     const dir = tempDirWithFiles("update-new-vuln", {
       "package.json": JSON.stringify({
         name: "test-app",
         dependencies: {
-          "lodash": "^4.17.0",
+          "lodash": "4.17.20",  // Exact version that's safe
         },
       }),
-      "bunfig.toml": `
+    });
+
+    // First install - should be safe (no scanner yet)
+    await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
+    
+    // Now add scanner and update package.json to allow updates
+    await Bun.write(
+      join(dir, "package.json"),
+      JSON.stringify({
+        name: "test-app",
+        dependencies: {
+          "lodash": "^4.17.0",  // Now allow updates
+        },
+      }),
+    );
+    
+    await Bun.write(
+      join(dir, "bunfig.toml"),
+      `
 [install.security]
 scanner = "./scanner.js"
 `,
-      "scanner.js": `
+    );
+    
+    await Bun.write(
+      join(dir, "scanner.js"),
+      `
 module.exports = {
   scanner: {
     version: "1",
     scan: async function(payload) {
       const results = [];
       for (const pkg of payload.packages) {
-        // Only flag lodash if it's version 4.17.21 or higher
-        if (pkg.name === "lodash" && Bun.semver.satisfies(pkg.version, ">=4.17.21")) {
+        // Flag lodash 4.17.21 as vulnerable
+        if (pkg.name === "lodash" && pkg.version === "4.17.21") {
           results.push({
             package: "lodash",
             level: "fatal",
-            description: "CVE-2024-XXXX: Prototype pollution in lodash >=4.17.21",
+            description: "CVE-2024-XXXX: Prototype pollution in lodash 4.17.21",
             url: "https://example.com/CVE-2024-XXXX"
           });
         }
@@ -38,10 +60,7 @@ module.exports = {
   }
 };
 `,
-    });
-
-    // First install - should be safe (gets 4.17.20 or lower)
-    await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
+    );
 
     // Simulate that a newer version (4.17.21) is now available with a vulnerability
     // Run update which would get the newer, vulnerable version
@@ -148,15 +167,20 @@ module.exports = {
           "lodash": "4.17.21",
         },
       }),
-      "bunfig.toml": `
-[install.security]
-scanner = "./scanner.js"
-`,
-      // Initially no scanner
+      // Initially no scanner in bunfig
     });
 
     // First install without security scanner (simulating before vulnerability was known)
     await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
+
+    // Now add scanner configuration
+    await Bun.write(
+      join(dir, "bunfig.toml"),
+      `
+[install.security]
+scanner = "./scanner.js"
+`,
+    );
 
     // Now add scanner that knows about the vulnerability
     await Bun.write(

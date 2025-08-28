@@ -611,6 +611,24 @@ pub const GraphVisualizer = struct {
                     };
                 }
                 
+                // Get output code snippet from compile results
+                var output_snippet: ?[]const u8 = null;
+                if (chunk.compile_results_for_chunk.len > 0 and chunk.content == .javascript) {
+                    // Get first JavaScript compile result
+                    const first_result = chunk.compile_results_for_chunk[0];
+                    if (first_result == .javascript) {
+                        const js_code = first_result.javascript.code();
+                        if (js_code.len > 0) {
+                            const max_len = @min(js_code.len, 1000);
+                            output_snippet = try allocator.dupe(u8, js_code[0..max_len]);
+                        }
+                    }
+                }
+                
+                // TODO: Extract actual source mappings from chunk.output_source_map
+                // For now, just use empty mappings
+                const source_mappings: []SourceMapping = &.{};
+                
                 chunks_data.?[i] = .{
                     .index = i,
                     .is_entry_point = chunk.entry_point.is_entry_point,
@@ -621,8 +639,8 @@ pub const GraphVisualizer = struct {
                     .unique_key = chunk.unique_key,
                     .final_path = chunk.final_rel_path,
                     .content_type = @tagName(chunk.content),
-                    .output_snippet = null, // TODO: get actual output
-                    .source_mappings = &.{}, // TODO: extract from source maps
+                    .output_snippet = output_snippet,
+                    .source_mappings = source_mappings,
                 };
             }
         }

@@ -1463,10 +1463,10 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
 
             if (request.flags.simple) {
                 // simple queries can have multiple commands
-                if (false) request.endPerformanceTracking(this, this.globalObject); // Only end on final result for simple queries
+                if (false) request.endPerformanceTrackingWithCommand(this, this.globalObject, cmd.command_tag.slice()); // Only end on final result for simple queries
                 request.onResult(cmd.command_tag.slice(), this.globalObject, this.js_value, false);
             } else {
-                request.endPerformanceTracking(this, this.globalObject);
+                request.endPerformanceTrackingWithCommand(this, this.globalObject, cmd.command_tag.slice());
                 request.onResult(cmd.command_tag.slice(), this.globalObject, this.js_value, true);
             }
         },

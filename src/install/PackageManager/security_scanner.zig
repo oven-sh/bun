@@ -894,8 +894,14 @@ pub const SecurityScanSubprocess = struct {
                     if (security_scanner_pkg_id) |pkg_id| {
                         return ScanAttemptResult{ .needs_install = pkg_id };
                     } else {
-                        // No package ID means it's not in dependencies - probably a local file
-                        Output.errGeneric("Security scanner '{s}' is configured in bunfig.toml but could not be resolved.\n  <d>If this is a local file, please check that the file exists.\n  If this is an npm package, add it to your dependencies: bun add --dev {s}<r>", .{ security_scanner, security_scanner });
+                        // No package ID means it's not in dependencies
+                        const is_package_name = bun.resolver.isPackagePath(security_scanner);
+
+                        if (is_package_name) {
+                            Output.errGeneric("Security scanner '{s}' is configured in bunfig.toml but is not installed.\n  <d>To install it, run: bun add --dev {s}<r>", .{ security_scanner, security_scanner });
+                        } else {
+                            Output.errGeneric("Security scanner '{s}' is configured in bunfig.toml but the file could not be found.\n  <d>Please check that the file exists and the path is correct.<r>", .{security_scanner});
+                        }
                         return error.SecurityScannerNotInDependencies;
                     }
                 },

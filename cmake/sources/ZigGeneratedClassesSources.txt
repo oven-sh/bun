@@ -21,5 +21,6 @@ src/bun.js/api/zlib.classes.ts
 src/bun.js/node/node.classes.ts
 src/bun.js/resolve_message.classes.ts
 src/bun.js/test/jest.classes.ts
+src/bun.js/webcore/compression.classes.ts
 src/bun.js/webcore/encoding.classes.ts
 src/bun.js/webcore/response.classes.ts

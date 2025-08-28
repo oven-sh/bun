@@ -3,8 +3,10 @@ src/js/builtins/Bake.ts
 src/js/builtins/BundlerPlugin.ts
 src/js/builtins/ByteLengthQueuingStrategy.ts
 src/js/builtins/CommonJS.ts
+src/js/builtins/CompressionStream.ts
 src/js/builtins/ConsoleObject.ts
 src/js/builtins/CountQueuingStrategy.ts
+src/js/builtins/DecompressionStream.ts
 src/js/builtins/Glob.ts
 src/js/builtins/ImportMetaObject.ts
 src/js/builtins/Ipc.ts

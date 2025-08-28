@@ -48,9 +48,11 @@
   BroadcastChannel                BroadcastChannelConstructorCallback                  PropertyCallback
   ByteLengthQueuingStrategy       ByteLengthQueuingStrategyConstructorCallback         PropertyCallback
   CloseEvent                      CloseEventConstructorCallback                        PropertyCallback
+  CompressionStream               CompressionStreamConstructorCallback                 PropertyCallback
   CountQueuingStrategy            CountQueuingStrategyConstructorCallback              PropertyCallback
   CryptoKey                       CryptoKeyConstructorCallback                         PropertyCallback
   CustomEvent                     CustomEventConstructorCallback                       PropertyCallback
+  DecompressionStream             DecompressionStreamConstructorCallback               PropertyCallback
   DOMException                    DOMExceptionConstructorCallback                      PropertyCallback
   ErrorEvent                      ErrorEventConstructorCallback                        PropertyCallback
   Event                           EventConstructorCallback                             PropertyCallback

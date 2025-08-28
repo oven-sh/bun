@@ -290,10 +290,12 @@ src/bun.js/bindings/webcore/JSBroadcastChannel.cpp
 src/bun.js/bindings/webcore/JSByteLengthQueuingStrategy.cpp
 src/bun.js/bindings/webcore/JSCallbackData.cpp
 src/bun.js/bindings/webcore/JSCloseEvent.cpp
+src/bun.js/bindings/webcore/JSCompressionStream.cpp
 src/bun.js/bindings/webcore/JSCookie.cpp
 src/bun.js/bindings/webcore/JSCookieMap.cpp
 src/bun.js/bindings/webcore/JSCountQueuingStrategy.cpp
 src/bun.js/bindings/webcore/JSCustomEvent.cpp
+src/bun.js/bindings/webcore/JSDecompressionStream.cpp
 src/bun.js/bindings/webcore/JSDOMBindingInternalsBuiltins.cpp
 src/bun.js/bindings/webcore/JSDOMBuiltinConstructorBase.cpp
 src/bun.js/bindings/webcore/JSDOMConstructorBase.cpp

@@ -34,6 +34,8 @@ using namespace JSC;
     macro(ReadableStreamDefaultReader) \
     macro(SQL) \
     macro(TextEncoderStreamEncoder) \
+    macro(CompressionStreamEncoder) \
+    macro(DecompressionStreamDecoder) \
     macro(TransformStream) \
     macro(TransformStreamDefaultController) \
     macro(WritableStream) \
@@ -258,6 +260,10 @@ using namespace JSC;
     macro(textDecoderStreamTransform) \
     macro(textEncoderStreamEncoder) \
     macro(textEncoderStreamTransform) \
+    macro(compressionStreamEncoder) \
+    macro(compressionStreamTransform) \
+    macro(decompressionStreamDecoder) \
+    macro(decompressionStreamTransform) \
     macro(toClass) \
     macro(toNamespacedPath) \
     macro(trace) \

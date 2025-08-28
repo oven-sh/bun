@@ -124,6 +124,8 @@
 #include "JSTextEncoder.h"
 #include "JSTextEncoderStream.h"
 #include "JSTextDecoderStream.h"
+#include "JSCompressionStream.h"
+#include "JSDecompressionStream.h"
 #include "JSTransformStream.h"
 #include "JSTransformStreamDefaultController.h"
 #include "JSURLSearchParams.h"
@@ -1468,9 +1470,11 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(AbortSignal);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(BroadcastChannel);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ByteLengthQueuingStrategy)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CloseEvent);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CompressionStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CountQueuingStrategy)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CryptoKey);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CustomEvent);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(DecompressionStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(DOMException);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(DOMFormData);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(DOMURL);
@@ -3741,6 +3745,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         GlobalPropertyInfo(builtinNames.processBindingConstantsPrivateName(), this->processBindingConstants(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.requireMapPrivateName(), this->requireMap(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0),
         GlobalPropertyInfo(builtinNames.TextEncoderStreamEncoderPrivateName(), JSTextEncoderStreamEncoderConstructor(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0),
+        GlobalPropertyInfo(builtinNames.CompressionStreamEncoderPrivateName(), JSCompressionStreamEncoderConstructor(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0),
+        GlobalPropertyInfo(builtinNames.DecompressionStreamDecoderPrivateName(), JSDecompressionStreamDecoderConstructor(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0),
         GlobalPropertyInfo(builtinNames.makeErrorWithCodePrivateName(), JSFunction::create(vm, this, 2, String(), jsFunctionMakeErrorWithCode, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.toClassPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionToClass, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.inheritsPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionInherits, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),

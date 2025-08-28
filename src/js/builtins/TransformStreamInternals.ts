@@ -34,6 +34,7 @@ export function isTransformStreamDefaultController(controller) {
   return $isObject(controller) && !!$getByIdDirectPrivate(controller, "transformAlgorithm");
 }
 
+$builtin;
 export function createTransformStream(
   startAlgorithm,
   transformAlgorithm,
@@ -208,6 +209,7 @@ export function transformStreamDefaultControllerClearAlgorithms(controller) {
   $putByIdDirectPrivate(controller, "flushAlgorithm", undefined);
 }
 
+$builtin;
 export function transformStreamDefaultControllerEnqueue(controller, chunk) {
   const stream = $getByIdDirectPrivate(controller, "stream");
   const readable = $getByIdDirectPrivate(stream, "readable");

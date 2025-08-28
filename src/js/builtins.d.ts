@@ -105,6 +105,48 @@ declare var ReadableStream: {
   new (): ReadableStream;
 };
 
+interface CompressionStream {
+  readonly readable: ReadableStream<Uint8Array>;
+  readonly writable: WritableStream<BufferSource>;
+}
+
+declare var CompressionStream: {
+  prototype: CompressionStream;
+  new (format: "deflate" | "deflate-raw" | "gzip" | "brotli"): CompressionStream;
+};
+
+interface DecompressionStream {
+  readonly readable: ReadableStream<Uint8Array>;
+  readonly writable: WritableStream<BufferSource>;
+}
+
+declare var DecompressionStream: {
+  prototype: DecompressionStream;
+  new (format: "deflate" | "deflate-raw" | "gzip" | "brotli"): DecompressionStream;
+};
+
+declare class $CompressionStreamEncoder {
+  constructor(format: number);
+  encode(chunk: BufferSource): Uint8Array | null;
+  flush(): Uint8Array | null;
+}
+
+declare class $DecompressionStreamDecoder {
+  constructor(format: number);
+  decode(chunk: BufferSource): Uint8Array | null;
+  flush(): Uint8Array | null;
+}
+
+declare function $createTransformStream(
+  startAlgorithm?: () => Promise<void>,
+  transformAlgorithm?: (chunk: any) => Promise<void>,
+  flushAlgorithm?: () => Promise<void>,
+  writableHighWaterMark?: number,
+  writableSizeAlgorithm?: (chunk: any) => number,
+  readableHighWaterMark?: number,
+  readableSizeAlgorithm?: (chunk: any) => number
+): TransformStream;
+
 interface Console {
   $writer: ReturnType<typeof Bun.stdout.writer>;
 }

@@ -6,6 +6,10 @@ threadlocal var source_set: bool = false;
 var stderr_stream: Source.StreamType = undefined;
 var stdout_stream: Source.StreamType = undefined;
 var stdout_stream_set = false;
+
+// Track which stdio descriptors are TTYs (0=stdin, 1=stdout, 2=stderr)
+pub export var bun_stdio_tty: [3]i32 = .{ 0, 0, 0 };
+
 pub var terminal_size: std.posix.winsize = .{
     .row = 0,
     .col = 0,
@@ -118,8 +122,6 @@ pub const Source = struct {
 
         return colorDepth() != .none;
     }
-
-    export var bun_stdio_tty: [3]i32 = .{ 0, 0, 0 };
 
     const WindowsStdio = struct {
         const w = bun.windows;
@@ -430,6 +432,18 @@ pub var is_github_action = false;
 
 pub var stderr_descriptor_type = OutputStreamDescriptor.unknown;
 pub var stdout_descriptor_type = OutputStreamDescriptor.unknown;
+
+pub inline fn isStdoutTTY() bool {
+    return bun_stdio_tty[1] != 0;
+}
+
+pub inline fn isStderrTTY() bool {
+    return bun_stdio_tty[2] != 0;
+}
+
+pub inline fn isStdinTTY() bool {
+    return bun_stdio_tty[0] != 0;
+}
 
 pub inline fn isEmojiEnabled() bool {
     return enable_ansi_colors;

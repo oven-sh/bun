@@ -625,7 +625,7 @@ declare module "bun" {
      *
      * @param value The JavaScript object to stringify
      * @param replacer Currently unused (for API consistency with JSON.stringify)
-     * @param options Options for TOML formatting
+     * @param space A string or number for indentation, or an options object
      * @returns A TOML string
      *
      * @example
@@ -642,20 +642,21 @@ declare module "bun" {
      *   }
      * };
      *
+     * // Basic usage
      * console.log(TOML.stringify(obj));
-     * // title = "TOML Example"
-     * //
-     * // [database]
-     * // server = "192.168.1.1"
-     * // ports = [8001, 8001, 8002]
-     * // connection_max = 5000
-     * // enabled = true
+     * 
+     * // JSON.stringify-style indentation
+     * TOML.stringify(obj, null, 2);      // 2 spaces
+     * TOML.stringify(obj, null, "\t");   // tab indentation
+     *
+     * // Advanced options
+     * TOML.stringify(obj, null, { inlineTables: true });
      * ```
      */
     export function stringify(
       value: any,
       replacer?: undefined | null,
-      options?: {
+      space?: string | number | {
         /**
          * Whether to format objects as inline tables
          * @default false

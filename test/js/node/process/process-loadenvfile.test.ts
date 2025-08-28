@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { writeFileSync, unlinkSync } from "fs";
-import { join } from "path";
+import { unlinkSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
+import { join } from "path";
 
 describe("process.loadEnvFile", () => {
   it("should load environment variables from a .env file", () => {
@@ -53,7 +53,7 @@ FULL_URL=\${API_URL}/v1
 
       expect(result).toEqual({
         BASE_URL: "https://example.com",
-        API_URL: "https://example.com/api", 
+        API_URL: "https://example.com/api",
         FULL_URL: "https://example.com/api/v1",
       });
     } finally {

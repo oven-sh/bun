@@ -1351,7 +1351,7 @@ pub fn jsFunctionProcessLoadEnvFile(globalObject: *jsc.JSGlobalObject, callframe
     };
     defer bun.default_allocator.free(source.contents);
 
-    // Create a temporary map for parsing - using VM allocator instead 
+    // Create a temporary map for parsing - using VM allocator instead
     var env_map = Map.init(vm.allocator);
     defer env_map.map.deinit();
 
@@ -1383,6 +1383,11 @@ pub const home_env = if (Environment.isWindows) "USERPROFILE" else "HOME";
 
 const string = []const u8;
 
+// Export the function for C binding
+comptime {
+    @export(&jsc.toJSHostFn(jsFunctionProcessLoadEnvFile), .{ .name = "jsFunctionProcessLoadEnvFile" });
+}
+
 const Fs = @import("./fs.zig");
 const std = @import("std");
 const URL = @import("./url.zig").URL;
@@ -1393,13 +1398,8 @@ const Environment = bun.Environment;
 const OOM = bun.OOM;
 const Output = bun.Output;
 const analytics = bun.analytics;
+const jsc = bun.jsc;
 const logger = bun.logger;
 const s3 = bun.S3;
 const strings = bun.strings;
 const api = bun.schema.api;
-const jsc = bun.jsc;
-
-// Export the function for C binding
-comptime {
-    @export(&jsc.toJSHostFn(jsFunctionProcessLoadEnvFile), .{ .name = "jsFunctionProcessLoadEnvFile" });
-}

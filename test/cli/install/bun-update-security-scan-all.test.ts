@@ -100,10 +100,6 @@ module.exports = {
           "axios": "0.21.0",
         },
       }),
-      "bunfig.toml": `
-[install.security]
-scanner = "./scanner.js"
-`,
       "scanner.js": `
 module.exports = {
   scanner: {
@@ -137,8 +133,15 @@ module.exports = {
 `,
     });
 
-    // First install
     await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
+
+    await Bun.write(
+      join(dir, "bunfig.toml"),
+      `
+[install.security]
+scanner = "./scanner.js"
+`,
+    );
 
     // Update only lodash - should only scan lodash and its dependencies
     const updateProc = Bun.spawn({
@@ -212,10 +215,6 @@ module.exports = {
           "lodash": "^4.0.0",
         },
       }),
-      "bunfig.toml": `
-[install.security]
-scanner = "./scanner.js"
-`,
       "scanner.js": `
 module.exports = {
   scanner: {
@@ -234,6 +233,14 @@ module.exports = {
     });
 
     await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
+
+    await Bun.write(
+      join(dir, "bunfig.toml"),
+      `
+[install.security]
+scanner = "./scanner.js"
+`,
+    );
 
     const updateProc = Bun.spawn({
       cmd: [bunExe(), "update"],
@@ -330,10 +337,6 @@ module.exports = {
           "express": "^4.0.0",
         },
       }),
-      "bunfig.toml": `
-[install.security]
-scanner = "./scanner.js"
-`,
       "scanner.js": `
 module.exports = {
   scanner: {
@@ -358,6 +361,14 @@ module.exports = {
     });
 
     await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
+
+    await Bun.write(
+      join(dir, "bunfig.toml"),
+      `
+[install.security]
+scanner = "./scanner.js"
+`,
+    );
 
     const updateProc = Bun.spawn({
       cmd: [bunExe(), "update"],

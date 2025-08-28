@@ -10,7 +10,6 @@ test("security scanner blocks bun update with fatal advisory", async () => {
         "left-pad": "1.3.0", // There is a real update to 1.3.1
       },
     }),
-    "bunfig.toml": `[install.security]\nscanner = "./scanner.ts"`,
     "scanner.ts": `
       export const scanner = {
         version: "1",
@@ -30,6 +29,7 @@ test("security scanner blocks bun update with fatal advisory", async () => {
     `,
   });
 
+  // First install without scanner
   await using installProc = Bun.spawn({
     cmd: [bunExe(), "install"],
     env: bunEnv,
@@ -42,6 +42,9 @@ test("security scanner blocks bun update with fatal advisory", async () => {
   await installProc.stderr.text();
   const installCode = await installProc.exited;
   expect(installCode).toBe(0);
+
+  // Now add scanner for update
+  await Bun.write(Bun.pathToFileURL(`${dir}/bunfig.toml`), `[install.security]\nscanner = "./scanner.ts"`);
 
   await using updateProc = Bun.spawn({
     cmd: [bunExe(), "update", "left-pad", "--latest"],

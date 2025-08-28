@@ -1658,3 +1658,251 @@ declare class ResolveMessage {
 ```
 
 {% bunCLIUsage command="build" /%}
+
+## Advanced Features
+
+### Multi-Format Output
+
+Build for multiple environments with different module formats:
+
+```ts
+// Build for browser
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  outdir: "./dist/browser",
+  target: "browser",
+  format: "esm",
+});
+
+// Build for Node.js
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  outdir: "./dist/node",
+  target: "node", 
+  format: "cjs",
+});
+
+// Build for Bun runtime
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  outdir: "./dist/bun",
+  target: "bun",
+  format: "esm",
+});
+```
+
+### Custom Asset Processing
+
+Transform assets during bundling with custom loaders:
+
+```ts
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  loader: {
+    // Inline SVGs as React components
+    ".svg": "jsx",
+    // Embed small images as data URLs
+    ".png": "dataurl",
+    // Load shaders as text
+    ".glsl": "text",
+  },
+});
+```
+
+### Build-Time Optimizations
+
+Use macros and build-time constants for optimization:
+
+```ts
+// macros.ts
+export function buildTimeConstant() {
+  return {
+    VERSION: process.env.npm_package_version,
+    BUILD_DATE: new Date().toISOString(),
+  };
+}
+
+// usage.ts
+import { buildTimeConstant } from "./macros" with { type: "macro" };
+
+const constants = buildTimeConstant();
+console.log(`Version: ${constants.VERSION}`);
+```
+
+Advanced environment variable processing:
+
+```ts
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  define: {
+    __VERSION__: JSON.stringify(process.env.npm_package_version),
+    __FEATURE_FLAGS__: JSON.stringify({
+      newFeature: process.env.ENABLE_NEW_FEATURE === "true",
+    }),
+  },
+});
+```
+
+### Bytecode Generation
+
+Generate bytecode for faster startup times:
+
+```ts
+await Bun.build({
+  entrypoints: ["./src/server.ts"],
+  outdir: "./dist",
+  target: "bun",
+  format: "cjs", // Required for bytecode
+  bytecode: true, // Generates .jsc files
+});
+```
+
+### Single-File Executables
+
+Create standalone executables:
+
+```bash
+# Basic executable
+bun build ./cli.ts --compile --outfile mycli
+
+# With embedded assets
+bun build ./app-with-assets.ts --compile --outfile myapp
+```
+
+## Optimization Guide
+
+### Tree Shaking and Dead Code Elimination
+
+Bun implements aggressive tree shaking through statement-level dependency analysis:
+
+```ts
+// Only the used exports will be included
+export function usedFunction() {
+  return "I will be bundled";
+}
+
+export function unusedFunction() {
+  return "I will be eliminated";
+}
+```
+
+Control tree shaking behavior:
+
+```json
+{
+  "sideEffects": false,  // Enable aggressive tree shaking
+  "sideEffects": [       // Only these files have side effects
+    "./src/polyfills.js",
+    "**/*.css"
+  ]
+}
+```
+
+### Bundle Size Optimization
+
+Minification with granular control:
+
+```ts
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  minify: {
+    whitespace: true,    // Remove whitespace and comments
+    identifiers: true,   // Rename variables to shorter names
+    syntax: true,        // Optimize syntax patterns
+  },
+});
+```
+
+Remove development code in production:
+
+```ts
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  drop: ["console", "debugger"], // Remove console/debugger statements
+  define: {
+    "__DEV__": "false",
+    "process.env.NODE_ENV": '"production"',
+  },
+});
+```
+
+Externalize large dependencies:
+
+```ts
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  external: ["react", "react-dom"], // Don't bundle these
+  packages: "external", // Or externalize all node_modules
+});
+```
+
+### Performance Optimization
+
+Enable code splitting for better loading:
+
+```ts
+await Bun.build({
+  entrypoints: ["./src/page1.ts", "./src/page2.ts"],
+  outdir: "./dist",
+  splitting: true, // Creates shared chunks automatically
+});
+```
+
+Manual code splitting with dynamic imports:
+
+```ts
+// Lazy load heavy dependencies
+const heavyLibrary = await import("./heavy-library");
+
+// Route-based splitting
+const HomePage = () => import("./pages/Home");
+const AboutPage = () => import("./pages/About");
+```
+
+Asset optimization:
+
+```ts
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  loader: {
+    ".png": "dataurl", // Inline small images
+    ".jpg": "file",    // Keep large images as files
+  },
+  naming: {
+    asset: "assets/[name]-[hash].[ext]",
+  },
+  publicPath: "https://cdn.example.com/", // CDN support
+});
+```
+
+### Build Performance
+
+For large projects, optimize build performance:
+
+```ts
+// Memory-conscious builds for very large projects
+const entrypoints = glob("./src/**/*.ts");
+const batchSize = 50;
+
+for (let i = 0; i < entrypoints.length; i += batchSize) {
+  const batch = entrypoints.slice(i, i + batchSize);
+  await Bun.build({
+    entrypoints: batch,
+    outdir: `./dist/batch-${i}`,
+  });
+}
+```
+
+Environment-specific optimization:
+
+```ts
+const isProduction = process.env.NODE_ENV === "production";
+
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  outdir: "./dist",
+  minify: isProduction,
+  sourcemap: isProduction ? "external" : "inline",
+  drop: isProduction ? ["console", "debugger"] : [],
+});
+```

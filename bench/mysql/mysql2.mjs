@@ -49,11 +49,7 @@ if (+(existingUsers?.[0]?.count ?? existingUsers?.count) < 100) {
 
 console.time("mysql2");
 let promises = [];
-<<<<<<< Updated upstream
-for (let i = 0; i < 100_000; i++) {
-=======
 for (let i = 0; i < 1_000_000; i++) {
->>>>>>> Stashed changes
   promises.push(pool.execute(`SELECT * FROM users_bun_bench LIMIT 100`));
 }
 await Promise.all(promises);

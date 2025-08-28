@@ -12,10 +12,10 @@ pub const ScanCommand = struct {
         };
         defer ctx.allocator.free(cwd);
 
-        try execWithManager(ctx, manager);
+        try execWithManager(ctx, manager, cwd);
     }
 
-    pub fn execWithManager(ctx: Command.Context, manager: *PackageManager) !void {
+    pub fn execWithManager(ctx: Command.Context, manager: *PackageManager, original_cwd: []const u8) !void {
         if (manager.options.security_scanner == null) {
             Output.prettyErrorln("<r><red>error<r>: no security scanner configured", .{});
             Output.prettyln("", .{});
@@ -41,7 +41,7 @@ pub const ScanCommand = struct {
             Global.exit(1);
         }
 
-        if (try security_scanner.performSecurityScanForAll(manager)) |results| {
+        if (try security_scanner.performSecurityScanForAll(manager, ctx, original_cwd)) |results| {
             defer {
                 var results_mut = results;
                 results_mut.deinit();

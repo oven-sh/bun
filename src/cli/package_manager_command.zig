@@ -160,7 +160,7 @@ pub const PackageManagerCommand = struct {
         }
 
         if (strings.eqlComptime(subcommand, "scan")) {
-            try ScanCommand.execWithManager(ctx, pm);
+            try ScanCommand.execWithManager(ctx, pm, cwd);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "pack")) {
             try PackCommand.execWithManager(ctx, pm);

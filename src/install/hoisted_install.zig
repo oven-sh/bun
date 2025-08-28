@@ -4,6 +4,7 @@ pub fn installHoistedPackages(
     workspace_filters: []const WorkspaceFilter,
     install_root_dependencies: bool,
     log_level: PackageManager.Options.LogLevel,
+    packages_to_install: ?[]const PackageID,
 ) !PackageInstall.Summary {
     bun.analytics.Features.hoisted_bun_install += 1;
 
@@ -215,7 +216,8 @@ pub fn installHoistedPackages(
             while (remaining.len > unroll_count) {
                 comptime var i: usize = 0;
                 inline while (i < unroll_count) : (i += 1) {
-                    installer.installPackage(remaining[i], log_level);
+                    const package_id = this.lockfile.buffers.resolutions.items[remaining[i]];
+                    doInstallPackageIfInPackagesToInstall(&installer, packages_to_install, remaining[i], package_id, log_level);
                 }
                 remaining = remaining[unroll_count..];
 
@@ -241,7 +243,8 @@ pub fn installHoistedPackages(
             }
 
             for (remaining) |dependency_id| {
-                installer.installPackage(dependency_id, log_level);
+                const pkg_id = this.lockfile.buffers.resolutions.items[dependency_id];
+                doInstallPackageIfInPackagesToInstall(&installer, packages_to_install, dependency_id, pkg_id, log_level);
             }
 
             try this.runTasks(
@@ -358,6 +361,24 @@ pub fn installHoistedPackages(
     return summary;
 }
 
+pub fn doInstallPackageIfInPackagesToInstall(
+    this: *PackageInstaller,
+    packages_to_install: ?[]const PackageID,
+    dependency_id: DependencyID,
+    package_id: PackageID,
+    log_level: PackageManager.Options.LogLevel,
+) void {
+    if (packages_to_install) |packages| {
+        for (packages) |package| {
+            if (package_id == package) {
+                this.installPackage(dependency_id, package_id, log_level);
+            }
+        }
+    } else {
+        this.installPackage(dependency_id, package_id, log_level);
+    }
+}
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -374,6 +395,7 @@ const install = bun.install;
 const Bin = install.Bin;
 const Lockfile = install.Lockfile;
 const PackageID = install.PackageID;
+const DependencyID = install.DependencyID;
 const PackageInstall = install.PackageInstall;
 
 const PackageManager = install.PackageManager;

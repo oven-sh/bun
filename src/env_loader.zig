@@ -1330,6 +1330,53 @@ pub const Map = struct {
     }
 };
 
+/// JavaScript function to load environment variables from a .env file
+/// Takes a file path as argument and returns an object containing the parsed env vars
+pub fn jsFunctionProcessLoadEnvFile(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const vm = globalObject.bunVM();
+    const arguments = callframe.arguments_old(1).slice();
+    var args = jsc.CallFrame.ArgumentsSlice.init(vm, arguments);
+    defer args.deinit();
+
+    const path_like = (try jsc.Node.PathLike.fromJS(globalObject, &args)) orelse {
+        return globalObject.throwInvalidArguments("loadEnvFile requires a file path argument", .{});
+    };
+
+    const path_slice = path_like.slice();
+    defer path_like.deinit();
+
+    // Use bun.sys.File.toSource to read the file
+    const source = bun.sys.File.toSource(path_slice, bun.default_allocator, .{}).unwrap() catch |err| {
+        return globalObject.throwPretty("Failed to read env file '{s}': {s}", .{ path_slice, @errorName(err) });
+    };
+    defer bun.default_allocator.free(source.contents);
+
+    // Create a temporary map for parsing - using VM allocator instead 
+    var env_map = Map.init(vm.allocator);
+    defer env_map.map.deinit();
+
+    // Parse the env file using the existing parser - using VM allocator
+    var value_buffer = std.ArrayList(u8).init(bun.default_allocator);
+    defer value_buffer.deinit();
+
+    Parser.parse(&source, vm.allocator, &env_map, &value_buffer, false, false, true) catch |err| {
+        return globalObject.throwPretty("Failed to parse env file '{s}': {s}", .{ path_slice, @errorName(err) });
+    };
+
+    // Convert the parsed map to a JavaScript object
+    const result_object = jsc.JSValue.createEmptyObject(globalObject, 0);
+    var iter = env_map.iterator();
+    while (iter.next()) |entry| {
+        const key_str = jsc.ZigString.init(entry.key_ptr.*);
+        const value_js = bun.String.createUTF8ForJS(globalObject, entry.value_ptr.value) catch {
+            return globalObject.throwOutOfMemory();
+        };
+        result_object.put(globalObject, key_str, value_js);
+    }
+
+    return result_object;
+}
+
 pub var instance: ?*Loader = null;
 
 pub const home_env = if (Environment.isWindows) "USERPROFILE" else "HOME";
@@ -1350,3 +1397,9 @@ const logger = bun.logger;
 const s3 = bun.S3;
 const strings = bun.strings;
 const api = bun.schema.api;
+const jsc = bun.jsc;
+
+// Export the function for C binding
+comptime {
+    @export(&jsc.toJSHostFn(jsFunctionProcessLoadEnvFile), .{ .name = "jsFunctionProcessLoadEnvFile" });
+}

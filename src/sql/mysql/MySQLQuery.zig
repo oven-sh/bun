@@ -549,7 +549,6 @@ const MySQLStatement = @import("./MySQLStatement.zig");
 const PreparedStatement = @import("./protocol/PreparedStatement.zig");
 const Signature = @import("./protocol/Signature.zig");
 const bun = @import("bun");
-const std = @import("std");
 const CommandTag = @import("../postgres/CommandTag.zig").CommandTag;
 const QueryBindingIterator = @import("../shared/QueryBindingIterator.zig").QueryBindingIterator;
 const SQLPerformanceEntryLogger = @import("../SQLPerformanceEntryLogger.zig").SQLPerformanceEntryLogger;

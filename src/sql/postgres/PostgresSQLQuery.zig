@@ -534,7 +534,6 @@ const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
 const Signature = @import("./Signature.zig");
 const bun = @import("bun");
 const protocol = @import("./PostgresProtocol.zig");
-const std = @import("std");
 const CommandTag = @import("./CommandTag.zig").CommandTag;
 const PostgresSQLQueryResultMode = @import("../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
 const SQLPerformanceEntryLogger = @import("../SQLPerformanceEntryLogger.zig").SQLPerformanceEntryLogger;

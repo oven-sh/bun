@@ -825,7 +825,9 @@ pub const SecurityScanSubprocess = struct {
                             if (security_scanner_pkg_id) |pkg_id| {
                                 return ScanAttemptResult{ .needs_install = pkg_id };
                             } else {
-                                Output.errGeneric("Security scanner exited with code {d} without sending data", .{exit.code});
+                                Output.errGeneric("Security scanner '{s}' is configured in bunfig.toml but not found in dependencies", .{security_scanner});
+                                Output.prettyln("\n<cyan>Did you mean to run: <b>bun add --dev {s}<r>", .{security_scanner});
+                                return error.SecurityScannerNotInDependencies;
                             }
                         },
                         else => {

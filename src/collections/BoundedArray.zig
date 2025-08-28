@@ -40,13 +40,9 @@ pub fn BoundedArrayAligned(
     return struct {
         const Self = @This();
         buffer: [buffer_capacity]T align(alignment.toByteUnits()) = undefined,
-        len: Int = 0,
+        len: Length = 0,
 
-        pub const Int = switch (buffer_capacity) {
-            0...255 => u8,
-            256...std.math.maxInt(u16) => u16,
-            else => @compileError("BoundedArray buffer_capacity must be less than 64 KiB"),
-        };
+        const Length = std.math.ByteAlignedInt(std.math.IntFittingRange(0, buffer_capacity));
 
         pub const Buffer = @FieldType(Self, "buffer");
 

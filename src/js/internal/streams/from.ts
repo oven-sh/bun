@@ -1,7 +1,3 @@
-"use strict";
-
-const { Buffer } = require("node:buffer");
-
 const SymbolIterator = Symbol.iterator;
 const SymbolAsyncIterator = Symbol.asyncIterator;
 const PromisePrototypeThen = Promise.prototype.then;

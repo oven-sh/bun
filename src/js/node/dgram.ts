@@ -57,7 +57,7 @@ const { isIP } = require("node:net");
 
 const EventEmitter = require("node:events");
 
-const { deprecate } = require("node:util");
+const { deprecate } = require("internal/util/deprecate");
 
 const SymbolDispose = Symbol.dispose;
 const SymbolAsyncDispose = Symbol.asyncDispose;

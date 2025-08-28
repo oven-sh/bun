@@ -499,7 +499,7 @@ const JSONBuilder = struct {
     pub fn buildPackageJSON(this: JSONBuilder) ![]const u8 {
         var json_buf = std.ArrayList(u8).init(this.manager.allocator);
         var writer = json_buf.writer();
-        
+
         const pkgs = this.manager.lockfile.packages.slice();
         const pkg_names = pkgs.items(.name);
         const pkg_resolutions = pkgs.items(.resolution);
@@ -512,9 +512,9 @@ const JSONBuilder = struct {
         while (iter.next()) |entry| {
             const pkg_id = entry.key_ptr.*;
             const paths = entry.value_ptr.*;
-            
+
             const dep_id = if (paths.dep_path.len > 0) paths.dep_path[paths.dep_path.len - 1] else invalid_dependency_id;
-            
+
             const pkg_name = pkg_names[pkg_id];
             const pkg_res = pkg_resolutions[pkg_id];
 
@@ -567,18 +567,18 @@ fn attemptSecurityScan(manager: *PackageManager, security_scanner: []const u8, s
 
     const finder = ScannerFinder{ .manager = manager, .scanner_name = security_scanner };
     try finder.validateNotInWorkspaces();
-    
+
     const security_scanner_pkg_id = finder.findInRootDependencies();
 
     var collector = PackageCollector.init(manager);
     defer collector.deinit();
-    
+
     if (scan_all) {
         try collector.collectAllPackages();
     } else {
         try collector.collectUpdatePackages();
     }
-    
+
     try collector.processQueue();
 
     const json_builder = JSONBuilder{ .manager = manager, .collector = &collector };

@@ -180,21 +180,11 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
                     status = .execute; // can't advance; already executing
                     break;
                 }
-                if (sequence.activeEntry(this) == null) {
-                    groupLog.log("runOne: sequence completed; decrement repeat count", .{});
-                    this.onSequenceCompleted(sequence);
-                    sequence.remaining_repeat_count -= 1;
-                    if (sequence.remaining_repeat_count <= 0) {
-                        groupLog.log("runOne: no repeats left; wait for group completion.", .{});
-                        break; // done
-                    }
-                    this.resetSequence(sequence);
-                }
 
                 const next_item = sequence.activeEntry(this) orelse {
-                    groupLog.log("runOne: no more entries in sequence", .{});
-                    bun.debugAssert(false);
-                    break;
+                    bun.assert(sequence.remaining_repeat_count == 0);
+                    groupLog.log("runOne: no repeats left; wait for group completion.", .{});
+                    break; // done
                 };
                 sequence.executing = true;
                 this.onSequenceStarted(sequence);
@@ -220,7 +210,9 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
                     }
                     sequence.executing = false;
                     sequence.index += 1;
+                    continue;
                 }
+                comptime unreachable;
             }
         }
 
@@ -248,6 +240,17 @@ pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, _: ?jsc.JSValue
 
     sequence.executing = false;
     sequence.index += 1;
+
+    if (sequence.activeEntry(this) == null) {
+        // just completed the sequence
+        this.onSequenceCompleted(sequence);
+        sequence.remaining_repeat_count -= 1;
+        if (sequence.remaining_repeat_count <= 0) {
+            // no repeats left; wait for group completion
+        } else {
+            this.resetSequence(sequence);
+        }
+    }
 
     // TODO: see what vitest does when a beforeAll fails. does it still run the test?
 }

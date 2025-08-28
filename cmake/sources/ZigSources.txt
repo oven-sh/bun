@@ -367,7 +367,7 @@ src/bun.js/test/expect/toThrow.zig
 src/bun.js/test/expect/toThrowErrorMatchingInlineSnapshot.zig
 src/bun.js/test/expect/toThrowErrorMatchingSnapshot.zig
 src/bun.js/test/jest.zig
-src/bun.js/test/Order.zig
+src/bun.js/test/order.zig
 src/bun.js/test/pretty_format.zig
 src/bun.js/test/ScopeFunctions.zig
 src/bun.js/test/snapshot.zig

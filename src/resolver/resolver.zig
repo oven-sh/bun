@@ -3965,6 +3965,18 @@ pub const Resolver = struct {
         const rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
         var entries = _entries.entries;
 
+        // Bottom-up approach: ensure parent is fully processed first (like esbuild)
+        // This prevents race conditions where sibling directories affect parent state
+        var resolved_parent: ?*DirInfo = parent;
+        if (parent == null) {
+            const parent_path = Dirname.dirname(path);
+            if (!strings.eql(parent_path, path)) {
+                // Recursively resolve parent first to ensure deterministic inheritance
+                resolved_parent = r.dirInfoCached(parent_path) catch null;
+                // If parent doesn't exist, we can still continue with null parent
+            }
+        }
+
         info.* = DirInfo{
             .abs_path = path,
             // .abs_real_path = path,
@@ -4043,7 +4055,7 @@ pub const Resolver = struct {
         }
         // }
 
-        if (parent) |parent_| {
+        if (resolved_parent) |parent_| {
             // Propagate the browser scope into child directories
             info.enclosing_browser_scope = parent_.enclosing_browser_scope;
             info.package_json_for_browser_field = parent_.package_json_for_browser_field;
@@ -4078,7 +4090,7 @@ pub const Resolver = struct {
                             info.abs_real_path = symlink;
                         } else if (parent_.abs_real_path.len > 0) {
                             // this might leak a little i'm not sure
-                            const parts = [_]string{ parent.?.abs_real_path, base };
+                            const parts = [_]string{ parent_.abs_real_path, base };
                             symlink = r.fs.dirname_store.append(string, r.fs.absBuf(&parts, bufs(.dir_info_uncached_filename))) catch unreachable;
 
                             if (r.debug_logs) |*logs| {

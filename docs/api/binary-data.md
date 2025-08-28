@@ -1142,19 +1142,11 @@ async function hashFile(path: string, algorithm = "sha256"): Promise<string> {
   const hasher = new CryptoHasher(algorithm);
   const file = Bun.file(path);
   
-  // Process file in chunks
+  // Process file in chunks using async iteration
   const stream = file.stream();
-  const reader = stream.getReader();
   
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      
-      hasher.update(value);
-    }
-  } finally {
-    reader.releaseLock();
+  for await (const chunk of stream) {
+    hasher.update(chunk);
   }
   
   return hasher.digest("hex");

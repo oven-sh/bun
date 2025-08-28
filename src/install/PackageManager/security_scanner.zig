@@ -600,7 +600,6 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
     defer code_buf.deinit();
 
     var temp_source = try manager.allocator.dupe(u8, scanner_entry_source);
-    defer manager.allocator.free(temp_source);
 
     // Replace __SCANNER_MODULE__ with actual scanner name
     const scanner_placeholder = "__SCANNER_MODULE__";
@@ -608,6 +607,7 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
         try code_buf.appendSlice(temp_source[0..index]);
         try code_buf.appendSlice(security_scanner);
         try code_buf.appendSlice(temp_source[index + scanner_placeholder.len ..]);
+        manager.allocator.free(temp_source);
         temp_source = try code_buf.toOwnedSlice();
         code_buf = std.ArrayList(u8).init(manager.allocator);
     }
@@ -870,40 +870,47 @@ pub const SecurityScanSubprocess = struct {
                 return error.InvalidErrorCode;
             };
 
-            if (std.mem.eql(u8, code_str, "MODULE_NOT_FOUND")) {
-                if (security_scanner_pkg_id) |pkg_id| {
-                    return ScanAttemptResult{ .needs_install = pkg_id };
-                } else {
-                    Output.errGeneric("Security scanner '{s}' is configured in bunfig.toml but could not be resolved\n  <d>Did you mean to run: bun add --dev {s}<r>", .{ security_scanner, security_scanner });
-                    return error.SecurityScannerNotInDependencies;
-                }
-            } else if (std.mem.eql(u8, code_str, "INVALID_VERSION")) {
-                const msg = obj.get("message");
-                if (msg) |m| {
-                    if (m.asString(this.manager.allocator)) |msg_str| {
-                        Output.errGeneric("Security scanner error: {s}", .{msg_str});
-                    }
-                }
-                return error.InvalidScannerVersion;
-            } else if (std.mem.eql(u8, code_str, "SCAN_FAILED")) {
-                const msg = obj.get("message");
-                if (msg) |m| {
-                    if (m.asString(this.manager.allocator)) |msg_str| {
-                        Output.errGeneric("Security scanner failed: {s}", .{msg_str});
-                    }
-                }
-                return error.ScannerFailed;
-            } else {
+            const error_code = std.meta.stringToEnum(enum {
+                MODULE_NOT_FOUND,
+                INVALID_VERSION,
+                SCAN_FAILED,
+            }, code_str);
+
+            switch (error_code orelse {
                 Output.errGeneric("Unknown security scanner error code: {s}", .{code_str});
                 return error.UnknownErrorCode;
+            }) {
+                .MODULE_NOT_FOUND => {
+                    if (security_scanner_pkg_id) |pkg_id| {
+                        return ScanAttemptResult{ .needs_install = pkg_id };
+                    } else {
+                        Output.errGeneric("Security scanner '{s}' is configured in bunfig.toml but could not be resolved\n  <d>Did you mean to run: bun add --dev {s}<r>", .{ security_scanner, security_scanner });
+                        return error.SecurityScannerNotInDependencies;
+                    }
+                },
+                .INVALID_VERSION => {
+                    if (obj.get("message")) |msg| {
+                        if (msg.asString(this.manager.allocator)) |msg_str| {
+                            Output.errGeneric("Security scanner error: {s}", .{msg_str});
+                        }
+                    }
+                    return error.InvalidScannerVersion;
+                },
+                .SCAN_FAILED => {
+                    if (obj.get("message")) |msg| {
+                        if (msg.asString(this.manager.allocator)) |msg_str| {
+                            Output.errGeneric("Security scanner failed: {s}", .{msg_str});
+                        }
+                    }
+                    return error.ScannerFailed;
+                },
             }
         } else if (!std.mem.eql(u8, type_str, "result")) {
             Output.errGeneric("Unknown security scanner message type: {s}", .{type_str});
             return error.UnknownMessageType;
         }
 
-        // If we get here, it's a result message - continue with normal advisory parsing
-
+        // if we got here then we got a result message so we can continue like normal
         const duration = std.time.milliTimestamp() - start_time;
 
         if (this.manager.options.log_level == .verbose) {
@@ -931,7 +938,6 @@ pub const SecurityScanSubprocess = struct {
             }
         }
 
-        // Extract advisories from the result message
         const advisories_expr = obj.get("advisories") orelse {
             Output.errGeneric("Security scanner result missing 'advisories' field", .{});
             return error.MissingAdvisoriesField;

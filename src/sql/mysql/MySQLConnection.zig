@@ -869,6 +869,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     const connection_timeout = arguments[12].toInt32();
     const max_lifetime = arguments[13].toInt32();
     const use_unnamed_prepared_statements = arguments[14].asBoolean();
+    const log_enabled = if (arguments.len > 15) arguments[15].asBoolean() else false;
 
     var ptr = try bun.default_allocator.create(MySQLConnection);
 
@@ -893,6 +894,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         .character_set = CharacterSet.default,
         .flags = .{
             .use_unnamed_prepared_statements = use_unnamed_prepared_statements,
+            .log_enabled = log_enabled,
         },
     };
 

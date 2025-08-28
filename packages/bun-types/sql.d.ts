@@ -123,6 +123,12 @@ declare module "bun" {
       filename?: URL | ":memory:" | (string & {}) | undefined;
 
       /**
+       * Enable query logging with ActiveRecord-style output
+       * @default false
+       */
+      log?: boolean | undefined;
+
+      /**
        * Callback executed when a connection attempt completes (SQLite)
        * Receives an Error on failure, or null on success.
        */
@@ -315,6 +321,12 @@ declare module "bun" {
        * @default true
        */
       prepare?: boolean | undefined;
+
+      /**
+       * Enable query logging with ActiveRecord-style output
+       * @default false
+       */
+      log?: boolean | undefined;
     }
 
     /**

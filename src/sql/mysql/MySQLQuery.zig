@@ -7,6 +7,7 @@ cursor_name: bun.String = bun.String.empty,
 thisValue: JSRef = JSRef.empty(),
 
 status: Status = Status.pending,
+start_time: i128 = 0,
 
 ref_count: RefCount = RefCount.init(),
 
@@ -81,6 +82,18 @@ pub fn onWriteFail(
     queries_array: JSValue,
 ) void {
     this.status = .fail;
+    
+    // Log query failure if enabled
+    if (this.start_time > 0) {
+        const end_time = std.time.nanoTimestamp();
+        const duration_ms = @as(f64, @floatFromInt(end_time - this.start_time)) / std.time.ns_per_ms;
+        
+        var query_str = this.query.toUTF8(bun.default_allocator);
+        defer query_str.deinit();
+        
+        bun.Output.prettyln("[<b><cyan>**MYSQL**<r>] <yellow>({d:.1}ms)<r> {s} <red>ERROR<r>", .{ duration_ms, query_str.slice() });
+    }
+    
     const thisValue = this.thisValue.get();
     defer this.thisValue.deinit();
     const targetValue = this.getTarget(globalObject, true);
@@ -216,6 +229,17 @@ pub fn onResult(this: *@This(), result_count: u64, globalObject: *jsc.JSGlobalOb
     const targetValue = this.getTarget(globalObject, is_last);
     if (is_last) {
         this.status = .success;
+        
+        // Log query completion if enabled
+        if (this.start_time > 0) {
+            const end_time = std.time.nanoTimestamp();
+            const duration_ms = @as(f64, @floatFromInt(end_time - this.start_time)) / std.time.ns_per_ms;
+            
+            var query_str = this.query.toUTF8(bun.default_allocator);
+            defer query_str.deinit();
+            
+            bun.Output.prettyln("[<b><cyan>**MYSQL**<r>] <yellow>({d:.1}ms)<r> {s}", .{ duration_ms, query_str.slice() });
+        }
     } else {
         this.status = .partial_response;
     }
@@ -354,6 +378,11 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
     const connection: *MySQLConnection = arguments[0].as(MySQLConnection) orelse {
         return globalObject.throw("connection must be a MySQLConnection", .{});
     };
+
+    // Record start time for logging
+    if (connection.flags.log_enabled) {
+        this.start_time = std.time.nanoTimestamp();
+    }
 
     connection.poll_ref.ref(globalObject.bunVM());
     var query = arguments[1];

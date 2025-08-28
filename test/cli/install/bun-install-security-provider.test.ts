@@ -139,7 +139,9 @@ describe("Security Scanner Edge Cases", () => {
     bunfigScanner: "./non-existent-scanner.ts",
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("Failed to import security scanner");
+      expect(err).toContain(
+        "Security scanner './non-existent-scanner.ts' is configured in bunfig.toml but could not be resolved",
+      );
     },
   });
 
@@ -147,7 +149,7 @@ describe("Security Scanner Edge Cases", () => {
     scanner: `throw new Error("Module failed to load");`,
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("Failed to import security scanner");
+      expect(err).toContain("Security scanner './scanner.ts' is configured in bunfig.toml but could not be resolved");
     },
   });
 

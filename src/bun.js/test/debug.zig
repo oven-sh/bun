@@ -1,37 +1,37 @@
 pub fn dumpSub(current: TestScheduleEntry) bun.JSError!void {
     switch (current) {
         .describe => |describe| try dumpDescribe(describe),
-        .test_callback => |test_callback| try dumpTest(test_callback),
+        .test_callback => |test_callback| try dumpTest(test_callback, "test"),
     }
 }
 pub fn dumpDescribe(describe: *DescribeScope) bun.JSError!void {
     groupLog.beginMsg("describe {s} (concurrent={}, filter={s}, only={s})", .{ describe.base.name orelse "undefined", describe.base.concurrent, @tagName(describe.base.filter), @tagName(describe.base.only) });
     defer groupLog.end();
 
-    for (describe.beforeAll.items) |entry| try dumpTest(entry);
-    for (describe.beforeEach.items) |entry| try dumpTest(entry);
+    for (describe.beforeAll.items) |entry| try dumpTest(entry, "beforeAll");
+    for (describe.beforeEach.items) |entry| try dumpTest(entry, "beforeEach");
     for (describe.entries.items) |entry| try dumpSub(entry);
-    for (describe.afterEach.items) |entry| try dumpTest(entry);
-    for (describe.afterAll.items) |entry| try dumpTest(entry);
+    for (describe.afterEach.items) |entry| try dumpTest(entry, "afterEach");
+    for (describe.afterAll.items) |entry| try dumpTest(entry, "afterAll");
 }
-pub fn dumpTest(current: *ExecutionEntry) bun.JSError!void {
-    groupLog.beginMsg("test {s} (concurrent={}, only={})", .{ current.base.name orelse "undefined", current.base.concurrent, current.base.only });
+pub fn dumpTest(current: *ExecutionEntry, label: []const u8) bun.JSError!void {
+    groupLog.beginMsg("{s} {s} (concurrent={}, only={})", .{ label, current.base.name orelse "undefined", current.base.concurrent, current.base.only });
     defer groupLog.end();
 }
 pub fn dumpOrder(this: *Execution) bun.JSError!void {
     groupLog.beginMsg("dumpOrder", .{});
     defer groupLog.end();
 
-    for (this.groups) |group| {
-        groupLog.beginMsg("ConcurrentGroup", .{});
+    for (this.groups, 0..) |group, group_index| {
+        groupLog.beginMsg("{d} ConcurrentGroup ({d}-{d})", .{ group_index, group.@"#sequence_start", group.@"#sequence_end" });
         defer groupLog.end();
 
-        for (group.sequences(this)) |*sequence| {
-            groupLog.beginMsg("Sequence ({d}x)", .{sequence.remaining_repeat_count});
+        for (group.sequences(this), group.@"#sequence_start"..) |*sequence, sequence_index| {
+            groupLog.beginMsg("{d} Sequence ({d}-{d},{d}x)", .{ sequence_index, sequence.@"#entries_start", sequence.@"#entries_end", sequence.remaining_repeat_count });
             defer groupLog.end();
 
-            for (sequence.entries(this)) |entry| {
-                groupLog.log("ExecutionEntry \"{}\" (concurrent={}, mode={s}, only={s}, filter={s})", .{ std.zig.fmtEscapes(entry.base.name orelse "undefined"), entry.base.concurrent, @tagName(entry.base.mode), @tagName(entry.base.only), @tagName(entry.base.filter) });
+            for (sequence.entries(this), sequence.@"#entries_start"..) |entry, entry_index| {
+                groupLog.log("{d} ExecutionEntry \"{}\" (concurrent={}, mode={s}, only={s}, filter={s})", .{ entry_index, std.zig.fmtEscapes(entry.base.name orelse "undefined"), entry.base.concurrent, @tagName(entry.base.mode), @tagName(entry.base.only), @tagName(entry.base.filter) });
             }
         }
     }

@@ -460,9 +460,9 @@ pub const BunTestFile = struct {
                 var order = Order.init(this.gpa);
                 defer order.deinit();
 
-                try order.generateAllOrder(this.buntest.hook_scope.beforeAll.items, .{ .concurrent = false });
+                try order.generateAllOrder(this.buntest.hook_scope.beforeAll.items);
                 try order.generateOrderDescribe(this.collection.root_scope);
-                try order.generateAllOrder(this.buntest.hook_scope.afterAll.items, .{ .concurrent = false });
+                try order.generateAllOrder(this.buntest.hook_scope.afterAll.items);
 
                 try this.execution.loadFromOrder(&order);
                 try debug.dumpOrder(&this.execution);

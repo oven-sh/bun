@@ -29,7 +29,7 @@ pub fn discardOrderSub(this: *Order, current: TestScheduleEntry) bun.JSError!voi
     _ = this;
     _ = current;
 }
-pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry, cfg: struct { concurrent: bool }) bun.JSError!void {
+pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry) bun.JSError!void {
     for (entries) |entry| {
         const entries_start = this.entries.items.len;
         try this.entries.append(entry); // add entry to sequence
@@ -37,14 +37,14 @@ pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry, cfg: str
         const sequences_start = this.sequences.items.len;
         try this.sequences.append(.{ .@"#entries_start" = entries_start, .@"#entries_end" = entries_end, .index = 0, .test_entry = null }); // add sequence to concurrentgroup
         const sequences_end = this.sequences.items.len;
-        try appendOrExtendConcurrentGroup(this, cfg.concurrent, sequences_start, sequences_end); // add or extend the concurrent group
+        try appendOrExtendConcurrentGroup(this, false, sequences_start, sequences_end); // add a new concurrent group. note that beforeAll/afterAll are never concurrent.
     }
 }
 pub fn generateOrderDescribe(this: *Order, current: *DescribeScope) bun.JSError!void {
     if (current.failed) return; // do not schedule any tests in a failed describe scope
 
     // gather beforeAll
-    try generateAllOrder(this, current.beforeAll.items, .{ .concurrent = current.base.concurrent });
+    try generateAllOrder(this, current.beforeAll.items);
 
     // gather children
     for (current.entries.items) |entry| {
@@ -56,7 +56,7 @@ pub fn generateOrderDescribe(this: *Order, current: *DescribeScope) bun.JSError!
     }
 
     // gather afterAll
-    try generateAllOrder(this, current.afterAll.items, .{ .concurrent = current.base.concurrent });
+    try generateAllOrder(this, current.afterAll.items);
 }
 pub fn generateOrderTest(this: *Order, current: *ExecutionEntry) bun.JSError!void {
     const entries_start = this.entries.items.len;

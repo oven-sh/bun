@@ -559,6 +559,11 @@ const JSONBuilder = struct {
     }
 };
 
+// Security scanner subprocess entry point - uses IPC protocol for communication
+// Note: scanner-entry.ts must be in JavaScriptSources.txt for the build
+// scanner-entry.d.ts is NOT included in the build (type definitions only)
+const scanner_entry_source = @embedFile("./scanner-entry.ts");
+
 fn attemptSecurityScan(manager: *PackageManager, security_scanner: []const u8, scan_all: bool, command_ctx: bun.cli.Command.Context, original_cwd: []const u8) !ScanAttemptResult {
     return attemptSecurityScanWithRetry(manager, security_scanner, scan_all, command_ctx, original_cwd, false);
 }
@@ -590,60 +595,45 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
     const json_data = try json_builder.buildPackageJSON();
     defer manager.allocator.free(json_data);
 
+    // Replace placeholders in the embedded scanner entry script
     var code_buf = std.ArrayList(u8).init(manager.allocator);
     defer code_buf.deinit();
-    var code_writer = code_buf.writer();
 
-    try code_writer.print(
-        \\let scanner;
-        \\const scannerModuleName = '{s}';
-        \\const packages = {s};
-        \\
-        \\try {{
-        \\  scanner = (await import(scannerModuleName)).scanner;
-        \\}} catch (error) {{
-        \\  const suppressError = {s};
-        \\  if (!suppressError) {{
-        \\    const msg = `\x1b[31merror: \x1b[0mFailed to import security scanner: \x1b[1m'${{scannerModuleName}}'`;
-        \\    console.error(msg);
-        \\  }}
-        \\  process.exit(2);
-        \\}}
-        \\
-        \\try {{
-        \\  if (typeof scanner !== 'object' || scanner === null || typeof scanner.version !== 'string') {{
-        \\    throw new Error("Security scanner must export a 'scanner' object with a version property");
-        \\  }}
-        \\
-        \\  if (scanner.version !== '1') {{
-        \\    throw new Error('Security scanner must be version 1');
-        \\  }}
-        \\
-        \\  if (typeof scanner.scan !== 'function') {{
-        \\    throw new Error('scanner.scan is not a function, got ' + typeof scanner.scan);
-        \\  }}
-        \\
-        \\  const result = await scanner.scan({{ packages }});
-        \\
-        \\  if (!Array.isArray(result)) {{
-        \\    throw new Error('Security scanner must return an array of advisories');
-        \\  }}
-        \\
-        \\  const fs = require('fs');
-        \\  const data = JSON.stringify({{advisories: result}});
-        \\  for (let remaining = data; remaining.length > 0;) {{
-        \\    const written = fs.writeSync(3, remaining);
-        \\    if (written === 0) process.exit(1);
-        \\    remaining = remaining.slice(written);
-        \\  }}
-        \\  fs.closeSync(3);
-        \\
-        \\  process.exit(0);
-        \\}} catch (error) {{
-        \\  console.error(error);
-        \\  process.exit(1);
-        \\}}
-    , .{ security_scanner, json_data, if (suppress_import_error) "true" else "false" });
+    var temp_source = try manager.allocator.dupe(u8, scanner_entry_source);
+    defer manager.allocator.free(temp_source);
+
+    // Replace __SCANNER_MODULE__ with actual scanner name
+    const scanner_placeholder = "__SCANNER_MODULE__";
+    if (std.mem.indexOf(u8, temp_source, scanner_placeholder)) |index| {
+        try code_buf.appendSlice(temp_source[0..index]);
+        try code_buf.appendSlice(security_scanner);
+        try code_buf.appendSlice(temp_source[index + scanner_placeholder.len ..]);
+        temp_source = try code_buf.toOwnedSlice();
+        code_buf = std.ArrayList(u8).init(manager.allocator);
+    }
+
+    // Replace __PACKAGES_JSON__ with actual JSON data
+    const packages_placeholder = "__PACKAGES_JSON__";
+    if (std.mem.indexOf(u8, temp_source, packages_placeholder)) |index| {
+        try code_buf.appendSlice(temp_source[0..index]);
+        try code_buf.appendSlice(json_data);
+        try code_buf.appendSlice(temp_source[index + packages_placeholder.len ..]);
+        manager.allocator.free(temp_source);
+        temp_source = try code_buf.toOwnedSlice();
+        code_buf = std.ArrayList(u8).init(manager.allocator);
+    }
+
+    // Replace __SUPPRESS_ERROR__ with boolean value
+    const suppress_placeholder = "__SUPPRESS_ERROR__";
+    if (std.mem.indexOf(u8, temp_source, suppress_placeholder)) |index| {
+        try code_buf.appendSlice(temp_source[0..index]);
+        try code_buf.appendSlice(if (suppress_import_error) "true" else "false");
+        try code_buf.appendSlice(temp_source[index + suppress_placeholder.len ..]);
+        manager.allocator.free(temp_source);
+    } else {
+        code_buf.deinit();
+        code_buf = std.ArrayList(u8).fromOwnedSlice(manager.allocator, temp_source);
+    }
 
     var scanner = SecurityScanSubprocess.new(.{
         .manager = manager,
@@ -825,22 +815,7 @@ pub const SecurityScanSubprocess = struct {
         if (this.ipc_data.items.len == 0) {
             switch (status) {
                 .exited => |exit| {
-                    switch (exit.code) {
-                        0 => {
-                            Output.errGeneric("Security scanner exited with code {d} without sending data", .{exit.code});
-                        },
-                        2 => {
-                            if (security_scanner_pkg_id) |pkg_id| {
-                                return ScanAttemptResult{ .needs_install = pkg_id };
-                            } else {
-                                Output.errGeneric("Security scanner '{s}' is configured in bunfig.toml but could not be resolved\n  <d>Did you mean to run: bun add --dev {s}<r>", .{ security_scanner, security_scanner });
-                                return error.SecurityScannerNotInDependencies;
-                            }
-                        },
-                        else => {
-                            Output.errGeneric("Security scanner exited without sending any data", .{});
-                        },
-                    }
+                    Output.errGeneric("Security scanner exited with code {d} without sending data", .{exit.code});
                 },
                 .signaled => |sig| {
                     Output.errGeneric("Security scanner terminated by signal {s} without sending data", .{@tagName(sig)});
@@ -851,6 +826,83 @@ pub const SecurityScanSubprocess = struct {
             }
             return error.NoSecurityScanData;
         }
+
+        const json_source = logger.Source{
+            .contents = this.ipc_data.items,
+            .path = bun.fs.Path.init("ipc-message.json"),
+        };
+
+        var temp_log = logger.Log.init(this.manager.allocator);
+        defer temp_log.deinit();
+
+        const json_expr = bun.json.parseUTF8(&json_source, &temp_log, this.manager.allocator) catch |err| {
+            Output.errGeneric("Security scanner sent invalid JSON: {s}", .{@errorName(err)});
+            if (this.ipc_data.items.len < 1000) {
+                Output.errGeneric("Response: {s}", .{this.ipc_data.items});
+            }
+            return error.InvalidIPCMessage;
+        };
+
+        if (json_expr.data != .e_object) {
+            Output.errGeneric("Security scanner IPC message must be a JSON object", .{});
+            return error.InvalidIPCFormat;
+        }
+
+        const obj = json_expr.data.e_object;
+        const type_expr = obj.get("type") orelse {
+            Output.errGeneric("Security scanner IPC message missing 'type' field", .{});
+            return error.MissingIPCType;
+        };
+
+        const type_str = type_expr.asString(this.manager.allocator) orelse {
+            Output.errGeneric("Security scanner IPC 'type' must be a string", .{});
+            return error.InvalidIPCType;
+        };
+
+        if (std.mem.eql(u8, type_str, "error")) {
+            const code_expr = obj.get("code") orelse {
+                Output.errGeneric("Security scanner error missing 'code' field", .{});
+                return error.MissingErrorCode;
+            };
+
+            const code_str = code_expr.asString(this.manager.allocator) orelse {
+                Output.errGeneric("Security scanner error 'code' must be a string", .{});
+                return error.InvalidErrorCode;
+            };
+
+            if (std.mem.eql(u8, code_str, "MODULE_NOT_FOUND")) {
+                if (security_scanner_pkg_id) |pkg_id| {
+                    return ScanAttemptResult{ .needs_install = pkg_id };
+                } else {
+                    Output.errGeneric("Security scanner '{s}' is configured in bunfig.toml but could not be resolved\n  <d>Did you mean to run: bun add --dev {s}<r>", .{ security_scanner, security_scanner });
+                    return error.SecurityScannerNotInDependencies;
+                }
+            } else if (std.mem.eql(u8, code_str, "INVALID_VERSION")) {
+                const msg = obj.get("message");
+                if (msg) |m| {
+                    if (m.asString(this.manager.allocator)) |msg_str| {
+                        Output.errGeneric("Security scanner error: {s}", .{msg_str});
+                    }
+                }
+                return error.InvalidScannerVersion;
+            } else if (std.mem.eql(u8, code_str, "SCAN_FAILED")) {
+                const msg = obj.get("message");
+                if (msg) |m| {
+                    if (m.asString(this.manager.allocator)) |msg_str| {
+                        Output.errGeneric("Security scanner failed: {s}", .{msg_str});
+                    }
+                }
+                return error.ScannerFailed;
+            } else {
+                Output.errGeneric("Unknown security scanner error code: {s}", .{code_str});
+                return error.UnknownErrorCode;
+            }
+        } else if (!std.mem.eql(u8, type_str, "result")) {
+            Output.errGeneric("Unknown security scanner message type: {s}", .{type_str});
+            return error.UnknownMessageType;
+        }
+
+        // If we get here, it's a result message - continue with normal advisory parsing
 
         const duration = std.time.milliTimestamp() - start_time;
 
@@ -879,7 +931,13 @@ pub const SecurityScanSubprocess = struct {
             }
         }
 
-        const advisories = try parseSecurityAdvisories(this.manager, this.ipc_data.items, package_paths);
+        // Extract advisories from the result message
+        const advisories_expr = obj.get("advisories") orelse {
+            Output.errGeneric("Security scanner result missing 'advisories' field", .{});
+            return error.MissingAdvisoriesField;
+        };
+
+        const advisories = try parseSecurityAdvisoriesFromExpr(this.manager, advisories_expr, package_paths);
 
         if (!status.isOK()) {
             switch (status) {
@@ -921,42 +979,9 @@ pub const SecurityScanSubprocess = struct {
     }
 };
 
-fn parseSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath)) ![]SecurityAdvisory {
-    if (ipc_data.len == 0) return &[_]SecurityAdvisory{};
-
-    const json_source = logger.Source{
-        .contents = ipc_data,
-        .path = bun.fs.Path.init("security-advisories.json"),
-    };
-
-    var temp_log = logger.Log.init(manager.allocator);
-    defer temp_log.deinit();
-
-    const json_expr = bun.json.parseUTF8(&json_source, &temp_log, manager.allocator) catch |err| {
-        Output.errGeneric("Security scanner returned invalid JSON: {s}", .{@errorName(err)});
-        if (ipc_data.len < 1000) {
-            Output.errGeneric("Response: {s}", .{ipc_data});
-        }
-        if (temp_log.errors > 0) {
-            temp_log.print(Output.errorWriter()) catch {};
-        }
-        return error.InvalidJSON;
-    };
-
+fn parseSecurityAdvisoriesFromExpr(manager: *PackageManager, advisories_expr: bun.js_parser.Expr, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath)) ![]SecurityAdvisory {
     var advisories_list = std.ArrayList(SecurityAdvisory).init(manager.allocator);
     defer advisories_list.deinit();
-
-    if (json_expr.data != .e_object) {
-        Output.errGeneric("Security scanner response must be a JSON object, got: {s}", .{@tagName(json_expr.data)});
-        return error.InvalidJSONFormat;
-    }
-
-    const obj = json_expr.data.e_object;
-
-    const advisories_expr = obj.get("advisories") orelse {
-        Output.errGeneric("Security scanner response missing required 'advisories' field", .{});
-        return error.MissingAdvisoriesField;
-    };
 
     if (advisories_expr.data != .e_array) {
         Output.errGeneric("Security scanner 'advisories' field must be an array, got: {s}", .{@tagName(advisories_expr.data)});

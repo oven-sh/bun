@@ -4050,10 +4050,7 @@ pub const Resolver = struct {
             info.enclosing_tsconfig_json = parent_.enclosing_tsconfig_json;
 
             if (parent_.package_json) |parent_package_json| {
-                // https://github.com/oven-sh/bun/issues/229
-                if (parent_package_json.name.len > 0 or r.care_about_bin_folder) {
-                    info.enclosing_package_json = parent_package_json;
-                }
+                info.enclosing_package_json = parent_package_json;
 
                 if (parent_package_json.dependencies.map.count() > 0 or parent_package_json.package_manager_package_id != Install.invalid_package_id) {
                     info.package_json_for_dependencies = parent_package_json;
@@ -4111,8 +4108,7 @@ pub const Resolver = struct {
                         info.package_json_for_browser_field = pkg;
                     }
 
-                    if (pkg.name.len > 0 or r.care_about_bin_folder)
-                        info.enclosing_package_json = pkg;
+                    info.enclosing_package_json = pkg;
 
                     if (pkg.dependencies.map.count() > 0 or pkg.package_manager_package_id != Install.invalid_package_id)
                         info.package_json_for_dependencies = pkg;

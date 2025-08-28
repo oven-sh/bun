@@ -66,6 +66,7 @@ Code quality:
 - [x] In Execution.zig, change order sequence and entries to be slices rather than ArrayLists. We have to rework test() in test() anyway.
 - [ ] Should make line_no be an enum with a none option and a function to get if line nombers are enabled
 - [ ] make Data type-safe. in Execution.zig, it should be a CurrentEntryRef
+  - this will help for when we cancel tests due to timeout, because they still might resolve in the future
 
 Follow-up:
 

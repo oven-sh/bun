@@ -1,3 +1,4 @@
+// Hardcoded module "node:_http_server"
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { Duplex, Stream } = require("node:stream");
 const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
@@ -191,27 +192,6 @@ function emitListeningNextTick(self, hostname, port) {
     self.emit("listening", null, hostname, port);
   }
 }
-
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
@@ -1037,39 +1017,6 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 } as unknown as typeof import("node:net").Socket;
 
-function _normalizeArgs(args) {
-  let arr;
-
-  if (args.length === 0) {
-    arr = [{}, null];
-    // arr[normalizedArgsSymbol] = true;
-    return arr;
-  }
-
-  const arg0 = args[0];
-  let options: any = {};
-  if (typeof arg0 === "object" && arg0 !== null) {
-    // (options[...][, cb])
-    options = arg0;
-    // } else if (isPipeName(arg0)) {
-    // (path[...][, cb])
-    // options.path = arg0;
-  } else {
-    // ([port][, host][...][, cb])
-    options.port = arg0;
-    if (args.length > 1 && typeof args[1] === "string") {
-      options.host = args[1];
-    }
-  }
-
-  const cb = args[args.length - 1];
-  if (typeof cb !== "function") arr = [options, null];
-  else arr = [options, cb];
-
-  // arr[normalizedArgsSymbol] = true;
-  return arr;
-}
-
 function _writeHead(statusCode, reason, obj, response) {
   const originalStatusCode = statusCode;
   let hasContentLength = response.hasHeader("content-length");
@@ -1198,10 +1145,6 @@ function ServerResponse(req, options): void {
   this.chunkedEncoding = false;
 }
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
-// ServerResponse.prototype = {};
-// $setPrototypeDirect.$call(ServerResponse, Stream);
-// ServerResponse.prototype.constructor = ServerResponse;
-// ServerResponse.prototype.__proto__ = OutgoingMessage.prototype;
 
 ServerResponse.prototype._removedConnection = false;
 
@@ -1557,10 +1500,6 @@ ServerResponse.prototype.assignSocket = function (socket) {
   this.socket = socket;
   this.emit("socket", socket);
 };
-
-// ServerResponse.prototype.statusMessage = undefined;
-
-// ServerResponse.prototype.statusCode = 200;
 
 Object.defineProperty(ServerResponse.prototype, "shouldKeepAlive", {
   get() {

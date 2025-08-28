@@ -675,11 +675,7 @@ declare module "bun" {
      * // obj:
      * //   *root
      */
-    export function stringify(
-      input: unknown,
-      replacer?: ((this: any, key: string, value: any) => any) | null,
-      space?: string | number,
-    ): string;
+    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string;
   }
 
   /**

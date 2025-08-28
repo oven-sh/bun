@@ -3,6 +3,363 @@ import { describe, expect, test } from "bun:test";
 
 describe("Bun.YAML", () => {
   describe("parse", () => {
+    // Test various input types
+    describe("input types", () => {
+      test("parses from Buffer", () => {
+        const buffer = Buffer.from("key: value\nnumber: 42");
+        expect(YAML.parse(buffer)).toEqual({ key: "value", number: 42 });
+      });
+
+      test("parses from Buffer with UTF-8", () => {
+        const buffer = Buffer.from("emoji: 🎉\ntext: hello");
+        expect(YAML.parse(buffer)).toEqual({ emoji: "🎉", text: "hello" });
+      });
+
+      test("parses from ArrayBuffer", () => {
+        const str = "name: test\ncount: 3";
+        const encoder = new TextEncoder();
+        const arrayBuffer = encoder.encode(str).buffer;
+        expect(YAML.parse(arrayBuffer)).toEqual({ name: "test", count: 3 });
+      });
+
+      test("parses from Uint8Array", () => {
+        const str = "- item1\n- item2\n- item3";
+        const encoder = new TextEncoder();
+        const uint8Array = encoder.encode(str);
+        expect(YAML.parse(uint8Array)).toEqual(["item1", "item2", "item3"]);
+      });
+
+      test("parses from Uint16Array", () => {
+        const str = "foo: bar";
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(str);
+        // Create Uint16Array from the bytes
+        const uint16Array = new Uint16Array(bytes.buffer.slice(0, bytes.length));
+        expect(YAML.parse(uint16Array)).toEqual({ foo: "bar" });
+      });
+
+      test("parses from Int8Array", () => {
+        const str = "enabled: true\ncount: -5";
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(str);
+        const int8Array = new Int8Array(bytes.buffer);
+        expect(YAML.parse(int8Array)).toEqual({ enabled: true, count: -5 });
+      });
+
+      test("parses from Int16Array", () => {
+        const str = "status: ok";
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(str);
+        // Ensure buffer is aligned for Int16Array
+        const alignedBuffer = new ArrayBuffer(Math.ceil(bytes.length / 2) * 2);
+        new Uint8Array(alignedBuffer).set(bytes);
+        const int16Array = new Int16Array(alignedBuffer);
+        expect(YAML.parse(int16Array)).toEqual({ status: "ok" });
+      });
+
+      test("parses from Int32Array", () => {
+        const str = "value: 42";
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(str);
+        // Ensure buffer is aligned for Int32Array
+        const alignedBuffer = new ArrayBuffer(Math.ceil(bytes.length / 4) * 4);
+        new Uint8Array(alignedBuffer).set(bytes);
+        const int32Array = new Int32Array(alignedBuffer);
+        expect(YAML.parse(int32Array)).toEqual({ value: 42 });
+      });
+
+      test("parses from Uint32Array", () => {
+        const str = "test: pass";
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(str);
+        // Ensure buffer is aligned for Uint32Array
+        const alignedBuffer = new ArrayBuffer(Math.ceil(bytes.length / 4) * 4);
+        new Uint8Array(alignedBuffer).set(bytes);
+        const uint32Array = new Uint32Array(alignedBuffer);
+        expect(YAML.parse(uint32Array)).toEqual({ test: "pass" });
+      });
+
+      test("parses from Float32Array", () => {
+        const str = "pi: 3.14";
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(str);
+        // Ensure buffer is aligned for Float32Array
+        const alignedBuffer = new ArrayBuffer(Math.ceil(bytes.length / 4) * 4);
+        new Uint8Array(alignedBuffer).set(bytes);
+        const float32Array = new Float32Array(alignedBuffer);
+        expect(YAML.parse(float32Array)).toEqual({ pi: 3.14 });
+      });
+
+      test("parses from Float64Array", () => {
+        const str = "e: 2.718";
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(str);
+        // Ensure buffer is aligned for Float64Array
+        const alignedBuffer = new ArrayBuffer(Math.ceil(bytes.length / 8) * 8);
+        new Uint8Array(alignedBuffer).set(bytes);
+        const float64Array = new Float64Array(alignedBuffer);
+        expect(YAML.parse(float64Array)).toEqual({ e: 2.718 });
+      });
+
+      test("parses from BigInt64Array", () => {
+        const str = "big: 999";
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(str);
+        // Ensure buffer is aligned for BigInt64Array
+        const alignedBuffer = new ArrayBuffer(Math.ceil(bytes.length / 8) * 8);
+        new Uint8Array(alignedBuffer).set(bytes);
+        const bigInt64Array = new BigInt64Array(alignedBuffer);
+        expect(YAML.parse(bigInt64Array)).toEqual({ big: 999 });
+      });
+
+      test("parses from BigUint64Array", () => {
+        const str = "huge: 1000";
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(str);
+        // Ensure buffer is aligned for BigUint64Array
+        const alignedBuffer = new ArrayBuffer(Math.ceil(bytes.length / 8) * 8);
+        new Uint8Array(alignedBuffer).set(bytes);
+        const bigUint64Array = new BigUint64Array(alignedBuffer);
+        expect(YAML.parse(bigUint64Array)).toEqual({ huge: 1000 });
+      });
+
+      test("parses from DataView", () => {
+        const str = "test: value\nnum: 123";
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(str);
+        const dataView = new DataView(bytes.buffer);
+        expect(YAML.parse(dataView)).toEqual({ test: "value", num: 123 });
+      });
+
+      test("parses from Blob", async () => {
+        const blob = new Blob(["key1: value1\nkey2: value2"], { type: "text/yaml" });
+        expect(YAML.parse(blob)).toEqual({ key1: "value1", key2: "value2" });
+      });
+
+      test("parses from Blob with multiple parts", async () => {
+        const blob = new Blob(["users:\n", "  - name: Alice\n", "  - name: Bob"], { type: "text/yaml" });
+        expect(YAML.parse(blob)).toEqual({
+          users: [{ name: "Alice" }, { name: "Bob" }],
+        });
+      });
+
+      test("parses complex YAML from Buffer", () => {
+        const yaml = `
+database:
+  host: localhost
+  port: 5432
+  credentials:
+    username: admin
+    password: secret
+`;
+        const buffer = Buffer.from(yaml);
+        expect(YAML.parse(buffer)).toEqual({
+          database: {
+            host: "localhost",
+            port: 5432,
+            credentials: {
+              username: "admin",
+              password: "secret",
+            },
+          },
+        });
+      });
+
+      test("parses arrays from TypedArray", () => {
+        const yaml = "[1, 2, 3, 4, 5]";
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(yaml);
+        // Ensure buffer is aligned for Uint32Array
+        const alignedBuffer = new ArrayBuffer(Math.ceil(bytes.length / 4) * 4);
+        new Uint8Array(alignedBuffer).set(bytes);
+        const uint32Array = new Uint32Array(alignedBuffer);
+        expect(YAML.parse(uint32Array)).toEqual([1, 2, 3, 4, 5]);
+      });
+
+      test("handles empty Buffer", () => {
+        const buffer = Buffer.from("");
+        expect(YAML.parse(buffer)).toBe(null);
+      });
+
+      test("handles empty ArrayBuffer", () => {
+        const arrayBuffer = new ArrayBuffer(0);
+        expect(YAML.parse(arrayBuffer)).toBe(null);
+      });
+
+      test("handles empty Blob", () => {
+        const blob = new Blob([]);
+        expect(YAML.parse(blob)).toBe(null);
+      });
+
+      test("parses multiline strings from Buffer", () => {
+        const yaml = `
+message: |
+  This is a
+  multiline
+  string
+`;
+        const buffer = Buffer.from(yaml);
+        expect(YAML.parse(buffer)).toEqual({
+          message: "This is a\nmultiline\nstring\n",
+        });
+      });
+
+      test("handles invalid YAML in Buffer", () => {
+        const buffer = Buffer.from("{ invalid: yaml:");
+        expect(() => YAML.parse(buffer)).toThrow();
+      });
+
+      test("handles invalid YAML in ArrayBuffer", () => {
+        const encoder = new TextEncoder();
+        const arrayBuffer = encoder.encode("[ unclosed").buffer;
+        expect(() => YAML.parse(arrayBuffer)).toThrow();
+      });
+
+      test("parses with anchors and aliases from Buffer", () => {
+        const yaml = `
+defaults: &defaults
+  adapter: postgres
+  host: localhost
+development:
+  <<: *defaults
+  database: dev_db
+`;
+        const buffer = Buffer.from(yaml);
+        expect(YAML.parse(buffer)).toEqual({
+          defaults: {
+            adapter: "postgres",
+            host: "localhost",
+          },
+          development: {
+            adapter: "postgres",
+            host: "localhost",
+            database: "dev_db",
+          },
+        });
+      });
+
+      test("round-trip with Buffer", () => {
+        const obj = {
+          name: "test",
+          items: [1, 2, 3],
+          nested: { key: "value" },
+        };
+        const yamlStr = YAML.stringify(obj);
+        const buffer = Buffer.from(yamlStr);
+        expect(YAML.parse(buffer)).toEqual(obj);
+      });
+
+      test("round-trip with ArrayBuffer", () => {
+        const data = {
+          users: ["Alice", "Bob"],
+          settings: { theme: "dark", notifications: true },
+        };
+        const yamlStr = YAML.stringify(data);
+        const encoder = new TextEncoder();
+        const arrayBuffer = encoder.encode(yamlStr).buffer;
+        expect(YAML.parse(arrayBuffer)).toEqual(data);
+      });
+
+      test("handles Buffer with offset", () => {
+        // Create a larger buffer and use a slice of it
+        const fullBuffer = Buffer.from("garbage_datakey: value\nmore_garbage");
+        const slicedBuffer = fullBuffer.slice(12, 22); // "key: value"
+        expect(YAML.parse(slicedBuffer)).toEqual({ key: "value" });
+      });
+
+      test("handles TypedArray with offset", () => {
+        const str = "name: test\ncount: 5";
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(str);
+        // Create a larger buffer with padding
+        const largerBuffer = new ArrayBuffer(bytes.length + 20);
+        const uint8View = new Uint8Array(largerBuffer);
+        // Put some garbage data before
+        uint8View.set(encoder.encode("garbage"), 0);
+        // Put our actual YAML data at offset 10
+        uint8View.set(bytes, 10);
+        // Create a view that points to just our YAML data
+        const view = new Uint8Array(largerBuffer, 10, bytes.length);
+        expect(YAML.parse(view)).toEqual({ name: "test", count: 5 });
+      });
+
+      // Test SharedArrayBuffer if available
+      if (typeof SharedArrayBuffer !== "undefined") {
+        test("parses from SharedArrayBuffer", () => {
+          const str = "shared: data";
+          const encoder = new TextEncoder();
+          const bytes = encoder.encode(str);
+          const sharedBuffer = new SharedArrayBuffer(bytes.length);
+          new Uint8Array(sharedBuffer).set(bytes);
+          expect(YAML.parse(sharedBuffer)).toEqual({ shared: "data" });
+        });
+
+        test("parses from TypedArray backed by SharedArrayBuffer", () => {
+          const str = "type: shared\nvalue: 123";
+          const encoder = new TextEncoder();
+          const bytes = encoder.encode(str);
+          const sharedBuffer = new SharedArrayBuffer(bytes.length);
+          const sharedArray = new Uint8Array(sharedBuffer);
+          sharedArray.set(bytes);
+          expect(YAML.parse(sharedArray)).toEqual({ type: "shared", value: 123 });
+        });
+      }
+
+      test("handles File (which is a Blob)", () => {
+        const file = new File(["file:\n  name: test.yaml\n  size: 100"], "test.yaml", { type: "text/yaml" });
+        expect(YAML.parse(file)).toEqual({
+          file: {
+            name: "test.yaml",
+            size: 100,
+          },
+        });
+      });
+
+      test("complex nested structure from various input types", () => {
+        const complexYaml = `
+version: "1.0"
+services:
+  web:
+    image: nginx:latest
+    ports:
+      - 80
+      - 443
+  db:
+    image: postgres:13
+    environment:
+      POSTGRES_PASSWORD: secret
+`;
+
+        // Test with Buffer
+        const buffer = Buffer.from(complexYaml);
+        const expected = {
+          version: "1.0",
+          services: {
+            web: {
+              image: "nginx:latest",
+              ports: [80, 443],
+            },
+            db: {
+              image: "postgres:13",
+              environment: {
+                POSTGRES_PASSWORD: "secret",
+              },
+            },
+          },
+        };
+        expect(YAML.parse(buffer)).toEqual(expected);
+
+        // Test with ArrayBuffer
+        const encoder = new TextEncoder();
+        const arrayBuffer = encoder.encode(complexYaml).buffer;
+        expect(YAML.parse(arrayBuffer)).toEqual(expected);
+
+        // Test with Blob
+        const blob = new Blob([complexYaml]);
+        expect(YAML.parse(blob)).toEqual(expected);
+      });
+    });
+
     test("parses null values", () => {
       expect(YAML.parse("null")).toBe(null);
       expect(YAML.parse("~")).toBe(null);

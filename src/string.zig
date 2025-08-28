@@ -1167,10 +1167,6 @@ pub const SliceWithUnderlyingString = struct {
         return this.utf8.slice();
     }
 
-    pub fn sliceZ(this: SliceWithUnderlyingString) [:0]const u8 {
-        return this.utf8.sliceZ();
-    }
-
     pub fn format(self: SliceWithUnderlyingString, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
         if (self.utf8.len == 0) {
             try self.underlying.format(fmt, opts, writer);

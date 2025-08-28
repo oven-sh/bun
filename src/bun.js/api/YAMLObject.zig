@@ -825,6 +825,41 @@ const Stringifier = struct {
     }
 };
 
+const ParseInput = union(enum) {
+    blob_or_string_or_buffer: jsc.Node.BlobOrStringOrBuffer,
+    string: struct {
+        str: String,
+        slice: bun.SliceWithUnderlyingString,
+    },
+
+    pub fn fromJS(global: *JSGlobalObject, allocator: std.mem.Allocator, input_value: JSValue) JSError!ParseInput {
+        const input = try jsc.Node.BlobOrStringOrBuffer.fromJS(global, allocator, input_value) orelse {
+            const str = try input_value.toBunString(global);
+            const str_slice = str.toSlice(allocator);
+            return .{ .string = .{ .str = str, .slice = str_slice } };
+        };
+
+        return .{ .blob_or_string_or_buffer = input };
+    }
+
+    pub fn deinit(this: @This()) void {
+        switch (this) {
+            .blob_or_string_or_buffer => this.blob_or_string_or_buffer.deinit(),
+            .string => |string| {
+                string.slice.deinit();
+                string.str.deref();
+            },
+        }
+    }
+
+    pub fn slice(this: *const @This()) []const u8 {
+        return switch (this.*) {
+            .blob_or_string_or_buffer => this.blob_or_string_or_buffer.slice(),
+            .string => this.string.slice.slice(),
+        };
+    }
+};
+
 pub fn parse(
     global: *jsc.JSGlobalObject,
     callFrame: *jsc.CallFrame,
@@ -834,9 +869,7 @@ pub fn parse(
 
     const input_value = callFrame.argumentsAsArray(1)[0];
 
-    const input_str = try input_value.toBunString(global);
-    defer input_str.deref();
-    const input = input_str.toSlice(arena.allocator());
+    const input: ParseInput = try .fromJS(global, arena.allocator(), input_value);
     defer input.deinit();
 
     var log = logger.Log.init(bun.default_allocator);

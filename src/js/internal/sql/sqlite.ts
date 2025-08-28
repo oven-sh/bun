@@ -367,23 +367,27 @@ export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Databa
 
         query.resolve(sqlResult);
       }
-      
+
       // Log successful query completion
       if (shouldLog && startTime > 0) {
         const duration = performance.now() - startTime;
-        const valuesStr = values && values.length > 0 
-          ? ` [${values.map(v => v === null ? "null" : typeof v === "string" ? `"${v}"` : String(v)).join(", ")}]`
-          : "";
+        const valuesStr =
+          values && values.length > 0
+            ? ` [${values.map(v => (v === null ? "null" : typeof v === "string" ? `"${v}"` : String(v))).join(", ")}]`
+            : "";
         console.log(`[\x1b[1;36m**SQLITE**\x1b[0m] \x1b[33m(${duration.toFixed(1)}ms)\x1b[0m ${sql}${valuesStr}`);
       }
     } catch (err) {
       // Log failed query
       if (shouldLog && startTime > 0) {
         const duration = performance.now() - startTime;
-        const valuesStr = values && values.length > 0 
-          ? ` [${values.map(v => v === null ? "null" : typeof v === "string" ? `"${v}"` : String(v)).join(", ")}]`
-          : "";
-        console.log(`[\x1b[1;36m**SQLITE**\x1b[0m] \x1b[33m(${duration.toFixed(1)}ms)\x1b[0m ${sql}${valuesStr} \x1b[31mERROR: ${err instanceof Error ? err.message : String(err)}\x1b[0m`);
+        const valuesStr =
+          values && values.length > 0
+            ? ` [${values.map(v => (v === null ? "null" : typeof v === "string" ? `"${v}"` : String(v))).join(", ")}]`
+            : "";
+        console.log(
+          `[\x1b[1;36m**SQLITE**\x1b[0m] \x1b[33m(${duration.toFixed(1)}ms)\x1b[0m ${sql}${valuesStr} \x1b[31mERROR: ${err instanceof Error ? err.message : String(err)}\x1b[0m`,
+        );
       }
       // Convert bun:sqlite errors to SQLiteError
       if (err && typeof err === "object" && "name" in err && err.name === "SQLiteError") {
@@ -438,7 +442,7 @@ export class SQLiteAdapter
       }
 
       this.db = new SQLiteModule.Database(filename, options);
-      
+
       // Set logging flag on the database instance
       if (this.connectionInfo.log) {
         (this.db as any).log_enabled = true;

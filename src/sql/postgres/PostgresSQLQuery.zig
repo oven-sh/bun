@@ -85,18 +85,18 @@ pub fn onWriteFail(
     this.ref();
     defer this.deref();
     this.status = .fail;
-    
+
     // Log query failure if enabled
     if (this.start_time > 0) {
         const end_time = std.time.nanoTimestamp();
         const duration_ms = @as(f64, @floatFromInt(end_time - this.start_time)) / std.time.ns_per_ms;
-        
+
         var query_str = this.query.toUTF8(bun.default_allocator);
         defer query_str.deinit();
-        
+
         bun.Output.prettyln("[<b><cyan>**POSTGRES**<r>] <yellow>({d:.1}ms)<r> {s} <red>ERROR<r>", .{ duration_ms, query_str.slice() });
     }
-    
+
     const thisValue = this.thisValue.get();
     defer this.thisValue.deinit();
     const targetValue = this.getTarget(globalObject, true);
@@ -162,15 +162,15 @@ pub fn onResult(this: *@This(), command_tag_str: []const u8, globalObject: *jsc.
     const targetValue = this.getTarget(globalObject, is_last);
     if (is_last) {
         this.status = .success;
-        
+
         // Log query completion if enabled
         if (this.start_time > 0) {
             const end_time = std.time.nanoTimestamp();
             const duration_ms = @as(f64, @floatFromInt(end_time - this.start_time)) / std.time.ns_per_ms;
-            
+
             var query_str = this.query.toUTF8(bun.default_allocator);
             defer query_str.deinit();
-            
+
             bun.Output.prettyln("[<b><cyan>**POSTGRES**<r>] <yellow>({d:.1}ms)<r> {s}", .{ duration_ms, query_str.slice() });
         }
     } else {

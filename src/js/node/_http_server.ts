@@ -1566,7 +1566,7 @@ Object.defineProperty(ServerResponse.prototype, "shouldKeepAlive", {
   get() {
     return this[kHandle]?.shouldKeepAlive ?? true;
   },
-  set(value) {
+  set(_value) {
     // throw new Error('not implemented');
   },
 });

@@ -1,9 +1,6 @@
 const MySQLQuery = @This();
 const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
 
-const std = @import("std");
-const SQLPerformanceEntryLogger = @import("../SQLPerformanceEntryLogger.zig").SQLPerformanceEntryLogger;
-
 extern "C" fn JSC__addSQLQueryPerformanceEntry(globalObject: *jsc.JSGlobalObject, name: [*:0]const u8, description: [*:0]const u8, startTime: f64, endTime: f64) void;
 
 statement: ?*MySQLStatement = null,
@@ -555,6 +552,7 @@ const bun = @import("bun");
 const std = @import("std");
 const CommandTag = @import("../postgres/CommandTag.zig").CommandTag;
 const QueryBindingIterator = @import("../shared/QueryBindingIterator.zig").QueryBindingIterator;
+const SQLPerformanceEntryLogger = @import("../SQLPerformanceEntryLogger.zig").SQLPerformanceEntryLogger;
 const SQLQueryResultMode = @import("../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
 const Value = @import("./MySQLTypes.zig").Value;
 

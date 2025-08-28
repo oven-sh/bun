@@ -18,7 +18,7 @@ $ bun init
 To get started, run:
 
     bun run index.ts
-    
+
 bun install v$BUN_LATEST_VERSION
 
 + @types/bun@$BUN_LATEST_VERSION

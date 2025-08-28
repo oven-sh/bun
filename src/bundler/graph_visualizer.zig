@@ -12,6 +12,7 @@ const C = bun.C;
 const JSC = bun.JSC;
 const js_ast = bun.ast;
 const bundler = bun.bundle_v2;
+const LinkerContext = bundler.LinkerContext;
 const Index = js_ast.Index;
 const Ref = js_ast.Ref;
 const Symbol = js_ast.Symbol;
@@ -25,6 +26,83 @@ const JSON = bun.json;
 const JSAst = bun.ast;
 
 pub const GraphVisualizer = struct {
+    pub fn dumpGraphStateWithOutput(ctx: *LinkerContext, stage: []const u8, chunks: []Chunk, output_buffer: []const u8) !void {
+        // Special version that takes the safe output buffer directly
+        if (comptime !Environment.isDebug) return;
+        if (!shouldDump()) return;
+        
+        const allocator = bun.default_allocator;
+        const timestamp = std.time.milliTimestamp();
+        const output_dir = "/tmp/bun-bundler-debug";
+        
+        // Ensure output directory exists
+        std.fs.cwd().makePath(output_dir) catch {};
+        
+        // Build graph data but pass the safe output buffer
+        const graph_data = try buildGraphDataWithOutput(allocator, ctx, stage, timestamp, chunks, output_buffer);
+        defer allocator.free(graph_data);
+        
+        // Write JSON file
+        const json_filename = try std.fmt.allocPrint(allocator, "{s}/bundler_graph_{s}_{d}.json", .{
+            output_dir,
+            stage,
+            timestamp,
+        });
+        defer allocator.free(json_filename);
+        
+        const json_file = try std.fs.cwd().createFile(json_filename, .{});
+        defer json_file.close();
+        
+        try json_file.writeAll(graph_data);
+        
+        // Also generate the visualizer HTML
+        try generateVisualizerHTML(allocator, output_dir, timestamp);
+    }
+    
+    fn buildGraphDataWithOutput(
+        allocator: std.mem.Allocator,
+        ctx: *LinkerContext,
+        stage: []const u8,
+        timestamp: i64,
+        chunks: []Chunk,
+        output_buffer: []const u8,
+    ) ![]const u8 {
+        // Build the graph data but use the provided safe output buffer
+        // instead of trying to extract it from potentially poisoned memory
+        var graph_data = try buildGraphData(ctx, allocator, stage, timestamp, chunks);
+        
+        // Override the output snippet with the safe buffer
+        if (chunks.len > 0 and graph_data.chunks != null) {
+            // Use the safe output buffer directly
+            graph_data.chunks.?[chunks.len - 1].output_snippet = try allocator.dupe(u8, output_buffer);
+        }
+        
+        // Convert to JSON AST
+        const json_ast = try JSON.toAST(allocator, GraphData, graph_data);
+        
+        // Print JSON to buffer
+        var stack_fallback = std.heap.stackFallback(1024 * 1024, allocator); // 1MB stack fallback
+        const print_allocator = stack_fallback.get();
+        
+        const buffer_writer = js_printer.BufferWriter.init(print_allocator);
+        var writer = js_printer.BufferPrinter.init(buffer_writer);
+        defer writer.ctx.buffer.deinit();
+        
+        const source = &logger.Source.initEmptyFile("graph_data.json");
+        _ = js_printer.printJSON(
+            *js_printer.BufferPrinter,
+            &writer,
+            json_ast,
+            source,
+            .{ .mangled_props = null },
+        ) catch |err| {
+            debug("Failed to print JSON: {}", .{err});
+            return err;
+        };
+        
+        // Return the printed JSON as a string
+        return try allocator.dupe(u8, writer.ctx.buffer.list.items);
+    }
     const debug = Output.scoped(.GraphViz, .visible);
     
     pub fn shouldDump() bool {
@@ -709,42 +787,9 @@ pub const GraphVisualizer = struct {
                     };
                 }
                 
-                // Get full output code from compile results
-                var output_snippet: ?[]const u8 = null;
-                if (chunk.compile_results_for_chunk.len > 0 and chunk.content == .javascript) {
-                    // Safely collect JavaScript compile results
-                    var code_parts = std.ArrayList([]const u8).init(allocator);
-                    defer code_parts.deinit();
-                    
-                    var total_len: usize = 0;
-                    for (chunk.compile_results_for_chunk) |result| {
-                        if (result == .javascript) {
-                            const code = result.javascript.code();
-                            // Make a defensive copy immediately to avoid use-after-free
-                            const code_copy = try allocator.dupe(u8, code);
-                            try code_parts.append(code_copy);
-                            total_len += code_copy.len;
-                        }
-                    }
-                    
-                    if (total_len > 0 and code_parts.items.len > 0) {
-                        if (code_parts.items.len == 1) {
-                            // Single part, just use it directly
-                            output_snippet = code_parts.items[0];
-                        } else {
-                            // Multiple parts, concatenate safely
-                            var output_buf = try allocator.alloc(u8, total_len);
-                            var offset: usize = 0;
-                            
-                            for (code_parts.items) |part| {
-                                @memcpy(output_buf[offset..][0..part.len], part);
-                                offset += part.len;
-                            }
-                            
-                            output_snippet = output_buf;
-                        }
-                    }
-                }
+                // Output will be captured safely in writeOutputFilesToDisk
+                const output_snippet: ?[]const u8 = null;
+                // Don't try to extract from compile_results here - it may be poisoned
                 
                 // TODO: Extract actual source mappings from chunk.output_source_map
                 // For now, just use empty mappings
@@ -826,7 +871,7 @@ pub const GraphVisualizer = struct {
     
     fn buildSymbolChains(
         allocator: std.mem.Allocator, 
-        ctx: anytype, 
+        ctx: *LinkerContext, 
         exports: []const ExportInfo,
         resolved_exports: []const ResolvedExportInfo,
     ) ![]SymbolChain {

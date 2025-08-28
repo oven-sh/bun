@@ -258,6 +258,17 @@ pub fn writeOutputFilesToDisk(
             break :brk null;
         };
 
+        // Capture final output for debugging (safe here as we have the actual buffer)
+        if (comptime bun.Environment.isDebug) {
+            if (chunk_index_in_chunks_list == chunks.len - 1) {
+                // Only dump once at the end with all chunks' output
+                const GraphVisualizer = @import("../graph_visualizer.zig").GraphVisualizer;
+                GraphVisualizer.dumpGraphStateWithOutput(c, "after_write", chunks, code_result.buffer) catch |err| {
+                    Output.warn("Failed to dump graph after write: {}", .{err});
+                };
+            }
+        }
+        
         switch (jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
             &pathbuf,
             .{

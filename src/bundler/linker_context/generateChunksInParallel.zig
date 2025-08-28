@@ -193,13 +193,7 @@ pub fn generateChunksInParallel(
         }
     }
 
-    // Dump graph state after generation (includes output code)
-    if (comptime Environment.isDebug) {
-        const GraphVisualizer = @import("../graph_visualizer.zig").GraphVisualizer;
-        GraphVisualizer.dumpGraphState(c, "after_generation", chunks) catch |err| {
-            debug("Failed to dump graph after generation: {}", .{err});
-        };
-    }
+    // Note: Output capture moved to writeOutputFilesToDisk where it's safe to access
     
     // When bake.DevServer is in use, we're going to take a different code path at the end.
     // We want to extract the source code of each part instead of combining it into a single file.

@@ -42,7 +42,7 @@ module.exports = {
 
     // First install - should be safe (gets 4.17.20 or lower)
     await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-    
+
     // Simulate that a newer version (4.17.21) is now available with a vulnerability
     // Run update which would get the newer, vulnerable version
     const updateProc = Bun.spawn({
@@ -109,7 +109,7 @@ module.exports = {
     });
 
     await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-    
+
     // Update only axios - newer version has vulnerability
     const updateProc = Bun.spawn({
       cmd: [bunExe(), "update", "axios"],
@@ -212,7 +212,7 @@ module.exports = {
 
   test("bun pm scan detects vulnerability in existing transitive dependency after adding package", async () => {
     // Scenario: After adding a new package, running pm scan finds vulnerabilities
-    // in existing transitive dependencies  
+    // in existing transitive dependencies
     const dir = tempDirWithFiles("scan-after-add", {
       "package.json": JSON.stringify({
         name: "test-app",
@@ -372,10 +372,7 @@ module.exports = {
     await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
 
     // Add scanner with updated vulnerability database
-    await Bun.write(
-      join(dir, "bunfig.toml"),
-      `[install.security]\nscanner = "./scanner.js"`,
-    );
+    await Bun.write(join(dir, "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
     await Bun.write(
       join(dir, "scanner.js"),
       `

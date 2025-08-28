@@ -133,7 +133,7 @@ describe("bun pm scan", () => {
       });
 
       await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-      
+
       // Add config after install
       await Bun.write(join(dir, "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
 

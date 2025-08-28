@@ -962,6 +962,9 @@ fn parseSecurityAdvisories(manager: *PackageManager, ipc_data: []const u8, packa
     return try advisories_list.toOwnedSlice();
 }
 
+const HoistedInstall = @import("../hoisted_install.zig");
+const InstallWithManager = @import("./install_with_manager.zig");
+const IsolatedInstall = @import("../isolated_install.zig");
 const std = @import("std");
 
 const bun = @import("bun");
@@ -976,7 +979,3 @@ const PackageID = bun.install.PackageID;
 const PackageManager = bun.install.PackageManager;
 const invalid_dependency_id = bun.install.invalid_dependency_id;
 const invalid_package_id = bun.install.invalid_package_id;
-const PackageInstall = bun.install.PackageInstall;
-const HoistedInstall = @import("../hoisted_install.zig");
-const IsolatedInstall = @import("../isolated_install.zig");
-const InstallWithManager = @import("./install_with_manager.zig");

@@ -393,9 +393,9 @@ const FileSystem = bun.fs.FileSystem;
 
 const install = bun.install;
 const Bin = install.Bin;
+const DependencyID = install.DependencyID;
 const Lockfile = install.Lockfile;
 const PackageID = install.PackageID;
-const DependencyID = install.DependencyID;
 const PackageInstall = install.PackageInstall;
 
 const PackageManager = install.PackageManager;

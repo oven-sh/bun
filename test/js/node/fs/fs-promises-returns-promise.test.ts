@@ -23,17 +23,17 @@ describe("fs.promises functions return proper Promise instances", () => {
       { name: "access", fn: () => promises.access(testFile) },
       { name: "stat", fn: () => promises.stat(testFile) },
       { name: "lstat", fn: () => promises.lstat(testFile) },
-      
+
       // Directory operations
       { name: "readdir", fn: () => promises.readdir(dir) },
       { name: "mkdir", fn: () => promises.mkdir(path.join(dir, "new-dir")) },
-      
+
       // File manipulation
       { name: "copyFile", fn: () => promises.copyFile(testFile, path.join(dir, "copy.txt")) },
       { name: "rename", fn: () => promises.rename(path.join(dir, "copy.txt"), path.join(dir, "renamed.txt")) },
       { name: "truncate", fn: () => promises.truncate(testFile, 5) },
       { name: "unlink", fn: () => promises.unlink(path.join(dir, "renamed.txt")) },
-      
+
       // Operations that may fail but should still return Promise
       { name: "rm", fn: () => promises.rm(nonExistentFile), shouldFail: true },
       { name: "rmdir", fn: () => promises.rmdir(nonExistentFile), shouldFail: true },
@@ -43,14 +43,14 @@ describe("fs.promises functions return proper Promise instances", () => {
     for (const test of tests) {
       try {
         const result = test.fn();
-        
+
         // Check that the result is a Promise instance
         expect(result instanceof Promise).toBe(true);
         expect(typeof result.then).toBe("function");
         expect(typeof result.catch).toBe("function");
         expect(typeof result.finally).toBe("function");
         expect(result.constructor.name).toBe("Promise");
-        
+
         // Actually await the promise to ensure it works
         if (test.shouldFail) {
           await expect(result).rejects.toThrow();
@@ -143,16 +143,16 @@ describe("fs.promises functions return proper Promise instances", () => {
   it("regression test: fs.promises.rm should return Promise instance, not InternalPromise", async () => {
     // This is the specific bug that was fixed - rm was returning InternalPromise instead of Promise
     const nonExistentFile = path.join(__dirname, "definitely-does-not-exist-" + Math.random());
-    
+
     const rmResult = promises.rm(nonExistentFile);
-    
+
     // The main assertion - this was returning false before the fix
     expect(rmResult instanceof Promise).toBe(true);
     expect(rmResult.constructor.name).toBe("Promise");
     expect(typeof rmResult.then).toBe("function");
     expect(typeof rmResult.catch).toBe("function");
     expect(typeof rmResult.finally).toBe("function");
-    
+
     // Should reject with ENOENT error
     await expect(rmResult).rejects.toThrow();
   });
@@ -175,12 +175,12 @@ describe("fs.promises functions return proper Promise instances", () => {
     expect(promises.truncate.name).toBe("truncate");
     expect(promises.chmod.name).toBe("chmod");
     expect(promises.chown.name).toBe("chown");
-    
+
     // Ensure no function names start with "defaultAsync" which would expose internal implementation
     const functionNames = Object.getOwnPropertyNames(promises)
       .filter(name => typeof promises[name] === "function")
       .map(name => promises[name].name);
-    
+
     for (const name of functionNames) {
       expect(name).not.toMatch(/^defaultAsync/);
     }

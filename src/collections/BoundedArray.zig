@@ -303,8 +303,10 @@ pub fn BoundedArrayAligned(
 }
 
 const bun = @import("bun");
-const std = @import("std");
 const assert = bun.assert;
-const mem = std.mem;
+
+const std = @import("std");
 const testing = std.testing;
+
+const mem = std.mem;
 const Alignment = std.mem.Alignment;

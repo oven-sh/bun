@@ -70,5 +70,4 @@ pub fn decodeLengthInt(bytes: []const u8) ?struct { value: u64, bytes_read: usiz
     }
 }
 
-const std = @import("std");
 const bun = @import("bun");

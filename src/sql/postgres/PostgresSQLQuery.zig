@@ -1,9 +1,6 @@
 const PostgresSQLQuery = @This();
 const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
 
-const std = @import("std");
-const SQLPerformanceEntryLogger = @import("../SQLPerformanceEntryLogger.zig").SQLPerformanceEntryLogger;
-
 extern "C" fn JSC__addSQLQueryPerformanceEntry(globalObject: *jsc.JSGlobalObject, name: [*:0]const u8, description: [*:0]const u8, startTime: f64, endTime: f64) void;
 statement: ?*PostgresSQLStatement = null,
 query: bun.String = bun.String.empty,
@@ -75,11 +72,11 @@ pub fn endPerformanceTracking(this: *@This(), connection: anytype, globalObject:
 /// End performance tracking with command tag information
 pub fn endPerformanceTrackingWithCommand(this: *@This(), connection: anytype, globalObject: *jsc.JSGlobalObject, command_tag_str: ?[]const u8) void {
     if (!connection.performance_entries_enabled) return;
-    
+
     // Convert query to UTF8 for description
     var query_utf8 = this.query.toUTF8(bun.default_allocator);
     defer query_utf8.deinit();
-    
+
     // Use the existing command_tag_str directly - SQLPerformanceEntryLogger will extract the command name
     this.performance_logger.end(connection.performance_entries_enabled, command_tag_str, query_utf8.slice(), globalObject);
 }
@@ -549,8 +546,10 @@ const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
 const Signature = @import("./Signature.zig");
 const bun = @import("bun");
 const protocol = @import("./PostgresProtocol.zig");
+const std = @import("std");
 const CommandTag = @import("./CommandTag.zig").CommandTag;
 const PostgresSQLQueryResultMode = @import("../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
+const SQLPerformanceEntryLogger = @import("../SQLPerformanceEntryLogger.zig").SQLPerformanceEntryLogger;
 
 const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
 const postgresErrorToJS = @import("./AnyPostgresError.zig").postgresErrorToJS;

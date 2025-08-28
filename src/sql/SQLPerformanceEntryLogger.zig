@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const jsc = bun.jsc;
-
 extern "C" fn JSC__addSQLQueryPerformanceEntry(globalObject: *jsc.JSGlobalObject, name: [*:0]const u8, description: [*:0]const u8, startTime: f64, endTime: f64) void;
 
 /// Shared SQL performance entry logger for tracking query performance across different SQL adapters
@@ -53,3 +49,8 @@ pub const SQLPerformanceEntryLogger = struct {
         self.start_time_ns = 0;
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const jsc = bun.jsc;

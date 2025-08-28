@@ -1,9 +1,6 @@
 const MySQLQuery = @This();
 const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
 
-const std = @import("std");
-const SQLPerformanceEntryLogger = @import("../SQLPerformanceEntryLogger.zig").SQLPerformanceEntryLogger;
-
 extern "C" fn JSC__addSQLQueryPerformanceEntry(globalObject: *jsc.JSGlobalObject, name: [*:0]const u8, description: [*:0]const u8, startTime: f64, endTime: f64) void;
 
 statement: ?*MySQLStatement = null,
@@ -62,30 +59,30 @@ pub fn startPerformanceTracking(this: *@This()) void {
 /// Parse SQL command from query text and return appropriate CommandTag
 fn parseQueryCommand(query_text: []const u8) CommandTag {
     if (query_text.len == 0) return .{ .other = "UNKNOWN" };
-    
+
     var i: usize = 0;
     // Skip leading whitespace
     while (i < query_text.len and std.ascii.isWhitespace(query_text[i])) {
         i += 1;
     }
-    
+
     const start_pos = i;
     // Find the end of the first word
     while (i < query_text.len and !std.ascii.isWhitespace(query_text[i]) and query_text[i] != '(' and query_text[i] != ';') {
         i += 1;
     }
-    
+
     if (i <= start_pos) return .{ .other = "UNKNOWN" };
-    
+
     const command = query_text[start_pos..i];
-    
+
     // Match against known commands (case insensitive)
     if (std.ascii.eqlIgnoreCase(command, "SELECT")) return .{ .SELECT = 0 };
     if (std.ascii.eqlIgnoreCase(command, "INSERT")) return .{ .INSERT = 0 };
     if (std.ascii.eqlIgnoreCase(command, "UPDATE")) return .{ .UPDATE = 0 };
     if (std.ascii.eqlIgnoreCase(command, "DELETE")) return .{ .DELETE = 0 };
     if (std.ascii.eqlIgnoreCase(command, "COPY")) return .{ .COPY = 0 };
-    
+
     return .{ .other = command };
 }
 
@@ -97,11 +94,11 @@ pub fn endPerformanceTracking(this: *@This(), connection: anytype, globalObject:
 /// End performance tracking with command tag information (matches PostgreSQL interface)
 pub fn endPerformanceTrackingWithCommand(this: *@This(), connection: anytype, globalObject: *jsc.JSGlobalObject, command_tag_str: ?[]const u8) void {
     if (!connection.performance_entries_enabled) return;
-    
+
     // Convert query to UTF8 for description
     var query_utf8 = this.query.toUTF8(bun.default_allocator);
     defer query_utf8.deinit();
-    
+
     // If no command_tag_str provided, fall back to parsing (for backwards compatibility)
     const final_command_tag_str = command_tag_str orelse blk: {
         const parsed_command = parseQueryCommand(query_utf8.slice());
@@ -109,7 +106,7 @@ pub fn endPerformanceTrackingWithCommand(this: *@This(), connection: anytype, gl
             .INSERT => "INSERT",
             .DELETE => "DELETE",
             .UPDATE => "UPDATE",
-            .MERGE => "MERGE", 
+            .MERGE => "MERGE",
             .SELECT => "SELECT",
             .MOVE => "MOVE",
             .FETCH => "FETCH",
@@ -117,7 +114,7 @@ pub fn endPerformanceTrackingWithCommand(this: *@This(), connection: anytype, gl
             .other => |other| other,
         };
     };
-    
+
     // Use the existing command detection - SQLPerformanceEntryLogger will extract the command name
     this.performance_logger.end(connection.performance_entries_enabled, final_command_tag_str, query_utf8.slice(), globalObject);
 }
@@ -610,8 +607,10 @@ const MySQLStatement = @import("./MySQLStatement.zig");
 const PreparedStatement = @import("./protocol/PreparedStatement.zig");
 const Signature = @import("./protocol/Signature.zig");
 const bun = @import("bun");
+const std = @import("std");
 const CommandTag = @import("../postgres/CommandTag.zig").CommandTag;
 const QueryBindingIterator = @import("../shared/QueryBindingIterator.zig").QueryBindingIterator;
+const SQLPerformanceEntryLogger = @import("../SQLPerformanceEntryLogger.zig").SQLPerformanceEntryLogger;
 const SQLQueryResultMode = @import("../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
 const Value = @import("./MySQLTypes.zig").Value;
 

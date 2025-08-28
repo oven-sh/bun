@@ -327,3 +327,31 @@ export { Head };
 ```
 
 {% /codetabs %}
+
+## Advanced Macro APIs
+
+### `Bun.registerMacro(id, macro)`
+
+Registers a macro function with a specific numeric ID for internal use by the bundler. This is a low-level API primarily used internally during the bundling process.
+
+```js
+// This API is primarily used internally by the bundler
+// Most users should use import statements with { type: "macro" } instead
+```
+
+**Parameters:**
+- `id` (`number`): A unique numeric identifier for the macro (must be positive, non-zero)
+- `macro` (`Function`): The macro function to register
+
+**Returns:** `undefined`
+
+{% callout type="warning" %}
+**Note** — `Bun.registerMacro()` is an internal API used by Bun's bundler during code generation. User code should not call this function directly. Instead, use the standard `import { myMacro } from "./macro.ts" with { type: "macro" }` syntax to define and use macros.
+{% /callout %}
+
+**Security considerations:**
+- Only callable functions are accepted as macro arguments
+- Invalid IDs (0, -1, or non-numeric values) will throw an error
+- This function requires exactly 2 arguments
+
+The bundler automatically calls `registerMacro()` when it encounters macro imports during the bundling process, assigning unique IDs to each macro and registering them for execution.

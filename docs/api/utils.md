@@ -227,29 +227,49 @@ test("peek.status", () => {
 
 ## `Bun.openInEditor()`
 
-Opens a file in your default editor. Bun auto-detects your editor via the `$VISUAL` or `$EDITOR` environment variables.
+`Bun.openInEditor(file: string, options?: EditorOptions): void`
+`Bun.openInEditor(file: string, line?: number, column?: number): void`
+
+Opens a file in your configured editor at an optional line and column position. Bun auto-detects your editor via the `$VISUAL` or `$EDITOR` environment variables.
 
 ```ts
 const currentFile = import.meta.url;
 Bun.openInEditor(currentFile);
+
+// Open at a specific line
+Bun.openInEditor(currentFile, 42);
+
+// Open at a specific line and column
+Bun.openInEditor(currentFile, 42, 15);
 ```
 
-You can override this via the `debug.editor` setting in your [`bunfig.toml`](https://bun.com/docs/runtime/bunfig).
+You can override the default editor via the `debug.editor` setting in your [`bunfig.toml`](https://bun.com/docs/runtime/bunfig).
 
 ```toml-diff#bunfig.toml
 + [debug]
 + editor = "code"
 ```
 
-Or specify an editor with the `editor` param. You can also specify a line and column number.
+Or specify an editor with the options object. You can also specify a line and column number.
 
 ```ts
 Bun.openInEditor(import.meta.url, {
-  editor: "vscode", // or "subl"
+  editor: "vscode", // or "subl", "vim", "nano", etc.
   line: 10,
   column: 5,
 });
+
+// Useful for opening files from error stack traces
+try {
+  throw new Error("Something went wrong");
+} catch (error) {
+  const stack = error.stack;
+  // Parse stack trace to get file, line, column...
+  Bun.openInEditor("/path/to/file.ts", 25, 10);
+}
 ```
+
+Supported editors include VS Code (`code`, `vscode`), Sublime Text (`subl`), Vim (`vim`), Neovim (`nvim`), Emacs (`emacs`), and many others.
 
 ## `Bun.deepEquals()`
 
@@ -602,6 +622,237 @@ dec.decode(decompressed);
 // => "hellohellohello..."
 ```
 
+## `Bun.zstdCompressSync()`
+
+Compresses a `Uint8Array`, `Buffer`, `ArrayBuffer`, or `string` using the [Zstandard](https://facebook.github.io/zstd/) compression algorithm.
+
+```ts
+const input = "hello world".repeat(100);
+const compressed = Bun.zstdCompressSync(input);
+// => Buffer
+
+console.log(input.length);     // => 1100
+console.log(compressed.length); // => 25 (significantly smaller!)
+```
+
+Zstandard provides excellent compression ratios with fast decompression speeds, making it ideal for applications where data is compressed once but decompressed frequently.
+
+### Compression levels
+
+Zstandard supports compression levels from `1` to `22`:
+
+```ts
+const data = "hello world".repeat(1000);
+
+// Fast compression, larger output
+const fast = Bun.zstdCompressSync(data, { level: 1 });
+
+// Balanced compression (default is level 3)
+const balanced = Bun.zstdCompressSync(data, { level: 3 });
+
+// Maximum compression, slower but smallest output
+const small = Bun.zstdCompressSync(data, { level: 22 });
+
+console.log({ fast: fast.length, balanced: balanced.length, small: small.length });
+// => { fast: 2776, balanced: 1064, small: 1049 }
+```
+
+The `level` parameter must be between 1 and 22. Higher levels provide better compression at the cost of slower compression speed.
+
+```ts
+// Invalid level throws an error
+Bun.zstdCompressSync("data", { level: 0 }); // Error: Compression level must be between 1 and 22
+```
+
+## `Bun.zstdDecompressSync()`
+
+Decompresses data that was compressed with Zstandard.
+
+```ts
+const input = "hello world".repeat(100);
+const compressed = Bun.zstdCompressSync(input, { level: 6 });
+const decompressed = Bun.zstdDecompressSync(compressed);
+
+console.log(new TextDecoder().decode(decompressed));
+// => "hello worldhello world..."
+```
+
+The function automatically detects the format and decompresses accordingly:
+
+```ts
+// Works with any input type that was compressed
+const stringCompressed = Bun.zstdCompressSync("text data");
+const bufferCompressed = Bun.zstdCompressSync(Buffer.from("binary data"));
+const uint8Compressed = Bun.zstdCompressSync(new TextEncoder().encode("encoded data"));
+
+console.log(new TextDecoder().decode(Bun.zstdDecompressSync(stringCompressed)));
+console.log(new TextDecoder().decode(Bun.zstdDecompressSync(bufferCompressed)));
+console.log(new TextDecoder().decode(Bun.zstdDecompressSync(uint8Compressed)));
+```
+
+## `Bun.zstdCompress()`
+
+Asynchronously compresses data using Zstandard. This is useful for large data that might block the event loop if compressed synchronously.
+
+```ts
+const largeData = "large dataset ".repeat(100000);
+
+// Won't block the event loop
+const compressed = await Bun.zstdCompress(largeData, { level: 9 });
+console.log(`Compressed ${largeData.length} bytes to ${compressed.length} bytes`);
+```
+
+The async version accepts the same compression levels and options as the sync version:
+
+```ts
+// Different compression levels
+const level1 = await Bun.zstdCompress(data, { level: 1 });  // Fast
+const level12 = await Bun.zstdCompress(data, { level: 12 }); // Balanced
+const level22 = await Bun.zstdCompress(data, { level: 22 }); // Maximum compression
+```
+
+## `Bun.zstdDecompress()`
+
+Asynchronously decompresses Zstandard-compressed data.
+
+```ts
+const data = "hello world ".repeat(10000);
+const compressed = await Bun.zstdCompress(data, { level: 6 });
+const decompressed = await Bun.zstdDecompress(compressed);
+
+console.log(new TextDecoder().decode(decompressed) === data); // => true
+```
+
+Both async compression functions return `Promise<Buffer>`:
+
+```ts
+// Type annotations for clarity
+const compressed: Promise<Buffer> = Bun.zstdCompress("data");
+const decompressed: Promise<Buffer> = Bun.zstdDecompress(compressed);
+```
+
+## Zstandard performance characteristics
+
+Zstandard offers excellent performance compared to other compression algorithms:
+
+- **Compression ratio**: Generally better than gzip, competitive with brotli
+- **Compression speed**: Faster than brotli, similar to gzip
+- **Decompression speed**: Much faster than gzip and brotli
+- **Memory usage**: Moderate, scales with compression level
+
+{% details summary="Performance comparison example" %}
+
+```ts
+const testData = "The quick brown fox jumps over the lazy dog. ".repeat(10000);
+
+// Zstandard
+console.time("zstd compress");
+const zstdCompressed = Bun.zstdCompressSync(testData, { level: 6 });
+console.timeEnd("zstd compress");
+
+console.time("zstd decompress");
+Bun.zstdDecompressSync(zstdCompressed);
+console.timeEnd("zstd decompress");
+
+// Compare with gzip
+console.time("gzip compress");
+const gzipCompressed = Bun.gzipSync(testData);
+console.timeEnd("gzip compress");
+
+console.time("gzip decompress");
+Bun.gunzipSync(gzipCompressed);
+console.timeEnd("gzip decompress");
+
+console.log({
+  originalSize: testData.length,
+  zstdSize: zstdCompressed.length,
+  gzipSize: gzipCompressed.length,
+  zstdRatio: (testData.length / zstdCompressed.length).toFixed(2) + "x",
+  gzipRatio: (testData.length / gzipCompressed.length).toFixed(2) + "x",
+});
+```
+
+{% /details %}
+
+## Working with files
+
+Compress and decompress files efficiently:
+
+```ts
+// Compress a file
+const file = Bun.file("large-document.txt");
+const content = await file.bytes();
+const compressed = await Bun.zstdCompress(content, { level: 9 });
+await Bun.write("large-document.txt.zst", compressed);
+
+// Decompress a file
+const compressedFile = Bun.file("large-document.txt.zst");
+const compressedData = await compressedFile.bytes();
+const decompressed = await Bun.zstdDecompress(compressedData);
+await Bun.write("large-document-restored.txt", decompressed);
+```
+
+## HTTP compression with Zstandard
+
+Modern browsers support Zstandard for HTTP compression. Check the `Accept-Encoding` header:
+
+```ts
+const server = Bun.serve({
+  async fetch(req) {
+    const acceptEncoding = req.headers.get("Accept-Encoding") || "";
+    const responseData = "Large response content...".repeat(1000);
+    
+    if (acceptEncoding.includes("zstd")) {
+      const compressed = await Bun.zstdCompress(responseData, { level: 6 });
+      return new Response(compressed, {
+        headers: {
+          "Content-Encoding": "zstd",
+          "Content-Type": "text/plain",
+          "Content-Length": compressed.length.toString(),
+        }
+      });
+    }
+    
+    // Fallback to uncompressed
+    return new Response(responseData, {
+      headers: { "Content-Type": "text/plain" }
+    });
+  },
+  port: 3000,
+});
+```
+
+## Error handling
+
+All Zstandard functions will throw errors for invalid input:
+
+```ts
+try {
+  // Invalid compression level
+  Bun.zstdCompressSync("data", { level: 25 });
+} catch (error) {
+  console.error(error.message); // => "Compression level must be between 1 and 22"
+}
+
+try {
+  // Invalid compressed data
+  Bun.zstdDecompressSync("not compressed");
+} catch (error) {
+  console.error("Decompression failed"); // => Throws decompression error
+}
+
+// Async error handling
+try {
+  await Bun.zstdDecompress("invalid compressed data");
+} catch (error) {
+  console.error("Async decompression failed:", error.message);
+}
+```
+
+---
+
+For more detailed examples and performance comparisons, see [Compress and decompress data with Zstandard (zstd)](/docs/guides/util/zstd).
+
 ## `Bun.inspect()`
 
 Serializes an object to a `string` exactly as it would be printed by `console.log`.
@@ -630,6 +881,331 @@ class Foo {
 const foo = new Foo();
 console.log(foo); // => "foo"
 ```
+
+## `Bun.indexOfLine()`
+
+`Bun.indexOfLine(buffer: Uint8Array | string, index: number): number`
+
+Finds the line boundary (start of line) for a given byte or character index within a text buffer. This is useful for converting byte offsets to line/column positions for error reporting, syntax highlighting, or text editor features.
+
+```ts
+const text = "Hello\nWorld\nFrom\nBun";
+
+// Find which line contains character at index 8
+const lineStart = Bun.indexOfLine(text, 8);
+console.log(lineStart); // => 6 (start of "World" line)
+
+// The character at index 8 is 'r' in "World"
+console.log(text[8]); // => 'r'
+console.log(text.slice(lineStart, text.indexOf('\n', lineStart)));
+// => "World"
+```
+
+This works with both strings and byte buffers:
+
+```ts
+const buffer = new TextEncoder().encode("Line 1\nLine 2\nLine 3");
+const lineStart = Bun.indexOfLine(buffer, 10); // index 10 is in "Line 2"
+console.log(lineStart); // => 7 (start of "Line 2")
+
+// Convert back to string to verify
+const decoder = new TextDecoder();
+const lineEnd = buffer.indexOf(0x0a, lineStart); // 0x0a is '\n'
+const line = decoder.decode(buffer.slice(lineStart, lineEnd === -1 ? undefined : lineEnd));
+console.log(line); // => "Line 2"
+```
+
+Useful for building development tools like linters, formatters, or language servers:
+
+```ts
+function getLineAndColumn(text: string, index: number) {
+  const lineStart = Bun.indexOfLine(text, index);
+  const lineNumber = text.slice(0, lineStart).split('\n').length;
+  const column = index - lineStart + 1;
+  return { line: lineNumber, column };
+}
+
+const position = getLineAndColumn("Hello\nWorld\nFrom\nBun", 8);
+console.log(position); // => { line: 2, column: 3 }
+```
+
+## `Bun.shellEscape()`
+
+`Bun.shellEscape(input: string): string`
+
+Escapes a string for safe use in shell commands by adding appropriate quoting and escaping special characters. This prevents shell injection vulnerabilities when constructing commands dynamically.
+
+```ts
+const userInput = "file with spaces & special chars.txt";
+const escaped = Bun.shellEscape(userInput);
+console.log(escaped); // => 'file with spaces & special chars.txt'
+
+// Safe to use in shell commands
+const command = `ls ${escaped}`;
+console.log(command); // => ls 'file with spaces & special chars.txt'
+```
+
+It handles various special characters that have meaning in shells:
+
+```ts
+// Characters that need escaping
+Bun.shellEscape("hello; rm -rf /"); // => 'hello; rm -rf /'
+Bun.shellEscape("$HOME/file"); // => '$HOME/file'
+Bun.shellEscape("`whoami`"); // => '`whoami`'
+Bun.shellEscape("a\"quote\""); // => 'a"quote"'
+
+// Already safe strings pass through unchanged
+Bun.shellEscape("simple-filename.txt"); // => simple-filename.txt
+```
+
+Essential for safely constructing shell commands with user input:
+
+```ts
+function safeCopy(source: string, destination: string) {
+  const safeSource = Bun.shellEscape(source);
+  const safeDest = Bun.shellEscape(destination);
+  
+  // Now safe to execute
+  const proc = Bun.spawn({
+    cmd: ["sh", "-c", `cp ${safeSource} ${safeDest}`],
+    stderr: "pipe"
+  });
+  
+  return proc;
+}
+
+// This won't execute malicious commands
+safeCopy("normal.txt", "evil; rm -rf /");
+```
+
+## `Bun.allocUnsafe()`
+
+`Bun.allocUnsafe(size: number): Uint8Array`
+
+Allocates a `Uint8Array` of the specified size without initializing the memory. This is faster than `new Uint8Array(size)` but the buffer contains arbitrary data from previously freed memory.
+
+**⚠️ Warning**: The allocated memory is not zeroed and may contain sensitive data from previous allocations. Only use this when you'll immediately overwrite all bytes or when performance is critical and you understand the security implications.
+
+```ts
+// Faster allocation (but contains arbitrary data)
+const buffer = Bun.allocUnsafe(1024);
+console.log(buffer[0]); // => some random value (could be anything)
+
+// Compare with safe allocation
+const safeBuffer = new Uint8Array(1024);
+console.log(safeBuffer[0]); // => 0 (always zeroed)
+```
+
+Best used when you'll immediately fill the entire buffer:
+
+```ts
+function readFileToBuffer(path: string): Uint8Array {
+  const file = Bun.file(path);
+  const size = file.size;
+  
+  // Safe to use allocUnsafe since we'll overwrite everything
+  const buffer = Bun.allocUnsafe(size);
+  
+  // Fill the entire buffer with file data
+  const bytes = file.bytes();
+  buffer.set(bytes);
+  
+  return buffer;
+}
+```
+
+Performance comparison:
+
+```ts
+// Benchmarking allocation methods
+const size = 1024 * 1024; // 1MB
+
+const start1 = Bun.nanoseconds();
+const safe = new Uint8Array(size);
+const safeTime = Bun.nanoseconds() - start1;
+
+const start2 = Bun.nanoseconds();
+const unsafe = Bun.allocUnsafe(size);
+const unsafeTime = Bun.nanoseconds() - start2;
+
+console.log(`Safe allocation: ${safeTime} ns`);
+console.log(`Unsafe allocation: ${unsafeTime} ns`);
+// Unsafe is typically 2-10x faster for large allocations
+```
+
+## `Bun.shrink()`
+
+`Bun.shrink(object: object): object`
+
+Optimizes the memory layout of an object by shrinking its internal representation. This is most effective after adding and removing many properties, which can leave gaps in the object's property storage.
+
+```ts
+const obj = { a: 1, b: 2, c: 3, d: 4, e: 5 };
+
+// Add and remove many properties (creates fragmentation)
+for (let i = 0; i < 1000; i++) {
+  obj[`temp${i}`] = i;
+}
+
+for (let i = 0; i < 1000; i++) {
+  delete obj[`temp${i}`];
+}
+
+// Object now has fragmented memory layout
+console.log(Object.keys(obj)); // => ["a", "b", "c", "d", "e"]
+
+// Optimize memory layout
+Bun.shrink(obj);
+// Returns the same object, but with optimized internal structure
+```
+
+Useful for long-lived objects that undergo many property changes:
+
+```ts
+class Cache {
+  private data = {};
+  
+  set(key: string, value: any) {
+    this.data[key] = value;
+  }
+  
+  delete(key: string) {
+    delete this.data[key];
+  }
+  
+  // Optimize after batch operations
+  optimize() {
+    return Bun.shrink(this.data);
+  }
+}
+
+const cache = new Cache();
+// ... many set/delete operations
+cache.optimize(); // Reclaim fragmented memory
+```
+
+The function returns the same object (doesn't create a copy):
+
+```ts
+const original = { foo: "bar" };
+const shrunk = Bun.shrink(original);
+console.log(original === shrunk); // => true
+```
+
+**Note**: This is a performance optimization hint. The JavaScript engine may ignore it if the object is already optimally laid out or if shrinking wouldn't provide benefits.
+
+## `Bun.gc()`
+
+`Bun.gc(force?: boolean): void`
+
+Manually trigger JavaScript garbage collection. Useful for testing memory behavior or forcing cleanup at specific times.
+
+```ts
+// Request garbage collection
+Bun.gc();
+
+// Force synchronous garbage collection (blocking)
+Bun.gc(true);
+```
+
+**Parameters:**
+- `force` (`boolean`, optional): If `true`, runs garbage collection synchronously (blocking). Default is asynchronous.
+
+**Note**: Manual garbage collection is generally not recommended in production applications. The JavaScript engine's automatic GC is typically more efficient.
+
+## `Bun.generateHeapSnapshot()`
+
+Generate detailed memory usage snapshots for debugging and profiling.
+
+### JSC Format (Safari/Bun Inspector)
+
+```ts
+const snapshot = Bun.generateHeapSnapshot(); // defaults to "jsc"
+const snapshot = Bun.generateHeapSnapshot("jsc");
+
+// Use with `bun --inspect` or Safari Web Inspector
+console.log(snapshot); // HeapSnapshot object
+```
+
+### V8 Format (Chrome DevTools)
+
+```ts
+const snapshot = Bun.generateHeapSnapshot("v8");
+
+// Save to file for Chrome DevTools
+await Bun.write("heap.heapsnapshot", snapshot);
+```
+
+**Formats:**
+- `"jsc"` (default): Returns a `HeapSnapshot` object compatible with Safari Web Inspector and `bun --inspect`
+- `"v8"`: Returns a JSON string compatible with Chrome DevTools
+
+**Usage in development:**
+1. Generate snapshot: `const snap = Bun.generateHeapSnapshot("v8")`
+2. Save to file: `await Bun.write("memory.heapsnapshot", snap)`  
+3. Open in Chrome DevTools > Memory tab > Load snapshot
+4. Analyze memory usage, object references, and potential leaks
+
+## `Bun.mmap()`
+
+`Bun.mmap(path: string): Uint8Array`
+
+Memory-maps a file, creating a `Uint8Array` that directly accesses the file's contents in memory without copying. This provides very fast access to large files and allows the operating system to manage memory efficiently.
+
+```ts
+// Map a large file into memory
+const mapped = Bun.mmap("/path/to/large-file.bin");
+
+// Access file contents directly
+console.log(mapped.length); // File size in bytes
+console.log(mapped[0]);     // First byte
+console.log(mapped.slice(0, 100)); // First 100 bytes
+
+// No explicit cleanup needed - GC will handle unmapping
+```
+
+Particularly efficient for large files:
+
+```ts
+// Reading a 1GB file with mmap vs traditional methods
+const largeMapped = Bun.mmap("/path/to/1gb-file.bin");
+// ↑ Very fast, no copying
+
+const largeLoaded = await Bun.file("/path/to/1gb-file.bin").arrayBuffer();
+// ↑ Slower, copies entire file into memory
+
+// Both provide same data, but mmap is faster and uses less memory
+console.log(largeMapped[1000] === new Uint8Array(largeLoaded)[1000]); // => true
+```
+
+Great for processing large data files:
+
+```ts
+function processLogFile(path: string) {
+  const data = Bun.mmap(path);
+  const decoder = new TextDecoder();
+  
+  let lineStart = 0;
+  for (let i = 0; i < data.length; i++) {
+    if (data[i] === 0x0a) { // newline
+      const line = decoder.decode(data.slice(lineStart, i));
+      processLine(line);
+      lineStart = i + 1;
+    }
+  }
+}
+
+function processLine(line: string) {
+  // Process each line...
+}
+```
+
+**Important considerations:**
+- The mapped memory is read-only
+- Changes to the underlying file may or may not be reflected in the mapped data
+- The mapping is automatically unmapped when the Uint8Array is garbage collected
+- Very large files may hit system memory mapping limits
+
 
 ## `Bun.inspect.table(tabularData, properties, options)`
 
@@ -692,11 +1268,30 @@ console.log(
 
 ## `Bun.nanoseconds()`
 
-Returns the number of nanoseconds since the current `bun` process started, as a `number`. Useful for high-precision timing and benchmarking.
+`Bun.nanoseconds(): number`
+
+Returns the number of nanoseconds since the Unix epoch (January 1, 1970 00:00:00 UTC), as a `number`. This provides the highest precision timing available and is useful for high-precision benchmarking and performance measurement.
 
 ```ts
-Bun.nanoseconds();
-// => 7288958
+const start = Bun.nanoseconds();
+// ... some operation
+const end = Bun.nanoseconds();
+const elapsed = end - start;
+console.log(`Operation took ${elapsed} nanoseconds`);
+// => Operation took 1234567 nanoseconds
+
+// Convert to milliseconds for easier reading
+console.log(`Operation took ${elapsed / 1_000_000} milliseconds`);
+// => Operation took 1.234567 milliseconds
+```
+
+This is significantly more precise than `Date.now()` which returns milliseconds, and `performance.now()` which returns milliseconds as floating point. Use this for micro-benchmarks where nanosecond precision is important.
+
+```ts
+// Comparing precision
+Date.now();        // milliseconds (e.g. 1703123456789)
+performance.now(); // milliseconds with sub-millisecond precision (e.g. 123.456)
+Bun.nanoseconds(); // nanoseconds (e.g. 1703123456789123456)
 ```
 
 ## `Bun.readableStreamTo*()`
@@ -733,16 +1328,32 @@ await Bun.readableStreamToFormData(stream);
 await Bun.readableStreamToFormData(stream, multipartFormBoundary);
 ```
 
-## `Bun.resolveSync()`
+## `Bun.resolve()` and `Bun.resolveSync()`
 
-Resolves a file path or module specifier using Bun's internal module resolution algorithm. The first argument is the path to resolve, and the second argument is the "root". If no match is found, an `Error` is thrown.
+`Bun.resolve(specifier: string, from?: string): Promise<string>`
+`Bun.resolveSync(specifier: string, from?: string): string`
+
+Resolves module specifiers using Bun's internal module resolution algorithm. These functions implement the same resolution logic as `import` and `require()` statements, including support for package.json, node_modules traversal, and path mapping. If no match is found, an `Error` is thrown.
 
 ```ts
-Bun.resolveSync("./foo.ts", "/path/to/project");
-// => "/path/to/project/foo.ts"
+// Resolve relative paths
+const resolved = Bun.resolveSync("./foo.ts", "/path/to/project");
+console.log(resolved); // => "/path/to/project/foo.ts"
 
+// Resolve npm packages
 Bun.resolveSync("zod", "/path/to/project");
 // => "/path/to/project/node_modules/zod/index.ts"
+
+// Resolve Node.js built-ins (returns special node: URLs)
+const fsPath = Bun.resolveSync("fs", "/path/to/project");
+console.log(fsPath); // => "node:fs"
+```
+
+The async version allows for potential future enhancements (currently behaves the same):
+
+```ts
+const resolved = await Bun.resolve("./config.json", import.meta.dir);
+console.log(resolved); // => "/absolute/path/to/config.json"
 ```
 
 To resolve relative to the current working directory, pass `process.cwd()` or `"."` as the root.
@@ -757,6 +1368,65 @@ To resolve relative to the directory containing the current file, pass `import.m
 ```ts
 Bun.resolveSync("./foo.ts", import.meta.dir);
 ```
+
+Useful for building tools that need to understand module resolution:
+
+```ts
+function findDependencies(entryPoint: string): string[] {
+  const dependencies: string[] = [];
+  const source = Bun.file(entryPoint).text();
+  
+  // Simple regex to find import statements (real implementation would use a parser)
+  const imports = source.match(/import .* from ["']([^"']+)["']/g) || [];
+  
+  for (const importStmt of imports) {
+    const specifier = importStmt.match(/from ["']([^"']+)["']/)?.[1];
+    if (specifier) {
+      try {
+        const resolved = Bun.resolveSync(specifier, path.dirname(entryPoint));
+        dependencies.push(resolved);
+      } catch (error) {
+        console.warn(`Could not resolve: ${specifier}`);
+      }
+    }
+  }
+  
+  return dependencies;
+}
+```
+
+Respects package.json configuration:
+
+```ts
+// If package.json has:
+// {
+//   "type": "module",
+//   "exports": {
+//     "./utils": "./dist/utils.js"
+//   }
+// }
+
+const resolved = Bun.resolveSync("my-package/utils", "/project");
+// => "/project/node_modules/my-package/dist/utils.js"
+```
+
+Error handling:
+
+```ts
+try {
+  const resolved = Bun.resolveSync("nonexistent-package", "/project");
+} catch (error) {
+  console.error(`Module not found: ${error.message}`);
+  // => Module not found: Cannot resolve "nonexistent-package" from "/project"
+}
+```
+
+Both functions respect:
+- `package.json` `exports` and `main` fields
+- `node_modules` resolution algorithm
+- TypeScript-style path mapping
+- File extensions resolution (`.js`, `.ts`, `.tsx`, etc.)
+- Directory index files (`index.js`, `index.ts`)
 
 ## `serialize` & `deserialize` in `bun:jsc`
 
@@ -855,3 +1525,228 @@ const array = Array(1024).fill({ a: 1 });
 estimateShallowMemoryUsageOf(array);
 // => 16
 ```
+
+## `Bun.unsafe` ⚠️
+
+**⚠️ DANGER ZONE**: The `Bun.unsafe` namespace contains extremely dangerous low-level operations that can crash your application, corrupt memory, or leak sensitive data. Only use these APIs if you know exactly what you're doing and understand the risks.
+
+### `Bun.unsafe.arrayBufferToString()`
+
+Cast bytes to a `string` without copying. This is the fastest way to get a `String` from a `Uint8Array` or `ArrayBuffer`.
+
+```ts
+const bytes = new Uint8Array([104, 101, 108, 108, 111]); // "hello"
+const str = Bun.unsafe.arrayBufferToString(bytes);
+console.log(str); // => "hello"
+```
+
+**⚠️ Critical warnings:**
+- **Only use this for ASCII strings**. Non-ASCII characters may crash your application or cause confusing bugs like `"foo" !== "foo"`
+- **The input buffer must not be garbage collected**. Hold a reference to the buffer for the string's entire lifetime
+- **Memory corruption risk**: Incorrect usage can lead to security vulnerabilities
+
+### `Bun.unsafe.gcAggressionLevel()`
+
+Force the garbage collector to run extremely often, especially useful for debugging memory issues in tests.
+
+```ts
+// Get current level
+const currentLevel = Bun.unsafe.gcAggressionLevel();
+
+// Set aggressive GC for debugging
+const previousLevel = Bun.unsafe.gcAggressionLevel(2);
+
+// Later, restore original level
+Bun.unsafe.gcAggressionLevel(previousLevel);
+```
+
+**Levels:**
+- `0`: Default, disabled
+- `1`: Asynchronously call GC more often  
+- `2`: Synchronously call GC more often (most aggressive)
+
+**Environment variable**: `BUN_GARBAGE_COLLECTOR_LEVEL` is also supported.
+
+### `Bun.unsafe.mimallocDump()`
+
+Dump the mimalloc heap to the console for debugging memory usage. Only available on macOS.
+
+```ts
+// Dump heap statistics to console
+Bun.unsafe.mimallocDump();
+```
+
+### `Bun.unsafe.segfault()` ☠️
+
+**☠️ EXTREMELY DANGEROUS**: Immediately crashes the process with a segmentation fault. Only used for testing crash handlers.
+
+```ts
+// This will immediately crash your program
+Bun.unsafe.segfault(); // Process terminates with segfault
+```
+
+**Never use this in production code.**
+
+## `Bun.CSRF`
+
+A utility namespace for generating and verifying CSRF (Cross-Site Request Forgery) tokens. CSRF tokens help protect web applications against CSRF attacks by ensuring that state-changing requests originate from the same site that served the form.
+
+### `Bun.CSRF.generate(secret?, options?)`
+
+Generates a CSRF token using the specified secret and options.
+
+```ts
+import { CSRF } from "bun";
+
+// Generate with default secret
+const token = CSRF.generate();
+console.log(token); // => "base64url-encoded-token"
+
+// Generate with custom secret
+const tokenWithSecret = CSRF.generate("my-secret-key");
+console.log(tokenWithSecret); // => "base64url-encoded-token"
+
+// Generate with options
+const customToken = CSRF.generate("my-secret", {
+  encoding: "hex",
+  expiresIn: 60 * 60 * 1000, // 1 hour in milliseconds
+  algorithm: "sha256"
+});
+```
+
+**Parameters:**
+- `secret` (`string`, optional): Secret key for token generation. If not provided, uses a default internal secret
+- `options` (`CSRFGenerateOptions`, optional): Configuration options
+
+**Options:**
+- `encoding` (`"base64url" | "base64" | "hex"`): Output encoding format (default: `"base64url"`)
+- `expiresIn` (`number`): Token expiration time in milliseconds (default: 24 hours)
+- `algorithm` (`CSRFAlgorithm`): Hash algorithm to use (default: `"sha256"`)
+
+**Supported algorithms:**
+- `"blake2b256"` - BLAKE2b with 256-bit output
+- `"blake2b512"` - BLAKE2b with 512-bit output  
+- `"sha256"` - SHA-256 (default)
+- `"sha384"` - SHA-384
+- `"sha512"` - SHA-512
+- `"sha512-256"` - SHA-512/256
+
+**Returns:** `string` - The generated CSRF token
+
+### `Bun.CSRF.verify(token, options?)`
+
+Verifies a CSRF token against the specified secret and constraints.
+
+```ts
+import { CSRF } from "bun";
+
+const secret = "my-secret-key";
+const token = CSRF.generate(secret);
+
+// Verify with same secret
+const isValid = CSRF.verify(token, { secret });
+console.log(isValid); // => true
+
+// Verify with wrong secret
+const isInvalid = CSRF.verify(token, { secret: "wrong-secret" });
+console.log(isInvalid); // => false
+
+// Verify with maxAge constraint
+const isExpired = CSRF.verify(token, { 
+  secret, 
+  maxAge: 1000 // 1 second
+});
+// If more than 1 second has passed, this will return false
+```
+
+**Parameters:**
+- `token` (`string`): The CSRF token to verify
+- `options` (`CSRFVerifyOptions`, optional): Verification options
+
+**Options:**
+- `secret` (`string`, optional): Secret key used for verification. If not provided, uses the default internal secret
+- `encoding` (`"base64url" | "base64" | "hex"`): Token encoding format (default: `"base64url"`)
+- `maxAge` (`number`, optional): Maximum age in milliseconds. If specified, tokens older than this will be rejected
+- `algorithm` (`CSRFAlgorithm`): Hash algorithm used (must match the one used for generation)
+
+**Returns:** `boolean` - `true` if the token is valid, `false` otherwise
+
+### Security considerations
+
+- **Secret management**: Use a cryptographically secure, randomly generated secret that's unique to your application
+- **Token lifetime**: Set appropriate expiration times - shorter is more secure but may affect user experience
+- **Transport security**: Always transmit CSRF tokens over HTTPS in production
+- **Storage**: Store tokens securely (e.g., in HTTP-only cookies or secure session storage)
+
+### Example: Express.js integration
+
+```ts
+import { CSRF } from "bun";
+import express from "express";
+
+const app = express();
+const secret = process.env.CSRF_SECRET || "your-secret-key";
+
+// Middleware to add CSRF token to forms
+app.use((req, res, next) => {
+  if (req.method === "GET") {
+    res.locals.csrfToken = CSRF.generate(secret);
+  }
+  next();
+});
+
+// Middleware to verify CSRF token
+app.use((req, res, next) => {
+  if (["POST", "PUT", "DELETE", "PATCH"].includes(req.method)) {
+    const token = req.body._csrf || req.headers["x-csrf-token"];
+    
+    if (!token || !CSRF.verify(token, { secret })) {
+      return res.status(403).json({ error: "Invalid CSRF token" });
+    }
+  }
+  next();
+});
+
+// Route that requires CSRF protection
+app.post("/api/data", (req, res) => {
+  // This route is now protected against CSRF attacks
+  res.json({ message: "Data updated successfully" });
+});
+```
+
+### Example: HTML form integration
+
+```html
+<!-- In your HTML template -->
+<form method="POST" action="/submit">
+  <input type="hidden" name="_csrf" value="${csrfToken}">
+  <input type="text" name="data" required>
+  <button type="submit">Submit</button>
+</form>
+```
+
+### Error handling
+
+```ts
+import { CSRF } from "bun";
+
+try {
+  // Generate token
+  const token = CSRF.generate("my-secret");
+  
+  // Verify token
+  const isValid = CSRF.verify(token, { secret: "my-secret" });
+} catch (error) {
+  if (error.message.includes("secret")) {
+    console.error("Invalid secret provided");
+  } else {
+    console.error("CSRF operation failed:", error.message);
+  }
+}
+```
+
+Common error scenarios:
+- Empty or invalid token strings throw verification errors
+- Empty secret strings throw generation/verification errors
+- Invalid encoding options are handled gracefully
+- Malformed tokens return `false` rather than throwing

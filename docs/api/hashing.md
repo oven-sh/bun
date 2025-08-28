@@ -316,3 +316,175 @@ console.log(copy.digest("hex"));
 console.log(hasher.digest("hex"));
 // => "095d5a21fe6d0646db223fdf3de6436bb8dfb2fab0b51677ecf6441fcf5f2a67"
 ```
+
+## Individual Hash Algorithm Classes
+
+In addition to the generic `Bun.CryptoHasher`, Bun provides individual classes for each supported hash algorithm. These offer a more direct API and can be slightly more performant for specific use cases.
+
+### Available Hash Classes
+
+The following individual hash classes are available:
+
+- `Bun.MD4` - MD4 hash algorithm (16 bytes)
+- `Bun.MD5` - MD5 hash algorithm (16 bytes)
+- `Bun.SHA1` - SHA-1 hash algorithm (20 bytes)
+- `Bun.SHA224` - SHA-224 hash algorithm (28 bytes)
+- `Bun.SHA256` - SHA-256 hash algorithm (32 bytes)
+- `Bun.SHA384` - SHA-384 hash algorithm (48 bytes)
+- `Bun.SHA512` - SHA-512 hash algorithm (64 bytes)
+- `Bun.SHA512_256` - SHA-512/256 hash algorithm (32 bytes)
+
+### Instance Methods
+
+Each hash class provides the same interface:
+
+```ts
+// Create a new hasher instance
+const hasher = new Bun.SHA256();
+
+// Update with data (can be called multiple times)
+hasher.update("hello");
+hasher.update(" world");
+
+// Get the final hash
+const hash = hasher.digest("hex");
+console.log(hash);
+// => "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+```
+
+The `.update()` method accepts strings, `TypedArray`, `ArrayBuffer`, and `Blob` objects:
+
+```ts
+const hasher = new Bun.SHA256();
+hasher.update("hello");
+hasher.update(new Uint8Array([32, 119, 111, 114, 108, 100])); // " world"
+hasher.update(new ArrayBuffer(1));
+
+const result = hasher.digest("hex");
+```
+
+The `.digest()` method can return the hash in different formats:
+
+```ts
+const hasher = new Bun.SHA256();
+hasher.update("hello world");
+
+// As a Uint8Array (default)
+const bytes = hasher.digest();
+
+// As a hex string
+const hex = hasher.digest("hex");
+
+// As a base64 string
+const base64 = hasher.digest("base64");
+
+// As a base64url string
+const base64url = hasher.digest("base64url");
+
+// Write directly into a TypedArray (more efficient)
+const buffer = new Uint8Array(32);
+hasher.digest(buffer);
+```
+
+{% callout %}
+**Important**: Once `.digest()` is called on a hasher instance, it cannot be reused. Calling `.update()` or `.digest()` again will throw an error. Create a new instance for each hash operation.
+{% /callout %}
+
+### Static Methods
+
+Each hash class also provides a static `.hash()` method for one-shot hashing:
+
+```ts
+// Hash a string and return as hex
+const hex = Bun.SHA256.hash("hello world", "hex");
+// => "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+
+// Hash and return as Uint8Array
+const bytes = Bun.SHA256.hash("hello world");
+
+// Hash directly into a buffer (most efficient)
+const buffer = new Uint8Array(32);
+Bun.SHA256.hash("hello world", buffer);
+```
+
+### Properties
+
+Each hash class has a static `byteLength` property indicating the output size:
+
+```ts
+console.log(Bun.SHA256.byteLength); // => 32
+console.log(Bun.SHA1.byteLength);   // => 20
+console.log(Bun.MD5.byteLength);    // => 16
+```
+
+### Security Considerations
+
+{% callout type="warning" %}
+**Legacy Algorithms**: MD4, MD5, and SHA1 are considered cryptographically broken and should not be used for security-sensitive applications. They are provided for compatibility with legacy systems only.
+
+- **MD4**: Severely broken, avoid entirely
+- **MD5**: Vulnerable to collision attacks, suitable only for checksums
+- **SHA1**: Deprecated due to collision vulnerabilities, avoid for new applications
+
+For new applications, use SHA-256 or higher.
+{% /callout %}
+
+### Performance Characteristics
+
+The individual hash classes are optimized for performance:
+
+- **SHA-256**: Excellent balance of security and performance, recommended for most use cases
+- **SHA-512**: Faster than SHA-256 on 64-bit systems, larger output
+- **SHA-384**: Truncated SHA-512, good compromise between SHA-256 and SHA-512
+- **SHA-224**: Truncated SHA-256, smaller output when space is constrained
+- **SHA-512/256**: Modern variant of SHA-512 with 256-bit output
+
+### Examples
+
+#### Basic Usage
+
+```ts
+// Using instance methods for incremental hashing
+const hasher = new Bun.SHA256();
+hasher.update("The quick brown fox ");
+hasher.update("jumps over the lazy dog");
+const hash = hasher.digest("hex");
+
+// Using static method for one-shot hashing
+const quickHash = Bun.SHA256.hash("The quick brown fox jumps over the lazy dog", "hex");
+
+// Both produce the same result
+console.log(hash === quickHash); // => true
+```
+
+#### Hashing Large Data
+
+```ts
+// For large data, use the static method or write into a buffer
+const data = new Uint8Array(1024 * 1024); // 1MB of data
+crypto.getRandomValues(data);
+
+// Method 1: Static method
+const hash1 = Bun.SHA256.hash(data, "hex");
+
+// Method 2: Write into existing buffer (avoids allocation)
+const output = new Uint8Array(32);
+Bun.SHA256.hash(data, output);
+const hash2 = Array.from(output, byte => byte.toString(16).padStart(2, '0')).join('');
+
+console.log(hash1 === hash2); // => true
+```
+
+#### Algorithm Comparison
+
+```ts
+const data = "hello world";
+
+console.log("MD5:        ", Bun.MD5.hash(data, "hex"));        // 16 bytes
+console.log("SHA1:       ", Bun.SHA1.hash(data, "hex"));       // 20 bytes  
+console.log("SHA224:     ", Bun.SHA224.hash(data, "hex"));     // 28 bytes
+console.log("SHA256:     ", Bun.SHA256.hash(data, "hex"));     // 32 bytes
+console.log("SHA384:     ", Bun.SHA384.hash(data, "hex"));     // 48 bytes
+console.log("SHA512:     ", Bun.SHA512.hash(data, "hex"));     // 64 bytes
+console.log("SHA512/256: ", Bun.SHA512_256.hash(data, "hex")); // 32 bytes
+```

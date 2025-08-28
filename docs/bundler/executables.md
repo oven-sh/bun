@@ -384,13 +384,110 @@ import "./icon.png" with { type: "file" };
 import { embeddedFiles } from "bun";
 
 console.log(embeddedFiles[0].name); // `icon-${hash}.png`
+console.log(embeddedFiles[0].size); // File size in bytes
+console.log(embeddedFiles[0].type); // MIME type (e.g., "image/png")
 ```
 
-`Bun.embeddedFiles` returns an array of `Blob` objects which you can use to get the size, contents, and other properties of the files.
+`Bun.embeddedFiles` returns a read-only array of `Blob` objects sorted lexicographically by filename. Each `Blob` provides access to the embedded file's contents and metadata.
 
 ```ts
-embeddedFiles: Blob[]
+const embeddedFiles: ReadonlyArray<Blob>
 ```
+
+**Properties of embedded file `Blob`s:**
+
+- `name` (`string`): The filename with hash suffix (e.g., `icon-a1b2c3.png`)
+- `size` (`number`): File size in bytes  
+- `type` (`string`): MIME type automatically detected from file extension
+- Standard `Blob` methods: `text()`, `arrayBuffer()`, `bytes()`, `stream()`, `slice()`
+
+### Working with embedded files
+
+```js
+import "./assets/logo.svg" with { type: "file" };
+import "./assets/data.json" with { type: "file" };
+import { embeddedFiles } from "bun";
+
+// Find a specific embedded file
+const logo = embeddedFiles.find(file => file.name.startsWith("logo"));
+if (logo) {
+  console.log(`Logo size: ${logo.size} bytes`);
+  const logoContent = await logo.text();
+}
+
+// Process all embedded files
+for (const file of embeddedFiles) {
+  console.log(`File: ${file.name}`);
+  console.log(`  Size: ${file.size} bytes`);  
+  console.log(`  Type: ${file.type}`);
+  
+  // Read file content based on type
+  if (file.type.startsWith("text/") || file.type === "application/json") {
+    const content = await file.text();
+    console.log(`  Content preview: ${content.slice(0, 100)}...`);
+  }
+}
+
+// Convert to different formats
+const dataFile = embeddedFiles.find(f => f.name.startsWith("data"));
+if (dataFile) {
+  const buffer = await dataFile.arrayBuffer();
+  const bytes = await dataFile.bytes();
+  const stream = dataFile.stream();
+}
+```
+
+### Serving embedded files over HTTP
+
+Embedded files can be served directly in HTTP responses:
+
+```js
+import "./public/favicon.ico" with { type: "file" };
+import "./public/robots.txt" with { type: "file" };
+import { embeddedFiles } from "bun";
+
+const server = Bun.serve({
+  port: 3000,
+  fetch(req) {
+    const url = new URL(req.url);
+    const filename = url.pathname.slice(1); // Remove leading slash
+    
+    // Find embedded file by filename (ignoring hash)
+    const file = embeddedFiles.find(f => 
+      f.name.includes(filename.split('.')[0])
+    );
+    
+    if (file) {
+      return new Response(file, {
+        headers: {
+          "Content-Type": file.type,
+          "Content-Length": file.size.toString(),
+          "Cache-Control": "public, max-age=31536000" // 1 year cache
+        }
+      });
+    }
+    
+    return new Response("Not found", { status: 404 });
+  }
+});
+```
+
+### Important notes
+
+- **Read-only**: The `embeddedFiles` array and individual files cannot be modified at runtime
+- **Empty when not compiled**: Returns an empty array when running with `bun run` (not compiled)  
+- **Hash suffixes**: Filenames include content hashes for cache busting (e.g., `style-a1b2c3.css`)
+- **MIME type detection**: File types are automatically detected from file extensions
+- **Memory efficient**: Files are lazily loaded - accessing content triggers reading from the embedded data
+- **Lexicographic ordering**: Files are sorted alphabetically by their embedded names
+
+### Use cases
+
+- **Static assets**: Serve CSS, images, fonts directly from the executable
+- **Configuration files**: Embed JSON/YAML config that's read at runtime
+- **Templates**: Include HTML/text templates in the binary
+- **Data files**: Ship with necessary data files without external dependencies
+- **Web assets**: Bundle frontend resources with backend services
 
 The list of embedded files excludes bundled source code like `.ts` and `.js` files.
 

@@ -34,6 +34,11 @@ Below is a quick "cheat sheet" that doubles as a table of contents. Click an ite
 - [`BunFile`](#bunfile)
 - _Bun only_. A subclass of `Blob` that represents a lazily-loaded file on disk. Created with `Bun.file(path)`.
 
+---
+
+- [`CryptoHasher`](#buncryptohasher)
+- _Bun only_. Hardware-accelerated cryptographic hash functions with streaming support. More direct interface than `crypto.createHash()`.
+
 {% /table %}
 
 ## `ArrayBuffer` and views
@@ -1020,6 +1025,160 @@ To split a `ReadableStream` into two streams that can be consumed independently:
 const [a, b] = stream.tee();
 ```
 
+## `Bun.CryptoHasher`
+
+_Bun only_. Hardware-accelerated cryptographic hash functions. This is the class used internally by `crypto.createHash()` and provides a more direct interface for high-performance hashing operations.
+
+### Creating a hasher
+
+```ts
+import { CryptoHasher } from "bun";
+
+const hasher = new CryptoHasher("sha256");
+console.log(hasher.algorithm); // => "sha256"
+console.log(hasher.byteLength); // => 32 (SHA-256 output size)
+```
+
+### Updating with data
+
+The `update()` method adds data to be hashed. It can be called multiple times to process data incrementally.
+
+```ts
+const hasher = new CryptoHasher("sha256");
+
+// Add data in chunks
+hasher.update("Hello");
+hasher.update(" ");
+hasher.update("World");
+
+// Different data types supported
+hasher.update(new Uint8Array([1, 2, 3]));
+hasher.update(Buffer.from("more data"));
+```
+
+### Getting the final hash
+
+Use `digest()` to finalize the hash and get the result. This resets the hasher so it can be reused.
+
+```ts
+const hasher = new CryptoHasher("sha256");
+hasher.update("Hello World");
+
+// Get hash as different formats
+const hexHash = hasher.digest("hex");
+console.log(hexHash); // => "a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e"
+
+// Hasher is reset, can be reused
+hasher.update("New data");
+const buffer = hasher.digest(); // Returns Buffer
+```
+
+### Copying hashers
+
+The `copy()` method creates a deep copy of the hasher's current state, useful for computing multiple hashes from a common prefix.
+
+```ts
+const hasher = new CryptoHasher("sha256");
+hasher.update("Common prefix: ");
+
+// Create copies for different suffixes
+const copy1 = hasher.copy();
+const copy2 = hasher.copy();
+
+copy1.update("suffix 1");
+copy2.update("suffix 2");
+
+console.log(copy1.digest("hex")); // Hash of "Common prefix: suffix 1"
+console.log(copy2.digest("hex")); // Hash of "Common prefix: suffix 2"
+```
+
+### Supported algorithms
+
+The following cryptographic hash algorithms are supported:
+
+```ts
+// SHA family
+new CryptoHasher("sha1");
+new CryptoHasher("sha224"); 
+new CryptoHasher("sha256");
+new CryptoHasher("sha384");
+new CryptoHasher("sha512");
+new CryptoHasher("sha512-256");
+
+// BLAKE2 family (very fast)
+new CryptoHasher("blake2b256");
+new CryptoHasher("blake2b512");
+
+// MD family (not recommended for security)
+new CryptoHasher("md4");
+new CryptoHasher("md5");
+```
+
+### Performance characteristics
+
+`CryptoHasher` uses hardware acceleration when available and is optimized for high throughput:
+
+```ts
+// Benchmark different algorithms
+const algorithms = ["sha256", "blake2b256", "md5"];
+const data = "x".repeat(1024 * 1024); // 1MB of data
+
+for (const algo of algorithms) {
+  const hasher = new CryptoHasher(algo);
+  console.time(algo);
+  hasher.update(data);
+  const hash = hasher.digest("hex");
+  console.timeEnd(algo);
+  console.log(`${algo}: ${hash.slice(0, 16)}...`);
+}
+```
+
+### Streaming large files
+
+For processing large files efficiently:
+
+```ts
+async function hashFile(path: string, algorithm = "sha256"): Promise<string> {
+  const hasher = new CryptoHasher(algorithm);
+  const file = Bun.file(path);
+  
+  // Process file in chunks
+  const stream = file.stream();
+  const reader = stream.getReader();
+  
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      hasher.update(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  
+  return hasher.digest("hex");
+}
+
+const hash = await hashFile("large-file.bin");
+console.log(`File hash: ${hash}`);
+```
+
+### Integration with crypto module
+
+`CryptoHasher` is the underlying implementation for Node.js-compatible crypto functions:
+
+```ts
+import crypto from "crypto";
+import { CryptoHasher } from "bun";
+
+// These are equivalent:
+const nodeHash = crypto.createHash("sha256").update("data").digest("hex");
+const bunHash = new CryptoHasher("sha256").update("data").digest("hex");
+
+console.log(nodeHash === bunHash); // => true
+```
+
 <!-- - Use Buffer
 - TextEncoder
 - `Bun.ArrayBufferSink`
@@ -1027,7 +1186,7 @@ const [a, b] = stream.tee();
 - AsyncIterator
 - TypedArray vs ArrayBuffer vs DataView
 - Bun.indexOfLine
-- “direct” readablestream
+- "direct" readablestream
   - readable stream has assumptions about
   - its very generic
   - all data is copies and queued

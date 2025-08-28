@@ -644,12 +644,12 @@ declare module "bun" {
      * console.log(TOML.stringify(obj));
      * // Output:
      * // title = "TOML Example"
-     * // 
+     * //
      * // [database]
      * // server = "192.168.1.1"
      * // ports = [
-     * //   8001, 
-     * //   8001, 
+     * //   8001,
+     * //   8001,
      * //   8002
      * // ]
      * // connection_max = 5000
@@ -675,11 +675,7 @@ declare module "bun" {
      * TOML.stringify(obj, null, "\t");   // tab indentation
      * ```
      */
-    export function stringify(
-      value: any,
-      replacer: undefined | null,
-      space: string | number,
-    ): string;
+    export function stringify(value: any, replacer: undefined | null, space: string | number): string;
 
     /**
      * Convert a JavaScript object to a TOML string with advanced TOML-specific options.
@@ -694,8 +690,8 @@ declare module "bun" {
      * @example
      * ```ts
      * // Advanced TOML-specific options
-     * TOML.stringify(obj, null, { 
-     *   inlineTables: true 
+     * TOML.stringify(obj, null, {
+     *   inlineTables: true
      * });
      * ```
      */
@@ -706,17 +702,17 @@ declare module "bun" {
         /**
          * Whether to format objects as inline tables instead of separate [table] sections
          * @default false
-         * 
+         *
          * @example
          * ```ts
          * const obj = { server: { host: "localhost", port: 3000 } };
-         * 
+         *
          * // With inlineTables: false (default)
          * // [server]
          * // host = "localhost"
          * // port = 3000
-         * 
-         * // With inlineTables: true  
+         *
+         * // With inlineTables: true
          * // server = { host = "localhost", port = 3000 }
          * ```
          */

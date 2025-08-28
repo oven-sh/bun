@@ -72,7 +72,9 @@ try {
 
   writeAndExit({ type: "result", advisories: result });
 } catch (error) {
-  console.error(error); // We should log in this case
+  if (!suppressError) {
+    console.error(error);
+  }
 
   writeAndExit({
     type: "error",

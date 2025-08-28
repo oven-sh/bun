@@ -160,7 +160,7 @@ pub fn performSecurityScanAfterResolution(manager: *PackageManager, command_ctx:
             try doPartialInstallOfSecurityScanner(manager, command_ctx, manager.options.log_level, pkg_id, original_cwd);
             Output.prettyln("<r><green><b>Security scanner installed successfully.<r>", .{});
 
-            const retry_result = try attemptSecurityScan(manager, security_scanner, scan_all, command_ctx, original_cwd);
+            const retry_result = try attemptSecurityScanWithRetry(manager, security_scanner, scan_all, command_ctx, original_cwd, true);
             switch (retry_result) {
                 .success => |scan_results| return scan_results,
                 else => return error.SecurityScannerRetryFailed,
@@ -181,7 +181,7 @@ pub fn performSecurityScanForAll(manager: *PackageManager, command_ctx: bun.cli.
             try doPartialInstallOfSecurityScanner(manager, command_ctx, manager.options.log_level, pkg_id, original_cwd);
             Output.prettyln("<r><green><b>Security scanner installed successfully.<r>", .{});
 
-            const retry_result = try attemptSecurityScan(manager, security_scanner, true, command_ctx, original_cwd);
+            const retry_result = try attemptSecurityScanWithRetry(manager, security_scanner, true, command_ctx, original_cwd, true);
             switch (retry_result) {
                 .success => |scan_results| return scan_results,
                 else => return error.SecurityScannerRetryFailed,
@@ -560,6 +560,10 @@ const JSONBuilder = struct {
 };
 
 fn attemptSecurityScan(manager: *PackageManager, security_scanner: []const u8, scan_all: bool, command_ctx: bun.cli.Command.Context, original_cwd: []const u8) !ScanAttemptResult {
+    return attemptSecurityScanWithRetry(manager, security_scanner, scan_all, command_ctx, original_cwd, false);
+}
+
+fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []const u8, scan_all: bool, command_ctx: bun.cli.Command.Context, original_cwd: []const u8, is_retry: bool) !ScanAttemptResult {
     if (manager.options.log_level == .verbose) {
         Output.prettyErrorln("<d>[SecurityProvider]<r> Running at '{s}'", .{security_scanner});
     }
@@ -569,6 +573,7 @@ fn attemptSecurityScan(manager: *PackageManager, security_scanner: []const u8, s
     try finder.validateNotInWorkspaces();
 
     const security_scanner_pkg_id = finder.findInRootDependencies();
+    const suppress_import_error = !is_retry and security_scanner_pkg_id == null;
 
     var collector = PackageCollector.init(manager);
     defer collector.deinit();
@@ -597,8 +602,11 @@ fn attemptSecurityScan(manager: *PackageManager, security_scanner: []const u8, s
         \\try {{
         \\  scanner = (await import(scannerModuleName)).scanner;
         \\}} catch (error) {{
-        \\  const msg = `\x1b[31merror: \x1b[0mFailed to import security scanner: \x1b[1m'${{scannerModuleName}}'`;
-        \\  console.error(msg);
+        \\  const suppressError = {s};
+        \\  if (!suppressError) {{
+        \\    const msg = `\x1b[31merror: \x1b[0mFailed to import security scanner: \x1b[1m'${{scannerModuleName}}'`;
+        \\    console.error(msg);
+        \\  }}
         \\  process.exit(2);
         \\}}
         \\
@@ -635,7 +643,7 @@ fn attemptSecurityScan(manager: *PackageManager, security_scanner: []const u8, s
         \\  console.error(error);
         \\  process.exit(1);
         \\}}
-    , .{ security_scanner, json_data });
+    , .{ security_scanner, json_data, if (suppress_import_error) "true" else "false" });
 
     var scanner = SecurityScanSubprocess.new(.{
         .manager = manager,
@@ -825,8 +833,7 @@ pub const SecurityScanSubprocess = struct {
                             if (security_scanner_pkg_id) |pkg_id| {
                                 return ScanAttemptResult{ .needs_install = pkg_id };
                             } else {
-                                Output.errGeneric("Security scanner '{s}' is configured in bunfig.toml but not found in dependencies", .{security_scanner});
-                                Output.prettyln("\n<cyan>Did you mean to run: <b>bun add --dev {s}<r>", .{security_scanner});
+                                Output.errGeneric("Security scanner '{s}' is configured in bunfig.toml but could not be resolved\n  <d>Did you mean to run: bun add --dev {s}<r>", .{ security_scanner, security_scanner });
                                 return error.SecurityScannerNotInDependencies;
                             }
                         },

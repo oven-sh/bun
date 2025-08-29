@@ -295,7 +295,8 @@ describe("Security Scanner Matrix Tests", () => {
               // so fatal advisories should block that initial installation
               const shouldFail =
                 scannerType === "bunfig-only" ||
-                (scannerReturns === "fatal" && (!hasExistingNodeModules || (command !== "remove" && command !== "uninstall"))) ||
+                (scannerReturns === "fatal" &&
+                  (!hasExistingNodeModules || (command !== "remove" && command !== "uninstall"))) ||
                 (scannerReturns === "warn" && command !== "remove" && command !== "uninstall");
               const expectedOutput = scannerType === "bunfig-only" ? [] : ["SCANNER_RAN"];
               const expectedError = scannerType === "bunfig-only" ? "Security scanner" : undefined;

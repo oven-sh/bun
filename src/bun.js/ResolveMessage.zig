@@ -6,7 +6,7 @@ pub const ResolveMessage = struct {
 
     msg: logger.Msg,
     allocator: std.mem.Allocator,
-    referrer: ?Fs.Path = null,
+    referrer: bun.String = bun.String.empty,
     logged: bool = false,
 
     pub fn constructor(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!*ResolveMessage {
@@ -173,7 +173,7 @@ pub const ResolveMessage = struct {
         resolve_error.* = ResolveMessage{
             .msg = try msg.clone(allocator),
             .allocator = allocator,
-            .referrer = Fs.Path.init(referrer),
+            .referrer = bun.String.cloneUTF8(referrer),
         };
         return resolve_error.toJS(globalThis);
     }
@@ -217,14 +217,15 @@ pub const ResolveMessage = struct {
         this: *ResolveMessage,
         globalThis: *jsc.JSGlobalObject,
     ) jsc.JSValue {
-        if (this.referrer) |referrer| {
-            return ZigString.init(referrer.text).toJS(globalThis);
-        } else {
+        if (this.referrer.isEmpty()) {
             return jsc.JSValue.jsNull();
+        } else {
+            return this.referrer.toJS(globalThis);
         }
     }
 
     pub fn finalize(this: *ResolveMessage) callconv(.C) void {
+        this.referrer.deref();
         this.msg.deinit(bun.default_allocator);
     }
 };

@@ -164,13 +164,13 @@ key4 = true
 
   test("JSON.stringify-like API", () => {
     const obj = { key: "value" };
-    
+
     // Should work with single argument
     expect(Bun.TOML.stringify(obj)).toBe('key = "value"\n');
-    
+
     // Should ignore replacer (like YAML.stringify)
     expect(() => Bun.TOML.stringify(obj, () => {})).toThrow("TOML.stringify does not support the replacer argument");
-    
+
     // Should ignore space parameter (TOML has fixed formatting)
     expect(Bun.TOML.stringify(obj, null, 4)).toBe('key = "value"\n');
     expect(Bun.TOML.stringify(obj, null, "  ")).toBe('key = "value"\n');
@@ -185,15 +185,15 @@ key4 = true
               value: "deep",
               number: 42,
             },
-            other: "value"
+            other: "value",
           },
-          simple: "test"
+          simple: "test",
         },
-        another: "branch"
+        another: "branch",
       },
-      root: "value"
+      root: "value",
     };
-    
+
     const result = Bun.TOML.stringify(obj);
     expect(result).toMatchInlineSnapshot(`
 "root = "value"
@@ -212,7 +212,7 @@ value = "deep"
 number = 42
 "
 `);
-    
+
     // Verify round-trip
     const parsed = Bun.TOML.parse(result);
     expect(parsed).toEqual(obj);
@@ -223,20 +223,20 @@ number = 42
       metadata: {
         version: "1.0",
         tags: ["production", "web"],
-        numbers: [1, 2, 3, 4, 5]
+        numbers: [1, 2, 3, 4, 5],
       },
       config: {
         database: {
           host: "localhost",
-          port: 5432
+          port: 5432,
         },
         cache: {
           enabled: true,
-          ttl: 300
-        }
-      }
+          ttl: 300,
+        },
+      },
     };
-    
+
     const result = Bun.TOML.stringify(obj);
     expect(result).toMatchInlineSnapshot(`
 "
@@ -262,7 +262,7 @@ enabled = true
 ttl = 300
 "
 `);
-    
+
     // Verify round-trip
     const parsed = Bun.TOML.parse(result);
     expect(parsed).toEqual(obj);

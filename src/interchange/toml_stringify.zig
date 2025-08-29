@@ -1,4 +1,3 @@
-
 pub const TOMLStringifyError = error{
     OutOfMemory,
     InvalidValue,
@@ -161,11 +160,10 @@ pub const TOMLStringifier = struct {
         if (!is_root) try self.writer.append('\n');
     }
 
-
     fn stringifyRootObject(self: *TOMLStringifier, globalThis: *JSGlobalObject, obj: JSValue) anyerror!void {
         return self.stringifyObjectAtPath(globalThis, obj, "");
     }
-    
+
     fn stringifyObjectAtPath(self: *TOMLStringifier, globalThis: *JSGlobalObject, obj: JSValue, table_path: []const u8) anyerror!void {
         const obj_val = obj.getObject() orelse return error.InvalidValue;
 
@@ -220,7 +218,7 @@ pub const TOMLStringifier = struct {
             // Build full table path
             var path_buf = std.ArrayList(u8).init(self.allocator);
             defer path_buf.deinit();
-            
+
             if (table_path.len > 0) {
                 try path_buf.appendSlice(table_path);
                 try path_buf.append('.');
@@ -235,7 +233,6 @@ pub const TOMLStringifier = struct {
             try self.stringifyObjectAtPath(globalThis, value, path_buf.items);
         }
     }
-
 
     fn stringifyTablePath(self: *TOMLStringifier, path: []const u8) anyerror!void {
         // Split path by dots and quote each part if needed

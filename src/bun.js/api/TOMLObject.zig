@@ -71,20 +71,20 @@ pub fn stringify(
     callframe: *jsc.CallFrame,
 ) bun.JSError!jsc.JSValue {
     const value, const replacer, const space = callframe.argumentsAsArray(3);
-    
+
     value.ensureStillAlive();
-    
+
     if (value.isUndefined() or value.isSymbol() or value.isFunction()) {
         return .js_undefined;
     }
-    
+
     if (!replacer.isUndefinedOrNull()) {
         return globalThis.throw("TOML.stringify does not support the replacer argument", .{});
     }
-    
+
     // TOML doesn't use space parameter - it has fixed formatting rules
     _ = space;
-    
+
     // Use a temporary allocator for stringification
     var arena = bun.ArenaAllocator.init(globalThis.allocator());
     defer arena.deinit();

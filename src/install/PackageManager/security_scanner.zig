@@ -617,7 +617,7 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
         try code.appendSlice(temp_source[index + scanner_placeholder.len ..]);
         temp_source = code.items;
     }
-    
+
     if (manager.options.log_level == .verbose) {
         Output.prettyErrorln("<d>[SecurityProvider]<r> Scanner module path in subprocess: '{s}'", .{security_scanner});
     }

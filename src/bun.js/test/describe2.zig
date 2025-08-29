@@ -296,7 +296,7 @@ pub const BunTestFile = struct {
         this.done_promise.deinit();
         this.execution.deinit();
         this.collection.deinit();
-        const backing = this.allocation_scope.parent;
+        const backing = this.allocation_scope.parent();
         this.allocation_scope.deinit();
         // TODO: consider making a StrongScope to ensure jsc.Strong values are deinitialized, or requiring a gpa for a strong that is used in asan builds for safety?
         backing.destroy(this.allocation_scope);

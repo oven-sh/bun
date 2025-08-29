@@ -36,22 +36,22 @@
 //! ```
 
 groups: []ConcurrentGroup,
-@"#sequences": []ExecutionSequence,
-@"#entries": []const *ExecutionEntry,
+#sequences: []ExecutionSequence,
+#entries: []const *ExecutionEntry,
 group_index: usize,
 
 pub const ConcurrentGroup = struct {
-    @"#sequence_start": usize,
-    @"#sequence_end": usize,
+    sequence_start: usize,
+    sequence_end: usize,
     executing: bool = false,
 
     pub fn sequences(this: ConcurrentGroup, execution: *Execution) []ExecutionSequence {
-        return execution.@"#sequences"[this.@"#sequence_start"..this.@"#sequence_end"];
+        return execution.#sequences[this.sequence_start..this.sequence_end];
     }
 };
 pub const ExecutionSequence = struct {
-    @"#entries_start": usize,
-    @"#entries_end": usize,
+    entries_start: usize,
+    entries_end: usize,
     index: usize,
     test_entry: ?*ExecutionEntry,
     remaining_repeat_count: i64 = 1,
@@ -66,7 +66,7 @@ pub const ExecutionSequence = struct {
     }
 
     pub fn entries(this: ExecutionSequence, execution: *Execution) []const *ExecutionEntry {
-        return execution.@"#entries"[this.@"#entries_start"..this.@"#entries_end"];
+        return execution.#entries[this.entries_start..this.entries_end];
     }
     pub fn activeEntry(this: ExecutionSequence, execution: *Execution) ?*ExecutionEntry {
         const entries_value = this.entries(execution);
@@ -103,27 +103,27 @@ const EntryID = enum(usize) {
 pub fn init(_: std.mem.Allocator) Execution {
     return .{
         .groups = &.{},
-        .@"#sequences" = &.{},
-        .@"#entries" = &.{},
+        .#sequences = &.{},
+        .#entries = &.{},
         .group_index = 0,
     };
 }
 pub fn deinit(this: *Execution) void {
     this.bunTest().gpa.free(this.groups);
-    this.bunTest().gpa.free(this.@"#sequences");
-    this.bunTest().gpa.free(this.@"#entries");
+    this.bunTest().gpa.free(this.#sequences);
+    this.bunTest().gpa.free(this.#entries);
 }
 pub fn loadFromOrder(this: *Execution, order: *Order) bun.JSError!void {
     bun.assert(this.groups.len == 0);
-    bun.assert(this.@"#sequences".len == 0);
-    bun.assert(this.@"#entries".len == 0);
+    bun.assert(this.#sequences.len == 0);
+    bun.assert(this.#entries.len == 0);
     var allocator_safety = bun.safety.AllocPtr.init(this.bunTest().gpa);
     allocator_safety.assertEq(order.groups.allocator);
     allocator_safety.assertEq(order.sequences.allocator);
     allocator_safety.assertEq(order.entries.allocator);
     this.groups = try order.groups.toOwnedSlice();
-    this.@"#sequences" = try order.sequences.toOwnedSlice();
-    this.@"#entries" = try order.entries.toOwnedSlice();
+    this.#sequences = try order.sequences.toOwnedSlice();
+    this.#entries = try order.entries.toOwnedSlice();
 }
 
 fn bunTest(this: *Execution) *BunTestFile {

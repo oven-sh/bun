@@ -23,14 +23,14 @@ pub fn dumpOrder(this: *Execution) bun.JSError!void {
     defer groupLog.end();
 
     for (this.groups, 0..) |group, group_index| {
-        groupLog.beginMsg("{d} ConcurrentGroup ({d}-{d})", .{ group_index, group.@"#sequence_start", group.@"#sequence_end" });
+        groupLog.beginMsg("{d} ConcurrentGroup ({d}-{d})", .{ group_index, group.sequence_start, group.sequence_end });
         defer groupLog.end();
 
-        for (group.sequences(this), group.@"#sequence_start"..) |*sequence, sequence_index| {
-            groupLog.beginMsg("{d} Sequence ({d}-{d},{d}x)", .{ sequence_index, sequence.@"#entries_start", sequence.@"#entries_end", sequence.remaining_repeat_count });
+        for (group.sequences(this), group.sequence_start..) |*sequence, sequence_index| {
+            groupLog.beginMsg("{d} Sequence ({d}-{d},{d}x)", .{ sequence_index, sequence.entries_start, sequence.entries_end, sequence.remaining_repeat_count });
             defer groupLog.end();
 
-            for (sequence.entries(this), sequence.@"#entries_start"..) |entry, entry_index| {
+            for (sequence.entries(this), sequence.entries_start..) |entry, entry_index| {
                 groupLog.log("{d} ExecutionEntry \"{}\" (concurrent={}, mode={s}, only={s}, has_callback={})", .{ entry_index, std.zig.fmtEscapes(entry.base.name orelse "undefined"), entry.base.concurrent, @tagName(entry.base.mode), @tagName(entry.base.only), entry.base.has_callback });
             }
         }

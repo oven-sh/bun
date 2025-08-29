@@ -35,7 +35,7 @@ let scanner: Bun.Security.Scanner;
 try {
   scanner = (await import(scannerModuleName)).scanner;
 } catch (error) {
-  if (error instanceof Error && "code" in error && error.code === "ERR_MODULE_NOT_FOUND") {
+  if (typeof error === "object" && error !== null && "code" in error && error.code === "ERR_MODULE_NOT_FOUND") {
     if (!suppressError) {
       const msg = `\x1b[31merror: \x1b[0mFailed to import security scanner: \x1b[1m'${scannerModuleName}'`;
       console.error(msg);

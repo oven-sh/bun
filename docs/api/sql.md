@@ -1346,7 +1346,6 @@ await mysql`DESCRIBE users`;
 await mysql`EXPLAIN SELECT * FROM users WHERE id = ${id}`;
 ```
 
-
 ## Why not just use an existing library?
 
 npm packages like postgres.js, pg, and node-postgres can be used in Bun too. They're great options.

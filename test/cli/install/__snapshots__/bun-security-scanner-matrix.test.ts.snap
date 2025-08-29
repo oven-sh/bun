@@ -797,3 +797,12 @@ exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_mo
 `;
 
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: fatal) 306: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: fatal) 300: requested-packages: unknown command 1`] = `
+[
+  "is-odd",
+  "is-even",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: fatal) 300: requested-tarballs: unknown command 1`] = `[]`;

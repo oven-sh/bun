@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { tempDirWithFiles, bunEnv, bunExe } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 test("ResolveMessage JSON.stringify should not cause heap-use-after-free and should extend Error", async () => {
   // Create a temporary directory with test files
@@ -27,18 +27,14 @@ test("ResolveMessage JSON.stringify should not cause heap-use-after-free and sho
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // The test passes if we don't get an ASAN error and the process exits normally
   // In the past, this would cause a heap-use-after-free error
   expect(exitCode).toBe(0);
   expect(stdout).toContain("instanceof Error: true");
   expect(stdout).toContain("Error caught:");
-  
+
   // Make sure we don't have any ASAN errors in stderr
   expect(stderr).not.toContain("AddressSanitizer");
   expect(stderr).not.toContain("heap-use-after-free");
@@ -72,11 +68,7 @@ test("ResolveMessage toJSON should handle missing referrer gracefully", async ()
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stdout).toContain("instanceof Error: true");

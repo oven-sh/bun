@@ -1758,7 +1758,7 @@ ${
 
 JSObject* ${name}::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
 {
-    auto *structure = ${prototypeName(typeName)}::createStructure(vm, globalObject, ${obj.inheritsFromError ? 'globalObject->errorPrototype()' : 'globalObject->objectPrototype()'});
+    auto *structure = ${prototypeName(typeName)}::createStructure(vm, globalObject, ${obj.inheritsFromError ? "globalObject->errorPrototype()" : "globalObject->objectPrototype()"});
     structure->setMayBePrototype(true);
     return ${prototypeName(typeName)}::create(vm, globalObject, structure);
 }

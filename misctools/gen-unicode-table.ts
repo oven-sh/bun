@@ -20,8 +20,9 @@ const idContinueES5Set = new Set([
 const idStartESNextSet = new Set(require("@unicode/unicode-15.1.0/Binary_Property/ID_Start/code-points"));
 const idContinueESNextSet = new Set(require("@unicode/unicode-15.1.0/Binary_Property/ID_Continue/code-points"));
 
-// Exclude known problematic codepoints
-const ID_Continue_mistake = new Set([0x30fb, 0xff65]);
+// Note: Previously excluded middle dot characters (0x30fb, 0xff65) but these are valid 
+// in Node.js and ECMAScript specification, so they should be included
+const ID_Continue_mistake = new Set();
 
 function bitsToU64Array(bits: number[]): bigint[] {
   const result: bigint[] = [];

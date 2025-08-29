@@ -294,20 +294,11 @@ describe("Security Scanner Matrix Tests", () => {
   let i = 0;
 
   describe.each(["install", "update", "add", "remove", "uninstall"] as const)("bun %s", command => {
-    const argConfigs: Array<{ args: string[]; name: string }> =
-      command === "install"
-        ? [{ args: [], name: "no args" }]
-        : command === "update"
-          ? [
-              { args: [], name: "no args" },
-              { args: ["left-pad"], name: "left-pad" },
-            ]
-          : [
-              { args: ["is-even"], name: "is-even" },
-              { args: ["left-pad", "is-even"], name: "left-pad,is-even" },
-            ];
-
-    describe.each(argConfigs)("$name", ({ args }) => {
+    describe.each([
+      { args: [], name: "no args" },
+      { args: ["is-even"], name: "is-even" },
+      { args: ["left-pad", "is-even"], name: "left-pad,is-even" },
+    ])("$name", ({ args }) => {
       describe.each(["true", "false"] as const)("(node_modules: %s)", _hasNodeModules => {
         const hasExistingNodeModules = _hasNodeModules === "true";
 

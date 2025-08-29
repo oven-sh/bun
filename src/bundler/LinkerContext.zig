@@ -394,7 +394,6 @@ pub const LinkerContext = struct {
         // Second pass: propagate async flag through cycles
         // Keep iterating until no changes are made
         {
-            var timer = std.time.Timer.start() catch unreachable;
             const import_records_list: []ImportRecord.List = this.graph.ast.items(.import_records);
             const flags: []JSMeta.Flags = this.graph.meta.items(.flags);
             const css_asts: []?*bun.css.BundlerStyleSheet = this.graph.ast.items(.css);
@@ -429,8 +428,6 @@ pub const LinkerContext = struct {
                     }
                 }
             }
-
-            std.debug.print("TLA: {}\n", .{bun.fmt.fmtDurationOneDecimal(timer.read())});
         }
 
         try this.scanImportsAndExports();

@@ -298,6 +298,11 @@ public:
         return std::move(*this);
     }
 
+    /** Closes all connections connected to this server which are not sending a request or waiting for a response. Does not close the listen socket. */
+    TemplatedApp &&closeIdle() {
+        return std::move(*this);
+    }
+
     template <typename UserData>
     TemplatedApp &&ws(std::string_view pattern, WebSocketBehavior<UserData> &&behavior) {
         /* Don't compile if alignment rules cannot be satisfied */

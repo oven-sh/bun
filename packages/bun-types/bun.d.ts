@@ -621,14 +621,11 @@ declare module "bun" {
     /**
      * Convert a JavaScript object to a TOML string.
      *
-     * Similar to JSON.stringify but for TOML format. Supports optional replacer and space parameters
-     * for API consistency, but replacer will throw an error and space is ignored.
-     *
      * @category Utilities
      *
      * @param value The JavaScript object to stringify
-     * @param replacer Currently unused - throws error if provided (for API consistency with JSON.stringify)
-     * @param space Ignored - TOML has consistent formatting rules
+     * @param replacer Optional replacer function (not supported, will throw if used)
+     * @param space Optional space parameter (ignored, TOML has fixed formatting)
      * @returns A TOML string
      *
      * @example
@@ -645,15 +642,19 @@ declare module "bun" {
      *   }
      * };
      *
-     * // Basic usage
      * console.log(TOML.stringify(obj));
-     *
-     * // JSON.stringify-style API (space parameter is ignored)
-     * TOML.stringify(obj, null, 2);      // Same output as TOML.stringify(obj)
-     * TOML.stringify(obj, null, "\t");   // Same output as TOML.stringify(obj)
-     *
-     * // Replacer throws error
-     * TOML.stringify(obj, () => {});     // Error: "TOML.stringify does not support the replacer argument"
+     * // Output:
+     * // title = "TOML Example"
+     * //
+     * // [database]
+     * // server = "192.168.1.1"
+     * // ports = [
+     * //   8001,
+     * //   8001,
+     * //   8002
+     * // ]
+     * // connection_max = 5000
+     * // enabled = true
      * ```
      */
     export function stringify(value: any, replacer?: undefined | null, space?: string | number): string;

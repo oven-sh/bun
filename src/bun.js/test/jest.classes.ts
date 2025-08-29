@@ -785,6 +785,18 @@ export default [
     },
   }),
   define({
+    name: "DoneCallback",
+    construct: false,
+    noConstructor: true,
+    instanceCallable: true,
+    finalize: true,
+    JSType: "0b11101110",
+    values: [],
+    configurable: false,
+    klass: {},
+    proto: {},
+  }),
+  define({
     name: "ScopeFunctions",
     construct: false,
     noConstructor: true,

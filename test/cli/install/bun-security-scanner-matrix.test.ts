@@ -51,7 +51,7 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
   // Create scanner code based on configuration
   const scannerCode =
     scannerType === "local" || scannerType === "npm"
-      ? `"export const scanner = {
+      ? `export const scanner = {
       version: "1",
       scan: async function(payload) {
         console.error("SCANNER_RAN: " + payload.packages.length + " packages");

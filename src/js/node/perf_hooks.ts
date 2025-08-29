@@ -92,8 +92,7 @@ class PerformanceNodeTiming {
     };
   }
 }
-Object.setPrototypeOf(PerformanceNodeTiming.prototype, PerformanceEntry.prototype);
-Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
+$toClass(PerformanceNodeTiming, "PerformanceNodeTiming", PerformanceEntry);
 
 function createPerformanceNodeTiming() {
   const object = Object.create(PerformanceNodeTiming.prototype);
@@ -118,8 +117,7 @@ class PerformanceResourceTiming {
     throwNotImplemented("PerformanceResourceTiming");
   }
 }
-Object.setPrototypeOf(PerformanceResourceTiming.prototype, PerformanceEntry.prototype);
-Object.setPrototypeOf(PerformanceResourceTiming, PerformanceEntry);
+$toClass(PerformanceResourceTiming, "PerformanceResourceTiming", PerformanceEntry);
 
 export default {
   performance: {

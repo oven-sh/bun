@@ -5,7 +5,7 @@
 // Normally, Readable.fromWeb will wrap the ReadableStream in JavaScript. In
 // Bun, `fromWeb` is able to check if the stream is backed by a native handle,
 // to which it will take this path.
-const Readable = require("node:stream").Readable;
+const Readable = require("internal/streams/readable");
 const transferToNativeReadable = $newCppFunction("ReadableStream.cpp", "jsFunctionTransferToNativeReadableStream", 1);
 const { errorOrDestroy } = require("internal/streams/destroy");
 

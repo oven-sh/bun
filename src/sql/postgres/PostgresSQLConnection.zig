@@ -333,7 +333,7 @@ pub fn failWithJSValue(this: *PostgresSQLConnection, value: JSValue) void {
 }
 
 pub fn failFmt(this: *PostgresSQLConnection, code: []const u8, comptime fmt: [:0]const u8, args: anytype) void {
-    const message = std.fmt.allocPrint(bun.default_allocator, fmt, args) catch bun.outOfMemory();
+    const message = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, fmt, args));
     defer bun.default_allocator.free(message);
 
     const err = createPostgresError(this.globalObject, message, .{ .code = code }) catch |e| this.globalObject.takeError(e);
@@ -1453,12 +1453,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             debug("-> {s}", .{cmd.command_tag.slice()});
             defer this.updateRef();
 
-            if (request.flags.simple) {
-                // simple queries can have multiple commands
-                request.onResult(cmd.command_tag.slice(), this.globalObject, this.js_value, false);
-            } else {
-                request.onResult(cmd.command_tag.slice(), this.globalObject, this.js_value, true);
-            }
+            request.onResult(cmd.command_tag.slice(), this.globalObject, this.js_value, false);
         },
         .BindComplete => {
             try reader.eatMessage(protocol.BindComplete);

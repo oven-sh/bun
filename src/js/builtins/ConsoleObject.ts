@@ -266,13 +266,11 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const kUseStderr = Symbol("kUseStderr");
 
   const optionsMap = new WeakMap<any, any>();
-  function Console(this: any, options /* or: stdout, stderr, ignoreErrors = true */) {
+  function Console(this: any, options /* or: stdout, stderr, ignoreErrors = true */): void {
     // We have to test new.target here to see if this function is called
     // with new, because we need to define a custom instanceof to accommodate
     // the global console.
-    if (new.target === undefined) {
-      return Reflect.construct(Console, arguments);
-    }
+    if (new.target === undefined) return new Console(...arguments);
 
     if (!options || typeof options.write === "function") {
       options = {

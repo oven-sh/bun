@@ -1,5 +1,5 @@
-import { bunExe, tempDirWithFiles } from "harness";
 import { expect, test } from "bun:test";
+import { bunExe, tempDirWithFiles } from "harness";
 
 test("AutoBitSet async dependency propagation should work correctly", async () => {
   const files = {
@@ -45,7 +45,16 @@ test("AutoBitSet async dependency propagation should work correctly", async () =
 
   // Test with require() - should fail
   const requireTest = await Bun.spawn({
-    cmd: [bunExe(), "build", "-e", `const { b } = require("./b.js"); console.log(b);`, "--outdir", "dist", "--format", "cjs"],
+    cmd: [
+      bunExe(),
+      "build",
+      "-e",
+      `const { b } = require("./b.js"); console.log(b);`,
+      "--outdir",
+      "dist",
+      "--format",
+      "cjs",
+    ],
     cwd: dir,
     env: process.env,
     stderr: "pipe",
@@ -53,7 +62,7 @@ test("AutoBitSet async dependency propagation should work correctly", async () =
   });
 
   const stderrRequire = await requireTest.stderr.text();
-  
+
   // Should fail due to async dependency through require()
   expect(requireTest.exitCode).not.toBe(0);
   expect(stderrRequire).toContain("not allowed");

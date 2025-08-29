@@ -291,13 +291,16 @@ function determineAdapter(
   // 3. If no URL provided, check environment variables to infer adapter
   // Respect precedence: POSTGRES_URL > DATABASE_URL > PGURL > PG_URL > MYSQL_URL
   if (!urlString && env) {
-    // Check in order of precedence
+    // Check in order of precedence (including TLS variants)
     const envVars = [
       { name: "POSTGRES_URL", url: env.POSTGRES_URL },
+      { name: "TLS_POSTGRES_DATABASE_URL", url: env.TLS_POSTGRES_DATABASE_URL },
       { name: "DATABASE_URL", url: env.DATABASE_URL },
+      { name: "TLS_DATABASE_URL", url: env.TLS_DATABASE_URL },
       { name: "PGURL", url: env.PGURL },
       { name: "PG_URL", url: env.PG_URL },
       { name: "MYSQL_URL", url: env.MYSQL_URL },
+      { name: "TLS_MYSQL_DATABASE_URL", url: env.TLS_MYSQL_DATABASE_URL }
     ];
 
     for (const { name, url: envUrl } of envVars) {
@@ -308,14 +311,14 @@ function determineAdapter(
         }
 
         // Environment variable name takes precedence over protocol
-        if (name === "MYSQL_URL") {
+        if (name === "MYSQL_URL" || name === "TLS_MYSQL_DATABASE_URL") {
           return "mysql";
-        } else if (name === "POSTGRES_URL" || name === "PGURL" || name === "PG_URL") {
+        } else if (name === "POSTGRES_URL" || name === "TLS_POSTGRES_DATABASE_URL" || name === "PGURL" || name === "PG_URL") {
           return "postgres";
         }
-
-        // For DATABASE_URL, use protocol detection as fallback
-        if (name === "DATABASE_URL") {
+        
+        // For generic DATABASE_URL and TLS_DATABASE_URL, use protocol detection as fallback
+        if (name === "DATABASE_URL" || name === "TLS_DATABASE_URL") {
           const colonIndex = envUrl.indexOf(":");
           if (colonIndex !== -1) {
             const protocol = envUrl.substring(0, colonIndex);
@@ -345,6 +348,8 @@ function getEnvironmentUrlsForAdapter(adapter: Bun.SQL.__internal.Adapter, env: 
     urls.push(env.TLS_POSTGRES_DATABASE_URL, env.TLS_DATABASE_URL);
   } else if (adapter === "mysql") {
     urls.push(env.MYSQL_URL, env.DATABASE_URL);
+    // Also check TLS variants
+    urls.push(env.TLS_MYSQL_DATABASE_URL, env.TLS_DATABASE_URL);
   } else if (adapter === "sqlite") {
     urls.push(env.DATABASE_URL);
   }
@@ -368,9 +373,11 @@ function getAdapterSpecificDefaults(adapter: Bun.SQL.__internal.Adapter, env: Re
     defaults.password = env.PGPASSWORD;
     defaults.database = env.PGDATABASE;
   } else if (adapter === "mysql") {
-    // MySQL doesn't have widely standardized env vars like PostgreSQL
-    // Fall back to generic ones
-    defaults.username = env.USER || env.USERNAME;
+    defaults.hostname = env.MYSQL_HOST;
+    defaults.port = env.MYSQL_PORT ? Number(env.MYSQL_PORT) : undefined;
+    defaults.username = env.MYSQL_USER || env.USER || env.USERNAME;
+    defaults.password = env.MYSQL_PASSWORD;
+    defaults.database = env.MYSQL_DATABASE;
   } else if (adapter === "sqlite") {
     // SQLite doesn't use these connection parameters
   }
@@ -443,7 +450,7 @@ function parseOptions(
 
       if (envUrl) {
         // Check if it's a TLS URL that sets SSL mode
-        if (envUrl === env.TLS_POSTGRES_DATABASE_URL || envUrl === env.TLS_DATABASE_URL) {
+        if (envUrl === env.TLS_POSTGRES_DATABASE_URL || envUrl === env.TLS_DATABASE_URL || envUrl === env.TLS_MYSQL_DATABASE_URL) {
           sslMode = SSLMode.require;
         }
         finalUrl = parseUrlForAdapter(envUrl, adapter);

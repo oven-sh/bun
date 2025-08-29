@@ -11,12 +11,20 @@ describe("SQL adapter environment variable precedence", () => {
     delete process.env.PGURL;
     delete process.env.PG_URL;
     delete process.env.MYSQL_URL;
+    delete process.env.TLS_DATABASE_URL;
+    delete process.env.TLS_POSTGRES_DATABASE_URL;
+    delete process.env.TLS_MYSQL_DATABASE_URL;
     delete process.env.PGHOST;
     delete process.env.PGPORT;
     delete process.env.PGUSER;
     delete process.env.PGUSERNAME;
     delete process.env.PGPASSWORD;
     delete process.env.PGDATABASE;
+    delete process.env.MYSQL_HOST;
+    delete process.env.MYSQL_PORT;
+    delete process.env.MYSQL_USER;
+    delete process.env.MYSQL_PASSWORD;
+    delete process.env.MYSQL_DATABASE;
     delete process.env.USER;
     delete process.env.USERNAME;
   }
@@ -231,6 +239,66 @@ describe("SQL adapter environment variable precedence", () => {
     expect(options.options.adapter).toBe("mysql");
     expect(options.options.hostname).toBe("host");
     expect(options.options.port).toBe(5432);
+    restoreEnv();
+  });
+  test("should use MySQL-specific environment variables", () => {
+    cleanEnv();
+    process.env.MYSQL_HOST = "mysql-server";
+    process.env.MYSQL_PORT = "3307";
+    process.env.MYSQL_USER = "admin";
+    process.env.MYSQL_PASSWORD = "secret";
+    process.env.MYSQL_DATABASE = "production";
+
+    const options = new SQL({ adapter: "mysql" });
+    expect(options.options.adapter).toBe("mysql");
+    expect(options.options.hostname).toBe("mysql-server");
+    expect(options.options.port).toBe(3307);
+    expect(options.options.username).toBe("admin");
+    expect(options.options.password).toBe("secret");
+    expect(options.options.database).toBe("production");
+    restoreEnv();
+  });
+
+  test("MySQL-specific env vars should take precedence over generic ones", () => {
+    cleanEnv();
+    process.env.USER = "generic-user";
+    process.env.MYSQL_USER = "mysql-user";
+
+    const options = new SQL({ adapter: "mysql" });
+    expect(options.options.username).toBe("mysql-user");
+    restoreEnv();
+  });
+
+  test("should infer mysql adapter from TLS_MYSQL_DATABASE_URL", () => {
+    cleanEnv();
+    process.env.TLS_MYSQL_DATABASE_URL = "mysql://user:pass@host:3306/db";
+
+    const options = new SQL();
+    expect(options.options.adapter).toBe("mysql");
+    expect(options.options.hostname).toBe("host");
+    expect(options.options.port).toBe(3306);
+    restoreEnv();
+  });
+
+  test("should infer postgres adapter from TLS_POSTGRES_DATABASE_URL", () => {
+    cleanEnv();
+    process.env.TLS_POSTGRES_DATABASE_URL = "postgres://user:pass@host:5432/db";
+
+    const options = new SQL();
+    expect(options.options.adapter).toBe("postgres");
+    expect(options.options.hostname).toBe("host");
+    expect(options.options.port).toBe(5432);
+    restoreEnv();
+  });
+
+  test("should infer adapter from TLS_DATABASE_URL using protocol", () => {
+    cleanEnv();
+    process.env.TLS_DATABASE_URL = "mysql://user:pass@host:3306/db";
+
+    const options = new SQL();
+    expect(options.options.adapter).toBe("mysql");
+    expect(options.options.hostname).toBe("host");
+    expect(options.options.port).toBe(3306);
     restoreEnv();
   });
 });

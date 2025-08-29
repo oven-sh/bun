@@ -390,15 +390,6 @@ function getAdapterSpecificDefaults(adapter: Bun.SQL.__internal.Adapter, env: Re
   return defaults;
 }
 
-function defaultToPostgresIfNoProtocol(url: string | URL | null): URL {
-  if (url instanceof URL) {
-    return url;
-  }
-  if (hasProtocol(url as string)) {
-    return new URL(url as string);
-  }
-  return new URL("postgres://" + url);
-}
 function parseOptions(
   stringOrUrlOrOptions: Bun.SQL.Options | string | URL | undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options,
@@ -424,30 +415,25 @@ function parseOptions(
 
   // Step 2.5: Validate adapter matches protocol if URL is provided
   if (inputUrl) {
-    let urlToValidate: URL;
-    try {
-      if (typeof inputUrl === "string") {
-        // Parse the URL for validation - handle SQLite URLs specially
-        if (parseDefinitelySqliteUrl(inputUrl) !== null) {
-          // Create a fake URL for SQLite validation
-          urlToValidate = new URL("sqlite:///" + encodeURIComponent(inputUrl));
-        } else if (hasProtocol(inputUrl)) {
-          // Only validate URLs that have protocols
-          urlToValidate = parseUrlForAdapter(inputUrl, adapter);
-        } else {
-          // For URLs without protocols, skip validation (could be filenames)
-          urlToValidate = null;
-        }
+    let urlToValidate: URL | null;
+    if (typeof inputUrl === "string") {
+      // Parse the URL for validation - handle SQLite URLs specially
+      if (parseDefinitelySqliteUrl(inputUrl) !== null) {
+        // Create a fake URL for SQLite validation
+        urlToValidate = new URL("sqlite:///" + encodeURIComponent(inputUrl));
+      } else if (hasProtocol(inputUrl)) {
+        // Only validate URLs that have protocols
+        urlToValidate = parseUrlForAdapter(inputUrl, adapter);
       } else {
-        urlToValidate = inputUrl;
+        // For URLs without protocols, skip validation (could be filenames)
+        urlToValidate = null;
       }
+    } else {
+      urlToValidate = inputUrl;
+    }
 
-      if (urlToValidate) {
-        validateAdapterProtocolMatch(adapter, urlToValidate, inputUrl);
-      }
-    } catch (error) {
-      // If URL parsing fails or validation fails, throw the error
-      throw error;
+    if (urlToValidate) {
+      validateAdapterProtocolMatch(adapter, urlToValidate, inputUrl);
     }
   }
 

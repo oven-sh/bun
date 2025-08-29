@@ -438,11 +438,10 @@ pub const BunTestFile = struct {
         try bunTestThenOrCatch(globalThis, callframe, true);
         return .js_undefined;
     }
-    pub fn bunTestDoneCallback(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, data: RefDataValue) bun.JSError!void {
+    pub fn bunTestDoneCallback(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, err_arg: jsc.JSValue, data: RefDataValue) bun.JSError!void {
         group.begin(@src());
         defer group.end();
 
-        const err_arg = callFrame.argumentsAsArray(1)[0];
         const is_catch = !err_arg.isEmptyOrUndefinedOrNull();
 
         if (is_catch) {
@@ -588,7 +587,7 @@ pub const BunTestFile = struct {
             const length = try cfg.callback.callback.get().getLength(globalThis);
             if (length > cfg.callback.args.get().len) {
                 group.log("callTestCallback -> appending done callback param: data {}", .{cfg.data});
-                done_callback = DoneCallback.create(globalThis);
+                done_callback = DoneCallback.create(globalThis, this, cfg.data);
                 args.append(this.gpa, done_callback.?);
             }
         }
@@ -599,16 +598,7 @@ pub const BunTestFile = struct {
             break :blk null;
         };
 
-        if (done_callback) |done_cb| {
-            defer done_cb.ensureStillAlive(); // makes sure the compiler can't drop done_callback while done_callback_data exists.
-            const done_callback_data = DoneCallback.fromJS(done_cb) orelse @panic("bad type for done_callback?");
-            if (done_callback_data.done) {
-                // completed synchronously
-                try this.runOneCompleted(globalThis, result, cfg.data);
-                return .continue_sync;
-            }
-            done_callback_data.ref = this.ref(cfg.data);
-
+        if (done_callback) |_| {
             if (result != null and result.?.asPromise() != null) {
                 // jest throws an error here but unfortunately bun waits for both
                 @panic("TODO: support waiting for both the promise and the done callback");

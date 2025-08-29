@@ -713,9 +713,7 @@ pub const SecurityScanSubprocess = struct {
         }
 
         const spawn_cwd = FileSystem.instance.top_level_dir;
-        if (bun.Environment.isDebug) {
-            bun.Output.debugWarn("Scanner subprocess cwd: {s}", .{spawn_cwd});
-        }
+
         const spawn_options = bun.spawn.SpawnOptions{
             .stdout = .inherit,
             .stderr = .inherit,

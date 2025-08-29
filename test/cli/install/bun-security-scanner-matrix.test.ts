@@ -274,16 +274,7 @@ describe("Security Scanner Matrix Tests", () => {
         describe.each(["hoisted", "isolated"] as const)("--linker=%s", linker => {
           describe.each(["local", "npm", "bunfig-only"] as const)("(scanner: %s)", scannerType => {
             describe.each(["clean", "warn", "fatal"] as const)("(returns: %s)", scannerReturns => {
-              if (command === "install" && hasExistingNodeModules) {
-                return;
-              }
-
               const testName = String(++i);
-
-              if (command === "install" && args.length > 0) {
-                test.todo(testName, async () => {});
-                return;
-              }
 
               if (scannerType === "npm") {
                 test.todo(testName, async () => {});

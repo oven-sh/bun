@@ -58,9 +58,14 @@ pub fn doPartialInstallOfSecurityScanner(
         return;
     }
 
-    const packages_to_install: ?[]const PackageID = if (security_scanner_pkg_id == invalid_package_id) null else &[_]PackageID{security_scanner_pkg_id};
+    if (security_scanner_pkg_id == invalid_package_id) {
+        Output.errGeneric("Cannot perform partial install: security scanner package ID is invalid", .{});
+        return error.InvalidPackageID;
+    }
 
-    _ = switch (manager.options.node_linker) {
+    const packages_to_install: ?[]const PackageID = &[_]PackageID{security_scanner_pkg_id};
+
+    const summary = switch (manager.options.node_linker) {
         .hoisted,
         // TODO
         .auto,
@@ -73,16 +78,28 @@ pub fn doPartialInstallOfSecurityScanner(
             packages_to_install,
         ),
 
-        .isolated => IsolatedInstall.installIsolatedPackages(
+        .isolated => try IsolatedInstall.installIsolatedPackages(
             manager,
             ctx,
             install_root_dependencies,
             workspace_filters,
             packages_to_install,
-        ) catch |err| switch (err) {
-            error.OutOfMemory => bun.outOfMemory(),
-        },
+        ),
     };
+
+    if (bun.Environment.isDebug) {
+        bun.Output.debugWarn("Partial install summary - success: {d}, fail: {d}, skipped: {d}", .{ summary.success, summary.fail, summary.skipped });
+    }
+
+    if (summary.fail > 0) {
+        Output.errGeneric("Failed to install security scanner package (failed: {d}, success: {d})", .{ summary.fail, summary.success });
+        return error.PartialInstallFailed;
+    }
+
+    if (summary.success == 0 and summary.skipped == 0) {
+        Output.errGeneric("No packages were installed during security scanner installation", .{});
+        return error.NoPackagesInstalled;
+    }
 }
 
 pub const ScanAttemptResult = union(enum) {
@@ -586,6 +603,8 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
     const finder = ScannerFinder{ .manager = manager, .scanner_name = security_scanner };
     try finder.validateNotInWorkspaces();
 
+    // After a partial install, the package might exist but not be in the lockfile yet
+    // In that case, we'll get null here but should still try to run the scanner
     const security_scanner_pkg_id = finder.findInRootDependencies();
     // Suppress JavaScript error output unless in verbose mode
     const suppress_error_output = manager.options.log_level != .verbose;
@@ -887,11 +906,22 @@ pub const SecurityScanSubprocess = struct {
                 return error.UnknownErrorCode;
             }) {
                 .MODULE_NOT_FOUND => {
-                    // If this is a retry after partial install, the scanner should exist now
-                    // If it still doesn't, it's likely a local file that doesn't exist
+                    // If this is a retry after partial install, we need to handle it differently
+                    // The scanner might have been installed but the lockfile wasn't updated
                     if (is_retry) {
-                        Output.errGeneric("Security scanner '{s}' could not be found after installation attempt.\n  <d>If this is a local file, please check that the file exists and the path is correct.<r>", .{security_scanner});
-                        return error.SecurityScannerNotFound;
+                        // Check if the scanner is an npm package name (not a file path)
+                        const is_package_name = bun.resolver.isPackagePath(security_scanner);
+
+                        if (is_package_name) {
+                            // For npm packages, after install they should be resolvable
+                            // If not, there was a real problem with the installation
+                            Output.errGeneric("Security scanner '{s}' could not be found after installation attempt.\n  <d>If this is a local file, please check that the file exists and the path is correct.<r>", .{security_scanner});
+                            return error.SecurityScannerNotFound;
+                        } else {
+                            // For local files, the error is expected - they can't be installed
+                            Output.errGeneric("Security scanner '{s}' is configured in bunfig.toml but the file could not be found.\n  <d>Please check that the file exists and the path is correct.<r>", .{security_scanner});
+                            return error.SecurityScannerNotFound;
+                        }
                     }
 
                     // First attempt - only try to install if we have a package ID

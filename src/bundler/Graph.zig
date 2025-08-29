@@ -78,7 +78,7 @@ pub const InputFile = struct {
     content_hash_for_additional_file: u64 = 0,
     is_plugin_file: bool = false,
 };
-pub const SourceIndexToSecondaryPathMap = std.AutoHashMapUnmanaged(Index.Int, []const u8);
+
 pub inline fn pathToSourceIndexMap(this: *Graph, target: options.Target) *PathToSourceIndexMap {
     return this.build_graphs.getPtr(target);
 }

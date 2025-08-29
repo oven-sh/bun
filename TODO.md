@@ -43,7 +43,8 @@ Complete before merge:
 - [ ] report expect counts per-test
 - [ ] make --bail work again
 - [ ] update types for `test.concurrent.skip.only()`
-- [ ] make test filtering work again
+- [x] make test filtering work again
+- [ ] decide what to do about test() inside test()
 - [ ] make sure ScopeFunctions class can finalize (see napi_handle_scope NapiHandleScopeImpl as an example)
   - currently, it never calls its finalize method because it no longer extends from finalize
 - [ ] see about caching ScopeFunctions by value maybe?

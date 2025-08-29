@@ -277,6 +277,7 @@ describe("SQL adapter environment variable precedence", () => {
     expect(options.options.adapter).toBe("mysql");
     expect(options.options.hostname).toBe("host");
     expect(options.options.port).toBe(3306);
+    expect(options.options.sslMode).toBe(2); // SSLMode.require
     restoreEnv();
   });
 
@@ -288,6 +289,7 @@ describe("SQL adapter environment variable precedence", () => {
     expect(options.options.adapter).toBe("postgres");
     expect(options.options.hostname).toBe("host");
     expect(options.options.port).toBe(5432);
+    expect(options.options.sslMode).toBe(2); // SSLMode.require
     restoreEnv();
   });
 
@@ -299,6 +301,7 @@ describe("SQL adapter environment variable precedence", () => {
     expect(options.options.adapter).toBe("mysql");
     expect(options.options.hostname).toBe("host");
     expect(options.options.port).toBe(3306);
+    expect(options.options.sslMode).toBe(2); // SSLMode.require
     restoreEnv();
   });
 });

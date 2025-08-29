@@ -16,7 +16,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
         jsc.createCallback(
             globalThis,
             ZigString.static("stringify"),
-            3,
+            1,
             stringify,
         ),
     );
@@ -70,20 +70,16 @@ pub fn stringify(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!jsc.JSValue {
-    const value, const replacer, const space = callframe.argumentsAsArray(3);
+    const arguments = callframe.arguments_old(1).slice();
+    if (arguments.len == 0) {
+        return globalThis.throwInvalidArguments("Expected a value to stringify", .{});
+    }
 
-    value.ensureStillAlive();
+    const value = arguments[0];
 
     if (value.isUndefined() or value.isSymbol() or value.isFunction()) {
         return .js_undefined;
     }
-
-    if (!replacer.isUndefinedOrNull()) {
-        return globalThis.throw("TOML.stringify does not support the replacer argument", .{});
-    }
-
-    // TOML doesn't use space parameter - it has fixed formatting rules
-    _ = space;
 
     // Use a temporary allocator for stringification
     var arena = bun.ArenaAllocator.init(globalThis.allocator());

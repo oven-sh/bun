@@ -624,8 +624,6 @@ declare module "bun" {
      * @category Utilities
      *
      * @param value The JavaScript object to stringify
-     * @param replacer Optional replacer function (not supported, will throw if used)
-     * @param space Optional space parameter (ignored, TOML has fixed formatting)
      * @returns A TOML string
      *
      * @example
@@ -657,7 +655,7 @@ declare module "bun" {
      * // enabled = true
      * ```
      */
-    export function stringify(value: any, replacer?: undefined | null, space?: string | number): string;
+    export function stringify(value: any): string;
   }
 
   /**

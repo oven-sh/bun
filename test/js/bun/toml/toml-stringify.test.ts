@@ -162,18 +162,11 @@ key4 = true
     expect(() => Bun.TOML.stringify(undefined)).toThrow();
   });
 
-  test("JSON.stringify-like API", () => {
+  test("simple single-argument API", () => {
     const obj = { key: "value" };
 
     // Should work with single argument
     expect(Bun.TOML.stringify(obj)).toBe('key = "value"\n');
-
-    // Should ignore replacer (like YAML.stringify)
-    expect(() => Bun.TOML.stringify(obj, () => {})).toThrow("TOML.stringify does not support the replacer argument");
-
-    // Should ignore space parameter (TOML has fixed formatting)
-    expect(Bun.TOML.stringify(obj, null, 4)).toBe('key = "value"\n');
-    expect(Bun.TOML.stringify(obj, null, "  ")).toBe('key = "value"\n');
   });
 
   test("very deeply nested objects", () => {

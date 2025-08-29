@@ -431,13 +431,20 @@ function parseOptions(
         if (parseDefinitelySqliteUrl(inputUrl) !== null) {
           // Create a fake URL for SQLite validation
           urlToValidate = new URL("sqlite:///" + encodeURIComponent(inputUrl));
-        } else {
+        } else if (hasProtocol(inputUrl)) {
+          // Only validate URLs that have protocols
           urlToValidate = parseUrlForAdapter(inputUrl, adapter);
+        } else {
+          // For URLs without protocols, skip validation (could be filenames)
+          urlToValidate = null;
         }
       } else {
         urlToValidate = inputUrl;
       }
-      validateAdapterProtocolMatch(adapter, urlToValidate);
+      
+      if (urlToValidate) {
+        validateAdapterProtocolMatch(adapter, urlToValidate, inputUrl);
+      }
     } catch (error) {
       // If URL parsing fails or validation fails, throw the error
       throw error;
@@ -560,7 +567,7 @@ function parseUrlForAdapter(urlString: string, adapter: Bun.SQL.__internal.Adapt
   return new URL(defaultProtocol + urlString);
 }
 
-function validateAdapterProtocolMatch(adapter: Bun.SQL.__internal.Adapter, url: URL) {
+function validateAdapterProtocolMatch(adapter: Bun.SQL.__internal.Adapter, url: URL, originalUrl: string | URL | null = null) {
   const protocol = url.protocol.replace(":", "");
 
   if (protocol === "unix") {
@@ -569,7 +576,27 @@ function validateAdapterProtocolMatch(adapter: Bun.SQL.__internal.Adapter, url: 
   }
 
   const expectedAdapter = getAdapterFromProtocol(protocol);
-  if (expectedAdapter && expectedAdapter !== adapter) {
+  if (!expectedAdapter) {
+    // Unknown protocol, let it through
+    return;
+  }
+
+  // Special handling for SQLite
+  if (protocol === "sqlite" && adapter !== "sqlite") {
+    const urlString = originalUrl ? originalUrl.toString() : url.href;
+    throw new Error(
+      `Invalid URL '${urlString}' for ${adapter}. Did you mean to specify \`{ adapter: "sqlite" }\`?`,
+    );
+  }
+
+  // Special handling: postgres:// protocol with sqlite adapter is allowed 
+  // (explicit adapter wins over protocol for backward compatibility)
+  if (protocol === "postgres" && adapter === "sqlite") {
+    return;
+  }
+
+  // For network databases (postgres/mysql), validate the match
+  if ((protocol === "postgres" || protocol === "mysql") && expectedAdapter !== adapter) {
     throw new Error(
       `Protocol '${protocol}' is not compatible with adapter '${adapter}'. Expected adapter '${expectedAdapter}'.`,
     );

@@ -269,6 +269,24 @@ describe("SQL adapter environment variable precedence", () => {
     restoreEnv();
   });
 
+  test("should default to database name 'mysql' for MySQL adapter", () => {
+    cleanEnv();
+    
+    const options = new SQL({ adapter: "mysql", hostname: "localhost" });
+    expect(options.options.adapter).toBe("mysql");
+    expect(options.options.database).toBe("mysql");
+    restoreEnv();
+  });
+
+  test("should default to username as database name for PostgreSQL adapter", () => {
+    cleanEnv();
+    
+    const options = new SQL({ adapter: "postgres", hostname: "localhost", username: "testuser" });
+    expect(options.options.adapter).toBe("postgres");
+    expect(options.options.database).toBe("testuser");
+    restoreEnv();
+  });
+
   test("should infer mysql adapter from TLS_MYSQL_DATABASE_URL", () => {
     cleanEnv();
     process.env.TLS_MYSQL_DATABASE_URL = "mysql://user:pass@host:3306/db";

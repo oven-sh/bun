@@ -27,13 +27,13 @@ let registryUrl: string;
 async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
   // Clear registry request log before test
   const registry = getRegistry();
-  if (registry) {
-    registry.clearRequestLog();
 
-    if (options.scannerType === "npm") {
-      registry.setScannerBehavior(options.scannerReturns ?? "clean");
-    }
+  if (!registry) {
+    throw new Error("Registry not found");
   }
+
+  registry.clearRequestLog();
+  registry.setScannerBehavior(options.scannerReturns ?? "clean");
 
   const {
     command,
@@ -114,41 +114,12 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
   // Add scanner based on type
   if (scannerType === "local") {
     files["scanner.js"] = scannerCode;
-  } else if (scannerType === "npm" || scannerType === "bunfig-only") {
-    // For npm scanner, create a local package that simulates an npm package
-    // We'll use the file: protocol to reference it
-    files["scanner-npm-package/package.json"] = JSON.stringify({
-      name: scannerPackageName,
-      version: "1.0.0",
-      main: "index.js",
-    });
-    files["scanner-npm-package/index.js"] = scannerCode;
-    // TODO: add npm scanner tests
-
-    // Add to dependencies if not bunfig-only
-    if (scannerType === "npm") {
-      const pkg = JSON.parse(files["package.json"]);
-      pkg.dependencies[scannerPackageName] = "file:./scanner-npm-package";
-      files["package.json"] = JSON.stringify(pkg);
-    }
   }
 
-  // Create the test directory
   const dir = tempDirWithFiles("scanner-matrix", files);
 
-  // Special handling for npm scanner - install it first without security config
-  let skipMainCommand = false;
-  if (scannerType === "npm") {
-    // First install without scanner to get the npm package installed
-    await $`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-
-    // If this is an install command with npm scanner, we'll run it again with the scanner
-    // But for now, let's mark that we already installed
-    if (command === "install") {
-      skipMainCommand = false; // We still want to run install again with scanner
-    }
-  } else if (hasExistingNodeModules && command !== "install") {
-    // For update/add commands, do initial install without scanner
+  if (hasExistingNodeModules) {
+    // Install initial node_modules because this test wants it
     await $`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
   }
 
@@ -174,22 +145,15 @@ scanner = "${scannerPath}"
     cmd = [...cmd, ...args];
   }
 
-  let stdout = "";
-  let stderr = "";
-  let exitCode = 0;
+  const proc = Bun.spawn({
+    cmd,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
 
-  if (!skipMainCommand) {
-    // Run the command
-    const proc = Bun.spawn({
-      cmd,
-      cwd: dir,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: bunEnv,
-    });
-
-    [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  }
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Debug output for failures
   if (exitCode !== expectedExitCode) {
@@ -201,46 +165,95 @@ scanner = "${scannerPath}"
     console.log("Stderr:", stderr);
   }
 
-  // Verify expectations
   expect(exitCode).toBe(expectedExitCode);
 
-  // Check expected output
   for (const expected of expectedOutput) {
     expect(stdout + stderr).toContain(expected);
   }
 
-  // Check unexpected output
   for (const unexpected of unexpectedOutput) {
     expect(stdout + stderr).not.toContain(unexpected);
   }
 
-  // Check for specific error
   if (expectedError) {
     expect(stderr).toContain(expectedError);
   }
 
-  if (registry) {
-    const requestedPackages = registry.getRequestedPackages();
-    const requestedTarballs = registry.getRequestedTarballs();
+  const errAndOut = stderr + stdout;
 
-    if (command === "install") {
-      expect(requestedPackages).toMatchSnapshot("requested-packages: install");
-      expect(requestedTarballs).toMatchSnapshot("requested-tarballs: install");
-    } else if (command === "add") {
-      expect(requestedPackages).toMatchSnapshot("requested-packages: add");
-      expect(requestedTarballs).toMatchSnapshot("requested-tarballs: add");
-    } else if (command === "update") {
-      if (args.length > 0) {
-        expect(requestedPackages).toMatchSnapshot("requested-packages: update with args");
-        expect(requestedTarballs).toMatchSnapshot("requested-tarballs: update with args");
-      } else {
-        expect(requestedPackages).toMatchSnapshot("requested-packages: update without args");
-        expect(requestedTarballs).toMatchSnapshot("requested-tarballs: update without args");
-      }
-    } else {
-      expect(requestedPackages).toMatchSnapshot("requested-packages: unknown command");
-      expect(requestedTarballs).toMatchSnapshot("requested-tarballs: unknown command");
+  // Additional verifications based on scanner type
+  if (scannerType === "npm" && !hasExistingNodeModules && command === "install") {
+    // Test partial installation: scanner from npm should be installed automatically
+    expect(errAndOut).toContain("Attempting to install security scanner from npm");
+    expect(errAndOut).toContain("Security scanner installed successfully");
+  }
+
+  // Check if scanner actually ran (except for bunfig-only which should fail)
+  if (scannerType !== "bunfig-only" && !scannerError) {
+    expect(errAndOut).toContain("SCANNER_RAN");
+
+    // Verify scanner output based on return type
+    if (scannerReturns === "warn") {
+      expect(errAndOut).toContain("WARNING:");
+      expect(errAndOut).toContain("Test warning");
+    } else if (scannerReturns === "fatal") {
+      expect(errAndOut).toContain("FATAL:");
+      expect(errAndOut).toContain("Test fatal error");
     }
+  }
+
+  // Verify node_modules was created for successful installs
+  // if (command === "install" && expectedExitCode === 0) {
+  //   const nodeModulesExists = await Bun.file(join(dir, "node_modules")).exists();
+  //   expect(nodeModulesExists).toBe(true);
+  // }
+
+  // // Verify packages were actually installed/removed
+  // if ((command === "add" || command === "install") && expectedExitCode === 0) {
+  //   const leftPadExists = await Bun.file(join(dir, "node_modules", "left-pad", "package.json")).exists();
+  //   expect(leftPadExists).toBe(true);
+
+  //   if (command === "add" && args.includes("is-even")) {
+  //     const isEvenExists = await Bun.file(join(dir, "node_modules", "is-even", "package.json")).exists();
+  //     expect(isEvenExists).toBe(true);
+  //   }
+  // }
+
+  // if ((command === "remove" || command === "uninstall") && expectedExitCode === 0) {
+  //   if (args.includes("is-even")) {
+  //     const isEvenExists = await Bun.file(join(dir, "node_modules", "is-even", "package.json")).exists();
+  //     expect(isEvenExists).toBe(false);
+  //   }
+
+  //   const leftPadExists = await Bun.file(join(dir, "node_modules", "left-pad", "package.json")).exists();
+  //   expect(leftPadExists).toBe(true);
+  // }
+
+  // if (expectedExitCode === 0 && command !== "update" && command !== "install") {
+  //   const lockfileExists = await Bun.file(join(dir, "bun.lock")).exists();
+  //   expect(lockfileExists).toBe(true);
+  // }
+
+  const requestedPackages = registry.getRequestedPackages();
+  const requestedTarballs = registry.getRequestedTarballs();
+
+  if (command === "install") {
+    expect(requestedPackages).toMatchSnapshot("requested-packages: install");
+    expect(requestedTarballs).toMatchSnapshot("requested-tarballs: install");
+  } else if (command === "add") {
+    expect(requestedPackages).toMatchSnapshot("requested-packages: add");
+    expect(requestedTarballs).toMatchSnapshot("requested-tarballs: add");
+  } else if (command === "update") {
+    if (args.length > 0) {
+      expect(requestedPackages).toMatchSnapshot("requested-packages: update with args");
+      expect(requestedTarballs).toMatchSnapshot("requested-tarballs: update with args");
+    } else {
+      expect(requestedPackages).toMatchSnapshot("requested-packages: update without args");
+      expect(requestedTarballs).toMatchSnapshot("requested-tarballs: update without args");
+    }
+  } else {
+    expect(requestedPackages).toMatchSnapshot("requested-packages: unknown command");
+    expect(requestedTarballs).toMatchSnapshot("requested-tarballs: unknown command");
   }
 
   return { stdout, stderr, exitCode, dir };
@@ -278,21 +291,12 @@ describe("Security Scanner Matrix Tests", () => {
         describe.each(["hoisted", "isolated"] as const)("--linker=%s", linker => {
           describe.each(["local", "npm", "bunfig-only"] as const)("(scanner: %s)", scannerType => {
             describe.each(["clean", "warn", "fatal"] as const)("(returns: %s)", scannerReturns => {
-              const testName = String(++i);
+              const testName = String(++i).padStart(4, "0");
 
               const shouldFail =
                 scannerType === "bunfig-only" || scannerReturns === "fatal" || scannerReturns === "warn";
-              const expectedOutput = scannerType === "bunfig-only" ? [] : ["SCANNER_RAN"];
+              const expectedOutput: string[] = [];
               const expectedError = scannerType === "bunfig-only" ? "Security scanner" : undefined;
-
-              if (scannerType !== "bunfig-only") {
-                if (scannerReturns === "warn") {
-                  expectedOutput.push("WARNING:");
-                }
-                if (scannerReturns === "fatal") {
-                  expectedOutput.push("FATAL:");
-                }
-              }
 
               test(testName, async () => {
                 await runSecurityScannerTest({

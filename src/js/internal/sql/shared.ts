@@ -300,7 +300,7 @@ function determineAdapter(
       { name: "PGURL", url: env.PGURL },
       { name: "PG_URL", url: env.PG_URL },
       { name: "MYSQL_URL", url: env.MYSQL_URL },
-      { name: "TLS_MYSQL_DATABASE_URL", url: env.TLS_MYSQL_DATABASE_URL }
+      { name: "TLS_MYSQL_DATABASE_URL", url: env.TLS_MYSQL_DATABASE_URL },
     ];
 
     for (const { name, url: envUrl } of envVars) {
@@ -313,10 +313,15 @@ function determineAdapter(
         // Environment variable name takes precedence over protocol
         if (name === "MYSQL_URL" || name === "TLS_MYSQL_DATABASE_URL") {
           return "mysql";
-        } else if (name === "POSTGRES_URL" || name === "TLS_POSTGRES_DATABASE_URL" || name === "PGURL" || name === "PG_URL") {
+        } else if (
+          name === "POSTGRES_URL" ||
+          name === "TLS_POSTGRES_DATABASE_URL" ||
+          name === "PGURL" ||
+          name === "PG_URL"
+        ) {
           return "postgres";
         }
-        
+
         // For generic DATABASE_URL and TLS_DATABASE_URL, use protocol detection as fallback
         if (name === "DATABASE_URL" || name === "TLS_DATABASE_URL") {
           const colonIndex = envUrl.indexOf(":");
@@ -450,7 +455,11 @@ function parseOptions(
 
       if (envUrl) {
         // Check if it's a TLS URL that sets SSL mode
-        if (envUrl === env.TLS_POSTGRES_DATABASE_URL || envUrl === env.TLS_DATABASE_URL || envUrl === env.TLS_MYSQL_DATABASE_URL) {
+        if (
+          envUrl === env.TLS_POSTGRES_DATABASE_URL ||
+          envUrl === env.TLS_DATABASE_URL ||
+          envUrl === env.TLS_MYSQL_DATABASE_URL
+        ) {
           sslMode = SSLMode.require;
         }
         finalUrl = parseUrlForAdapter(envUrl, adapter);

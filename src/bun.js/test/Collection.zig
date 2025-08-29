@@ -130,8 +130,12 @@ pub fn runOne(this: *Collection, globalThis: *jsc.JSGlobalObject, callback_queue
     var i: usize = this.current_scope_callback_queue.items.len;
     while (i > 0) {
         i -= 1;
-        const item = this.current_scope_callback_queue.items[i];
-        bun.handleOom(this.describe_callback_queue.append(item));
+        const item = &this.current_scope_callback_queue.items[i];
+        if (item.new_scope.failed) { // if there was an error in the describe callback, don't run any describe callbacks in this scope
+            item.deinit(buntest.gpa);
+        } else {
+            bun.handleOom(this.describe_callback_queue.append(item.*));
+        }
     }
     this.current_scope_callback_queue.clearRetainingCapacity();
 

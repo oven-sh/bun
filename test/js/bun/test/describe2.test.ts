@@ -20,6 +20,13 @@ test("describe/test", async () => {
       "exitCode": 1,
       "stderr": 
     "test/js/bun/test/describe2.fixture.ts:
+
+    # Unhandled error between tests
+    -------------------------------
+    error: uh oh
+    uh oh
+    -------------------------------
+
     error: uh oh
     uh oh
     (fail) actual tests > more functions called after delayed done
@@ -27,6 +34,7 @@ test("describe/test", async () => {
 
      1 pass
      1 fail
+     1 error
     Ran 2 tests across 1 file."
     ,
       "stdout": 
@@ -61,6 +69,7 @@ test("describe/test", async () => {
     describe each 4b
     describe each 4c
     describe each 4d
+    failed describe
     async describe 1
     async describe 2
     async describe 3

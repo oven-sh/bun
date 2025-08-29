@@ -3,6 +3,7 @@ Breaking changes:
 - describe ordering: describe(A, describe(B), C, describe(D), E) will now run in order A, C, E, B, D rather than A, B, C, D, E
 - test ordering: test(a) describe(test(b), test(c)) will now run in order 'A', 'B", 'C' rather than 'B', 'C', 'A"
 - preload hooks: beforeAll/afterAll in preloads will now run before and after each file, rather than before the first file and after the last
+- describe failures: `describe(A, describe(B), throw error)` -> this will no longer run B. previously it would run B.
 
 Complete before merge:
 

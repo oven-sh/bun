@@ -33,6 +33,23 @@ describe.each([1, 2, 3, 4])("describe each %s", i => {
   });
 });
 
+describe("failed describe", () => {
+  console.log("failed describe");
+  test("in failed describe", () => {
+    console.log("this test should not run because it is in a failed describe");
+  });
+  describe("failed describe inner 1", () => {
+    console.log("failed describe inner 1");
+    test("in failed describe inner 1", () => {
+      console.log("this test should not run because it is in a failed describe inner 1");
+    });
+  });
+  describe("failed describe inner 2", () => {
+    console.log("failed describe inner 2");
+  });
+  throw "uh oh";
+});
+
 // == async ==
 
 describe("async describe 1", async () => {

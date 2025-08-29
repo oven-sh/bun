@@ -397,5 +397,171 @@ describe("SQL adapter environment variable precedence", () => {
       expect(options.options.filename).toBe("/tmp/test.db");
       restoreEnv();
     });
+
+    describe("Explicit options override URL parameters", () => {
+      test("explicit hostname should override URL hostname", () => {
+        cleanEnv();
+        
+        const options = new SQL("postgres://urluser:urlpass@urlhost:1234/urldb", {
+          hostname: "explicithost",
+        });
+        
+        expect(options.options.hostname).toBe("explicithost");
+        expect(options.options.port).toBe(1234); // URL port should remain
+        expect(options.options.username).toBe("urluser"); // URL username should remain
+        expect(options.options.database).toBe("urldb"); // URL database should remain
+        restoreEnv();
+      });
+
+      test("explicit port should override URL port", () => {
+        cleanEnv();
+        
+        const options = new SQL("postgres://urluser:urlpass@urlhost:1234/urldb", {
+          port: 5432,
+        });
+        
+        expect(options.options.hostname).toBe("urlhost"); // URL hostname should remain
+        expect(options.options.port).toBe(5432);
+        expect(options.options.username).toBe("urluser"); // URL username should remain
+        expect(options.options.database).toBe("urldb"); // URL database should remain
+        restoreEnv();
+      });
+
+      test("explicit username should override URL username", () => {
+        cleanEnv();
+        
+        const options = new SQL("postgres://urluser:urlpass@urlhost:1234/urldb", {
+          username: "explicituser",
+        });
+        
+        expect(options.options.hostname).toBe("urlhost"); // URL hostname should remain
+        expect(options.options.port).toBe(1234); // URL port should remain
+        expect(options.options.username).toBe("explicituser");
+        expect(options.options.database).toBe("urldb"); // URL database should remain
+        restoreEnv();
+      });
+
+      test("explicit password should override URL password", () => {
+        cleanEnv();
+        
+        const options = new SQL("postgres://urluser:urlpass@urlhost:1234/urldb", {
+          password: "explicitpass",
+        });
+        
+        expect(options.options.hostname).toBe("urlhost"); // URL hostname should remain
+        expect(options.options.port).toBe(1234); // URL port should remain
+        expect(options.options.username).toBe("urluser"); // URL username should remain
+        expect(options.options.password).toBe("explicitpass");
+        expect(options.options.database).toBe("urldb"); // URL database should remain
+        restoreEnv();
+      });
+
+      test("explicit database should override URL database", () => {
+        cleanEnv();
+        
+        const options = new SQL("postgres://urluser:urlpass@urlhost:1234/urldb", {
+          database: "explicitdb",
+        });
+        
+        expect(options.options.hostname).toBe("urlhost"); // URL hostname should remain
+        expect(options.options.port).toBe(1234); // URL port should remain
+        expect(options.options.username).toBe("urluser"); // URL username should remain
+        expect(options.options.database).toBe("explicitdb");
+        restoreEnv();
+      });
+
+      test("multiple explicit options should override corresponding URL parameters", () => {
+        cleanEnv();
+        
+        const options = new SQL("postgres://urluser:urlpass@urlhost:1234/urldb", {
+          hostname: "explicithost",
+          port: 5432,
+          username: "explicituser",
+          password: "explicitpass",
+          database: "explicitdb",
+        });
+        
+        expect(options.options.hostname).toBe("explicithost");
+        expect(options.options.port).toBe(5432);
+        expect(options.options.username).toBe("explicituser");
+        expect(options.options.password).toBe("explicitpass");
+        expect(options.options.database).toBe("explicitdb");
+        restoreEnv();
+      });
+
+      test("should work with MySQL URLs and explicit options", () => {
+        cleanEnv();
+        
+        const options = new SQL("mysql://urluser:urlpass@urlhost:3306/urldb", {
+          hostname: "explicithost",
+          port: 3307,
+          username: "explicituser",
+        });
+        
+        expect(options.options.adapter).toBe("mysql");
+        expect(options.options.hostname).toBe("explicithost");
+        expect(options.options.port).toBe(3307);
+        expect(options.options.username).toBe("explicituser");
+        expect(options.options.password).toBe("urlpass"); // URL password should remain
+        expect(options.options.database).toBe("urldb"); // URL database should remain
+        restoreEnv();
+      });
+
+      test("should work with alternative option names (user, pass, db, host)", () => {
+        cleanEnv();
+        
+        const options = new SQL("postgres://urluser:urlpass@urlhost:1234/urldb", {
+          host: "explicithost",
+          user: "explicituser", 
+          pass: "explicitpass",
+          db: "explicitdb",
+        });
+        
+        expect(options.options.hostname).toBe("explicithost");
+        expect(options.options.username).toBe("explicituser");
+        expect(options.options.password).toBe("explicitpass");
+        expect(options.options.database).toBe("explicitdb");
+        restoreEnv();
+      });
+
+      test("explicit options should override URL even when environment variables are present", () => {
+        cleanEnv();
+        process.env.PGHOST = "envhost";
+        process.env.PGPORT = "9999";
+        process.env.PGUSER = "envuser";
+        
+        const options = new SQL("postgres://urluser:urlpass@urlhost:1234/urldb", {
+          hostname: "explicithost",
+          port: 5432,
+          username: "explicituser",
+        });
+        
+        expect(options.options.hostname).toBe("explicithost");
+        expect(options.options.port).toBe(5432);
+        expect(options.options.username).toBe("explicituser");
+        expect(options.options.password).toBe("urlpass"); // URL password should remain since no explicit password
+        expect(options.options.database).toBe("urldb"); // URL database should remain
+        restoreEnv();
+      });
+
+      test("explicit options should have higher precedence than environment-specific variables", () => {
+        cleanEnv();
+        process.env.MYSQL_HOST = "mysqlhost";
+        process.env.MYSQL_USER = "mysqluser";
+        process.env.MYSQL_PASSWORD = "mysqlpass";
+        
+        const options = new SQL("mysql://urluser:urlpass@urlhost:3306/urldb", {
+          hostname: "explicithost",
+          username: "explicituser",
+        });
+        
+        expect(options.options.adapter).toBe("mysql");
+        expect(options.options.hostname).toBe("explicithost");
+        expect(options.options.username).toBe("explicituser");
+        expect(options.options.password).toBe("urlpass"); // URL password (not env)
+        expect(options.options.database).toBe("urldb"); // URL database should remain
+        restoreEnv();
+      });
+    });
   });
 });

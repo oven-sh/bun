@@ -4,7 +4,7 @@
   " catch bun.outOfMemory()": 0,
   "!= alloc.ptr": 0,
   "!= allocator.ptr": 0,
-  ".arguments_old(": 276,
+  ".arguments_old(": 275,
   ".jsBoolean(false)": 0,
   ".jsBoolean(true)": 0,
   ".stdDir()": 41,

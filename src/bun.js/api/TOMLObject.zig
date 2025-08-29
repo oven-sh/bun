@@ -32,12 +32,12 @@ pub fn parse(
     const allocator = arena.allocator();
     defer arena.deinit();
     var log = logger.Log.init(default_allocator);
-    const arguments = callframe.arguments_old(1).slice();
-    if (arguments.len == 0 or arguments[0].isEmptyOrUndefinedOrNull()) {
+    const input = callframe.argumentsAsArray(1)[0];
+    if (input.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwInvalidArguments("Expected a string to parse", .{});
     }
 
-    var input_slice = try arguments[0].toSlice(globalThis, bun.default_allocator);
+    var input_slice = try input.toSlice(globalThis, bun.default_allocator);
     defer input_slice.deinit();
     const source = &logger.Source.initPathString("input.toml", input_slice.slice());
     const parse_result = TOML.parse(source, &log, allocator, false) catch {
@@ -70,12 +70,7 @@ pub fn stringify(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(1).slice();
-    if (arguments.len == 0) {
-        return globalThis.throwInvalidArguments("Expected a value to stringify", .{});
-    }
-
-    const value = arguments[0];
+    const value = callframe.argumentsAsArray(1)[0];
 
     if (value.isUndefined() or value.isSymbol() or value.isFunction()) {
         return .js_undefined;

@@ -278,6 +278,7 @@ pub fn printSecurityAdvisories(manager: *PackageManager, results: *const Securit
         }
     }
 }
+
 pub fn promptForWarnings() bool {
     const can_prompt = Output.isStdinTTY();
 

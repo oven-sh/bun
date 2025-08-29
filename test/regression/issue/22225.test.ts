@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
+import { FFIType, cc } from "bun:ffi";
+import { expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
 import { endianness } from "os";
-import { FFIType, cc } from "bun:ffi";
 
 test("FFI ArrayBuffer should work as pointer without segfault (issue #22225)", async () => {
   const LE = endianness() === "LE";
@@ -17,7 +17,9 @@ test("FFI ArrayBuffer should work as pointer without segfault (issue #22225)", a
   });
 
   // Compile C code and get FFI function
-  const { symbols: { get } } = cc({
+  const {
+    symbols: { get },
+  } = cc({
     source: `${dir}/test.c`,
     symbols: {
       get: {

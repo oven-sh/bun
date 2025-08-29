@@ -254,7 +254,15 @@ pub fn enqueuePackageForDownload(
     if (task_queue.found_existing) return;
 
     // Skip tarball download when prefetch_resolved_tarballs is disabled (e.g., --lockfile-only)
-    if (!this.options.do.prefetch_resolved_tarballs) return;
+    // EXCEPT for the security scanner itself - we need to download it to run the scan
+    const is_security_scanner = brk: {
+        if (this.options.security_scanner) |scanner_name| {
+            break :brk strings.eql(name, scanner_name);
+        }
+        break :brk false;
+    };
+    
+    if (!this.options.do.prefetch_resolved_tarballs and !is_security_scanner) return;
 
     const is_required = this.lockfile.buffers.dependencies.items[dependency_id].behavior.isRequired();
 

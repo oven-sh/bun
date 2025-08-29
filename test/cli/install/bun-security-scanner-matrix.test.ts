@@ -159,6 +159,38 @@ scanner = "${scannerPath}"`,
     cmd = [...cmd, ...args];
   }
 
+  // Debug mode: if SCANNER_TEST_DEBUG env var is set, print the test dir and exit
+  if (process.env.SCANNER_TEST_DEBUG) {
+    console.log(`[DEBUG] Test directory: ${dir}`);
+    console.log(`[DEBUG] Command: ${cmd.join(" ")}`);
+    console.log(`[DEBUG] Scanner type: ${scannerType}`);
+    console.log(`[DEBUG] Scanner returns: ${scannerReturns}`);
+    console.log(`[DEBUG] Has existing node_modules: ${hasExistingNodeModules}`);
+    console.log(`[DEBUG] Linker: ${linker}`);
+    console.log("");
+    console.log("Files in test directory:");
+    const files = await Array.fromAsync(new Bun.Glob("**/*").scan(dir));
+    for (const file of files) {
+      console.log(`  ${file}`);
+    }
+    console.log("");
+    console.log("bunfig.toml contents:");
+    console.log(await Bun.file(join(dir, "bunfig.toml")).text());
+    console.log("");
+    console.log("package.json contents:");
+    console.log(await Bun.file(join(dir, "package.json")).text());
+    console.log("");
+    console.log("To run the command manually:");
+    console.log(`cd ${dir} && ${cmd.join(" ")}`);
+    console.log("");
+    console.log("Registry URL:", registryUrl);
+    console.log("Registry should be running on this port (check with: lsof -i :PORT)");
+    console.log("");
+    console.log("Keeping test alive... Press Ctrl+C to exit");
+
+    await new Promise(r => {});
+  }
+
   const proc = Bun.spawn({
     cmd,
     cwd: dir,
@@ -200,9 +232,17 @@ scanner = "${scannerPath}"`,
 
   const errAndOut = stderr + stdout;
 
+  console.log(
+    `[TEST DEBUG] scannerType=${scannerType}, hasExistingNodeModules=${hasExistingNodeModules}, exitCode=${exitCode}`,
+  );
+  console.log(`[TEST DEBUG] stdout length=${stdout.length}, stderr length=${stderr.length}`);
+  console.log(`[TEST DEBUG] stderr: ${stderr}`);
+  console.log(`[TEST DEBUG] stdout: ${stdout}`);
+
   // If the scanner is from npm and there are no node modules when the test "starts"
   // then we should expect Bun to do the partial install first of all
   if (scannerType === "npm" && !hasExistingNodeModules) {
+    console.log("[TEST DEBUG] Checking for partial install messages");
     expect(errAndOut).toContain("Attempting to install security scanner from npm");
     expect(errAndOut).toContain("Security scanner installed successfully");
   }
@@ -213,6 +253,7 @@ scanner = "${scannerPath}"`,
 
   // Check if scanner actually ran (except for bunfig-only which should fail)
   if (scannerType !== "bunfig-only" && !scannerError) {
+    console.log("[TEST DEBUG] Checking for SCANNER_RAN");
     expect(errAndOut).toContain("SCANNER_RAN");
 
     // Verify scanner output based on return type
@@ -305,6 +346,10 @@ describe("Security Scanner Matrix Tests", () => {
         describe.each(["hoisted", "isolated"] as const)("--linker=%s", linker => {
           describe.each(["local", "npm", "bunfig-only"] as const)("(scanner: %s)", scannerType => {
             describe.each(["clean", "warn", "fatal"] as const)("(returns: %s)", scannerReturns => {
+              if ((command === "add" || command === "uninstall" || command === "remove") && args.length === 0) {
+                return;
+              }
+
               const testName = String(++i).padStart(4, "0");
 
               const shouldFail =

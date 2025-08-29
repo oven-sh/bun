@@ -291,7 +291,7 @@ function determineAdapter(
   // 3. If no URL provided, check environment variables to infer adapter
   // Respect precedence: POSTGRES_URL > DATABASE_URL > PGURL > PG_URL > MYSQL_URL
   if (!urlString && env) {
-    // Check in order of precedence with env var names
+    // Check in order of precedence
     const envVars = [
       { name: "POSTGRES_URL", url: env.POSTGRES_URL },
       { name: "DATABASE_URL", url: env.DATABASE_URL },
@@ -302,26 +302,28 @@ function determineAdapter(
     
     for (const { name, url: envUrl } of envVars) {
       if (envUrl) {
-        // Check for SQLite URLs first
+        // Check for SQLite URLs first (special case)
         if (parseDefinitelySqliteUrl(envUrl) !== null) {
           return "sqlite";
         }
         
-        // Check protocol for other adapters
-        const colonIndex = envUrl.indexOf(":");
-        if (colonIndex !== -1) {
-          const protocol = envUrl.substring(0, colonIndex);
-          const adapterFromProtocol = getAdapterFromProtocol(protocol);
-          if (adapterFromProtocol) {
-            return adapterFromProtocol;
-          }
-        }
-        
-        // If no protocol detected, infer from environment variable name
+        // Environment variable name takes precedence over protocol
         if (name === "MYSQL_URL") {
           return "mysql";
         } else if (name === "POSTGRES_URL" || name === "PGURL" || name === "PG_URL") {
           return "postgres";
+        }
+        
+        // For DATABASE_URL, use protocol detection as fallback
+        if (name === "DATABASE_URL") {
+          const colonIndex = envUrl.indexOf(":");
+          if (colonIndex !== -1) {
+            const protocol = envUrl.substring(0, colonIndex);
+            const adapterFromProtocol = getAdapterFromProtocol(protocol);
+            if (adapterFromProtocol) {
+              return adapterFromProtocol;
+            }
+          }
         }
         
         // If we found a URL with higher precedence, don't check lower precedence URLs

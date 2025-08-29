@@ -211,4 +211,26 @@ describe("SQL adapter environment variable precedence", () => {
     expect(options.options.username).toBe("user");
     restoreEnv();
   });
+
+  test("environment variable name should override protocol (PGURL with mysql protocol should be postgres)", () => {
+    cleanEnv();
+    process.env.PGURL = "mysql://host:3306/db";
+
+    const options = new SQL();
+    expect(options.options.adapter).toBe("postgres");
+    expect(options.options.hostname).toBe("host");
+    expect(options.options.port).toBe(3306);
+    restoreEnv();
+  });
+
+  test("environment variable name should override protocol (MYSQL_URL with postgres protocol should be mysql)", () => {
+    cleanEnv();
+    process.env.MYSQL_URL = "postgres://host:5432/db";
+
+    const options = new SQL();
+    expect(options.options.adapter).toBe("mysql");
+    expect(options.options.hostname).toBe("host");
+    expect(options.options.port).toBe(5432);
+    restoreEnv();
+  });
 });

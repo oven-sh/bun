@@ -290,14 +290,8 @@ describe("Security Scanner Matrix Tests", () => {
                 return;
               }
 
-              // For remove/uninstall commands with existing node_modules, only bunfig-only should fail
-              // But when there's no existing node_modules, uninstall needs to resolve/install first,
-              // so fatal advisories should block that initial installation
               const shouldFail =
-                scannerType === "bunfig-only" ||
-                (scannerReturns === "fatal" &&
-                  (!hasExistingNodeModules || (command !== "remove" && command !== "uninstall"))) ||
-                (scannerReturns === "warn" && command !== "remove" && command !== "uninstall");
+                scannerType === "bunfig-only" || scannerReturns === "fatal" || scannerReturns === "warn";
               const expectedOutput = scannerType === "bunfig-only" ? [] : ["SCANNER_RAN"];
               const expectedError = scannerType === "bunfig-only" ? "Security scanner" : undefined;
 

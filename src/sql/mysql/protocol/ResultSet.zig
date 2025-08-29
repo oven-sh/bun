@@ -124,6 +124,15 @@ pub const Row = struct {
                 };
                 cell.* = SQLDataCell{ .tag = .date, .value = .{ .date = date } };
             },
+            .MYSQL_TYPE_BIT => {
+                // BIT(1) is a special case, it's a boolean
+                if (column.column_length == 1) {
+                    const slice = value.slice();
+                    cell.* = SQLDataCell{ .tag = .bool, .value = .{ .bool = if (slice.len > 0 and slice[0] == 1) 1 else 0 } };
+                } else {
+                    cell.* = SQLDataCell.raw(value);
+                }
+            },
             else => {
                 const slice = value.slice();
                 cell.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
@@ -211,7 +220,7 @@ pub const Row = struct {
             }
 
             const column = this.columns[i];
-            value.* = try decodeBinaryValue(this.globalObject, column.column_type, this.raw, this.bigint, column.flags.UNSIGNED, Context, reader);
+            value.* = try decodeBinaryValue(this.globalObject, column.column_type, column.column_length, this.raw, this.bigint, column.flags.UNSIGNED, Context, reader);
             value.index = switch (column.name_or_index) {
                 // The indexed columns can be out of order.
                 .index => |idx| idx,

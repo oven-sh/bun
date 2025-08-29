@@ -261,7 +261,7 @@ pub fn enqueuePackageForDownload(
         }
         break :brk false;
     };
-    
+
     if (!this.options.do.prefetch_resolved_tarballs and !is_security_scanner) return;
 
     const is_required = this.lockfile.buffers.dependencies.items[dependency_id].behavior.isRequired();

@@ -1,5 +1,5 @@
-import { test, expect, describe } from "bun:test";
 import { SQL } from "bun";
+import { describe, expect, test } from "bun:test";
 
 describe("SQL adapter environment variable precedence", () => {
   const originalEnv = { ...process.env };
@@ -32,7 +32,7 @@ describe("SQL adapter environment variable precedence", () => {
 
     const options = new SQL({
       hostname: "bar_url",
-      username: "postgres",  
+      username: "postgres",
       password: "postgres",
       port: 5432,
     });
@@ -51,7 +51,7 @@ describe("SQL adapter environment variable precedence", () => {
     process.env.MYSQL_URL = "mysql://mysql-host/db";
 
     const options = new SQL({
-      adapter: "postgres"
+      adapter: "postgres",
     });
 
     expect(options.options.hostname).toBe("pg-host");
@@ -65,11 +65,11 @@ describe("SQL adapter environment variable precedence", () => {
   test("should only read MySQL env vars when adapter is mysql", () => {
     cleanEnv();
     process.env.PGHOST = "pg-host";
-    process.env.PGUSER = "pg-user"; 
+    process.env.PGUSER = "pg-user";
     process.env.MYSQL_URL = "mysql://mysql-host/db";
 
     const options = new SQL({
-      adapter: "mysql"
+      adapter: "mysql",
     });
 
     // Should use MYSQL_URL and not read PostgreSQL env vars
@@ -102,9 +102,9 @@ describe("SQL adapter environment variable precedence", () => {
   test("should support unix:// with explicit adapter", () => {
     cleanEnv();
     const options = new SQL("unix:///tmp/mysql.sock", {
-      adapter: "mysql"
+      adapter: "mysql",
     });
-    
+
     expect(options.options.adapter).toBe("mysql");
     expect(options.options.path).toBe("/tmp/mysql.sock");
     restoreEnv();
@@ -124,7 +124,7 @@ describe("SQL adapter environment variable precedence", () => {
     process.env.PGUSER = "postgres-user";
 
     const options = new SQL({
-      adapter: "postgres"
+      adapter: "postgres",
     });
 
     expect(options.options.username).toBe("postgres-user");
@@ -157,9 +157,9 @@ describe("SQL adapter environment variable precedence", () => {
     cleanEnv();
     const options = new SQL({
       adapter: "mysql",
-      hostname: "localhost"
+      hostname: "localhost",
     });
-    
+
     expect(options.options.adapter).toBe("mysql");
     expect(options.options.port).toBe(3306); // Should default to MySQL port
     restoreEnv();

@@ -76,3 +76,34 @@ test("ResolveMessage toJSON should handle missing referrer gracefully", async ()
   expect(stderr).not.toContain("AddressSanitizer");
   expect(stderr).not.toContain("heap-use-after-free");
 });
+
+test("ResolveMessage should pass Error.isError check", async () => {
+  const tempDir = tempDirWithFiles("resolve-message-error-iserror", {
+    "index.js": `
+      try {
+        require("./nonexistent-module");
+      } catch (error) {
+        // Verify it extends Error using Error.isError
+        console.log("Error.isError:", Error.isError(error));
+        console.log("instanceof Error:", error instanceof Error);
+        process.exit(0);
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    cwd: tempDir,
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(exitCode).toBe(0);
+  expect(stdout).toContain("Error.isError: true");
+  expect(stdout).toContain("instanceof Error: true");
+  expect(stderr).not.toContain("AddressSanitizer");
+  expect(stderr).not.toContain("heap-use-after-free");
+});

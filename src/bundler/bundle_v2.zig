@@ -3947,6 +3947,8 @@ pub const JSMeta = struct {
         needs_synthetic_default_export: bool = false,
 
         wrap: WrapKind = WrapKind.none,
+        
+        _padding: u1 = 0,
     };
 };
 

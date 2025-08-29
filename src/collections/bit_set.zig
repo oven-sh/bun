@@ -539,7 +539,7 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         /// result in the first one.  Bits in the result are
         /// set if the corresponding bits were set in either input.
         pub fn setUnion(self: *Self, other: *const Self) void {
-            for (&self.masks, other[0..self.masks.len]) |*mask, alt| {
+            for (&self.masks, other.masks) |*mask, alt| {
                 mask.* |= alt;
             }
         }
@@ -1202,6 +1202,14 @@ pub const AutoBitSet = union(enum) {
         return switch (std.meta.activeTag(this.*)) {
             .static => this.static.isSet(index),
             .dynamic => this.dynamic.isSet(index),
+        };
+    }
+
+    /// Returns the total number of set bits in this bit set.
+    pub fn count(this: *const AutoBitSet) usize {
+        return switch (std.meta.activeTag(this.*)) {
+            .static => this.static.count(),
+            .dynamic => this.dynamic.count(),
         };
     }
 

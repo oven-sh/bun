@@ -23,6 +23,7 @@ pub const Classes = struct {
     pub const ExpectArrayContaining = jsc.Expect.ExpectArrayContaining;
     pub const ExpectTypeOf = jsc.Expect.ExpectTypeOf;
     pub const ScopeFunctions = jsc.Jest.describe2.ScopeFunctions;
+    pub const DoneCallback = jsc.Jest.describe2.DoneCallback;
     pub const FileSystemRouter = api.FileSystemRouter;
     pub const Glob = api.Glob;
     pub const ShellInterpreter = api.Shell.Interpreter;

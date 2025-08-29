@@ -27,6 +27,8 @@ Complete before merge:
     - bun: beforeAll1 beforeAll2 beforeEach1 beforeEach2 test1 <b>afterEach1</b> <s>afterEach2</s> beforeEach1 beforeEach2 test1 <b>afterEach1</b> <s>afterEach2</s> afterAll1 afterAll2
 - [ ] make the summary work again
 - [ ] add timeouts back
+- [ ] when a timeout triggers on a funciton with a done callback because the done callback was never called, note in the error that the function must call the done callback
+  - [ ] there should be an issue that this can close
 - [ ] add retry/run-multiple-times back
 - [ ] report expect counts per-test
 - [ ] make --bail work again

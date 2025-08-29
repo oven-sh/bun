@@ -14,6 +14,8 @@ pub fn getActive() ?*BunTestFile {
     return runner.describe2Root.active_file orelse return null;
 }
 
+pub const DoneCallback = @import("./DoneCallback.zig");
+
 pub const js_fns = struct {
     fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, description: jsc.JSValue, signature: Signature) bun.JSError![]const u8 {
         const is_valid_description =
@@ -410,7 +412,7 @@ pub const BunTestFile = struct {
 
     export const Bun__TestScope__Describe2__bunTestThen = jsc.toJSHostFn(bunTestThen);
     export const Bun__TestScope__Describe2__bunTestCatch = jsc.toJSHostFn(bunTestCatch);
-    fn bunTestThenOrCatch(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, is_catch: bool) bun.JSError!jsc.JSValue {
+    fn bunTestThenOrCatch(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, is_catch: bool) bun.JSError!void {
         group.begin(@src());
         defer group.end();
         errdefer group.log("ended in error", .{});
@@ -427,13 +429,28 @@ pub const BunTestFile = struct {
 
         try this.runOneCompleted(globalThis, if (is_catch) null else result, refdata.phase);
         try this.run(globalThis);
-        return .js_undefined;
     }
     fn bunTestThen(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        return bunTestThenOrCatch(globalThis, callframe, false);
+        try bunTestThenOrCatch(globalThis, callframe, false);
+        return .js_undefined;
     }
     fn bunTestCatch(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        return bunTestThenOrCatch(globalThis, callframe, true);
+        try bunTestThenOrCatch(globalThis, callframe, true);
+        return .js_undefined;
+    }
+    pub fn bunTestDoneCallback(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, data: RefDataValue) bun.JSError!void {
+        group.begin(@src());
+        defer group.end();
+
+        const err_arg = callFrame.argumentsAsArray(1)[0];
+        const is_catch = err_arg.isEmptyOrUndefinedOrNull();
+
+        if (is_catch) {
+            this.onUncaughtException(globalThis, err_arg, true, data);
+        }
+
+        try this.runOneCompleted(globalThis, if (is_catch) null else err_arg, data);
+        try this.run(globalThis);
     }
 
     pub fn run(this: *BunTestFile, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
@@ -563,19 +580,43 @@ pub const BunTestFile = struct {
         // - for test.concurrent, we will have multiple 'then's active at once, and they will
         //   need to be able to pass context information to runOneCompleted
 
+        var args: Strong.List = cfg.callback.args.dupe(this.gpa);
+        defer args.deinit(this.gpa);
+
+        var done_callback: ?jsc.JSValue = null;
         if (cfg.done_parameter) {
             const length = try cfg.callback.callback.get().getLength(globalThis);
             if (length > cfg.callback.args.get().len) {
-                // TODO: support done parameter
-                @panic("TODO: support done parameter");
+                group.log("callTestCallback -> appending done callback param: data {}", .{cfg.data});
+                done_callback = DoneCallback.create(globalThis);
+                args.append(this.gpa, done_callback.?);
             }
         }
 
-        const result: ?jsc.JSValue = cfg.callback.callback.get().call(globalThis, .js_undefined, cfg.callback.args.get()) catch |e| blk: {
+        const result: ?jsc.JSValue = cfg.callback.callback.get().call(globalThis, .js_undefined, args.get()) catch |e| blk: {
             this.onUncaughtException(globalThis, globalThis.takeError(e), false, cfg.data);
             group.log("callTestCallback -> error", .{});
             break :blk null;
         };
+
+        if (done_callback) |done_cb| {
+            defer done_cb.ensureStillAlive(); // makes sure the compiler can't drop done_callback while done_callback_data exists.
+            const done_callback_data = DoneCallback.fromJS(done_cb) orelse @panic("bad type for done_callback?");
+            if (done_callback_data.done) {
+                // completed synchronously
+                try this.runOneCompleted(globalThis, result, cfg.data);
+                return .continue_sync;
+            }
+            done_callback_data.ref = this.ref(cfg.data);
+
+            if (result != null and result.?.asPromise() != null) {
+                // jest throws an error here but unfortunately bun waits for both
+                @panic("TODO: support waiting for both the promise and the done callback");
+            }
+            // completed asynchronously
+            group.log("callTestCallback -> wait for done callback", .{});
+            return .continue_async;
+        }
 
         if (result != null and result.?.asPromise() != null) {
             group.log("callTestCallback -> promise: data {}", .{cfg.data});

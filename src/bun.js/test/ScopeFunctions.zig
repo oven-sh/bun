@@ -201,7 +201,7 @@ pub fn create(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue, cfg: d
 const std = @import("std");
 const test_command = @import("../../cli/test_command.zig");
 
-const describe2 = @import("./describe2.zig");
+const describe2 = jsc.Jest.describe2;
 const BunTestFile = describe2.BunTestFile;
 const Execution = describe2.Execution;
 const ExecutionEntry = describe2.ExecutionEntry;

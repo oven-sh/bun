@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("Japanese middle dot character should be allowed in identifier names", () => {
   // Test the full-width middle dot (・) character U+30FB
@@ -10,7 +10,7 @@ test("Japanese middle dot character should be allowed in identifier names", () =
   `;
   expect(() => eval(code1)).not.toThrow();
 
-  // Test unquoted property with middle dot  
+  // Test unquoted property with middle dot
   const code2 = `
     const obj = {
       バス・トイレ: "bathroom"

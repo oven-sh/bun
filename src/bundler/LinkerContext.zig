@@ -933,99 +933,242 @@ pub const LinkerContext = struct {
         meta_flags: []JSMeta.Flags,
         ast_import_records: []const bun.BabyList(ImportRecord),
     ) bun.OOM!js_ast.TlaCheck {
-        var result_tla_check: *js_ast.TlaCheck = &tla_checks[source_index];
+        // Use iterative DFS with AutoBitSet to track async dependencies efficiently
+        return c.validateTLAIterative(
+            source_index,
+            tla_keywords,
+            tla_checks,
+            input_files,
+            import_records,
+            meta_flags,
+            ast_import_records,
+        );
+    }
 
-        if (result_tla_check.depth == 0) {
-            result_tla_check.depth = 1;
-            if (tla_keywords[source_index].len > 0) {
-                result_tla_check.parent = source_index;
-            }
+    pub fn validateTLAIterative(
+        c: *LinkerContext,
+        root_source_index: Index.Int,
+        tla_keywords: []const Logger.Range,
+        tla_checks: []js_ast.TlaCheck,
+        input_files: []const Logger.Source,
+        import_records: []const ImportRecord,
+        meta_flags: []JSMeta.Flags,
+        ast_import_records: []const bun.BabyList(ImportRecord),
+    ) bun.OOM!js_ast.TlaCheck {
+        const total_files = tla_checks.len;
 
-            for (import_records, 0..) |record, import_record_index| {
-                if (Index.isValid(record.source_index) and (record.kind == .require or record.kind == .stmt)) {
-                    const parent = try c.validateTLA(
-                        record.source_index.get(),
-                        tla_keywords,
-                        tla_checks,
-                        input_files,
-                        ast_import_records[record.source_index.get()].slice(),
-                        meta_flags,
-                        ast_import_records,
-                    );
-                    if (Index.isInvalid(Index.init(parent.parent))) {
-                        continue;
-                    }
+        // BitSet for tracking all files that are async or have async dependencies
+        var async_dependency_set = try AutoBitSet.initEmpty(c.allocator(), total_files);
+        defer async_dependency_set.deinit(c.allocator());
 
-                    // Follow any import chains
-                    if (record.kind == .stmt and (Index.isInvalid(Index.init(result_tla_check.parent)) or parent.depth < result_tla_check.depth)) {
-                        result_tla_check.depth = parent.depth + 1;
-                        result_tla_check.parent = record.source_index.get();
-                        result_tla_check.import_record_index = @intCast(import_record_index);
-                        continue;
-                    }
+        // BitSet for tracking current DFS stack (cycle detection)
+        var visiting_stack = try AutoBitSet.initEmpty(c.allocator(), total_files);
+        defer visiting_stack.deinit(c.allocator());
 
-                    // Require of a top-level await chain is forbidden
-                    if (record.kind == .require) {
-                        var notes = std.ArrayList(Logger.Data).init(c.allocator());
+        // Work stack for iterative DFS
+        const WorkItem = struct {
+            source_index: Index.Int,
+            import_records: []const ImportRecord,
+            import_record_index: usize,
+            in_post_order: bool,
+        };
 
-                        var tla_pretty_path: string = "";
-                        var other_source_index = record.source_index.get();
+        var work_stack = std.ArrayList(WorkItem).init(c.allocator());
+        defer work_stack.deinit();
 
-                        // Build up a chain of notes for all of the imports
-                        while (true) {
-                            const parent_result_tla_keyword = tla_keywords[other_source_index];
-                            const parent_tla_check = tla_checks[other_source_index];
-                            const parent_source_index = other_source_index;
-
-                            if (parent_result_tla_keyword.len > 0) {
-                                const source = &input_files[other_source_index];
-                                tla_pretty_path = source.path.pretty;
-                                notes.append(Logger.Data{
-                                    .text = bun.handleOom(std.fmt.allocPrint(c.allocator(), "The top-level await in {s} is here:", .{tla_pretty_path})),
-                                    .location = .initOrNull(source, parent_result_tla_keyword),
-                                }) catch |err| bun.handleOom(err);
-                                break;
-                            }
-
-                            if (!Index.isValid(Index.init(parent_tla_check.parent))) {
-                                try notes.append(Logger.Data{
-                                    .text = "unexpected invalid index",
-                                });
-                                break;
-                            }
-
-                            other_source_index = parent_tla_check.parent;
-
-                            try notes.append(Logger.Data{
-                                .text = try std.fmt.allocPrint(c.allocator(), "The file {s} imports the file {s} here:", .{
-                                    input_files[parent_source_index].path.pretty,
-                                    input_files[other_source_index].path.pretty,
-                                }),
-                                .location = .initOrNull(&input_files[parent_source_index], ast_import_records[parent_source_index].slice()[tla_checks[parent_source_index].import_record_index].range),
-                            });
-                        }
-
-                        const source: *const Logger.Source = &input_files[source_index];
-                        const imported_pretty_path = source.path.pretty;
-                        const text: string = if (strings.eql(imported_pretty_path, tla_pretty_path))
-                            try std.fmt.allocPrint(c.allocator(), "This require call is not allowed because the imported file \"{s}\" contains a top-level await", .{imported_pretty_path})
-                        else
-                            try std.fmt.allocPrint(c.allocator(), "This require call is not allowed because the transitive dependency \"{s}\" contains a top-level await", .{tla_pretty_path});
-
-                        try c.log.addRangeErrorWithNotes(source, record.range, text, notes.items);
-                    }
-                }
-            }
-
-            // Make sure that if we wrap this module in a closure, the closure is also
-            // async. This happens when you call "import()" on this module and code
-            // splitting is off.
-            if (Index.isValid(Index.init(result_tla_check.parent))) {
-                meta_flags[source_index].is_async_or_has_async_dependency = true;
-            }
+        // Start DFS from root
+        var result_tla_check: *js_ast.TlaCheck = &tla_checks[root_source_index];
+        if (result_tla_check.depth > 0) {
+            return result_tla_check.*;
         }
 
-        return result_tla_check.*;
+        result_tla_check.depth = 1;
+        if (tla_keywords[root_source_index].len > 0) {
+            result_tla_check.parent = root_source_index;
+            async_dependency_set.set(root_source_index);
+        }
+
+        // Add postorder processing for root first (will be processed after children)
+        try work_stack.append(.{
+            .source_index = root_source_index,
+            .import_records = &.{}, // Not used in post-order
+            .import_record_index = 0,
+            .in_post_order = true,
+        });
+
+        try work_stack.append(.{
+            .source_index = root_source_index,
+            .import_records = import_records,
+            .import_record_index = 0,
+            .in_post_order = false,
+        });
+
+        while (work_stack.items.len > 0) {
+            var item = &work_stack.items[work_stack.items.len - 1];
+
+            if (item.in_post_order) {
+                // Post-order: propagate async dependency information and set final flag
+                const source_index = item.source_index;
+                _ = work_stack.pop();
+
+                visiting_stack.unset(source_index);
+
+                if (async_dependency_set.isSet(source_index)) {
+                    meta_flags[source_index].is_async_or_has_async_dependency = true;
+
+                    // Propagate to parent in the work stack
+                    if (work_stack.items.len > 0) {
+                        const parent_item = &work_stack.items[work_stack.items.len - 1];
+                        async_dependency_set.set(parent_item.source_index);
+                    }
+                }
+                continue;
+            }
+
+            // Process next import record
+            const source_index = item.source_index;
+            const records = item.import_records;
+
+            if (item.import_record_index >= records.len) {
+                // Done with all imports, switch to post-order processing
+                item.in_post_order = true;
+                continue;
+            }
+
+            const record = records[item.import_record_index];
+            item.import_record_index += 1;
+
+            if (!Index.isValid(record.source_index) or
+                (record.kind != .require and record.kind != .stmt))
+            {
+                continue;
+            }
+
+            const dep_index = record.source_index.get();
+            const dep_tla_check = &tla_checks[dep_index];
+
+            // Check for cycle
+            if (visiting_stack.isSet(dep_index)) {
+                continue;
+            }
+
+            // If already processed this dependency
+            if (dep_tla_check.depth > 0) {
+                if (Index.isValid(Index.init(dep_tla_check.parent)) or async_dependency_set.isSet(dep_index)) {
+                    async_dependency_set.set(source_index);
+
+                    // Handle require() of async dependency error
+                    if (record.kind == .require) {
+                        try c.reportRequireAsyncError(
+                            dep_index,
+                            record,
+                            input_files,
+                            tla_keywords,
+                            tla_checks,
+                            ast_import_records,
+                        );
+                    }
+
+                    // Update chain information for import statements
+                    const current_tla_check = &tla_checks[source_index];
+                    if (record.kind == .stmt and
+                        (Index.isInvalid(Index.init(current_tla_check.parent)) or
+                            dep_tla_check.depth < current_tla_check.depth))
+                    {
+                        current_tla_check.depth = dep_tla_check.depth + 1;
+                        current_tla_check.parent = dep_index;
+                        current_tla_check.import_record_index = @intCast(item.import_record_index - 1);
+                    }
+                }
+                continue;
+            }
+
+            // Visit dependency
+            visiting_stack.set(dep_index);
+            dep_tla_check.depth = 1;
+
+            if (tla_keywords[dep_index].len > 0) {
+                dep_tla_check.parent = dep_index;
+                async_dependency_set.set(dep_index);
+            }
+
+            // Add postorder processing for dependency first (will be processed after children)
+            try work_stack.append(.{
+                .source_index = dep_index,
+                .import_records = &.{}, // Not used in post-order
+                .import_record_index = 0,
+                .in_post_order = true,
+            });
+
+            // Add dependency to work stack (pre-order processing)
+            try work_stack.append(.{
+                .source_index = dep_index,
+                .import_records = ast_import_records[dep_index].slice(),
+                .import_record_index = 0,
+                .in_post_order = false,
+            });
+        }
+
+        return tla_checks[root_source_index];
+    }
+
+    fn reportRequireAsyncError(
+        c: *LinkerContext,
+        dep_index: Index.Int,
+        record: ImportRecord,
+        input_files: []const Logger.Source,
+        tla_keywords: []const Logger.Range,
+        tla_checks: []js_ast.TlaCheck,
+        ast_import_records: []const bun.BabyList(ImportRecord),
+    ) !void {
+        var notes = std.ArrayList(Logger.Data).init(c.allocator());
+        defer notes.deinit();
+
+        var tla_pretty_path: string = "";
+        var other_source_index = dep_index;
+
+        // Build up a chain of notes for all of the imports
+        while (true) {
+            const parent_result_tla_keyword = tla_keywords[other_source_index];
+            const parent_tla_check = tla_checks[other_source_index];
+            const parent_source_index = other_source_index;
+
+            if (parent_result_tla_keyword.len > 0) {
+                const source = &input_files[other_source_index];
+                tla_pretty_path = source.path.pretty;
+                try notes.append(Logger.Data{
+                    .text = try std.fmt.allocPrint(c.allocator(), "The top-level await in {s} is here:", .{tla_pretty_path}),
+                    .location = .initOrNull(source, parent_result_tla_keyword),
+                });
+                break;
+            }
+
+            if (!Index.isValid(Index.init(parent_tla_check.parent))) {
+                try notes.append(Logger.Data{
+                    .text = "unexpected invalid index",
+                });
+                break;
+            }
+
+            other_source_index = parent_tla_check.parent;
+
+            try notes.append(Logger.Data{
+                .text = try std.fmt.allocPrint(c.allocator(), "The file {s} imports the file {s} here:", .{
+                    input_files[parent_source_index].path.pretty,
+                    input_files[other_source_index].path.pretty,
+                }),
+                .location = .initOrNull(&input_files[parent_source_index], ast_import_records[parent_source_index].slice()[tla_checks[parent_source_index].import_record_index].range),
+            });
+        }
+
+        const source: *const Logger.Source = &input_files[dep_index];
+        const imported_pretty_path = source.path.pretty;
+        const text: string = if (strings.eql(imported_pretty_path, tla_pretty_path))
+            try std.fmt.allocPrint(c.allocator(), "This require call is not allowed because the imported file \"{s}\" contains a top-level await", .{imported_pretty_path})
+        else
+            try std.fmt.allocPrint(c.allocator(), "This require call is not allowed because the transitive dependency \"{s}\" contains a top-level await", .{tla_pretty_path});
+
+        try c.log.addRangeErrorWithNotes(source, record.range, text, notes.items);
     }
 
     pub const StmtList = struct {

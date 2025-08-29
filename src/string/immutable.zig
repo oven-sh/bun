@@ -1546,11 +1546,11 @@ const LineRange = struct {
     start: u32,
     end: u32,
 };
-pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range_count: usize) std.BoundedArray(LineRange, line_range_count) {
+pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range_count: usize) bun.BoundedArray(LineRange, line_range_count) {
     const remaining = text;
     if (remaining.len == 0) return .{};
 
-    var ranges = std.BoundedArray(LineRange, line_range_count){};
+    var ranges = bun.BoundedArray(LineRange, line_range_count){};
 
     var current_line: u32 = 0;
     const first_newline_or_nonascii_i = strings.indexOfNewlineOrNonASCIICheckStart(text, 0, true) orelse {
@@ -1644,7 +1644,7 @@ pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range
         };
 
         if (ranges.len == line_range_count and current_line <= target_line) {
-            var new_ranges = std.BoundedArray(LineRange, line_range_count){};
+            var new_ranges = bun.BoundedArray(LineRange, line_range_count){};
             new_ranges.appendSliceAssumeCapacity(ranges.slice()[1..]);
             ranges = new_ranges;
         }
@@ -1658,7 +1658,7 @@ pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range
     }
 
     if (ranges.len == line_range_count and current_line <= target_line) {
-        var new_ranges = std.BoundedArray(LineRange, line_range_count){};
+        var new_ranges = bun.BoundedArray(LineRange, line_range_count){};
         new_ranges.appendSliceAssumeCapacity(ranges.slice()[1..]);
         ranges = new_ranges;
     }
@@ -1667,10 +1667,10 @@ pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range
 }
 
 /// Get N lines from the start of the text
-pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: usize) ?std.BoundedArray([]const u8, line_range_count) {
+pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: usize) ?bun.BoundedArray([]const u8, line_range_count) {
     const ranges = indexOfLineRanges(text, line, line_range_count);
     if (ranges.len == 0) return null;
-    var results = std.BoundedArray([]const u8, line_range_count){};
+    var results = bun.BoundedArray([]const u8, line_range_count){};
     results.len = ranges.len;
 
     for (results.slice()[0..ranges.len], ranges.slice()) |*chunk, range| {

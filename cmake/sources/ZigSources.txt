@@ -491,6 +491,7 @@ src/codegen/process_windows_translate_c.zig
 src/collections.zig
 src/collections/baby_list.zig
 src/collections/bit_set.zig
+src/collections/BoundedArray.zig
 src/collections/hive_array.zig
 src/collections/multi_array_list.zig
 src/compile_target.zig

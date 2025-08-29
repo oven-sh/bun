@@ -96,6 +96,7 @@ Code quality:
     - someone owns it (easiest option for now is .protect())
     - benchmark this vs the version that is only .protect()
   - the problem with .protect() is that every protected value is visited by the gc every gc, which is slow
+  - basically we make BunTestFile into a class. BunTest is a class that holds BunTestFile. Expect holds a weak reference to BunTest
 - [ ] strong.list should only have one jsvalue (or be removed fully)
 
 - [x] Add private fields in SafeStrong.zig

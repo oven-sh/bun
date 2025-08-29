@@ -57,9 +57,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         uWS::HttpContextData<SSL> *httpContextData = uWS::HttpContext<SSL>::getSocketContextDataS((us_socket_t *) uwsRes);
         httpContextData->flags.isIdle = true;
-        if (httpContextData->flags.shouldCloseOnceIdle) {
-            ((uWS::AsyncSocket<SSL> *) uwsRes)->close();
-        }
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */

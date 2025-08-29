@@ -40,7 +40,6 @@ void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
         us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_cb, LIBUS_TIMEOUT_GRANULARITY * 1000, LIBUS_TIMEOUT_GRANULARITY * 1000);
         Bun__internal_ensureDateHeaderTimerIsEnabled(loop);
     }
-
 }
 
 void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
@@ -213,7 +212,7 @@ void us_internal_dns_callback_threadsafe(struct us_connecting_socket_t *c, void*
 void us_internal_drain_pending_dns_resolve(struct us_loop_t *loop, struct us_connecting_socket_t *s) {
     while (s) {
         struct us_connecting_socket_t *next = s->next;
-        us_internal_socket_after_resolve(0, s);
+        us_internal_socket_after_resolve(s);
         s = next;
     }
 }
@@ -308,7 +307,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             /* Both connect and listen sockets are semi-sockets
              * but they poll for different events */
             if (us_poll_events(p) == LIBUS_SOCKET_WRITABLE) {
-                us_internal_socket_after_open(0, (struct us_socket_t *) p, error || eof);
+                us_internal_socket_after_open((struct us_socket_t *) p, error || eof);
             } else {
                 struct us_listen_socket_t *listen_socket = (struct us_listen_socket_t *) p;
                 struct bsd_addr_t addr;

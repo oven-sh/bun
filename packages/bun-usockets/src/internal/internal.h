@@ -153,8 +153,8 @@ void us_internal_free_loop_ssl_data(us_loop_r loop);
 void us_internal_socket_context_link_socket(int ssl, us_socket_context_r context, us_socket_r s);
 void us_internal_socket_context_unlink_socket(int ssl, us_socket_context_r context, us_socket_r s);
 
-void us_internal_socket_after_resolve(int ssl, struct us_connecting_socket_t *s);
-void us_internal_socket_after_open(int ssl, us_socket_r s, int error);
+void us_internal_socket_after_resolve(struct us_connecting_socket_t *s);
+void us_internal_socket_after_open(us_socket_r s, int error);
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_close(us_internal_ssl_socket_r s, int code, void *reason);
 
 int us_internal_handle_dns_results(us_loop_r loop);

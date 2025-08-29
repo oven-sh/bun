@@ -604,7 +604,7 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
     return opened;
 }
 
-void us_internal_socket_after_resolve(int ssl, struct us_connecting_socket_t *c) {
+void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     // make sure to decrement the active_handles counter, no matter what
 #ifdef _WIN32
     c->context->loop->uv_loop->active_handles--;
@@ -633,7 +633,7 @@ void us_internal_socket_after_resolve(int ssl, struct us_connecting_socket_t *c)
     }
 }
 
-void us_internal_socket_after_open(int ssl, struct us_socket_t *s, int error) {
+void us_internal_socket_after_open(struct us_socket_t *s, int error) {
     struct us_connecting_socket_t *c = s->connect_state;
     #if _WIN32
     // libuv doesn't give us a way to know if a non-blockingly connected socket failed to connect
@@ -804,12 +804,9 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
     }
 
     struct us_connecting_socket_t *c = s->connect_state;
-
     struct us_socket_t *new_s = s;
-
     if (ext_size != -1) {
         struct us_poll_t *pool_ref = &s->p;
-
         new_s = (struct us_socket_t *) us_poll_resize(pool_ref, loop, sizeof(struct us_socket_t) + ext_size);
         if (c) {
             c->connecting_head = new_s;

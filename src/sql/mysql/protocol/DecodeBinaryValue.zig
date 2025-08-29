@@ -25,6 +25,17 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
             }
             return SQLDataCell{ .tag = .int4, .value = .{ .int4 = try reader.int(i16) } };
         },
+        .MYSQL_TYPE_INT24 => {
+            if (raw) {
+                var data = try reader.read(3);
+                defer data.deinit();
+                return SQLDataCell.raw(&data);
+            }
+            if (unsigned) {
+                return SQLDataCell{ .tag = .uint4, .value = .{ .uint4 = try reader.int(u24) } };
+            }
+            return SQLDataCell{ .tag = .int4, .value = .{ .int4 = try reader.int(i24) } };
+        },
         .MYSQL_TYPE_LONG => {
             if (raw) {
                 var data = try reader.read(4);

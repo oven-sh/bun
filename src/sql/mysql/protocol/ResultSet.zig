@@ -73,6 +73,15 @@ pub const Row = struct {
                     cell.* = SQLDataCell{ .tag = .int4, .value = .{ .int4 = val } };
                 }
             },
+            .MYSQL_TYPE_INT24 => {
+                if (column.flags.UNSIGNED) {
+                    const val: u24 = std.fmt.parseInt(u24, value.slice(), 10) catch 0;
+                    cell.* = SQLDataCell{ .tag = .uint4, .value = .{ .uint4 = val } };
+                } else {
+                    const val: i24 = std.fmt.parseInt(i24, value.slice(), 10) catch std.math.minInt(i24);
+                    cell.* = SQLDataCell{ .tag = .int4, .value = .{ .int4 = val } };
+                }
+            },
             .MYSQL_TYPE_LONGLONG => {
                 if (column.flags.UNSIGNED) {
                     const val: u64 = std.fmt.parseInt(u64, value.slice(), 10) catch 0;

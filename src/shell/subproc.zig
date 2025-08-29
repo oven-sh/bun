@@ -696,7 +696,7 @@ pub const ShellSubprocess = struct {
         ) void {
             const allocator = this.arena.allocator();
             this.override_env = true;
-            this.env_array.ensureTotalCapacityPrecise(allocator, env_iter.len) catch bun.outOfMemory();
+            bun.handleOom(this.env_array.ensureTotalCapacityPrecise(allocator, env_iter.len));
 
             if (disable_path_lookup_for_arv0) {
                 // If the env object does not include a $PATH, it must disable path lookup for argv[0]
@@ -707,13 +707,13 @@ pub const ShellSubprocess = struct {
                 const key = entry.key_ptr.*.slice();
                 const value = entry.value_ptr.*.slice();
 
-                var line = std.fmt.allocPrintZ(allocator, "{s}={s}", .{ key, value }) catch bun.outOfMemory();
+                var line = bun.handleOom(std.fmt.allocPrintZ(allocator, "{s}={s}", .{ key, value }));
 
                 if (bun.strings.eqlComptime(key, "PATH")) {
                     this.PATH = bun.asByteSlice(line["PATH=".len..]);
                 }
 
-                this.env_array.append(allocator, line) catch bun.outOfMemory();
+                bun.handleOom(this.env_array.append(allocator, line));
             }
         }
     };
@@ -764,8 +764,8 @@ pub const ShellSubprocess = struct {
         const is_sync = config.is_sync;
 
         if (!spawn_args.override_env and spawn_args.env_array.items.len == 0) {
-            // spawn_args.env_array.items = jsc_vm.transpiler.env.map.createNullDelimitedEnvMap(allocator) catch bun.outOfMemory();
-            spawn_args.env_array.items = event_loop.createNullDelimitedEnvMap(allocator) catch bun.outOfMemory();
+            // spawn_args.env_array.items = bun.handleOom(jsc_vm.transpiler.env.map.createNullDelimitedEnvMap(allocator));
+            spawn_args.env_array.items = bun.handleOom(event_loop.createNullDelimitedEnvMap(allocator));
             spawn_args.env_array.capacity = spawn_args.env_array.items.len;
         }
 
@@ -790,7 +790,7 @@ pub const ShellSubprocess = struct {
                 .result => |opt| opt,
                 .err => |e| {
                     return .{ .err = .{
-                        .custom = bun.default_allocator.dupe(u8, e.toStr()) catch bun.outOfMemory(),
+                        .custom = bun.handleOom(bun.default_allocator.dupe(u8, e.toStr())),
                     } };
                 },
             },
@@ -798,7 +798,7 @@ pub const ShellSubprocess = struct {
                 .result => |opt| opt,
                 .err => |e| {
                     return .{ .err = .{
-                        .custom = bun.default_allocator.dupe(u8, e.toStr()) catch bun.outOfMemory(),
+                        .custom = bun.handleOom(bun.default_allocator.dupe(u8, e.toStr())),
                     } };
                 },
             },
@@ -806,7 +806,7 @@ pub const ShellSubprocess = struct {
                 .result => |opt| opt,
                 .err => |e| {
                     return .{ .err = .{
-                        .custom = bun.default_allocator.dupe(u8, e.toStr()) catch bun.outOfMemory(),
+                        .custom = bun.handleOom(bun.default_allocator.dupe(u8, e.toStr())),
                     } };
                 },
             },
@@ -821,11 +821,11 @@ pub const ShellSubprocess = struct {
         }
 
         spawn_args.cmd_parent.args.append(null) catch {
-            return .{ .err = .{ .custom = bun.default_allocator.dupe(u8, "out of memory") catch bun.outOfMemory() } };
+            return .{ .err = .{ .custom = bun.handleOom(bun.default_allocator.dupe(u8, "out of memory")) } };
         };
 
         spawn_args.env_array.append(allocator, null) catch {
-            return .{ .err = .{ .custom = bun.default_allocator.dupe(u8, "out of memory") catch bun.outOfMemory() } };
+            return .{ .err = .{ .custom = bun.handleOom(bun.default_allocator.dupe(u8, "out of memory")) } };
         };
 
         var spawn_result = switch (bun.spawn.spawnProcess(
@@ -833,13 +833,13 @@ pub const ShellSubprocess = struct {
             @ptrCast(spawn_args.cmd_parent.args.items.ptr),
             @ptrCast(spawn_args.env_array.items.ptr),
         ) catch |err| {
-            return .{ .err = .{ .custom = std.fmt.allocPrint(bun.default_allocator, "Failed to spawn process: {s}", .{@errorName(err)}) catch bun.outOfMemory() } };
+            return .{ .err = .{ .custom = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to spawn process: {s}", .{@errorName(err)})) } };
         }) {
             .err => |err| return .{ .err = .{ .sys = err.toShellSystemError() } },
             .result => |result| result,
         };
 
-        var subprocess = event_loop.allocator().create(Subprocess) catch bun.outOfMemory();
+        var subprocess = bun.handleOom(event_loop.allocator().create(Subprocess));
         out_subproc.* = subprocess;
         subprocess.* = Subprocess{
             .event_loop = event_loop,
@@ -847,7 +847,17 @@ pub const ShellSubprocess = struct {
                 event_loop,
                 is_sync,
             ),
-            .stdin = Subprocess.Writable.init(spawn_args.stdio[0], event_loop, subprocess, spawn_result.stdin) catch bun.outOfMemory(),
+            .stdin = Subprocess.Writable.init(
+                spawn_args.stdio[0],
+                event_loop,
+                subprocess,
+                spawn_result.stdin,
+            ) catch |err| switch (err) {
+                error.UnexpectedCreatingStdin => std.debug.panic(
+                    "unexpected error while creating stdin",
+                    .{},
+                ),
+            },
 
             .stdout = Subprocess.Readable.init(.stdout, spawn_args.stdio[1], shellio.stdout, event_loop, subprocess, spawn_result.stdout, event_loop.allocator(), ShellSubprocess.default_max_buffer_size, true),
             .stderr = Subprocess.Readable.init(.stderr, spawn_args.stdio[2], shellio.stderr, event_loop, subprocess, spawn_result.stderr, event_loop.allocator(), ShellSubprocess.default_max_buffer_size, true),
@@ -975,7 +985,7 @@ pub const PipeReader = struct {
         pub fn append(this: *BufferedOutput, bytes: []const u8) void {
             switch (this.*) {
                 .bytelist => {
-                    this.bytelist.append(bun.default_allocator, bytes) catch bun.outOfMemory();
+                    bun.handleOom(this.bytelist.append(bun.default_allocator, bytes));
                 },
                 .array_buffer => {
                     const array_buf_slice = this.array_buffer.buf.slice();

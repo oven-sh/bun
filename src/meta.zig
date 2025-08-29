@@ -338,7 +338,9 @@ pub fn SliceChild(comptime T: type) type {
 }
 
 /// userland implementation of https://github.com/ziglang/zig/issues/21879
-pub fn VoidFieldTypes(comptime T: type) type {
+pub fn useAllFields(comptime T: type, _: VoidFields(T)) void {}
+
+fn VoidFields(comptime T: type) type {
     const fields = @typeInfo(T).@"struct".fields;
     var new_fields = fields[0..fields.len].*;
     for (&new_fields) |*field| {

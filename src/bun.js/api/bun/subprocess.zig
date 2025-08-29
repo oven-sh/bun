@@ -984,8 +984,7 @@ pub fn spawnMaybeSync(
         if (comptime !Environment.isWindows) {
             // Since the event loop is recursively called, we need to check if it's safe to recurse.
             if (!bun.StackCheck.init().isSafeToRecurse()) {
-                globalThis.throwStackOverflow();
-                return error.JSError;
+                return globalThis.throwStackOverflow();
             }
         }
     }
@@ -1746,7 +1745,7 @@ pub fn spawnMaybeSync(
 
 fn throwCommandNotFound(globalThis: *jsc.JSGlobalObject, command: []const u8) bun.JSError {
     const err = jsc.SystemError{
-        .message = bun.String.createFormat("Executable not found in $PATH: \"{s}\"", .{command}) catch bun.outOfMemory(),
+        .message = bun.handleOom(bun.String.createFormat("Executable not found in $PATH: \"{s}\"", .{command})),
         .code = bun.String.static("ENOENT"),
         .errno = -bun.sys.UV_E.NOENT,
         .path = bun.String.cloneUTF8(command),

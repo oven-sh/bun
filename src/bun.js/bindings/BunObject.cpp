@@ -40,6 +40,7 @@
 #include "BunObjectModule.h"
 #include "JSCookie.h"
 #include "JSCookieMap.h"
+#include "Secrets.h"
 
 #ifdef WIN32
 #include <ws2def.h>
@@ -90,6 +91,7 @@ static JSValue BunObject_lazyPropCb_wrap_ArrayBufferSink(VM& vm, JSObject* bunOb
 
 static JSValue constructCookieObject(VM& vm, JSObject* bunObject);
 static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject);
+static JSValue constructSecretsObject(VM& vm, JSObject* bunObject);
 
 static JSValue constructEnvObject(VM& vm, JSObject* object)
 {
@@ -720,6 +722,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     SHA512                                         BunObject_lazyPropCb_wrap_SHA512                                    DontDelete|PropertyCallback
     SHA512_256                                     BunObject_lazyPropCb_wrap_SHA512_256                                DontDelete|PropertyCallback
     TOML                                           BunObject_lazyPropCb_wrap_TOML                                      DontDelete|PropertyCallback
+    YAML                                           BunObject_lazyPropCb_wrap_YAML                                      DontDelete|PropertyCallback
     Transpiler                                     BunObject_lazyPropCb_wrap_Transpiler                                DontDelete|PropertyCallback
     embeddedFiles                                  BunObject_lazyPropCb_wrap_embeddedFiles                             DontDelete|PropertyCallback
     S3Client                                       BunObject_lazyPropCb_wrap_S3Client                                  DontDelete|PropertyCallback
@@ -798,6 +801,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     which                                          BunObject_callback_which                                            DontDelete|Function 1
     RedisClient                                    BunObject_lazyPropCb_wrap_ValkeyClient                              DontDelete|PropertyCallback
     redis                                          BunObject_lazyPropCb_wrap_valkey                                    DontDelete|PropertyCallback
+    secrets                                        constructSecretsObject                                              DontDelete|PropertyCallback
     write                                          BunObject_callback_write                                            DontDelete|Function 1
     zstdCompressSync                               BunObject_callback_zstdCompressSync                                DontDelete|Function 1
     zstdDecompressSync                             BunObject_callback_zstdDecompressSync                              DontDelete|Function 1
@@ -893,6 +897,12 @@ static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject)
 {
     auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
     return WebCore::JSCookieMap::getConstructor(vm, zigGlobalObject);
+}
+
+static JSValue constructSecretsObject(VM& vm, JSObject* bunObject)
+{
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    return Bun::createSecretsObject(vm, zigGlobalObject);
 }
 
 JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)

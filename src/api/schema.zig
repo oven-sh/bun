@@ -322,22 +322,26 @@ pub const FileWriter = Writer(std.fs.File);
 
 pub const api = struct {
     pub const Loader = enum(u8) {
-        _none,
-        jsx,
-        js,
-        ts,
-        tsx,
-        css,
-        file,
-        json,
-        toml,
-        wasm,
-        napi,
-        base64,
-        dataurl,
-        text,
-        sqlite,
-        html,
+        _none = 255,
+        jsx = 1,
+        js = 2,
+        ts = 3,
+        tsx = 4,
+        css = 5,
+        file = 6,
+        json = 7,
+        jsonc = 8,
+        toml = 9,
+        wasm = 10,
+        napi = 11,
+        base64 = 12,
+        dataurl = 13,
+        text = 14,
+        bunsh = 15,
+        sqlite = 16,
+        sqlite_embedded = 17,
+        html = 18,
+        yaml = 19,
         _,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {
@@ -2816,7 +2820,7 @@ pub const api = struct {
         token: []const u8,
 
         pub fn dupe(this: NpmRegistry, allocator: std.mem.Allocator) NpmRegistry {
-            const buf = allocator.alloc(u8, this.url.len + this.username.len + this.password.len + this.token.len) catch bun.outOfMemory();
+            const buf = bun.handleOom(allocator.alloc(u8, this.url.len + this.username.len + this.password.len + this.token.len));
 
             var out: NpmRegistry = .{
                 .url = "",
@@ -3040,6 +3044,8 @@ pub const api = struct {
         link_workspace_packages: ?bool = null,
 
         node_linker: ?bun.install.PackageManager.Options.NodeLinker = null,
+
+        security_scanner: ?[]const u8 = null,
 
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);

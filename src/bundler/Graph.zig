@@ -2,12 +2,11 @@ const Graph = @This();
 
 pool: *ThreadPool,
 heap: ThreadLocalArena,
-/// This allocator is thread-local to the Bundler thread
-/// .allocator == .heap.allocator()
-allocator: std.mem.Allocator,
 
 /// Mapping user-specified entry points to their Source Index
 entry_points: std.ArrayListUnmanaged(Index) = .{},
+/// Maps entry point source indices to their original specifiers (for virtual entries resolved by plugins)
+entry_point_original_names: IndexStringMap = .{},
 /// Every source index has an associated InputFile
 input_files: MultiArrayList(InputFile) = .{},
 /// Every source index has an associated Ast
@@ -104,6 +103,7 @@ pub const Index = bun.ast.Index;
 
 const string = []const u8;
 
+const IndexStringMap = @import("./IndexStringMap.zig");
 const Logger = @import("../logger.zig");
 const _resolver = @import("../resolver/resolver.zig");
 const std = @import("std");
@@ -113,10 +113,7 @@ const Loader = options.Loader;
 
 const bun = @import("bun");
 const MultiArrayList = bun.MultiArrayList;
-const default_allocator = bun.default_allocator;
 const BabyList = bun.collections.BabyList;
-
-const allocators = bun.allocators;
 const ThreadLocalArena = bun.allocators.MimallocArena;
 
 const js_ast = bun.ast;

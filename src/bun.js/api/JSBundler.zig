@@ -46,6 +46,10 @@ pub const JSBundler = struct {
             windows_hide_console: bool = false,
             windows_icon_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             windows_title: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            windows_publisher: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            windows_version: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            windows_description: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            windows_copyright: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             outfile: OwnedString = OwnedString.initEmpty(bun.default_allocator),
 
             pub fn fromJS(globalThis: *jsc.JSGlobalObject, config: jsc.JSValue, allocator: std.mem.Allocator, compile_target: ?CompileTarget) JSError!?CompileOptions {
@@ -54,6 +58,10 @@ pub const JSBundler = struct {
                     .executable_path = OwnedString.initEmpty(allocator),
                     .windows_icon_path = OwnedString.initEmpty(allocator),
                     .windows_title = OwnedString.initEmpty(allocator),
+                    .windows_publisher = OwnedString.initEmpty(allocator),
+                    .windows_version = OwnedString.initEmpty(allocator),
+                    .windows_description = OwnedString.initEmpty(allocator),
+                    .windows_copyright = OwnedString.initEmpty(allocator),
                     .outfile = OwnedString.initEmpty(allocator),
                     .compile_target = compile_target orelse .{},
                 };
@@ -131,6 +139,30 @@ pub const JSBundler = struct {
                         defer slice.deinit();
                         try this.windows_title.appendSliceExact(slice.slice());
                     }
+
+                    if (try windows.getOwn(globalThis, "publisher")) |windows_publisher| {
+                        var slice = try windows_publisher.toSlice(globalThis, bun.default_allocator);
+                        defer slice.deinit();
+                        try this.windows_publisher.appendSliceExact(slice.slice());
+                    }
+
+                    if (try windows.getOwn(globalThis, "version")) |windows_version| {
+                        var slice = try windows_version.toSlice(globalThis, bun.default_allocator);
+                        defer slice.deinit();
+                        try this.windows_version.appendSliceExact(slice.slice());
+                    }
+
+                    if (try windows.getOwn(globalThis, "description")) |windows_description| {
+                        var slice = try windows_description.toSlice(globalThis, bun.default_allocator);
+                        defer slice.deinit();
+                        try this.windows_description.appendSliceExact(slice.slice());
+                    }
+
+                    if (try windows.getOwn(globalThis, "copyright")) |windows_copyright| {
+                        var slice = try windows_copyright.toSlice(globalThis, bun.default_allocator);
+                        defer slice.deinit();
+                        try this.windows_copyright.appendSliceExact(slice.slice());
+                    }
                 }
 
                 if (try object.getOwn(globalThis, "outfile")) |outfile| {
@@ -147,6 +179,10 @@ pub const JSBundler = struct {
                 this.executable_path.deinit();
                 this.windows_icon_path.deinit();
                 this.windows_title.deinit();
+                this.windows_publisher.deinit();
+                this.windows_version.deinit();
+                this.windows_description.deinit();
+                this.windows_copyright.deinit();
                 this.outfile.deinit();
             }
         };
@@ -176,6 +212,15 @@ pub const JSBundler = struct {
                 if (strings.hasPrefixComptime(slice.slice(), "bun-")) {
                     this.compile = .{
                         .compile_target = try CompileTarget.fromSlice(globalThis, slice.slice()),
+                        .exec_argv = OwnedString.initEmpty(allocator),
+                        .executable_path = OwnedString.initEmpty(allocator),
+                        .windows_icon_path = OwnedString.initEmpty(allocator),
+                        .windows_title = OwnedString.initEmpty(allocator),
+                        .windows_publisher = OwnedString.initEmpty(allocator),
+                        .windows_version = OwnedString.initEmpty(allocator),
+                        .windows_description = OwnedString.initEmpty(allocator),
+                        .windows_copyright = OwnedString.initEmpty(allocator),
+                        .outfile = OwnedString.initEmpty(allocator),
                     };
                     this.target = .bun;
                     did_set_target = true;
@@ -1039,6 +1084,27 @@ pub const JSBundler = struct {
         }
 
         extern fn JSBundlerPlugin__tombstone(*Plugin) void;
+        extern fn JSBundlerPlugin__runOnEndCallbacks(*Plugin, jsc.JSValue, jsc.JSValue, jsc.JSValue) jsc.JSValue;
+
+        pub fn runOnEndCallbacks(this: *Plugin, globalThis: *jsc.JSGlobalObject, build_promise: *jsc.JSPromise, build_result: jsc.JSValue, rejection: jsc.JSValue) JSError!jsc.JSValue {
+            jsc.markBinding(@src());
+
+            var scope: jsc.CatchScope = undefined;
+            scope.init(globalThis, @src());
+            defer scope.deinit();
+
+            const value = JSBundlerPlugin__runOnEndCallbacks(
+                this,
+                build_promise.asValue(globalThis),
+                build_result,
+                rejection,
+            );
+
+            try scope.returnIfException();
+
+            return value;
+        }
+
         pub fn deinit(this: *Plugin) void {
             jsc.markBinding(@src());
             JSBundlerPlugin__tombstone(this);
@@ -1197,7 +1263,13 @@ pub const JSBundler = struct {
                             plugin.globalObject(),
                             resolve.import_record.source_file,
                             exception,
-                        ) catch bun.outOfMemory(),
+                        ) catch |err| switch (err) {
+                            error.OutOfMemory => bun.outOfMemory(),
+                            error.JSError => {
+                                plugin.globalObject().reportActiveExceptionAsUnhandled(err);
+                                return;
+                            },
+                        },
                     };
                     resolve.bv2.onResolveAsync(resolve);
                 },
@@ -1209,7 +1281,13 @@ pub const JSBundler = struct {
                             plugin.globalObject(),
                             load.path,
                             exception,
-                        ) catch bun.outOfMemory(),
+                        ) catch |err| switch (err) {
+                            error.OutOfMemory => bun.outOfMemory(),
+                            error.JSError => {
+                                plugin.globalObject().reportActiveExceptionAsUnhandled(err);
+                                return;
+                            },
+                        },
                     };
                     load.bv2.onLoadAsync(load);
                 },

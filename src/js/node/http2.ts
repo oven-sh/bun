@@ -51,7 +51,7 @@ type Http2ConnectOptions = {
 const TLSSocket = tls.TLSSocket;
 const Socket = net.Socket;
 const EventEmitter = require("node:events");
-const { Duplex } = require("node:stream");
+const { Duplex } = Stream;
 
 const { SafeArrayIterator, SafeSet } = require("internal/primordials");
 
@@ -470,8 +470,8 @@ class Http2ServerResponse extends Stream {
       sendDate: true,
       statusCode: HTTP_STATUS_OK,
     };
-    this[kHeaders] = { __proto__: null };
-    this[kTrailers] = { __proto__: null };
+    this[kHeaders] = Object.create(null);
+    this[kTrailers] = Object.create(null);
     this[kStream] = stream;
     stream[kResponse] = this;
     this.writable = true;
@@ -581,7 +581,7 @@ class Http2ServerResponse extends Stream {
   }
 
   getHeaders() {
-    const headers = { __proto__: null };
+    const headers = Object.create(null);
     return ObjectAssign(headers, this[kHeaders]);
   }
 
@@ -869,7 +869,7 @@ class Http2ServerResponse extends Stream {
 
   writeEarlyHints(hints) {
     validateObject(hints, "hints");
-    const headers = { __proto__: null };
+    const headers = Object.create(null);
     const linkHeaderValue = validateLinkHeaderValue(hints.link);
     for (const key of ObjectKeys(hints)) {
       if (key !== "link") {

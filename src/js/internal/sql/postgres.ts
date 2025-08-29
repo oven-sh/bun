@@ -1,13 +1,12 @@
+import type { PostgresErrorOptions } from "internal/sql/errors";
 import type { Query } from "./query";
 import type { DatabaseAdapter, SQLHelper, SQLResultArray, SSLMode } from "./shared";
-
 const { SQLHelper, SSLMode, SQLResultArray } = require("internal/sql/shared");
 const {
   Query,
   SQLQueryFlags,
   symbols: { _strings, _values, _flags, _results, _handle },
 } = require("internal/sql/query");
-const { escapeIdentifier, connectionClosedError } = require("internal/sql/utils");
 const { PostgresError } = require("internal/sql/errors");
 
 const {
@@ -17,6 +16,13 @@ const {
 } = $zig("postgres.zig", "createBinding") as PostgresDotZig;
 
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
+
+function wrapPostgresError(error: Error | PostgresErrorOptions) {
+  if (Error.isError(error)) {
+    return error;
+  }
+  return new PostgresError(error.message, error);
+}
 
 initPostgres(
   function onResolvePostgresQuery(query, result, commandTag, count, queries, is_last) {
@@ -85,7 +91,12 @@ initPostgres(
     } catch {}
   },
 
-  function onRejectPostgresQuery(query: Query<any, any>, reject: Error, queries: Query<any, any>[]) {
+  function onRejectPostgresQuery(
+    query: Query<any, any>,
+    reject: Error | PostgresErrorOptions,
+    queries: Query<any, any>[],
+  ) {
+    reject = wrapPostgresError(reject);
     if (queries) {
       const queriesIndex = queries.indexOf(query);
       if (queriesIndex !== -1) {
@@ -94,7 +105,7 @@ initPostgres(
     }
 
     try {
-      query.reject(reject);
+      query.reject(reject as Error);
     } catch {}
   },
 );
@@ -356,6 +367,9 @@ class PooledPostgresConnection {
   queryCount: number = 0;
 
   #onConnected(err, _) {
+    if (err) {
+      err = wrapPostgresError(err);
+    }
     const connectionInfo = this.connectionInfo;
     if (connectionInfo?.onconnect) {
       connectionInfo.onconnect(err);
@@ -384,6 +398,9 @@ class PooledPostgresConnection {
   }
 
   #onClose(err) {
+    if (err) {
+      err = wrapPostgresError(err);
+    }
     const connectionInfo = this.connectionInfo;
     if (connectionInfo?.onclose) {
       connectionInfo.onclose(err);
@@ -514,6 +531,30 @@ export class PostgresAdapter
     this.readyConnections = new Set();
   }
 
+  escapeIdentifier(str: string) {
+    return '"' + str.replaceAll('"', '""').replaceAll(".", '"."') + '"';
+  }
+
+  connectionClosedError() {
+    return new PostgresError("Connection closed", {
+      code: "ERR_POSTGRES_CONNECTION_CLOSED",
+    });
+  }
+  notTaggedCallError() {
+    return new PostgresError("Query not called as a tagged template literal", {
+      code: "ERR_POSTGRES_NOT_TAGGED_CALL",
+    });
+  }
+  queryCancelledError(): Error {
+    return new PostgresError("Query cancelled", {
+      code: "ERR_POSTGRES_QUERY_CANCELLED",
+    });
+  }
+  invalidTransactionStateError(message: string) {
+    return new PostgresError(message, {
+      code: "ERR_POSTGRES_INVALID_TRANSACTION_STATE",
+    });
+  }
   supportsReservedConnections() {
     return true;
   }
@@ -766,12 +807,12 @@ export class PostgresAdapter
   async #close() {
     let pending;
     while ((pending = this.waitingQueue.shift())) {
-      pending(connectionClosedError(), null);
+      pending(this.connectionClosedError(), null);
     }
     while (this.reservedQueue.length > 0) {
       const pendingReserved = this.reservedQueue.shift();
       if (pendingReserved) {
-        pendingReserved(connectionClosedError(), null);
+        pendingReserved(this.connectionClosedError(), null);
       }
     }
 
@@ -871,7 +912,7 @@ export class PostgresAdapter
    */
   connect(onConnected: (err: Error | null, result: any) => void, reserved: boolean = false) {
     if (this.closed) {
-      return onConnected(connectionClosedError(), null);
+      return onConnected(this.connectionClosedError(), null);
     }
 
     if (this.readyConnections.size === 0) {
@@ -920,7 +961,7 @@ export class PostgresAdapter
           }
         } else if (!retry_in_progress) {
           // impossible to connect or retry
-          onConnected(storedError ?? connectionClosedError(), null);
+          onConnected(storedError ?? this.connectionClosedError(), null);
         }
         return;
       }
@@ -1035,7 +1076,7 @@ export class PostgresAdapter
 
               query += "(";
               for (let j = 0; j < columnCount; j++) {
-                query += escapeIdentifier(columns[j]);
+                query += this.escapeIdentifier(columns[j]);
                 if (j < lastColumnIndex) {
                   query += ", ";
                 }
@@ -1135,7 +1176,7 @@ export class PostgresAdapter
               for (let i = 0; i < columnCount; i++) {
                 const column = columns[i];
                 const columnValue = item[column];
-                query += `${escapeIdentifier(column)} = $${binding_idx++}${i < lastColumnIndex ? ", " : ""}`;
+                query += `${this.escapeIdentifier(column)} = $${binding_idx++}${i < lastColumnIndex ? ", " : ""}`;
                 if (typeof columnValue === "undefined") {
                   binding_values.push(null);
                 } else {

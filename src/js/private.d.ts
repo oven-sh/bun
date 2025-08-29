@@ -31,7 +31,9 @@ declare module "bun" {
       query: string;
     };
 
-    type DefinedOptions = DefinedSQLiteOptions | DefinedPostgresOptions;
+    type DefinedMySQLOptions = DefinedPostgresOptions;
+
+    type DefinedOptions = DefinedSQLiteOptions | DefinedPostgresOptions | DefinedMySQLOptions;
   }
 }
 

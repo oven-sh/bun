@@ -3,8 +3,9 @@ pub const JSGlobalObject = opaque {
         return this.bunVM().allocator;
     }
     extern fn JSGlobalObject__throwStackOverflow(this: *JSGlobalObject) void;
-    pub fn throwStackOverflow(this: *JSGlobalObject) void {
+    pub fn throwStackOverflow(this: *JSGlobalObject) bun.JSError {
         JSGlobalObject__throwStackOverflow(this);
+        return error.JSError;
     }
     extern fn JSGlobalObject__throwOutOfMemoryError(this: *JSGlobalObject) void;
     pub fn throwOutOfMemory(this: *JSGlobalObject) bun.JSError {
@@ -20,6 +21,10 @@ pub const JSGlobalObject = opaque {
     pub fn throwOutOfMemoryValue(this: *JSGlobalObject) JSValue {
         JSGlobalObject__throwOutOfMemoryError(this);
         return .zero;
+    }
+    pub fn gregorianDateTimeToMS(this: *jsc.JSGlobalObject, year: i32, month: i32, day: i32, hour: i32, minute: i32, second: i32, millisecond: i32) bun.JSError!f64 {
+        jsc.markBinding(@src());
+        return bun.cpp.Bun__gregorianDateTimeToMS(this, year, month, day, hour, minute, second, millisecond);
     }
 
     pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) bun.JSError {
@@ -666,6 +671,40 @@ pub const JSGlobalObject = opaque {
         field_name: []const u8 = "",
         always_allow_zero: bool = false,
     };
+
+    pub fn validateBigIntRange(this: *JSGlobalObject, value: JSValue, comptime T: type, default: T, comptime range: IntegerRange) bun.JSError!T {
+        if (value.isUndefined() or value == .zero) {
+            return 0;
+        }
+
+        const TypeInfo = @typeInfo(T);
+        if (TypeInfo != .int) {
+            @compileError("T must be an integer type");
+        }
+        const signed = TypeInfo.int.signedness == .signed;
+
+        const min_t = comptime @max(range.min, std.math.minInt(T));
+        const max_t = comptime @min(range.max, std.math.maxInt(T));
+        if (value.isBigInt()) {
+            if (signed) {
+                if (value.isBigIntInInt64Range(min_t, max_t)) {
+                    return value.toInt64();
+                }
+            } else {
+                if (value.isBigIntInUInt64Range(min_t, max_t)) {
+                    return value.toUInt64NoTruncate();
+                }
+            }
+            return this.ERR(.OUT_OF_RANGE, "The value is out of range. It must be >= {d} and <= {d}.", .{ min_t, max_t }).throw();
+        }
+
+        return try this.validateIntegerRange(value, T, default, .{
+            .min = comptime @max(min_t, jsc.MIN_SAFE_INTEGER),
+            .max = comptime @min(max_t, jsc.MAX_SAFE_INTEGER),
+            .field_name = range.field_name,
+            .always_allow_zero = range.always_allow_zero,
+        });
+    }
 
     pub fn validateIntegerRange(this: *JSGlobalObject, value: JSValue, comptime T: type, default: T, comptime range: IntegerRange) bun.JSError!T {
         if (value.isUndefined() or value == .zero) {

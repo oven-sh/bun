@@ -336,7 +336,7 @@ pub const BunxCommand = struct {
         var opts = try Options.parse(ctx, argv);
         defer opts.deinit();
 
-        var requests_buf = UpdateRequest.Array.initCapacity(ctx.allocator, 64) catch bun.outOfMemory();
+        var requests_buf = bun.handleOom(UpdateRequest.Array.initCapacity(ctx.allocator, 64));
         defer requests_buf.deinit(ctx.allocator);
         const update_requests = UpdateRequest.parse(
             ctx.allocator,
@@ -743,7 +743,7 @@ pub const BunxCommand = struct {
         const argv_to_use = args.slice();
 
         debug("installing package: {s}", .{bun.fmt.fmtSlice(argv_to_use, " ")});
-        this_transpiler.env.map.put("BUN_INTERNAL_BUNX_INSTALL", "true") catch bun.outOfMemory();
+        bun.handleOom(this_transpiler.env.map.put("BUN_INTERNAL_BUNX_INSTALL", "true"));
 
         const spawn_result = switch ((bun.spawnSync(&.{
             .argv = argv_to_use,
@@ -772,6 +772,10 @@ pub const BunxCommand = struct {
         switch (spawn_result.status) {
             .exited => |exit| {
                 if (exit.signal.valid()) {
+                    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                        bun.crash_handler.suppressReporting();
+                    }
+
                     Global.raiseIgnoringPanicHandler(exit.signal);
                 }
 
@@ -780,6 +784,10 @@ pub const BunxCommand = struct {
                 }
             },
             .signaled => |signal| {
+                if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                    bun.crash_handler.suppressReporting();
+                }
+
                 Global.raiseIgnoringPanicHandler(signal);
             },
             .err => |err| {

@@ -176,7 +176,7 @@ pub fn installHoistedPackages(
                 .tree_ids_to_trees_the_id_depends_on = tree_ids_to_trees_the_id_depends_on,
                 .completed_trees = completed_trees,
                 .trees = trees: {
-                    const trees = this.allocator.alloc(TreeContext, this.lockfile.buffers.trees.items.len) catch bun.outOfMemory();
+                    const trees = bun.handleOom(this.allocator.alloc(TreeContext, this.lockfile.buffers.trees.items.len));
                     for (0..this.lockfile.buffers.trees.items.len) |i| {
                         trees[i] = .{
                             .binaries = Bin.PriorityQueue.init(this.allocator, .{

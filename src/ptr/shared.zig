@@ -186,11 +186,11 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         /// Converts a `Shared(*T)` into a non-null `Shared(?*T)`.
         ///
         /// This method invalidates `self`.
-        pub const intoOptional = if (!info.isOptional()) struct {
-            pub fn intoOptional(self: Self) SharedOptional {
+        pub const toOptional = if (!info.isOptional()) struct {
+            pub fn toOptional(self: Self) SharedOptional {
                 return .{ .unsafe_pointer = self.unsafe_pointer };
             }
-        }.intoOptional;
+        }.toOptional;
 
         const Count = if (info.isOptional()) ?usize else usize;
 

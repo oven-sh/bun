@@ -216,7 +216,7 @@ pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) vo
     if (this.next_immediate_tasks.capacity > 0) {
         // this would only occur if we were recursively running tickImmediateTasks.
         @branchHint(.unlikely);
-        this.immediate_tasks.appendSlice(bun.default_allocator, this.next_immediate_tasks.items) catch bun.outOfMemory();
+        bun.handleOom(this.immediate_tasks.appendSlice(bun.default_allocator, this.next_immediate_tasks.items));
         this.next_immediate_tasks.deinit(bun.default_allocator);
     }
 
@@ -529,7 +529,7 @@ pub fn enqueueTask(this: *EventLoop, task: Task) void {
 }
 
 pub fn enqueueImmediateTask(this: *EventLoop, task: *Timer.ImmediateObject) void {
-    this.immediate_tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
+    bun.handleOom(this.immediate_tasks.append(bun.default_allocator, task));
 }
 
 pub fn ensureWaker(this: *EventLoop) void {

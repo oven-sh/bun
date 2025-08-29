@@ -40,7 +40,7 @@ void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
         us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_cb, LIBUS_TIMEOUT_GRANULARITY * 1000, LIBUS_TIMEOUT_GRANULARITY * 1000);
         Bun__internal_ensureDateHeaderTimerIsEnabled(loop);
     }
-    
+
 }
 
 void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
@@ -183,7 +183,7 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
         if (s->next) s->next->prev = 0;
         s->next = 0;
 
-        us_internal_socket_context_link_socket(s->context, s);
+        us_internal_socket_context_link_socket(0, s->context, s);
         us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
 
         s->flags.low_prio_state = 2;
@@ -213,7 +213,7 @@ void us_internal_dns_callback_threadsafe(struct us_connecting_socket_t *c, void*
 void us_internal_drain_pending_dns_resolve(struct us_loop_t *loop, struct us_connecting_socket_t *s) {
     while (s) {
         struct us_connecting_socket_t *next = s->next;
-        us_internal_socket_after_resolve(s);
+        us_internal_socket_after_resolve(0, s);
         s = next;
     }
 }
@@ -308,7 +308,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             /* Both connect and listen sockets are semi-sockets
              * but they poll for different events */
             if (us_poll_events(p) == LIBUS_SOCKET_WRITABLE) {
-                us_internal_socket_after_open((struct us_socket_t *) p, error || eof);
+                us_internal_socket_after_open(0, (struct us_socket_t *) p, error || eof);
             } else {
                 struct us_listen_socket_t *listen_socket = (struct us_listen_socket_t *) p;
                 struct bsd_addr_t addr;
@@ -340,7 +340,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
 
-                        us_internal_socket_context_link_socket(listen_socket->s.context, s);
+                        us_internal_socket_context_link_socket(0, listen_socket->s.context, s);
 
                         listen_socket->s.context->on_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
 
@@ -364,7 +364,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 /* Note: if we failed a write as a socket of one loop then adopted
                  * to another loop, this will be wrong. Absurd case though */
                 loop->data.last_write_failed = 0;
-                
+
                 s = s->context->on_writable(s);
 
                 if (!s || us_socket_is_closed(0, s)) {

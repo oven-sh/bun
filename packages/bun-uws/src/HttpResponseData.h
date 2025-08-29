@@ -22,10 +22,14 @@
 #include "HttpParser.h"
 #include "AsyncSocketData.h"
 #include "ProxyParser.h"
+#include "HttpContext.h"
 
 #include "MoveOnlyFunction.h"
 
 namespace uWS {
+
+template <bool SSL>
+struct HttpContext;
 
 template <bool SSL>
 struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
@@ -38,7 +42,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     using OnDataCallback = void (*)(uWS::HttpResponse<SSL>* response, const char* chunk, size_t chunk_length, bool, void*);
 
     /* When we are done with a response we mark it like so */
-    void markDone() {
+    void markDone(uWS::HttpResponse<SSL> *uwsRes) {
         onAborted = nullptr;
         /* Also remove onWritable so that we do not emit when draining behind the scenes. */
         onWritable = nullptr;
@@ -50,6 +54,12 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         /* We are done with this request */
         this->state &= ~HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
+
+        uWS::HttpContextData<SSL> *httpContextData = uWS::HttpContext<SSL>::getSocketContextDataS((us_socket_t *) uwsRes);
+        httpContextData->flags.isIdle = true;
+        if (httpContextData->flags.shouldCloseOnceIdle) {
+            ((uWS::AsyncSocket<SSL> *) uwsRes)->close();
+        }
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */

@@ -34,6 +34,8 @@ struct HttpFlags {
     bool requireHostHeader: 1 = true;
     bool isAuthorized: 1 = false;
     bool useStrictMethodValidation: 1 = false;
+    bool isIdle: 1 = true;
+    bool shouldCloseOnceIdle: 1 = false;
 };
 
 template <bool SSL>
@@ -63,7 +65,6 @@ private:
     OnSocketClosedCallback onSocketClosed = nullptr;
     OnClientErrorCallback onClientError = nullptr;
 
-    HttpFlags flags;
     uint64_t maxHeaderSize = 0; // 0 means no limit
 
     // TODO: SNI
@@ -73,10 +74,8 @@ private:
         filterHandlers.clear();
     }
 
-    public:
-    bool isAuthorized() const {
-        return flags.isAuthorized;
-    }
+public:
+    HttpFlags flags;
 };
 
 }

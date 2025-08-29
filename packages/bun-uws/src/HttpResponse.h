@@ -132,7 +132,7 @@ public:
 
             /* Terminating 0 chunk */
             Super::write("0\r\n\r\n", 5);
-            httpResponseData->markDone();
+            httpResponseData->markDone(this);
 
             /* We need to check if we should close this socket here now */
             if (!Super::isCorked()) {
@@ -198,7 +198,7 @@ public:
 
             /* Remove onAborted function if we reach the end */
             if (httpResponseData->offset == totalSize) {
-                httpResponseData->markDone();
+                httpResponseData->markDone(this);
 
                 /* We need to check if we should close this socket here now */
                 if (!Super::isCorked()) {

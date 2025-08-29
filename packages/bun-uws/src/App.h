@@ -300,6 +300,17 @@ public:
 
     /** Closes all connections connected to this server which are not sending a request or waiting for a response. Does not close the listen socket. */
     TemplatedApp &&closeIdle() {
+        auto context = (struct us_socket_context_t *)this->httpContext;
+        struct us_socket_t *s = context->head_sockets;
+        while (s) {
+            HttpContextData<SSL> *httpContextData = HttpContext<SSL>::getSocketContextDataS(s);
+            httpContextData->flags.shouldCloseOnceIdle = true;
+            struct us_socket_t *next = s->next;
+            if (httpContextData->flags.isIdle) {
+                us_socket_close(SSL, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+            }
+            s = next;
+        }
         return std::move(*this);
     }
 

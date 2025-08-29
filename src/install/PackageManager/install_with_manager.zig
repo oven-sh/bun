@@ -596,6 +596,10 @@ pub fn installWithManager(
                         Global.exit(1);
                     }
                 }
+                
+                // Re-enable tarball downloads after security scan passes
+                // The scan has completed, so it's now safe to download packages for installation
+                manager.options.do.prefetch_resolved_tarballs = true;
             }
         }
     }

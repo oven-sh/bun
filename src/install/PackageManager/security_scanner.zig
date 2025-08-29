@@ -65,6 +65,13 @@ pub fn doPartialInstallOfSecurityScanner(
 
     const packages_to_install: ?[]const PackageID = &[_]PackageID{security_scanner_pkg_id};
 
+    // Temporarily enable prefetch for the security scanner partial install
+    // We need to download the scanner package, but we don't want to prefetch
+    // other packages when the scanner is enabled for security reasons
+    const saved_prefetch = manager.options.do.prefetch_resolved_tarballs;
+    manager.options.do.prefetch_resolved_tarballs = true;
+    defer manager.options.do.prefetch_resolved_tarballs = saved_prefetch;
+
     const summary = switch (manager.options.node_linker) {
         .hoisted,
         // TODO

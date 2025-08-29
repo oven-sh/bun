@@ -578,6 +578,8 @@ fn attemptSecurityScan(manager: *PackageManager, security_scanner: []const u8, s
 fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []const u8, scan_all: bool, command_ctx: bun.cli.Command.Context, original_cwd: []const u8, is_retry: bool) !ScanAttemptResult {
     if (manager.options.log_level == .verbose) {
         Output.prettyErrorln("<d>[SecurityProvider]<r> Running at '{s}'", .{security_scanner});
+        Output.prettyErrorln("<d>[SecurityProvider]<r> top_level_dir: '{s}'", .{FileSystem.instance.top_level_dir});
+        Output.prettyErrorln("<d>[SecurityProvider]<r> original_cwd: '{s}'", .{original_cwd});
     }
     const start_time = std.time.milliTimestamp();
 
@@ -614,6 +616,10 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
         try code.appendSlice(security_scanner);
         try code.appendSlice(temp_source[index + scanner_placeholder.len ..]);
         temp_source = code.items;
+    }
+    
+    if (manager.options.log_level == .verbose) {
+        Output.prettyErrorln("<d>[SecurityProvider]<r> Scanner module path in subprocess: '{s}'", .{security_scanner});
     }
 
     const packages_placeholder = "__PACKAGES_JSON__";
@@ -710,11 +716,15 @@ pub const SecurityScanSubprocess = struct {
             this.manager.allocator.free(bun.span(argv[3].?));
         }
 
+        const spawn_cwd = FileSystem.instance.top_level_dir;
+        if (bun.Environment.isDebug) {
+            bun.Output.debugWarn("Scanner subprocess cwd: {s}", .{spawn_cwd});
+        }
         const spawn_options = bun.spawn.SpawnOptions{
             .stdout = .inherit,
             .stderr = .inherit,
             .stdin = .inherit,
-            .cwd = FileSystem.instance.top_level_dir,
+            .cwd = spawn_cwd,
             .extra_fds = &.{.{ .pipe = pipe_fds[1] }},
             .windows = if (Environment.isWindows) .{
                 .loop = jsc.EventLoopHandle.init(&this.manager.event_loop),

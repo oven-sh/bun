@@ -435,7 +435,6 @@ fn FullData(comptime Child: type, comptime options: Options) type {
         }
 
         fn destroy(self: *Self) void {
-            defer self.* = undefined;
             bun.memory.destroy(bun.allocators.asStd(self.allocator), self);
         }
 

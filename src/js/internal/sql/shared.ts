@@ -657,13 +657,13 @@ function normalizeOptionsForAdapter(
     }
   }
 
-  // Apply explicit options (highest precedence)
-  hostname ||= options.hostname || options.host;
-  port ||= options.port;
-  username ||= options.username || options.user;
-  password ||= options.password || options.pass;
-  database ||= options.database || options.db;
-  path ||= (options as { path?: string }).path;
+  // Apply explicit options (highest precedence) - they override URL parameters
+  hostname = options.hostname || options.host || hostname;
+  port = options.port || port;
+  username = options.username || options.user || username;
+  password = options.password || options.pass || password;
+  database = options.database || options.db || database;
+  path = (options as { path?: string }).path || path;
 
   // Apply adapter-specific environment defaults (medium precedence)
   hostname ||= envDefaults.hostname;

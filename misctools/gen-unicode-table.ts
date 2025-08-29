@@ -83,12 +83,12 @@ async function main() {
     {
       name: "isIDStartESNext",
       table: "idStartESNext",
-      check: (cp: number) => idStartESNextSet.has(cp),
+      check: (cp: number) => idStartESNextSet.has(cp) || cp === 0x24 || cp === 0x5F, // Add $ and _
     },
     {
       name: "isIDContinueESNext",
       table: "idContinueESNext",
-      check: (cp: number) => idContinueESNextSet.has(cp) && !ID_Continue_mistake.has(cp),
+      check: (cp: number) => (idContinueESNextSet.has(cp) && !ID_Continue_mistake.has(cp)) || cp === 0x24 || cp === 0x5F, // Add $ and _
     },
   ];
 

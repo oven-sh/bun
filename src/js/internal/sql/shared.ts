@@ -422,6 +422,28 @@ function parseOptions(
   // Step 2: Determine the adapter (without reading environment variables yet)
   const adapter = determineAdapter(options, inputUrl, env);
 
+  // Step 2.5: Validate adapter matches protocol if URL is provided
+  if (inputUrl) {
+    let urlToValidate: URL;
+    try {
+      if (typeof inputUrl === "string") {
+        // Parse the URL for validation - handle SQLite URLs specially
+        if (parseDefinitelySqliteUrl(inputUrl) !== null) {
+          // Create a fake URL for SQLite validation
+          urlToValidate = new URL("sqlite:///" + encodeURIComponent(inputUrl));
+        } else {
+          urlToValidate = parseUrlForAdapter(inputUrl, adapter);
+        }
+      } else {
+        urlToValidate = inputUrl;
+      }
+      validateAdapterProtocolMatch(adapter, urlToValidate);
+    } catch (error) {
+      // If URL parsing fails or validation fails, throw the error
+      throw error;
+    }
+  }
+
   // Handle SQLite early since it has different logic
   if (adapter === "sqlite") {
     return handleSQLiteOptions(options, inputUrl, env);
@@ -467,12 +489,7 @@ function parseOptions(
     }
   }
 
-  // Step 4: Validate adapter matches protocol if URL is provided
-  if (finalUrl && inputUrl) {
-    validateAdapterProtocolMatch(adapter, finalUrl);
-  }
-
-  // Step 5: Normalize and validate options for the specific adapter
+  // Step 4: Normalize and validate options for the specific adapter
   return normalizeOptionsForAdapter(adapter, options, finalUrl, env, sslMode);
 }
 

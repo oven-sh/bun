@@ -304,4 +304,80 @@ describe("SQL adapter environment variable precedence", () => {
     expect(options.options.sslMode).toBe(2); // SSLMode.require
     restoreEnv();
   });
+
+  describe("Adapter-Protocol Validation", () => {
+    test("should work with explicit adapter and URL without protocol", () => {
+      cleanEnv();
+      
+      const options = new SQL("user:pass@host:3306/db", { adapter: "mysql" });
+      expect(options.options.adapter).toBe("mysql");
+      expect(options.options.hostname).toBe("host");
+      expect(options.options.port).toBe(3306);
+      restoreEnv();
+    });
+
+    test("should work with explicit adapter and matching protocol", () => {
+      cleanEnv();
+      
+      const options = new SQL("mysql://user:pass@host:3306/db", { adapter: "mysql" });
+      expect(options.options.adapter).toBe("mysql");
+      expect(options.options.hostname).toBe("host");
+      expect(options.options.port).toBe(3306);
+      restoreEnv();
+    });
+
+    test("should throw error when adapter conflicts with protocol (mysql adapter with postgres protocol)", () => {
+      cleanEnv();
+      
+      expect(() => {
+        new SQL("postgres://user:pass@host:5432/db", { adapter: "mysql" });
+      }).toThrow(/Protocol 'postgres' is not compatible with adapter 'mysql'/);
+      restoreEnv();
+    });
+
+    test("should throw error when adapter conflicts with protocol (postgres adapter with mysql protocol)", () => {
+      cleanEnv();
+      
+      expect(() => {
+        new SQL("mysql://user:pass@host:3306/db", { adapter: "postgres" });
+      }).toThrow(/Protocol 'mysql' is not compatible with adapter 'postgres'/);
+      restoreEnv();
+    });
+
+    test("should throw error when sqlite adapter used with mysql protocol", () => {
+      cleanEnv();
+      
+      expect(() => {
+        new SQL("mysql://user:pass@host:3306/db", { adapter: "sqlite" });
+      }).toThrow(/Protocol 'mysql' is not compatible with adapter 'sqlite'/);
+      restoreEnv();
+    });
+
+    test("should throw error when mysql adapter used with postgres protocol", () => {
+      cleanEnv();
+      
+      expect(() => {
+        new SQL("postgres://user:pass@host:5432/db", { adapter: "mysql" });
+      }).toThrow(/Protocol 'postgres' is not compatible with adapter 'mysql'/);
+      restoreEnv();
+    });
+
+    test("should work with unix:// protocol and explicit adapter", () => {
+      cleanEnv();
+      
+      const options = new SQL("unix:///tmp/mysql.sock", { adapter: "mysql" });
+      expect(options.options.adapter).toBe("mysql");
+      expect(options.options.path).toBe("/tmp/mysql.sock");
+      restoreEnv();
+    });
+
+    test("should work with sqlite:// protocol and sqlite adapter", () => {
+      cleanEnv();
+      
+      const options = new SQL("sqlite:///tmp/test.db", { adapter: "sqlite" });
+      expect(options.options.adapter).toBe("sqlite");
+      expect(options.options.filename).toBe("/tmp/test.db");
+      restoreEnv();
+    });
+  });
 });

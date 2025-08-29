@@ -1221,7 +1221,7 @@ MySQL types are automatically converted to JavaScript types:
 
 | MySQL Type                              | JavaScript Type          | Notes                                                                                                |
 | --------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------- |
-| INT, SMALLINT, MEDIUMINT                | number                   | Within safe integer range                                                                            |
+| INT, TINYINT, MEDIUMINT                 | number                   | Within safe integer range                                                                            |
 | BIGINT                                  | string, number or BigInt | If the value fits in i32/u32 size will be number otherwise string or BigInt Based on `bigint` option |
 | DECIMAL, NUMERIC                        | string                   | To preserve precision                                                                                |
 | FLOAT, DOUBLE                           | number                   |                                                                                                      |
@@ -1233,7 +1233,7 @@ MySQL types are automatically converted to JavaScript types:
 | TINY TEXT, MEDIUM TEXT, TEXT, LONG TEXT | string                   |                                                                                                      |
 | TINY BLOB, MEDIUM BLOB, BLOG, LONG BLOB | string                   | BLOB Types are alias for TEXT types                                                                  |
 | JSON                                    | object/array             | Automatically parsed                                                                                 |
-| BOOLEAN, BOOL                           | boolean                  | TINYINT(1) in MySQL                                                                                  |
+| BIT(1)                                  | boolean                  | BIT(1) in MySQL                                                                                      |
 | GEOMETRY                                | string                   | Geometry data                                                                                        |
 
 #### Differences from PostgreSQL
@@ -1242,8 +1242,7 @@ While the API is unified, there are some behavioral differences:
 
 1. **Parameter placeholders**: MySQL uses `?` internally but Bun converts `$1, $2` style automatically
 2. **RETURNING clause**: MySQL doesn't support RETURNING; use `result.lastInsertRowid` or a separate SELECT
-3. **Boolean type**: MySQL uses TINYINT(1) for booleans
-4. **Array types**: MySQL doesn't have native array types like PostgreSQL
+3. **Array types**: MySQL doesn't have native array types like PostgreSQL
 
 ### MySQL-Specific Features
 

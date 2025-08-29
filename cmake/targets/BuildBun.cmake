@@ -636,6 +636,7 @@ register_command(
   SOURCES
     ${BUN_ZIG_SOURCES}
     ${BUN_ZIG_GENERATED_SOURCES}
+    ${CWD}/src/install/PackageManager/scanner-entry.ts # Is there a better way to do this?
 )
 
 set_property(TARGET bun-zig PROPERTY JOB_POOL compile_pool)

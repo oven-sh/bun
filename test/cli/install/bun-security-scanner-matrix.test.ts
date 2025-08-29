@@ -123,20 +123,17 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
     await $`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
   }
 
-  // Now add bunfig with scanner configuration
   const scannerPath = scannerType === "local" ? "./scanner.js" : scannerPackageName;
 
   await Bun.write(
     join(dir, "bunfig.toml"),
-    `
-[install]
+    `[install]
 cache = false
 linker = "${linker}"
 registry = "${registryUrl}/"
 
 [install.security]
-scanner = "${scannerPath}"
-`,
+scanner = "${scannerPath}"`,
   );
 
   // Prepare the command
@@ -163,6 +160,11 @@ scanner = "${scannerPath}"
     console.log("Files in test dir:", await Array.fromAsync(new Bun.Glob("**/*").scan(dir)));
     console.log("Stdout:", stdout);
     console.log("Stderr:", stderr);
+    console.log("Registry:", registryUrl);
+    console.log();
+    console.log("bunfig:");
+    console.log(await Bun.file(join(dir, "bunfig.toml")).text());
+    console.log();
   }
 
   expect(exitCode).toBe(expectedExitCode);

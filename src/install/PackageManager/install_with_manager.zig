@@ -570,7 +570,7 @@ pub fn installWithManager(
             const is_subcommand_to_run_scanner = manager.subcommand == .add or manager.subcommand == .update or manager.subcommand == .install or manager.subcommand == .remove;
 
             if (is_subcommand_to_run_scanner) {
-                const results = (security_scanner.performSecurityScanAfterResolution(manager, ctx, original_cwd) catch |err| {
+                if (security_scanner.performSecurityScanAfterResolution(manager, ctx, original_cwd) catch |err| {
                     switch (err) {
                         error.SecurityScannerInWorkspace => {
                             Output.pretty("<red>Security scanner cannot be a dependency of a workspace package. It must be a direct dependency of the root package.<r>\n", .{});
@@ -579,24 +579,26 @@ pub fn installWithManager(
                     }
 
                     Global.exit(1);
-                }) orelse return;
+                }) |results| {
+                    defer {
+                        var results_mut = results;
+                        results_mut.deinit();
+                    }
 
-                defer {
-                    var results_mut = results;
-                    results_mut.deinit();
-                }
+                    security_scanner.printSecurityAdvisories(manager, &results);
 
-                security_scanner.printSecurityAdvisories(manager, &results);
-
-                if (results.hasFatalAdvisories()) {
-                    Output.pretty("<red>Installation aborted due to fatal security advisories<r>\n", .{});
-                    Global.exit(1);
-                } else if (results.hasWarnings()) {
-                    if (!security_scanner.promptForWarnings()) {
+                    if (results.hasFatalAdvisories()) {
+                        Output.pretty("<red>Installation aborted due to fatal security advisories<r>\n", .{});
                         Global.exit(1);
+                    } else if (results.hasWarnings()) {
+                        if (!security_scanner.promptForWarnings()) {
+                            Global.exit(1);
+                        }
                     }
                 }
             }
+
+            manager.options.do.prefetch_resolved_tarballs = true;
         }
     }
 

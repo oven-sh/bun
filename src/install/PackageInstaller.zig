@@ -2,6 +2,7 @@ pub const PackageInstaller = struct {
     manager: *PackageManager,
     lockfile: *Lockfile,
     progress: *Progress,
+    force_install_skip_prefetch_check: bool,
 
     // relative paths from `next` will be copied into this list.
     node_modules: NodeModulesFolder,
@@ -982,6 +983,7 @@ pub const PackageInstaller = struct {
                             resolution.value.npm.url.slice(this.lockfile.buffers.string_bytes.items),
                             context,
                             patch_name_and_version_hash,
+                            this.force_install_skip_prefetch_check,
                         ) catch |err| switch (err) {
                             error.OutOfMemory => bun.outOfMemory(),
                             error.InvalidURL => this.failWithInvalidUrl(

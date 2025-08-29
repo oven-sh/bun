@@ -686,8 +686,7 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
     manager.sleepUntil(&closure, &@TypeOf(closure).isDone);
 
     const packages_scanned = collector.dedupe.count();
-    const result = try scanner.handleResults(&collector.package_paths, start_time, packages_scanned, security_scanner, security_scanner_pkg_id, command_ctx, original_cwd, is_retry);
-    return result;
+    return try scanner.handleResults(&collector.package_paths, start_time, packages_scanned, security_scanner, security_scanner_pkg_id, command_ctx, original_cwd, is_retry);
 }
 
 pub const SecurityScanSubprocess = struct {

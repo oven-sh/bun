@@ -266,14 +266,17 @@ scanner = "${scannerPath}"`,
 
   if (scannerType !== "bunfig-only" && !hasExistingNodeModules) {
     switch (scannerReturns) {
-      case "fatal": {
+      case "fatal": 
+      case "warn": {
+        // When there are fatal advisories OR warnings (with no TTY to prompt),
+        // the installation is cancelled and packages should NOT be installed
         const files = await Array.fromAsync(new Bun.Glob("**/*").scan(dir));
         expect(files).not.toContain("node_modules/left-pad/package.json");
         break;
       }
 
-      case "warn":
       case "clean": {
+        // When there are no security issues, packages should be installed normally
         const files = await Array.fromAsync(new Bun.Glob("**/*").scan(dir));
         expect(files).toContain("node_modules/left-pad/package.json");
         break;

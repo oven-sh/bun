@@ -17,7 +17,7 @@ Complete before merge:
   test("another test", async () => {});
   ```
 - [ ] support having both a done callback and a promise result
-- [ ] finalize describe call order. ideally `A[B, C], D[E, F[G]]` will run in normal order rather than `A, D, B, C, E, F, G`
+- [x] finalize describe call order. ideally `A[B, C], D[E, F[G]]` will run in normal order rather than `A, D, B, C, E, F, G`
 - [x] sometimes error messages aren't printing!
 - [x] make sure it exits with code 1 on failure
 - [ ] decide on preload behaviour: before first/after last?

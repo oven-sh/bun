@@ -271,7 +271,7 @@ describe("SQL adapter environment variable precedence", () => {
 
   test("should default to database name 'mysql' for MySQL adapter", () => {
     cleanEnv();
-    
+
     const options = new SQL({ adapter: "mysql", hostname: "localhost" });
     expect(options.options.adapter).toBe("mysql");
     expect(options.options.database).toBe("mysql");
@@ -280,7 +280,7 @@ describe("SQL adapter environment variable precedence", () => {
 
   test("should default to username as database name for PostgreSQL adapter", () => {
     cleanEnv();
-    
+
     const options = new SQL({ adapter: "postgres", hostname: "localhost", username: "testuser" });
     expect(options.options.adapter).toBe("postgres");
     expect(options.options.database).toBe("testuser");
@@ -326,7 +326,7 @@ describe("SQL adapter environment variable precedence", () => {
   describe("Adapter-Protocol Validation", () => {
     test("should work with explicit adapter and URL without protocol", () => {
       cleanEnv();
-      
+
       const options = new SQL("user:pass@host:3306/db", { adapter: "mysql" });
       expect(options.options.adapter).toBe("mysql");
       expect(options.options.hostname).toBe("host");
@@ -336,7 +336,7 @@ describe("SQL adapter environment variable precedence", () => {
 
     test("should work with explicit adapter and matching protocol", () => {
       cleanEnv();
-      
+
       const options = new SQL("mysql://user:pass@host:3306/db", { adapter: "mysql" });
       expect(options.options.adapter).toBe("mysql");
       expect(options.options.hostname).toBe("host");
@@ -346,7 +346,7 @@ describe("SQL adapter environment variable precedence", () => {
 
     test("should throw error when adapter conflicts with protocol (mysql adapter with postgres protocol)", () => {
       cleanEnv();
-      
+
       expect(() => {
         new SQL("postgres://user:pass@host:5432/db", { adapter: "mysql" });
       }).toThrow(/Protocol 'postgres' is not compatible with adapter 'mysql'/);
@@ -355,7 +355,7 @@ describe("SQL adapter environment variable precedence", () => {
 
     test("should throw error when adapter conflicts with protocol (postgres adapter with mysql protocol)", () => {
       cleanEnv();
-      
+
       expect(() => {
         new SQL("mysql://user:pass@host:3306/db", { adapter: "postgres" });
       }).toThrow(/Protocol 'mysql' is not compatible with adapter 'postgres'/);
@@ -364,7 +364,7 @@ describe("SQL adapter environment variable precedence", () => {
 
     test("should throw error when sqlite adapter used with mysql protocol", () => {
       cleanEnv();
-      
+
       expect(() => {
         new SQL("mysql://user:pass@host:3306/db", { adapter: "sqlite" });
       }).toThrow(/Protocol 'mysql' is not compatible with adapter 'sqlite'/);
@@ -373,7 +373,7 @@ describe("SQL adapter environment variable precedence", () => {
 
     test("should throw error when mysql adapter used with postgres protocol", () => {
       cleanEnv();
-      
+
       expect(() => {
         new SQL("postgres://user:pass@host:5432/db", { adapter: "mysql" });
       }).toThrow(/Protocol 'postgres' is not compatible with adapter 'mysql'/);
@@ -382,7 +382,7 @@ describe("SQL adapter environment variable precedence", () => {
 
     test("should work with unix:// protocol and explicit adapter", () => {
       cleanEnv();
-      
+
       const options = new SQL("unix:///tmp/mysql.sock", { adapter: "mysql" });
       expect(options.options.adapter).toBe("mysql");
       expect(options.options.path).toBe("/tmp/mysql.sock");
@@ -391,7 +391,7 @@ describe("SQL adapter environment variable precedence", () => {
 
     test("should work with sqlite:// protocol and sqlite adapter", () => {
       cleanEnv();
-      
+
       const options = new SQL("sqlite:///tmp/test.db", { adapter: "sqlite" });
       expect(options.options.adapter).toBe("sqlite");
       expect(options.options.filename).toBe("/tmp/test.db");
@@ -401,11 +401,11 @@ describe("SQL adapter environment variable precedence", () => {
     describe("Explicit options override URL parameters", () => {
       test("explicit hostname should override URL hostname", () => {
         cleanEnv();
-        
+
         const options = new SQL("postgres://urluser:urlpass@urlhost:1234/urldb", {
           hostname: "explicithost",
         });
-        
+
         expect(options.options.hostname).toBe("explicithost");
         expect(options.options.port).toBe(1234); // URL port should remain
         expect(options.options.username).toBe("urluser"); // URL username should remain
@@ -415,11 +415,11 @@ describe("SQL adapter environment variable precedence", () => {
 
       test("explicit port should override URL port", () => {
         cleanEnv();
-        
+
         const options = new SQL("postgres://urluser:urlpass@urlhost:1234/urldb", {
           port: 5432,
         });
-        
+
         expect(options.options.hostname).toBe("urlhost"); // URL hostname should remain
         expect(options.options.port).toBe(5432);
         expect(options.options.username).toBe("urluser"); // URL username should remain
@@ -429,11 +429,11 @@ describe("SQL adapter environment variable precedence", () => {
 
       test("explicit username should override URL username", () => {
         cleanEnv();
-        
+
         const options = new SQL("postgres://urluser:urlpass@urlhost:1234/urldb", {
           username: "explicituser",
         });
-        
+
         expect(options.options.hostname).toBe("urlhost"); // URL hostname should remain
         expect(options.options.port).toBe(1234); // URL port should remain
         expect(options.options.username).toBe("explicituser");
@@ -443,11 +443,11 @@ describe("SQL adapter environment variable precedence", () => {
 
       test("explicit password should override URL password", () => {
         cleanEnv();
-        
+
         const options = new SQL("postgres://urluser:urlpass@urlhost:1234/urldb", {
           password: "explicitpass",
         });
-        
+
         expect(options.options.hostname).toBe("urlhost"); // URL hostname should remain
         expect(options.options.port).toBe(1234); // URL port should remain
         expect(options.options.username).toBe("urluser"); // URL username should remain
@@ -458,11 +458,11 @@ describe("SQL adapter environment variable precedence", () => {
 
       test("explicit database should override URL database", () => {
         cleanEnv();
-        
+
         const options = new SQL("postgres://urluser:urlpass@urlhost:1234/urldb", {
           database: "explicitdb",
         });
-        
+
         expect(options.options.hostname).toBe("urlhost"); // URL hostname should remain
         expect(options.options.port).toBe(1234); // URL port should remain
         expect(options.options.username).toBe("urluser"); // URL username should remain
@@ -472,7 +472,7 @@ describe("SQL adapter environment variable precedence", () => {
 
       test("multiple explicit options should override corresponding URL parameters", () => {
         cleanEnv();
-        
+
         const options = new SQL("postgres://urluser:urlpass@urlhost:1234/urldb", {
           hostname: "explicithost",
           port: 5432,
@@ -480,7 +480,7 @@ describe("SQL adapter environment variable precedence", () => {
           password: "explicitpass",
           database: "explicitdb",
         });
-        
+
         expect(options.options.hostname).toBe("explicithost");
         expect(options.options.port).toBe(5432);
         expect(options.options.username).toBe("explicituser");
@@ -491,13 +491,13 @@ describe("SQL adapter environment variable precedence", () => {
 
       test("should work with MySQL URLs and explicit options", () => {
         cleanEnv();
-        
+
         const options = new SQL("mysql://urluser:urlpass@urlhost:3306/urldb", {
           hostname: "explicithost",
           port: 3307,
           username: "explicituser",
         });
-        
+
         expect(options.options.adapter).toBe("mysql");
         expect(options.options.hostname).toBe("explicithost");
         expect(options.options.port).toBe(3307);
@@ -509,14 +509,14 @@ describe("SQL adapter environment variable precedence", () => {
 
       test("should work with alternative option names (user, pass, db, host)", () => {
         cleanEnv();
-        
+
         const options = new SQL("postgres://urluser:urlpass@urlhost:1234/urldb", {
           host: "explicithost",
-          user: "explicituser", 
+          user: "explicituser",
           pass: "explicitpass",
           db: "explicitdb",
         });
-        
+
         expect(options.options.hostname).toBe("explicithost");
         expect(options.options.username).toBe("explicituser");
         expect(options.options.password).toBe("explicitpass");
@@ -529,13 +529,13 @@ describe("SQL adapter environment variable precedence", () => {
         process.env.PGHOST = "envhost";
         process.env.PGPORT = "9999";
         process.env.PGUSER = "envuser";
-        
+
         const options = new SQL("postgres://urluser:urlpass@urlhost:1234/urldb", {
           hostname: "explicithost",
           port: 5432,
           username: "explicituser",
         });
-        
+
         expect(options.options.hostname).toBe("explicithost");
         expect(options.options.port).toBe(5432);
         expect(options.options.username).toBe("explicituser");
@@ -549,12 +549,12 @@ describe("SQL adapter environment variable precedence", () => {
         process.env.MYSQL_HOST = "mysqlhost";
         process.env.MYSQL_USER = "mysqluser";
         process.env.MYSQL_PASSWORD = "mysqlpass";
-        
+
         const options = new SQL("mysql://urluser:urlpass@urlhost:3306/urldb", {
           hostname: "explicithost",
           username: "explicituser",
         });
-        
+
         expect(options.options.adapter).toBe("mysql");
         expect(options.options.hostname).toBe("explicithost");
         expect(options.options.username).toBe("explicituser");

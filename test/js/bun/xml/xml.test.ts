@@ -15,13 +15,19 @@ test("Bun.XML.parse - element with whitespace", () => {
 test("Bun.XML.parse - empty element", () => {
   const xml = "<empty></empty>";
   const result = Bun.XML.parse(xml);
-  expect(result).toBe("");
+  expect(result).toEqual({});
 });
 
-test("Bun.XML.parse - element with attributes (attributes ignored for now)", () => {
+test("Bun.XML.parse - element with attributes", () => {
   const xml = '<message id="1" type="info">Hello</message>';
   const result = Bun.XML.parse(xml);
-  expect(result).toBe("Hello");
+  expect(result).toEqual({
+    __attrs: {
+      id: "1",
+      type: "info"
+    },
+    __text: "Hello"
+  });
 });
 
 test("Bun.XML.parse - with XML declaration", () => {
@@ -34,4 +40,65 @@ test("Bun.XML.parse - empty string", () => {
   const xml = "";
   const result = Bun.XML.parse(xml);
   expect(result).toBe(null);
+});
+
+test("Bun.XML.parse - self-closing tag with attributes", () => {
+  const xml = '<config debug="true" version="1.0"/>';
+  const result = Bun.XML.parse(xml);
+  expect(result).toEqual({
+    __attrs: {
+      debug: "true",
+      version: "1.0"
+    }
+  });
+});
+
+test("Bun.XML.parse - self-closing tag without attributes", () => {
+  const xml = '<br/>';
+  const result = Bun.XML.parse(xml);
+  expect(result).toEqual({});
+});
+
+test("Bun.XML.parse - nested elements", () => {
+  const xml = `<person>
+    <name>John</name>
+    <age>30</age>
+  </person>`;
+  const result = Bun.XML.parse(xml);
+  expect(result).toEqual({
+    children: ["John", "30"]
+  });
+});
+
+test("Bun.XML.parse - complex nested structure", () => {
+  const xml = `<person name="John">
+    <address type="home">
+      <city>New York</city>
+    </address>
+  </person>`;
+  const result = Bun.XML.parse(xml);
+  expect(result).toEqual({
+    __attrs: {
+      name: "John"
+    },
+    children: [{
+      __attrs: {
+        type: "home"
+      },
+      children: ["New York"]
+    }]
+  });
+});
+
+test("Bun.XML.parse - mixed content (text and children)", () => {
+  const xml = `<doc>
+    Some text
+    <child>value</child>
+    More text
+  </doc>`;
+  const result = Bun.XML.parse(xml);
+  expect(result).toEqual({
+    children: ["value"],
+    __text: "Some text\n    \n    More text"
+  });
 });

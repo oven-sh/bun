@@ -57,7 +57,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
     return struct {
         const Self = @This();
 
-        unsafe_raw_pointer: Pointer,
+        #unsafe_raw_pointer: Pointer,
         unsafe_allocator: if (options.allocator == null) Allocator else void,
 
         /// An unmanaged version of this owned pointer. This type doesn't store the allocator and
@@ -134,7 +134,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
             /// * `data` must not be freed for the life of the owned pointer.
             pub fn fromRawOwned(data: NonOptionalPointer, allocator: Allocator) Self {
                 return .{
-                    .unsafe_raw_pointer = data,
+                    .#unsafe_raw_pointer = data,
                     .unsafe_allocator = allocator,
                 };
             }
@@ -147,7 +147,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
             /// * `data` must not be freed for the life of the owned pointer.
             pub fn fromRawOwned(data: NonOptionalPointer) Self {
                 return .{
-                    .unsafe_raw_pointer = data,
+                    .#unsafe_raw_pointer = data,
                     .unsafe_allocator = {},
                 };
             }
@@ -160,9 +160,9 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         /// be disabled in `options`.
         pub fn deinit(self: Self) void {
             const data = if (comptime info.isOptional())
-                self.unsafe_raw_pointer orelse return
+                self.#unsafe_raw_pointer orelse return
             else
-                self.unsafe_raw_pointer;
+                self.#unsafe_raw_pointer;
             if (comptime options.deinit and std.meta.hasFn(Child, "deinit")) {
                 switch (comptime info.kind()) {
                     .single => data.deinit(),
@@ -179,7 +179,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
 
         /// Returns the inner pointer or slice.
         pub fn get(self: SelfOrPtr) Pointer {
-            return self.unsafe_raw_pointer;
+            return self.#unsafe_raw_pointer;
         }
 
         /// Returns a const version of the inner pointer or slice.
@@ -187,7 +187,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         /// This method is not provided if the pointer is already const; use `get` in that case.
         pub const getConst = if (!info.isConst()) struct {
             pub fn getConst(self: Self) AddConst(Pointer) {
-                return self.unsafe_raw_pointer;
+                return self.#unsafe_raw_pointer;
             }
         }.getConst;
 
@@ -197,15 +197,15 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         /// This method invalidates `self`.
         pub const intoRawOwned = (if (options.allocator != null) struct {
             pub fn intoRawOwned(self: Self) Pointer {
-                return self.unsafe_raw_pointer;
+                return self.#unsafe_raw_pointer;
             }
         } else if (info.isOptional()) struct {
             pub fn intoRawOwned(self: Self) ?struct { NonOptionalPointer, Allocator } {
-                return .{ self.unsafe_raw_pointer orelse return null, self.unsafe_allocator };
+                return .{ self.#unsafe_raw_pointer orelse return null, self.unsafe_allocator };
             }
         } else struct {
             pub fn intoRawOwned(self: Self) struct { Pointer, Allocator } {
-                return .{ self.unsafe_raw_pointer, self.unsafe_allocator };
+                return .{ self.#unsafe_raw_pointer, self.unsafe_allocator };
             }
         }).intoRawOwned;
 
@@ -216,7 +216,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         pub const initNull = if (info.isOptional()) struct {
             pub fn initNull() Self {
                 return .{
-                    .unsafe_raw_pointer = null,
+                    .#unsafe_raw_pointer = null,
                     .unsafe_allocator = undefined,
                 };
             }
@@ -234,7 +234,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
             pub fn take(self: *Self) ?OwnedNonOptional {
                 defer self.* = .initNull();
                 return .{
-                    .unsafe_raw_pointer = self.unsafe_raw_pointer orelse return null,
+                    .#unsafe_raw_pointer = self.#unsafe_raw_pointer orelse return null,
                     .unsafe_allocator = self.unsafe_allocator,
                 };
             }
@@ -248,7 +248,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         pub const toOptional = if (!info.isOptional()) struct {
             pub fn toOptional(self: Self) OwnedOptional {
                 return .{
-                    .unsafe_raw_pointer = self.unsafe_raw_pointer,
+                    .#unsafe_raw_pointer = self.#unsafe_raw_pointer,
                     .unsafe_allocator = self.unsafe_allocator,
                 };
             }
@@ -263,7 +263,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         pub const toUnmanaged = if (options.allocator == null) struct {
             pub fn toUnmanaged(self: Self) Self.Unmanaged {
                 return .{
-                    .unsafe_raw_pointer = self.unsafe_raw_pointer,
+                    .#unsafe_raw_pointer = self.#unsafe_raw_pointer,
                 };
             }
         }.toUnmanaged;
@@ -279,7 +279,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         pub const toDynamic = if (options.allocator) |allocator| struct {
             pub fn toDynamic(self: Self) DynamicOwned {
                 return .{
-                    .unsafe_raw_pointer = self.unsafe_raw_pointer,
+                    .#unsafe_raw_pointer = self.#unsafe_raw_pointer,
                     .unsafe_allocator = allocator,
                 };
             }
@@ -287,7 +287,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
 
         fn rawInit(data: NonOptionalPointer, allocator: Allocator) Self {
             return .{
-                .unsafe_raw_pointer = data,
+                .#unsafe_raw_pointer = data,
                 .unsafe_allocator = if (comptime options.allocator == null) allocator,
             };
         }
@@ -328,7 +328,7 @@ fn Unmanaged(comptime Pointer: type, comptime options: Options) type {
     return struct {
         const Self = @This();
 
-        unsafe_raw_pointer: Pointer,
+        #unsafe_raw_pointer: Pointer,
 
         const Managed = WithOptions(Pointer, options);
 
@@ -337,9 +337,9 @@ fn Unmanaged(comptime Pointer: type, comptime options: Options) type {
         /// `allocator` must be the allocator that was used to allocate the pointer.
         pub fn toManaged(self: Self, allocator: Allocator) Managed {
             const data = if (comptime info.isOptional())
-                self.unsafe_raw_pointer orelse return .initNull()
+                self.#unsafe_raw_pointer orelse return .initNull()
             else
-                self.unsafe_raw_pointer;
+                self.#unsafe_raw_pointer;
             return .fromRawOwned(data, allocator);
         }
 
@@ -354,7 +354,7 @@ fn Unmanaged(comptime Pointer: type, comptime options: Options) type {
 
         /// Returns the inner pointer or slice.
         pub fn get(self: SelfOrPtr) Pointer {
-            return self.unsafe_raw_pointer;
+            return self.#unsafe_raw_pointer;
         }
 
         /// Returns a const version of the inner pointer or slice.
@@ -362,7 +362,7 @@ fn Unmanaged(comptime Pointer: type, comptime options: Options) type {
         /// This method is not provided if the pointer is already const; use `get` in that case.
         pub const getConst = if (!info.isConst()) struct {
             pub fn getConst(self: Self) AddConst(Pointer) {
-                return self.unsafe_raw_pointer;
+                return self.#unsafe_raw_pointer;
             }
         }.getConst;
     };

@@ -49,7 +49,7 @@ pub fn generateCodeForFileInChunkJS(
 
         const inner = stmts.all_stmts.items[0..main_stmts_len];
 
-        var clousure_args = std.BoundedArray(G.Arg, 3).fromSlice(&.{
+        var clousure_args = bun.BoundedArray(G.Arg, 3).fromSlice(&.{
             .{ .binding = Binding.alloc(temp_allocator, B.Identifier{
                 .ref = hmr_api_ref,
             }, Logger.Loc.Empty) },

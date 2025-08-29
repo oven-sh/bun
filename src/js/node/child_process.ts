@@ -1132,7 +1132,7 @@ class ChildProcess extends EventEmitter {
 
             if (!stdin) {
               // This can happen if the process was already killed.
-              const { Writable } = require("node:stream");
+              const Writable = require("internal/streams/writable");
               const stream = new Writable({
                 write(chunk, encoding, callback) {
                   // Gracefully handle writes - stream acts as if it's ended
@@ -1151,7 +1151,7 @@ class ChildProcess extends EventEmitter {
           case "inherit":
             return null;
           case "destroyed": {
-            const { Writable } = require("node:stream");
+            const Writable = require("internal/streams/writable");
             const stream = new Writable({
               write(chunk, encoding, callback) {
                 // Gracefully handle writes - stream acts as if it's ended
@@ -1176,7 +1176,7 @@ class ChildProcess extends EventEmitter {
             const value = handle?.[fdToStdioName(i as 1 | 2)!];
             // This can happen if the process was already killed.
             if (!value) {
-              const { Readable } = require("node:stream");
+              const Readable = require("internal/streams/readable");
               const stream = new Readable({ read() {} });
               // Mark as destroyed to indicate it's not usable
               stream.destroy();
@@ -1190,7 +1190,7 @@ class ChildProcess extends EventEmitter {
             return pipe;
           }
           case "destroyed": {
-            const { Readable } = require("node:stream");
+            const Readable = require("internal/streams/readable");
             const stream = new Readable({ read() {} });
             // Mark as destroyed to indicate it's not usable
             stream.destroy();

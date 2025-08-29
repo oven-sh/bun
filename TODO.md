@@ -84,6 +84,12 @@ Add tests:
 Code quality:
 
 - [ ] need to weakly hold BunTestFile from ref()
+  - two tests for comparing performance
+    - 1: as-is
+    - 2: rather than holding JSValues as Strongs, we hold them as indices into a JSArray that is visited by BunTestFile
+    - 3: do that but in a class
+    - 4: what if DescribeScope/ExecutionEntry have their own JSValues
+    - call gc(true) often during the benchmark
   - have the global object hold the buntest which holds the buntestfile
   - needs a cpp binding?
   - the cpp binding
@@ -97,6 +103,7 @@ Code quality:
     - benchmark this vs the version that is only .protect()
   - the problem with .protect() is that every protected value is visited by the gc every gc, which is slow
   - basically we make BunTestFile into a class. BunTest is a class that holds BunTestFile. Expect holds a weak reference to BunTest
+  - an alternative option is making BunTestFile a jsobject that holds a jsarray rather than protect/unprotect
 - [ ] strong.list should only have one jsvalue (or be removed fully)
 
 - [x] Add private fields in SafeStrong.zig

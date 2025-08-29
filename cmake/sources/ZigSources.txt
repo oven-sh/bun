@@ -443,6 +443,7 @@ src/bundler/linker_context/writeOutputFilesToDisk.zig
 src/bundler/LinkerContext.zig
 src/bundler/LinkerGraph.zig
 src/bundler/ParseTask.zig
+src/bundler/PathToSourceIndexMap.zig
 src/bundler/ServerComponentParseTask.zig
 src/bundler/ThreadPool.zig
 src/bunfig.zig

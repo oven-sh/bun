@@ -34,7 +34,8 @@ pending_items: u32 = 0,
 deferred_pending: u32 = 0,
 
 /// A map of build targets to their corresponding module graphs.
-build_graphs: std.EnumArray(options.Target, PathToSourceIndexMap) = .initFill(.{}),
+build_graphs: std.EnumArray(options.Target, PathToSourceIndexMap),
+source_index_to_secondary_path_map: std.EnumArray(options.Target, SourceIndexToSecondaryPathMap) = .initFill(.{}),
 
 /// When Server Components is enabled, this holds a list of all boundary
 /// files. This happens for all files with a "use <side>" directive.
@@ -72,9 +73,13 @@ pub const InputFile = struct {
     content_hash_for_additional_file: u64 = 0,
     is_plugin_file: bool = false,
 };
-
+pub const SourceIndexToSecondaryPathMap = std.AutoHashMapUnmanaged(Index.Int, []const u8);
 pub inline fn pathToSourceIndexMap(this: *Graph, target: options.Target) *PathToSourceIndexMap {
     return this.build_graphs.getPtr(target);
+}
+
+pub inline fn sourceIndexToSecondaryPathMap(this: *Graph, target: options.Target) *SourceIndexToSecondaryPathMap {
+    return this.source_index_to_secondary_path_map.getPtr(target);
 }
 
 /// Schedule a task to be run on the JS thread which resolves the promise of

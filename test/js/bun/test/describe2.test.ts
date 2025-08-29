@@ -36,7 +36,13 @@ test("describe/test", async () => {
     describe 5
     describe 6
     describe 7
-    describe 8"
+    describe 8
+    async describe 1
+    async describe 2
+    async describe 3
+    async describe 4
+    async describe 5
+    async describe 6"
     ,
     }
   `);

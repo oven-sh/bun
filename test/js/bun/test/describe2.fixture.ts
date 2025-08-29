@@ -29,6 +29,23 @@ describe("describe 8", () => {
 
 // == async ==
 
-describe("async describe 1", async () => {});
+describe("async describe 1", async () => {
+  console.log("async describe 1");
+  describe("async describe 2", async () => {
+    console.log("async describe 2");
+  });
+  describe("async describe 3", async () => {
+    console.log("async describe 3");
+  });
+});
+describe("async describe 4", async () => {
+  console.log("async describe 4");
+  describe("async describe 5", async () => {
+    console.log("async describe 5");
+  });
+  describe("async describe 6", async () => {
+    console.log("async describe 6");
+  });
+});
 
 console.log("exit");

@@ -71,7 +71,7 @@ pub fn getFormDataEncoding(this: *Blob) ?*bun.FormData.AsyncFormData {
     var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
     defer content_type_slice.deinit();
     const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
-    return bun.FormData.AsyncFormData.init(this.allocator orelse bun.default_allocator, encoding) catch bun.outOfMemory();
+    return bun.handleOom(bun.FormData.AsyncFormData.init(this.allocator orelse bun.default_allocator, encoding));
 }
 
 pub fn hasContentTypeFromUser(this: *const Blob) bool {
@@ -141,8 +141,8 @@ pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObje
         *Handler,
         handler,
         Handler.run,
-    ) catch bun.outOfMemory();
-    var read_file_task = read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
+    ) catch |err| bun.handleOom(err);
+    var read_file_task = bun.handleOom(read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read));
 
     // Create the Promise only after the store has been ref()'d.
     // The garbage collector runs on memory allocations
@@ -179,8 +179,8 @@ pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, com
         NewInternalReadFileHandler(Handler, Function).run,
         this.offset,
         this.size,
-    ) catch bun.outOfMemory();
-    var read_file_task = read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
+    ) catch |err| bun.handleOom(err);
+    var read_file_task = bun.handleOom(read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read));
     read_file_task.schedule();
 }
 
@@ -504,7 +504,7 @@ const URLSearchParamsConverter = struct {
     buf: []u8 = "",
     globalThis: *jsc.JSGlobalObject,
     pub fn convert(this: *URLSearchParamsConverter, str: ZigString) void {
-        var out = str.toSlice(this.allocator).cloneIfNeeded(this.allocator) catch bun.outOfMemory();
+        var out = bun.handleOom(str.toSlice(this.allocator).cloneIfNeeded(this.allocator));
         this.buf = @constCast(out.slice());
     }
 };
@@ -561,9 +561,9 @@ pub fn fromDOMFormData(
     context.joiner.pushStatic(boundary);
     context.joiner.pushStatic("--\r\n");
 
-    const store = Blob.Store.init(context.joiner.done(allocator) catch bun.outOfMemory(), allocator);
+    const store = Blob.Store.init(bun.handleOom(context.joiner.done(allocator)), allocator);
     var blob = Blob.initWithStore(store, globalThis);
-    blob.content_type = std.fmt.allocPrint(allocator, "multipart/form-data; boundary={s}", .{boundary}) catch bun.outOfMemory();
+    blob.content_type = std.fmt.allocPrint(allocator, "multipart/form-data; boundary={s}", .{boundary}) catch |err| bun.handleOom(err);
     blob.content_type_allocated = true;
     blob.content_type_was_set = true;
 
@@ -1000,7 +1000,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             WriteFilePromise.run,
             options.mkdirp_if_not_exists orelse true,
         ) catch unreachable;
-        var task = write_file.WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier) catch bun.outOfMemory();
+        var task = bun.handleOom(write_file.WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier));
         // Defer promise creation until we're just about to schedule the task
         var promise = jsc.JSPromise.create(ctx);
         const promise_value = promise.asValue(ctx);
@@ -1717,7 +1717,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
             switch (store_.data) {
                 .bytes => |*bytes| {
                     bytes.stored_name = bun.PathString.init(
-                        (name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(),
+                        bun.handleOom(name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator)).slice(),
                     );
                 },
                 .s3, .file => {
@@ -1730,7 +1730,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
                 .data = .{
                     .bytes = Blob.Store.Bytes.initEmptyWithName(
                         bun.PathString.init(
-                            (name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(),
+                            bun.handleOom(name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator)).slice(),
                         ),
                         allocator,
                     ),
@@ -1765,7 +1765,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
                             blob.content_type = mime.value;
                             break :inner;
                         }
-                        const content_type_buf = allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                        const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
                         blob.content_type = strings.copyLowercase(slice, content_type_buf);
                         blob.content_type_allocated = true;
                     }
@@ -1866,7 +1866,7 @@ pub fn constructBunFile(
                             blob.content_type = entry.value;
                             break :inner;
                         }
-                        const content_type_buf = allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                        const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
                         blob.content_type = strings.copyLowercase(slice, content_type_buf);
                         blob.content_type_allocated = true;
                     }
@@ -1892,7 +1892,7 @@ pub fn findOrCreateFileFromPath(path_or_fd: *jsc.Node.PathOrFileDescriptor, glob
                 const credentials = globalThis.bunVM().transpiler.env.getS3Credentials();
                 const copy = path_or_fd.*;
                 path_or_fd.* = .{ .path = .{ .string = bun.PathString.empty } };
-                return Blob.initWithStore(Blob.Store.initS3(copy.path, null, credentials, allocator) catch bun.outOfMemory(), globalThis);
+                return Blob.initWithStore(bun.handleOom(Blob.Store.initS3(copy.path, null, credentials, allocator)), globalThis);
             }
         }
     }
@@ -1907,7 +1907,7 @@ pub fn findOrCreateFileFromPath(path_or_fd: *jsc.Node.PathOrFileDescriptor, glob
                     path_or_fd.* = .{
                         .path = .{
                             // this memory is freed with this allocator in `Blob.Store.deinit`
-                            .string = bun.PathString.init(allocator.dupe(u8, "\\\\.\\NUL") catch bun.outOfMemory()),
+                            .string = bun.PathString.init(bun.handleOom(allocator.dupe(u8, "\\\\.\\NUL"))),
                         },
                     };
                     slice = path_or_fd.path.slice();
@@ -1946,7 +1946,7 @@ pub fn findOrCreateFileFromPath(path_or_fd: *jsc.Node.PathOrFileDescriptor, glob
         }
     };
 
-    return Blob.initWithStore(Blob.Store.initFile(path, null, allocator) catch bun.outOfMemory(), globalThis);
+    return Blob.initWithStore(bun.handleOom(Blob.Store.initFile(path, null, allocator)), globalThis);
 }
 
 pub fn getStream(
@@ -2263,7 +2263,7 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
                     if (globalThis.bunVM().mimeType(slice)) |mime| {
                         this.content_type = mime.value;
                     } else {
-                        const content_type_buf = bun.default_allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                        const content_type_buf = bun.handleOom(bun.default_allocator.alloc(u8, slice.len));
                         this.content_type = strings.copyLowercase(slice, content_type_buf);
                         this.content_type_allocated = true;
                     }
@@ -2468,7 +2468,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                         store.data.file.pathlike.path.slice(),
                     ).cloneIfNeeded(
                         bun.default_allocator,
-                    ) catch bun.outOfMemory(),
+                    ) catch |err| bun.handleOom(err),
                 };
             }
         };
@@ -2604,7 +2604,7 @@ pub fn getWriter(
                         if (globalThis.bunVM().mimeType(slice)) |mime| {
                             this.content_type = mime.value;
                         } else {
-                            const content_type_buf = bun.default_allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                            const content_type_buf = bun.handleOom(bun.default_allocator.alloc(u8, slice.len));
                             this.content_type = strings.copyLowercase(slice, content_type_buf);
                             this.content_type_allocated = true;
                         }
@@ -2708,7 +2708,7 @@ pub fn getWriter(
                     store.data.file.pathlike.path.slice(),
                 ).cloneIfNeeded(
                     bun.default_allocator,
-                ) catch bun.outOfMemory(),
+                ) catch |err| bun.handleOom(err),
             };
         }
     };
@@ -2845,7 +2845,7 @@ pub fn getSlice(
                 }
 
                 content_type_was_allocated = slice.len > 0;
-                const content_type_buf = allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
                 content_type = strings.copyLowercase(slice, content_type_buf);
             }
         }
@@ -3034,7 +3034,7 @@ export fn Blob__fromBytes(globalThis: *jsc.JSGlobalObject, ptr: ?[*]const u8, le
         return blob;
     }
 
-    const bytes = bun.default_allocator.dupe(u8, ptr.?[0..len]) catch bun.outOfMemory();
+    const bytes = bun.handleOom(bun.default_allocator.dupe(u8, ptr.?[0..len]));
     const store = Store.init(bytes, bun.default_allocator);
     var blob = initWithStore(store, globalThis);
     blob.allocator = bun.default_allocator;
@@ -3191,7 +3191,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
                                     blob.content_type = mime.value;
                                     break :inner;
                                 }
-                                const content_type_buf = allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                                const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
                                 blob.content_type = strings.copyLowercase(slice, content_type_buf);
                                 blob.content_type_allocated = true;
                             }
@@ -3307,7 +3307,7 @@ pub fn create(
     globalThis: *JSGlobalObject,
     was_string: bool,
 ) Blob {
-    return tryCreate(bytes_, allocator_, globalThis, was_string) catch bun.outOfMemory();
+    return bun.handleOom(tryCreate(bytes_, allocator_, globalThis, was_string));
 }
 
 pub fn initWithStore(store: *Blob.Store, globalThis: *JSGlobalObject) Blob {
@@ -3372,7 +3372,7 @@ pub fn dupeWithContentType(this: *const Blob, include_content_type: bool) Blob {
             duped.content_type_was_set = duped.content_type.len > 0;
         }
     } else if (duped.content_type_allocated and duped.allocator != null and include_content_type) {
-        duped.content_type = bun.default_allocator.dupe(u8, this.content_type) catch bun.outOfMemory();
+        duped.content_type = bun.handleOom(bun.default_allocator.dupe(u8, this.content_type));
     }
     duped.name = duped.name.dupeRef();
 

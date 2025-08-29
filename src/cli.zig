@@ -659,8 +659,8 @@ pub const Command = struct {
                     };
                     global_cli_ctx = &context_data;
 
-                    // If no compile_exec_argv, set offset normally
-                    offset_for_passthrough = if (bun.argv.len > 1) 1 else 0;
+                    // If no compile_exec_argv, skip executable name if present
+                    offset_for_passthrough = @min(1, bun.argv.len);
 
                     break :brk global_cli_ctx;
                 };
@@ -1482,7 +1482,7 @@ pub const Command = struct {
                         'z' => FirstLetter.z,
                         else => break :outer,
                     };
-                    AddCompletions.init(bun.default_allocator) catch bun.outOfMemory();
+                    bun.handleOom(AddCompletions.init(bun.default_allocator));
                     const results = AddCompletions.getPackages(first_letter);
 
                     var prefilled_i: usize = 0;

@@ -16,7 +16,7 @@
 /// to determine since the imports happen at run-time instead of compile-time.
 /// In this case we just pick an arbitrary but consistent order.
 pub fn findImportedCSSFilesInJSOrder(this: *LinkerContext, temp_allocator: std.mem.Allocator, entry_point: Index) BabyList(Index) {
-    var visited = BitSet.initEmpty(temp_allocator, this.graph.files.len) catch bun.outOfMemory();
+    var visited = bun.handleOom(BitSet.initEmpty(temp_allocator, this.graph.files.len));
     var order: BabyList(Index) = .{};
 
     const all_import_records = this.graph.ast.items(.import_records);
@@ -68,7 +68,7 @@ pub fn findImportedCSSFilesInJSOrder(this: *LinkerContext, temp_allocator: std.m
             }
 
             if (is_css and source_index.isValid()) {
-                o.push(temp, source_index) catch bun.outOfMemory();
+                bun.handleOom(o.push(temp, source_index));
             }
         }
     }.visit;

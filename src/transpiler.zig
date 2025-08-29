@@ -376,7 +376,7 @@ pub const Transpiler = struct {
                 }
             }
 
-            transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch bun.outOfMemory();
+            bun.handleOom(transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }));
             return err;
         };
     }
@@ -713,7 +713,7 @@ pub const Transpiler = struct {
                     },
                 };
                 if (sheet.minify(alloc, bun.css.MinifyOptions.default(), &extra).asErr()) |e| {
-                    transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while minifying", .{e.kind}) catch bun.outOfMemory();
+                    bun.handleOom(transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while minifying", .{e.kind}));
                     return null;
                 }
                 const symbols = bun.ast.Symbol.Map{};
@@ -729,7 +729,7 @@ pub const Transpiler = struct {
                 )) {
                     .result => |v| v,
                     .err => |e| {
-                        transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while printing", .{e}) catch bun.outOfMemory();
+                        bun.handleOom(transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while printing", .{e}));
                         return null;
                     },
                 };

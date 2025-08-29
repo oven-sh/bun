@@ -700,8 +700,7 @@ const db = new SQL({
 });
 ```
 
-<details>
-<summary>SQLite Connection Notes</summary>
+{% details summary="SQLite Connection Notes" %}
 
 - **Connection Pooling**: SQLite doesn't use connection pooling as it's a file-based database. Each `SQL` instance represents a single connection.
 - **Transactions**: SQLite supports nested transactions through savepoints, similar to PostgreSQL.
@@ -1006,6 +1005,8 @@ try {
 }
 ```
 
+{% details summary="PostgreSQL-Specific Error Codes" %}
+
 ### PostgreSQL Connection Errors
 
 | Connection Errors                 | Description                                          |
@@ -1071,12 +1072,13 @@ try {
 | `ERR_POSTGRES_UNSAFE_TRANSACTION`        | Unsafe transaction operation detected |
 | `ERR_POSTGRES_INVALID_TRANSACTION_STATE` | Invalid transaction state             |
 
+{% /details %}
+
 ### SQLite-Specific Errors
 
 SQLite errors provide error codes and numbers that correspond to SQLite's standard error codes:
 
-<details>
-<summary>Common SQLite Error Codes</summary>
+{% details summary="Common SQLite Error Codes" %}
 
 | Error Code          | errno | Description                                          |
 | ------------------- | ----- | ---------------------------------------------------- |
@@ -1344,7 +1346,8 @@ await mysql`DESCRIBE users`;
 await mysql`EXPLAIN SELECT * FROM users WHERE id = ${id}`;
 ```
 
-> Why not just use an existing library?
+
+## Why not just use an existing library?
 
 npm packages like postgres.js, pg, and node-postgres can be used in Bun too. They're great options.
 

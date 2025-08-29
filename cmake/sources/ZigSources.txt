@@ -416,6 +416,7 @@ src/bundler/DeferredBatchTask.zig
 src/bundler/entry_points.zig
 src/bundler/Graph.zig
 src/bundler/HTMLImportManifest.zig
+src/bundler/IndexStringMap.zig
 src/bundler/linker_context/computeChunks.zig
 src/bundler/linker_context/computeCrossChunkDependencies.zig
 src/bundler/linker_context/convertStmtsForChunk.zig
@@ -490,6 +491,7 @@ src/codegen/process_windows_translate_c.zig
 src/collections.zig
 src/collections/baby_list.zig
 src/collections/bit_set.zig
+src/collections/BoundedArray.zig
 src/collections/hive_array.zig
 src/collections/multi_array_list.zig
 src/compile_target.zig
@@ -498,7 +500,6 @@ src/copy_file.zig
 src/crash_handler.zig
 src/create/SourceFileProjectGenerator.zig
 src/csrf.zig
-src/css_scanner.zig
 src/css/compat.zig
 src/css/context.zig
 src/css/css_internals.zig
@@ -650,6 +651,7 @@ src/glob.zig
 src/glob/GlobWalker.zig
 src/glob/match.zig
 src/Global.zig
+src/handle_oom.zig
 src/heap_breakdown.zig
 src/highway.zig
 src/hmac.zig

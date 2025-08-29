@@ -1,4 +1,4 @@
-pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.FieldType, raw: bool, bigint: bool, unsigned: bool, comptime Context: type, reader: NewReader(Context)) !SQLDataCell {
+pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.FieldType, column_length: u32, raw: bool, bigint: bool, unsigned: bool, comptime Context: type, reader: NewReader(Context)) !SQLDataCell {
     debug("decodeBinaryValue: {s}", .{@tagName(field_type)});
     return switch (field_type) {
         .MYSQL_TYPE_TINY => {
@@ -8,7 +8,11 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
                 return SQLDataCell.raw(&data);
             }
             const val = try reader.byte();
-            return SQLDataCell{ .tag = .bool, .value = .{ .bool = val } };
+            if (unsigned) {
+                return SQLDataCell{ .tag = .uint4, .value = .{ .uint4 = val } };
+            }
+            const ival: i8 = @bitCast(val);
+            return SQLDataCell{ .tag = .int4, .value = .{ .int4 = ival } };
         },
         .MYSQL_TYPE_SHORT => {
             if (raw) {
@@ -134,7 +138,24 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
             const slice = string_data.slice();
             return SQLDataCell{ .tag = .json, .value = .{ .json = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
         },
-        else => return error.UnsupportedColumnType,
+        .MYSQL_TYPE_BIT => {
+            // BIT(1) is a special case, it's a boolean
+            if (column_length == 1) {
+                var data = try reader.encodeLenString();
+                defer data.deinit();
+                const slice = data.slice();
+                return SQLDataCell{ .tag = .bool, .value = .{ .bool = if (slice.len > 0 and slice[0] == 1) 1 else 0 } };
+            } else {
+                var data = try reader.encodeLenString();
+                defer data.deinit();
+                return SQLDataCell.raw(&data);
+            }
+        },
+        else => {
+            var data = try reader.read(column_length);
+            defer data.deinit();
+            return SQLDataCell.raw(&data);
+        },
     };
 }
 

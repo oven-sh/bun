@@ -24,6 +24,18 @@ describeWithContainer(
       max: 1,
     };
     const sql = new SQL(options);
+    test("should return lastInsertRowid and affectedRows", async () => {
+      await using db = new SQL({ ...options, max: 1, idleTimeout: 5 });
+      using sql = await db.reserve();
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, name text)`;
+
+      const { lastInsertRowid } = await sql`INSERT INTO ${sql(random_name)} (name) VALUES (${"test"})`;
+      expect(lastInsertRowid).toBe(1);
+      const { affectedRows } = await sql`UPDATE ${sql(random_name)} SET name = "test2" WHERE id = ${lastInsertRowid}`;
+      expect(affectedRows).toBe(1);
+    });
     describe("should work with more than the max inline capacity", () => {
       for (let size of [50, 60, 62, 64, 70, 100]) {
         for (let duplicated of [true, false]) {
@@ -264,17 +276,58 @@ describeWithContainer(
       expect((await sql`select ${"hello"} as x`)[0].x).toBe("hello");
     });
 
-    test("Boolean", async () => {
+    test("Boolean/TinyInt/BIT", async () => {
       // Protocol will always return 0 or 1 for TRUE and FALSE when not using a table.
       expect((await sql`select ${false} as x`)[0].x).toBe(0);
       expect((await sql`select ${true} as x`)[0].x).toBe(1);
-      const random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+      let random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a bool)`;
-      const values = [{ a: true }, { a: false }];
+      const values = [{ a: true }, { a: false }, { a: 8 }, { a: -1 }];
       await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
-      const [[a], [b]] = await sql`select * from ${sql(random_name)}`.values();
-      expect(a).toBe(true);
-      expect(b).toBe(false);
+      const [[a], [b], [c], [d]] = await sql`select * from ${sql(random_name)}`.values();
+      expect(a).toBe(1);
+      expect(b).toBe(0);
+      expect(c).toBe(8);
+      expect(d).toBe(-1);
+      {
+        random_name += "2";
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a tinyint(1) unsigned)`;
+        try {
+          const values = [{ a: -1 }];
+          await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
+          expect.unreachable();
+        } catch (e: any) {
+          expect(e.code).toBe("ERR_MYSQL_SERVER_ERROR");
+          expect(e.message).toContain("Out of range value for column 'a'");
+        }
+
+        const values = [{ a: 255 }];
+        await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
+        const [[a]] = await sql`select * from ${sql(random_name)}`.values();
+        expect(a).toBe(255);
+      }
+
+      {
+        random_name += "3";
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a bit(1), b bit(2))`;
+        const values = [
+          { a: true, b: 1 },
+          { a: false, b: 2 },
+        ];
+        await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
+        const results = await sql`select * from ${sql(random_name)}`;
+        // return true or false for BIT(1) and buffer for BIT(n)
+        expect(results[0].a).toBe(true);
+        expect(results[0].b).toEqual(Buffer.from([1]));
+        expect(results[1].a).toBe(false);
+        expect(results[1].b).toEqual(Buffer.from([2]));
+        // text protocol should behave the same
+        const results2 = await sql`select * from ${sql(random_name)}`.simple();
+        expect(results2[0].a).toBe(true);
+        expect(results2[0].b).toEqual(Buffer.from([1]));
+        expect(results2[1].a).toBe(false);
+        expect(results2[1].b).toEqual(Buffer.from([2]));
+      }
     });
 
     test("Date", async () => {

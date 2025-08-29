@@ -400,7 +400,7 @@ pub fn generateCodeForFileInChunkJS(
                 // dependency. For correctness, we must not use "async" if the module
                 // isn't async because then calling "require()" on that module would
                 // swallow any exceptions thrown during module initialization.
-                const is_async = flags.is_async_or_has_async_dependency;
+                const is_async = c.graph.async_dependencies.isSet(part_range.source_index.get());
 
                 const ExportHoist = struct {
                     decls: std.ArrayListUnmanaged(G.Decl),

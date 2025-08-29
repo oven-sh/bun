@@ -391,41 +391,58 @@ pub const LinkerContext = struct {
             }
         }
 
-        // Second pass: propagate async flag through cycles
-        // Keep iterating until no changes are made
+        // Second pass: propagate async flag through cycles using bitset operations
+        // Keep iterating until no changes are made, but use efficient bitset operations
         {
             const import_records_list: []ImportRecord.List = this.graph.ast.items(.import_records);
-            const flags: []JSMeta.Flags = this.graph.meta.items(.flags);
             const css_asts: []?*bun.css.BundlerStyleSheet = this.graph.ast.items(.css);
+            var async_deps = &this.graph.async_dependencies;
 
             var changed = true;
             while (changed) {
                 changed = false;
+                var new_async = try AutoBitSet.initEmpty(this.allocator(), this.graph.files.len);
+                defer new_async.deinit(this.allocator());
+
                 var idx: u32 = 0;
                 while (idx < this.graph.files.len) : (idx += 1) {
                     // Skip runtime
                     if (idx == Index.runtime.get()) continue;
-
                     // Skip if not a JavaScript AST
                     if (idx >= import_records_list.len) continue;
-
                     // Skip CSS files
                     if (css_asts[idx] != null) continue;
+                    // Skip if already async
+                    if (async_deps.isSet(idx)) continue;
 
                     const import_records = import_records_list[idx].slice();
                     for (import_records) |record| {
                         if (Index.isValid(record.source_index) and record.kind == .stmt) {
                             const dep_index = record.source_index.get();
-                            // If our dependency is async, we should be async too
-                            if (dep_index < flags.len and
-                                flags[dep_index].is_async_or_has_async_dependency and
-                                !flags[idx].is_async_or_has_async_dependency)
-                            {
-                                flags[idx].is_async_or_has_async_dependency = true;
+                            // If any dependency is async, mark this file as async
+                            if (async_deps.isSet(dep_index)) {
+                                new_async.set(idx);
                                 changed = true;
+                                break;
                             }
                         }
                     }
+                }
+
+                // Union the new async files with the existing set
+                switch (async_deps.*) {
+                    .static => {
+                        switch (new_async.*) {
+                            .static => async_deps.static.setUnion(&new_async.static),
+                            .dynamic => unreachable, // Should not happen with same capacity
+                        }
+                    },
+                    .dynamic => {
+                        switch (new_async.*) {
+                            .static => unreachable, // Should not happen with same capacity
+                            .dynamic => async_deps.dynamic.setUnion(new_async.dynamic),
+                        }
+                    },
                 }
             }
         }
@@ -994,14 +1011,13 @@ pub const LinkerContext = struct {
         meta_flags: []JSMeta.Flags,
         ast_import_records: []const bun.BabyList(ImportRecord),
     ) bun.OOM!js_ast.TlaCheck {
-        const total_files = tla_checks.len;
+        _ = meta_flags; // No longer used - async dependencies are tracked in LinkerGraph.async_dependencies
 
-        // BitSet for tracking all files that are async or have async dependencies
-        var async_dependency_set = try AutoBitSet.initEmpty(c.allocator(), total_files);
-        defer async_dependency_set.deinit(c.allocator());
+        // Use the shared AutoBitSet from LinkerGraph for async dependencies
+        var async_dependency_set = &c.graph.async_dependencies;
 
         // BitSet for tracking current DFS stack (cycle detection)
-        var visiting_stack = try AutoBitSet.initEmpty(c.allocator(), total_files);
+        var visiting_stack = try AutoBitSet.initEmpty(c.allocator(), tla_checks.len);
         defer visiting_stack.deinit(c.allocator());
 
         // Work stack for iterative DFS
@@ -1052,14 +1068,10 @@ pub const LinkerContext = struct {
 
                 visiting_stack.unset(source_index);
 
-                if (async_dependency_set.isSet(source_index)) {
-                    meta_flags[source_index].is_async_or_has_async_dependency = true;
-
-                    // Propagate to parent in the work stack
-                    if (work_stack.items.len > 0) {
-                        const parent_item = &work_stack.items[work_stack.items.len - 1];
-                        async_dependency_set.set(parent_item.source_index);
-                    }
+                // Propagate to parent in the work stack
+                if (async_dependency_set.isSet(source_index) and work_stack.items.len > 0) {
+                    const parent_item = &work_stack.items[work_stack.items.len - 1];
+                    async_dependency_set.set(parent_item.source_index);
                 }
                 continue;
             }
@@ -1474,7 +1486,7 @@ pub const LinkerContext = struct {
                 c.graph.ast.items(.exports_ref)[source_index]
             else
                 Ref.None,
-            .is_wrapper_async = flags.is_async_or_has_async_dependency,
+            .is_wrapper_async = c.graph.async_dependencies.isSet(source_index),
             .wrapper_ref = c.graph.ast.items(.wrapper_ref)[source_index],
 
             .was_unwrapped_require = was_unwrapped_require and c.graph.ast.items(.flags)[source_index].force_cjs_to_esm,

@@ -353,12 +353,12 @@ pub fn handleUncaughtException(this: *Execution, user_data: describe2.BunTestFil
 const std = @import("std");
 const test_command = @import("../../cli/test_command.zig");
 
-const describe2 = @import("./describe2.zig");
+const bun = @import("bun");
+const jsc = bun.jsc;
+
+const describe2 = jsc.Jest.describe2;
 const BunTestFile = describe2.BunTestFile;
 const Execution = describe2.Execution;
 const ExecutionEntry = describe2.ExecutionEntry;
-const groupLog = describe2.group;
-
-const bun = @import("bun");
-const jsc = bun.jsc;
 const Order = describe2.Order;
+const groupLog = describe2.group;

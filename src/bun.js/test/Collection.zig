@@ -176,12 +176,11 @@ pub fn handleUncaughtException(this: *Collection, _: describe2.BunTestFile.RefDa
 
 const std = @import("std");
 
-const describe2 = @import("./describe2.zig");
+const bun = @import("bun");
+const jsc = bun.jsc;
+
+const describe2 = jsc.Jest.describe2;
 const BunTestFile = describe2.BunTestFile;
 const Collection = describe2.Collection;
 const DescribeScope = describe2.DescribeScope;
 const group = describe2.group;
-
-const bun = @import("bun");
-const jsc = bun.jsc;
-const Strong = jsc.Strong.Safe;

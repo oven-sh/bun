@@ -198,21 +198,17 @@ pub fn create(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue, cfg: d
     return value;
 }
 
+const bun = @import("bun");
 const std = @import("std");
-const test_command = @import("../../cli/test_command.zig");
+
+const jsc = bun.jsc;
+const CallFrame = jsc.CallFrame;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;
+const Strong = jsc.Strong.Safe;
 
 const describe2 = jsc.Jest.describe2;
 const BunTestFile = describe2.BunTestFile;
-const Execution = describe2.Execution;
-const ExecutionEntry = describe2.ExecutionEntry;
-const groupLog = describe2.group;
 const ScopeFunctions = describe2.ScopeFunctions;
-
-const bun = @import("bun");
-const jsc = bun.jsc;
-const JSGlobalObject = jsc.JSGlobalObject;
-const CallFrame = jsc.CallFrame;
-const VirtualMachine = jsc.VirtualMachine;
-const JSValue = jsc.JSValue;
-
-const Strong = jsc.Strong.Safe;
+const groupLog = describe2.group;

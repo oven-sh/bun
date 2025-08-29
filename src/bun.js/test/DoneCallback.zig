@@ -74,21 +74,16 @@ pub fn create(globalThis: *JSGlobalObject, buntest: *describe2.BunTestFile, ref_
     return value;
 }
 
-const std = @import("std");
-const test_command = @import("../../cli/test_command.zig");
+const bun = @import("bun");
+
+const jsc = bun.jsc;
+const CallFrame = jsc.CallFrame;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;
+const Strong = jsc.Strong.Safe;
 
 const describe2 = jsc.Jest.describe2;
 const BunTestFile = describe2.BunTestFile;
-const Execution = describe2.Execution;
-const ExecutionEntry = describe2.ExecutionEntry;
-const groupLog = describe2.group;
 const DoneCallback = describe2.DoneCallback;
-
-const bun = @import("bun");
-const jsc = bun.jsc;
-const JSGlobalObject = jsc.JSGlobalObject;
-const CallFrame = jsc.CallFrame;
-const VirtualMachine = jsc.VirtualMachine;
-const JSValue = jsc.JSValue;
-
-const Strong = jsc.Strong.Safe;
+const groupLog = describe2.group;

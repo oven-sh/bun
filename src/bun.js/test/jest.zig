@@ -2421,6 +2421,7 @@ pub fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObj
 const string = []const u8;
 
 pub const describe2 = @import("./describe2.zig");
+
 const std = @import("std");
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const Snapshots = @import("./snapshot.zig").Snapshots;
@@ -2433,7 +2434,6 @@ const ExpectTypeOf = expect.ExpectTypeOf;
 const bun = @import("bun");
 const ArrayIdentityContext = bun.ArrayIdentityContext;
 const Environment = bun.Environment;
-const Fs = bun.fs;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
 const RegularExpression = bun.RegularExpression;

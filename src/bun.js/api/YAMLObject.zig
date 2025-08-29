@@ -68,29 +68,30 @@ const Stringifier = struct {
     space: Space,
 
     pub const Space = union(enum) {
+        minified,
         number: u32,
         str: String,
 
         pub fn init(global: *JSGlobalObject, space_value: JSValue) JSError!Space {
-            if (space_value.isUndefinedOrNull()) {
-                return .{ .number = 2 };
-            }
-
             if (space_value.isNumber()) {
                 var num = space_value.toInt32();
-                if (num <= 0) {
-                    // default is 2.
-                    num = 2;
+                num = @max(0, @min(num, 10));
+                if (num == 0) {
+                    return .minified;
                 }
                 return .{ .number = @intCast(num) };
             }
 
-            const str = try space_value.toBunString(global);
-            return .{ .str = str };
+            if (space_value.isString()) {
+                return .{ .str = try space_value.toBunString(global) };
+            }
+
+            return .minified;
         }
 
         pub fn deinit(this: *const Space) void {
             switch (this.*) {
+                .minified => {},
                 .number => {},
                 .str => |str| {
                     str.deref();
@@ -360,7 +361,14 @@ const Stringifier = struct {
                 return;
             }
 
-            this.newline();
+            switch (this.space) {
+                .minified => {
+                    this.builder.append(.lchar, ' ');
+                },
+                .number, .str => {
+                    this.newline();
+                },
+            }
             anchor.anchored = true;
         }
 
@@ -372,25 +380,44 @@ const Stringifier = struct {
                 return;
             }
 
-            this.builder.ensureUnusedCapacity(iter.len * "- ".len);
+            switch (this.space) {
+                .minified => {
+                    this.builder.append(.lchar, '[');
+                    while (try iter.next()) |item| {
+                        if (item.isUndefined() or item.isSymbol()) {
+                            continue;
+                        }
 
-            while (try iter.next()) |item| {
-                if (item.isUndefined() or item.isSymbol()) {
-                    continue;
-                }
+                        try this.stringify(global, item);
 
-                this.builder.append(.latin1, "- ");
+                        if (iter.i != iter.len) {
+                            this.builder.append(.lchar, ',');
+                        }
+                    }
+                    this.builder.append(.lchar, ']');
+                },
+                .number, .str => {
+                    this.builder.ensureUnusedCapacity(iter.len * "- ".len);
+                    while (try iter.next()) |item| {
+                        if (item.isUndefined() or item.isSymbol()) {
+                            continue;
+                        }
 
-                // don't need to print a newline here for any value
+                        this.builder.append(.latin1, "- ");
 
-                this.indent += 1;
-                try this.stringify(global, item);
-                this.indent -= 1;
+                        // don't need to print a newline here for any value
 
-                if (iter.i != iter.len) {
-                    this.newline();
-                }
+                        this.indent += 1;
+                        try this.stringify(global, item);
+                        this.indent -= 1;
+
+                        if (iter.i != iter.len) {
+                            this.newline();
+                        }
+                    }
+                },
             }
+
             return;
         }
 
@@ -405,28 +432,49 @@ const Stringifier = struct {
             return;
         }
 
-        this.builder.ensureUnusedCapacity(iter.len * ": ".len);
+        switch (this.space) {
+            .minified => {
+                this.builder.append(.lchar, '{');
+                while (try iter.next()) |prop_name| {
+                    if (iter.value.isUndefined() or iter.value.isSymbol()) {
+                        continue;
+                    }
 
-        while (try iter.next()) |prop_name| {
-            if (iter.value.isUndefined() or iter.value.isSymbol()) {
-                continue;
-            }
+                    this.appendString(prop_name);
+                    this.builder.append(.latin1, ": ");
 
-            this.appendString(prop_name);
-            this.builder.append(.latin1, ": ");
+                    try this.stringify(global, iter.value);
 
-            this.indent += 1;
+                    if (iter.i != iter.len - 1) {
+                        this.builder.append(.lchar, ',');
+                    }
+                }
+                this.builder.append(.lchar, '}');
+            },
+            .number, .str => {
+                this.builder.ensureUnusedCapacity(iter.len * ": ".len);
+                while (try iter.next()) |prop_name| {
+                    if (iter.value.isUndefined() or iter.value.isSymbol()) {
+                        continue;
+                    }
 
-            if (propValueNeedsNewline(iter.value)) {
-                this.newline();
-            }
+                    this.appendString(prop_name);
+                    this.builder.append(.latin1, ": ");
 
-            try this.stringify(global, iter.value);
-            this.indent -= 1;
+                    this.indent += 1;
 
-            if (iter.i != iter.len - 1) {
-                this.newline();
-            }
+                    if (propValueNeedsNewline(iter.value)) {
+                        this.newline();
+                    }
+
+                    try this.stringify(global, iter.value);
+                    this.indent -= 1;
+
+                    if (iter.i != iter.len - 1) {
+                        this.newline();
+                    }
+                }
+            },
         }
     }
 
@@ -438,19 +486,26 @@ const Stringifier = struct {
     fn newline(this: *Stringifier) void {
         const indent_count = this.indent;
 
-        this.builder.append(.lchar, '\n');
-
         switch (this.space) {
+            .minified => {},
             .number => |space_num| {
+                this.builder.append(.lchar, '\n');
                 this.builder.ensureUnusedCapacity(indent_count * space_num);
                 for (0..indent_count * space_num) |_| {
                     this.builder.append(.lchar, ' ');
                 }
             },
             .str => |space_str| {
-                this.builder.ensureUnusedCapacity(indent_count * space_str.length());
+                this.builder.append(.lchar, '\n');
+
+                const clamped = if (space_str.length() > 10)
+                    space_str.substringWithLen(0, 10)
+                else
+                    space_str;
+
+                this.builder.ensureUnusedCapacity(indent_count * clamped.length());
                 for (0..indent_count) |_| {
-                    this.builder.append(.string, space_str);
+                    this.builder.append(.string, clamped);
                 }
             },
         }

@@ -33,7 +33,7 @@ status_flags: StatusFlags = .{},
 auth_plugin: ?AuthMethod = null,
 auth_state: AuthState = .{ .pending = {} },
 
-auth_data: []const u8 = "",
+auth_data: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
 database: []const u8 = "",
 user: []const u8 = "",
 password: []const u8 = "",
@@ -964,8 +964,7 @@ pub fn deinit(this: *MySQLConnection) void {
     this.write_buffer.deinit(bun.default_allocator);
     this.read_buffer.deinit(bun.default_allocator);
     this.statements.deinit(bun.default_allocator);
-    bun.default_allocator.free(this.auth_data);
-    this.auth_data = "";
+    this.auth_data.deinit();
     this.tls_config.deinit();
     if (this.tls_ctx) |ctx| {
         ctx.deinit(true);
@@ -1169,16 +1168,12 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
         this.status_flags,
     });
 
-    if (this.auth_data.len > 0) {
-        bun.default_allocator.free(this.auth_data);
-        this.auth_data = "";
-    }
+    this.auth_data.clearAndFree();
 
     // Store auth data
-    const auth_data = try bun.default_allocator.alloc(u8, handshake.auth_plugin_data_part_1.len + handshake.auth_plugin_data_part_2.len);
-    @memcpy(auth_data[0..8], &handshake.auth_plugin_data_part_1);
-    @memcpy(auth_data[8..], handshake.auth_plugin_data_part_2);
-    this.auth_data = auth_data;
+    try this.auth_data.ensureTotalCapacity(handshake.auth_plugin_data_part_1.len + handshake.auth_plugin_data_part_2.len);
+    try this.auth_data.appendSlice(handshake.auth_plugin_data_part_1[0..]);
+    try this.auth_data.appendSlice(handshake.auth_plugin_data_part_2[0..]);
 
     // Get auth plugin
     if (handshake.auth_plugin_name.slice().len > 0) {
@@ -1205,7 +1200,7 @@ fn handleHandshakeDecodePublicKey(this: *MySQLConnection, comptime Context: type
     var encrypted_password = Auth.caching_sha2_password.EncryptedPassword{
         .password = this.password,
         .public_key = response.data.slice(),
-        .nonce = this.auth_data,
+        .nonce = this.auth_data.items,
         .sequence_id = this.sequence_id,
     };
     try encrypted_password.write(this.writer());
@@ -1293,7 +1288,7 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
             // Handle various MORE_DATA cases
             if (this.auth_plugin) |plugin| {
                 switch (plugin) {
-                    .caching_sha2_password => {
+                    .sha256_password, .caching_sha2_password => {
                         reader.skip(1);
 
                         if (this.status == .authentication_awaiting_pk) {
@@ -1306,7 +1301,7 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
 
                         switch (response.status) {
                             .success => {
-                                debug("success", .{});
+                                debug("success auth", .{});
                                 this.setStatus(.connected);
                                 defer this.updateRef();
                                 this.flags.is_ready_for_query = true;
@@ -1319,6 +1314,7 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
                                 if (this.ssl_mode == .disable) {
                                     // we are in plain TCP so we need to request the public key
                                     this.setStatus(.authentication_awaiting_pk);
+                                    debug("awaiting public key", .{});
                                     var packet = try this.writer().start(this.sequence_id);
 
                                     var request = Auth.caching_sha2_password.PublicKeyRequest{};
@@ -1326,6 +1322,7 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
                                     try packet.end();
                                     this.flushData();
                                 } else {
+                                    debug("sending password TLS enabled", .{});
                                     // SSL mode is enabled, send password as is
                                     var packet = try this.writer().start(this.sequence_id);
                                     try this.writer().write(this.password);
@@ -1372,9 +1369,13 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
                 this.fail("Unsupported auth plugin", error.UnsupportedAuthPlugin);
                 return;
             };
+            const auth_data = auth_switch.plugin_data.slice();
+            this.auth_plugin = auth_method;
+            this.auth_data.clearRetainingCapacity();
+            try this.auth_data.appendSlice(auth_data);
 
             // Send new auth response
-            try this.sendAuthSwitchResponse(auth_method, auth_switch.plugin_data.slice());
+            try this.sendAuthSwitchResponse(auth_method, auth_data);
         },
 
         else => {
@@ -1467,12 +1468,12 @@ pub fn sendHandshakeResponse(this: *MySQLConnection) AnyMySQLError.Error!void {
     // Generate auth response based on plugin
     var scrambled_buf: [32]u8 = undefined;
     if (this.auth_plugin) |plugin| {
-        if (this.auth_data.len == 0) {
+        if (this.auth_data.items.len == 0) {
             this.fail("Missing auth data from server", error.MissingAuthData);
             return;
         }
 
-        response.auth_response = .{ .temporary = try plugin.scramble(this.password, this.auth_data, &scrambled_buf) };
+        response.auth_response = .{ .temporary = try plugin.scramble(this.password, this.auth_data.items, &scrambled_buf) };
     }
     response.capability_flags.reject();
     try response.write(this.writer());
@@ -1490,7 +1491,10 @@ pub fn sendAuthSwitchResponse(this: *MySQLConnection, auth_method: AuthMethod, p
         .temporary = try auth_method.scramble(this.password, plugin_data, &scrambled_buf),
     };
 
-    try response.write(this.writer());
+    var response_writer = this.writer();
+    var packet = try response_writer.start(this.sequence_id);
+    try response.write(response_writer);
+    try packet.end();
     this.flushData();
 }
 
@@ -1684,7 +1688,7 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
     }
 }
 
-fn handleResultSetOK(this: *MySQLConnection, request: *MySQLQuery, statement: *MySQLStatement, status_flags: StatusFlags) void {
+fn handleResultSetOK(this: *MySQLConnection, request: *MySQLQuery, statement: *MySQLStatement, status_flags: StatusFlags, last_insert_id: u64, affected_rows: u64) void {
     this.status_flags = status_flags;
     this.flags.is_ready_for_query = !status_flags.has(.SERVER_MORE_RESULTS_EXISTS);
     debug("handleResultSetOK: {d} {}", .{ status_flags.toInt(), status_flags.has(.SERVER_MORE_RESULTS_EXISTS) });
@@ -1695,7 +1699,14 @@ fn handleResultSetOK(this: *MySQLConnection, request: *MySQLQuery, statement: *M
     if (this.flags.is_ready_for_query) {
         this.finishRequest(request);
     }
-    request.onResult(statement.result_count, this.globalObject, this.js_value, this.flags.is_ready_for_query);
+    request.onResult(
+        statement.result_count,
+        this.globalObject,
+        this.js_value,
+        this.flags.is_ready_for_query,
+        last_insert_id,
+        affected_rows,
+    );
     statement.reset();
 }
 
@@ -1740,7 +1751,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                     // if packet type is OK it means the query is done and no results are returned
                     try ok.decode(reader);
                     defer ok.deinit();
-                    this.handleResultSetOK(request, statement, ok.status_flags);
+                    this.handleResultSetOK(request, statement, ok.status_flags, ok.last_insert_id, ok.affected_rows);
                     return;
                 }
 
@@ -1776,13 +1787,13 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                         try ok.decode(reader);
                         defer ok.deinit();
 
-                        this.handleResultSetOK(request, statement, ok.status_flags);
+                        this.handleResultSetOK(request, statement, ok.status_flags, ok.last_insert_id, ok.affected_rows);
                         return;
                     } else if (packet_type == .EOF) {
                         // this is actually a OK packet but with the flag EOF
                         try ok.decode(reader);
                         defer ok.deinit();
-                        this.handleResultSetOK(request, statement, ok.status_flags);
+                        this.handleResultSetOK(request, statement, ok.status_flags, ok.last_insert_id, ok.affected_rows);
                         return;
                     }
                 }

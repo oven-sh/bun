@@ -974,7 +974,7 @@ var CallTracker;
 Object.defineProperty(assert, "CallTracker", {
   get() {
     if (CallTracker === undefined) {
-      const { deprecate } = require("node:util");
+      const { deprecate } = require("internal/util/deprecate");
       CallTracker = deprecate(require("internal/assert/calltracker"), "assert.CallTracker is deprecated.", "DEP0173");
     }
     return CallTracker;

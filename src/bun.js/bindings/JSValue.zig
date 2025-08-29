@@ -653,6 +653,17 @@ pub const JSValue = enum(i64) {
         return jsNumberWithType(@TypeOf(number), number);
     }
 
+    pub fn jsBigInt(number: anytype) JSValue {
+        const Number = @TypeOf(number);
+        return switch (comptime Number) {
+            u64 => JSValue.fromUInt64NoTruncate(number),
+            i64 => JSValue.fromInt64NoTruncate(number),
+            i32 => JSValue.fromInt64NoTruncate(number),
+            u32 => JSValue.fromUInt64NoTruncate(number),
+            else => @compileError("Expected u64, i64, u32 or i32, got " ++ @typeName(Number)),
+        };
+    }
+
     pub inline fn jsTDZValue() JSValue {
         return bun.cpp.JSC__JSValue__jsTDZValue();
     }

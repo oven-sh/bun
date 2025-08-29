@@ -618,10 +618,6 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
         temp_source = code.items;
     }
 
-    if (manager.options.log_level == .verbose) {
-        Output.prettyErrorln("<d>[SecurityProvider]<r> Scanner module path in subprocess: '{s}'", .{security_scanner});
-    }
-
     const packages_placeholder = "__PACKAGES_JSON__";
     if (std.mem.indexOf(u8, temp_source, packages_placeholder)) |index| {
         var new_code = std.ArrayList(u8).init(manager.allocator);

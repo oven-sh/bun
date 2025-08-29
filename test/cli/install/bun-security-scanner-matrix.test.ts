@@ -214,6 +214,10 @@ scanner = "${scannerPath}"`,
     console.log("bunfig:");
     console.log(await Bun.file(join(dir, "bunfig.toml")).text());
     console.log();
+  } else {
+    console.log("Files in test dir:", await Array.fromAsync(new Bun.Glob("**/*").scan(dir)));
+    console.log("Stdout:", stdout);
+    console.log("Stderr:", stderr);
   }
 
   expect(exitCode).toBe(expectedExitCode);
@@ -233,11 +237,8 @@ scanner = "${scannerPath}"`,
   const errAndOut = stderr + stdout;
 
   console.log(
-    `[TEST DEBUG] scannerType=${scannerType}, hasExistingNodeModules=${hasExistingNodeModules}, exitCode=${exitCode}`,
+    `[TEST STATE] scannerType=${scannerType}, hasExistingNodeModules=${hasExistingNodeModules}, exitCode=${exitCode}, command='${cmd.join(" ")}'`,
   );
-  console.log(`[TEST DEBUG] stdout length=${stdout.length}, stderr length=${stderr.length}`);
-  console.log(`[TEST DEBUG] stderr: ${stderr}`);
-  console.log(`[TEST DEBUG] stdout: ${stdout}`);
 
   // If the scanner is from npm and there are no node modules when the test "starts"
   // then we should expect Bun to do the partial install first of all
@@ -260,6 +261,23 @@ scanner = "${scannerPath}"`,
     } else if (scannerReturns === "fatal") {
       expect(errAndOut).toContain("FATAL:");
       expect(errAndOut).toContain("Test fatal error");
+    }
+  }
+
+  if (scannerType !== "bunfig-only" && !hasExistingNodeModules) {
+    switch (scannerReturns) {
+      case "fatal": {
+        const files = await Array.fromAsync(new Bun.Glob("**/*").scan(dir));
+        expect(files).not.toContain("node_modules/left-pad/package.json");
+        break;
+      }
+
+      case "warn":
+      case "clean": {
+        const files = await Array.fromAsync(new Bun.Glob("**/*").scan(dir));
+        expect(files).toContain("node_modules/left-pad/package.json");
+        break;
+      }
     }
   }
 

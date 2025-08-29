@@ -191,6 +191,8 @@ scanner = "${scannerPath}"
   if (exitCode !== expectedExitCode) {
     console.log("Command:", cmd.join(" "));
     console.log("Expected exit code:", expectedExitCode, "Got:", exitCode);
+    console.log("Test directory:", dir);
+    console.log("Files in test dir:", await Array.fromAsync(new Bun.Glob("**/*").scan(dir)));
     console.log("Stdout:", stdout);
     console.log("Stderr:", stderr);
   }

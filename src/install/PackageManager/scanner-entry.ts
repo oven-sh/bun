@@ -35,16 +35,24 @@ let scanner: Bun.Security.Scanner;
 try {
   scanner = (await import(scannerModuleName)).scanner;
 } catch (error) {
-  if (!suppressError) {
-    const msg = `\x1b[31merror: \x1b[0mFailed to import security scanner: \x1b[1m'${scannerModuleName}'`;
-    console.error(msg);
-  }
+  if (error instanceof Error && "code" in error && error.code === "ERR_MODULE_NOT_FOUND") {
+    if (!suppressError) {
+      const msg = `\x1b[31merror: \x1b[0mFailed to import security scanner: \x1b[1m'${scannerModuleName}'`;
+      console.error(msg);
+    }
 
-  writeAndExit({
-    type: "error",
-    code: "MODULE_NOT_FOUND",
-    module: scannerModuleName,
-  });
+    writeAndExit({
+      type: "error",
+      code: "MODULE_NOT_FOUND",
+      module: scannerModuleName,
+    });
+  } else {
+    writeAndExit({
+      type: "error",
+      code: "SCAN_FAILED",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 try {

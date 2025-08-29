@@ -3,6 +3,8 @@
 
 const allocation_scope = @This();
 
+/// An allocation scope with a dynamically typed parent allocator. Prefer using a concrete type,
+/// like `AllocationScopeIn(bun.DefaultAllocator)`.
 pub const AllocationScope = AllocationScopeIn(std.mem.Allocator);
 
 pub const Allocation = struct {
@@ -338,41 +340,78 @@ pub fn AllocationScopeIn(comptime Allocator: type) type {
             if (comptime enabled) self.#state.setPointerExtra(ptr, extra);
         }
 
-        /// Converts an `std.mem.Allocator` into a borrowed allocation scope.
-        ///
-        /// `alloc` must have come from `AllocationScopeIn(Allocator).allocator` or
-        /// `AllocationScopeIn(Allocator).Borrowed.allocator`.
-        ///
-        /// Additionally, one of the following must be true:
-        ///
-        /// * `Allocator` is `std.mem.Allocator`.
-        /// * The parent allocator of the allocation scope was a default-initialized instance
-        ///   of `Allocator`.
-        pub fn downcast(alloc: std.mem.Allocator) Self {
+        fn downcastImpl(
+            std_alloc: std.mem.Allocator,
+            parent_alloc: if (Allocator == std.mem.Allocator)
+                ?BorrowedAllocator
+            else
+                BorrowedAllocator,
+        ) Self {
             const state = if (comptime enabled) blk: {
                 bun.assertf(
-                    alloc.vtable == &vtable,
-                    "allocator is not an AllocationScope (has vtable {*})",
-                    .{alloc.vtable},
+                    std_alloc.vtable == &vtable,
+                    "allocator is not an allocation scope (has vtable {*})",
+                    .{std_alloc.vtable},
                 );
-                const state: *State = @ptrCast(@alignCast(alloc.ptr));
+                const state: *State = @ptrCast(@alignCast(std_alloc.ptr));
                 break :blk state;
             };
 
-            const parent_alloc = if (comptime enabled)
+            const current_std_parent = if (comptime enabled)
                 state.parent
             else
-                alloc;
+                std_alloc;
 
             const new_parent = if (comptime Allocator == std.mem.Allocator)
-                parent_alloc
-            else blk: {
-                const default = bun.memory.initDefault(BorrowedAllocator);
-                const default_std = bun.allocators.asStd(default);
-                bun.safety.alloc.assertEq(parent_alloc, default_std);
-                break :blk default;
-            };
+                parent_alloc orelse current_std_parent
+            else
+                parent_alloc;
+
+            const new_std_parent = bun.allocators.asStd(new_parent);
+            bun.safety.alloc.assertEqFmt(
+                current_std_parent,
+                new_std_parent,
+                "tried to downcast allocation scope with wrong parent allocator",
+                .{},
+            );
             return .{ .#parent = new_parent, .#state = state };
+        }
+
+        /// Converts an `std.mem.Allocator` into a borrowed allocation scope, with a given parent
+        /// allocator.
+        ///
+        /// Requirements:
+        ///
+        /// * `std_alloc` must have come from `AllocationScopeIn(Allocator).allocator` (or the
+        ///   equivalent method on a `Borrowed` instance).
+        ///
+        /// * `parent_alloc` must be equivalent to the (borrowed) parent allocator of the original
+        ///   allocation scope (that is, the return value of `AllocationScopeIn(Allocator).parent`).
+        ///   In particular, `bun.allocators.asStd` must return the same value for each allocator.
+        pub fn downcastIn(std_alloc: std.mem.Allocator, parent_alloc: BorrowedAllocator) Self {
+            return downcastImpl(std_alloc, parent_alloc);
+        }
+
+        /// Converts an `std.mem.Allocator` into a borrowed allocation scope.
+        ///
+        /// Requirements:
+        ///
+        /// * `std_alloc` must have come from `AllocationScopeIn(Allocator).allocator` (or the
+        ///   equivalent method on a `Borrowed` instance).
+        ///
+        /// * One of the following must be true:
+        ///
+        ///   1. `Allocator` is `std.mem.Allocator`.
+        ///
+        ///   2. The parent allocator of the original allocation scope is equivalent to a
+        ///      default-initialized borrowed `Allocator`, as returned by
+        ///      `bun.memory.initDefault(bun.allocators.Borrowed(Allocator))`. This is the case
+        ///      for `bun.DefaultAllocator`.
+        pub fn downcast(std_alloc: std.mem.Allocator) Self {
+            return downcastImpl(std_alloc, if (comptime Allocator == std.mem.Allocator)
+                null
+            else
+                bun.memory.initDefault(BorrowedAllocator));
         }
     };
 
@@ -398,6 +437,10 @@ pub fn AllocationScopeIn(comptime Allocator: type) type {
                     bun.allocators.asStd(parent_alloc),
                 )),
             };
+        }
+
+        pub fn initDefault() Self {
+            return .init(bun.memory.initDefault(Allocator));
         }
 
         /// Borrows this `AllocationScope`. Use this method instead of copying `self`, as that makes
@@ -492,7 +535,7 @@ fn vtable_free(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, ret_add
     state.free(buf, alignment, ret_addr);
 }
 
-pub fn isInstance(allocator: std.mem.Allocator) bool {
+pub inline fn isInstance(allocator: std.mem.Allocator) bool {
     return (comptime enabled) and allocator.vtable == &vtable;
 }
 

@@ -50,19 +50,36 @@ fn guaranteedMismatch(alloc1: Allocator, alloc2: Allocator) bool {
 /// This function may have false negatives; that is, it may fail to detect that two allocators
 /// are different. However, in practice, it's a useful safety check.
 pub fn assertEq(alloc1: Allocator, alloc2: Allocator) void {
+    assertEqFmt(alloc1, alloc2, "allocators do not match", .{});
+}
+
+/// Asserts that two allocators are equal, with a formatted message.
+pub fn assertEqFmt(
+    alloc1: Allocator,
+    alloc2: Allocator,
+    comptime format: []const u8,
+    args: anytype,
+) void {
     if (comptime !enabled) return;
-    bun.assertf(
-        alloc1.vtable == alloc2.vtable,
-        "allocators do not match (vtables differ: {*} and {*})",
-        .{ alloc1.vtable, alloc2.vtable },
-    );
-    const ptr1 = if (hasPtr(alloc1)) alloc1.ptr else return;
-    const ptr2 = if (hasPtr(alloc2)) alloc2.ptr else return;
-    bun.assertf(
-        ptr1 == ptr2,
-        "allocators do not match (vtables are both {*} but pointers differ: {*} and {*})",
-        .{ alloc1.vtable, ptr1, ptr2 },
-    );
+    blk: {
+        if (alloc1.vtable != alloc2.vtable) {
+            bun.Output.err(
+                "allocator mismatch",
+                "vtables differ: {*} and {*}",
+                .{ alloc1.vtable, alloc2.vtable },
+            );
+            break :blk;
+        }
+        const ptr1 = if (hasPtr(alloc1)) alloc1.ptr else return;
+        const ptr2 = if (hasPtr(alloc2)) alloc2.ptr else return;
+        if (ptr1 == ptr2) return;
+        bun.Output.err(
+            "allocator mismatch",
+            "vtables are both {*} but pointers differ: {*} and {*}",
+            .{ alloc1.vtable, ptr1, ptr2 },
+        );
+    }
+    bun.assertf(false, format, args);
 }
 
 /// Use this in unmanaged containers to ensure multiple allocators aren't being used with the same

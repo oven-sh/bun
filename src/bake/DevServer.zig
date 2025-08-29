@@ -268,7 +268,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     const separate_ssr_graph = if (options.framework.server_components) |sc| sc.separate_ssr_graph else false;
 
     const dev = bun.new(DevServer, .{
-        .allocation_scope = .init(.{}),
+        .allocation_scope = .initDefault(),
         .root = options.root,
         .vm = options.vm,
         .server = null,

@@ -29,6 +29,10 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
   const registry = getRegistry();
   if (registry) {
     registry.clearRequestLog();
+
+    if (options.scannerType === "npm") {
+      registry.setScannerBehavior(options.scannerReturns ?? "clean");
+    }
   }
 
   const {
@@ -275,11 +279,6 @@ describe("Security Scanner Matrix Tests", () => {
           describe.each(["local", "npm", "bunfig-only"] as const)("(scanner: %s)", scannerType => {
             describe.each(["clean", "warn", "fatal"] as const)("(returns: %s)", scannerReturns => {
               const testName = String(++i);
-
-              if (scannerType === "npm") {
-                test.todo(testName, async () => {});
-                return;
-              }
 
               const shouldFail =
                 scannerType === "bunfig-only" || scannerReturns === "fatal" || scannerReturns === "warn";

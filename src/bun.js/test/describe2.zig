@@ -435,13 +435,6 @@ pub const BunTestFile = struct {
     fn bunTestCatch(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         return bunTestThenOrCatch(globalThis, callframe, true);
     }
-    fn addThen(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, promise: jsc.JSValue, data: RefDataValue) void {
-        group.begin(@src());
-        defer group.end();
-        group.log("addThen: data: {}", .{data});
-
-        promise.then(globalThis, this.ref(data), bunTestThen, bunTestCatch); // TODO: this function is odd. it requires manually exporting the describeCallbackThen as a toJSHostFn and also adding logic in c++
-    }
 
     pub fn run(this: *BunTestFile, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
         group.begin(@src());
@@ -585,8 +578,8 @@ pub const BunTestFile = struct {
         };
 
         if (result != null and result.?.asPromise() != null) {
-            group.log("callTestCallback -> promise", .{});
-            this.addThen(globalThis, result.?, cfg.data);
+            group.log("callTestCallback -> promise: data {}", .{cfg.data});
+            result.?.then(globalThis, this.ref(cfg.data), bunTestThen, bunTestCatch);
             return .continue_async;
         }
 

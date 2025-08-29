@@ -42,3 +42,10 @@ test("ordering", done => {
 test("ordering 2", () => {
   console.log("L2");
 });
+
+test("forcing an error to go to the wrong function", () => {
+  setTimeout(() => expect(false).toBe(true), 0);
+});
+test("the error goes to this function", done => {
+  setTimeout(done, 100);
+});

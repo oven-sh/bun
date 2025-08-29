@@ -1,6 +1,12 @@
+Breaking changes:
+
+- describe ordering: describe(A, describe(B), C, describe(D), E) will now run in order A, C, E, B, D rather than A, B, C, D, E
+- test ordering: test(a) describe(test(b), test(c)) will now run in order 'A', 'B", 'C' rather than 'B', 'C', 'A"
+- preload hooks: beforeAll/afterAll in preloads will now run before and after each file, rather than before the first file and after the last
+
 Complete before merge:
 
-- [ ] fix this scenerio
+- [ ] add a test for this scenerio
   ```js
   test("more functions called after delayed done", done => {
     process.nextTick(() => {
@@ -10,8 +16,10 @@ Complete before merge:
   });
   test("another test", async () => {});
   ```
+- [ ] support having both a done callback and a promise result
+- [ ] finalize describe call order. ideally `A[B, C], D[E, F[G]]` will run in normal order rather than `A, D, B, C, E, F, G`
 - [x] sometimes error messages aren't printing!
-- [ ] make sure it exits with code 1 on failure
+- [x] make sure it exits with code 1 on failure
 - [ ] decide on preload behaviour: before first/after last?
   - vitest/jest both do them seperately for each file, which makes sense because of isolation
   - bun does them before the first file and after the last file
@@ -35,7 +43,7 @@ Complete before merge:
   - error in afterEach
     - jest: beforeAll1 beforeAll2 beforeEach1 beforeEach2 test1 <b>afterEach1</b> afterEach2 beforeEach1 beforeEach2 test1 <b>afterEach1</b> afterEach2 afterAll1 afterAll2
     - bun: beforeAll1 beforeAll2 beforeEach1 beforeEach2 test1 <b>afterEach1</b> <s>afterEach2</s> beforeEach1 beforeEach2 test1 <b>afterEach1</b> <s>afterEach2</s> afterAll1 afterAll2
-- [ ] make the summary work again
+- [x] make the summary work again
 - [ ] add timeouts back
 - [ ] when a timeout triggers on a funciton with a done callback because the done callback was never called, note in the error that the function must call the done callback
   - [ ] there should be an issue that this can close

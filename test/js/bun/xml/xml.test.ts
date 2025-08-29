@@ -102,3 +102,38 @@ test("Bun.XML.parse - mixed content (text and children)", () => {
     __text: "Some text\n    \n    More text"
   });
 });
+
+test("Bun.XML.parse - XML entities", () => {
+  const xml = "<message>Hello &lt;world&gt; &amp; &quot;everyone&quot; &#39;here&#39;</message>";
+  const result = Bun.XML.parse(xml);
+  expect(result).toBe("Hello <world> & \"everyone\" 'here'");
+});
+
+test("Bun.XML.parse - numeric entities", () => {
+  const xml = "<test>&#65;&#66;&#67;</test>";
+  const result = Bun.XML.parse(xml);
+  expect(result).toBe("ABC");
+});
+
+test("Bun.XML.parse - entities in attributes", () => {
+  const xml = '<tag attr="&lt;value&gt;">content</tag>';
+  const result = Bun.XML.parse(xml);
+  expect(result).toEqual({
+    __attrs: {
+      attr: "<value>"
+    },
+    __text: "content"
+  });
+});
+
+test("Bun.XML.parse - XML comments are ignored", () => {
+  const xml = `<root>
+    <!-- This is a comment -->
+    <message>Hello</message>
+    <!-- Another comment -->
+  </root>`;
+  const result = Bun.XML.parse(xml);
+  expect(result).toEqual({
+    children: ["Hello"]
+  });
+});

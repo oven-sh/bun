@@ -126,6 +126,10 @@ const Parser = struct {
                 self.source.contents[self.current + 1] == '/') {
                 // End tag found
                 break;
+            } else if (self.current + 3 < self.source.contents.len and 
+                       std.mem.startsWith(u8, self.source.contents[self.current..], "<!--")) {
+                // Comment found - skip it
+                self.skipComment();
             } else if (self.source.contents[self.current] == '<') {
                 // Child element
                 const child = try self.parseElement();
@@ -261,10 +265,97 @@ const Parser = struct {
     }
 
     fn createStringExpr(self: *Parser, slice: []const u8) !Expr {
-        const string_data = try self.allocator.dupe(u8, slice);
-        return Expr.init(E.String, .{ .data = string_data }, .Empty);
+        // Decode XML entities before creating string
+        const decoded_data = try self.decodeXmlEntities(slice);
+        return Expr.init(E.String, .{ .data = decoded_data }, .Empty);
     }
     
+    fn decodeXmlEntities(self: *Parser, input: []const u8) ![]u8 {
+        var result = std.ArrayList(u8).init(self.allocator);
+        defer result.deinit();
+        
+        var i: usize = 0;
+        while (i < input.len) {
+            if (input[i] == '&') {
+                // Find the ending ';'
+                var end: usize = i + 1;
+                while (end < input.len and input[end] != ';') {
+                    end += 1;
+                }
+                
+                if (end < input.len) {
+                    const entity = input[i + 1..end];
+                    
+                    // Decode common XML entities
+                    if (std.mem.eql(u8, entity, "lt")) {
+                        try result.append('<');
+                    } else if (std.mem.eql(u8, entity, "gt")) {
+                        try result.append('>');
+                    } else if (std.mem.eql(u8, entity, "amp")) {
+                        try result.append('&');
+                    } else if (std.mem.eql(u8, entity, "quot")) {
+                        try result.append('"');
+                    } else if (std.mem.eql(u8, entity, "apos")) {
+                        try result.append('\'');
+                    } else if (entity.len > 1 and entity[0] == '#') {
+                        // Numeric entity
+                        const num_str = entity[1..];
+                        if (num_str.len > 0) {
+                            const codepoint = std.fmt.parseInt(u32, num_str, 10) catch {
+                                // If parsing fails, keep the original entity
+                                try result.appendSlice(input[i..end + 1]);
+                                i = end + 1;
+                                continue;
+                            };
+                            
+                            // Convert Unicode codepoint to UTF-8
+                            if (codepoint < 128) {
+                                try result.append(@intCast(codepoint));
+                            } else {
+                                // For simplicity, just handle ASCII range for now
+                                // A full implementation would need proper UTF-8 encoding
+                                try result.appendSlice(input[i..end + 1]);
+                            }
+                        } else {
+                            try result.appendSlice(input[i..end + 1]);
+                        }
+                    } else {
+                        // Unknown entity, keep as-is
+                        try result.appendSlice(input[i..end + 1]);
+                    }
+                    
+                    i = end + 1;
+                } else {
+                    // No closing ';' found, keep the '&'
+                    try result.append(input[i]);
+                    i += 1;
+                }
+            } else {
+                try result.append(input[i]);
+                i += 1;
+            }
+        }
+        
+        return try result.toOwnedSlice();
+    }
+    
+    fn skipComment(self: *Parser) void {
+        // Skip "<!--"
+        self.current += 4;
+        
+        // Find "-->"
+        while (self.current + 2 < self.source.contents.len) {
+            if (std.mem.startsWith(u8, self.source.contents[self.current..], "-->")) {
+                self.current += 3; // Skip "-->"
+                return;
+            }
+            self.advance();
+        }
+        
+        // If we reach here, comment was not properly closed
+        // But we'll just consume the rest to be lenient
+    }
+
     fn isNameChar(self: *Parser, c: u8) bool {
         _ = self;
         return std.ascii.isAlphanumeric(c) or c == '_' or c == '-' or c == ':' or c == '.';

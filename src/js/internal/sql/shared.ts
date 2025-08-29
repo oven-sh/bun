@@ -480,6 +480,8 @@ function parseOptions(
     prepare = false;
   }
 
+  const performanceEntries = !!options.performanceEntries;
+
   onconnect ??= options.onconnect;
   onclose ??= options.onclose;
   if (onconnect !== undefined) {
@@ -567,6 +569,7 @@ function parseOptions(
     sslMode,
     query,
     max: max || 10,
+    performanceEntries,
   };
 
   if (idleTimeout != null) {

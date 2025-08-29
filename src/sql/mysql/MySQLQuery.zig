@@ -1,6 +1,8 @@
 const MySQLQuery = @This();
 const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
 
+extern "C" fn JSC__addSQLQueryPerformanceEntry(globalObject: *jsc.JSGlobalObject, name: [*:0]const u8, description: [*:0]const u8, startTime: f64, endTime: f64) void;
+
 statement: ?*MySQLStatement = null,
 query: bun.String = bun.String.empty,
 cursor_name: bun.String = bun.String.empty,
@@ -9,6 +11,9 @@ thisValue: JSRef = JSRef.empty(),
 status: Status = Status.pending,
 
 ref_count: RefCount = RefCount.init(),
+
+/// Performance tracking logger
+performance_logger: SQLPerformanceEntryLogger = SQLPerformanceEntryLogger.init(),
 
 flags: packed struct(u8) {
     is_done: bool = false,
@@ -44,6 +49,74 @@ pub const Status = enum(u8) {
 
 pub fn hasPendingActivity(this: *@This()) bool {
     return this.ref_count.load(.monotonic) > 1;
+}
+
+/// Start performance tracking for this query
+pub fn startPerformanceTracking(this: *@This()) void {
+    this.performance_logger.start();
+}
+
+/// Parse SQL command from query text and return appropriate CommandTag
+fn parseQueryCommand(query_text: []const u8) CommandTag {
+    if (query_text.len == 0) return .{ .other = "UNKNOWN" };
+
+    var i: usize = 0;
+    // Skip leading whitespace
+    while (i < query_text.len and std.ascii.isWhitespace(query_text[i])) {
+        i += 1;
+    }
+
+    const start_pos = i;
+    // Find the end of the first word
+    while (i < query_text.len and !std.ascii.isWhitespace(query_text[i]) and query_text[i] != '(' and query_text[i] != ';') {
+        i += 1;
+    }
+
+    if (i <= start_pos) return .{ .other = "UNKNOWN" };
+
+    const command = query_text[start_pos..i];
+
+    // Match against known commands (case insensitive)
+    if (std.ascii.eqlIgnoreCase(command, "SELECT")) return .{ .SELECT = 0 };
+    if (std.ascii.eqlIgnoreCase(command, "INSERT")) return .{ .INSERT = 0 };
+    if (std.ascii.eqlIgnoreCase(command, "UPDATE")) return .{ .UPDATE = 0 };
+    if (std.ascii.eqlIgnoreCase(command, "DELETE")) return .{ .DELETE = 0 };
+    if (std.ascii.eqlIgnoreCase(command, "COPY")) return .{ .COPY = 0 };
+
+    return .{ .other = command };
+}
+
+/// End performance tracking and report to the performance API
+pub fn endPerformanceTracking(this: *@This(), connection: anytype, globalObject: *jsc.JSGlobalObject) void {
+    this.endPerformanceTrackingWithCommand(connection, globalObject, null);
+}
+
+/// End performance tracking with command tag information (matches PostgreSQL interface)
+pub fn endPerformanceTrackingWithCommand(this: *@This(), connection: anytype, globalObject: *jsc.JSGlobalObject, command_tag_str: ?[]const u8) void {
+    if (!connection.performance_entries_enabled) return;
+
+    // Convert query to UTF8 for description
+    var query_utf8 = this.query.toUTF8(bun.default_allocator);
+    defer query_utf8.deinit();
+
+    // If no command_tag_str provided, fall back to parsing (for backwards compatibility)
+    const final_command_tag_str = command_tag_str orelse blk: {
+        const parsed_command = parseQueryCommand(query_utf8.slice());
+        break :blk switch (parsed_command) {
+            .INSERT => "INSERT",
+            .DELETE => "DELETE",
+            .UPDATE => "UPDATE",
+            .MERGE => "MERGE",
+            .SELECT => "SELECT",
+            .MOVE => "MOVE",
+            .FETCH => "FETCH",
+            .COPY => "COPY",
+            .other => |other| other,
+        };
+    };
+
+    // Use the existing command detection - SQLPerformanceEntryLogger will extract the command name
+    this.performance_logger.end(connection.performance_entries_enabled, final_command_tag_str, query_utf8.slice(), globalObject);
 }
 
 pub fn deinit(this: *@This()) void {
@@ -537,6 +610,7 @@ const bun = @import("bun");
 const std = @import("std");
 const CommandTag = @import("../postgres/CommandTag.zig").CommandTag;
 const QueryBindingIterator = @import("../shared/QueryBindingIterator.zig").QueryBindingIterator;
+const SQLPerformanceEntryLogger = @import("../SQLPerformanceEntryLogger.zig").SQLPerformanceEntryLogger;
 const SQLQueryResultMode = @import("../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
 const Value = @import("./MySQLTypes.zig").Value;
 

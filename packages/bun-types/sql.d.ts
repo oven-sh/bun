@@ -133,6 +133,12 @@ declare module "bun" {
        * Receives the closing Error or null.
        */
       onclose?: ((err: Error | null) => void) | undefined;
+
+      /**
+       * Whether to track SQL query performance entries
+       * @default false
+       */
+      performanceEntries?: boolean | undefined;
     }
 
     interface PostgresOrMySQLOptions {
@@ -315,6 +321,12 @@ declare module "bun" {
        * @default true
        */
       prepare?: boolean | undefined;
+
+      /**
+       * Whether to track SQL query performance entries
+       * @default false
+       */
+      performanceEntries?: boolean | undefined;
     }
 
     /**

@@ -65,6 +65,7 @@ class PerformanceUserTiming;
 class PerformanceEntry;
 class PerformanceMark;
 class PerformanceMeasure;
+class SQLQueryPerformanceEntry;
 class PerformanceNavigation;
 class PerformanceNavigationTiming;
 class PerformanceObserver;
@@ -108,6 +109,7 @@ public:
     // void addNavigationTiming(DocumentLoader&, Document&, CachedResource&, const DocumentLoadTiming&, const NetworkLoadMetrics&);
     // void navigationFinished(const NetworkLoadMetrics&);
     void addResourceTiming(ResourceTiming&&);
+    void addSQLQueryEntry(const String& name, const String& description, double startTime, double endTime);
 
     // void reportFirstContentfulPaint();
 
@@ -159,6 +161,8 @@ private:
     // https://w3c.github.io/resource-timing/#extensions-performance-interface recommends size of 150.
     Vector<RefPtr<PerformanceEntry>> m_resourceTimingBuffer;
     unsigned m_resourceTimingBufferSize { 150 };
+
+    Vector<RefPtr<SQLQueryPerformanceEntry>> m_sqlQueryBuffer;
 
     // Timer m_resourceTimingBufferFullTimer;
     Vector<RefPtr<PerformanceEntry>> m_backupResourceTimingBuffer;

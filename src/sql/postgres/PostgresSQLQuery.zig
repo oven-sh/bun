@@ -1,5 +1,7 @@
 const PostgresSQLQuery = @This();
 const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
+
+extern "C" fn JSC__addSQLQueryPerformanceEntry(globalObject: *jsc.JSGlobalObject, name: [*:0]const u8, description: [*:0]const u8, startTime: f64, endTime: f64) void;
 statement: ?*PostgresSQLStatement = null,
 query: bun.String = bun.String.empty,
 cursor_name: bun.String = bun.String.empty,
@@ -9,6 +11,8 @@ thisValue: JSRef = JSRef.empty(),
 status: Status = Status.pending,
 
 ref_count: RefCount = RefCount.init(),
+
+performance_logger: SQLPerformanceEntryLogger = SQLPerformanceEntryLogger.init(),
 
 flags: packed struct(u8) {
     is_done: bool = false,
@@ -53,6 +57,28 @@ pub const Status = enum(u8) {
 
 pub fn hasPendingActivity(this: *@This()) bool {
     return this.ref_count.get() > 1;
+}
+
+/// Start performance tracking for this query
+pub fn startPerformanceTracking(this: *@This()) void {
+    this.performance_logger.start();
+}
+
+/// End performance tracking and report to the performance API
+pub fn endPerformanceTracking(this: *@This(), connection: anytype, globalObject: *jsc.JSGlobalObject) void {
+    this.endPerformanceTrackingWithCommand(connection, globalObject, null);
+}
+
+/// End performance tracking with command tag information
+pub fn endPerformanceTrackingWithCommand(this: *@This(), connection: anytype, globalObject: *jsc.JSGlobalObject, command_tag_str: ?[]const u8) void {
+    if (!connection.performance_entries_enabled) return;
+
+    // Convert query to UTF8 for description
+    var query_utf8 = this.query.toUTF8(bun.default_allocator);
+    defer query_utf8.deinit();
+
+    // Use the existing command_tag_str directly - SQLPerformanceEntryLogger will extract the command name
+    this.performance_logger.end(connection.performance_entries_enabled, command_tag_str, query_utf8.slice(), globalObject);
 }
 
 pub fn deinit(this: *@This()) void {
@@ -523,6 +549,7 @@ const protocol = @import("./PostgresProtocol.zig");
 const std = @import("std");
 const CommandTag = @import("./CommandTag.zig").CommandTag;
 const PostgresSQLQueryResultMode = @import("../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
+const SQLPerformanceEntryLogger = @import("../SQLPerformanceEntryLogger.zig").SQLPerformanceEntryLogger;
 
 const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
 const postgresErrorToJS = @import("./AnyPostgresError.zig").postgresErrorToJS;

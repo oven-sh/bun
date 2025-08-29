@@ -53,7 +53,8 @@ public:
         Mark = 1 << 1,
         Measure = 1 << 2,
         Resource = 1 << 3,
-        Paint = 1 << 4
+        Paint = 1 << 4,
+        SQLQuery = 1 << 5
     };
 
     virtual Type performanceEntryType() const = 0;

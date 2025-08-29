@@ -14,6 +14,7 @@
 #include <JavaScriptCore/GCDeferralContext.h>
 #include "GCDefferalContext.h"
 #include "wtf/Assertions.h"
+#include "Performance.h"
 
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/ArrayAllocationProfile.h"
@@ -485,5 +486,14 @@ extern "C" void JSC__putDirectOffset(JSC::VM* vm, JSC::EncodedJSValue object, ui
 {
     JSValue::decode(object).getObject()->putDirectOffset(*vm, offset, JSValue::decode(value));
 }
+
+extern "C" void JSC__addSQLQueryPerformanceEntry(JSC::JSGlobalObject* globalObject, const char* name, const char* description, double startTime, double endTime)
+{
+    Zig::GlobalObject* zigGlobal = jsCast<Zig::GlobalObject*>(globalObject);
+    if (auto performance = zigGlobal->performance()) {
+        performance->addSQLQueryEntry(String::fromUTF8(name), String::fromUTF8(description), startTime, endTime);
+    }
+}
+
 extern "C" uint32_t JSC__JSObject__maxInlineCapacity = JSC::JSFinalObject::maxInlineCapacity;
 }

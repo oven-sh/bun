@@ -114,6 +114,7 @@ export interface MySQLDotZig {
     connectionTimeout: number,
     maxLifetime: number,
     useUnnamedPreparedStatements: boolean,
+    performanceEntries: boolean,
   ) => $ZigGeneratedClasses.MySQLConnection;
   createQuery: (
     sql: string,
@@ -288,6 +289,7 @@ class PooledMySQLConnection {
       connectionTimeout = 30 * 1000,
       maxLifetime = 0,
       prepare = true,
+      performanceEntries = false,
 
       // @ts-expect-error path is currently removed from the types
       path,
@@ -324,6 +326,7 @@ class PooledMySQLConnection {
         connectionTimeout,
         maxLifetime,
         !prepare,
+        performanceEntries,
       );
     } catch (e) {
       onClose(e as Error);

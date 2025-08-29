@@ -180,8 +180,10 @@ static bool JSVALUE_TO_BOOL(EncodedJSValue val) __attribute__((__always_inline__
 static uint8_t GET_JSTYPE(EncodedJSValue val) __attribute__((__always_inline__));
 static bool JSTYPE_IS_TYPED_ARRAY(uint8_t type) __attribute__((__always_inline__));
 static bool JSCELL_IS_TYPED_ARRAY(EncodedJSValue val) __attribute__((__always_inline__));
+static bool JSCELL_IS_ARRAY_BUFFER(EncodedJSValue val) __attribute__((__always_inline__));
 static void* JSVALUE_TO_TYPED_ARRAY_VECTOR(EncodedJSValue val) __attribute__((__always_inline__));
 static uint64_t JSVALUE_TO_TYPED_ARRAY_LENGTH(EncodedJSValue val) __attribute__((__always_inline__));
+void* JSVALUE_TO_ARRAYBUFFER_PTR(EncodedJSValue val);
 
 static bool JSVALUE_IS_CELL(EncodedJSValue val) {
   return !(val.asInt64 & NotCellMask);
@@ -207,6 +209,10 @@ static bool JSCELL_IS_TYPED_ARRAY(EncodedJSValue val) {
   return JSVALUE_IS_CELL(val) && JSTYPE_IS_TYPED_ARRAY(GET_JSTYPE(val));
 }
 
+static bool JSCELL_IS_ARRAY_BUFFER(EncodedJSValue val) {
+  return JSVALUE_IS_CELL(val) && GET_JSTYPE(val) == JSTypeArrayBuffer;
+}
+
 static void* JSVALUE_TO_TYPED_ARRAY_VECTOR(EncodedJSValue val) {
   return *(void**)((char*)val.asPtr + JSArrayBufferView__offsetOfVector);
 }
@@ -226,6 +232,10 @@ static void* JSVALUE_TO_PTR(EncodedJSValue val) {
 
   if (JSCELL_IS_TYPED_ARRAY(val)) {
       return JSVALUE_TO_TYPED_ARRAY_VECTOR(val);
+  }
+
+  if (JSCELL_IS_ARRAY_BUFFER(val)) {
+      return JSVALUE_TO_ARRAYBUFFER_PTR(val);
   }
 
   val.asInt64 -= DoubleEncodeOffset;

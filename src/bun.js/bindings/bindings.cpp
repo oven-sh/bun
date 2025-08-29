@@ -4297,6 +4297,15 @@ JSC::JSString* JSC__JSValue__toStringOrNull(JSC::EncodedJSValue JSValue0, JSC::J
     return value.toStringOrNull(arg1);
 }
 
+void* JSC__JSValue__toArrayBufferPtr(JSC::EncodedJSValue JSValue0)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    if (auto* arrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(value)) {
+        return arrayBuffer->impl()->data();
+    }
+    return nullptr;
+}
+
 bool JSC__JSValue__toMatch(JSC::EncodedJSValue regexValue, JSC::JSGlobalObject* global, JSC::EncodedJSValue value)
 {
     ASSERT_NO_PENDING_EXCEPTION(global);

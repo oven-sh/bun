@@ -17,6 +17,11 @@
 
 #define ZIG_REPR_TYPE int64_t
 
+#ifdef _WIN32
+#define BUN_FFI_IMPORT __declspec(dllimport)
+#else
+#define BUN_FFI_IMPORT
+#endif
 
 // /* 7.18.1.1  Exact-width integer types */
 typedef unsigned char uint8_t;
@@ -62,9 +67,9 @@ typedef enum {
   napi_detachable_arraybuffer_expected,
   napi_would_deadlock // unused
 } napi_status;
-void* NapiHandleScope__open(void* napi_env, bool detached);
-void NapiHandleScope__close(void* napi_env, void* handleScope);
-extern struct napi_env__ Bun__thisFFIModuleNapiEnv;
+BUN_FFI_IMPORT void* NapiHandleScope__open(void* napi_env, bool detached);
+BUN_FFI_IMPORT void NapiHandleScope__close(void* napi_env, void* handleScope);
+BUN_FFI_IMPORT extern struct napi_env__ Bun__thisFFIModuleNapiEnv;
 #endif
 
 
@@ -138,7 +143,7 @@ typedef void* JSContext;
 
 #ifdef IS_CALLBACK
 void* callback_ctx;
-ZIG_REPR_TYPE FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args);
+BUN_FFI_IMPORT ZIG_REPR_TYPE FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args);
 // We wrap 
 static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args)  __attribute__((__always_inline__));
 static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args) {
@@ -177,8 +182,10 @@ static bool JSVALUE_TO_BOOL(EncodedJSValue val) __attribute__((__always_inline__
 static uint8_t GET_JSTYPE(EncodedJSValue val) __attribute__((__always_inline__));
 static bool JSTYPE_IS_TYPED_ARRAY(uint8_t type) __attribute__((__always_inline__));
 static bool JSCELL_IS_TYPED_ARRAY(EncodedJSValue val) __attribute__((__always_inline__));
+static bool JSCELL_IS_ARRAY_BUFFER(EncodedJSValue val) __attribute__((__always_inline__));
 static void* JSVALUE_TO_TYPED_ARRAY_VECTOR(EncodedJSValue val) __attribute__((__always_inline__));
 static uint64_t JSVALUE_TO_TYPED_ARRAY_LENGTH(EncodedJSValue val) __attribute__((__always_inline__));
+void* JSVALUE_TO_ARRAYBUFFER_PTR(EncodedJSValue val);
 
 static bool JSVALUE_IS_CELL(EncodedJSValue val) {
   return !(val.asInt64 & NotCellMask);
@@ -204,6 +211,10 @@ static bool JSCELL_IS_TYPED_ARRAY(EncodedJSValue val) {
   return JSVALUE_IS_CELL(val) && JSTYPE_IS_TYPED_ARRAY(GET_JSTYPE(val));
 }
 
+static bool JSCELL_IS_ARRAY_BUFFER(EncodedJSValue val) {
+  return JSVALUE_IS_CELL(val) && GET_JSTYPE(val) == JSTypeArrayBuffer;
+}
+
 static void* JSVALUE_TO_TYPED_ARRAY_VECTOR(EncodedJSValue val) {
   return *(void**)((char*)val.asPtr + JSArrayBufferView__offsetOfVector);
 }
@@ -223,6 +234,10 @@ static void* JSVALUE_TO_PTR(EncodedJSValue val) {
 
   if (JSCELL_IS_TYPED_ARRAY(val)) {
       return JSVALUE_TO_TYPED_ARRAY_VECTOR(val);
+  }
+
+  if (JSCELL_IS_ARRAY_BUFFER(val)) {
+      return JSVALUE_TO_ARRAYBUFFER_PTR(val);
   }
 
   val.asInt64 -= DoubleEncodeOffset;
@@ -350,7 +365,7 @@ static EncodedJSValue INT64_TO_JSVALUE(void* jsGlobalObject, int64_t val) {
 }
 
 #ifndef IS_CALLBACK
-ZIG_REPR_TYPE JSFunctionCall(void* jsGlobalObject, void* callFrame);
+BUN_FFI_IMPORT ZIG_REPR_TYPE JSFunctionCall(void* jsGlobalObject, void* callFrame);
 
 #endif
 

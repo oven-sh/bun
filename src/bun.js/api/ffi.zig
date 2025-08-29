@@ -2323,6 +2323,7 @@ const CompilerRT = struct {
         JSVALUE_TO_UINT64: *const fn (JSValue0: jsc.JSValue) callconv(.C) u64,
         INT64_TO_JSVALUE: *const fn (arg0: *jsc.JSGlobalObject, arg1: i64) callconv(.C) jsc.JSValue,
         UINT64_TO_JSVALUE: *const fn (arg0: *jsc.JSGlobalObject, arg1: u64) callconv(.C) jsc.JSValue,
+        JSVALUE_TO_ARRAYBUFFER_PTR: *const fn (JSValue0: jsc.JSValue) callconv(.C) ?*anyopaque,
         bun_call: *const @TypeOf(jsc.C.JSObjectCallAsFunction),
     };
     const headers = JSValue.exposed_to_ffi;
@@ -2331,6 +2332,7 @@ const CompilerRT = struct {
         .JSVALUE_TO_UINT64 = headers.JSVALUE_TO_UINT64,
         .INT64_TO_JSVALUE = headers.INT64_TO_JSVALUE,
         .UINT64_TO_JSVALUE = headers.UINT64_TO_JSVALUE,
+        .JSVALUE_TO_ARRAYBUFFER_PTR = headers.JSVALUE_TO_ARRAYBUFFER_PTR,
         .bun_call = &jsc.C.JSObjectCallAsFunction,
     };
 
@@ -2369,6 +2371,7 @@ const CompilerRT = struct {
             .JSCell__offsetOfType = offsets.JSCell__offsetOfType,
             .JSTypeArrayBufferViewMin = @intFromEnum(jsc.JSValue.JSType.min_typed_array),
             .JSTypeArrayBufferViewMax = @intFromEnum(jsc.JSValue.JSType.max_typed_array),
+            .JSTypeArrayBuffer = @intFromEnum(jsc.JSValue.JSType.ArrayBuffer),
         });
     }
 
@@ -2382,6 +2385,7 @@ const CompilerRT = struct {
         state.addSymbol("JSVALUE_TO_UINT64_SLOW", workaround.JSVALUE_TO_UINT64) catch unreachable;
         state.addSymbol("INT64_TO_JSVALUE_SLOW", workaround.INT64_TO_JSVALUE) catch unreachable;
         state.addSymbol("UINT64_TO_JSVALUE_SLOW", workaround.UINT64_TO_JSVALUE) catch unreachable;
+        state.addSymbol("JSVALUE_TO_ARRAYBUFFER_PTR", workaround.JSVALUE_TO_ARRAYBUFFER_PTR) catch unreachable;
     }
 };
 

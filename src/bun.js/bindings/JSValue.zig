@@ -1124,6 +1124,8 @@ pub const JSValue = enum(i64) {
 
         return null;
     }
+
+    extern fn JSC__JSValue__toArrayBufferPtr(value: JSValue) callconv(jsc.conv) ?*anyopaque;
     extern fn JSC__JSValue__fromInt64NoTruncate(globalObject: *JSGlobalObject, i: i64) JSValue;
     /// This always returns a JS BigInt
     pub fn fromInt64NoTruncate(globalObject: *JSGlobalObject, i: i64) JSValue {
@@ -2359,6 +2361,7 @@ pub const JSValue = enum(i64) {
         pub const JSVALUE_TO_UINT64 = JSValue.JSC__JSValue__toUInt64NoTruncate;
         pub const INT64_TO_JSVALUE = JSValue.JSC__JSValue__fromInt64NoTruncate;
         pub const UINT64_TO_JSVALUE = JSValue.JSC__JSValue__fromUInt64NoTruncate;
+        pub const JSVALUE_TO_ARRAYBUFFER_PTR = JSC__JSValue__toArrayBufferPtr;
     };
 
     pub const backing_int = @typeInfo(JSValue).@"enum".tag_type;

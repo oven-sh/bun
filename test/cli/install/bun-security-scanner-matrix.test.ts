@@ -99,6 +99,7 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
       version: "1.0.0",
       dependencies: {
         "left-pad": "1.3.0",
+
         // For remove/uninstall commands, add the packages we're trying to remove
         ...(command === "remove" || command === "uninstall"
           ? {
@@ -106,25 +107,41 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
               "is-odd": "1.0.0",
             }
           : {}),
+
+        // For npm scanner, add it to dependencies so it gets installed
+        ...(scannerType === "npm"
+          ? {
+              [scannerPackageName]: "1.0.0",
+            }
+          : {}),
         ...additionalDependencies,
       },
     }),
   };
 
-  // Add scanner based on type
   if (scannerType === "local") {
     files["scanner.js"] = scannerCode;
   }
 
   const dir = tempDirWithFiles("scanner-matrix", files);
 
+  const scannerPath = scannerType === "local" ? "./scanner.js" : scannerPackageName;
+
   if (hasExistingNodeModules) {
-    // Install initial node_modules because this test wants it
+    // First write bunfig WITHOUT scanner for pre-install
+    await Bun.write(
+      join(dir, "bunfig.toml"),
+      `[install]
+cache = false
+linker = "${linker}"
+registry = "${registryUrl}/"`,
+    );
+
+    // Install initial node_modules without scanner configured
     await $`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
   }
 
-  const scannerPath = scannerType === "local" ? "./scanner.js" : scannerPackageName;
-
+  // write the full bunfig WITH scanner configuration
   await Bun.write(
     join(dir, "bunfig.toml"),
     `[install]
@@ -183,11 +200,15 @@ scanner = "${scannerPath}"`,
 
   const errAndOut = stderr + stdout;
 
-  // Additional verifications based on scanner type
-  if (scannerType === "npm" && !hasExistingNodeModules && command === "install") {
-    // Test partial installation: scanner from npm should be installed automatically
+  // If the scanner is from npm and there are no node modules when the test "starts"
+  // then we should expect Bun to do the partial install first of all
+  if (scannerType === "npm" && !hasExistingNodeModules) {
     expect(errAndOut).toContain("Attempting to install security scanner from npm");
     expect(errAndOut).toContain("Security scanner installed successfully");
+  }
+
+  if (scannerType === "bunfig-only") {
+    expect(stdout).toContain("");
   }
 
   // Check if scanner actually ran (except for bunfig-only which should fail)

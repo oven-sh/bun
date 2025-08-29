@@ -83,6 +83,21 @@ Add tests:
 
 Code quality:
 
+- [ ] need to weakly hold BunTestFile from ref()
+  - have the global object hold the buntest which holds the buntestfile
+  - needs a cpp binding?
+  - the cpp binding
+  - write barriers tell gc to revisit the object. write barrier when adding/removing a callback
+  - vector needs to have a lock because visit is called concurrently
+  - fully eliminates protect/unprotect
+  - the plan:
+    - cpp class that holds a list of jsvalues
+    - you can add and remove from it. when doing that it marks itself as needing re-visitation
+    - someone owns it (easiest option for now is .protect())
+    - benchmark this vs the version that is only .protect()
+  - the problem with .protect() is that every protected value is visited by the gc every gc, which is slow
+- [ ] strong.list should only have one jsvalue (or be removed fully)
+
 - [x] Add private fields in SafeStrong.zig
 - [ ] Add private fields in Execution.zig and Order.zig
 - [ ] Add a phase before ordering results that inherits properties to the parents. (eg inherit only from the child and inherit has_callback from the child. and has_callback can be on describe/test individually rather than on base). then we won't have that happening in an init() function (terrible!)

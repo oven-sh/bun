@@ -35,7 +35,6 @@ deferred_pending: u32 = 0,
 
 /// A map of build targets to their corresponding module graphs.
 build_graphs: std.EnumArray(options.Target, PathToSourceIndexMap),
-source_index_to_secondary_path_map: std.EnumArray(options.Target, SourceIndexToSecondaryPathMap) = .initFill(.{}),
 
 /// When Server Components is enabled, this holds a list of all boundary
 /// files. This happens for all files with a "use <side>" directive.
@@ -63,8 +62,14 @@ additional_output_files: std.ArrayListUnmanaged(options.OutputFile) = .{},
 kit_referenced_server_data: bool,
 kit_referenced_client_data: bool,
 
+/// Do any input_files have a secondary_path.len > 0?
+///
+/// Helps skip a loop.
+has_any_secondary_paths: bool = false,
+
 pub const InputFile = struct {
     source: Logger.Source,
+    secondary_path: []const u8 = "",
     loader: options.Loader = options.Loader.file,
     side_effects: _resolver.SideEffects,
     allocator: std.mem.Allocator = bun.default_allocator,
@@ -76,10 +81,6 @@ pub const InputFile = struct {
 pub const SourceIndexToSecondaryPathMap = std.AutoHashMapUnmanaged(Index.Int, []const u8);
 pub inline fn pathToSourceIndexMap(this: *Graph, target: options.Target) *PathToSourceIndexMap {
     return this.build_graphs.getPtr(target);
-}
-
-pub inline fn sourceIndexToSecondaryPathMap(this: *Graph, target: options.Target) *SourceIndexToSecondaryPathMap {
-    return this.source_index_to_secondary_path_map.getPtr(target);
 }
 
 /// Schedule a task to be run on the JS thread which resolves the promise of

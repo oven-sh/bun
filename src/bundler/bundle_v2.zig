@@ -251,10 +251,6 @@ pub const BundleV2 = struct {
         return this.transpiler.log;
     }
 
-    pub fn sourceIndexToSecondaryPathMap(this: *BundleV2, target: options.Target) *Graph.SourceIndexToSecondaryPathMap {
-        return this.graph.sourceIndexToSecondaryPathMap(target);
-    }
-
     pub inline fn pathToSourceIndexMap(this: *BundleV2, target: options.Target) *PathToSourceIndexMap {
         return this.graph.pathToSourceIndexMap(target);
     }
@@ -475,12 +471,17 @@ pub const BundleV2 = struct {
     }
 
     pub fn scanForSecondaryPaths(this: *BundleV2) void {
-        skip_if_no_dual_package_hazard: {
-            for (&this.graph.source_index_to_secondary_path_map.values) |*map| {
-                if (map.count() > 0) {
-                    break :skip_if_no_dual_package_hazard;
+        if (!this.graph.has_any_secondary_paths) {
+
+            // Assert the boolean is accurate.
+            if (comptime Environment.ci_assert) {
+                for (this.graph.input_files.items(.secondary_path)) |secondary_path| {
+                    if (secondary_path.len > 0) {
+                        @panic("secondary_path is not empty");
+                    }
                 }
             }
+
             // No dual package hazard. Do nothing.
             return;
         }
@@ -496,21 +497,20 @@ pub const BundleV2 = struct {
         // version and exports a non-object in CommonJS (often a function). If we
         // pick the "module" field and the package is imported with "require" then
         // code expecting a function will crash.
-        const maps = &this.graph.source_index_to_secondary_path_map;
         const targets: []const options.Target = this.graph.ast.items(.target);
         const max_valid_source_index: Index.Int = @intCast(this.graph.input_files.len);
+        const secondary_paths: []const []const u8 = this.graph.input_files.items(.secondary_path);
 
         for (ast_import_records, targets) |*ast_import_record_list, target| {
             const import_records: []ImportRecord = ast_import_record_list.slice();
-            const source_index_to_secondary_path_map = maps.getPtr(target);
             const path_to_source_index_map = this.pathToSourceIndexMap(target);
-            if (source_index_to_secondary_path_map.count() > 0) {
-                for (import_records) |*import_record| {
-                    const source_index = import_record.source_index.get();
-                    if (source_index >= max_valid_source_index) {
-                        continue;
-                    }
-                    const secondary_path = source_index_to_secondary_path_map.get(source_index) orelse continue;
+            for (import_records) |*import_record| {
+                const source_index = import_record.source_index.get();
+                if (source_index >= max_valid_source_index) {
+                    continue;
+                }
+                const secondary_path = secondary_paths[source_index];
+                if (secondary_path.len > 0) {
                     const secondary_source_index = path_to_source_index_map.get(secondary_path) orelse continue;
                     import_record.source_index = Index.init(secondary_source_index);
                 }
@@ -674,7 +674,7 @@ pub const BundleV2 = struct {
                     !strings.eqlLong(secondary.text, path.text, true))
                 {
                     const secondary_path_to_copy = secondary.dupeAlloc(this.allocator()) catch |err| bun.handleOom(err);
-                    this.graph.source_index_to_secondary_path_map.getPtr(import_record.original_target).put(this.allocator(), idx, secondary_path_to_copy.text) catch |err| bun.handleOom(err);
+                    this.graph.input_files.items(.secondary_path)[idx] = secondary_path_to_copy.text;
                 }
             }
 
@@ -3642,7 +3642,10 @@ pub const BundleV2 = struct {
                         var new_input_file = Graph.InputFile{
                             .source = Logger.Source.initEmptyFile(new_task.path.text),
                             .side_effects = value.side_effects,
+                            .secondary_path = if (value.secondary_path_for_commonjs_interop) |*secondary_path| secondary_path.text else "",
                         };
+
+                        graph.has_any_secondary_paths = graph.has_any_secondary_paths or new_input_file.secondary_path.len > 0;
 
                         new_input_file.source.index = Index.source(graph.input_files.len);
                         new_input_file.source.path = new_task.path;
@@ -3657,15 +3660,6 @@ pub const BundleV2 = struct {
 
                         graph.input_files.append(this.allocator(), new_input_file) catch unreachable;
                         graph.ast.append(this.allocator(), JSAst.empty) catch unreachable;
-
-                        if (new_task.secondary_path_for_commonjs_interop) |*secondary_path| {
-                            // Set us up for automatically fixing the "dual-package hazard" later.
-                            this.sourceIndexToSecondaryPathMap(original_target).put(
-                                this.allocator(),
-                                new_input_file.source.index.get(),
-                                secondary_path.text,
-                            ) catch |err| bun.handleOom(err);
-                        }
 
                         if (is_html_entrypoint) {
                             this.ensureClientTranspiler();

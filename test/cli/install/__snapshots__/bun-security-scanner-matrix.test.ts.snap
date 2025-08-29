@@ -952,6 +952,14 @@ exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true)
 
 exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: clean) 163: requested-tarballs: unknown command 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: warn) 164: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: warn) 164: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 165: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 165: requested-tarballs: unknown command 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 169: requested-packages: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 169: requested-tarballs: unknown command 1`] = `[]`;
@@ -967,6 +975,14 @@ exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true)
 exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: clean) 172: requested-packages: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: clean) 172: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: warn) 173: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: warn) 173: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 174: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 174: requested-tarballs: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) 178: requested-packages: unknown command 1`] = `[]`;
 
@@ -989,6 +1005,16 @@ exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false
 `;
 
 exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: clean) 181: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: warn) 182: requested-packages: unknown command 1`] = `
+[
+  "left-pad",
+  "is-odd",
+  "is-even",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: warn) 182: requested-tarballs: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: fatal) 183: requested-packages: unknown command 1`] = `
 [
@@ -1040,6 +1066,16 @@ exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false
 
 exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: clean) 190: requested-tarballs: unknown command 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: warn) 191: requested-packages: unknown command 1`] = `
+[
+  "left-pad",
+  "is-odd",
+  "is-even",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: warn) 191: requested-tarballs: unknown command 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: fatal) 192: requested-packages: unknown command 1`] = `
 [
   "left-pad",
@@ -1084,6 +1120,14 @@ exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modul
 
 exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: clean) 199: requested-tarballs: unknown command 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: warn) 200: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: warn) 200: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 201: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 201: requested-tarballs: unknown command 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 205: requested-packages: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 205: requested-tarballs: unknown command 1`] = `[]`;
@@ -1099,6 +1143,14 @@ exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modul
 exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: clean) 208: requested-packages: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: clean) 208: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: warn) 209: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: warn) 209: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 210: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 210: requested-tarballs: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) 214: requested-packages: unknown command 1`] = `[]`;
 
@@ -1120,6 +1172,15 @@ exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modul
 `;
 
 exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: clean) 217: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: warn) 218: requested-packages: unknown command 1`] = `
+[
+  "is-odd",
+  "is-even",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: warn) 218: requested-tarballs: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: fatal) 219: requested-packages: unknown command 1`] = `
 [
@@ -1166,6 +1227,15 @@ exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modul
 
 exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: clean) 226: requested-tarballs: unknown command 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: warn) 227: requested-packages: unknown command 1`] = `
+[
+  "is-odd",
+  "is-even",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: warn) 227: requested-tarballs: unknown command 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: fatal) 228: requested-packages: unknown command 1`] = `
 [
   "is-odd",
@@ -1206,6 +1276,14 @@ exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: tr
 
 exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: clean) 235: requested-tarballs: unknown command 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: warn) 236: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: warn) 236: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 237: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 237: requested-tarballs: unknown command 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 241: requested-packages: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 241: requested-tarballs: unknown command 1`] = `[]`;
@@ -1221,6 +1299,14 @@ exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: tr
 exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: clean) 244: requested-packages: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: clean) 244: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: warn) 245: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: warn) 245: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 246: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 246: requested-tarballs: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) 250: requested-packages: unknown command 1`] = `[]`;
 
@@ -1243,6 +1329,16 @@ exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: fa
 `;
 
 exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: clean) 253: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: warn) 254: requested-packages: unknown command 1`] = `
+[
+  "left-pad",
+  "is-odd",
+  "is-even",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: warn) 254: requested-tarballs: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: fatal) 255: requested-packages: unknown command 1`] = `
 [
@@ -1294,6 +1390,16 @@ exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: fa
 
 exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: clean) 262: requested-tarballs: unknown command 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: warn) 263: requested-packages: unknown command 1`] = `
+[
+  "left-pad",
+  "is-odd",
+  "is-even",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: warn) 263: requested-tarballs: unknown command 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: fatal) 264: requested-packages: unknown command 1`] = `
 [
   "left-pad",
@@ -1338,6 +1444,14 @@ exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_mo
 
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: clean) 271: requested-tarballs: unknown command 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: warn) 272: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: warn) 272: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 273: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 273: requested-tarballs: unknown command 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 277: requested-packages: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 277: requested-tarballs: unknown command 1`] = `[]`;
@@ -1353,6 +1467,14 @@ exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_mo
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: clean) 280: requested-packages: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: clean) 280: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: warn) 281: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: warn) 281: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 282: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 282: requested-tarballs: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) 286: requested-packages: unknown command 1`] = `[]`;
 
@@ -1374,6 +1496,15 @@ exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_mo
 `;
 
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: clean) 289: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: warn) 290: requested-packages: unknown command 1`] = `
+[
+  "is-odd",
+  "is-even",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: warn) 290: requested-tarballs: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: fatal) 291: requested-packages: unknown command 1`] = `
 [
@@ -1420,6 +1551,15 @@ exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_mo
 
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: clean) 298: requested-tarballs: unknown command 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: warn) 299: requested-packages: unknown command 1`] = `
+[
+  "is-odd",
+  "is-even",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: warn) 299: requested-tarballs: unknown command 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: fatal) 300: requested-packages: unknown command 1`] = `
 [
   "is-odd",
@@ -1455,143 +1595,3 @@ exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_mo
 `;
 
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: fatal) 306: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: warn) 164: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: warn) 164: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 165: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 165: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: warn) 173: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: warn) 173: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 174: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 174: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: warn) 182: requested-packages: unknown command 1`] = `
-[
-  "left-pad",
-  "is-odd",
-  "is-even",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: warn) 182: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: warn) 191: requested-packages: unknown command 1`] = `
-[
-  "left-pad",
-  "is-odd",
-  "is-even",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: warn) 191: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: warn) 200: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: warn) 200: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 201: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 201: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: warn) 209: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: warn) 209: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 210: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 210: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: warn) 218: requested-packages: unknown command 1`] = `
-[
-  "is-odd",
-  "is-even",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: warn) 218: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: warn) 227: requested-packages: unknown command 1`] = `
-[
-  "is-odd",
-  "is-even",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: warn) 227: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: warn) 236: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: warn) 236: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 237: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 237: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: warn) 245: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: warn) 245: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 246: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 246: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: warn) 254: requested-packages: unknown command 1`] = `
-[
-  "left-pad",
-  "is-odd",
-  "is-even",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: warn) 254: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: warn) 263: requested-packages: unknown command 1`] = `
-[
-  "left-pad",
-  "is-odd",
-  "is-even",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: warn) 263: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: warn) 272: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: warn) 272: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 273: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 273: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: warn) 281: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: warn) 281: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 282: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 282: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: warn) 290: requested-packages: unknown command 1`] = `
-[
-  "is-odd",
-  "is-even",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: warn) 290: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: warn) 299: requested-packages: unknown command 1`] = `
-[
-  "is-odd",
-  "is-even",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: warn) 299: requested-tarballs: unknown command 1`] = `[]`;

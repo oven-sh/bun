@@ -4512,7 +4512,6 @@ pub const Graph = @import("./Graph.zig");
 const string = []const u8;
 
 const options = @import("../options.zig");
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

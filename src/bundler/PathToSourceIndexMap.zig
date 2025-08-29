@@ -39,7 +39,8 @@ pub fn removePath(this: *PathToSourceIndexMap, path: *const Fs.Path) bool {
     return this.remove(path.text);
 }
 
-const bun = @import("bun");
 const std = @import("std");
+
+const bun = @import("bun");
 const Fs = bun.fs;
 const Index = bun.ast.Index;

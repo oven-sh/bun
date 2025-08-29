@@ -40,11 +40,8 @@ pub const Snapshots = struct {
         file: std.fs.File,
     };
 
-    pub fn addCountOnly(this: *Snapshots) void {
-        this.total += 1;
-    }
     pub fn addCount(this: *Snapshots, expect: *Expect, hint: []const u8) !struct { []const u8, usize } {
-        this.addCountOnly();
+        this.total += 1;
         const snapshot_name = try expect.getSnapshotName(this.allocator, hint);
         const count_entry = try this.counts.getOrPut(snapshot_name);
         if (count_entry.found_existing) {

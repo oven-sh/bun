@@ -75,6 +75,7 @@ Add tests:
 
 Code quality:
 
+- [ ] Add private fields in SafeStrong.zig
 - [ ] Add a phase before ordering results that inherits properties to the parents. (eg inherit only from the child and inherit has_callback from the child. and has_callback can be on describe/test individually rather than on base). then we won't have that happening in an init() function (terrible!)
 - [ ] In Collection.zig, consider inlining enqueueDescribeCallback/enqueueTestCallback/enqueueHookCallback to their callsites?
 - [x] In Execution.zig, rename order: ..., order_index to groups, group_index for consistency.

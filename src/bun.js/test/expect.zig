@@ -674,8 +674,12 @@ pub const Expect = struct {
         result: ?[]const u8,
         comptime fn_name: []const u8,
     ) bun.JSError!JSValue {
-        // jest counts inline snapshots towards the snapshot counter
-        _ = Jest.runner.?.snapshots.addCountOnly();
+        // jest counts inline snapshots towards the snapshot counter for some reason
+        _ = Jest.runner.?.snapshots.addCount(this, "") catch |e| switch (e) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.NoTest => {},
+            error.SnapshotInConcurrentGroup => {},
+        };
 
         const update = Jest.runner.?.snapshots.update_snapshots;
         var needs_write = false;

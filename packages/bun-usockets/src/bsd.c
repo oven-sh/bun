@@ -34,17 +34,11 @@ static int debug_logging_initialized = 0;
 static void init_debug_logging() {
     if (debug_logging_initialized) return;
     debug_logging_initialized = 1;
-    
+
     const char *recv_path = getenv("BUN_RECV");
     const char *send_path = getenv("BUN_SEND");
-    
-    if (recv_path) {
-        debug_recv_file = fopen(recv_path, "a");
-    }
-    
-    if (send_path) {
-        debug_send_file = fopen(send_path, "a");
-    }
+    if (recv_path) if (!debug_recv_file) debug_recv_file = fopen(recv_path, "w");
+    if (send_path) if (!debug_send_file) debug_send_file = fopen(send_path, "w");
 }
 #endif
 

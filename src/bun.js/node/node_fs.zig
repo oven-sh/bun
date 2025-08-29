@@ -4832,6 +4832,84 @@ pub const NodeFS = struct {
 
         const path = args.path.sliceZ(buf);
 
+        // Check for standalone executable support first
+        if (bun.StandaloneModuleGraph.get()) |graph| {
+            if (graph.readdir(path, bun.default_allocator)) |entries_list| {
+                defer {
+                    for (entries_list.items) |item| {
+                        bun.default_allocator.free(item);
+                    }
+                    entries_list.deinit();
+                }
+
+                var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
+                for (entries_list.items) |entry_name| {
+                    const result: ExpectedType = switch (ExpectedType) {
+                        bun.jsc.Node.Dirent => blk: {
+                            // Create a Dirent object for the entry
+                            // We need to determine if it's a file or directory
+                            var is_dir = false;
+
+                            // Check if this entry represents a directory by seeing if there are files under it
+                            var check_path_buf: bun.PathBuffer = undefined;
+                            const check_path = if (path.len > 0 and path[path.len - 1] == '/')
+                                std.fmt.bufPrint(check_path_buf[0..], "{s}{s}/", .{ path, entry_name }) catch path
+                            else
+                                std.fmt.bufPrint(check_path_buf[0..], "{s}/{s}/", .{ path, entry_name }) catch path;
+
+                            for (graph.files.keys()) |file_path| {
+                                if (bun.strings.hasPrefix(file_path, check_path)) {
+                                    is_dir = true;
+                                    break;
+                                }
+                            }
+
+                            break :blk bun.jsc.Node.Dirent{
+                                .name = bun.String.cloneUTF8(entry_name),
+                                .path = bun.String.cloneUTF8(path),
+                                .kind = if (is_dir) .directory else .file,
+                            };
+                        },
+                        bun.String => bun.String.cloneUTF8(entry_name),
+                        Buffer => Buffer.fromBytes(
+                            bun.handleOom(bun.default_allocator.dupe(u8, entry_name)),
+                            bun.default_allocator,
+                            .Uint8Array,
+                        ),
+                        else => @compileError("unreachable"),
+                    };
+                    entries.append(result) catch {
+                        // Clean up on failure
+                        switch (ExpectedType) {
+                            bun.jsc.Node.Dirent => {
+                                result.name.deref();
+                                result.path.deref();
+                            },
+                            Buffer => @constCast(&result).destroy(),
+                            bun.String => result.deref(),
+                            else => {},
+                        }
+                        // Clean up existing entries
+                        for (entries.items) |*existing| {
+                            switch (ExpectedType) {
+                                bun.jsc.Node.Dirent => {
+                                    existing.name.deref();
+                                    existing.path.deref();
+                                },
+                                Buffer => @constCast(existing).destroy(),
+                                bun.String => existing.deref(),
+                                else => {},
+                            }
+                        }
+                        entries.deinit();
+                        return .{ .err = Syscall.Error.fromCode(.NOMEM, .open) };
+                    };
+                }
+
+                return .{ .result = @unionInit(Return.Readdir, file_type, entries.items) };
+            }
+        }
+
         if (comptime recursive and flavor == .sync) {
             var buf_to_pass: bun.PathBuffer = undefined;
 

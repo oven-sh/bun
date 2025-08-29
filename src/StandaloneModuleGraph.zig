@@ -67,6 +67,82 @@ pub const StandaloneModuleGraph = struct {
         return file.stat();
     }
 
+    /// Lists files and directories within the given standalone directory path
+    pub fn readdir(this: *const StandaloneModuleGraph, dir_path: []const u8, allocator: std.mem.Allocator) ?std.ArrayList([]const u8) {
+        if (!isBunStandaloneFilePath(dir_path)) {
+            return null;
+        }
+
+        // Ensure the directory path ends with a slash for consistent matching
+        var normalized_dir_path_buf: bun.PathBuffer = undefined;
+        const normalized_dir_path = brk: {
+            if (dir_path.len > 0 and dir_path[dir_path.len - 1] == '/') {
+                break :brk dir_path;
+            }
+
+            if (dir_path.len >= normalized_dir_path_buf.len - 1) {
+                return null; // Path too long
+            }
+
+            @memcpy(normalized_dir_path_buf[0..dir_path.len], dir_path);
+            normalized_dir_path_buf[dir_path.len] = '/';
+            break :brk normalized_dir_path_buf[0 .. dir_path.len + 1];
+        };
+
+        var entries = std.ArrayList([]const u8).init(allocator);
+        var seen_names = std.StringHashMap(void).init(allocator);
+        defer seen_names.deinit();
+
+        for (this.files.keys()) |file_path| {
+            // Check if this file is within the requested directory
+            if (!bun.strings.hasPrefix(file_path, normalized_dir_path)) {
+                continue;
+            }
+
+            const relative_path = file_path[normalized_dir_path.len..];
+
+            // Skip empty relative paths (shouldn't happen, but be safe)
+            if (relative_path.len == 0) {
+                continue;
+            }
+
+            // Get the first path component (either a file or subdirectory name)
+            const slash_index = bun.strings.indexOfChar(relative_path, '/');
+            const entry_name = if (slash_index) |idx| relative_path[0..idx] else relative_path;
+
+            // Only add each name once (avoids duplicate directories)
+            if (seen_names.contains(entry_name)) {
+                continue;
+            }
+
+            // Clone the entry name for the result
+            const cloned_name = allocator.dupe(u8, entry_name) catch {
+                // Clean up on allocation failure
+                for (entries.items) |item| {
+                    allocator.free(item);
+                }
+                entries.deinit();
+                return null;
+            };
+
+            entries.append(cloned_name) catch {
+                allocator.free(cloned_name);
+                // Clean up on allocation failure
+                for (entries.items) |item| {
+                    allocator.free(item);
+                }
+                entries.deinit();
+                return null;
+            };
+
+            seen_names.put(entry_name, {}) catch {
+                // If we can't track uniqueness, continue anyway
+            };
+        }
+
+        return entries;
+    }
+
     pub fn findAssumeStandalonePath(this: *const StandaloneModuleGraph, name: []const u8) ?*File {
         if (Environment.isWindows) {
             var normalized_buf: bun.PathBuffer = undefined;

@@ -16,7 +16,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
         jsc.createCallback(
             globalThis,
             ZigString.static("stringify"),
-            1,
+            3,
             stringify,
         ),
     );
@@ -70,43 +70,27 @@ pub fn stringify(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(3).slice();
-    if (arguments.len == 0 or arguments[0].isEmptyOrUndefinedOrNull()) {
-        return globalThis.throwInvalidArguments("Expected a value to stringify", .{});
+    const value, const replacer, const space = callframe.argumentsAsArray(3);
+    
+    value.ensureStillAlive();
+    
+    if (value.isUndefined() or value.isSymbol() or value.isFunction()) {
+        return .js_undefined;
     }
-
-    const value = arguments[0];
-
-    // Note: replacer parameter is not supported (like YAML.stringify)
-
-    // Parse options if provided - support both JSON.stringify style and object style
-    var options = toml_stringify.TOMLStringifyOptions{};
-    if (arguments.len > 2 and !arguments[2].isEmptyOrUndefinedOrNull()) {
-        const third_arg = arguments[2];
-
-        // Support JSON.stringify-style: number or string for indentation
-        // Note: Since we simplified TOML options, this doesn't change behavior but maintains API compatibility
-        if (third_arg.isNumber() or third_arg.isString()) {
-            // JSON.stringify-style parameters are accepted but don't affect TOML formatting
-            // (TOML has consistent formatting rules unlike JSON)
-        } else if (third_arg.isObject()) {
-            // Support object-style options
-            if (third_arg.get(globalThis, "inlineTables")) |maybe_inline_tables| {
-                if (maybe_inline_tables) |inline_tables| {
-                    if (inline_tables.isBoolean()) {
-                        options.inline_tables = inline_tables.toBoolean();
-                    }
-                }
-            } else |_| {}
-        }
+    
+    if (!replacer.isUndefinedOrNull()) {
+        return globalThis.throw("TOML.stringify does not support the replacer argument", .{});
     }
-
+    
+    // TOML doesn't use space parameter - it has fixed formatting rules
+    _ = space;
+    
     // Use a temporary allocator for stringification
     var arena = bun.ArenaAllocator.init(globalThis.allocator());
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const result = toml_stringify.stringify(globalThis, value, options, allocator) catch |err| switch (err) {
+    const result = toml_stringify.stringify(globalThis, value, allocator) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.InvalidValue => return globalThis.throwInvalidArguments("Invalid value for TOML stringification", .{}),
         error.CircularReference => return globalThis.throwInvalidArguments("Circular reference detected", .{}),

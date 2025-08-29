@@ -659,66 +659,23 @@ declare module "bun" {
     export function stringify(value: any): string;
 
     /**
-     * Convert a JavaScript object to a TOML string with JSON.stringify-style indentation.
+     * Convert a JavaScript object to a TOML string with JSON.stringify-style parameters.
      *
      * @category Utilities
      *
      * @param value The JavaScript object to stringify
      * @param replacer Currently unused (for API consistency with JSON.stringify)
-     * @param space A string or number for indentation
+     * @param space Ignored - TOML has consistent formatting rules
      * @returns A TOML string
      *
      * @example
      * ```ts
-     * // JSON.stringify-style indentation
-     * TOML.stringify(obj, null, 2);      // 2 spaces
-     * TOML.stringify(obj, null, "\t");   // tab indentation
+     * // JSON.stringify-style API (replacer and space parameters are ignored)
+     * TOML.stringify(obj, null, 2);      // Same output as TOML.stringify(obj)
+     * TOML.stringify(obj, null, "\t");   // Same output as TOML.stringify(obj)
      * ```
      */
-    export function stringify(value: any, replacer: undefined | null, space: string | number): string;
-
-    /**
-     * Convert a JavaScript object to a TOML string with advanced TOML-specific options.
-     *
-     * @category Utilities
-     *
-     * @param value The JavaScript object to stringify
-     * @param replacer Currently unused (for API consistency with JSON.stringify)
-     * @param options Advanced TOML formatting options
-     * @returns A TOML string
-     *
-     * @example
-     * ```ts
-     * // Advanced TOML-specific options
-     * TOML.stringify(obj, null, {
-     *   inlineTables: true
-     * });
-     * ```
-     */
-    export function stringify(
-      value: any,
-      replacer: undefined | null,
-      options: {
-        /**
-         * Whether to format objects as inline tables instead of separate [table] sections
-         * @default false
-         *
-         * @example
-         * ```ts
-         * const obj = { server: { host: "localhost", port: 3000 } };
-         *
-         * // With inlineTables: false (default)
-         * // [server]
-         * // host = "localhost"
-         * // port = 3000
-         *
-         * // With inlineTables: true
-         * // server = { host = "localhost", port = 3000 }
-         * ```
-         */
-        inlineTables?: boolean;
-      },
-    ): string;
+    export function stringify(value: any, replacer?: undefined | null, space?: string | number): string;
   }
 
   /**

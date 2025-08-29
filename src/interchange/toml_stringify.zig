@@ -1,6 +1,3 @@
-pub const TOMLStringifyOptions = struct {
-    inline_tables: bool = false,
-};
 
 pub const TOMLStringifyError = error{
     OutOfMemory,
@@ -14,14 +11,12 @@ pub const TOMLStringifyError = error{
 pub const TOMLStringifier = struct {
     writer: std.ArrayList(u8),
     allocator: std.mem.Allocator,
-    options: TOMLStringifyOptions,
     seen_objects: std.HashMap(*anyopaque, void, std.hash_map.AutoContext(*anyopaque), std.hash_map.default_max_load_percentage),
 
-    pub fn init(allocator: std.mem.Allocator, options: TOMLStringifyOptions) TOMLStringifier {
+    pub fn init(allocator: std.mem.Allocator) TOMLStringifier {
         return TOMLStringifier{
             .writer = std.ArrayList(u8).init(allocator),
             .allocator = allocator,
-            .options = options,
             .seen_objects = std.HashMap(*anyopaque, void, std.hash_map.AutoContext(*anyopaque), std.hash_map.default_max_load_percentage).init(allocator),
         };
     }
@@ -64,16 +59,8 @@ pub const TOMLStringifier = struct {
         if (value.isObject()) {
             if (is_root) {
                 return self.stringifyRootObject(globalThis, value);
-            } else if (self.options.inline_tables) {
-                if (key.len > 0) {
-                    try self.stringifyKey(key);
-                    try self.writer.appendSlice(" = ");
-                }
-                try self.stringifyInlineObject(globalThis, value);
-                if (key.len > 0) try self.writer.append('\n');
-                return;
             } else {
-                // Non-root, non-inline objects should be handled as tables in the root pass
+                // Non-root objects should be handled as tables in the root pass
                 return;
             }
         }
@@ -174,43 +161,21 @@ pub const TOMLStringifier = struct {
         if (!is_root) try self.writer.append('\n');
     }
 
-    fn stringifyInlineObject(self: *TOMLStringifier, globalThis: *JSGlobalObject, obj: JSValue) anyerror!void {
-        // TODO: Implement proper circular reference detection
-
-        try self.writer.appendSlice("{ ");
-
-        const obj_val = obj.getObject() orelse return error.InvalidValue;
-        var iterator = jsc.JSPropertyIterator(.{
-            .skip_empty_name = false,
-            .include_value = true,
-        }).init(globalThis, obj_val) catch return error.JSError;
-        defer iterator.deinit();
-
-        var first = true;
-        while (try iterator.next()) |prop| {
-            const value = iterator.value;
-            if (value.isNull() or value.isUndefined()) continue;
-
-            if (!first) {
-                try self.writer.appendSlice(", ");
-            }
-            first = false;
-
-            const name = prop.toSlice(self.allocator);
-            defer name.deinit();
-
-            try self.stringifyKey(name.slice());
-            try self.writer.appendSlice(" = ");
-            try self.stringifyValue(globalThis, value, "", true);
-        }
-
-        try self.writer.appendSlice(" }");
-    }
 
     fn stringifyRootObject(self: *TOMLStringifier, globalThis: *JSGlobalObject, obj: JSValue) anyerror!void {
-        // TODO: Implement proper circular reference detection
-
+        return self.stringifyObjectAtPath(globalThis, obj, "");
+    }
+    
+    fn stringifyObjectAtPath(self: *TOMLStringifier, globalThis: *JSGlobalObject, obj: JSValue, table_path: []const u8) anyerror!void {
         const obj_val = obj.getObject() orelse return error.InvalidValue;
+
+        // Basic circular reference detection
+        const obj_ptr = @as(*anyopaque, @ptrCast(obj_val));
+        if (self.seen_objects.contains(obj_ptr)) {
+            return error.CircularReference;
+        }
+        try self.seen_objects.put(obj_ptr, {});
+        defer _ = self.seen_objects.remove(obj_ptr);
 
         // First pass: write simple key-value pairs
         var iterator = jsc.JSPropertyIterator(.{
@@ -226,13 +191,13 @@ pub const TOMLStringifier = struct {
             const name = prop.toSlice(self.allocator);
             defer name.deinit();
 
-            // Skip objects for second pass unless using inline tables
-            if (value.isObject() and value.jsType() != .Array and !self.options.inline_tables) continue;
+            // Skip objects for second pass
+            if (value.isObject() and value.jsType() != .Array) continue;
 
             try self.stringifyValue(globalThis, value, name.slice(), false);
         }
 
-        // Second pass: write tables (non-inline objects)
+        // Second pass: write tables (nested objects)
         var iterator2 = jsc.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
@@ -242,7 +207,7 @@ pub const TOMLStringifier = struct {
         var has_written_table = false;
         while (try iterator2.next()) |prop| {
             const value = iterator2.value;
-            if (!value.isObject() or value.jsType() == .Array or self.options.inline_tables) continue;
+            if (!value.isObject() or value.jsType() == .Array) continue;
 
             if (has_written_table or self.writer.items.len > 0) {
                 try self.writer.append('\n');
@@ -252,38 +217,36 @@ pub const TOMLStringifier = struct {
             const name = prop.toSlice(self.allocator);
             defer name.deinit();
 
+            // Build full table path
+            var path_buf = std.ArrayList(u8).init(self.allocator);
+            defer path_buf.deinit();
+            
+            if (table_path.len > 0) {
+                try path_buf.appendSlice(table_path);
+                try path_buf.append('.');
+            }
+            try path_buf.appendSlice(name.slice());
+
             try self.writer.appendSlice("[");
-            try self.stringifyKey(name.slice());
+            // For table paths, handle dotted keys specially
+            try self.stringifyTablePath(path_buf.items);
             try self.writer.appendSlice("]\n");
 
-            try self.stringifyTableContent(globalThis, value);
+            try self.stringifyObjectAtPath(globalThis, value, path_buf.items);
         }
     }
 
-    fn stringifyTableContent(self: *TOMLStringifier, globalThis: *JSGlobalObject, obj: JSValue) anyerror!void {
-        const obj_val = obj.getObject() orelse return error.InvalidValue;
 
-        var iterator = jsc.JSPropertyIterator(.{
-            .skip_empty_name = false,
-            .include_value = true,
-        }).init(globalThis, obj_val) catch return error.JSError;
-        defer iterator.deinit();
-
-        while (try iterator.next()) |prop| {
-            const value = iterator.value;
-            if (value.isNull() or value.isUndefined()) continue;
-
-            const name = prop.toSlice(self.allocator);
-            defer name.deinit();
-
-            // For simplicity, only handle simple values in tables for now
-            // Nested tables would require more complex path tracking
-            if (value.isObject() and value.jsType() != .Array and !self.options.inline_tables) {
-                // Skip nested objects for now - would need proper table path handling
-                continue;
+    fn stringifyTablePath(self: *TOMLStringifier, path: []const u8) anyerror!void {
+        // Split path by dots and quote each part if needed
+        var it = std.mem.splitScalar(u8, path, '.');
+        var first = true;
+        while (it.next()) |part| {
+            if (!first) {
+                try self.writer.append('.');
             }
-
-            try self.stringifyValue(globalThis, value, name.slice(), false);
+            first = false;
+            try self.stringifyKey(part);
         }
     }
 
@@ -336,8 +299,8 @@ pub const TOMLStringifier = struct {
     }
 };
 
-pub fn stringify(globalThis: *JSGlobalObject, value: JSValue, options: TOMLStringifyOptions, allocator: std.mem.Allocator) TOMLStringifyError![]const u8 {
-    var stringifier = TOMLStringifier.init(allocator, options);
+pub fn stringify(globalThis: *JSGlobalObject, value: JSValue, allocator: std.mem.Allocator) TOMLStringifyError![]const u8 {
+    var stringifier = TOMLStringifier.init(allocator);
     defer stringifier.deinit();
     const result = try stringifier.stringify(globalThis, value);
     // Make a copy since the stringifier will be deinitialized

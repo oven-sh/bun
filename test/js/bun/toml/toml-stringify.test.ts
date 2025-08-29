@@ -58,9 +58,16 @@ describe("Bun.TOML.stringify", () => {
     expect(Bun.TOML.stringify({ longArr })).toBe("longArr = [\n  1, \n  2, \n  3, \n  4, \n  5\n]\n");
   });
 
-  test("inline tables", () => {
+  test("nested objects become tables", () => {
     const obj = { name: { first: "John", last: "Doe" } };
-    expect(Bun.TOML.stringify(obj, null, { inlineTables: true })).toBe('name = { first = "John", last = "Doe" }\n');
+    const result = Bun.TOML.stringify(obj);
+    expect(result).toBe(
+      `
+[name]
+first = "John"
+last = "Doe"
+`.trim() + "\n",
+    );
   });
 
   test("regular tables", () => {
@@ -150,9 +157,115 @@ key4 = true
   });
 
   test("error handling", () => {
-    expect(() => Bun.TOML.stringify()).toThrow("Expected a value to stringify");
-    expect(() => Bun.TOML.stringify(null)).toThrow("Expected a value to stringify");
-    expect(() => Bun.TOML.stringify(undefined)).toThrow("Expected a value to stringify");
+    expect(() => Bun.TOML.stringify()).toThrow();
+    expect(() => Bun.TOML.stringify(null)).toThrow();
+    expect(() => Bun.TOML.stringify(undefined)).toThrow();
+  });
+
+  test("JSON.stringify-like API", () => {
+    const obj = { key: "value" };
+    
+    // Should work with single argument
+    expect(Bun.TOML.stringify(obj)).toBe('key = "value"\n');
+    
+    // Should ignore replacer (like YAML.stringify)
+    expect(() => Bun.TOML.stringify(obj, () => {})).toThrow("TOML.stringify does not support the replacer argument");
+    
+    // Should ignore space parameter (TOML has fixed formatting)
+    expect(Bun.TOML.stringify(obj, null, 4)).toBe('key = "value"\n');
+    expect(Bun.TOML.stringify(obj, null, "  ")).toBe('key = "value"\n');
+  });
+
+  test("very deeply nested objects", () => {
+    const obj = {
+      level1: {
+        level2: {
+          level3: {
+            level4: {
+              value: "deep",
+              number: 42,
+            },
+            other: "value"
+          },
+          simple: "test"
+        },
+        another: "branch"
+      },
+      root: "value"
+    };
+    
+    const result = Bun.TOML.stringify(obj);
+    expect(result).toMatchInlineSnapshot(`
+"root = "value"
+
+[level1]
+another = "branch"
+
+[level1.level2]
+simple = "test"
+
+[level1.level2.level3]
+other = "value"
+
+[level1.level2.level3.level4]
+value = "deep"
+number = 42
+"
+`);
+    
+    // Verify round-trip
+    const parsed = Bun.TOML.parse(result);
+    expect(parsed).toEqual(obj);
+  });
+
+  test("arrays with simple values only", () => {
+    const obj = {
+      metadata: {
+        version: "1.0",
+        tags: ["production", "web"],
+        numbers: [1, 2, 3, 4, 5]
+      },
+      config: {
+        database: {
+          host: "localhost",
+          port: 5432
+        },
+        cache: {
+          enabled: true,
+          ttl: 300
+        }
+      }
+    };
+    
+    const result = Bun.TOML.stringify(obj);
+    expect(result).toMatchInlineSnapshot(`
+"
+[metadata]
+version = "1.0"
+tags = ["production", "web"]
+numbers = [
+  1, 
+  2, 
+  3, 
+  4, 
+  5
+]
+
+[config]
+
+[config.database]
+host = "localhost"
+port = 5432
+
+[config.cache]
+enabled = true
+ttl = 300
+"
+`);
+    
+    // Verify round-trip
+    const parsed = Bun.TOML.parse(result);
+    expect(parsed).toEqual(obj);
   });
 
   test("circular reference detection", () => {

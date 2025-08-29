@@ -863,7 +863,6 @@ pub fn installIsolatedPackages(
                                 pkg_res.value.npm.url.slice(string_buf),
                                 ctx,
                                 patch_info.nameAndVersionHash(),
-                                manager.options.do.prefetch_resolved_tarballs,
                             ) catch |err| switch (err) {
                                 error.OutOfMemory => |oom| return oom,
                                 error.InvalidURL => {

@@ -187,4 +187,28 @@ describe("SQL adapter environment variable precedence", () => {
     expect(options.options.port).toBe(5432);
     restoreEnv();
   });
+
+  test("should infer mysql from MYSQL_URL even without protocol", () => {
+    cleanEnv();
+    process.env.MYSQL_URL = "root@localhost:3306/test";
+
+    const options = new SQL();
+    expect(options.options.adapter).toBe("mysql");
+    expect(options.options.hostname).toBe("localhost");
+    expect(options.options.port).toBe(3306);
+    expect(options.options.username).toBe("root");
+    restoreEnv();
+  });
+
+  test("should infer postgres from POSTGRES_URL even without protocol", () => {
+    cleanEnv();
+    process.env.POSTGRES_URL = "user@localhost:5432/test";
+
+    const options = new SQL();
+    expect(options.options.adapter).toBe("postgres");
+    expect(options.options.hostname).toBe("localhost");
+    expect(options.options.port).toBe(5432);
+    expect(options.options.username).toBe("user");
+    restoreEnv();
+  });
 });

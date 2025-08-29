@@ -288,12 +288,19 @@ function determineAdapter(
     }
   }
 
-  // 3. If no URL provided, check environment variables to infer adapter from protocol
+  // 3. If no URL provided, check environment variables to infer adapter
   // Respect precedence: POSTGRES_URL > DATABASE_URL > PGURL > PG_URL > MYSQL_URL
   if (!urlString && env) {
-    // Check in order of precedence
-    const envUrls = [env.POSTGRES_URL, env.DATABASE_URL, env.PGURL, env.PG_URL, env.MYSQL_URL];
-    for (const envUrl of envUrls) {
+    // Check in order of precedence with env var names
+    const envVars = [
+      { name: "POSTGRES_URL", url: env.POSTGRES_URL },
+      { name: "DATABASE_URL", url: env.DATABASE_URL },
+      { name: "PGURL", url: env.PGURL },
+      { name: "PG_URL", url: env.PG_URL },
+      { name: "MYSQL_URL", url: env.MYSQL_URL }
+    ];
+    
+    for (const { name, url: envUrl } of envVars) {
       if (envUrl) {
         // Check for SQLite URLs first
         if (parseDefinitelySqliteUrl(envUrl) !== null) {
@@ -308,6 +315,13 @@ function determineAdapter(
           if (adapterFromProtocol) {
             return adapterFromProtocol;
           }
+        }
+        
+        // If no protocol detected, infer from environment variable name
+        if (name === "MYSQL_URL") {
+          return "mysql";
+        } else if (name === "POSTGRES_URL" || name === "PGURL" || name === "PG_URL") {
+          return "postgres";
         }
         
         // If we found a URL with higher precedence, don't check lower precedence URLs

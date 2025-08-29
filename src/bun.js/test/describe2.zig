@@ -443,7 +443,7 @@ pub const BunTestFile = struct {
         defer group.end();
 
         const err_arg = callFrame.argumentsAsArray(1)[0];
-        const is_catch = err_arg.isEmptyOrUndefinedOrNull();
+        const is_catch = !err_arg.isEmptyOrUndefinedOrNull();
 
         if (is_catch) {
             this.onUncaughtException(globalThis, err_arg, true, data);

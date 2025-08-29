@@ -441,7 +441,7 @@ function parseOptions(
       } else {
         urlToValidate = inputUrl;
       }
-      
+
       if (urlToValidate) {
         validateAdapterProtocolMatch(adapter, urlToValidate, inputUrl);
       }
@@ -567,7 +567,11 @@ function parseUrlForAdapter(urlString: string, adapter: Bun.SQL.__internal.Adapt
   return new URL(defaultProtocol + urlString);
 }
 
-function validateAdapterProtocolMatch(adapter: Bun.SQL.__internal.Adapter, url: URL, originalUrl: string | URL | null = null) {
+function validateAdapterProtocolMatch(
+  adapter: Bun.SQL.__internal.Adapter,
+  url: URL,
+  originalUrl: string | URL | null = null,
+) {
   const protocol = url.protocol.replace(":", "");
 
   if (protocol === "unix") {
@@ -584,12 +588,10 @@ function validateAdapterProtocolMatch(adapter: Bun.SQL.__internal.Adapter, url: 
   // Special handling for SQLite
   if (protocol === "sqlite" && adapter !== "sqlite") {
     const urlString = originalUrl ? originalUrl.toString() : url.href;
-    throw new Error(
-      `Invalid URL '${urlString}' for ${adapter}. Did you mean to specify \`{ adapter: "sqlite" }\`?`,
-    );
+    throw new Error(`Invalid URL '${urlString}' for ${adapter}. Did you mean to specify \`{ adapter: "sqlite" }\`?`);
   }
 
-  // Special handling: postgres:// protocol with sqlite adapter is allowed 
+  // Special handling: postgres:// protocol with sqlite adapter is allowed
   // (explicit adapter wins over protocol for backward compatibility)
   if (protocol === "postgres" && adapter === "sqlite") {
     return;

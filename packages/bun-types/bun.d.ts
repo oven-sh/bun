@@ -653,7 +653,7 @@ declare module "bun" {
      *
      * @param input The JavaScript value to stringify.
      * @param replacer Currently not supported.
-     * @param space A number for how many spaces each level of indentation gets, or a string used as indentation. Default indentation is 2 spaces.
+     * @param space A number for how many spaces each level of indentation gets, or a string used as indentation. The number is clamped between 0 and 10, and the first 10 characters of the string are used.
      * @returns A string containing the YAML document.
      *
      * @example

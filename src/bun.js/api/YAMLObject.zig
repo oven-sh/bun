@@ -83,7 +83,12 @@ const Stringifier = struct {
             }
 
             if (space_value.isString()) {
-                return .{ .str = try space_value.toBunString(global) };
+                const str = try space_value.toBunString(global);
+                if (str.length() == 0) {
+                    str.deref();
+                    return .minified;
+                }
+                return .{ .str = str };
             }
 
             return .minified;
@@ -383,25 +388,33 @@ const Stringifier = struct {
             switch (this.space) {
                 .minified => {
                     this.builder.append(.lchar, '[');
+                    var first = true;
                     while (try iter.next()) |item| {
-                        if (item.isUndefined() or item.isSymbol()) {
+                        if (item.isUndefined() or item.isSymbol() or item.isFunction()) {
                             continue;
                         }
 
-                        try this.stringify(global, item);
-
-                        if (iter.i != iter.len) {
+                        if (!first) {
                             this.builder.append(.lchar, ',');
                         }
+                        first = false;
+
+                        try this.stringify(global, item);
                     }
                     this.builder.append(.lchar, ']');
                 },
                 .number, .str => {
                     this.builder.ensureUnusedCapacity(iter.len * "- ".len);
+                    var first = true;
                     while (try iter.next()) |item| {
-                        if (item.isUndefined() or item.isSymbol()) {
+                        if (item.isUndefined() or item.isSymbol() or item.isFunction()) {
                             continue;
                         }
+
+                        if (!first) {
+                            this.newline();
+                        }
+                        first = false;
 
                         this.builder.append(.latin1, "- ");
 
@@ -410,10 +423,6 @@ const Stringifier = struct {
                         this.indent += 1;
                         try this.stringify(global, item);
                         this.indent -= 1;
-
-                        if (iter.i != iter.len) {
-                            this.newline();
-                        }
                     }
                 },
             }
@@ -435,28 +444,37 @@ const Stringifier = struct {
         switch (this.space) {
             .minified => {
                 this.builder.append(.lchar, '{');
+                var first = true;
                 while (try iter.next()) |prop_name| {
-                    if (iter.value.isUndefined() or iter.value.isSymbol()) {
+                    if (iter.value.isUndefined() or iter.value.isSymbol() or iter.value.isFunction()) {
                         continue;
                     }
+
+                    if (!first) {
+                        this.builder.append(.lchar, ',');
+                    }
+                    first = false;
 
                     this.appendString(prop_name);
                     this.builder.append(.latin1, ": ");
 
                     try this.stringify(global, iter.value);
-
-                    if (iter.i != iter.len - 1) {
-                        this.builder.append(.lchar, ',');
-                    }
                 }
                 this.builder.append(.lchar, '}');
             },
             .number, .str => {
                 this.builder.ensureUnusedCapacity(iter.len * ": ".len);
+
+                var first = true;
                 while (try iter.next()) |prop_name| {
-                    if (iter.value.isUndefined() or iter.value.isSymbol()) {
+                    if (iter.value.isUndefined() or iter.value.isSymbol() or iter.value.isFunction()) {
                         continue;
                     }
+
+                    if (!first) {
+                        this.newline();
+                    }
+                    first = false;
 
                     this.appendString(prop_name);
                     this.builder.append(.latin1, ": ");
@@ -469,10 +487,6 @@ const Stringifier = struct {
 
                     try this.stringify(global, iter.value);
                     this.indent -= 1;
-
-                    if (iter.i != iter.len - 1) {
-                        this.newline();
-                    }
                 }
             },
         }

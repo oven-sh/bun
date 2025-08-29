@@ -54,4 +54,16 @@ describe("async describe 4", async () => {
   });
 });
 
+describe("actual tests", () => {
+  test("more functions called after delayed done", done => {
+    process.nextTick(() => {
+      done();
+      throw "uh oh";
+    });
+  });
+  test("another test", async () => {
+    expect(true).toBe(true);
+  });
+});
+
 console.log("exit");

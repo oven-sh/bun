@@ -17,13 +17,17 @@ test("describe/test", async () => {
     stderr: normalizeBunSnapshot(stderr),
   }).toMatchInlineSnapshot(`
     {
-      "exitCode": 0,
+      "exitCode": 1,
       "stderr": 
     "test/js/bun/test/describe2.fixture.ts:
+    error: uh oh
+    uh oh
+    (fail) actual tests > more functions called after delayed done
+    (pass) actual tests > another test
 
-     0 pass
-     0 fail
-    Ran 0 tests across 1 file."
+     1 pass
+     1 fail
+    Ran 2 tests across 1 file."
     ,
       "stdout": 
     "bun test <version> (<revision>)

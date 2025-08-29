@@ -142,6 +142,29 @@ describe("SQL adapter environment variable precedence", () => {
     restoreEnv();
   });
 
+  test("should default to port 3306 for MySQL when no port specified", () => {
+    cleanEnv();
+    process.env.MYSQL_URL = "mysql://user:pass@host/db";
+
+    const options = new SQL();
+    expect(options.options.adapter).toBe("mysql");
+    expect(options.options.hostname).toBe("host");
+    expect(options.options.port).toBe(3306); // Should default to MySQL port
+    restoreEnv();
+  });
+
+  test("should default to port 3306 for explicit MySQL adapter", () => {
+    cleanEnv();
+    const options = new SQL({
+      adapter: "mysql",
+      hostname: "localhost"
+    });
+    
+    expect(options.options.adapter).toBe("mysql");
+    expect(options.options.port).toBe(3306); // Should default to MySQL port
+    restoreEnv();
+  });
+
   test("should infer postgres adapter from POSTGRES_URL env var", () => {
     cleanEnv();
     process.env.POSTGRES_URL = "postgres://user:pass@host:5432/db";

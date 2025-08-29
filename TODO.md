@@ -1,11 +1,233 @@
-Breaking changes:
+# New features:
 
-- describe ordering: describe(A, describe(B), C, describe(D), E) will now run in order A, C, E, B, D rather than A, B, C, D, E
-- test ordering: test(a) describe(test(b), test(c)) will now run in order 'A', 'B", 'C' rather than 'B', 'C', 'A"
-- preload hooks: beforeAll/afterAll in preloads will now run before and after each file, rather than before the first file and after the last
-- describe failures: `describe(A, describe(B), throw error)` -> this will no longer run B. previously it would run B.
+## Concurrent tests
 
-Complete before merge:
+Concurrent tests allow running multiple async tests at the same time.
+
+```ts
+// concurrent.test.ts
+test.concurrent("this takes a while 1", async () => {
+  await Bun.sleep(1000);
+});
+test.concurrent("this takes a while 2", async () => {
+  await Bun.sleep(1000);
+});
+test.concurrent("this takes a while 3", async () => {
+  await Bun.sleep(1000);
+});
+```
+
+Without `.concurrent`, this test file takes 3 seconds to run because each one has to wait for the one before it to finish before it can start.
+
+With `.concurrent`, this file takes 1 second because all three sleeps can run at once.
+
+```
+$> bun-after test concurrent
+concurrent.test.js:
+✓ this takes a while 1 [1005.36ms]
+✓ this takes a while 2 [1012.51ms]
+✓ this takes a while 3 [1013.15ms]
+
+ 3 pass
+ 0 fail
+Ran 3 tests across 1 file. [1081.00ms]
+```
+
+## Chaining
+
+Chaining multiple describe/test qualifiers is now allowed. Previously, it would fail.
+
+```ts
+// chaining-test-qualifiers.test.ts
+test.failing.each([1, 2, 3])("each %i", async i => {
+  throw new Error(i);
+});
+```
+
+```
+$> bun-after test chaining-test-qualifiers
+a.test.js:
+✓ each 1
+✓ each 2
+✓ each 3
+```
+
+# Breaking changes:
+
+## Describe ordering
+
+Previously, describe callbacks were called immediately. Now, they are deferred until the outer callback has finished running. The previous order matched Jest. The new order is similar to Vitest, but does not match exactly.
+
+```ts
+// describe-ordering.test.ts
+describe("outer", () => {
+  console.log("outer before");
+  describe("inner", () => {
+    console.log("inner");
+  });
+  console.log("outer after");
+});
+```
+
+Before, this would print
+
+```
+$> bun-before test describe-ordering
+outer before
+inner
+outer after
+```
+
+Now, this will print
+
+```
+$> bun-after test describe-ordering
+outer before
+outer after
+inner
+```
+
+## Test ordering
+
+Describes are no longer always called before tests. They are now in order.
+
+```ts
+// test-ordering.test.ts
+test("one", () => {});
+describe("scope", () => {
+  test("two", () => {});
+});
+test("three", () => {});
+```
+
+Before, this would print
+
+```
+$> bun-before test test-ordering
+✓ scope > two
+✓ one
+✓ three
+```
+
+Now, this will print
+
+```
+$> bun-after test test-ordering
+✓ one
+✓ scope > two
+✓ three
+```
+
+## Preload hooks
+
+Previously, beforeAll in a preload ran before the first file and afterAll ran after the last file. Now, beforeAll will run at the start of each file and afterAll will run at the end of each file. This behaviour matches Jest and Vitest.
+
+```ts
+// preload.ts
+beforeAll(() => console.log("preload: beforeAll"));
+afterAll(() => console.log("preload: afterAll"));
+```
+
+```ts
+// preload-ordering-1.test.ts
+test("demonstration file 1", () => {});
+```
+
+```ts
+// preload-ordering-2.test.ts
+test("demonstration file 2", () => {});
+```
+
+```
+$> bun-before test --preload=./preload preload-ordering
+preload-ordering-1.test.ts:
+preload: beforeAll
+✓ demonstration file 1
+
+preload-ordering-2.test.ts:
+✓ demonstration file 2
+preload: afterAll
+```
+
+```
+$> bun-after test --preload=./preload preload-ordering
+preload-ordering-1.test.ts:
+preload: beforeAll
+✓ demonstration file 1
+preload: afterAll
+
+preload-ordering-2.test.ts:
+preload: beforeAll
+✓ demonstration file 2
+preload: afterAll
+```
+
+## Describe failures
+
+Current behaviour is that when an error is thrown inside a describe callback, none of the tests declared there will run. Now, describes declared inside will also not run. The new behaviour matches the behaviour of Jest and Vitest.
+
+```ts
+// describe-failures.test.ts
+describe("erroring describe", () => {
+  test("this test does not run because its describe failed", () => {
+    expect(true).toBe(true);
+  });
+  describe("inner describe", () => {
+    console.log("does the inner describe callback get called?");
+    test("does the inner test run?", () => {
+      expect(true).toBe(true);
+    });
+  });
+  throw new Error("uh oh!");
+});
+```
+
+Before, the inner describe callback would be called and the inner test would run, although the outer test would not:
+
+```
+$> bun-before test describe-failures
+describe-failures.test.ts:
+does the inner describe callback get called?
+
+# Unhandled error between tests
+-------------------------------
+11 |   throw new Error("uh oh!");
+             ^
+error: uh oh!
+-------------------------------
+
+✓ erroring describe > inner describe > does the inner test run?
+
+ 1 pass
+ 0 fail
+ 1 error
+ 1 expect() calls
+Ran 1 test across 1 file.
+Exited with code [1]
+```
+
+Now, the inner describe callback is not called at all.
+
+```
+$> bun-after test describe-failures
+describe-failures.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+11 |   throw new Error("uh oh!");
+             ^
+error: uh oh!
+-------------------------------
+
+
+ 0 pass
+ 0 fail
+ 1 error
+Ran 0 tests across 1 file.
+Exited with code [1]
+```
+
+# Complete before merge:
 
 - [ ] add a test for this scenerio
   ```js
@@ -30,6 +252,7 @@ Complete before merge:
 - [x] announce results of skip/todo with no callback, eg `test.skip("abc")` or `test.todo("def")`
 - [x] fix toMatchInlineSnapshot
 - [x] make sure error.SnapshotInConcurrentGroup prints well
+- [ ] test error.SnapshotInConcurrentGroup
 - [ ] validate uses of sequence.entry_index (entry_index can be >= entries_end)
 - [ ] decide on beforeAll/beforeEach behaviour
   - these are all tested flat, not sure if it changes with describe()
@@ -79,11 +302,7 @@ Complete before merge:
 - [ ] remove TestId stuff
 - [ ] remove TODO.md
 
-Add tests:
-
-- [ ] test error.SnapshotInConcurrentGroup
-
-Code quality:
+# Code quality:
 
 - [ ] need to weakly hold BunTestFile from ref()
   - two tests for comparing performance
@@ -121,7 +340,7 @@ Code quality:
   - this will help for when we cancel tests due to timeout, because they still might resolve in the future
   - this will help for the done callback, which could be called multiple times by the user. it can be stored as a js value and gc'd.
 
-Follow-up:
+# Follow-up:
 
 - [ ] looks like we don't need to use file_id anymore (remove `bun.jsc.Jest.Jest.runner.?.getOrPutFile(file_path).file_id;`, store the file path directly)
 - [ ] CallbackWithArguments is copied like 3 times which copies the arguments list 3 times

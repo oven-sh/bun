@@ -1,5 +1,15 @@
 Complete before merge:
 
+- [ ] fix this scenerio
+  ```js
+  test("more functions called after delayed done", done => {
+    process.nextTick(() => {
+      done();
+      expect(true).toBe(false);
+    });
+  });
+  test("another test", async () => {});
+  ```
 - [x] sometimes error messages aren't printing!
 - [ ] make sure it exits with code 1 on failure
 - [ ] decide on preload behaviour: before first/after last?

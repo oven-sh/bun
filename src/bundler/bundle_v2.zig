@@ -67,7 +67,9 @@ pub fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, t
     // the "node" namespace is also put through this code path so that the
     // "node:" prefix is not emitted.
     if (path.isFile() or is_node) {
-        const rel = bun.path.relativePlatformBuf(buf, top_level_dir, path.text, .loose, false);
+        const buf2 = if (target == .bake_server_components_ssr) bun.path_buffer_pool.get() else buf;
+        defer if (target == .bake_server_components_ssr) bun.path_buffer_pool.put(buf2);
+        const rel = bun.path.relativePlatformBuf(buf2, top_level_dir, path.text, .loose, false);
         var path_clone = path;
         // stack-allocated temporary is not leaked because dupeAlloc on the path will
         // move .pretty into the heap. that function also fixes some slash issues.

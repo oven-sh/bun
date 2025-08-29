@@ -7,6 +7,7 @@ export class SimpleRegistry {
   private server: Server | null = null;
   private port: number = 0;
   public requestedUrls: string[] = [];
+  private scannerBehavior: "clean" | "warn" | "fatal" = "clean";
 
   private packages = {
     "left-pad": ["1.3.0"],
@@ -14,6 +15,10 @@ export class SimpleRegistry {
     "is-odd": ["1.0.0"],
     "test-security-scanner": ["1.0.0"],
   };
+
+  setScannerBehavior(behavior: "clean" | "warn" | "fatal") {
+    this.scannerBehavior = behavior;
+  }
 
   async start(): Promise<number> {
     const self = this;
@@ -85,7 +90,7 @@ export class SimpleRegistry {
     });
   }
 
-  private getDependencies(packageName: string, version: string) {
+  private getDependencies(packageName: string, _version: string) {
     if (packageName === "is-even") {
       return { "is-odd": "^1.0.0" };
     }
@@ -102,13 +107,12 @@ export class SimpleRegistry {
       return new Response("Version not found", { status: 404 });
     }
 
+    let tarballPath: string;
     if (name === "test-security-scanner") {
-      // We'll need to create this one since it doesn't exist on npm
-      // For now, return a dummy response
-      return new Response("Not implemented", { status: 501 });
+      tarballPath = join(__dirname, `${name}-${version}-${this.scannerBehavior}.tgz`);
+    } else {
+      tarballPath = join(__dirname, `${name}-${version}.tgz`);
     }
-
-    const tarballPath = join(__dirname, `${name}-${version}.tgz`);
 
     try {
       const tarballFile = file(tarballPath);
@@ -121,7 +125,7 @@ export class SimpleRegistry {
         },
       });
     } catch (error) {
-      console.error(`Failed to serve tarball ${name}-${version}.tgz:`, error);
+      console.error(`Failed to serve tarball ${tarballPath}:`, error);
       return new Response("Tarball not found", { status: 404 });
     }
   }

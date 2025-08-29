@@ -31,11 +31,17 @@ test("describe/test", async () => {
     uh oh
     (fail) actual tests > more functions called after delayed done
     (pass) actual tests > another test
+    (pass) concurrent describe 1 > item 1
+    (pass) concurrent describe 1 > item 2
+    error: Snapshot matchers are not supported in concurrent tests
+    Snapshot matchers are not supported in concurrent tests
+    (fail) concurrent describe 1 > snapshot in concurrent group
 
-     1 pass
-     1 fail
+     3 pass
+     2 fail
      1 error
-    Ran 2 tests across 1 file."
+     snapshots: 
+    Ran 5 tests across 1 file."
     ,
       "stdout": 
     "bun test <version> (<revision>)

@@ -83,4 +83,19 @@ describe("actual tests", () => {
   });
 });
 
+// == concurrent ==
+
+describe.concurrent("concurrent describe 1", () => {
+  test("item 1", async () => {});
+  test("item 2", async () => {});
+  test("snapshot in concurrent group", async () => {
+    // this is a technical limitation of not using async context. in the future, we could allow this
+    try {
+      expect("hello").toMatchSnapshot();
+    } catch (e) {
+      throw (e as Error).message;
+    }
+  });
+});
+
 console.log("exit");

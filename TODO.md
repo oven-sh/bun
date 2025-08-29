@@ -33,6 +33,12 @@ concurrent.test.js:
 Ran 3 tests across 1 file. [1081.00ms]
 ```
 
+Limitations:
+
+- concurrent tests cannot attribute `expect()` call counts to the test
+- concurrent tests cannot use `toMatchSnapshot`. `toMatchInlineSnapshot` is still supported.
+- `beforeAll`/`afterAll` will never be executed concurrently. `beforeEach`/`afterEach` will.
+
 ## Chaining
 
 Chaining multiple describe/test qualifiers is now allowed. Previously, it would fail.
@@ -226,6 +232,10 @@ error: uh oh!
 Ran 0 tests across 1 file.
 Exited with code [1]
 ```
+
+## Only is not allowed in CI
+
+(TODO)
 
 # Complete before merge:
 

@@ -288,17 +288,29 @@ function determineAdapter(
     }
   }
 
-  // 3. If no URL provided, check environment variables for SQLite URLs
-  // But respect precedence: POSTGRES_URL > DATABASE_URL > PGURL > PG_URL > MYSQL_URL
+  // 3. If no URL provided, check environment variables to infer adapter from protocol
+  // Respect precedence: POSTGRES_URL > DATABASE_URL > PGURL > PG_URL > MYSQL_URL
   if (!urlString && env) {
     // Check in order of precedence
     const envUrls = [env.POSTGRES_URL, env.DATABASE_URL, env.PGURL, env.PG_URL, env.MYSQL_URL];
     for (const envUrl of envUrls) {
       if (envUrl) {
+        // Check for SQLite URLs first
         if (parseDefinitelySqliteUrl(envUrl) !== null) {
           return "sqlite";
         }
-        // If we found a non-SQLite URL with higher precedence, don't check lower precedence URLs
+        
+        // Check protocol for other adapters
+        const colonIndex = envUrl.indexOf(":");
+        if (colonIndex !== -1) {
+          const protocol = envUrl.substring(0, colonIndex);
+          const adapterFromProtocol = getAdapterFromProtocol(protocol);
+          if (adapterFromProtocol) {
+            return adapterFromProtocol;
+          }
+        }
+        
+        // If we found a URL with higher precedence, don't check lower precedence URLs
         break;
       }
     }

@@ -130,4 +130,38 @@ describe("SQL adapter environment variable precedence", () => {
     expect(options.options.username).toBe("postgres-user");
     restoreEnv();
   });
+
+  test("should infer mysql adapter from MYSQL_URL env var", () => {
+    cleanEnv();
+    process.env.MYSQL_URL = "mysql://user:pass@host:3306/db";
+
+    const options = new SQL();
+    expect(options.options.adapter).toBe("mysql");
+    expect(options.options.hostname).toBe("host");
+    expect(options.options.port).toBe(3306);
+    restoreEnv();
+  });
+
+  test("should infer postgres adapter from POSTGRES_URL env var", () => {
+    cleanEnv();
+    process.env.POSTGRES_URL = "postgres://user:pass@host:5432/db";
+
+    const options = new SQL();
+    expect(options.options.adapter).toBe("postgres");
+    expect(options.options.hostname).toBe("host");
+    expect(options.options.port).toBe(5432);
+    restoreEnv();
+  });
+
+  test("POSTGRES_URL should take precedence over MYSQL_URL", () => {
+    cleanEnv();
+    process.env.POSTGRES_URL = "postgres://pg-host:5432/pgdb";
+    process.env.MYSQL_URL = "mysql://mysql-host:3306/mysqldb";
+
+    const options = new SQL();
+    expect(options.options.adapter).toBe("postgres");
+    expect(options.options.hostname).toBe("pg-host");
+    expect(options.options.port).toBe(5432);
+    restoreEnv();
+  });
 });

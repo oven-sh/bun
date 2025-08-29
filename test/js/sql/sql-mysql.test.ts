@@ -286,7 +286,6 @@ describeWithContainer(
       expect(result2[0].a).toBe(1);
     });
 
-
     test("Boolean/TinyInt/BIT", async () => {
       // Protocol will always return 0 or 1 for TRUE and FALSE when not using a table.
       expect((await sql`select ${false} as x`)[0].x).toBe(0);

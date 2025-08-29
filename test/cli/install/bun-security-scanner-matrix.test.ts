@@ -251,12 +251,9 @@ scanner = "${scannerPath}"`,
     expect(stdout).toContain("");
   }
 
-  // Check if scanner actually ran (except for bunfig-only which should fail)
   if (scannerType !== "bunfig-only" && !scannerError) {
-    console.log("[TEST DEBUG] Checking for SCANNER_RAN");
     expect(errAndOut).toContain("SCANNER_RAN");
 
-    // Verify scanner output based on return type
     if (scannerReturns === "warn") {
       expect(errAndOut).toContain("WARNING:");
       expect(errAndOut).toContain("Test warning");

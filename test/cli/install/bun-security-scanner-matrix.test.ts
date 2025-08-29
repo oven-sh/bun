@@ -266,7 +266,7 @@ scanner = "${scannerPath}"`,
 
   if (scannerType !== "bunfig-only" && !hasExistingNodeModules) {
     switch (scannerReturns) {
-      case "fatal": 
+      case "fatal":
       case "warn": {
         // When there are fatal advisories OR warnings (with no TTY to prompt),
         // the installation is cancelled and packages should NOT be installed

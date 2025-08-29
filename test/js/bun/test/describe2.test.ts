@@ -37,6 +37,26 @@ test("describe/test", async () => {
     describe 6
     describe 7
     describe 8
+    describe each 1
+    describe each 1a
+    describe each 1b
+    describe each 1c
+    describe each 1d
+    describe each 2
+    describe each 2a
+    describe each 2b
+    describe each 2c
+    describe each 2d
+    describe each 3
+    describe each 3a
+    describe each 3b
+    describe each 3c
+    describe each 3d
+    describe each 4
+    describe each 4a
+    describe each 4b
+    describe each 4c
+    describe each 4d
     async describe 1
     async describe 2
     async describe 3

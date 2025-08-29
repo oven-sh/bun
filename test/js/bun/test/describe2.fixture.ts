@@ -26,6 +26,12 @@ describe("describe 4", () => {
 describe("describe 8", () => {
   console.log("describe 8");
 });
+describe.each([1, 2, 3, 4])("describe each %s", i => {
+  console.log(`describe each ${i}`);
+  describe.each(["a", "b", "c", "d"])("describe each %s", j => {
+    console.log(`describe each ${i}${j}`);
+  });
+});
 
 // == async ==
 

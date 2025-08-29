@@ -24,6 +24,18 @@ exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true
 
 exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 3: requested-tarballs: install 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 4: requested-packages: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 4: requested-tarballs: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 5: requested-packages: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 5: requested-tarballs: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 6: requested-packages: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 6: requested-tarballs: install 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 7: requested-packages: install 1`] = `
 [
   "left-pad",
@@ -71,6 +83,18 @@ exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true
 `;
 
 exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 12: requested-tarballs: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 13: requested-packages: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 13: requested-tarballs: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 14: requested-packages: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 14: requested-tarballs: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 15: requested-packages: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 15: requested-tarballs: install 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) 16: requested-packages: install 1`] = `
 [
@@ -120,6 +144,18 @@ exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: fals
 
 exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=hoisted (scanner: local) (returns: fatal) 21: requested-tarballs: install 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 22: requested-packages: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 22: requested-tarballs: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 23: requested-packages: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 23: requested-tarballs: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 24: requested-packages: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 24: requested-tarballs: install 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: clean) 25: requested-packages: install 1`] = `
 [
   "left-pad",
@@ -167,6 +203,18 @@ exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: fals
 `;
 
 exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=isolated (scanner: local) (returns: fatal) 30: requested-tarballs: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 31: requested-packages: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 31: requested-tarballs: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 32: requested-packages: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 32: requested-tarballs: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 33: requested-packages: install 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 33: requested-tarballs: install 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: clean) 34: requested-packages: install 1`] = `
 [
@@ -216,6 +264,30 @@ exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true)
 
 exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 39: requested-tarballs: update without args 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 40: requested-packages: update without args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 40: requested-tarballs: update without args 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 41: requested-packages: update without args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 41: requested-tarballs: update without args 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 42: requested-packages: update without args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 42: requested-tarballs: update without args 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 43: requested-packages: update without args 1`] = `
 [
   "left-pad",
@@ -263,6 +335,30 @@ exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true)
 `;
 
 exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 48: requested-tarballs: update without args 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 49: requested-packages: update without args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 49: requested-tarballs: update without args 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 50: requested-packages: update without args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 50: requested-tarballs: update without args 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 51: requested-packages: update without args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 51: requested-tarballs: update without args 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) 52: requested-packages: update without args 1`] = `
 [
@@ -312,6 +408,30 @@ exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false
 
 exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=hoisted (scanner: local) (returns: fatal) 57: requested-tarballs: update without args 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 58: requested-packages: update without args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 58: requested-tarballs: update without args 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 59: requested-packages: update without args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 59: requested-tarballs: update without args 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 60: requested-packages: update without args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 60: requested-tarballs: update without args 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: clean) 61: requested-packages: update without args 1`] = `
 [
   "left-pad",
@@ -359,6 +479,30 @@ exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false
 `;
 
 exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=isolated (scanner: local) (returns: fatal) 66: requested-tarballs: update without args 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 67: requested-packages: update without args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 67: requested-tarballs: update without args 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 68: requested-packages: update without args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 68: requested-tarballs: update without args 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 69: requested-packages: update without args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 69: requested-tarballs: update without args 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: clean) 70: requested-packages: update without args 1`] = `
 [
@@ -408,6 +552,30 @@ exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true
 
 exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 75: requested-tarballs: update with args 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 76: requested-packages: update with args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 76: requested-tarballs: update with args 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 77: requested-packages: update with args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 77: requested-tarballs: update with args 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 78: requested-packages: update with args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 78: requested-tarballs: update with args 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 79: requested-packages: update with args 1`] = `
 [
   "left-pad",
@@ -455,6 +623,30 @@ exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true
 `;
 
 exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 84: requested-tarballs: update with args 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 85: requested-packages: update with args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 85: requested-tarballs: update with args 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 86: requested-packages: update with args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 86: requested-tarballs: update with args 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 87: requested-packages: update with args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 87: requested-tarballs: update with args 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) 88: requested-packages: update with args 1`] = `
 [
@@ -504,6 +696,30 @@ exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: fals
 
 exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=hoisted (scanner: local) (returns: fatal) 93: requested-tarballs: update with args 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 94: requested-packages: update with args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 94: requested-tarballs: update with args 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 95: requested-packages: update with args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 95: requested-tarballs: update with args 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 96: requested-packages: update with args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 96: requested-tarballs: update with args 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: clean) 97: requested-packages: update with args 1`] = `
 [
   "left-pad",
@@ -551,6 +767,30 @@ exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: fals
 `;
 
 exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=isolated (scanner: local) (returns: fatal) 102: requested-tarballs: update with args 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 103: requested-packages: update with args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 103: requested-tarballs: update with args 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 104: requested-packages: update with args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 104: requested-tarballs: update with args 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 105: requested-packages: update with args 1`] = `
+[
+  "left-pad",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 105: requested-tarballs: update with args 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: clean) 106: requested-packages: update with args 1`] = `
 [
@@ -602,6 +842,33 @@ exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --
 `;
 
 exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 111: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 112: requested-packages: add 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 112: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 113: requested-packages: add 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 113: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 114: requested-packages: add 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 114: requested-tarballs: add 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 115: requested-packages: add 1`] = `
 [
@@ -656,6 +923,33 @@ exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --
 `;
 
 exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 120: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 121: requested-packages: add 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 121: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 122: requested-packages: add 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 122: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 123: requested-packages: add 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 123: requested-tarballs: add 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) 124: requested-packages: add 1`] = `
 [
@@ -713,6 +1007,33 @@ exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) -
 `;
 
 exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: fatal) 129: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 130: requested-packages: add 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 130: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 131: requested-packages: add 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 131: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 132: requested-packages: add 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 132: requested-tarballs: add 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: clean) 133: requested-packages: add 1`] = `
 [
@@ -774,6 +1095,33 @@ exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) -
 
 exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: fatal) 138: requested-tarballs: add 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 139: requested-packages: add 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 139: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 140: requested-packages: add 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 140: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 141: requested-packages: add 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 141: requested-tarballs: add 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: clean) 142: requested-packages: add 1`] = `
 [
   "left-pad",
@@ -833,6 +1181,36 @@ exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules:
 `;
 
 exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 147: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 148: requested-packages: add 1`] = `
+[
+  "left-pad",
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 148: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 149: requested-packages: add 1`] = `
+[
+  "left-pad",
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 149: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 150: requested-packages: add 1`] = `
+[
+  "left-pad",
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 150: requested-tarballs: add 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 151: requested-packages: add 1`] = `
 [
@@ -894,6 +1272,36 @@ exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules:
 
 exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 156: requested-tarballs: add 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 157: requested-packages: add 1`] = `
+[
+  "left-pad",
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 157: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 158: requested-packages: add 1`] = `
+[
+  "left-pad",
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 158: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 159: requested-packages: add 1`] = `
+[
+  "left-pad",
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 159: requested-tarballs: add 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) 160: requested-packages: add 1`] = `
 [
   "left-pad",
@@ -953,6 +1361,36 @@ exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules:
 `;
 
 exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: fatal) 165: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 166: requested-packages: add 1`] = `
+[
+  "left-pad",
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 166: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 167: requested-packages: add 1`] = `
+[
+  "left-pad",
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 167: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 168: requested-packages: add 1`] = `
+[
+  "left-pad",
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 168: requested-tarballs: add 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: clean) 169: requested-packages: add 1`] = `
 [
@@ -1014,6 +1452,36 @@ exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules:
 
 exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: fatal) 174: requested-tarballs: add 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 175: requested-packages: add 1`] = `
+[
+  "left-pad",
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 175: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 176: requested-packages: add 1`] = `
+[
+  "left-pad",
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 176: requested-tarballs: add 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 177: requested-packages: add 1`] = `
+[
+  "left-pad",
+  "is-even",
+  "is-odd",
+]
+`;
+
+exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 177: requested-tarballs: add 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: clean) 178: requested-packages: add 1`] = `
 [
   "left-pad",
@@ -1056,6 +1524,18 @@ exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true)
 
 exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 183: requested-tarballs: unknown command 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 184: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 184: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 185: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 185: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 186: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 186: requested-tarballs: unknown command 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 187: requested-packages: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 187: requested-tarballs: unknown command 1`] = `[]`;
@@ -1079,6 +1559,18 @@ exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true)
 exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 192: requested-packages: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 192: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 193: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 193: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 194: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 194: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 195: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 195: requested-tarballs: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) 196: requested-packages: unknown command 1`] = `[]`;
 
@@ -1121,6 +1613,18 @@ exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false
 `;
 
 exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: fatal) 201: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 202: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 202: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 203: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 203: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 204: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 204: requested-tarballs: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: clean) 205: requested-packages: unknown command 1`] = `
 [
@@ -1182,6 +1686,18 @@ exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false
 
 exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: fatal) 210: requested-tarballs: unknown command 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 211: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 211: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 212: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 212: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 213: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 213: requested-tarballs: unknown command 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: clean) 214: requested-packages: unknown command 1`] = `
 [
   "left-pad",
@@ -1224,6 +1740,18 @@ exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modul
 
 exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 219: requested-tarballs: unknown command 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 220: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 220: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 221: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 221: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 222: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 222: requested-tarballs: unknown command 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 223: requested-packages: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 223: requested-tarballs: unknown command 1`] = `[]`;
@@ -1247,6 +1775,18 @@ exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modul
 exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 228: requested-packages: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 228: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 229: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 229: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 230: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 230: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 231: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 231: requested-tarballs: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) 232: requested-packages: unknown command 1`] = `[]`;
 
@@ -1286,6 +1826,18 @@ exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modul
 `;
 
 exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: fatal) 237: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 238: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 238: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 239: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 239: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 240: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 240: requested-tarballs: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: clean) 241: requested-packages: unknown command 1`] = `
 [
@@ -1341,6 +1893,18 @@ exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modul
 
 exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: fatal) 246: requested-tarballs: unknown command 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 247: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 247: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 248: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 248: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 249: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 249: requested-tarballs: unknown command 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: clean) 250: requested-packages: unknown command 1`] = `
 [
   "is-odd",
@@ -1380,6 +1944,18 @@ exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: tr
 
 exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 255: requested-tarballs: unknown command 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 256: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 256: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 257: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 257: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 258: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 258: requested-tarballs: unknown command 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 259: requested-packages: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 259: requested-tarballs: unknown command 1`] = `[]`;
@@ -1403,6 +1979,18 @@ exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: tr
 exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 264: requested-packages: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 264: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 265: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 265: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 266: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 266: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 267: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 267: requested-tarballs: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) 268: requested-packages: unknown command 1`] = `[]`;
 
@@ -1445,6 +2033,18 @@ exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: fa
 `;
 
 exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: fatal) 273: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 274: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 274: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 275: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 275: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 276: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 276: requested-tarballs: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: clean) 277: requested-packages: unknown command 1`] = `
 [
@@ -1506,6 +2106,18 @@ exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: fa
 
 exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: fatal) 282: requested-tarballs: unknown command 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 283: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 283: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 284: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 284: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 285: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 285: requested-tarballs: unknown command 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: clean) 286: requested-packages: unknown command 1`] = `
 [
   "left-pad",
@@ -1548,6 +2160,18 @@ exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_mo
 
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: local) (returns: fatal) 291: requested-tarballs: unknown command 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 292: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 292: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 293: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 293: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 294: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 294: requested-tarballs: unknown command 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 295: requested-packages: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: bunfig-only) (returns: clean) 295: requested-tarballs: unknown command 1`] = `[]`;
@@ -1571,6 +2195,18 @@ exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_mo
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 300: requested-packages: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: local) (returns: fatal) 300: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 301: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 301: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 302: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 302: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 303: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 303: requested-tarballs: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: bunfig-only) (returns: clean) 304: requested-packages: unknown command 1`] = `[]`;
 
@@ -1610,6 +2246,18 @@ exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_mo
 `;
 
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: local) (returns: fatal) 309: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 310: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 310: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 311: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 311: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 312: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 312: requested-tarballs: unknown command 1`] = `[]`;
 
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: bunfig-only) (returns: clean) 313: requested-packages: unknown command 1`] = `
 [
@@ -1665,6 +2313,18 @@ exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_mo
 
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: local) (returns: fatal) 318: requested-tarballs: unknown command 1`] = `[]`;
 
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 319: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 319: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 320: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 320: requested-tarballs: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 321: requested-packages: unknown command 1`] = `[]`;
+
+exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 321: requested-tarballs: unknown command 1`] = `[]`;
+
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: clean) 322: requested-packages: unknown command 1`] = `
 [
   "is-odd",
@@ -1691,663 +2351,3 @@ exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_mo
 `;
 
 exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: bunfig-only) (returns: fatal) 324: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 4: requested-packages: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 4: requested-tarballs: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 5: requested-packages: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 5: requested-tarballs: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 6: requested-packages: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 6: requested-tarballs: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 13: requested-packages: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 13: requested-tarballs: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 14: requested-packages: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 14: requested-tarballs: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 15: requested-packages: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 15: requested-tarballs: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 22: requested-packages: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 22: requested-tarballs: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 23: requested-packages: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 23: requested-tarballs: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 24: requested-packages: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 24: requested-tarballs: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 31: requested-packages: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 31: requested-tarballs: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 32: requested-packages: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 32: requested-tarballs: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 33: requested-packages: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun install "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 33: requested-tarballs: install 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 40: requested-packages: update without args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 40: requested-tarballs: update without args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 41: requested-packages: update without args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 41: requested-tarballs: update without args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 42: requested-packages: update without args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 42: requested-tarballs: update without args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 49: requested-packages: update without args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 49: requested-tarballs: update without args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 50: requested-packages: update without args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 50: requested-tarballs: update without args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 51: requested-packages: update without args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 51: requested-tarballs: update without args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 58: requested-packages: update without args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 58: requested-tarballs: update without args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 59: requested-packages: update without args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 59: requested-tarballs: update without args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 60: requested-packages: update without args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 60: requested-tarballs: update without args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 67: requested-packages: update without args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 67: requested-tarballs: update without args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 68: requested-packages: update without args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 68: requested-tarballs: update without args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 69: requested-packages: update without args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "no args" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 69: requested-tarballs: update without args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 76: requested-packages: update with args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 76: requested-tarballs: update with args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 77: requested-packages: update with args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 77: requested-tarballs: update with args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 78: requested-packages: update with args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 78: requested-tarballs: update with args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 85: requested-packages: update with args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 85: requested-tarballs: update with args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 86: requested-packages: update with args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 86: requested-tarballs: update with args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 87: requested-packages: update with args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 87: requested-tarballs: update with args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 94: requested-packages: update with args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 94: requested-tarballs: update with args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 95: requested-packages: update with args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 95: requested-tarballs: update with args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 96: requested-packages: update with args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 96: requested-tarballs: update with args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 103: requested-packages: update with args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 103: requested-tarballs: update with args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 104: requested-packages: update with args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 104: requested-tarballs: update with args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 105: requested-packages: update with args 1`] = `
-[
-  "left-pad",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun update "left-pad" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 105: requested-tarballs: update with args 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 112: requested-packages: add 1`] = `
-[
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 112: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 113: requested-packages: add 1`] = `
-[
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 113: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 114: requested-packages: add 1`] = `
-[
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 114: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 121: requested-packages: add 1`] = `
-[
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 121: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 122: requested-packages: add 1`] = `
-[
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 122: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 123: requested-packages: add 1`] = `
-[
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 123: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 130: requested-packages: add 1`] = `
-[
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 130: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 131: requested-packages: add 1`] = `
-[
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 131: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 132: requested-packages: add 1`] = `
-[
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 132: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 139: requested-packages: add 1`] = `
-[
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 139: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 140: requested-packages: add 1`] = `
-[
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 140: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 141: requested-packages: add 1`] = `
-[
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 141: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 148: requested-packages: add 1`] = `
-[
-  "left-pad",
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 148: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 149: requested-packages: add 1`] = `
-[
-  "left-pad",
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 149: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 150: requested-packages: add 1`] = `
-[
-  "left-pad",
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 150: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 157: requested-packages: add 1`] = `
-[
-  "left-pad",
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 157: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 158: requested-packages: add 1`] = `
-[
-  "left-pad",
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 158: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 159: requested-packages: add 1`] = `
-[
-  "left-pad",
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 159: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 166: requested-packages: add 1`] = `
-[
-  "left-pad",
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 166: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 167: requested-packages: add 1`] = `
-[
-  "left-pad",
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 167: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 168: requested-packages: add 1`] = `
-[
-  "left-pad",
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 168: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 175: requested-packages: add 1`] = `
-[
-  "left-pad",
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 175: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 176: requested-packages: add 1`] = `
-[
-  "left-pad",
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 176: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 177: requested-packages: add 1`] = `
-[
-  "left-pad",
-  "is-even",
-  "is-odd",
-]
-`;
-
-exports[`Security Scanner Matrix Tests bun add "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 177: requested-tarballs: add 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 184: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 184: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 185: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 185: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 186: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 186: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 193: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 193: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 194: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 194: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 195: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 195: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 202: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 202: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 203: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 203: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 204: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 204: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 211: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 211: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 212: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 212: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 213: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 213: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 220: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 220: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 221: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 221: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 222: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 222: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 229: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 229: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 230: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 230: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 231: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 231: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 238: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 238: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 239: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 239: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 240: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 240: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 247: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 247: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 248: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 248: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 249: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun remove "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 249: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 256: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 256: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 257: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 257: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 258: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 258: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 265: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 265: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 266: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 266: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 267: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 267: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 274: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 274: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 275: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 275: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 276: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 276: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 283: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 283: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 284: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 284: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 285: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 285: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 292: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: clean) 292: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 293: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: warn) 293: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 294: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=hoisted (scanner: npm) (returns: fatal) 294: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 301: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: clean) 301: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 302: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: warn) 302: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 303: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: true) --linker=isolated (scanner: npm) (returns: fatal) 303: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 310: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: clean) 310: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 311: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: warn) 311: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 312: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=hoisted (scanner: npm) (returns: fatal) 312: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 319: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: clean) 319: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 320: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: warn) 320: requested-tarballs: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 321: requested-packages: unknown command 1`] = `[]`;
-
-exports[`Security Scanner Matrix Tests bun uninstall "left-pad,is-even" (node_modules: false) --linker=isolated (scanner: npm) (returns: fatal) 321: requested-tarballs: unknown command 1`] = `[]`;

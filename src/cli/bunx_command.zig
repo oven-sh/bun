@@ -711,7 +711,7 @@ pub const BunxCommand = struct {
             package_json.writeAll("{}\n") catch {};
         }
 
-        var args = std.BoundedArray([]const u8, 8).fromSlice(&.{
+        var args = bun.BoundedArray([]const u8, 8).fromSlice(&.{
             try bun.selfExePath(),
             "add",
             install_param,

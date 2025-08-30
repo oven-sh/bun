@@ -68,7 +68,7 @@ pub fn hasRequestedTerminate(this: *const WebWorker) bool {
 }
 
 export fn WebWorker__updatePtr(handle: *WebWorkerLifecycleHandle, ptr: *anyopaque) bool {
-    const worker = handle.worker.swap(null, .monotonic) orelse return false;
+    const worker = handle.worker.load(.acquire).?;
     worker.cpp_worker = ptr;
 
     var thread = std.Thread.spawn(
@@ -695,7 +695,7 @@ const WebWorkerLifecycleHandle = struct {
             .ref_count = .init(),
         });
 
-        const worker = create(cpp_worker, parent, name_str, specifier_str, error_message, parent_context_id, this_context_id, mini, default_unref, eval_mode, argv_ptr, argv_len, inherit_execArgv, execArgv_ptr, execArgv_len, preload_modules_ptr, preload_modules_len, handle);
+        const worker = create(cpp_worker, parent, name_str, specifier_str, error_message, parent_context_id, this_context_id, mini, default_unref, eval_mode, argv_ptr, argv_len, inherit_execArgv, execArgv_ptr, execArgv_len, preload_modules_ptr, preload_modules_len, handle).?;
 
         handle.worker.store(worker, .release);
 

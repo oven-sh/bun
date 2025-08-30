@@ -25,6 +25,7 @@
 #include "NodeVM.h"
 #include "../../bake/BakeGlobalObject.h"
 #include "napi_handle_scope.h"
+#include "ZigGeneratedClasses.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -36,6 +37,7 @@ JSHeapData::JSHeapData(Heap& heap)
     , m_heapCellTypeForNodeVMGlobalObject(JSC::IsoHeapCellType::Args<Bun::NodeVMGlobalObject>())
     , m_heapCellTypeForBakeGlobalObject(JSC::IsoHeapCellType::Args<Bake::GlobalObject>())
     , m_heapCellTypeForNapiHandleScopeImpl(JSC::IsoHeapCellType::Args<Bun::NapiHandleScopeImpl>())
+    , m_heapCellTypeForJSResolveMessage(JSC::IsoHeapCellType::Args<WebCore::JSResolveMessage>())
     , m_domBuiltinConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMBuiltinConstructorBase)
     , m_domConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMConstructorBase)
     , m_domNamespaceObjectSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMObject)

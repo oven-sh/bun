@@ -1068,8 +1068,9 @@ JSC_DEFINE_CUSTOM_GETTER(js${typeName}Constructor, (JSGlobalObject * lexicalGlob
   }
 
   for (const name in proto) {
-    if (name.startsWith("@@")) continue; // Skip symbol properties
-    if ("cache" in proto[name] || proto[name]?.internal) {
+    // Skip symbol properties except for functions that need callbacks generated
+    if (name.startsWith("@@") && !("fn" in proto[name])) continue;
+    if (("cache" in proto[name] || proto[name]?.internal) && !name.startsWith("@@")) {
       const cacheName = typeof proto[name].cache === "string" ? `m_${proto[name].cache}` : `m_${name}`;
       if ("cache" in proto[name]) {
         if (!supportsObjectCreate) {
@@ -1141,7 +1142,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
         }
       }
       rows.push(writeBarrier(symbolName, typeName, name, cacheName));
-    } else if ("getter" in proto[name] || ("accessor" in proto[name] && proto[name].getter)) {
+    } else if (("getter" in proto[name] || ("accessor" in proto[name] && proto[name].getter)) && !name.startsWith("@@")) {
       if (!supportsObjectCreate) {
         rows.push(`
 JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, PropertyName attributeName))
@@ -1180,7 +1181,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
       }
     }
 
-    if ("setter" in proto[name] || ("accessor" in proto[name] && proto[name].setter)) {
+    if (("setter" in proto[name] || ("accessor" in proto[name] && proto[name].setter)) && !name.startsWith("@@")) {
       rows.push(
         `
 JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, EncodedJSValue encodedValue, PropertyName attributeName))
@@ -1383,21 +1384,18 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         static constexpr unsigned StructureFlags = Base::StructureFlags${obj.hasOwnProperties() ? ` | HasStaticPropertyTable` : ""};
         static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
 
-        DECLARE_EXPORT_INFO;${
-          obj.inheritsFromError
-            ? ""
-            : `
+        DECLARE_EXPORT_INFO;
         template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
         {
             if constexpr (mode == JSC::SubspaceAccess::Concurrently)
                 return nullptr;
-            return WebCore::subspaceForImpl<${name}, WebCore::UseCustomHeapCellType::No>(
+            return WebCore::subspaceForImpl<${name}, WebCore::UseCustomHeapCellType::${obj.inheritsFromError ? "Yes" : "No"}>(
                 vm,
                 [](auto& spaces) { return spaces.${clientSubspaceFor(typeName)}.get(); },
                 [](auto& spaces, auto&& space) { spaces.${clientSubspaceFor(typeName)} = std::forward<decltype(space)>(space); },
                 [](auto& spaces) { return spaces.${subspaceFor(typeName)}.get(); },
-                [](auto& spaces, auto&& space) { spaces.${subspaceFor(typeName)} = std::forward<decltype(space)>(space); });
-        }`
+                [](auto& spaces, auto&& space) { spaces.${subspaceFor(typeName)} = std::forward<decltype(space)>(space); }${obj.inheritsFromError ? `,
+                [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeFor${name}; }` : ""});
         }
 
         static void destroy(JSC::JSCell*);

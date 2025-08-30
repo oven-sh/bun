@@ -445,6 +445,9 @@ pub fn GlobWalker_(
                             const fd = switch (try Accessor.open(path)) {
                                 .err => |e| {
                                     if (e.getErrno() == bun.sys.E.NOTDIR) {
+                                        // File exists, add it to matchedPaths
+                                        const path_string = matchedPathToBunString(path);
+                                        _ = try this.walker.matchedPaths.getOrPutValue(this.walker.arena.allocator(), path_string, {});
                                         this.iter_state = .{ .matched = path };
                                         return .success;
                                     }
@@ -459,6 +462,9 @@ pub fn GlobWalker_(
                                 .result => |fd| fd,
                             };
                             _ = Accessor.close(fd);
+                            // Directory exists, add it to matchedPaths
+                            const path_string = matchedPathToBunString(path);
+                            _ = try this.walker.matchedPaths.getOrPutValue(this.walker.arena.allocator(), path_string, {});
                             this.iter_state = .{ .matched = path };
                             return .success;
                         }
@@ -1602,12 +1608,12 @@ pub fn GlobWalker_(
                 saw_special = saw_special or component.syntax_hint.isSpecialSyntax();
                 if (!saw_special) {
                     basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
-                    end_byte_of_basename_excluding_special_syntax.* = i + width;
+                    end_byte_of_basename_excluding_special_syntax.* = @intCast(pattern.len);
                 }
                 try patternComponents.append(arena.allocator(), component);
             } else if (!saw_special) {
                 basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
-                end_byte_of_basename_excluding_special_syntax.* = i + width;
+                end_byte_of_basename_excluding_special_syntax.* = @intCast(pattern.len);
             }
         }
     };

@@ -1233,6 +1233,22 @@ pub const DescribeScope = struct {
     }
 
     pub fn runTests(this: *DescribeScope, globalObject: *JSGlobalObject) void {
+        // Early optimization: skip entire describe blocks that can't contain matching tests
+        if (Jest.runner.?.full_name_filters.len > 0) {
+            var could_match = false;
+            for (Jest.runner.?.full_name_filters) |full_name| {
+                // If any full test name could start with this describe block's label, we need to process it
+                if (bun.strings.startsWith(full_name, this.label)) {
+                    could_match = true;
+                    break;
+                }
+            }
+            if (!could_match) {
+                // Skip this entire describe block - no tests in it could possibly match
+                return;
+            }
+        }
+
         // Step 1. Initialize the test block
         globalObject.clearTerminationException();
 

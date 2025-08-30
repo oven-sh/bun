@@ -12,7 +12,7 @@ class SQLResultArray<T> extends PublicArray<T> {
   public count!: number | null;
   public command!: string | null;
   public lastInsertRowid!: number | bigint | null;
-  public affectedRows!: number | bigint | null;
+
   static [Symbol.toStringTag] = "SQLResults";
 
   constructor(values: T[] = []) {
@@ -24,7 +24,6 @@ class SQLResultArray<T> extends PublicArray<T> {
       count: { value: null, writable: true },
       command: { value: null, writable: true },
       lastInsertRowid: { value: null, writable: true },
-      affectedRows: { value: null, writable: true },
     });
   }
 
@@ -212,10 +211,8 @@ function hasProtocol(url: string) {
     "mysql",
     "mysql2",
     "mariadb",
-    "mysqls",
     "file",
     "sqlite",
-    "unix",
   ];
   for (const protocol of protocols) {
     if (url.startsWith(protocol + "://")) {
@@ -225,408 +222,73 @@ function hasProtocol(url: string) {
   return false;
 }
 
-function getAdapterFromProtocol(protocol: string): Bun.SQL.__internal.Adapter | null {
-  switch (protocol) {
-    case "postgres":
-    case "postgresql":
-      return "postgres";
-    case "mysql":
-    case "mysql2":
-    case "mariadb":
-    case "mysqls":
-      return "mysql";
-    case "file":
-    case "sqlite":
-      return "sqlite";
-    case "unix":
-      return null; // Unix sockets require explicit adapter
-    default:
-      return null;
+function defaultToPostgresIfNoProtocol(url: string | URL | null): URL {
+  if (url instanceof URL) {
+    return url;
   }
+  if (hasProtocol(url as string)) {
+    return new URL(url as string);
+  }
+  return new URL("postgres://" + url);
 }
-
-function determineAdapter(
-  options: Bun.SQL.Options,
-  urlString: string | URL | null,
-  env?: Record<string, string | undefined>,
-): Bun.SQL.__internal.Adapter {
-  // 1. Use explicit adapter if provided
-  if (options.adapter) {
-    const adapter = options.adapter;
-    switch (adapter) {
-      case "postgres":
-      case "postgresql":
-        return "postgres";
-      case "mysql":
-      case "mysql2":
-      case "mariadb":
-        return "mysql";
-      case "sqlite":
-        return "sqlite";
-      default:
-        throw new Error(`Unsupported adapter: ${adapter}. Supported adapters: "postgres", "sqlite", "mysql"`);
-    }
-  }
-
-  // 2. Infer from URL protocol if present
-  if (urlString) {
-    const urlStr = urlString instanceof URL ? urlString.href : urlString;
-
-    // Check for SQLite URLs first
-    if (parseDefinitelySqliteUrl(urlStr) !== null) {
-      return "sqlite";
-    }
-
-    // Extract protocol
-    const colonIndex = urlStr.indexOf(":");
-    if (colonIndex !== -1) {
-      const protocol = urlStr.substring(0, colonIndex);
-      const adapterFromProtocol = getAdapterFromProtocol(protocol);
-      if (adapterFromProtocol) {
-        return adapterFromProtocol;
-      }
-    }
-  }
-
-  // 3. If no URL provided, check environment variables to infer adapter
-  // Respect precedence: POSTGRES_URL > DATABASE_URL > PGURL > PG_URL > MYSQL_URL
-  if (!urlString && env) {
-    // Check in order of precedence (including TLS variants)
-    const envVars = [
-      { name: "POSTGRES_URL", url: env.POSTGRES_URL },
-      { name: "TLS_POSTGRES_DATABASE_URL", url: env.TLS_POSTGRES_DATABASE_URL },
-      { name: "DATABASE_URL", url: env.DATABASE_URL },
-      { name: "TLS_DATABASE_URL", url: env.TLS_DATABASE_URL },
-      { name: "PGURL", url: env.PGURL },
-      { name: "PG_URL", url: env.PG_URL },
-      { name: "MYSQL_URL", url: env.MYSQL_URL },
-      { name: "TLS_MYSQL_DATABASE_URL", url: env.TLS_MYSQL_DATABASE_URL },
-    ];
-
-    for (const { name, url: envUrl } of envVars) {
-      if (envUrl) {
-        // Check for SQLite URLs first (special case)
-        if (parseDefinitelySqliteUrl(envUrl) !== null) {
-          return "sqlite";
-        }
-
-        // Environment variable name takes precedence over protocol
-        if (name === "MYSQL_URL" || name === "TLS_MYSQL_DATABASE_URL") {
-          return "mysql";
-        } else if (
-          name === "POSTGRES_URL" ||
-          name === "TLS_POSTGRES_DATABASE_URL" ||
-          name === "PGURL" ||
-          name === "PG_URL"
-        ) {
-          return "postgres";
-        }
-
-        // For generic DATABASE_URL and TLS_DATABASE_URL, use protocol detection as fallback
-        if (name === "DATABASE_URL" || name === "TLS_DATABASE_URL") {
-          const colonIndex = envUrl.indexOf(":");
-          if (colonIndex !== -1) {
-            const protocol = envUrl.substring(0, colonIndex);
-            const adapterFromProtocol = getAdapterFromProtocol(protocol);
-            if (adapterFromProtocol) {
-              return adapterFromProtocol;
-            }
-          }
-        }
-
-        //  No adapter inferred from this env var; continue to lower-precedence vars
-        continue;
-      }
-    }
-  }
-
-  // 4. Default to postgres if no explicit adapter or protocol
-  return "postgres";
-}
-
-function getEnvironmentUrlsForAdapter(adapter: Bun.SQL.__internal.Adapter, env: Record<string, string | undefined>) {
-  const urls: (string | undefined)[] = [];
-
-  if (adapter === "postgres") {
-    urls.push(env.POSTGRES_URL, env.DATABASE_URL, env.PGURL, env.PG_URL);
-    // Also check TLS variants
-    urls.push(env.TLS_POSTGRES_DATABASE_URL, env.TLS_DATABASE_URL);
-  } else if (adapter === "mysql") {
-    urls.push(env.MYSQL_URL, env.DATABASE_URL);
-    // Also check TLS variants
-    urls.push(env.TLS_MYSQL_DATABASE_URL, env.TLS_DATABASE_URL);
-  } else if (adapter === "sqlite") {
-    urls.push(env.DATABASE_URL);
-  }
-
-  return urls.filter((url): url is string => typeof url === "string" && url.length > 0);
-}
-
-function getAdapterSpecificDefaults(adapter: Bun.SQL.__internal.Adapter, env: Record<string, string | undefined>) {
-  const defaults: {
-    hostname?: string;
-    port?: number;
-    username?: string;
-    password?: string;
-    database?: string;
-  } = {};
-
-  if (adapter === "postgres") {
-    defaults.hostname = env.PGHOST;
-    defaults.port = env.PGPORT ? Number(env.PGPORT) : undefined;
-    defaults.username = env.PGUSERNAME || env.PGUSER || env.USER || env.USERNAME;
-    defaults.password = env.PGPASSWORD;
-    defaults.database = env.PGDATABASE;
-  } else if (adapter === "mysql") {
-    defaults.hostname = env.MYSQL_HOST;
-    defaults.port = env.MYSQL_PORT ? Number(env.MYSQL_PORT) : undefined;
-    defaults.username = env.MYSQL_USER || env.USER || env.USERNAME;
-    defaults.password = env.MYSQL_PASSWORD;
-    defaults.database = env.MYSQL_DATABASE;
-  } else if (adapter === "sqlite") {
-    // SQLite doesn't use these connection parameters
-  }
-
-  return defaults;
-}
-
 function parseOptions(
   stringOrUrlOrOptions: Bun.SQL.Options | string | URL | undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options,
 ): Bun.SQL.__internal.DefinedOptions {
   const env = Bun.env;
 
-  // Step 1: Determine input string/URL and options
-  let inputUrl: string | URL | null = null;
-  let options: Bun.SQL.Options;
+  let [
+    stringOrUrl = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL || env.MYSQL_URL || null,
+    options,
+  ]: [string | URL | null, Bun.SQL.Options] =
+    typeof stringOrUrlOrOptions === "string" || stringOrUrlOrOptions instanceof URL
+      ? [stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty]
+      : stringOrUrlOrOptions
+        ? [null, { ...stringOrUrlOrOptions, ...definitelyOptionsButMaybeEmpty }]
+        : [null, definitelyOptionsButMaybeEmpty];
 
-  if (typeof stringOrUrlOrOptions === "string" || stringOrUrlOrOptions instanceof URL) {
-    inputUrl = stringOrUrlOrOptions;
-    options = definitelyOptionsButMaybeEmpty;
-  } else if (stringOrUrlOrOptions) {
-    options = { ...stringOrUrlOrOptions, ...definitelyOptionsButMaybeEmpty };
-    inputUrl = options.url || null;
-  } else {
-    options = definitelyOptionsButMaybeEmpty;
-  }
+  if (options.adapter === undefined && stringOrUrl !== null) {
+    const sqliteUrl = parseDefinitelySqliteUrl(stringOrUrl);
 
-  // Step 2: Determine the adapter (without reading environment variables yet)
-  const adapter = determineAdapter(options, inputUrl, env);
+    if (sqliteUrl !== null) {
+      const sqliteOptions: Bun.SQL.__internal.DefinedSQLiteOptions = {
+        ...options,
+        adapter: "sqlite",
+        filename: sqliteUrl,
+      };
 
-  // Step 2.5: Validate adapter matches protocol if URL is provided
-  if (inputUrl) {
-    let urlToValidate: URL | null;
-    if (typeof inputUrl === "string") {
-      // Parse the URL for validation - handle SQLite URLs specially
-      if (parseDefinitelySqliteUrl(inputUrl) !== null) {
-        // Create a fake URL for SQLite validation
-        urlToValidate = new URL("sqlite:///" + encodeURIComponent(inputUrl));
-      } else if (hasProtocol(inputUrl)) {
-        // Only validate URLs that have protocols
-        urlToValidate = parseUrlForAdapter(inputUrl, adapter);
-      } else {
-        // For URLs without protocols, skip validation (could be filenames)
-        urlToValidate = null;
-      }
-    } else {
-      urlToValidate = inputUrl;
-    }
-
-    if (urlToValidate) {
-      validateAdapterProtocolMatch(adapter, urlToValidate, inputUrl);
+      return parseSQLiteOptionsWithQueryParams(sqliteOptions, stringOrUrl);
     }
   }
 
-  // Handle SQLite early since it has different logic
-  if (adapter === "sqlite") {
-    return handleSQLiteOptions(options, inputUrl, env);
-  }
+  if (options.adapter === "sqlite") {
+    let filenameFromOptions = options.filename || stringOrUrl;
 
-  // Step 3: Get the appropriate URL for this adapter
-  let finalUrl: URL | null = null;
-  let sslMode: SSLMode = SSLMode.disable;
-
-  if (inputUrl) {
-    // User provided a URL directly
-    finalUrl = inputUrl instanceof URL ? inputUrl : parseUrlForAdapter(inputUrl, adapter);
-  } else {
-    // Look for environment URLs appropriate for this adapter
-    // Only use environment URLs if no explicit connection options are provided
-    const hasExplicitConnectionOptions = !!(
-      options.hostname ||
-      options.host ||
-      options.port ||
-      options.username ||
-      options.user ||
-      options.password ||
-      options.pass ||
-      options.database ||
-      options.db
-    );
-
-    if (!hasExplicitConnectionOptions) {
-      const envUrls = getEnvironmentUrlsForAdapter(adapter, env);
-      const envUrl = envUrls[0]; // Get first available URL
-
-      if (envUrl) {
-        // Check if it's a TLS URL that sets SSL mode
-        if (
-          envUrl === env.TLS_POSTGRES_DATABASE_URL ||
-          envUrl === env.TLS_DATABASE_URL ||
-          envUrl === env.TLS_MYSQL_DATABASE_URL
-        ) {
-          sslMode = SSLMode.require;
-        }
-        finalUrl = parseUrlForAdapter(envUrl, adapter);
-      }
-    }
-  }
-
-  // Step 4: Normalize and validate options for the specific adapter
-  return normalizeOptionsForAdapter(adapter, options, finalUrl, env, sslMode);
-}
-
-function handleSQLiteOptions(
-  options: Bun.SQL.Options,
-  inputUrl: string | URL | null,
-  env: Record<string, string | undefined>,
-): Bun.SQL.__internal.DefinedSQLiteOptions {
-  let filename: string | URL | null = options.filename || inputUrl;
-
-  // If no filename provided, check environment
-  if (!filename) {
-    const envUrl = env.DATABASE_URL;
-    if (envUrl) {
-      const parsed = parseDefinitelySqliteUrl(envUrl);
+    // Parse sqlite:// URLs when adapter is explicitly sqlite
+    if (typeof filenameFromOptions === "string" || filenameFromOptions instanceof URL) {
+      const parsed = parseDefinitelySqliteUrl(filenameFromOptions);
       if (parsed !== null) {
-        filename = parsed;
+        filenameFromOptions = parsed;
       }
     }
+
+    const sqliteOptions: Bun.SQL.__internal.DefinedSQLiteOptions = {
+      ...options,
+      adapter: "sqlite",
+      filename: filenameFromOptions || ":memory:",
+    };
+
+    return parseSQLiteOptionsWithQueryParams(sqliteOptions, stringOrUrl);
   }
 
-  // Parse SQLite URLs
-  if (typeof filename === "string" || filename instanceof URL) {
-    const parsed = parseDefinitelySqliteUrl(filename);
-    if (parsed !== null) {
-      filename = parsed;
+  if (!stringOrUrl) {
+    const url = options?.url;
+    if (typeof url === "string") {
+      stringOrUrl = defaultToPostgresIfNoProtocol(url);
+    } else if (url instanceof URL) {
+      stringOrUrl = url;
     }
   }
-
-  // Special handling for empty strings: should default to :memory:
-  let finalFilename: string;
-  if (filename === null || filename === undefined) {
-    finalFilename = ":memory:";
-  } else if (filename === "") {
-    // Empty string when explicitly passed (like new SQL("", {adapter: "sqlite"})) should be :memory:
-    // This should only be set to ":memory:" if the inputUrl is also an empty string
-    finalFilename = inputUrl === "" ? ":memory:" : "";
-  } else {
-    finalFilename = filename as string;
-  }
-
-  const sqliteOptions: Bun.SQL.__internal.DefinedSQLiteOptions = {
-    ...options,
-    adapter: "sqlite",
-    filename: finalFilename,
-  };
-
-  return parseSQLiteOptionsWithQueryParams(sqliteOptions, inputUrl);
-}
-
-function defaultProtocolForAdapter(adapter: Bun.SQL.__internal.Adapter) {
-  switch (adapter) {
-    case "mariadb":
-    case "mysql2":
-    case "mysql":
-      return "mysql://";
-    case "sqlite":
-      return "sqlite://";
-    case "postgres":
-    case "postgresql":
-    default:
-      return "postgres://";
-  }
-}
-
-function parseUrlForAdapter(urlString: string, adapter: Bun.SQL.__internal.Adapter): URL {
-  if (urlString.startsWith("unix://")) {
-    // Handle unix:// URLs specially
-    return new URL(urlString);
-  }
-
-  // Check if it's a SQLite URL that can't be parsed as a standard URL
-  if (parseDefinitelySqliteUrl(urlString) !== null) {
-    // Create a fake URL for SQLite that won't fail URL parsing
-    return new URL("sqlite:///" + encodeURIComponent(urlString));
-  }
-
-  if (hasProtocol(urlString)) {
-    return new URL(urlString);
-  }
-
-  // Add default protocol for the adapter
-  const defaultProtocol = defaultProtocolForAdapter(adapter);
-  try {
-    return new URL(defaultProtocol + urlString);
-  } catch (error) {
-    try {
-      // can be a "sqlite://file with empty spaces.db"
-      return new URL(encodeURI(defaultProtocol + urlString));
-    } catch {
-      // throw the original error if the URL is invalid
-      throw error;
-    }
-  }
-}
-
-function validateAdapterProtocolMatch(
-  adapter: Bun.SQL.__internal.Adapter,
-  url: URL,
-  originalUrl: string | URL | null = null,
-) {
-  let protocol = url.protocol.replace(":", "");
-
-  if (protocol === "unix") {
-    // Unix sockets are valid for any adapter
-    return;
-  }
-
-  const expectedAdapter = getAdapterFromProtocol(protocol);
-  if (!expectedAdapter) {
-    // Unknown protocol, let it through
-    return;
-  }
-  protocol = getAdapterFromProtocol(protocol) as string;
-
-  // Special handling for SQLite
-  if (protocol === "sqlite" && adapter !== "sqlite") {
-    const urlString = originalUrl ? originalUrl.toString() : url.href;
-    throw new Error(`Invalid URL '${urlString}' for ${adapter}. Did you mean to specify \`{ adapter: "sqlite" }\`?`);
-  }
-
-  // Special handling: postgres:// protocol with sqlite adapter is allowed
-  // (explicit adapter wins over protocol for backward compatibility)
-  if (protocol === "postgres" && adapter === "sqlite") {
-    return;
-  }
-
-  // For network databases (postgres/mysql), validate the match
-  if ((protocol === "postgres" || protocol === "mysql") && expectedAdapter !== adapter) {
-    throw new Error(
-      `Protocol '${protocol}' is not compatible with adapter '${adapter}'. Expected adapter '${expectedAdapter}'.`,
-    );
-  }
-}
-
-function normalizeOptionsForAdapter(
-  adapter: Bun.SQL.__internal.Adapter,
-  options: Bun.SQL.Options,
-  url: URL | null,
-  env: Record<string, string | undefined>,
-  sslMode: SSLMode,
-): Bun.SQL.__internal.DefinedOptions {
-  // Get adapter-specific defaults from environment
-  const envDefaults = getAdapterSpecificDefaults(adapter, env);
 
   let hostname: string | undefined,
     port: number | string | undefined,
@@ -634,7 +296,8 @@ function normalizeOptionsForAdapter(
     password: string | (() => Bun.MaybePromise<string>) | undefined | null,
     database: string | undefined,
     tls: Bun.TLSOptions | boolean | undefined,
-    query = "",
+    url: URL | undefined,
+    query: string,
     idleTimeout: number | null | undefined,
     connectionTimeout: number | null | undefined,
     maxLifetime: number | null | undefined,
@@ -642,71 +305,152 @@ function normalizeOptionsForAdapter(
     onclose: ((client: Bun.SQL) => void) | undefined,
     max: number | null | undefined,
     bigint: boolean | undefined,
-    path = "";
+    path: string,
+    adapter: Bun.SQL.__internal.Adapter;
 
   let prepare = true;
+  let sslMode: SSLMode = SSLMode.disable;
 
-  // Parse URL if provided
-  if (url) {
-    if (url.protocol === "unix:") {
-      // Handle unix domain socket
-      path = url.pathname;
-    } else {
-      hostname = url.hostname;
-      port = url.port;
-      username = decodeIfValid(url.username);
-      password = decodeIfValid(url.password);
-      database = decodeIfValid(url.pathname.slice(1)); // Remove leading /
+  if (!stringOrUrl || (typeof stringOrUrl === "string" && stringOrUrl.length === 0)) {
+    let urlString = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL;
 
-      const queryObject = url.searchParams.toJSON();
-      for (const key in queryObject) {
-        if (key.toLowerCase() === "sslmode") {
-          sslMode = normalizeSSLMode(queryObject[key]);
-        } else if (key.toLowerCase() === "path") {
-          path = queryObject[key];
-        } else {
-          query += `${key}\0${queryObject[key]}\0`;
-        }
+    if (!urlString) {
+      urlString = env.TLS_POSTGRES_DATABASE_URL || env.TLS_DATABASE_URL;
+      if (urlString) {
+        sslMode = SSLMode.require;
       }
-      query = query.trim();
+    }
+
+    if (urlString) {
+      // Check if it's a SQLite URL before trying to parse as regular URL
+      const sqliteUrl = parseDefinitelySqliteUrl(urlString);
+      if (sqliteUrl !== null) {
+        const sqliteOptions: Bun.SQL.__internal.DefinedSQLiteOptions = {
+          ...options,
+          adapter: "sqlite",
+          filename: sqliteUrl,
+        };
+        return parseSQLiteOptionsWithQueryParams(sqliteOptions, urlString);
+      }
+
+      url = new URL(urlString);
+    }
+  } else if (stringOrUrl && typeof stringOrUrl === "object") {
+    if (stringOrUrl instanceof URL) {
+      url = stringOrUrl;
+    } else if (options?.url) {
+      const _url = options.url;
+      if (typeof _url === "string") {
+        url = defaultToPostgresIfNoProtocol(_url);
+      } else if (_url && typeof _url === "object" && _url instanceof URL) {
+        url = _url;
+      }
+    }
+    if (options?.tls) {
+      sslMode = SSLMode.require;
+      tls = options.tls;
+    }
+  } else if (typeof stringOrUrl === "string") {
+    try {
+      url = defaultToPostgresIfNoProtocol(stringOrUrl);
+    } catch (e) {
+      throw new Error(`Invalid URL '${stringOrUrl}' for postgres. Did you mean to specify \`{ adapter: "sqlite" }\`?`, {
+        cause: e,
+      });
     }
   }
+  query = "";
+  adapter = options.adapter;
+  if (url) {
+    ({ hostname, port, username, password, adapter } = options);
+    // object overrides url
+    hostname ||= url.hostname;
+    port ||= url.port;
+    username ||= decodeIfValid(url.username);
+    password ||= decodeIfValid(url.password);
+    adapter ||= url.protocol as Bun.SQL.__internal.Adapter;
+    if (adapter && adapter[adapter.length - 1] === ":") {
+      adapter = adapter.slice(0, -1) as Bun.SQL.__internal.Adapter;
+    }
 
-  // Apply explicit options (highest precedence) - they override URL parameters
-  hostname = options.hostname || options.host || hostname;
-  port = options.port || port;
-  username = options.username || options.user || username;
-  password = options.password || options.pass || password;
-  database = options.database || options.db || database;
-  path = (options as { path?: string }).path || path;
-
-  // Apply adapter-specific environment defaults (medium precedence)
-  hostname ||= envDefaults.hostname;
-  port ||= envDefaults.port;
-  username ||= envDefaults.username;
-  password ||= envDefaults.password;
-  database ||= envDefaults.database;
-
-  // Apply final defaults (lowest precedence)
-  hostname ||= "localhost";
-  if (port === undefined || port === "") {
-    port = adapter === "mysql" ? 3306 : 5432;
+    const queryObject = url.searchParams.toJSON();
+    for (const key in queryObject) {
+      if (key.toLowerCase() === "sslmode") {
+        sslMode = normalizeSSLMode(queryObject[key]);
+      } else if (key.toLowerCase() === "path") {
+        path = queryObject[key];
+      } else {
+        // this is valid for postgres for other databases it might not be valid
+        // check adapter then implement for other databases
+        // encode string with \0 as finalizer
+        // must be key\0value\0
+        query += `${key}\0${queryObject[key]}\0`;
+      }
+    }
+    query = query.trim();
+  }
+  if (adapter) {
+    switch (adapter) {
+      case "http":
+      case "https":
+      case "ftp":
+      case "postgres":
+      case "postgresql":
+        adapter = "postgres";
+        break;
+      case "mysql":
+      case "mysql2":
+      case "mariadb":
+        adapter = "mysql";
+        break;
+      case "file":
+      case "sqlite":
+        adapter = "sqlite";
+        break;
+      default:
+        options.adapter satisfies never; // This will type error if we support a new adapter in the future, which will let us know to update this check
+        throw new Error(`Unsupported adapter: ${options.adapter}. Supported adapters: "postgres", "sqlite", "mysql"`);
+    }
   } else {
-    port = Number(port);
+    adapter = "postgres";
   }
-  username ||= adapter === "mysql" ? "root" : "postgres";
-  database ||= adapter === "mysql" ? "mysql" : username;
-  password ||= "";
+  options.adapter = adapter;
+  assertIsOptionsOfAdapter(options, adapter);
+  hostname ||= options.hostname || options.host || env.PGHOST || "localhost";
 
-  // Handle PostgreSQL unix domain socket special case
-  if (adapter === "postgres" && path && Number.isSafeInteger(port) && path.indexOf("/.s.PGSQL.") === -1) {
-    const pathWithSocket = `${path}/.s.PGSQL.${port}`;
-    if (require("node:fs").existsSync(pathWithSocket)) {
-      path = pathWithSocket;
+  port ||= Number(options.port || env.PGPORT || (adapter === "mysql" ? 3306 : 5432));
+
+  path ||= (options as { path?: string }).path || "";
+
+  if (adapter === "postgres") {
+    // add /.s.PGSQL.${port} if the unix domain socket is listening on that path
+    if (path && Number.isSafeInteger(port) && path?.indexOf("/.s.PGSQL.") === -1) {
+      const pathWithSocket = `${path}/.s.PGSQL.${port}`;
+
+      // Only add the path if it actually exists. It would be better to just
+      // always respect whatever the user passes in, but that would technically
+      // be a breakpoint change at this point.
+      if (require("node:fs").existsSync(pathWithSocket)) {
+        path = pathWithSocket;
+      }
     }
   }
 
-  // Handle connection parameters
+  username ||=
+    options.username ||
+    options.user ||
+    env.PGUSERNAME ||
+    env.PGUSER ||
+    env.USER ||
+    env.USERNAME ||
+    (adapter === "mysql" ? "root" : "postgres"); // default username for mysql is root and for postgres is postgres;
+  database ||=
+    options.database ||
+    options.db ||
+    decodeIfValid((url?.pathname ?? "").slice(1)) ||
+    env.PGDATABASE ||
+    (adapter === "mysql" ? "mysql" : username); // default database;
+  password ||= options.password || options.pass || env.PGPASSWORD || "";
   const connection = options.connection;
   if (connection && $isObject(connection)) {
     for (const key in connection) {
@@ -716,15 +460,9 @@ function normalizeOptionsForAdapter(
     }
   }
 
-  // Handle TLS
   tls ||= options.tls || options.ssl;
-  if (options?.tls) {
-    sslMode = SSLMode.require;
-    tls = options.tls;
-  }
-
-  // Handle other options
   max = options.max;
+
   idleTimeout ??= options.idleTimeout;
   idleTimeout ??= options.idle_timeout;
   connectionTimeout ??= options.connectionTimeout;
@@ -734,8 +472,7 @@ function normalizeOptionsForAdapter(
   maxLifetime ??= options.maxLifetime;
   maxLifetime ??= options.max_lifetime;
   bigint ??= options.bigint;
-
-  // Handle prepare option
+  // we need to explicitly set prepare to false if it is false
   if (options.prepare === false) {
     if (adapter === "mysql") {
       throw $ERR_INVALID_ARG_VALUE("options.prepare", false, "prepared: false is not supported in MySQL");
@@ -757,7 +494,6 @@ function normalizeOptionsForAdapter(
     }
   }
 
-  // Validate numeric options
   if (idleTimeout != null) {
     idleTimeout = Number(idleTimeout);
     if (idleTimeout > 2 ** 31 || idleTimeout < 0 || idleTimeout !== idleTimeout) {
@@ -801,18 +537,19 @@ function normalizeOptionsForAdapter(
     }
   }
 
-  // Handle TLS configuration
   if (sslMode !== SSLMode.disable && !tls?.serverName) {
     if (hostname) {
       tls = { ...tls, serverName: hostname };
+    } else if (tls) {
+      tls = true;
     }
   }
 
   if (tls && sslMode === SSLMode.disable) {
     sslMode = SSLMode.prefer;
   }
-
   port = Number(port);
+
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
     throw $ERR_INVALID_ARG_VALUE("port", port, "must be a non-negative integer between 1 and 65535");
   }
@@ -853,11 +590,7 @@ function normalizeOptionsForAdapter(
   }
 
   if (path) {
-    // For unix sockets or when explicitly set, always use the path
-    // Don't require existence check for unix sockets since they might not exist yet
-    if (url?.protocol === "unix:" || (options as { path?: string }).path) {
-      ret.path = path;
-    } else if (require("node:fs").existsSync(path)) {
+    if (require("node:fs").existsSync(path)) {
       ret.path = path;
     }
   }

@@ -34,7 +34,7 @@ export class SimpleRegistry {
         console.error(`[REGISTRY] ${req.method} ${pathname}`);
 
         if (pathname.startsWith("/") && !pathname.includes(".tgz")) {
-          const packageName = pathname.slice(1).replace(/%2f/g, "/");
+          const packageName = decodeURIComponent(pathname.slice(1));
           return self.handleMetadata(packageName);
         }
 
@@ -142,7 +142,7 @@ export class SimpleRegistry {
   getRequestedPackages(): string[] {
     return this.requestedUrls
       .filter(url => !url.includes(".tgz") && url !== "/")
-      .map(url => url.slice(1).replace(/%2f/g, "/"));
+      .map(url => decodeURIComponent(url.slice(1)));
   }
 
   getRequestedTarballs(): string[] {

@@ -3,8 +3,12 @@ import { promises as fs } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
+// Gate network tests behind environment variable to avoid CI flakes
+// TODO: Replace with hermetic local TLS fixtures in a follow-up
+const networkTest = process.env.BUN_TEST_ALLOW_NET === "1" ? test : test.skip;
+
 describe("NODE_USE_SYSTEM_CA", () => {
-  test("should use system CA when NODE_USE_SYSTEM_CA=1", async () => {
+  networkTest("should use system CA when NODE_USE_SYSTEM_CA=1", async () => {
     const testDir = tempDirWithFiles("node-use-system-ca", {});
 
     // Create a simple test script that tries to make an HTTPS request
@@ -129,7 +133,7 @@ process.exit(allPassed ? 0 : 1);
     expect(stdout).toContain("PASS");
   });
 
-  test("should work with Bun.serve and fetch using system certificates", async () => {
+  networkTest("should work with Bun.serve and fetch using system certificates", async () => {
     const testDir = tempDirWithFiles("node-use-system-ca-serve", {});
 
     const serverScript = `

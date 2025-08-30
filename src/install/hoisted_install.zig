@@ -190,6 +190,7 @@ pub fn installHoistedPackages(
                 },
                 .trusted_dependencies_from_update_requests = this.findTrustedDependenciesFromUpdateRequests(),
                 .seen_bin_links = bun.StringHashMap(void).init(this.allocator),
+                .force_install_skip_prefetch_check = packages_to_install != null,
             };
         };
 

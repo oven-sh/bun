@@ -1114,13 +1114,12 @@ pub const TextChunk = struct {
     }
 
     fn contentHandler(this: *TextChunk, comptime Callback: (fn (*LOLHTML.TextChunk, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
-        if (this.text_chunk == null)
-            return .js_undefined;
+        const text_chunk = this.text_chunk orelse return .js_undefined;
         var content_slice = content.toSlice(bun.default_allocator);
         defer content_slice.deinit();
 
         Callback(
-            this.text_chunk.?,
+            text_chunk,
             content_slice.slice(),
             contentOptions != null and contentOptions.?.html,
         ) catch return createLOLHTMLError(globalObject);
@@ -1167,9 +1166,8 @@ pub const TextChunk = struct {
         _: *JSGlobalObject,
         callFrame: *jsc.CallFrame,
     ) bun.JSError!JSValue {
-        if (this.text_chunk == null)
-            return .js_undefined;
-        this.text_chunk.?.remove();
+        const text_chunk = this.text_chunk orelse return .js_undefined;
+        text_chunk.remove();
         return callFrame.this();
     }
 
@@ -1177,18 +1175,17 @@ pub const TextChunk = struct {
         this: *TextChunk,
         global: *JSGlobalObject,
     ) JSValue {
-        if (this.text_chunk == null)
-            return .js_undefined;
-        return ZigString.init(this.text_chunk.?.getContent().slice()).withEncoding().toJS(global);
+        const text_chunk = this.text_chunk orelse return .js_undefined;
+        return bun.String.createUTF8ForJS(global, text_chunk.getContent().slice());
     }
 
     pub fn removed(this: *TextChunk, _: *JSGlobalObject) JSValue {
-        const text_chunk = this.text_chunk orelse return JSValue.jsBoolean(false);
+        const text_chunk = this.text_chunk orelse return .js_undefined;
         return JSValue.jsBoolean(text_chunk.isRemoved());
     }
 
     pub fn lastInTextNode(this: *TextChunk, _: *JSGlobalObject) JSValue {
-        const text_chunk = this.text_chunk orelse return JSValue.jsBoolean(false);
+        const text_chunk = this.text_chunk orelse return .js_undefined;
         return JSValue.jsBoolean(text_chunk.isLastInTextNode());
     }
 

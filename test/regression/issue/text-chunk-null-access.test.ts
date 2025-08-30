@@ -22,14 +22,7 @@ test("TextChunk methods handle null text_chunk gracefully", async () => {
     Bun.gc(true);
   }
 
-  // Try to access properties after transformation is complete
-  // This reproduces the original crash: "panic: attempt to use null value"
-  const removedValue = textChunkRef.removed;
-  const lastInTextNodeValue = textChunkRef.lastInTextNode;
-
-  // These should return false when text_chunk is null (after fix)
-  expect(typeof removedValue).toBe("boolean");
-  expect(typeof lastInTextNodeValue).toBe("boolean");
-  expect(removedValue).toBe(false);
-  expect(lastInTextNodeValue).toBe(false);
+  // It should be undefined to be consistent with the rest of the APIs.
+  expect(textChunkRef.removed).toBeUndefined();
+  expect(textChunkRef.lastInTextNode).toBeUndefined();
 });

@@ -80,11 +80,11 @@ pub fn stringify(
     if (value.isUndefined()) {
         return globalThis.throwInvalidArguments("Cannot stringify undefined value to TOML", .{});
     }
-    
+
     if (value.isNull()) {
         return globalThis.throwInvalidArguments("Cannot stringify null value to TOML", .{});
     }
-    
+
     if (value.isSymbol() or value.isFunction()) {
         return .js_undefined;
     }

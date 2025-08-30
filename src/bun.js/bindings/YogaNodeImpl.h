@@ -40,6 +40,7 @@ private:
     YGNodeRef m_yogaNode;
     JSC::Weak<JSYogaNode> m_wrapper;
     JSYogaConfig* m_jsConfig;
+    bool m_ownsYogaNode; // Track if we should free the YGNode in destructor
 };
 
 } // namespace Bun

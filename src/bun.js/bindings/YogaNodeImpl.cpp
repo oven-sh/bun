@@ -3,8 +3,26 @@
 #include "JSYogaConfig.h"
 #include "JSYogaNodeOwner.h"
 #include <yoga/Yoga.h>
+#include <wtf/HashSet.h>
+#include <wtf/Lock.h>
 
 namespace Bun {
+
+// Global set to track freed YGNodes to prevent double-freeing
+static Lock s_freedNodesLock;
+static HashSet<void*> s_freedNodes;
+
+static void safeYGNodeFree(YGNodeRef node) {
+    if (!node) return;
+    
+    Locker locker { s_freedNodesLock };
+    if (s_freedNodes.contains(node)) {
+        return; // Already freed
+    }
+    
+    s_freedNodes.add(node);
+    YGNodeFree(node);
+}
 
 Ref<YogaNodeImpl> YogaNodeImpl::create(YGConfigRef config, JSYogaConfig* jsConfig)
 {
@@ -13,6 +31,7 @@ Ref<YogaNodeImpl> YogaNodeImpl::create(YGConfigRef config, JSYogaConfig* jsConfi
 
 YogaNodeImpl::YogaNodeImpl(YGConfigRef config, JSYogaConfig* jsConfig)
     : m_jsConfig(jsConfig)
+    , m_ownsYogaNode(true)
 {
     if (config) {
         m_yogaNode = YGNodeNewWithConfig(config);
@@ -30,13 +49,14 @@ YogaNodeImpl::~YogaNodeImpl()
         // Clear the context pointer to avoid callbacks during cleanup
         YGNodeSetContext(m_yogaNode, nullptr);
 
-        // Remove from parent to avoid use-after-free when parent tries to clear owner
-        YGNodeRef parent = YGNodeGetParent(m_yogaNode);
-        if (parent) {
-            YGNodeRemoveChild(parent, m_yogaNode);
+        // Only free the node if we own it and it has no parent
+        // Nodes with parents should be freed when the parent is freed
+        if (m_ownsYogaNode) {
+            YGNodeRef parent = YGNodeGetParent(m_yogaNode);
+            if (!parent) {
+                safeYGNodeFree(m_yogaNode);
+            }
         }
-
-        YGNodeFree(m_yogaNode);
         m_yogaNode = nullptr;
     }
 }
@@ -47,10 +67,7 @@ void YogaNodeImpl::setJSWrapper(JSYogaNode* wrapper)
     // This prevents ref count leaks if setJSWrapper is called multiple times
     if (!m_wrapper) {
         // Increment ref count for the weak handle context
-        fprintf(stderr, "[DEBUG] YogaNodeImpl::setJSWrapper %p calling ref() for JS wrapper %p\n", this, wrapper);
         this->ref();
-    } else {
-        fprintf(stderr, "[DEBUG] YogaNodeImpl::setJSWrapper %p already has wrapper, replacing with %p\n", this, wrapper);
     }
 
     // Create weak reference with our JS owner
@@ -84,11 +101,16 @@ void YogaNodeImpl::replaceYogaNode(YGNodeRef newNode)
 {
     if (m_yogaNode) {
         YGNodeSetContext(m_yogaNode, nullptr);
-        YGNodeFree(m_yogaNode);
+        // Only free the old node if we owned it
+        if (m_ownsYogaNode) {
+            safeYGNodeFree(m_yogaNode);
+        }
     }
     m_yogaNode = newNode;
     if (newNode) {
         YGNodeSetContext(newNode, this);
+        // Cloned nodes are owned by us - YGNodeClone creates a new node we must free
+        m_ownsYogaNode = true;
     }
 }
 

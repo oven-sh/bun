@@ -117,8 +117,6 @@ JSC::GCClient::IsoSubspace* JSYogaNode::subspaceFor(JSC::VM& vm)
 template<typename Visitor>
 void JSYogaNode::visitAdditionalChildren(Visitor& visitor)
 {
-    fprintf(stderr, "[DEBUG] JSYogaNode::visitAdditionalChildren called for %p\n", this);
-
     visitor.append(m_measureFunc);
     visitor.append(m_dirtiedFunc);
     visitor.append(m_baselineFunc);
@@ -126,7 +124,6 @@ void JSYogaNode::visitAdditionalChildren(Visitor& visitor)
 
     // Use the YogaNodeImpl pointer as opaque root instead of YGNodeRef
     // This avoids use-after-free when YGNode memory is freed but YogaNodeImpl still exists
-    fprintf(stderr, "[DEBUG] JSYogaNode::visitAdditionalChildren adding YogaNodeImpl %p as opaque root for JSYogaNode %p\n", &m_impl.get(), this);
     visitor.addOpaqueRoot(&m_impl.get());
 }
 

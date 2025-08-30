@@ -518,6 +518,7 @@ function handleSQLiteOptions(
     finalFilename = ":memory:";
   } else if (filename === "") {
     // Empty string when explicitly passed (like new SQL("", {adapter: "sqlite"})) should be :memory:
+    // This should only be set to ":memory:" if the inputUrl is also an empty string
     finalFilename = inputUrl === "" ? ":memory:" : "";
   } else {
     finalFilename = filename as string;
@@ -577,7 +578,7 @@ function validateAdapterProtocolMatch(
   url: URL,
   originalUrl: string | URL | null = null,
 ) {
-  const protocol = url.protocol.replace(":", "");
+  let protocol = url.protocol.replace(":", "");
 
   if (protocol === "unix") {
     // Unix sockets are valid for any adapter
@@ -589,6 +590,7 @@ function validateAdapterProtocolMatch(
     // Unknown protocol, let it through
     return;
   }
+  protocol = getAdapterFromProtocol(protocol) as string;
 
   // Special handling for SQLite
   if (protocol === "sqlite" && adapter !== "sqlite") {
@@ -681,7 +683,11 @@ function normalizeOptionsForAdapter(
 
   // Apply final defaults (lowest precedence)
   hostname ||= "localhost";
-  port ||= Number(port) || (adapter === "mysql" ? 3306 : 5432);
+  if (port === undefined || port === "") {
+    port = adapter === "mysql" ? 3306 : 5432;
+  } else {
+    port = Number(port);
+  }
   username ||= adapter === "mysql" ? "root" : "postgres";
   database ||= adapter === "mysql" ? "mysql" : username;
   password ||= "";

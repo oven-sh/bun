@@ -539,7 +539,7 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         /// result in the first one.  Bits in the result are
         /// set if the corresponding bits were set in either input.
         pub fn setUnion(self: *Self, other: *const Self) void {
-            for (&self.masks, other[0..self.masks.len]) |*mask, alt| {
+            for (&self.masks, other.masks) |*mask, alt| {
                 mask.* |= alt;
             }
         }
@@ -1200,8 +1200,23 @@ pub const AutoBitSet = union(enum) {
 
     pub fn isSet(this: *const AutoBitSet, index: usize) bool {
         return switch (std.meta.activeTag(this.*)) {
-            .static => this.static.isSet(index),
+            .static => {
+                // Bounds check for static variant - return false for out of bounds
+                if (index < Static.bit_length) {
+                    return this.static.isSet(index);
+                } else {
+                    return false;
+                }
+            },
             .dynamic => this.dynamic.isSet(index),
+        };
+    }
+
+    /// Returns the total number of set bits in this bit set.
+    pub fn count(this: *const AutoBitSet) usize {
+        return switch (std.meta.activeTag(this.*)) {
+            .static => this.static.count(),
+            .dynamic => this.dynamic.count(),
         };
     }
 
@@ -1226,14 +1241,24 @@ pub const AutoBitSet = union(enum) {
 
     pub fn set(this: *AutoBitSet, index: usize) void {
         switch (std.meta.activeTag(this.*)) {
-            .static => this.static.set(index),
+            .static => {
+                // Bounds check for static variant - silently ignore out of bounds
+                if (index < Static.bit_length) {
+                    this.static.set(index);
+                }
+            },
             .dynamic => this.dynamic.set(index),
         }
     }
 
     pub fn unset(this: *AutoBitSet, index: usize) void {
         switch (std.meta.activeTag(this.*)) {
-            .static => this.static.unset(index),
+            .static => {
+                // Bounds check for static variant - silently ignore out of bounds
+                if (index < Static.bit_length) {
+                    this.static.unset(index);
+                }
+            },
             .dynamic => this.dynamic.unset(index),
         }
     }
@@ -1277,6 +1302,41 @@ pub const AutoBitSet = union(enum) {
     pub fn setAll(this: *AutoBitSet, value: bool) void {
         switch (this.*) {
             inline else => |*bitset| bitset.setAll(value),
+        }
+    }
+
+    /// Performs a union of two AutoBitSets, handling variant mismatches safely.
+    /// Sets are unioned even if they have different variants (static vs dynamic).
+    pub fn setUnion(this: *AutoBitSet, other: *const AutoBitSet) void {
+        switch (std.meta.activeTag(this.*)) {
+            .static => {
+                switch (std.meta.activeTag(other.*)) {
+                    .static => this.static.setUnion(&other.static),
+                    .dynamic => {
+                        // Union static with dynamic by checking each bit within static capacity
+                        const max_index = @min(Static.bit_length, other.dynamic.bit_length);
+                        for (0..max_index) |index| {
+                            if (other.dynamic.isSet(index)) {
+                                this.static.set(index);
+                            }
+                        }
+                    },
+                }
+            },
+            .dynamic => {
+                switch (std.meta.activeTag(other.*)) {
+                    .static => {
+                        // Union dynamic with static by checking each static bit
+                        const max_index = @min(Static.bit_length, this.dynamic.bit_length);
+                        for (0..max_index) |index| {
+                            if (other.static.isSet(index)) {
+                                this.dynamic.set(index);
+                            }
+                        }
+                    },
+                    .dynamic => this.dynamic.setUnion(other.dynamic),
+                }
+            },
         }
     }
 

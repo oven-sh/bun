@@ -2494,6 +2494,9 @@ pub const BundleV2 = struct {
             on_parse_finalizers.deinit(bun.default_allocator);
         }
 
+        // Clean up LinkerContext which includes the AutoBitSet
+        this.linker.deinit();
+
         defer {
             this.graph.ast.deinit(this.allocator());
             this.graph.input_files.deinit(this.allocator());
@@ -3979,11 +3982,8 @@ pub const JSMeta = struct {
     flags: Flags = .{},
 
     pub const Flags = packed struct(u8) {
-        /// This is true if this file is affected by top-level await, either by having
-        /// a top-level await inside this file or by having an import/export statement
-        /// that transitively imports such a file. It is forbidden to call "require()"
-        /// on these files since they are evaluated asynchronously.
-        is_async_or_has_async_dependency: bool = false,
+        // Note: is_async_or_has_async_dependency moved to LinkerGraph.async_dependencies AutoBitSet
+        // for better performance with bitset operations
 
         /// If true, we need to insert "var exports = {};". This is the case for ESM
         /// files when the import namespace is captured via "import * as" and also
@@ -4013,6 +4013,8 @@ pub const JSMeta = struct {
         needs_synthetic_default_export: bool = false,
 
         wrap: WrapKind = WrapKind.none,
+
+        _padding: u1 = 0,
     };
 };
 

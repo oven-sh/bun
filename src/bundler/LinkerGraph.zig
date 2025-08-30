@@ -32,6 +32,10 @@ is_scb_bitset: BitSet = .{},
 has_client_components: bool = false,
 has_server_components: bool = false,
 
+/// Tracks files that are async or have async dependencies (top-level await)
+/// This replaces the individual boolean flags in JSMeta.Flags for better performance
+async_dependencies: AutoBitSet = undefined,
+
 /// This is for cross-module inlining of detected inlinable constants
 // const_values: js_ast.Ast.ConstValuesMap = .{},
 /// This is for cross-module inlining of TypeScript enum constants
@@ -41,7 +45,13 @@ pub fn init(allocator: std.mem.Allocator, file_count: usize) !LinkerGraph {
     return LinkerGraph{
         .allocator = allocator,
         .files_live = try BitSet.initEmpty(allocator, file_count),
+        .async_dependencies = try AutoBitSet.initEmpty(allocator, file_count),
     };
+}
+
+pub fn deinit(this: *LinkerGraph) void {
+    this.files_live.deinit(this.allocator);
+    this.async_dependencies.deinit(this.allocator);
 }
 
 pub fn runtimeFunction(this: *const LinkerGraph, name: string) Ref {

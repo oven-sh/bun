@@ -385,8 +385,10 @@ src/bun.js/webcore/blob/write_file.zig
 src/bun.js/webcore/Body.zig
 src/bun.js/webcore/ByteBlobLoader.zig
 src/bun.js/webcore/ByteStream.zig
+src/bun.js/webcore/CompressionStreamEncoder.zig
 src/bun.js/webcore/CookieMap.zig
 src/bun.js/webcore/Crypto.zig
+src/bun.js/webcore/DecompressionStreamDecoder.zig
 src/bun.js/webcore/encoding.zig
 src/bun.js/webcore/EncodingLabel.zig
 src/bun.js/webcore/fetch.zig

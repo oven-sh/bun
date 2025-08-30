@@ -9,6 +9,9 @@ const redDebugPrefix = "\x1b[31m   [DEBUG]\x1b[0m";
 const redShellPrefix = "\x1b[31m   [SHELL] $\x1b[0m";
 
 // prettier-ignore
+// These tests are failing for other reasons outside of the security scanner.
+// You should leave a comment above pointing to a GitHub issue for reference, so these
+// don't get totally lost.
 const TESTS_TO_SKIP: Set<string> = new Set<`${number}`>([
   // https://github.com/oven-sh/bun/issues/22255
   "0613", "0616", "0619", "0622", "0631", "0634", "0637", "0640",  // remove "is-even"

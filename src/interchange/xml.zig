@@ -41,11 +41,11 @@ const Parser = struct {
             self.skipWhitespace();
 
             // XML declaration
-            if (self.current + 5 < self.source.contents.len and std.mem.startsWith(u8, self.source.contents[self.current..], "<?xml")) {
+            if (self.current + 5 < self.source.contents.len and bun.strings.hasPrefix(self.source.contents[self.current..], "<?xml")) {
                 var found = false;
                 // Scan for the closing "?>"
                 while (self.current + 1 < self.source.contents.len) {
-                    if (std.mem.startsWith(u8, self.source.contents[self.current..], "?>")) {
+                    if (bun.strings.hasPrefix(self.source.contents[self.current..], "?>")) {
                         self.advance(); // skip '?'
                         self.advance(); // skip '>'
                         found = true;
@@ -60,19 +60,19 @@ const Parser = struct {
             }
 
             // DOCTYPE declaration
-            if (self.current + 9 < self.source.contents.len and std.mem.startsWith(u8, self.source.contents[self.current..], "<!DOCTYPE")) {
+            if (self.current + 9 < self.source.contents.len and bun.strings.hasPrefix(self.source.contents[self.current..], "<!DOCTYPE")) {
                 try self.skipDoctypeDeclaration();
                 continue;
             }
 
             // Top-level processing instructions (not XML declaration)
-            if (self.current + 1 < self.source.contents.len and std.mem.startsWith(u8, self.source.contents[self.current..], "<?")) {
+            if (self.current + 1 < self.source.contents.len and bun.strings.hasPrefix(self.source.contents[self.current..], "<?")) {
                 self.skipProcessingInstruction();
                 continue;
             }
 
             // Top-level comments
-            if (self.current + 3 < self.source.contents.len and std.mem.startsWith(u8, self.source.contents[self.current..], "<!--")) {
+            if (self.current + 3 < self.source.contents.len and bun.strings.hasPrefix(self.source.contents[self.current..], "<!--")) {
                 self.skipComment();
                 continue;
             }
@@ -127,19 +127,12 @@ const Parser = struct {
             }
             self.advance(); // consume '>'
 
-            // Create object with __name and optionally __attrs
+            // Create object with attributes directly as properties
             var properties = std.ArrayList(G.Property).init(self.allocator);
 
-            // Always add __name
-            const name_key = try self.createStringExpr("__name");
-            const name_value = try self.createStringExpr(tag_name_slice);
-            try properties.append(.{ .key = name_key, .value = name_value });
-
-            // Add __attrs if present
+            // Add attributes directly as properties
             if (attributes.items.len > 0) {
-                const attrs_obj = Expr.init(E.Object, .{ .properties = .fromList(attributes) }, .Empty);
-                const attrs_key = try self.createStringExpr("__attrs");
-                try properties.append(.{ .key = attrs_key, .value = attrs_obj });
+                try properties.appendSlice(attributes.items);
             }
 
             const element = Expr.init(E.Object, .{ .properties = .fromList(properties) }, .Empty);
@@ -168,24 +161,24 @@ const Parser = struct {
                 // End tag found
                 break;
             } else if (self.current + 3 < self.source.contents.len and
-                std.mem.startsWith(u8, self.source.contents[self.current..], "<!--"))
+                bun.strings.hasPrefix(self.source.contents[self.current..], "<!--"))
             {
                 // Comment found - skip it
                 self.skipComment();
             } else if (self.current + 1 < self.source.contents.len and
-                std.mem.startsWith(u8, self.source.contents[self.current..], "<?"))
+                bun.strings.hasPrefix(self.source.contents[self.current..], "<?"))
             {
                 // Processing instruction found - skip it
                 self.skipProcessingInstruction();
             } else if (self.current + 9 < self.source.contents.len and
-                std.mem.startsWith(u8, self.source.contents[self.current..], "<![CDATA["))
+                bun.strings.hasPrefix(self.source.contents[self.current..], "<![CDATA["))
             {
                 // CDATA section
                 self.current += 9; // move past "<![CDATA["
                 const cdata_start = self.current;
                 // scan until "]]>"
                 while (self.current + 2 < self.source.contents.len and
-                    !std.mem.startsWith(u8, self.source.contents[self.current..], "]]>"))
+                    !bun.strings.hasPrefix(self.source.contents[self.current..], "]]>"))
                 {
                     self.advance();
                 }
@@ -240,35 +233,21 @@ const Parser = struct {
         }
         self.advance(); // consume '>'
 
-        // Build result - always return object with __name and other properties
+        // Build result with cleaner structure - no __name or __children
         const trimmed_text = std.mem.trim(u8, text_parts.items, " \t\n\r");
         var properties = std.ArrayList(G.Property).init(self.allocator);
 
-        // Always add __name
-        const name_key = try self.createStringExpr("__name");
-        const name_value = try self.createStringExpr(tag_name_slice);
-        try properties.append(.{ .key = name_key, .value = name_value });
-
-        // Add __attrs if present
+        // Add attributes directly as properties
         if (attributes.items.len > 0) {
-            const attrs_obj = Expr.init(E.Object, .{ .properties = .fromList(attributes) }, .Empty);
-            const attrs_key = try self.createStringExpr("__attrs");
-            try properties.append(.{ .key = attrs_key, .value = attrs_obj });
+            try properties.appendSlice(attributes.items);
         }
 
-        // Add __children if present
+        // Add children as direct properties
         if (children.items.len > 0) {
-            var child_array = std.ArrayList(Expr).init(self.allocator);
-            for (children.items) |child| {
-                try child_array.append(child.element);
-            }
-            const children_array = Expr.init(E.Array, .{ .items = .fromList(child_array) }, .Empty);
-            const children_key = try self.createStringExpr("__children");
-            try properties.append(.{ .key = children_key, .value = children_array });
+            try self.addChildrenAsProperties(&properties, children.items);
         }
 
-        // Add __text if present (preserve original text including whitespace)
-        // But only if we don't have children, or if the text contains non-whitespace content
+        // Add text content if present and no children
         if (text_parts.items.len > 0 and trimmed_text.len > 0 and children.items.len == 0) {
             const text_expr = try self.createStringExpr(text_parts.items);
             const text_key = try self.createStringExpr("__text");
@@ -491,25 +470,11 @@ const Parser = struct {
                                 };
                             }
 
-                            // Convert Unicode codepoint to UTF-8
-                            if (codepoint < 0x80) {
-                                // ASCII range
-                                try result.append(@intCast(codepoint));
-                            } else if (codepoint < 0x800) {
-                                // 2-byte UTF-8
-                                try result.append(@intCast(0xC0 | (codepoint >> 6)));
-                                try result.append(@intCast(0x80 | (codepoint & 0x3F)));
-                            } else if (codepoint < 0x10000) {
-                                // 3-byte UTF-8
-                                try result.append(@intCast(0xE0 | (codepoint >> 12)));
-                                try result.append(@intCast(0x80 | ((codepoint >> 6) & 0x3F)));
-                                try result.append(@intCast(0x80 | (codepoint & 0x3F)));
-                            } else if (codepoint <= 0x10FFFF) {
-                                // 4-byte UTF-8
-                                try result.append(@intCast(0xF0 | (codepoint >> 18)));
-                                try result.append(@intCast(0x80 | ((codepoint >> 12) & 0x3F)));
-                                try result.append(@intCast(0x80 | ((codepoint >> 6) & 0x3F)));
-                                try result.append(@intCast(0x80 | (codepoint & 0x3F)));
+                            // Convert Unicode codepoint to UTF-8 using bun's built-in function
+                            if (codepoint <= 0x10FFFF) {
+                                var utf8_bytes: [4]u8 = undefined;
+                                const len = bun.strings.encodeWTF8RuneT(&utf8_bytes, u32, codepoint);
+                                try result.appendSlice(utf8_bytes[0..len]);
                             } else {
                                 // Invalid codepoint, keep the original entity
                                 try result.appendSlice(input[i .. end + 1]);
@@ -543,7 +508,7 @@ const Parser = struct {
 
         // Find "-->"
         while (self.current + 2 < self.source.contents.len) {
-            if (std.mem.startsWith(u8, self.source.contents[self.current..], "-->")) {
+            if (bun.strings.hasPrefix(self.source.contents[self.current..], "-->")) {
                 self.current += 3; // Skip "-->"
                 return;
             }
@@ -560,7 +525,7 @@ const Parser = struct {
 
         // Find "?>"
         while (self.current + 1 < self.source.contents.len) {
-            if (std.mem.startsWith(u8, self.source.contents[self.current..], "?>")) {
+            if (bun.strings.hasPrefix(self.source.contents[self.current..], "?>")) {
                 self.current += 2; // Skip "?>"
                 return;
             }
@@ -584,8 +549,8 @@ const Parser = struct {
 
         // Check if we have an external DTD
         if (self.current < self.source.contents.len and
-            (std.mem.startsWith(u8, self.source.contents[self.current..], "SYSTEM") or
-                std.mem.startsWith(u8, self.source.contents[self.current..], "PUBLIC")))
+            (bun.strings.hasPrefix(self.source.contents[self.current..], "SYSTEM") or
+                bun.strings.hasPrefix(self.source.contents[self.current..], "PUBLIC")))
         {
             // Skip external DTD reference
             try self.skipExternalDTD();
@@ -615,9 +580,9 @@ const Parser = struct {
 
     fn skipExternalDTD(self: *Parser) !void {
         // Skip "SYSTEM" or "PUBLIC"
-        if (std.mem.startsWith(u8, self.source.contents[self.current..], "SYSTEM")) {
+        if (bun.strings.hasPrefix(self.source.contents[self.current..], "SYSTEM")) {
             self.current += 6;
-        } else if (std.mem.startsWith(u8, self.source.contents[self.current..], "PUBLIC")) {
+        } else if (bun.strings.hasPrefix(self.source.contents[self.current..], "PUBLIC")) {
             self.current += 6;
             self.skipWhitespace();
             // Skip public ID (quoted string)
@@ -679,7 +644,7 @@ const Parser = struct {
 
             // Skip comments
             if (self.current + 3 < self.source.contents.len and
-                std.mem.startsWith(u8, self.source.contents[self.current..], "<!--"))
+                bun.strings.hasPrefix(self.source.contents[self.current..], "<!--"))
             {
                 self.skipComment();
                 continue;
@@ -687,7 +652,7 @@ const Parser = struct {
 
             // Skip processing instructions
             if (self.current + 1 < self.source.contents.len and
-                std.mem.startsWith(u8, self.source.contents[self.current..], "<?"))
+                bun.strings.hasPrefix(self.source.contents[self.current..], "<?"))
             {
                 self.skipProcessingInstruction();
                 continue;
@@ -708,7 +673,7 @@ const Parser = struct {
 
             // Skip declaration markup
             if (self.current + 1 < self.source.contents.len and
-                std.mem.startsWith(u8, self.source.contents[self.current..], "<!"))
+                bun.strings.hasPrefix(self.source.contents[self.current..], "<!"))
             {
                 try self.skipDeclarationMarkup();
                 continue;
@@ -724,13 +689,13 @@ const Parser = struct {
         self.current += 2;
 
         // Determine the type of declaration
-        if (std.mem.startsWith(u8, self.source.contents[self.current..], "ELEMENT")) {
+        if (bun.strings.hasPrefix(self.source.contents[self.current..], "ELEMENT")) {
             try self.skipElementDecl();
-        } else if (std.mem.startsWith(u8, self.source.contents[self.current..], "ATTLIST")) {
+        } else if (bun.strings.hasPrefix(self.source.contents[self.current..], "ATTLIST")) {
             try self.skipAttlistDecl();
-        } else if (std.mem.startsWith(u8, self.source.contents[self.current..], "ENTITY")) {
+        } else if (bun.strings.hasPrefix(self.source.contents[self.current..], "ENTITY")) {
             try self.skipEntityDecl();
-        } else if (std.mem.startsWith(u8, self.source.contents[self.current..], "NOTATION")) {
+        } else if (bun.strings.hasPrefix(self.source.contents[self.current..], "NOTATION")) {
             try self.skipNotationDecl();
         } else {
             // Unknown declaration, skip until '>' while handling quoted strings
@@ -838,15 +803,15 @@ const Parser = struct {
         {
             // Internal entity - skip quoted string
             try self.skipQuotedString();
-        } else if (std.mem.startsWith(u8, self.source.contents[self.current..], "SYSTEM") or
-            std.mem.startsWith(u8, self.source.contents[self.current..], "PUBLIC"))
+        } else if (bun.strings.hasPrefix(self.source.contents[self.current..], "SYSTEM") or
+            bun.strings.hasPrefix(self.source.contents[self.current..], "PUBLIC"))
         {
             // External entity
             try self.skipExternalDTD();
             self.skipWhitespace();
 
             // Check for NDATA declaration
-            if (std.mem.startsWith(u8, self.source.contents[self.current..], "NDATA")) {
+            if (bun.strings.hasPrefix(self.source.contents[self.current..], "NDATA")) {
                 self.current += 5;
                 self.skipWhitespace();
                 // Skip notation name
@@ -874,11 +839,11 @@ const Parser = struct {
         self.skipWhitespace();
 
         // Skip external or public ID
-        if (std.mem.startsWith(u8, self.source.contents[self.current..], "SYSTEM")) {
+        if (bun.strings.hasPrefix(self.source.contents[self.current..], "SYSTEM")) {
             self.current += 6;
             self.skipWhitespace();
             try self.skipQuotedString();
-        } else if (std.mem.startsWith(u8, self.source.contents[self.current..], "PUBLIC")) {
+        } else if (bun.strings.hasPrefix(self.source.contents[self.current..], "PUBLIC")) {
             self.current += 6;
             self.skipWhitespace();
             try self.skipQuotedString();
@@ -899,11 +864,11 @@ const Parser = struct {
 
     fn skipContentModel(self: *Parser) !void {
         // Skip content models: EMPTY, ANY, or mixed/element content
-        if (std.mem.startsWith(u8, self.source.contents[self.current..], "EMPTY")) {
+        if (bun.strings.hasPrefix(self.source.contents[self.current..], "EMPTY")) {
             self.current += 5;
-        } else if (std.mem.startsWith(u8, self.source.contents[self.current..], "ANY")) {
+        } else if (bun.strings.hasPrefix(self.source.contents[self.current..], "ANY")) {
             self.current += 3;
-        } else if (std.mem.startsWith(u8, self.source.contents[self.current..], "(#PCDATA")) {
+        } else if (bun.strings.hasPrefix(self.source.contents[self.current..], "(#PCDATA")) {
             // Mixed content model
             self.advance(); // consume '('
             try self.skipUntilBalanced(')', 0);
@@ -922,27 +887,27 @@ const Parser = struct {
     }
 
     fn skipAttributeType(self: *Parser) !void {
-        if (std.mem.startsWith(u8, self.source.contents[self.current..], "CDATA")) {
+        if (bun.strings.hasPrefix(self.source.contents[self.current..], "CDATA")) {
             self.current += 5;
-        } else if (std.mem.startsWith(u8, self.source.contents[self.current..], "ID")) {
-            if (std.mem.startsWith(u8, self.source.contents[self.current..], "IDREFS")) {
+        } else if (bun.strings.hasPrefix(self.source.contents[self.current..], "ID")) {
+            if (bun.strings.hasPrefix(self.source.contents[self.current..], "IDREFS")) {
                 self.current += 6;
-            } else if (std.mem.startsWith(u8, self.source.contents[self.current..], "IDREF")) {
+            } else if (bun.strings.hasPrefix(self.source.contents[self.current..], "IDREF")) {
                 self.current += 5;
             } else {
                 self.current += 2;
             }
-        } else if (std.mem.startsWith(u8, self.source.contents[self.current..], "ENTIT")) {
-            if (std.mem.startsWith(u8, self.source.contents[self.current..], "ENTITIES")) {
+        } else if (bun.strings.hasPrefix(self.source.contents[self.current..], "ENTIT")) {
+            if (bun.strings.hasPrefix(self.source.contents[self.current..], "ENTITIES")) {
                 self.current += 8;
             } else {
                 self.current += 6; // ENTITY
             }
-        } else if (std.mem.startsWith(u8, self.source.contents[self.current..], "NMTOKENS")) {
+        } else if (bun.strings.hasPrefix(self.source.contents[self.current..], "NMTOKENS")) {
             self.current += 8;
-        } else if (std.mem.startsWith(u8, self.source.contents[self.current..], "NMTOKEN")) {
+        } else if (bun.strings.hasPrefix(self.source.contents[self.current..], "NMTOKEN")) {
             self.current += 7;
-        } else if (std.mem.startsWith(u8, self.source.contents[self.current..], "NOTATION")) {
+        } else if (bun.strings.hasPrefix(self.source.contents[self.current..], "NOTATION")) {
             self.current += 8;
             self.skipWhitespace();
             if (self.current < self.source.contents.len and self.source.contents[self.current] == '(') {
@@ -966,11 +931,11 @@ const Parser = struct {
     }
 
     fn skipDefaultDecl(self: *Parser) !void {
-        if (std.mem.startsWith(u8, self.source.contents[self.current..], "#REQUIRED")) {
+        if (bun.strings.hasPrefix(self.source.contents[self.current..], "#REQUIRED")) {
             self.current += 9;
-        } else if (std.mem.startsWith(u8, self.source.contents[self.current..], "#IMPLIED")) {
+        } else if (bun.strings.hasPrefix(self.source.contents[self.current..], "#IMPLIED")) {
             self.current += 8;
-        } else if (std.mem.startsWith(u8, self.source.contents[self.current..], "#FIXED")) {
+        } else if (bun.strings.hasPrefix(self.source.contents[self.current..], "#FIXED")) {
             self.current += 6;
             self.skipWhitespace();
             try self.skipQuotedString();

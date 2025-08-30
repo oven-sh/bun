@@ -13,7 +13,7 @@ Ref<YogaConfigImpl> YogaConfigImpl::create()
 YogaConfigImpl::YogaConfigImpl()
 {
     m_yogaConfig = YGConfigNew();
-    
+
     // Store this C++ wrapper in the Yoga config's context
     // Note: YGConfig doesn't have context like YGNode, so we handle this differently
 }
@@ -30,7 +30,7 @@ void YogaConfigImpl::setJSWrapper(JSYogaConfig* wrapper)
 {
     // Increment ref count for the weak handle context
     this->ref();
-    
+
     // Create weak reference with our JS owner
     m_wrapper = JSC::Weak<JSYogaConfig>(wrapper, &jsYogaNodeOwner(), this);
 }

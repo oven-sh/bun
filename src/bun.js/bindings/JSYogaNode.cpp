@@ -49,7 +49,7 @@ JSYogaNode* JSYogaNode::create(JSC::VM& vm, JSC::Structure* structure, Ref<YogaN
 void JSYogaNode::finishCreation(JSC::VM& vm, YGConfigRef config, JSYogaConfig* jsConfig)
 {
     Base::finishCreation(vm);
-    
+
     // If we need to recreate with specific config, do so
     if (config || jsConfig) {
         m_impl = YogaNodeImpl::create(config, jsConfig);
@@ -67,7 +67,7 @@ void JSYogaNode::finishCreation(JSC::VM& vm, YGConfigRef config, JSYogaConfig* j
 void JSYogaNode::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    
+
     // Set this JS wrapper in the C++ impl
     m_impl->setJSWrapper(this);
 
@@ -125,7 +125,7 @@ void JSYogaNode::visitChildrenImpl(JSC::JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_dirtiedFunc);
     visitor.append(thisObject->m_baselineFunc);
     visitor.append(thisObject->m_config);
-    
+
     // Add the root YogaNode as an opaque root
     if (void* yogaRoot = root(&thisObject->m_impl.get())) {
         visitor.addOpaqueRoot(yogaRoot);

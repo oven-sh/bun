@@ -45,7 +45,7 @@ void YogaNodeImpl::setJSWrapper(JSYogaNode* wrapper)
 {
     // Increment ref count for the weak handle context
     this->ref();
-    
+
     // Create weak reference with our JS owner
     m_wrapper = JSC::Weak<JSYogaNode>(wrapper, &jsYogaNodeOwner(), this);
 }

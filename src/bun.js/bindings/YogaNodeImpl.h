@@ -29,7 +29,7 @@ public:
 
     // Helper to get YogaNodeImpl from YGNodeRef
     static YogaNodeImpl* fromYGNode(YGNodeRef);
-    
+
     // Replace the internal YGNodeRef (used for cloning)
     void replaceYogaNode(YGNodeRef newNode);
 

@@ -24,7 +24,7 @@ public:
 
     // Helper to get YogaConfigImpl from YGConfigRef
     static YogaConfigImpl* fromYGConfig(YGConfigRef);
-    
+
     // Replace the internal YGConfigRef (used for advanced cases)
     void replaceYogaConfig(YGConfigRef newConfig);
 

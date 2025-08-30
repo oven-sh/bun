@@ -47,11 +47,10 @@ JSYogaConfig* JSYogaConfig::create(JSC::VM& vm, JSC::Structure* structure, Ref<Y
 void JSYogaConfig::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    
+
     // Set this JS wrapper in the C++ impl
     m_impl->setJSWrapper(this);
 }
-
 
 JSC::Structure* JSYogaConfig::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {

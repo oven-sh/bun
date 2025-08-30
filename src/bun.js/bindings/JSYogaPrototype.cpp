@@ -21,7 +21,7 @@
 
 // Macro to check if a Yoga node has been freed before using impl
 #define CHECK_YOGA_NODE_FREED(thisObject)                                                     \
-    if (UNLIKELY(!thisObject->impl().yogaConfig())) {                                           \
+    if (UNLIKELY(!thisObject->impl().yogaConfig())) {                                         \
         throwTypeError(globalObject, scope, "Cannot perform operation on freed Yoga.Node"_s); \
         return {};                                                                            \
     }
@@ -529,7 +529,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaConfigProtoFuncFree, (JSC::JSGlobalObject * globa
     // The actual cleanup will happen in the destructor
     if (thisObject->impl().yogaConfig()) {
         YGConfigFree(thisObject->impl().yogaConfig());
-// Lifecycle managed by RefCounted
+        // Lifecycle managed by RefCounted
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -853,7 +853,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncFree, (JSC::JSGlobalObject * globalO
     // Clear the internal pointer - actual cleanup in destructor
     if (thisObject->impl().yogaConfig()) {
         YGNodeFree(thisObject->impl().yogaConfig());
-// Lifecycle managed by RefCounted
+        // Lifecycle managed by RefCounted
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -3022,7 +3022,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncFreeRecursive, (JSC::JSGlobalObject 
         // Clear the JS wrapper for this node
         JSYogaNode* jsNode = JSYogaNode::fromYGNode(currentNode);
         if (jsNode) {
-// Lifecycle managed by RefCounted
+            // Lifecycle managed by RefCounted
         }
     }
 

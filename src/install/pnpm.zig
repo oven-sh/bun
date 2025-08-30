@@ -279,7 +279,6 @@ pub fn migratePnpmLockfile(
     data: string,
     dir: bun.FD,
 ) !LoadResult {
-
     this.initEmpty(allocator);
     Install.initializeStore();
 

@@ -27,7 +27,7 @@ public:
 
     // Replace the internal YGConfigRef (used for advanced cases)
     void replaceYogaConfig(YGConfigRef newConfig);
-    
+
     // Mark as freed (for JS free() method validation)
     void markAsFreed() { m_freed = true; }
     bool isFreed() const { return m_freed; }

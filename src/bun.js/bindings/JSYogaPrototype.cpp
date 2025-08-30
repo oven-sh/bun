@@ -21,14 +21,14 @@
 
 // Macro to check if a Yoga node has been freed before using impl
 #define CHECK_YOGA_NODE_FREED(thisObject)                                                     \
-    if (UNLIKELY(!thisObject->impl().yogaNode())) {                                             \
+    if (UNLIKELY(!thisObject->impl().yogaNode())) {                                           \
         throwTypeError(globalObject, scope, "Cannot perform operation on freed Yoga.Node"_s); \
         return {};                                                                            \
     }
 
 // Macro to check if a Yoga config has been freed before using impl
 #define CHECK_YOGA_CONFIG_FREED(thisObject)                                                     \
-    if (UNLIKELY(!thisObject->impl().yogaConfig())) {                                         \
+    if (UNLIKELY(!thisObject->impl().yogaConfig())) {                                           \
         throwTypeError(globalObject, scope, "Cannot perform operation on freed Yoga.Config"_s); \
         return {};                                                                              \
     }
@@ -538,7 +538,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaConfigProtoFuncFree, (JSC::JSGlobalObject * globa
     // The actual cleanup will happen in the destructor
     if (thisObject->impl().yogaConfig()) {
         YGConfigFree(thisObject->impl().yogaConfig());
-// Lifecycle managed by RefCounted
+        // Lifecycle managed by RefCounted
 =======
     // Check if already freed before marking as freed
     if (UNLIKELY(thisObject->impl().isFreed())) {
@@ -546,7 +546,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaConfigProtoFuncFree, (JSC::JSGlobalObject * globa
         return {};
 >>>>>>> 86b59da959 (Complete Yoga RefCounted migration - all tests passing)
     }
-    
+
     // Mark as freed - this will make yogaConfig() return nullptr
     thisObject->impl().markAsFreed();
 
@@ -876,11 +876,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncFree, (JSC::JSGlobalObject * globalO
 ||||||| parent of 86b59da959 (Complete Yoga RefCounted migration - all tests passing)
     if (thisObject->impl().yogaConfig()) {
         YGNodeFree(thisObject->impl().yogaConfig());
-// Lifecycle managed by RefCounted
+        // Lifecycle managed by RefCounted
 =======
     if (thisObject->impl().yogaNode()) {
         YGNodeFree(thisObject->impl().yogaNode());
-// Lifecycle managed by RefCounted
+        // Lifecycle managed by RefCounted
 >>>>>>> 86b59da959 (Complete Yoga RefCounted migration - all tests passing)
     }
 

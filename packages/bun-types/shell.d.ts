@@ -58,7 +58,7 @@ declare module "bun" {
      * // "bun"
      * ```
      */
-    function env(newEnv?: Record<string, string | undefined>): $;
+    function env(newEnv?: Record<string, string | undefined> | NodeJS.Dict<string> | undefined): $;
 
     /**
      *

@@ -6,21 +6,20 @@ import { getRegistry, startRegistry, stopRegistry } from "./simple-dummy-registr
 
 interface SecurityScannerTestOptions {
   command: "install" | "update" | "add" | "remove" | "uninstall";
-  args?: string[];
-  hasExistingNodeModules?: boolean;
-  linker?: "hoisted" | "isolated";
+  args: string[];
+  hasExistingNodeModules: boolean;
+  linker: "hoisted" | "isolated";
   scannerType: "local" | "npm" | "npm.bunfigonly";
-  scannerPackageName?: string;
-  scannerReturns?: "clean" | "warn" | "fatal";
-  scannerError?: boolean;
-  shouldFail?: boolean;
-  expectedExitCode?: number;
+  scannerReturns: "clean" | "warn" | "fatal";
+  shouldFail: boolean;
+
+  hasLockfile: boolean;
+  scannerSyncronouslyThrows: boolean;
 }
 
 let registryUrl: string;
 
 async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
-  // Clear registry request log before test
   const registry = getRegistry();
 
   if (!registry) {
@@ -32,18 +31,18 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
 
   const {
     command,
-    args = [],
-    hasExistingNodeModules = false,
-    linker = "hoisted",
+    args,
+    hasExistingNodeModules,
+    hasLockfile,
+    linker,
     scannerType,
-    scannerPackageName = "test-security-scanner",
-    scannerReturns = "clean",
-    scannerError = false,
-    shouldFail = false,
-    expectedExitCode = shouldFail ? 1 : 0,
+    scannerReturns,
+    shouldFail,
+    scannerSyncronouslyThrows,
   } = options;
 
-  // Create scanner code based on configuration
+  const expectedExitCode = shouldFail ? 1 : 0;
+
   const scannerCode =
     scannerType === "local" || scannerType === "npm"
       ? `export const scanner = {
@@ -51,7 +50,7 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
       scan: async function(payload) {
         console.error("SCANNER_RAN: " + payload.packages.length + " packages");
         
-        ${scannerError ? "throw new Error('Scanner error!');" : ""}
+        ${scannerSyncronouslyThrows ? "throw new Error('Scanner error!');" : ""}
         
         const results = [];
         ${
@@ -102,7 +101,7 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
         // For npm scanner, add it to dependencies so it gets installed
         ...(scannerType === "npm"
           ? {
-              [scannerPackageName]: "1.0.0",
+              "test-security-scanner": "1.0.0",
             }
           : {}),
       },
@@ -115,21 +114,31 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
 
   const dir = tempDirWithFiles("scanner-matrix", files);
 
-  const scannerPath = scannerType === "local" ? "./scanner.js" : scannerPackageName;
+  const scannerPath = scannerType === "local" ? "./scanner.js" : "test-security-scanner";
 
-  if (hasExistingNodeModules) {
-    // First write bunfig WITHOUT scanner for pre-install
-    await Bun.write(
-      join(dir, "bunfig.toml"),
-      `[install]
+  // First write bunfig WITHOUT scanner for pre-install
+  await Bun.write(
+    join(dir, "bunfig.toml"),
+    `[install]
 cache = false
 linker = "${linker}"
 registry = "${registryUrl}/"`,
-    );
+  );
 
-    // Install initial node_modules without scanner configured
-    await $`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
+  const shouldDoInitialInstall = hasExistingNodeModules || hasLockfile;
+  if (hasExistingNodeModules || hasLockfile) {
+    await $`${bunExe()} install`.cwd(dir).env(bunEnv);
   }
+
+  if (shouldDoInitialInstall && !hasExistingNodeModules) {
+    await $`rm -rf node_modules`.cwd(dir);
+  }
+
+  if (shouldDoInitialInstall && !hasLockfile) {
+    await $`rm bun.lock`.cwd(dir);
+  }
+
+  ////////////////////////// POST SETUP DONE //////////////////////////
 
   // write the full bunfig WITH scanner configuration
   await Bun.write(
@@ -143,11 +152,7 @@ registry = "${registryUrl}/"
 scanner = "${scannerPath}"`,
   );
 
-  // Prepare the command
-  let cmd = [bunExe(), command];
-  if (args.length > 0) {
-    cmd = [...cmd, ...args];
-  }
+  const cmd = [bunExe(), command, ...args];
 
   // Debug mode: if SCANNER_TEST_DEBUG env var is set, print the test dir and exit
   if (process.env.SCANNER_TEST_DEBUG) {
@@ -251,7 +256,7 @@ scanner = "${scannerPath}"`,
     expect(errAndOut).toContain("");
   }
 
-  if (scannerType !== "npm.bunfigonly" && !scannerError) {
+  if (scannerType !== "npm.bunfigonly" && !scannerSyncronouslyThrows) {
     expect(errAndOut).toContain("SCANNER_RAN");
 
     if (scannerReturns === "warn") {
@@ -285,12 +290,36 @@ scanner = "${scannerPath}"`,
         switch (command) {
           case "remove":
           case "uninstall": {
-            expect(files).not.toContain("node_modules/is-even/package.json");
+            for (const arg of args) {
+              switch (linker) {
+                case "hoisted": {
+                  expect(files).not.toContain(`node_modules/${arg}/package.json`);
+                  break;
+                }
+
+                case "isolated": {
+                  expect(files).not.toContain(`node_modules/.bun/node_modules/${arg}/package.json`);
+                  break;
+                }
+              }
+            }
             break;
           }
 
           default: {
-            expect(files).toContain("node_modules/left-pad/package.json");
+            for (const arg of args) {
+              switch (linker) {
+                case "hoisted": {
+                  expect(files).toContain(`node_modules/${arg}/package.json`);
+                  break;
+                }
+
+                case "isolated": {
+                  expect(files).toContain(`node_modules/.bun/node_modules/${arg}/package.json`);
+                  break;
+                }
+              }
+            }
             break;
           }
         }
@@ -349,6 +378,14 @@ scanner = "${scannerPath}"`,
       expect(requestedPackages).toMatchSnapshot("requested-packages: update without args");
       expect(requestedTarballs).toMatchSnapshot("requested-tarballs: update without args");
     }
+  } else if (command === "remove" || command === "uninstall") {
+    if (args.length > 0) {
+      expect(requestedPackages).toMatchSnapshot("requested-packages: remove with args");
+      expect(requestedTarballs).toMatchSnapshot("requested-tarballs: remove with args");
+    } else {
+      expect(requestedPackages).toMatchSnapshot("requested-packages: remove without args");
+      expect(requestedTarballs).toMatchSnapshot("requested-tarballs: remove without args");
+    }
   } else {
     expect(requestedPackages).toMatchSnapshot("requested-packages: unknown command");
     expect(requestedTarballs).toMatchSnapshot("requested-tarballs: unknown command");
@@ -377,33 +414,39 @@ describe("Security Scanner Matrix Tests", () => {
       describe.each([true, false] as const)("(node_modules: %p)", hasExistingNodeModules => {
         describe.each(["hoisted", "isolated"] as const)("--linker=%s", linker => {
           describe.each(["local", "npm", "npm.bunfigonly"] as const)("(scanner: %s)", scannerType => {
-            describe.each(["clean", "warn", "fatal"] as const)("(returns: %s)", scannerReturns => {
-              if ((command === "add" || command === "uninstall" || command === "remove") && args.length === 0) {
-                // TODO(@alii): Test this case:
-                //  - Exit code 1
-                //  - No changes to disk
-                //  - Scanner does not run
-                return;
-              }
+            describe.each([true, false] as const)("(bun.lock exists: %p)", hasLockfile => {
+              describe.each(["clean", "warn", "fatal"] as const)("(returns: %s)", scannerReturns => {
+                if ((command === "add" || command === "uninstall" || command === "remove") && args.length === 0) {
+                  // TODO(@alii): Test this case:
+                  //  - Exit code 1
+                  //  - No changes to disk
+                  //  - Scanner does not run
+                  return;
+                }
 
-              const testName = String(++i).padStart(4, "0");
+                const testName = String(++i).padStart(4, "0");
 
-              // npm.bunfigonly is the case where a scanner is a valid npm package name identifier
-              // but is not referenced in package.json anywhere and is not in the lockfile, so the only knowledge
-              // of this package's existence is the fact that it was defined in as the value in bunfig.toml
-              // Therefore, we should fail because we don't know where to install it from
-              const shouldFail =
-                scannerType === "npm.bunfigonly" || scannerReturns === "fatal" || scannerReturns === "warn";
+                // npm.bunfigonly is the case where a scanner is a valid npm package name identifier
+                // but is not referenced in package.json anywhere and is not in the lockfile, so the only knowledge
+                // of this package's existence is the fact that it was defined in as the value in bunfig.toml
+                // Therefore, we should fail because we don't know where to install it from
+                const shouldFail =
+                  scannerType === "npm.bunfigonly" || scannerReturns === "fatal" || scannerReturns === "warn";
 
-              test(testName, async () => {
-                await runSecurityScannerTest({
-                  command,
-                  args,
-                  hasExistingNodeModules,
-                  linker,
-                  scannerType,
-                  scannerReturns,
-                  shouldFail,
+                test(testName, async () => {
+                  await runSecurityScannerTest({
+                    command,
+                    args,
+                    hasExistingNodeModules,
+                    linker,
+                    scannerType,
+                    scannerReturns,
+                    shouldFail,
+                    hasLockfile,
+
+                    // TODO(@alii): Test this case
+                    scannerSyncronouslyThrows: false,
+                  });
                 });
               });
             });

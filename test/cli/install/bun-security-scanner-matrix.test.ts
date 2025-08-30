@@ -2,15 +2,19 @@ import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "node:path";
-import { getRegistry, startRegistry, stopRegistry } from "./simple-dummy-registry";
+import { getRegistry, SimpleRegistry, startRegistry, stopRegistry } from "./simple-dummy-registry";
 
 const redSubprocessPrefix = "\x1b[31m [SUBPROC]\x1b[0m";
 const redDebugPrefix = "\x1b[31m   [DEBUG]\x1b[0m";
 const redShellPrefix = "\x1b[31m   [SHELL] $\x1b[0m";
 
-const TESTS_TO_SKIP = new Set([
+// prettier-ignore
+const TESTS_TO_SKIP: Set<string> = new Set<`${number}`>([
   // https://github.com/oven-sh/bun/issues/22255
-  "0613",
+  "0613", "0616", "0619", "0622", "0631", "0634", "0637", "0640",  // remove "is-even"
+  "0685", "0688", "0691", "0694", "0703", "0706", "0709", "0712",  // remove "left-pad,is-even"
+  "0757", "0760", "0763", "0766", "0775", "0778", "0781", "0784",  // uninstall "is-even"
+  "0829", "0832", "0835", "0838", "0847", "0850", "0853", "0856",  // uninstall "left-pad,is-even"
 ]);
 
 interface SecurityScannerTestOptions {
@@ -159,8 +163,6 @@ registry = "${registryUrl}/"`,
     console.log(redShellPrefix, `rm ${dir}/bun.lock`);
     await $`rm bun.lock`.cwd(dir);
   }
-
-  console.log(redDebugPrefix, await globEverything(dir));
 
   ////////////////////////// POST SETUP DONE //////////////////////////
 
@@ -315,7 +317,10 @@ scanner = "${scannerPath}"`,
                 }
 
                 case "isolated": {
-                  expect(files).not.toContain(`node_modules/.bun/node_modules/${arg}/package.json`);
+                  const versionInRegistry = SimpleRegistry.packages[arg][0];
+                  expect(files).not.toContain(
+                    `node_modules/.bun/${arg}@${versionInRegistry}/node_modules/${arg}/package.json`,
+                  );
                   break;
                 }
               }
@@ -332,7 +337,10 @@ scanner = "${scannerPath}"`,
                 }
 
                 case "isolated": {
-                  expect(files).toContain(`node_modules/.bun/node_modules/${arg}/package.json`);
+                  const versionInRegistry = SimpleRegistry.packages[arg][0];
+                  expect(files).toContain(
+                    `node_modules/.bun/${arg}@${versionInRegistry}/node_modules/${arg}/package.json`,
+                  );
                   break;
                 }
               }

@@ -9,7 +9,7 @@ export class SimpleRegistry {
   public requestedUrls: string[] = [];
   private scannerBehavior: "clean" | "warn" | "fatal" = "clean";
 
-  private packages = {
+  public static readonly packages: Record<string, [version: string]> = {
     "left-pad": ["1.3.0"],
     "is-even": ["1.0.0"],
     "is-odd": ["1.0.0"],
@@ -62,7 +62,7 @@ export class SimpleRegistry {
   }
 
   private handleMetadata(packageName: string): Response {
-    const versions = this.packages[packageName];
+    const versions = SimpleRegistry.packages[packageName];
     if (!versions) {
       return new Response("Package not found", { status: 404 });
     }
@@ -102,7 +102,7 @@ export class SimpleRegistry {
   }
 
   private async handleTarball(name: string, version: string): Promise<Response> {
-    const versions = this.packages[name];
+    const versions = SimpleRegistry.packages[name];
 
     if (!versions || !versions.includes(version)) {
       return new Response("Version not found", { status: 404 });

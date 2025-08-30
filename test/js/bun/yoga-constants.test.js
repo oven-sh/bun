@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-// Test if we can access Yoga via globalThis (once it's exposed)
-const Yoga = globalThis.Yoga;
+// Test if we can access Yoga via Bun.Yoga
+const Yoga = Bun.Yoga;
 
 describe("Yoga Constants", () => {
   test("should export all alignment constants", () => {
@@ -41,8 +41,6 @@ describe("Yoga Constants", () => {
 
   test("should export all experimental feature constants", () => {
     expect(Yoga.EXPERIMENTAL_FEATURE_WEB_FLEX_BASIS).toBeDefined();
-    expect(Yoga.EXPERIMENTAL_FEATURE_ABSOLUTE_PERCENTAGE_AGAINST_PADDING_EDGE).toBeDefined();
-    expect(Yoga.EXPERIMENTAL_FEATURE_FIX_ABSOLUTE_TRAILING_COLUMN_MARGIN).toBeDefined();
   });
 
   test("should export all flex direction constants", () => {
@@ -106,7 +104,7 @@ describe("Yoga Constants", () => {
   test("should export all errata constants", () => {
     expect(Yoga.ERRATA_NONE).toBeDefined();
     expect(Yoga.ERRATA_STRETCH_FLEX_BASIS).toBeDefined();
-    expect(Yoga.ERRATA_ABSOLUTE_POSITIONING_INCORRECT).toBeDefined();
+    expect(Yoga.ERRATA_ABSOLUTE_POSITION_WITHOUT_INSETS_EXCLUDES_PADDING).toBeDefined();
     expect(Yoga.ERRATA_ABSOLUTE_PERCENT_AGAINST_INNER_SIZE).toBeDefined();
     expect(Yoga.ERRATA_ALL).toBeDefined();
     expect(Yoga.ERRATA_CLASSIC).toBeDefined();

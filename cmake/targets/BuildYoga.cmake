@@ -18,7 +18,7 @@ register_cmake_command(
     -DYOGA_BUILD_SAMPLES=OFF
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON
   LIB_PATH
-    lib
+    yoga
   LIBRARIES
     yogacore
   INCLUDES

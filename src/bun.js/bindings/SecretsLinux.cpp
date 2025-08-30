@@ -25,6 +25,7 @@ typedef int gboolean;
 typedef char gchar;
 typedef void* gpointer;
 typedef unsigned int guint;
+typedef int gint;
 
 // GLib constants
 #define G_FALSE 0
@@ -50,6 +51,14 @@ struct _SecretSchema {
     const gchar* name;
     SecretSchemaFlags flags;
     SecretSchemaAttribute attributes[32];
+    gint reserved;
+	gpointer reserved1;
+	gpointer reserved2;
+	gpointer reserved3;
+	gpointer reserved4;
+	gpointer reserved5;
+	gpointer reserved6;
+	gpointer reserved7;
 };
 
 struct _GError {
@@ -240,7 +249,7 @@ static LibsecretFramework* libsecretFramework()
 // Define our simple schema for Bun secrets
 static const SecretSchema* get_bun_schema()
 {
-    static SecretSchema schema = {
+    static const SecretSchema schema = {
         "com.oven-sh.bun.Secret",
         SECRET_SCHEMA_NONE,
         { { "service", SECRET_SCHEMA_ATTRIBUTE_STRING },

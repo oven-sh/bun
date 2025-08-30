@@ -449,7 +449,7 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         // notifyNeedTermination uses vm.global.requestTermination() instead of
         // vm.jsc.notifyNeedTermination() which avoid VMTraps assertion failures
         worker_.exit_called = true;
-        _ = worker_.lifecycle_handle.requestTermination();
+        worker_.lifecycle_handle.requestTermination();
     }
 }
 
@@ -575,7 +575,7 @@ pub fn setRefInternal(this: *WebWorker, value: bool) void {
 /// Implement process.exit(). May only be called from the Worker thread.
 pub fn exit(this: *WebWorker) void {
     this.exit_called = true;
-    _ = this.lifecycle_handle.requestTermination();
+    this.lifecycle_handle.requestTermination();
 }
 
 /// Request a terminate from any thread.
@@ -650,7 +650,7 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
 
 pub export fn WebWorkerLifecycleHandle__requestTermination(handle: ?*WebWorkerLifecycleHandle) void {
     if (handle) |h| {
-        _ = h.requestTermination();
+        h.requestTermination();
     }
 }
 
@@ -709,15 +709,11 @@ const WebWorkerLifecycleHandle = struct {
         bun.destroy(this);
     }
 
-    pub const RequestTerminationResult = enum { success, already_requested };
-
-    pub fn requestTermination(self: *WebWorkerLifecycleHandle) RequestTerminationResult {
-        const worker = self.worker.swap(null, .acq_rel) orelse return .already_requested;
+    pub fn requestTermination(self: *WebWorkerLifecycleHandle) void {
+        const worker = self.worker.swap(null, .acq_rel) orelse return;
 
         worker.notifyNeedTermination();
         worker.deref();
-
-        return .success;
     }
 };
 

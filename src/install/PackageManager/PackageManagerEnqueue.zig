@@ -239,6 +239,7 @@ pub fn enqueuePackageForDownload(
     url: []const u8,
     task_context: TaskCallbackContext,
     patch_name_and_version_hash: ?u64,
+    force_install_skip_prefetch_check: bool,
 ) EnqueuePackageForDownloadError!void {
     const task_id = Task.Id.forNPMPackage(name, version);
     var task_queue = try this.task_queue.getOrPut(this.allocator, task_id);
@@ -254,7 +255,7 @@ pub fn enqueuePackageForDownload(
     if (task_queue.found_existing) return;
 
     // Skip tarball download when prefetch_resolved_tarballs is disabled (e.g., --lockfile-only)
-    if (!this.options.do.prefetch_resolved_tarballs) return;
+    if (!this.options.do.prefetch_resolved_tarballs and !force_install_skip_prefetch_check) return;
 
     const is_required = this.lockfile.buffers.dependencies.items[dependency_id].behavior.isRequired();
 

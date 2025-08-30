@@ -842,6 +842,10 @@ pub fn installIsolatedPackages(
                                     break :should_install true;
                                 }
                             }
+                        } else {
+                            // If packages_to_install is null, we're doing a full install (not partial)
+                            // This happens after security scan passes - we need to install everything
+                            break :should_install true;
                         }
 
                         break :should_install false;
@@ -863,6 +867,7 @@ pub fn installIsolatedPackages(
                                 pkg_res.value.npm.url.slice(string_buf),
                                 ctx,
                                 patch_info.nameAndVersionHash(),
+                                packages_to_install != null,
                             ) catch |err| switch (err) {
                                 error.OutOfMemory => |oom| return oom,
                                 error.InvalidURL => {

@@ -1393,7 +1393,7 @@ export function initializeArrayStream(underlyingSource, _highWaterMark: number) 
 
   function fulfill() {
     calledDone = true;
-    closingPromise.$resolve.$call(undefined, array);
+    closingPromise.resolve.$call(undefined, array);
     return array;
   }
 

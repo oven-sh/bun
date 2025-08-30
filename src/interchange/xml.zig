@@ -235,6 +235,16 @@ const Parser = struct {
 
         // Build result with cleaner structure - no __name or __children
         const trimmed_text = std.mem.trim(u8, text_parts.items, " \t\n\r");
+
+        // If element has only text content (no attributes, no children), return text directly
+        if (attributes.items.len == 0 and children.items.len == 0 and trimmed_text.len > 0) {
+            const text_expr = try self.createStringExpr(text_parts.items);
+            return ChildElement{
+                .tag_name = tag_name_slice,
+                .element = text_expr,
+            };
+        }
+
         var properties = std.ArrayList(G.Property).init(self.allocator);
 
         // Add attributes directly as properties
@@ -242,16 +252,27 @@ const Parser = struct {
             try properties.appendSlice(attributes.items);
         }
 
-        // Add children as direct properties
-        if (children.items.len > 0) {
+        // Handle mixed content (text + children) - use __children array only
+        if (children.items.len > 0 and text_parts.items.len > 0 and trimmed_text.len > 0) {
+            // Mixed content: use __children array only
+            var child_array = std.ArrayList(Expr).init(self.allocator);
+            for (children.items) |child| {
+                try child_array.append(child.element);
+            }
+            const children_array = Expr.init(E.Array, .{ .items = .fromList(child_array) }, .Empty);
+            const children_key = try self.createStringExpr("__children");
+            try properties.append(.{ .key = children_key, .value = children_array });
+        } else if (children.items.len > 0) {
+            // Children only: add as direct properties
             try self.addChildrenAsProperties(&properties, children.items);
-        }
-
-        // Add text content if present and no children
-        if (text_parts.items.len > 0 and trimmed_text.len > 0 and children.items.len == 0) {
+        } else if (text_parts.items.len > 0 and trimmed_text.len > 0 and attributes.items.len > 0) {
+            // Attributes + text only: use single-element __children array for consistency
             const text_expr = try self.createStringExpr(text_parts.items);
-            const text_key = try self.createStringExpr("__text");
-            try properties.append(.{ .key = text_key, .value = text_expr });
+            var child_array = std.ArrayList(Expr).init(self.allocator);
+            try child_array.append(text_expr);
+            const children_array = Expr.init(E.Array, .{ .items = .fromList(child_array) }, .Empty);
+            const children_key = try self.createStringExpr("__children");
+            try properties.append(.{ .key = children_key, .value = children_array });
         }
 
         const element = Expr.init(E.Object, .{ .properties = .fromList(properties) }, .Empty);

@@ -106,8 +106,7 @@ pub const TestRunner = struct {
     filter_buffer: MutableString,
 
     // Used for file:line filtering
-    line_filter_file: ?[]const u8 = null,
-    line_filter_line: u32 = 0,
+    line_filters: bun.StringHashMapUnmanaged(std.ArrayListUnmanaged(u32)) = .{},
 
     unhandled_errors_between_tests: u32 = 0,
     summary: Summary = Summary{},
@@ -140,42 +139,47 @@ pub const TestRunner = struct {
     }
 
     pub fn hasTestFilter(this: *const TestRunner) bool {
-        return this.filter_regex != null or this.line_filter_file != null;
+        return this.filter_regex != null or this.line_filters.count() > 0;
     }
 
     pub fn matchesLineFilter(this: *const TestRunner, file_path: []const u8, line_number: u32, parent: ?*DescribeScope) bool {
-        if (this.line_filter_file == null) return true;
+        if (this.line_filters.count() == 0) return true;
         
-        // Check if the file matches (using relative path comparison)
-        const filter_file = this.line_filter_file.?;
-        
-        // Normalize the filter file by removing ./ prefix if it exists
-        const normalized_filter = if (bun.strings.startsWith(filter_file, "./"))
-            filter_file[2..]
-        else
-            filter_file;
+        // Iterate through all line filters to find matches
+        var iter = this.line_filters.iterator();
+        while (iter.next()) |entry| {
+            const filter_file = entry.key_ptr.*;
+            const lines = &entry.value_ptr.*;
             
-        // Check if the file path ends with the normalized filter file
-        if (!bun.strings.endsWith(file_path, normalized_filter)) {
-            return false;
-        }
-        
-        const filter_line = this.line_filter_line;
-        
-        // If the test is directly on the specified line, it matches
-        if (line_number == filter_line) {
-            return true;
-        }
-        
-        // Check if the test is within a describe block that starts at the specified line
-        var current_parent = parent;
-        while (current_parent) |p| {
-            // If the describe block starts exactly at the filter line,
-            // then all tests within it should be included
-            if (p.line_number > 0 and p.line_number == filter_line) {
-                return true;
+            // Normalize the filter file by removing ./ prefix if it exists
+            const normalized_filter = if (bun.strings.startsWith(filter_file, "./"))
+                filter_file[2..]
+            else
+                filter_file;
+                
+            // Check if the file path ends with the normalized filter file
+            if (!bun.strings.endsWith(file_path, normalized_filter)) {
+                continue;
             }
-            current_parent = p.parent;
+            
+            // Check if any of the specified lines match
+            for (lines.items) |filter_line| {
+                // If the test is directly on the specified line, it matches
+                if (line_number == filter_line) {
+                    return true;
+                }
+                
+                // Check if the test is within a describe block that starts at the specified line
+                var current_parent = parent;
+                while (current_parent) |p| {
+                    // If the describe block starts exactly at the filter line,
+                    // then all tests within it should be included
+                    if (p.line_number > 0 and p.line_number == filter_line) {
+                        return true;
+                    }
+                    current_parent = p.parent;
+                }
+            }
         }
         
         return false;
@@ -2047,7 +2051,7 @@ inline fn createScope(
             }
             
             // Apply line-based filtering
-            if (runner.line_filter_file != null) {
+            if (runner.line_filters.count() > 0) {
                 const current_file = runner.files.items(.source)[parent.file_id].path.text;
                 const test_line = captureTestLineNumber(callframe, globalThis);
                 if (!runner.matchesLineFilter(current_file, test_line, parent)) {
@@ -2432,7 +2436,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                 }
                 
                 // Apply line-based filtering
-                if (Jest.runner.?.line_filter_file != null) {
+                if (Jest.runner.?.line_filters.count() > 0) {
                     const current_file = Jest.runner.?.files.items(.source)[parent.file_id].path.text;
                     const test_line = each_data.line_number;
                     if (!Jest.runner.?.matchesLineFilter(current_file, test_line, parent)) {
@@ -2564,7 +2568,7 @@ extern fn Bun__CallFrame__getLineNumber(callframe: *jsc.CallFrame, globalObject:
 
 fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObject) u32 {
     if (Jest.runner) |runner| {
-        if (runner.test_options.file_reporter == .junit or runner.test_options.test_line_filter_file != null) {
+        if (runner.test_options.file_reporter == .junit or runner.test_options.test_line_filters.count() > 0) {
             return Bun__CallFrame__getLineNumber(callframe, globalThis);
         }
     }

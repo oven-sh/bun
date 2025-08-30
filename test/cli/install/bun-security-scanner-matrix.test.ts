@@ -318,14 +318,22 @@ scanner = "${scannerPath}"`,
             for (const arg of args) {
               switch (linker) {
                 case "hoisted": {
-                  expect(files).not.toContain(`node_modules/${arg}/package.json`);
+                  expect(files).not.toContain(join(dir, "node_modules", arg, "package.json"));
                   break;
                 }
 
                 case "isolated": {
                   const versionInRegistry = SimpleRegistry.packages[arg][0];
                   expect(files).not.toContain(
-                    `node_modules/.bun/${arg}@${versionInRegistry}/node_modules/${arg}/package.json`,
+                    join(
+                      dir,
+                      "node_modules",
+                      ".bun",
+                      `${arg}@${versionInRegistry}`,
+                      "node_modules",
+                      arg,
+                      "package.json",
+                    ),
                   );
                   break;
                 }
@@ -338,14 +346,22 @@ scanner = "${scannerPath}"`,
             for (const arg of args) {
               switch (linker) {
                 case "hoisted": {
-                  expect(files).toContain(`node_modules/${arg}/package.json`);
+                  expect(files).toContain(join(dir, "node_modules", arg, "package.json"));
                   break;
                 }
 
                 case "isolated": {
                   const versionInRegistry = SimpleRegistry.packages[arg][0];
                   expect(files).toContain(
-                    `node_modules/.bun/${arg}@${versionInRegistry}/node_modules/${arg}/package.json`,
+                    join(
+                      dir,
+                      "node_modules",
+                      ".bun",
+                      `${arg}@${versionInRegistry}`,
+                      "node_modules",
+                      arg,
+                      "package.json",
+                    ),
                   );
                   break;
                 }

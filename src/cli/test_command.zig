@@ -839,7 +839,15 @@ pub const CommandLineReporter = struct {
             .fail_because_expected_has_assertions,
             .fail_because_expected_assertion_count,
             .timeout,
-            => this.summary().fail += 1,
+            => {
+                this.summary().fail += 1;
+
+                if (this.summary().fail == this.jest.bail) {
+                    this.printSummary();
+                    Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ this.jest.bail, if (this.jest.bail == 1) "" else "s" });
+                    Global.exit(1);
+                }
+            },
         }
         this.summary().expectations +|= sequence.expect_call_count;
     }

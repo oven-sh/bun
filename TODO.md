@@ -284,14 +284,13 @@ Exited with code [1]
   - [ ] there should be an issue that this can close
 - [ ] add retry/run-multiple-times back
 - [ ] report expect counts per-test
-- [ ] make --bail work again
+- [x] make --bail work again
 - [ ] update types for `test.concurrent.skip.only()`
 - [x] make test filtering work again
 - [ ] decide what to do about test() inside test()
 - [ ] make sure ScopeFunctions class can finalize (see napi_handle_scope NapiHandleScopeImpl as an example)
   - currently, it never calls its finalize method because it no longer extends from finalize
 - [ ] see about caching ScopeFunctions by value maybe?
-- [ ] add back bailing after nth failure
 - [ ] add back repeating failure/skip messages at the end of the test print
 - [ ] make sure failure exits with code 1
 - [ ] `test("rerun me", () => { console.log("run one time!"); });` `--rerun-each=3`. works 1, no message 2, fails 3
@@ -314,6 +313,7 @@ Exited with code [1]
 
 # Code quality:
 
+- [ ] BunTestFile is called buntest. what is BunTest called? rename these. maybe BunTestFile -> BunTest and BunTest -> BunTestAllFiles? or BunTestRoot?
 - [ ] need to weakly hold BunTestFile from ref()
   - two tests for comparing performance
     - 1: as-is

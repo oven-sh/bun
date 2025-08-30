@@ -1,6 +1,6 @@
 import assert from "assert";
 import { describe, expect } from "bun:test";
-import { isMacOS, isMusl, osSlashes } from "harness";
+import { osSlashes } from "harness";
 import path from "path";
 import { dedent, ESBUILD_PATH, itBundled } from "../expectBundled";
 

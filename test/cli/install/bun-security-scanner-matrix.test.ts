@@ -9,7 +9,7 @@ interface SecurityScannerTestOptions {
   args?: string[];
   hasExistingNodeModules?: boolean;
   linker?: "hoisted" | "isolated";
-  scannerType: "local" | "npm" | "bunfig-only";
+  scannerType: "local" | "npm" | "npm.bunfigonly";
   scannerPackageName?: string;
   scannerReturns?: "clean" | "warn" | "fatal";
   scannerError?: boolean;
@@ -271,11 +271,11 @@ scanner = "${scannerPath}"`,
     expect(errAndOut).toContain("Security scanner installed successfully");
   }
 
-  if (scannerType === "bunfig-only") {
+  if (scannerType === "npm.bunfigonly") {
     expect(errAndOut).toContain("");
   }
 
-  if (scannerType !== "bunfig-only" && !scannerError) {
+  if (scannerType !== "npm.bunfigonly" && !scannerError) {
     expect(errAndOut).toContain("SCANNER_RAN");
 
     if (scannerReturns === "warn") {
@@ -287,7 +287,7 @@ scanner = "${scannerPath}"`,
     }
   }
 
-  if (scannerType !== "bunfig-only" && !hasExistingNodeModules) {
+  if (scannerType !== "npm.bunfigonly" && !hasExistingNodeModules) {
     switch (scannerReturns) {
       case "fatal":
       case "warn": {
@@ -389,18 +389,26 @@ describe("Security Scanner Matrix Tests", () => {
         const hasExistingNodeModules = _hasNodeModules === "true";
 
         describe.each(["hoisted", "isolated"] as const)("--linker=%s", linker => {
-          describe.each(["local", "npm", "bunfig-only"] as const)("(scanner: %s)", scannerType => {
+          describe.each(["local", "npm", "npm.bunfigonly"] as const)("(scanner: %s)", scannerType => {
             describe.each(["clean", "warn", "fatal"] as const)("(returns: %s)", scannerReturns => {
               if ((command === "add" || command === "uninstall" || command === "remove") && args.length === 0) {
+                // TODO(@alii): Test this case:
+                //  - Exit code 1
+                //  - No changes to disk
+                //  - Scanner does not run
                 return;
               }
 
               const testName = String(++i).padStart(4, "0");
 
+              // npm.bunfigonly is the case where a scanner is a valid npm package name identifier
+              // but is not referenced in package.json anywhere and is not in the lockfile, so the only knowledge
+              // of this package's existence is the fact that it was defined in as the value in bunfig.toml
+              // Therefore, we should fail because we don't know where to install it from
               const shouldFail =
-                scannerType === "bunfig-only" || scannerReturns === "fatal" || scannerReturns === "warn";
+                scannerType === "npm.bunfigonly" || scannerReturns === "fatal" || scannerReturns === "warn";
               const expectedOutput: string[] = [];
-              const expectedError = scannerType === "bunfig-only" ? "Security scanner" : undefined;
+              const expectedError = scannerType === "npm.bunfigonly" ? "Security scanner" : undefined;
 
               test(testName, async () => {
                 await runSecurityScannerTest({

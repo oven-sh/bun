@@ -279,10 +279,6 @@ pub fn migratePnpmLockfile(
     data: string,
     dir: bun.FD,
 ) !LoadResult {
-    var dir_path_buf: bun.PathBuffer = undefined;
-    const directory = bun.getFdPath(dir, &dir_path_buf) catch {
-        return error.UnableToGetDirectory;
-    };
 
     this.initEmpty(allocator);
     Install.initializeStore();
@@ -365,19 +361,29 @@ pub fn migratePnpmLockfile(
         for (importers.properties.slice()) |entry| {
             const importer_path = entry.key.?.asString(allocator) orelse continue;
 
-            const workspace_package_json_path = if (strings.eqlComptime(importer_path, "."))
-                try std.fmt.allocPrint(allocator, "{s}/package.json", .{directory})
-            else
-                try std.fmt.allocPrint(allocator, "{s}/{s}/package.json", .{ directory, importer_path });
-            defer allocator.free(workspace_package_json_path);
-
             var workspace_name: []const u8 = importer_path;
             var workspace_version: ?[]const u8 = null;
 
-            if (std.fs.cwd().readFileAlloc(allocator, workspace_package_json_path, 1024 * 1024) catch null) |package_json_content| {
+            // Use openat to read the package.json relative to the dir file descriptor
+            const package_json_path: [:0]const u8 = if (strings.eqlComptime(importer_path, "."))
+                "package.json"
+            else brk: {
+                var path_buf: bun.PathBuffer = undefined;
+                const path = std.fmt.bufPrintZ(&path_buf, "{s}/package.json", .{importer_path}) catch break :brk "package.json";
+                break :brk path;
+            };
+
+            const package_json_file = bun.sys.File.openat(dir, package_json_path, bun.O.RDONLY, 0).unwrap() catch {
+                // If we can't open the package.json, continue with default name
+                // We can't add it here since we don't have workspace_map yet
+                continue;
+            };
+            defer package_json_file.close();
+
+            if (package_json_file.readToEnd(allocator).unwrap() catch null) |package_json_content| {
                 defer allocator.free(package_json_content);
 
-                const pkg_source = logger.Source.initPathString(workspace_package_json_path, package_json_content);
+                const pkg_source = logger.Source.initPathString(package_json_path, package_json_content);
                 if (bun.json.parseUTF8(&pkg_source, log, allocator) catch null) |pkg_json| {
                     if (pkg_json.data == .e_object) {
                         const pkg_obj = pkg_json.data.e_object;
@@ -535,12 +541,19 @@ pub fn migratePnpmLockfile(
             var actual_workspace_name: ?[]const u8 = null;
             var actual_workspace_version_str: ?String = null;
 
-            const workspace_pkg_json_path = try std.fs.path.join(allocator, &.{ workspace_path, "package.json" });
-            defer allocator.free(workspace_pkg_json_path);
+            // Use openat to read package.json relative to dir
+            var workspace_pkg_path_buf: bun.PathBuffer = undefined;
+            const workspace_pkg_path = std.fmt.bufPrintZ(&workspace_pkg_path_buf, "{s}/package.json", .{workspace_path}) catch continue;
 
-            if (std.fs.cwd().readFileAlloc(allocator, workspace_pkg_json_path, 1024 * 1024)) |package_json_content| {
+            const workspace_pkg_file = bun.sys.File.openat(dir, workspace_pkg_path, bun.O.RDONLY, 0).unwrap() catch {
+                // If we can't open package.json, skip it
+                continue;
+            };
+            defer workspace_pkg_file.close();
+
+            if (workspace_pkg_file.readToEnd(allocator).unwrap()) |package_json_content| {
                 defer allocator.free(package_json_content);
-                const pkg_source = logger.Source.initPathString(workspace_pkg_json_path, package_json_content);
+                const pkg_source = logger.Source.initPathString("package.json", package_json_content);
                 const pkg_json = bun.json.parseUTF8(&pkg_source, log, allocator) catch null;
                 if (pkg_json) |parsed_json| {
                     if (parsed_json.data == .e_object) {
@@ -2636,7 +2649,7 @@ pub fn migratePnpmLockfile(
         }
     }
 
-    updatePackageJsonAfterMigration(allocator, log) catch {};
+    updatePackageJsonAfterMigration(allocator, log, dir) catch {};
 
     return LoadResult{
         .ok = .{
@@ -2650,10 +2663,13 @@ pub fn migratePnpmLockfile(
 }
 
 /// Updates package.json with workspace and catalog information after migration
-fn updatePackageJsonAfterMigration(allocator: Allocator, log: *logger.Log) !void {
+fn updatePackageJsonAfterMigration(allocator: Allocator, log: *logger.Log, dir: bun.FD) !void {
     const package_json_path = "package.json";
 
-    const package_json_content = std.fs.cwd().readFileAlloc(allocator, package_json_path, 1024 * 1024) catch return;
+    const package_json_file = bun.sys.File.openat(dir, package_json_path, bun.O.RDONLY, 0).unwrap() catch return;
+    defer package_json_file.close();
+
+    const package_json_content = package_json_file.readToEnd(allocator).unwrap() catch return;
     defer allocator.free(package_json_content);
 
     const source = logger.Source.initPathString(package_json_path, package_json_content);
@@ -2988,10 +3004,10 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, log: *logger.Log) !void
             },
         ) catch return;
 
-        std.fs.cwd().writeFile(.{
-            .sub_path = package_json_path,
-            .data = package_json_writer.ctx.writtenWithoutTrailingZero(),
-        }) catch return;
+        // Write the updated package.json
+        const write_file = bun.sys.File.openat(dir, package_json_path, bun.O.WRONLY | bun.O.TRUNC, 0).unwrap() catch return;
+        defer write_file.close();
+        _ = write_file.write(package_json_writer.ctx.writtenWithoutTrailingZero()).unwrap() catch return;
     }
 }
 

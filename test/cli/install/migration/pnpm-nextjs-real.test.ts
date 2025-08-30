@@ -15,9 +15,6 @@ describe("pnpm real Next.js repo migration", () => {
     fs.rmSync(join(tempDir, "node_modules"), { recursive: true, force: true });
     fs.rmSync(join(tempDir, "bun.lock"), { force: true });
 
-    console.log("Running migration on real Next.js repo structure...");
-    console.log("Temp dir:", tempDir);
-
     // Run bun pm migrate
     await using proc = Bun.spawn({
       cmd: [bunExe(), "pm", "migrate"],
@@ -29,9 +26,11 @@ describe("pnpm real Next.js repo migration", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    console.log("Migration stdout:", stdout);
-    console.log("Migration stderr:", stderr);
-    console.log("Migration exitCode:", exitCode);
+    if (exitCode !== 0) {
+      console.log("Migration stdout:", stdout);
+      console.log("Migration stderr:", stderr);
+      console.log("Migration exitCode:", exitCode);
+    }
 
     // Check migration succeeded
     expect(exitCode).toBe(0);

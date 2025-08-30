@@ -28,8 +28,12 @@ YogaConfigImpl::~YogaConfigImpl()
 
 void YogaConfigImpl::setJSWrapper(JSYogaConfig* wrapper)
 {
-    // Increment ref count for the weak handle context
-    this->ref();
+    // Only increment ref count if we don't already have a wrapper
+    // This prevents ref count leaks if setJSWrapper is called multiple times
+    if (!m_wrapper) {
+        // Increment ref count for the weak handle context
+        this->ref();
+    }
 
     // Create weak reference with our JS owner
     m_wrapper = JSC::Weak<JSYogaConfig>(wrapper, &jsYogaNodeOwner(), this);

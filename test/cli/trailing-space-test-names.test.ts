@@ -1,4 +1,3 @@
-import { $ } from "bun";
 import { expect, test } from "bun:test";
 import { bunExe, tempDirWithFiles } from "harness";
 
@@ -37,11 +36,7 @@ describe("user", () => {
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   const output = stdout + stderr;
@@ -84,11 +79,7 @@ describe("user", () => {
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   const output = stdout + stderr;
@@ -130,23 +121,13 @@ describe("admin", () => {
 
   // Test multiple trailing space filters
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(), 
-      "test", 
-      "test.test.js", 
-      "--full-test-name", "auth ",
-      "--full-test-name", "user "
-    ],
+    cmd: [bunExe(), "test", "test.test.js", "--full-test-name", "auth ", "--full-test-name", "user "],
     cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   const output = stdout + stderr;
@@ -176,11 +157,7 @@ describe("auth", () => {
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   const output = stdout + stderr;
@@ -216,11 +193,7 @@ describe("auth integration", () => {
     stdout: "pipe",
   });
 
-  const [stdout1, stderr1, exitCode1] = await Promise.all([
-    proc1.stdout.text(),
-    proc1.stderr.text(),
-    proc1.exited,
-  ]);
+  const [stdout1, stderr1, exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
 
   expect(exitCode1).toBe(0);
   const output1 = stdout1 + stderr1;
@@ -234,11 +207,7 @@ describe("auth integration", () => {
     stdout: "pipe",
   });
 
-  const [stdout2, stderr2, exitCode2] = await Promise.all([
-    proc2.stdout.text(),
-    proc2.stderr.text(),
-    proc2.exited,
-  ]);
+  const [stdout2, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
 
   expect(exitCode2).toBe(0);
   const output2 = stdout2 + stderr2;

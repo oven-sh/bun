@@ -11,10 +11,10 @@ describe("Yoga - Comprehensive Layout Tests", () => {
 
     const child1 = new Yoga.Node();
     child1.setFlex(1);
-    
+
     const child2 = new Yoga.Node();
     child2.setFlex(2);
-    
+
     const child3 = new Yoga.Node();
     child3.setWidth(50); // Fixed width
 
@@ -263,7 +263,7 @@ describe("Yoga - Comprehensive Layout Tests", () => {
     // child1 would normally get 1/3 of 500 = ~166.67
     // But it's clamped by maxWidth(200), so it gets 200
     expect(child1Layout.width).toBe(200);
-    
+
     // child2 gets the remaining space: 500 - 200 = 300
     expect(child2Layout.width).toBe(300);
   });

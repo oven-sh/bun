@@ -48,8 +48,7 @@ pub const ScanCommand = struct {
 
         if (security_scan_results) |results| {
             defer {
-                var results_mut = results;
-                results_mut.deinit();
+                @constCast(&results).deinit();
             }
 
             security_scanner.printSecurityAdvisories(manager, &results);

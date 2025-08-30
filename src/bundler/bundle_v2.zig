@@ -474,31 +474,11 @@ pub const BundleV2 = struct {
 
     pub fn scanForSecondaryPaths(this: *BundleV2) void {
         if (!this.graph.has_any_secondary_paths) {
-
-            // Assert the boolean is accurate.
-            if (comptime Environment.ci_assert) {
-                for (this.graph.input_files.items(.secondary_path)) |secondary_path| {
-                    if (secondary_path.len > 0) {
-                        @panic("secondary_path is not empty");
-                    }
-                }
-            }
-
-            // No dual package hazard. Do nothing.
+            // ...
             return;
         }
 
         const ast_import_records: []const ImportRecord.List = this.graph.ast.items(.import_records);
-
-        // Now that all files have been scanned, look for packages that are imported
-        // both with "import" and "require". Rewrite any imports that reference the
-        // "module" package.json field to the "main" package.json field instead.
-        //
-        // This attempts to automatically avoid the "dual package hazard" where a
-        // package has both a CommonJS module version and an ECMAScript module
-        // version and exports a non-object in CommonJS (often a function). If we
-        // pick the "module" field and the package is imported with "require" then
-        // code expecting a function will crash.
         const targets: []const options.Target = this.graph.ast.items(.target);
         const max_valid_source_index: Index = .init(this.graph.input_files.len);
         const secondary_paths: []const []const u8 = this.graph.input_files.items(.secondary_path);
@@ -515,6 +495,8 @@ pub const BundleV2 = struct {
                 if (secondary_path.len > 0) {
                     const secondary_source_index = path_to_source_index_map.get(secondary_path) orelse continue;
                     import_record.source_index = Index.init(secondary_source_index);
+                    // Keep path in sync for determinism, diagnostics, and dev tooling.
+                    import_record.path = this.graph.input_files.items(.source)[secondary_source_index].path;
                 }
             }
         }

@@ -43,7 +43,7 @@ void JSYogaNode::finishCreation(JSC::VM& vm, YGConfigRef config, JSYogaConfig* j
 
     // Essential: store JS wrapper in Yoga node's context for callbacks and hierarchy traversal
     YGNodeSetContext(m_node, this);
-    
+
     // Store the JSYogaConfig if provided
     if (jsConfig) {
         m_config.set(vm, this, jsConfig);

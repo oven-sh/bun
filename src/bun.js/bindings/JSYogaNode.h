@@ -42,7 +42,7 @@ public:
     JSC::WriteBarrier<JSC::JSObject> m_measureFunc;
     JSC::WriteBarrier<JSC::JSObject> m_dirtiedFunc;
     JSC::WriteBarrier<JSC::JSObject> m_baselineFunc;
-    
+
     // Store the JSYogaConfig that was used to create this node
     JSC::WriteBarrier<JSC::JSObject> m_config;
 

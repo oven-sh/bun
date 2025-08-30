@@ -148,7 +148,7 @@ void setupJSYogaConfigClassStructure(JSC::LazyClassStructure::Initializer& init)
     auto* constructor = JSYogaConfigConstructor::create(init.vm, constructorStructure, prototype);
 
     auto* structure = JSYogaConfig::createStructure(init.vm, init.global, prototype);
-    
+
     init.setPrototype(prototype);
     init.setStructure(structure);
     init.setConstructor(constructor);
@@ -163,7 +163,7 @@ void setupJSYogaNodeClassStructure(JSC::LazyClassStructure::Initializer& init)
     auto* constructor = JSYogaNodeConstructor::create(init.vm, constructorStructure, prototype);
 
     auto* structure = JSYogaNode::createStructure(init.vm, init.global, prototype);
-    
+
     init.setPrototype(prototype);
     init.setStructure(structure);
     init.setConstructor(constructor);

@@ -28,13 +28,13 @@ public:
 
     YGConfigRef internal() { return m_config; }
     void clearInternal() { m_config = nullptr; }
-    
+
     // Context storage
     JSC::WriteBarrier<JSC::Unknown> m_context;
-    
+
     // Logger callback
     JSC::WriteBarrier<JSC::JSObject> m_loggerFunc;
-    
+
     // Clone node callback
     JSC::WriteBarrier<JSC::JSObject> m_cloneNodeFunc;
 

@@ -39,7 +39,7 @@ private:
     }
 
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
-    
+
 public:
     void setConstructor(JSC::VM& vm, JSC::JSObject* constructor);
 };
@@ -78,7 +78,7 @@ private:
     }
 
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
-    
+
 public:
     void setConstructor(JSC::VM& vm, JSC::JSObject* constructor);
 };

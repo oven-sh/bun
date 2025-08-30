@@ -176,14 +176,14 @@ describe("Yoga.Node", () => {
     };
 
     node.setDirtiedFunc(dirtiedFunc);
-    
+
     // markDirty requires a measure function
     node.setMeasureFunc(() => ({ width: 100, height: 50 }));
-    
+
     // Nodes start dirty, so clear the dirty flag first
     node.calculateLayout();
     expect(node.isDirty()).toBe(false);
-    
+
     // Now mark dirty - this should trigger the callback
     node.markDirty();
 

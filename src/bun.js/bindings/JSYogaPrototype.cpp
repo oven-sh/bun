@@ -18,17 +18,17 @@
 #endif
 
 // Macro to check if a Yoga node has been freed before using internal()
-#define CHECK_YOGA_NODE_FREED(thisObject) \
-    if (UNLIKELY(!thisObject->internal())) { \
+#define CHECK_YOGA_NODE_FREED(thisObject)                                                     \
+    if (UNLIKELY(!thisObject->internal())) {                                                  \
         throwTypeError(globalObject, scope, "Cannot perform operation on freed Yoga.Node"_s); \
-        return {}; \
+        return {};                                                                            \
     }
 
 // Macro to check if a Yoga config has been freed before using internal()
-#define CHECK_YOGA_CONFIG_FREED(thisObject) \
-    if (UNLIKELY(!thisObject->internal())) { \
+#define CHECK_YOGA_CONFIG_FREED(thisObject)                                                     \
+    if (UNLIKELY(!thisObject->internal())) {                                                    \
         throwTypeError(globalObject, scope, "Cannot perform operation on freed Yoga.Config"_s); \
-        return {}; \
+        return {};                                                                              \
     }
 
 namespace Bun {
@@ -77,7 +77,7 @@ static const JSC::HashTableValue JSYogaConfigPrototypeTableValues[] = {
 void JSYogaConfigPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    
+
     // Use reifyStaticProperties to add all methods at once
     reifyStaticProperties(vm, JSYogaConfig::info(), JSYogaConfigPrototypeTableValues, *this);
 }
@@ -204,7 +204,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsYogaNodeProtoFuncGetConfig);
 static JSC_DECLARE_HOST_FUNCTION(jsYogaNodeProtoFuncGetHasNewLayout);
 static JSC_DECLARE_HOST_FUNCTION(jsYogaNodeProtoFuncSetHasNewLayout);
 
-
 // Hash table for Node prototype properties
 static const JSC::HashTableValue JSYogaNodePrototypeTableValues[] = {
     { "reset"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncReset, 0 } },
@@ -265,12 +264,12 @@ static const JSC::HashTableValue JSYogaNodePrototypeTableValues[] = {
     { "setMeasureFunc"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncSetMeasureFunc, 1 } },
     { "setDirtiedFunc"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncSetDirtiedFunc, 1 } },
     { "setBaselineFunc"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncSetBaselineFunc, 1 } },
-    
+
     // Style setters
     { "setDirection"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncSetDirection, 1 } },
     { "setBorder"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncSetBorder, 2 } },
     { "setBoxSizing"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncSetBoxSizing, 1 } },
-    
+
     // Style getters
     { "getDirection"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncGetDirection, 0 } },
     { "getFlexDirection"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncGetFlexDirection, 0 } },
@@ -289,7 +288,7 @@ static const JSC::HashTableValue JSYogaNodePrototypeTableValues[] = {
     { "getGap"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncGetGap, 1 } },
     { "getBorder"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncGetBorder, 1 } },
     { "getBoxSizing"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncGetBoxSizing, 0 } },
-    
+
     // Layout getters
     { "getComputedLeft"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncGetComputedLeft, 0 } },
     { "getComputedTop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncGetComputedTop, 0 } },
@@ -300,11 +299,11 @@ static const JSC::HashTableValue JSYogaNodePrototypeTableValues[] = {
     { "getComputedMargin"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncGetComputedMargin, 1 } },
     { "getComputedBorder"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncGetComputedBorder, 1 } },
     { "getComputedPadding"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncGetComputedPadding, 1 } },
-    
+
     // Hierarchy methods
     { "removeAllChildren"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncRemoveAllChildren, 0 } },
     { "getOwner"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncGetOwner, 0 } },
-    
+
     // Utility methods
     { "freeRecursive"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncFreeRecursive, 0 } },
     { "copyStyle"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsYogaNodeProtoFuncCopyStyle, 1 } },
@@ -324,7 +323,7 @@ static const JSC::HashTableValue JSYogaNodePrototypeTableValues[] = {
 void JSYogaNodePrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    
+
     // Use reifyStaticProperties to add all methods at once
     reifyStaticProperties(vm, JSYogaNode::info(), JSYogaNodePrototypeTableValues, *this);
 }
@@ -345,7 +344,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaConfigProtoFuncSetUseWebDefaults, (JSC::JSGlobalO
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Config"_s, "setUseWebDefaults"_s);
     }
     CHECK_YOGA_CONFIG_FREED(thisObject);
-
 
     bool enabled = true;
     if (callFrame->argumentCount() > 0) {
@@ -368,7 +366,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaConfigProtoFuncUseWebDefaults, (JSC::JSGlobalObje
     }
     CHECK_YOGA_CONFIG_FREED(thisObject);
 
-
     // Legacy method - same as setUseWebDefaults(true)
     YGConfigSetUseWebDefaults(thisObject->internal(), true);
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -384,7 +381,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaConfigProtoFuncSetExperimentalFeatureEnabled, (JS
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Config"_s, "setExperimentalFeatureEnabled"_s);
     }
     CHECK_YOGA_CONFIG_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 2) {
         throwTypeError(globalObject, scope, "setExperimentalFeatureEnabled requires 2 arguments"_s);
@@ -412,7 +408,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaConfigProtoFuncIsExperimentalFeatureEnabled, (JSC
     }
     CHECK_YOGA_CONFIG_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         throwTypeError(globalObject, scope, "isExperimentalFeatureEnabled requires 1 argument"_s);
         return {};
@@ -435,7 +430,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaConfigProtoFuncSetPointScaleFactor, (JSC::JSGloba
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Config"_s, "setPointScaleFactor"_s);
     }
     CHECK_YOGA_CONFIG_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         throwTypeError(globalObject, scope, "setPointScaleFactor requires 1 argument"_s);
@@ -460,7 +454,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaConfigProtoFuncIsEnabledForNodes, (JSC::JSGlobalO
     }
     CHECK_YOGA_CONFIG_FREED(thisObject);
 
-
     // This method checks if a config is actively being used by any nodes
     // In the future, we might track this, but for now always return true if valid config
     return JSC::JSValue::encode(JSC::jsBoolean(thisObject->internal() != nullptr));
@@ -476,7 +469,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaConfigProtoFuncGetPointScaleFactor, (JSC::JSGloba
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Config"_s, "getPointScaleFactor"_s);
     }
     CHECK_YOGA_CONFIG_FREED(thisObject);
-
 
     if (UNLIKELY(!thisObject->internal())) {
         throwTypeError(globalObject, scope, "Cannot perform operation on freed Yoga.Config"_s);
@@ -497,7 +489,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaConfigProtoFuncSetErrata, (JSC::JSGlobalObject * 
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Config"_s, "setErrata"_s);
     }
     CHECK_YOGA_CONFIG_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         throwTypeError(globalObject, scope, "setErrata requires 1 argument"_s);
@@ -522,7 +513,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaConfigProtoFuncGetErrata, (JSC::JSGlobalObject * 
     }
     CHECK_YOGA_CONFIG_FREED(thisObject);
 
-
     YGErrata errata = YGConfigGetErrata(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(static_cast<int32_t>(errata)));
 }
@@ -537,7 +527,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaConfigProtoFuncFree, (JSC::JSGlobalObject * globa
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Config"_s, "free"_s);
     }
     CHECK_YOGA_CONFIG_FREED(thisObject);
-
 
     // Mark the config as freed by setting internal pointer to nullptr
     // The actual cleanup will happen in the destructor
@@ -560,7 +549,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaConfigProtoFuncGetUseWebDefaults, (JSC::JSGlobalO
     }
     CHECK_YOGA_CONFIG_FREED(thisObject);
 
-
     bool useWebDefaults = YGConfigGetUseWebDefaults(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsBoolean(useWebDefaults));
 }
@@ -582,7 +570,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaConfigProtoFuncSetContext, (JSC::JSGlobalObject *
 
     JSC::JSValue contextValue = callFrame->uncheckedArgument(0);
     thisObject->m_context.set(vm, thisObject, contextValue);
-    
+
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -612,11 +600,11 @@ static int bunLoggerCallback(
     // Note: We need to find the JSYogaConfig that owns this YGConfig
     // For now, we'll use a global map or store it in the config context
     // This is a limitation that should be addressed in a production implementation
-    
+
     // Format the message
     char buffer[1024];
     vsnprintf(buffer, sizeof(buffer), format, args);
-    
+
     // Since we can't easily get back to the JS config from the C config,
     // we'll need to store a mapping or use the context API
     // For now, just return 0 (success)
@@ -634,13 +622,12 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaConfigProtoFuncSetLogger, (JSC::JSGlobalObject * 
     }
     CHECK_YOGA_CONFIG_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
     JSC::JSValue loggerValue = callFrame->uncheckedArgument(0);
-    
+
     if (loggerValue.isNull() || loggerValue.isUndefined()) {
         // Clear the logger
         thisObject->m_loggerFunc.clear();
@@ -649,7 +636,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaConfigProtoFuncSetLogger, (JSC::JSGlobalObject * 
         // Set the logger function
         JSC::JSObject* func = loggerValue.getObject();
         thisObject->m_loggerFunc.set(vm, thisObject, func);
-        
+
         // Note: The current implementation of bunLoggerCallback doesn't actually
         // call the JS function because we need a way to get from the C config
         // back to the JS wrapper. This would require storing the JSYogaConfig
@@ -674,14 +661,14 @@ static YGNodeRef bunCloneNodeCallback(
     // 1. Get the JS wrapper for the old node
     // 2. Call the JS clone function
     // 3. Return the YGNodeRef from the cloned JS node
-    
+
     // Get the JS wrapper for the old node
     JSYogaNode* jsOldNode = JSYogaNode::fromYGNode(const_cast<YGNodeRef>(oldNode));
     if (!jsOldNode) {
         // If there's no JS wrapper, just use default cloning
         return YGNodeClone(oldNode);
     }
-    
+
     // For now, just use default cloning
     // A full implementation would need to call the JS function
     return YGNodeClone(oldNode);
@@ -698,13 +685,12 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaConfigProtoFuncSetCloneNodeFunc, (JSC::JSGlobalOb
     }
     CHECK_YOGA_CONFIG_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
     JSC::JSValue cloneFuncValue = callFrame->uncheckedArgument(0);
-    
+
     if (cloneFuncValue.isNull() || cloneFuncValue.isUndefined()) {
         // Clear the clone function
         thisObject->m_cloneNodeFunc.clear();
@@ -713,7 +699,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaConfigProtoFuncSetCloneNodeFunc, (JSC::JSGlobalOb
         // Set the clone function
         JSC::JSObject* func = cloneFuncValue.getObject();
         thisObject->m_cloneNodeFunc.set(vm, thisObject, func);
-        
+
         // Note: Similar limitation as logger callback - we need a way to
         // get from the C config back to the JS wrapper
         YGConfigSetCloneNodeFunc(thisObject->internal(), bunCloneNodeCallback);
@@ -752,12 +738,12 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncMarkDirty, (JSC::JSGlobalObject * gl
     }
 
     CHECK_YOGA_NODE_FREED(thisObject);
-    
+
     // Yoga only allows marking nodes dirty if they have a measure function
     // Check this condition to avoid the internal assertion failure
     YGNodeRef node = thisObject->internal();
     bool hasMeasureFunc = YGNodeHasMeasureFunc(node);
-    
+
     if (!hasMeasureFunc) {
         // Check if it's a leaf node (no children)
         uint32_t childCount = YGNodeGetChildCount(node);
@@ -765,7 +751,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncMarkDirty, (JSC::JSGlobalObject * gl
             throwTypeError(globalObject, scope, "Only leaf nodes with custom measure functions can be marked as dirty"_s);
             return {};
         }
-        
+
         // It's a leaf node but still needs a measure function
         throwTypeError(globalObject, scope, "Only nodes with custom measure functions can be marked as dirty"_s);
         return {};
@@ -786,7 +772,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncIsDirty, (JSC::JSGlobalObject * glob
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     bool isDirty = YGNodeIsDirty(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsBoolean(isDirty));
 }
@@ -801,7 +786,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncCalculateLayout, (JSC::JSGlobalObjec
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "calculateLayout"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     float width = YGUndefined;
     float height = YGUndefined;
@@ -845,7 +829,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedLayout, (JSC::JSGlobalObj
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     // Create object with computed layout values
     JSC::JSObject* layout = constructEmptyObject(globalObject);
 
@@ -870,7 +853,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncFree, (JSC::JSGlobalObject * globalO
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     // Clear the internal pointer - actual cleanup in destructor
     if (thisObject->internal()) {
         YGNodeFree(thisObject->internal());
@@ -891,7 +873,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetFlexDirection, (JSC::JSGlobalObje
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "setFlexDirection"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -915,7 +896,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetJustifyContent, (JSC::JSGlobalObj
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -937,7 +917,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetAlignItems, (JSC::JSGlobalObject 
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "setAlignItems"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -961,7 +940,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetAlignSelf, (JSC::JSGlobalObject *
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -983,7 +961,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetAlignContent, (JSC::JSGlobalObjec
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "setAlignContent"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -1007,7 +984,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetFlexWrap, (JSC::JSGlobalObject * 
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -1029,7 +1005,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetPositionType, (JSC::JSGlobalObjec
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "setPositionType"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -1053,7 +1028,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetDisplay, (JSC::JSGlobalObject * g
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -1075,7 +1049,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetOverflow, (JSC::JSGlobalObject * 
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "setOverflow"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -1100,7 +1073,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetFlex, (JSC::JSGlobalObject * glob
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -1122,7 +1094,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetFlexGrow, (JSC::JSGlobalObject * 
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "setFlexGrow"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -1146,7 +1117,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetFlexShrink, (JSC::JSGlobalObject 
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -1168,7 +1138,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetAspectRatio, (JSC::JSGlobalObject
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "setAspectRatio"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -1198,7 +1167,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncRemoveChild, (JSC::JSGlobalObject * 
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "removeChild"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         throwTypeError(globalObject, scope, "removeChild requires 1 argument"_s);
@@ -1240,7 +1208,7 @@ static YGSize bunMeasureCallback(
 {
     JSYogaNode* jsNode = JSYogaNode::fromYGNode(const_cast<YGNodeRef>(ygNode));
     if (!jsNode || !jsNode->m_measureFunc) {
-        return {0, 0};
+        return { 0, 0 };
     }
 
     JSC::JSGlobalObject* globalObject = jsNode->globalObject();
@@ -1257,13 +1225,13 @@ static YGSize bunMeasureCallback(
 
     JSC::MarkedArgumentBuffer args;
     args.append(argsObj);
-    
+
     JSC::CallData callData = JSC::getCallData(jsNode->m_measureFunc.get());
     JSC::JSValue result = JSC::call(globalObject, jsNode->m_measureFunc.get(), callData, jsNode, args);
-    
+
     if (scope.exception()) {
         scope.clearException();
-        return {0, 0};
+        return { 0, 0 };
     }
 
     // Extract width and height from result
@@ -1271,14 +1239,14 @@ static YGSize bunMeasureCallback(
         JSC::JSObject* resultObj = result.getObject();
         JSC::JSValue widthValue = resultObj->get(globalObject, JSC::Identifier::fromString(vm, "width"_s));
         JSC::JSValue heightValue = resultObj->get(globalObject, JSC::Identifier::fromString(vm, "height"_s));
-        
+
         float measuredWidth = widthValue.isNumber() ? static_cast<float>(widthValue.toNumber(globalObject)) : 0;
         float measuredHeight = heightValue.isNumber() ? static_cast<float>(heightValue.toNumber(globalObject)) : 0;
-        
-        return {measuredWidth, measuredHeight};
+
+        return { measuredWidth, measuredHeight };
     }
 
-    return {0, 0};
+    return { 0, 0 };
 }
 
 // Dirtied function callback
@@ -1311,7 +1279,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetDirtiedFunc, (JSC::JSGlobalObject
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -1332,7 +1299,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetDirtiedFunc, (JSC::JSGlobalObject
 }
 
 // Node method implementations - only missing functions that don't already exist
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetWidth, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetWidth, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1342,7 +1309,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetWidth, (JSC::JSGlobalObject* glob
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "setWidth"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (UNLIKELY(!thisObject->internal())) {
         throwTypeError(globalObject, scope, "Cannot perform operation on freed Yoga.Node"_s);
@@ -1355,7 +1321,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetWidth, (JSC::JSGlobalObject* glob
     }
 
     JSC::JSValue arg = callFrame->uncheckedArgument(0);
-    
+
     if (arg.isUndefinedOrNull()) {
         YGNodeStyleSetWidthAuto(thisObject->internal());
     } else if (arg.isNumber()) {
@@ -1363,7 +1329,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetWidth, (JSC::JSGlobalObject* glob
     } else if (arg.isString()) {
         String str = arg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         if (str == "auto"_s) {
             YGNodeStyleSetWidthAuto(thisObject->internal());
         } else if (str.endsWith('%')) {
@@ -1379,29 +1345,29 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetWidth, (JSC::JSGlobalObject* glob
         JSC::JSValue unitValue = obj->get(globalObject, JSC::Identifier::fromString(vm, "unit"_s));
         JSC::JSValue valueValue = obj->get(globalObject, JSC::Identifier::fromString(vm, "value"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         if (!unitValue.isNumber() || !valueValue.isNumber()) {
             throwTypeError(globalObject, scope, "Width object must have numeric 'unit' and 'value' properties"_s);
             return {};
         }
-        
+
         int unit = unitValue.toInt32(globalObject);
         float value = valueValue.toNumber(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         switch (unit) {
-            case YGUnitPoint:
-                YGNodeStyleSetWidth(thisObject->internal(), value);
-                break;
-            case YGUnitPercent:
-                YGNodeStyleSetWidthPercent(thisObject->internal(), value);
-                break;
-            case YGUnitAuto:
-                YGNodeStyleSetWidthAuto(thisObject->internal());
-                break;
-            default:
-                throwTypeError(globalObject, scope, "Invalid unit value"_s);
-                return {};
+        case YGUnitPoint:
+            YGNodeStyleSetWidth(thisObject->internal(), value);
+            break;
+        case YGUnitPercent:
+            YGNodeStyleSetWidthPercent(thisObject->internal(), value);
+            break;
+        case YGUnitAuto:
+            YGNodeStyleSetWidthAuto(thisObject->internal());
+            break;
+        default:
+            throwTypeError(globalObject, scope, "Invalid unit value"_s);
+            return {};
         }
     } else {
         throwTypeError(globalObject, scope, "Width must be a number, string, object, null, or undefined"_s);
@@ -1411,7 +1377,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetWidth, (JSC::JSGlobalObject* glob
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetHeight, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetHeight, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1422,14 +1388,13 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetHeight, (JSC::JSGlobalObject* glo
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         YGNodeStyleSetHeightAuto(thisObject->internal());
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
     JSC::JSValue arg = callFrame->uncheckedArgument(0);
-    
+
     if (arg.isUndefinedOrNull()) {
         YGNodeStyleSetHeightAuto(thisObject->internal());
     } else if (arg.isNumber()) {
@@ -1437,7 +1402,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetHeight, (JSC::JSGlobalObject* glo
     } else if (arg.isString()) {
         String str = arg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         if (str == "auto"_s) {
             YGNodeStyleSetHeightAuto(thisObject->internal());
         } else if (str.endsWith('%')) {
@@ -1453,29 +1418,29 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetHeight, (JSC::JSGlobalObject* glo
         JSC::JSValue unitValue = obj->get(globalObject, JSC::Identifier::fromString(vm, "unit"_s));
         JSC::JSValue valueValue = obj->get(globalObject, JSC::Identifier::fromString(vm, "value"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         if (!unitValue.isNumber() || !valueValue.isNumber()) {
             throwTypeError(globalObject, scope, "Height object must have numeric 'unit' and 'value' properties"_s);
             return {};
         }
-        
+
         int unit = unitValue.toInt32(globalObject);
         float value = valueValue.toNumber(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         switch (unit) {
-            case YGUnitPoint:
-                YGNodeStyleSetHeight(thisObject->internal(), value);
-                break;
-            case YGUnitPercent:
-                YGNodeStyleSetHeightPercent(thisObject->internal(), value);
-                break;
-            case YGUnitAuto:
-                YGNodeStyleSetHeightAuto(thisObject->internal());
-                break;
-            default:
-                throwTypeError(globalObject, scope, "Invalid unit value"_s);
-                return {};
+        case YGUnitPoint:
+            YGNodeStyleSetHeight(thisObject->internal(), value);
+            break;
+        case YGUnitPercent:
+            YGNodeStyleSetHeightPercent(thisObject->internal(), value);
+            break;
+        case YGUnitAuto:
+            YGNodeStyleSetHeightAuto(thisObject->internal());
+            break;
+        default:
+            throwTypeError(globalObject, scope, "Invalid unit value"_s);
+            return {};
         }
     } else {
         throwTypeError(globalObject, scope, "Height must be a number, string, object, null, or undefined"_s);
@@ -1485,7 +1450,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetHeight, (JSC::JSGlobalObject* glo
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMinWidth, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMinWidth, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1496,19 +1461,18 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMinWidth, (JSC::JSGlobalObject* g
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
     JSC::JSValue arg = callFrame->uncheckedArgument(0);
-    
+
     if (arg.isNumber()) {
         YGNodeStyleSetMinWidth(thisObject->internal(), arg.asNumber());
     } else if (arg.isString()) {
         String str = arg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         if (str.endsWith('%')) {
             String percentStr = str.substring(0, str.length() - 1);
             double percent = percentStr.toDouble();
@@ -1522,26 +1486,26 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMinWidth, (JSC::JSGlobalObject* g
         JSC::JSValue unitValue = obj->get(globalObject, JSC::Identifier::fromString(vm, "unit"_s));
         JSC::JSValue valueValue = obj->get(globalObject, JSC::Identifier::fromString(vm, "value"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         if (!unitValue.isNumber() || !valueValue.isNumber()) {
             throwTypeError(globalObject, scope, "MinWidth object must have numeric 'unit' and 'value' properties"_s);
             return {};
         }
-        
+
         int unit = unitValue.toInt32(globalObject);
         float value = valueValue.toNumber(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         switch (unit) {
-            case YGUnitPoint:
-                YGNodeStyleSetMinWidth(thisObject->internal(), value);
-                break;
-            case YGUnitPercent:
-                YGNodeStyleSetMinWidthPercent(thisObject->internal(), value);
-                break;
-            default:
-                throwTypeError(globalObject, scope, "Invalid unit value for minWidth"_s);
-                return {};
+        case YGUnitPoint:
+            YGNodeStyleSetMinWidth(thisObject->internal(), value);
+            break;
+        case YGUnitPercent:
+            YGNodeStyleSetMinWidthPercent(thisObject->internal(), value);
+            break;
+        default:
+            throwTypeError(globalObject, scope, "Invalid unit value for minWidth"_s);
+            return {};
         }
     } else {
         throwTypeError(globalObject, scope, "MinWidth must be a number, string, or object"_s);
@@ -1551,7 +1515,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMinWidth, (JSC::JSGlobalObject* g
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMinHeight, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMinHeight, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1562,19 +1526,18 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMinHeight, (JSC::JSGlobalObject* 
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
     JSC::JSValue arg = callFrame->uncheckedArgument(0);
-    
+
     if (arg.isNumber()) {
         YGNodeStyleSetMinHeight(thisObject->internal(), arg.asNumber());
     } else if (arg.isString()) {
         String str = arg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         if (str.endsWith('%')) {
             String percentStr = str.substring(0, str.length() - 1);
             double percent = percentStr.toDouble();
@@ -1588,26 +1551,26 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMinHeight, (JSC::JSGlobalObject* 
         JSC::JSValue unitValue = obj->get(globalObject, JSC::Identifier::fromString(vm, "unit"_s));
         JSC::JSValue valueValue = obj->get(globalObject, JSC::Identifier::fromString(vm, "value"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         if (!unitValue.isNumber() || !valueValue.isNumber()) {
             throwTypeError(globalObject, scope, "MinHeight object must have numeric 'unit' and 'value' properties"_s);
             return {};
         }
-        
+
         int unit = unitValue.toInt32(globalObject);
         float value = valueValue.toNumber(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         switch (unit) {
-            case YGUnitPoint:
-                YGNodeStyleSetMinHeight(thisObject->internal(), value);
-                break;
-            case YGUnitPercent:
-                YGNodeStyleSetMinHeightPercent(thisObject->internal(), value);
-                break;
-            default:
-                throwTypeError(globalObject, scope, "Invalid unit value for minHeight"_s);
-                return {};
+        case YGUnitPoint:
+            YGNodeStyleSetMinHeight(thisObject->internal(), value);
+            break;
+        case YGUnitPercent:
+            YGNodeStyleSetMinHeightPercent(thisObject->internal(), value);
+            break;
+        default:
+            throwTypeError(globalObject, scope, "Invalid unit value for minHeight"_s);
+            return {};
         }
     } else {
         throwTypeError(globalObject, scope, "MinHeight must be a number, string, or object"_s);
@@ -1617,7 +1580,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMinHeight, (JSC::JSGlobalObject* 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMaxWidth, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMaxWidth, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1628,19 +1591,18 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMaxWidth, (JSC::JSGlobalObject* g
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
     JSC::JSValue arg = callFrame->uncheckedArgument(0);
-    
+
     if (arg.isNumber()) {
         YGNodeStyleSetMaxWidth(thisObject->internal(), arg.asNumber());
     } else if (arg.isString()) {
         String str = arg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         if (str.endsWith('%')) {
             String percentStr = str.substring(0, str.length() - 1);
             double percent = percentStr.toDouble();
@@ -1654,26 +1616,26 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMaxWidth, (JSC::JSGlobalObject* g
         JSC::JSValue unitValue = obj->get(globalObject, JSC::Identifier::fromString(vm, "unit"_s));
         JSC::JSValue valueValue = obj->get(globalObject, JSC::Identifier::fromString(vm, "value"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         if (!unitValue.isNumber() || !valueValue.isNumber()) {
             throwTypeError(globalObject, scope, "MaxWidth object must have numeric 'unit' and 'value' properties"_s);
             return {};
         }
-        
+
         int unit = unitValue.toInt32(globalObject);
         float value = valueValue.toNumber(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         switch (unit) {
-            case YGUnitPoint:
-                YGNodeStyleSetMaxWidth(thisObject->internal(), value);
-                break;
-            case YGUnitPercent:
-                YGNodeStyleSetMaxWidthPercent(thisObject->internal(), value);
-                break;
-            default:
-                throwTypeError(globalObject, scope, "Invalid unit value for maxWidth"_s);
-                return {};
+        case YGUnitPoint:
+            YGNodeStyleSetMaxWidth(thisObject->internal(), value);
+            break;
+        case YGUnitPercent:
+            YGNodeStyleSetMaxWidthPercent(thisObject->internal(), value);
+            break;
+        default:
+            throwTypeError(globalObject, scope, "Invalid unit value for maxWidth"_s);
+            return {};
         }
     } else {
         throwTypeError(globalObject, scope, "MaxWidth must be a number, string, or object"_s);
@@ -1683,7 +1645,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMaxWidth, (JSC::JSGlobalObject* g
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMaxHeight, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMaxHeight, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1694,19 +1656,18 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMaxHeight, (JSC::JSGlobalObject* 
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
     JSC::JSValue arg = callFrame->uncheckedArgument(0);
-    
+
     if (arg.isNumber()) {
         YGNodeStyleSetMaxHeight(thisObject->internal(), arg.asNumber());
     } else if (arg.isString()) {
         String str = arg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         if (str.endsWith('%')) {
             String percentStr = str.substring(0, str.length() - 1);
             double percent = percentStr.toDouble();
@@ -1720,26 +1681,26 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMaxHeight, (JSC::JSGlobalObject* 
         JSC::JSValue unitValue = obj->get(globalObject, JSC::Identifier::fromString(vm, "unit"_s));
         JSC::JSValue valueValue = obj->get(globalObject, JSC::Identifier::fromString(vm, "value"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         if (!unitValue.isNumber() || !valueValue.isNumber()) {
             throwTypeError(globalObject, scope, "MaxHeight object must have numeric 'unit' and 'value' properties"_s);
             return {};
         }
-        
+
         int unit = unitValue.toInt32(globalObject);
         float value = valueValue.toNumber(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         switch (unit) {
-            case YGUnitPoint:
-                YGNodeStyleSetMaxHeight(thisObject->internal(), value);
-                break;
-            case YGUnitPercent:
-                YGNodeStyleSetMaxHeightPercent(thisObject->internal(), value);
-                break;
-            default:
-                throwTypeError(globalObject, scope, "Invalid unit value for maxHeight"_s);
-                return {};
+        case YGUnitPoint:
+            YGNodeStyleSetMaxHeight(thisObject->internal(), value);
+            break;
+        case YGUnitPercent:
+            YGNodeStyleSetMaxHeightPercent(thisObject->internal(), value);
+            break;
+        default:
+            throwTypeError(globalObject, scope, "Invalid unit value for maxHeight"_s);
+            return {};
         }
     } else {
         throwTypeError(globalObject, scope, "MaxHeight must be a number, string, or object"_s);
@@ -1749,7 +1710,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMaxHeight, (JSC::JSGlobalObject* 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetFlexBasis, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetFlexBasis, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1760,14 +1721,13 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetFlexBasis, (JSC::JSGlobalObject* 
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         YGNodeStyleSetFlexBasisAuto(thisObject->internal());
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
     JSC::JSValue arg = callFrame->uncheckedArgument(0);
-    
+
     if (arg.isUndefinedOrNull()) {
         YGNodeStyleSetFlexBasisAuto(thisObject->internal());
     } else if (arg.isNumber()) {
@@ -1775,7 +1735,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetFlexBasis, (JSC::JSGlobalObject* 
     } else if (arg.isString()) {
         String str = arg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         if (str == "auto"_s) {
             YGNodeStyleSetFlexBasisAuto(thisObject->internal());
         } else if (str.endsWith('%')) {
@@ -1791,29 +1751,29 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetFlexBasis, (JSC::JSGlobalObject* 
         JSC::JSValue unitValue = obj->get(globalObject, JSC::Identifier::fromString(vm, "unit"_s));
         JSC::JSValue valueValue = obj->get(globalObject, JSC::Identifier::fromString(vm, "value"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         if (!unitValue.isNumber() || !valueValue.isNumber()) {
             throwTypeError(globalObject, scope, "FlexBasis object must have numeric 'unit' and 'value' properties"_s);
             return {};
         }
-        
+
         int unit = unitValue.toInt32(globalObject);
         float value = valueValue.toNumber(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        
+
         switch (unit) {
-            case YGUnitPoint:
-                YGNodeStyleSetFlexBasis(thisObject->internal(), value);
-                break;
-            case YGUnitPercent:
-                YGNodeStyleSetFlexBasisPercent(thisObject->internal(), value);
-                break;
-            case YGUnitAuto:
-                YGNodeStyleSetFlexBasisAuto(thisObject->internal());
-                break;
-            default:
-                throwTypeError(globalObject, scope, "Invalid unit value for flexBasis"_s);
-                return {};
+        case YGUnitPoint:
+            YGNodeStyleSetFlexBasis(thisObject->internal(), value);
+            break;
+        case YGUnitPercent:
+            YGNodeStyleSetFlexBasisPercent(thisObject->internal(), value);
+            break;
+        case YGUnitAuto:
+            YGNodeStyleSetFlexBasisAuto(thisObject->internal());
+            break;
+        default:
+            throwTypeError(globalObject, scope, "Invalid unit value for flexBasis"_s);
+            return {};
         }
     } else {
         throwTypeError(globalObject, scope, "FlexBasis must be a number, string, object, null, or undefined"_s);
@@ -1823,7 +1783,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetFlexBasis, (JSC::JSGlobalObject* 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMargin, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMargin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1833,7 +1793,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMargin, (JSC::JSGlobalObject* glo
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "setMargin"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 2) {
         throwTypeError(globalObject, scope, "setMargin requires 2 arguments (edge, value)"_s);
@@ -1852,7 +1811,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMargin, (JSC::JSGlobalObject* glo
             YGNodeStyleSetMargin(thisObject->internal(), targetEdge, value);
         } else if (valueArg.isString()) {
             WTF::String str = valueArg.toString(globalObject)->value(globalObject);
-            
+
             if (str == "auto"_s) {
                 YGNodeStyleSetMarginAuto(thisObject->internal(), targetEdge);
             } else if (str.endsWith('%')) {
@@ -1866,20 +1825,20 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMargin, (JSC::JSGlobalObject* glo
             JSC::JSObject* obj = valueArg.getObject();
             JSC::JSValue unitValue = obj->get(globalObject, JSC::Identifier::fromString(vm, "unit"_s));
             JSC::JSValue value = obj->get(globalObject, JSC::Identifier::fromString(vm, "value"_s));
-            
+
             int unit = unitValue.toInt32(globalObject);
             float val = static_cast<float>(value.toNumber(globalObject));
-            
+
             switch (static_cast<YGUnit>(unit)) {
-                case YGUnitPercent:
-                    YGNodeStyleSetMarginPercent(thisObject->internal(), targetEdge, val);
-                    break;
-                case YGUnitAuto:
-                    YGNodeStyleSetMarginAuto(thisObject->internal(), targetEdge);
-                    break;
-                default:
-                    YGNodeStyleSetMargin(thisObject->internal(), targetEdge, val);
-                    break;
+            case YGUnitPercent:
+                YGNodeStyleSetMarginPercent(thisObject->internal(), targetEdge, val);
+                break;
+            case YGUnitAuto:
+                YGNodeStyleSetMarginAuto(thisObject->internal(), targetEdge);
+                break;
+            default:
+                YGNodeStyleSetMargin(thisObject->internal(), targetEdge, val);
+                break;
             }
         }
     };
@@ -1906,7 +1865,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMargin, (JSC::JSGlobalObject* glo
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetPadding, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetPadding, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1916,7 +1875,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetPadding, (JSC::JSGlobalObject* gl
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "setPadding"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 2) {
         throwTypeError(globalObject, scope, "setPadding requires 2 arguments (edge, value)"_s);
@@ -1935,7 +1893,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetPadding, (JSC::JSGlobalObject* gl
             YGNodeStyleSetPadding(thisObject->internal(), targetEdge, value);
         } else if (valueArg.isString()) {
             WTF::String str = valueArg.toString(globalObject)->value(globalObject);
-            
+
             if (str.endsWith('%')) {
                 float percent = str.substring(0, str.length() - 1).toFloat();
                 YGNodeStyleSetPaddingPercent(thisObject->internal(), targetEdge, percent);
@@ -1947,10 +1905,10 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetPadding, (JSC::JSGlobalObject* gl
             JSC::JSObject* obj = valueArg.getObject();
             JSC::JSValue unitValue = obj->get(globalObject, JSC::Identifier::fromString(vm, "unit"_s));
             JSC::JSValue value = obj->get(globalObject, JSC::Identifier::fromString(vm, "value"_s));
-            
+
             int unit = unitValue.toInt32(globalObject);
             float val = static_cast<float>(value.toNumber(globalObject));
-            
+
             if (static_cast<YGUnit>(unit) == YGUnitPercent) {
                 YGNodeStyleSetPaddingPercent(thisObject->internal(), targetEdge, val);
             } else {
@@ -1981,7 +1939,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetPadding, (JSC::JSGlobalObject* gl
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetPosition, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetPosition, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1991,7 +1949,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetPosition, (JSC::JSGlobalObject* g
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "setPosition"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 2) {
         throwTypeError(globalObject, scope, "setPosition requires 2 arguments (edge, value)"_s);
@@ -2010,7 +1967,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetPosition, (JSC::JSGlobalObject* g
             YGNodeStyleSetPosition(thisObject->internal(), targetEdge, value);
         } else if (valueArg.isString()) {
             WTF::String str = valueArg.toString(globalObject)->value(globalObject);
-            
+
             if (str.endsWith('%')) {
                 float percent = str.substring(0, str.length() - 1).toFloat();
                 YGNodeStyleSetPositionPercent(thisObject->internal(), targetEdge, percent);
@@ -2022,10 +1979,10 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetPosition, (JSC::JSGlobalObject* g
             JSC::JSObject* obj = valueArg.getObject();
             JSC::JSValue unitValue = obj->get(globalObject, JSC::Identifier::fromString(vm, "unit"_s));
             JSC::JSValue value = obj->get(globalObject, JSC::Identifier::fromString(vm, "value"_s));
-            
+
             int unit = unitValue.toInt32(globalObject);
             float val = static_cast<float>(value.toNumber(globalObject));
-            
+
             if (static_cast<YGUnit>(unit) == YGUnitPercent) {
                 YGNodeStyleSetPositionPercent(thisObject->internal(), targetEdge, val);
             } else {
@@ -2056,7 +2013,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetPosition, (JSC::JSGlobalObject* g
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetGap, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetGap, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2066,7 +2023,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetGap, (JSC::JSGlobalObject* global
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "setGap"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 2) {
         throwTypeError(globalObject, scope, "setGap requires 2 arguments (gutter, value)"_s);
@@ -2085,7 +2041,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetGap, (JSC::JSGlobalObject* global
             YGNodeStyleSetGap(thisObject->internal(), targetGutter, value);
         } else if (valueArg.isString()) {
             String str = valueArg.toWTFString(globalObject);
-            
+
             if (str.endsWith('%')) {
                 String numberPart = str.substring(0, str.length() - 1);
                 float percent = numberPart.toFloat();
@@ -2093,13 +2049,13 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetGap, (JSC::JSGlobalObject* global
             }
         } else if (valueArg.isObject()) {
             JSC::JSObject* obj = valueArg.toObject(globalObject);
-            
+
             JSC::JSValue unitValue = obj->get(globalObject, JSC::Identifier::fromString(vm, "unit"_s));
             JSC::JSValue valueValue = obj->get(globalObject, JSC::Identifier::fromString(vm, "value"_s));
-            
+
             int unit = unitValue.toInt32(globalObject);
             float value = valueValue.toFloat(globalObject);
-            
+
             if (unit == YGUnitPercent) {
                 YGNodeStyleSetGapPercent(thisObject->internal(), targetGutter, value);
             } else {
@@ -2122,7 +2078,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetGap, (JSC::JSGlobalObject* global
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetWidth, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetWidth, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2133,22 +2089,21 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetWidth, (JSC::JSGlobalObject* glob
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (UNLIKELY(!thisObject->internal())) {
         throwTypeError(globalObject, scope, "Cannot perform operation on freed Yoga.Node"_s);
         return {};
     }
 
     YGValue value = YGNodeStyleGetWidth(thisObject->internal());
-    
+
     JSC::JSObject* result = JSC::constructEmptyObject(globalObject);
     result->putDirect(vm, JSC::Identifier::fromString(vm, "value"_s), JSC::jsNumber(value.value));
     result->putDirect(vm, JSC::Identifier::fromString(vm, "unit"_s), JSC::jsNumber(static_cast<int>(value.unit)));
-    
+
     return JSC::JSValue::encode(result);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetHeight, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetHeight, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2159,17 +2114,16 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetHeight, (JSC::JSGlobalObject* glo
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGValue value = YGNodeStyleGetHeight(thisObject->internal());
-    
+
     JSC::JSObject* result = JSC::constructEmptyObject(globalObject);
     result->putDirect(vm, JSC::Identifier::fromString(vm, "value"_s), JSC::jsNumber(value.value));
     result->putDirect(vm, JSC::Identifier::fromString(vm, "unit"_s), JSC::jsNumber(static_cast<int>(value.unit)));
-    
+
     return JSC::JSValue::encode(result);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMinWidth, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMinWidth, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2180,17 +2134,16 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMinWidth, (JSC::JSGlobalObject* g
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGValue value = YGNodeStyleGetMinWidth(thisObject->internal());
-    
+
     JSC::JSObject* result = JSC::constructEmptyObject(globalObject);
     result->putDirect(vm, JSC::Identifier::fromString(vm, "value"_s), JSC::jsNumber(value.value));
     result->putDirect(vm, JSC::Identifier::fromString(vm, "unit"_s), JSC::jsNumber(static_cast<int>(value.unit)));
-    
+
     return JSC::JSValue::encode(result);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMinHeight, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMinHeight, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2201,17 +2154,16 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMinHeight, (JSC::JSGlobalObject* 
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGValue value = YGNodeStyleGetMinHeight(thisObject->internal());
-    
+
     JSC::JSObject* result = JSC::constructEmptyObject(globalObject);
     result->putDirect(vm, JSC::Identifier::fromString(vm, "value"_s), JSC::jsNumber(value.value));
     result->putDirect(vm, JSC::Identifier::fromString(vm, "unit"_s), JSC::jsNumber(static_cast<int>(value.unit)));
-    
+
     return JSC::JSValue::encode(result);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMaxWidth, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMaxWidth, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2222,17 +2174,16 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMaxWidth, (JSC::JSGlobalObject* g
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGValue value = YGNodeStyleGetMaxWidth(thisObject->internal());
-    
+
     JSC::JSObject* result = JSC::constructEmptyObject(globalObject);
     result->putDirect(vm, JSC::Identifier::fromString(vm, "value"_s), JSC::jsNumber(value.value));
     result->putDirect(vm, JSC::Identifier::fromString(vm, "unit"_s), JSC::jsNumber(static_cast<int>(value.unit)));
-    
+
     return JSC::JSValue::encode(result);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMaxHeight, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMaxHeight, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2243,17 +2194,16 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMaxHeight, (JSC::JSGlobalObject* 
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGValue value = YGNodeStyleGetMaxHeight(thisObject->internal());
-    
+
     JSC::JSObject* result = JSC::constructEmptyObject(globalObject);
     result->putDirect(vm, JSC::Identifier::fromString(vm, "value"_s), JSC::jsNumber(value.value));
     result->putDirect(vm, JSC::Identifier::fromString(vm, "unit"_s), JSC::jsNumber(static_cast<int>(value.unit)));
-    
+
     return JSC::JSValue::encode(result);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetFlexBasis, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetFlexBasis, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2264,17 +2214,16 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetFlexBasis, (JSC::JSGlobalObject* 
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGValue value = YGNodeStyleGetFlexBasis(thisObject->internal());
-    
+
     JSC::JSObject* result = JSC::constructEmptyObject(globalObject);
     result->putDirect(vm, JSC::Identifier::fromString(vm, "value"_s), JSC::jsNumber(value.value));
     result->putDirect(vm, JSC::Identifier::fromString(vm, "unit"_s), JSC::jsNumber(static_cast<int>(value.unit)));
-    
+
     return JSC::JSValue::encode(result);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMargin, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMargin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2285,7 +2234,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMargin, (JSC::JSGlobalObject* glo
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         throwTypeError(globalObject, scope, "getMargin requires 1 argument (edge)"_s);
         return {};
@@ -2295,16 +2243,16 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetMargin, (JSC::JSGlobalObject* glo
     RETURN_IF_EXCEPTION(scope, {});
 
     YGValue value = YGNodeStyleGetMargin(thisObject->internal(), static_cast<YGEdge>(edge));
-    
+
     // Create the return object { unit, value }
     auto* result = JSC::constructEmptyObject(globalObject);
     result->putDirect(vm, JSC::Identifier::fromString(vm, "unit"_s), JSC::jsNumber(static_cast<int>(value.unit)));
     result->putDirect(vm, JSC::Identifier::fromString(vm, "value"_s), JSC::jsNumber(value.value));
-    
+
     return JSC::JSValue::encode(result);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetPadding, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetPadding, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2315,7 +2263,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetPadding, (JSC::JSGlobalObject* gl
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         throwTypeError(globalObject, scope, "getPadding requires 1 argument (edge)"_s);
         return {};
@@ -2325,16 +2272,16 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetPadding, (JSC::JSGlobalObject* gl
     RETURN_IF_EXCEPTION(scope, {});
 
     YGValue value = YGNodeStyleGetPadding(thisObject->internal(), static_cast<YGEdge>(edge));
-    
+
     // Create the return object { unit, value }
     auto* result = JSC::constructEmptyObject(globalObject);
     result->putDirect(vm, JSC::Identifier::fromString(vm, "unit"_s), JSC::jsNumber(static_cast<int>(value.unit)));
     result->putDirect(vm, JSC::Identifier::fromString(vm, "value"_s), JSC::jsNumber(value.value));
-    
+
     return JSC::JSValue::encode(result);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetPosition, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetPosition, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2345,7 +2292,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetPosition, (JSC::JSGlobalObject* g
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         throwTypeError(globalObject, scope, "getPosition requires 1 argument (edge)"_s);
         return {};
@@ -2355,16 +2301,16 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetPosition, (JSC::JSGlobalObject* g
     RETURN_IF_EXCEPTION(scope, {});
 
     YGValue value = YGNodeStyleGetPosition(thisObject->internal(), static_cast<YGEdge>(edge));
-    
+
     // Create the return object { unit, value }
     auto* result = JSC::constructEmptyObject(globalObject);
     result->putDirect(vm, JSC::Identifier::fromString(vm, "unit"_s), JSC::jsNumber(static_cast<int>(value.unit)));
     result->putDirect(vm, JSC::Identifier::fromString(vm, "value"_s), JSC::jsNumber(value.value));
-    
+
     return JSC::JSValue::encode(result);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncInsertChild, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncInsertChild, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2374,7 +2320,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncInsertChild, (JSC::JSGlobalObject* g
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "insertChild"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 2) {
         throwTypeError(globalObject, scope, "insertChild requires 2 arguments (child, index)"_s);
@@ -2394,7 +2339,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncInsertChild, (JSC::JSGlobalObject* g
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetChild, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetChild, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2404,7 +2349,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetChild, (JSC::JSGlobalObject* glob
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "getChild"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         throwTypeError(globalObject, scope, "getChild requires 1 argument (index)"_s);
@@ -2428,7 +2372,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetChild, (JSC::JSGlobalObject* glob
     return JSC::JSValue::encode(childJSNode);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetParent, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetParent, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2438,7 +2382,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetParent, (JSC::JSGlobalObject* glo
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "getParent"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     YGNodeRef parentYGNode = YGNodeGetParent(thisObject->internal());
     if (!parentYGNode) {
@@ -2454,7 +2397,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetParent, (JSC::JSGlobalObject* glo
     return JSC::JSValue::encode(parentJSNode);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMeasureFunc, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMeasureFunc, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2465,13 +2408,12 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMeasureFunc, (JSC::JSGlobalObject
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
     JSC::JSValue funcArg = callFrame->uncheckedArgument(0);
-    
+
     if (funcArg.isNull() || funcArg.isUndefined()) {
         // Clear the measure function
         thisObject->m_measureFunc.clear();
@@ -2489,7 +2431,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetMeasureFunc, (JSC::JSGlobalObject
 }
 
 // Style setter implementations
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetDirection, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetDirection, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2499,7 +2441,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetDirection, (JSC::JSGlobalObject* 
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "setDirection"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -2512,7 +2453,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetDirection, (JSC::JSGlobalObject* 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetBorder, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetBorder, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2523,7 +2464,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetBorder, (JSC::JSGlobalObject* glo
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 2) {
         throwTypeError(globalObject, scope, "setBorder requires 2 arguments (edge, value)"_s);
         return {};
@@ -2531,7 +2471,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetBorder, (JSC::JSGlobalObject* glo
 
     int edge = callFrame->uncheckedArgument(0).toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    
+
     float value = static_cast<float>(callFrame->uncheckedArgument(1).toNumber(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -2546,11 +2486,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetBorder, (JSC::JSGlobalObject* glo
     } else {
         YGNodeStyleSetBorder(thisObject->internal(), static_cast<YGEdge>(edge), value);
     }
-    
+
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetBoxSizing, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetBoxSizing, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2560,7 +2500,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetBoxSizing, (JSC::JSGlobalObject* 
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "setBoxSizing"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -2574,7 +2513,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetBoxSizing, (JSC::JSGlobalObject* 
 }
 
 // Style getter implementations
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetDirection, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetDirection, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2585,12 +2524,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetDirection, (JSC::JSGlobalObject* 
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGDirection direction = YGNodeStyleGetDirection(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(static_cast<int>(direction)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetFlexDirection, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetFlexDirection, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2601,12 +2539,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetFlexDirection, (JSC::JSGlobalObje
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGFlexDirection flexDirection = YGNodeStyleGetFlexDirection(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(static_cast<int>(flexDirection)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetJustifyContent, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetJustifyContent, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2617,12 +2554,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetJustifyContent, (JSC::JSGlobalObj
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGJustify justifyContent = YGNodeStyleGetJustifyContent(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(static_cast<int>(justifyContent)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetAlignContent, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetAlignContent, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2633,12 +2569,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetAlignContent, (JSC::JSGlobalObjec
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGAlign alignContent = YGNodeStyleGetAlignContent(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(static_cast<int>(alignContent)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetAlignItems, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetAlignItems, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2649,12 +2584,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetAlignItems, (JSC::JSGlobalObject*
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGAlign alignItems = YGNodeStyleGetAlignItems(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(static_cast<int>(alignItems)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetAlignSelf, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetAlignSelf, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2665,12 +2599,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetAlignSelf, (JSC::JSGlobalObject* 
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGAlign alignSelf = YGNodeStyleGetAlignSelf(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(static_cast<int>(alignSelf)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetPositionType, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetPositionType, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2681,12 +2614,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetPositionType, (JSC::JSGlobalObjec
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGPositionType positionType = YGNodeStyleGetPositionType(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(static_cast<int>(positionType)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetFlexWrap, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetFlexWrap, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2697,12 +2629,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetFlexWrap, (JSC::JSGlobalObject* g
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGWrap flexWrap = YGNodeStyleGetFlexWrap(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(static_cast<int>(flexWrap)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetOverflow, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetOverflow, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2713,12 +2644,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetOverflow, (JSC::JSGlobalObject* g
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGOverflow overflow = YGNodeStyleGetOverflow(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(static_cast<int>(overflow)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetDisplay, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetDisplay, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2729,12 +2659,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetDisplay, (JSC::JSGlobalObject* gl
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGDisplay display = YGNodeStyleGetDisplay(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(static_cast<int>(display)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetFlex, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetFlex, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2745,12 +2674,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetFlex, (JSC::JSGlobalObject* globa
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     float flex = YGNodeStyleGetFlex(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(flex));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetFlexGrow, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetFlexGrow, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2761,12 +2689,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetFlexGrow, (JSC::JSGlobalObject* g
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     float flexGrow = YGNodeStyleGetFlexGrow(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(flexGrow));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetFlexShrink, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetFlexShrink, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2777,12 +2704,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetFlexShrink, (JSC::JSGlobalObject*
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     float flexShrink = YGNodeStyleGetFlexShrink(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(flexShrink));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetAspectRatio, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetAspectRatio, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2793,12 +2719,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetAspectRatio, (JSC::JSGlobalObject
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     float aspectRatio = YGNodeStyleGetAspectRatio(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(aspectRatio));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetGap, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetGap, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2809,7 +2734,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetGap, (JSC::JSGlobalObject* global
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         throwTypeError(globalObject, scope, "getGap requires 1 argument (gutter)"_s);
         return {};
@@ -2819,15 +2743,15 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetGap, (JSC::JSGlobalObject* global
     RETURN_IF_EXCEPTION(scope, {});
 
     YGValue gap = YGNodeStyleGetGap(thisObject->internal(), static_cast<YGGutter>(gutter));
-    
+
     JSC::JSObject* result = JSC::constructEmptyObject(globalObject);
     result->putDirect(vm, JSC::Identifier::fromString(vm, "value"_s), JSC::jsNumber(gap.value));
     result->putDirect(vm, JSC::Identifier::fromString(vm, "unit"_s), JSC::jsNumber(static_cast<int>(gap.unit)));
-    
+
     return JSC::JSValue::encode(result);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetBorder, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetBorder, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2837,7 +2761,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetBorder, (JSC::JSGlobalObject* glo
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "getBorder"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         throwTypeError(globalObject, scope, "getBorder requires 1 argument (edge)"_s);
@@ -2851,7 +2774,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetBorder, (JSC::JSGlobalObject* glo
     return JSC::JSValue::encode(JSC::jsNumber(border));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetBoxSizing, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetBoxSizing, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2862,13 +2785,12 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetBoxSizing, (JSC::JSGlobalObject* 
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGBoxSizing boxSizing = YGNodeStyleGetBoxSizing(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(static_cast<int>(boxSizing)));
 }
 
 // Layout getter implementations
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedLeft, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedLeft, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2879,12 +2801,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedLeft, (JSC::JSGlobalObjec
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     float left = YGNodeLayoutGetLeft(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(left));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedTop, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedTop, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2895,12 +2816,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedTop, (JSC::JSGlobalObject
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     float top = YGNodeLayoutGetTop(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(top));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedRight, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedRight, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2911,12 +2831,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedRight, (JSC::JSGlobalObje
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     float right = YGNodeLayoutGetRight(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(right));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedBottom, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedBottom, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2927,12 +2846,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedBottom, (JSC::JSGlobalObj
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     float bottom = YGNodeLayoutGetBottom(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(bottom));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedWidth, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedWidth, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2943,12 +2861,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedWidth, (JSC::JSGlobalObje
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     float width = YGNodeLayoutGetWidth(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(width));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedHeight, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedHeight, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2959,12 +2876,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedHeight, (JSC::JSGlobalObj
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     float height = YGNodeLayoutGetHeight(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(height));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedMargin, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedMargin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2974,7 +2890,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedMargin, (JSC::JSGlobalObj
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "getComputedMargin"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         throwTypeError(globalObject, scope, "getComputedMargin requires 1 argument (edge)"_s);
@@ -2988,7 +2903,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedMargin, (JSC::JSGlobalObj
     return JSC::JSValue::encode(JSC::jsNumber(margin));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedBorder, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedBorder, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2998,7 +2913,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedBorder, (JSC::JSGlobalObj
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "getComputedBorder"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         throwTypeError(globalObject, scope, "getComputedBorder requires 1 argument (edge)"_s);
@@ -3012,7 +2926,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedBorder, (JSC::JSGlobalObj
     return JSC::JSValue::encode(JSC::jsNumber(border));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedPadding, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedPadding, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3022,7 +2936,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedPadding, (JSC::JSGlobalOb
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "getComputedPadding"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         throwTypeError(globalObject, scope, "getComputedPadding requires 1 argument (edge)"_s);
@@ -3037,7 +2950,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetComputedPadding, (JSC::JSGlobalOb
 }
 
 // Hierarchy method implementations
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncRemoveAllChildren, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncRemoveAllChildren, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3048,12 +2961,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncRemoveAllChildren, (JSC::JSGlobalObj
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGNodeRemoveAllChildren(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetOwner, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetOwner, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3063,7 +2975,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetOwner, (JSC::JSGlobalObject* glob
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "getOwner"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     YGNodeRef owner = YGNodeGetOwner(thisObject->internal());
     if (!owner) {
@@ -3076,7 +2987,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetOwner, (JSC::JSGlobalObject* glob
 }
 
 // Utility method implementations
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncFreeRecursive, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncFreeRecursive, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3087,7 +2998,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncFreeRecursive, (JSC::JSGlobalObject*
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGNodeRef node = thisObject->internal();
     if (!node) {
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -3096,14 +3006,14 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncFreeRecursive, (JSC::JSGlobalObject*
     // Clear JS wrapper references recursively using a vector as a stack
     Vector<YGNodeRef> stack;
     stack.append(node);
-    
+
     while (!stack.isEmpty()) {
         YGNodeRef currentNode = stack.takeLast();
         if (!currentNode) continue;
-        
+
         // Get child count before processing
         uint32_t childCount = YGNodeGetChildCount(currentNode);
-        
+
         // Add all children to the stack for processing
         for (uint32_t i = 0; i < childCount; i++) {
             YGNodeRef childNode = YGNodeGetChild(currentNode, i);
@@ -3111,21 +3021,21 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncFreeRecursive, (JSC::JSGlobalObject*
                 stack.append(childNode);
             }
         }
-        
+
         // Clear the JS wrapper for this node
         JSYogaNode* jsNode = JSYogaNode::fromYGNode(currentNode);
         if (jsNode) {
             jsNode->clearInternal();
         }
     }
-    
+
     // Now free the Yoga nodes
     YGNodeFreeRecursive(node);
-    
+
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncCopyStyle, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncCopyStyle, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3135,7 +3045,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncCopyStyle, (JSC::JSGlobalObject* glo
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "copyStyle"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         throwTypeError(globalObject, scope, "copyStyle requires 1 argument (sourceNode)"_s);
@@ -3152,7 +3061,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncCopyStyle, (JSC::JSGlobalObject* glo
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncClone, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncClone, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3163,19 +3072,18 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncClone, (JSC::JSGlobalObject* globalO
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGNodeRef clonedNode = YGNodeClone(thisObject->internal());
-    
+
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSC::Structure* structure = zigGlobalObject->m_JSYogaNodeClassStructure.get(zigGlobalObject);
-    
+
     // Create a new JSYogaNode wrapper for the cloned node
     JSYogaNode* jsClonedNode = JSYogaNode::create(vm, structure, nullptr);
     // Replace the internal node with the cloned one
     YGNodeFree(jsClonedNode->internal());
     jsClonedNode->setInternal(clonedNode);
     YGNodeSetContext(clonedNode, jsClonedNode);
-    
+
     // Copy JavaScript callbacks from the original node
     if (thisObject->m_measureFunc) {
         jsClonedNode->m_measureFunc.set(vm, jsClonedNode, thisObject->m_measureFunc.get());
@@ -3183,31 +3091,31 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncClone, (JSC::JSGlobalObject* globalO
     if (thisObject->m_dirtiedFunc) {
         jsClonedNode->m_dirtiedFunc.set(vm, jsClonedNode, thisObject->m_dirtiedFunc.get());
     }
-    
+
     // Update context pointers for all cloned children using iterative approach
     struct NodePair {
         YGNodeRef original;
         YGNodeRef cloned;
     };
-    
+
     Vector<NodePair> stack;
-    stack.append({thisObject->internal(), clonedNode});
-    
+    stack.append({ thisObject->internal(), clonedNode });
+
     while (!stack.isEmpty()) {
         NodePair pair = stack.takeLast();
         uint32_t childCount = YGNodeGetChildCount(pair.cloned);
-        
+
         for (uint32_t i = 0; i < childCount; i++) {
             YGNodeRef clonedChild = YGNodeGetChild(pair.cloned, i);
             YGNodeRef originalChild = YGNodeGetChild(pair.original, i);
-            
+
             if (clonedChild && originalChild) {
                 // Create JS wrapper for cloned child
                 JSYogaNode* jsClonedChild = JSYogaNode::create(vm, structure, nullptr);
                 YGNodeFree(jsClonedChild->internal());
                 jsClonedChild->setInternal(clonedChild);
                 YGNodeSetContext(clonedChild, jsClonedChild);
-                
+
                 // Copy callbacks from original child
                 JSYogaNode* jsOriginalChild = JSYogaNode::fromYGNode(originalChild);
                 if (jsOriginalChild) {
@@ -3226,17 +3134,17 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncClone, (JSC::JSGlobalObject* globalO
                         jsClonedChild->m_config.set(vm, jsClonedChild, jsOriginalChild->m_config.get());
                     }
                 }
-                
+
                 // Add to stack for processing grandchildren
-                stack.append({originalChild, clonedChild});
+                stack.append({ originalChild, clonedChild });
             }
         }
     }
-    
+
     return JSC::JSValue::encode(jsClonedNode);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetNodeType, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetNodeType, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3246,7 +3154,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetNodeType, (JSC::JSGlobalObject* g
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "setNodeType"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -3259,7 +3166,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetNodeType, (JSC::JSGlobalObject* g
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetNodeType, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetNodeType, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3270,12 +3177,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetNodeType, (JSC::JSGlobalObject* g
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     YGNodeType nodeType = YGNodeGetNodeType(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsNumber(static_cast<int>(nodeType)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetIsReferenceBaseline, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetIsReferenceBaseline, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3285,7 +3191,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetIsReferenceBaseline, (JSC::JSGlob
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "setIsReferenceBaseline"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -3298,7 +3203,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetIsReferenceBaseline, (JSC::JSGlob
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncIsReferenceBaseline, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncIsReferenceBaseline, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3309,12 +3214,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncIsReferenceBaseline, (JSC::JSGlobalO
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     bool isReferenceBaseline = YGNodeIsReferenceBaseline(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsBoolean(isReferenceBaseline));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetContext, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetContext, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3329,7 +3233,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetContext, (JSC::JSGlobalObject* gl
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetContext, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetContext, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3343,7 +3247,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetContext, (JSC::JSGlobalObject* gl
     return JSC::JSValue::encode(JSC::jsNull());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetConfig, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetConfig, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3353,7 +3257,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetConfig, (JSC::JSGlobalObject* glo
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "setConfig"_s);
     }
     CHECK_YOGA_CONFIG_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -3375,7 +3278,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetConfig, (JSC::JSGlobalObject* glo
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetConfig, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetConfig, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3386,26 +3289,25 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetConfig, (JSC::JSGlobalObject* glo
     }
     CHECK_YOGA_CONFIG_FREED(thisObject);
 
-
     // Return the stored JSYogaConfig if available
     JSC::JSValue config = thisObject->m_config.get();
     if (config) {
         return JSC::JSValue::encode(config);
     }
-    
+
     // If no stored config, try to get it from the Yoga node
     YGConfigConstRef ygConfig = YGNodeGetConfig(thisObject->internal());
     if (!ygConfig) {
         return JSC::JSValue::encode(JSC::jsNull());
     }
-    
+
     // We have a YGConfig but no JSYogaConfig wrapper stored
     // This can happen for nodes created without a config parameter
     // For now, return null
     return JSC::JSValue::encode(JSC::jsNull());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetHasNewLayout, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetHasNewLayout, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3416,12 +3318,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncGetHasNewLayout, (JSC::JSGlobalObjec
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     bool hasNewLayout = YGNodeGetHasNewLayout(thisObject->internal());
     return JSC::JSValue::encode(JSC::jsBoolean(hasNewLayout));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetHasNewLayout, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetHasNewLayout, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3431,7 +3332,6 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetHasNewLayout, (JSC::JSGlobalObjec
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Node"_s, "setHasNewLayout"_s);
     }
     CHECK_YOGA_NODE_FREED(thisObject);
-
 
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
@@ -3463,7 +3363,7 @@ static float bunBaselineCallback(YGNodeConstRef ygNode, float width, float heigh
     args.append(JSC::jsNumber(height));
 
     JSC::JSValue result = JSC::call(globalObject, jsNode->m_baselineFunc.get(), jsNode, args, "baseline function"_s);
-    
+
     if (scope.exception()) {
         scope.clearException();
         return height; // Return default on error
@@ -3479,7 +3379,7 @@ static float bunBaselineCallback(YGNodeConstRef ygNode, float width, float heigh
     return static_cast<float>(baseline);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetBaselineFunc, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetBaselineFunc, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3490,13 +3390,12 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetBaselineFunc, (JSC::JSGlobalObjec
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-
     if (callFrame->argumentCount() < 1) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
     JSC::JSValue baselineValue = callFrame->uncheckedArgument(0);
-    
+
     if (baselineValue.isNull() || baselineValue.isUndefined()) {
         // Clear the baseline function
         thisObject->m_baselineFunc.clear();

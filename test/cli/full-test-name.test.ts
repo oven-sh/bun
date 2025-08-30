@@ -1,4 +1,3 @@
-import { $ } from "bun";
 import { expect, test } from "bun:test";
 import { bunExe, tempDirWithFiles } from "harness";
 
@@ -29,11 +28,7 @@ test("top level test", () => {
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   const output = stdout + stderr;
@@ -63,11 +58,7 @@ test("top level test", () => {
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   const output = stdout + stderr;
@@ -107,23 +98,22 @@ test("top level test", () => {
   // Test multiple tests from different describe blocks
   await using proc = Bun.spawn({
     cmd: [
-      bunExe(), 
-      "test", 
-      "test.test.js", 
-      "--full-test-name", "auth login test",
-      "--full-test-name", "user profile test", 
-      "--full-test-name", "top level test"
+      bunExe(),
+      "test",
+      "test.test.js",
+      "--full-test-name",
+      "auth login test",
+      "--full-test-name",
+      "user profile test",
+      "--full-test-name",
+      "top level test",
     ],
     cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   const output = stdout + stderr;
@@ -141,22 +131,13 @@ test("simple test", () => {
   });
 
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(), 
-      "test", 
-      "test.test.js", 
-      "--test-name-pattern", "simple",
-      "--full-test-name", "simple test"
-    ],
+    cmd: [bunExe(), "test", "test.test.js", "--test-name-pattern", "simple", "--full-test-name", "simple test"],
     cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(1);
   expect(stderr).toContain("--full-test-name and --test-name-pattern cannot be used together");
@@ -180,10 +161,7 @@ test("existing test", () => {
       stdout: "pipe",
     });
 
-    const [stderr, exitCode] = await Promise.all([
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(1);
     expect(stderr).toContain("test name matched 0 tests");
@@ -193,21 +171,20 @@ test("existing test", () => {
   {
     await using proc = Bun.spawn({
       cmd: [
-        bunExe(), 
-        "test", 
-        "test.test.js", 
-        "--full-test-name", "nonexistent test 1",
-        "--full-test-name", "nonexistent test 2"
+        bunExe(),
+        "test",
+        "test.test.js",
+        "--full-test-name",
+        "nonexistent test 1",
+        "--full-test-name",
+        "nonexistent test 2",
       ],
       cwd: dir,
-      stderr: "pipe", 
+      stderr: "pipe",
       stdout: "pipe",
     });
 
-    const [stderr, exitCode] = await Promise.all([
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(1);
     expect(stderr).toContain("test names matched 0 tests");

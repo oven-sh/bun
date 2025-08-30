@@ -2011,7 +2011,7 @@ inline fn createScope(
                 appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
                 buffer.append(label) catch unreachable;
                 const full_test_name = buffer.slice();
-                
+
                 // Check if the test name matches any of the provided filters
                 var matches = false;
                 var expected_name_buffer: [1024]u8 = undefined;
@@ -2407,7 +2407,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                     appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
                     buffer.append(formattedLabel) catch unreachable;
                     const full_test_name = buffer.slice();
-                    
+
                     // Check if the test name matches any of the provided filters
                     var matches = false;
                     var expected_name_buffer: [1024]u8 = undefined;

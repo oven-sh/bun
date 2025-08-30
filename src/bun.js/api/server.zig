@@ -1247,6 +1247,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub fn closeIdleConnections(this: *ThisServer, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             _ = globalObject;
             _ = callframe;
+            if (this.app == null) return .js_undefined;
             this.app.?.closeIdleConnections();
             return .js_undefined;
         }

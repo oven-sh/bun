@@ -34,8 +34,6 @@ struct HttpFlags {
     bool requireHostHeader: 1 = true;
     bool isAuthorized: 1 = false;
     bool useStrictMethodValidation: 1 = false;
-    bool isIdle: 1 = true;
-    bool shouldCloseOnceIdle: 1 = false;
 };
 
 template <bool SSL>

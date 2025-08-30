@@ -55,8 +55,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* We are done with this request */
         this->state &= ~HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
 
-        uWS::HttpContextData<SSL> *httpContextData = uWS::HttpContext<SSL>::getSocketContextDataS((us_socket_t *) uwsRes);
-        httpContextData->flags.isIdle = true;
+        HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
+        httpResponseData->isIdle = true;
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */
@@ -108,6 +108,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     uint8_t state = 0;
     uint8_t idleTimeout = 10; // default HTTP_TIMEOUT 10 seconds
     bool fromAncientRequest = false;
+    bool isIdle = true;
+    bool shouldCloseOnceIdle = false;
 
 
 #ifdef UWS_WITH_PROXY

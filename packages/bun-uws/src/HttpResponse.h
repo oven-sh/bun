@@ -50,6 +50,11 @@ public:
     HttpResponseData<SSL> *getHttpResponseData() {
         return (HttpResponseData<SSL> *) Super::getAsyncSocketData();
     }
+
+    static HttpResponseData<SSL> *getHttpResponseDataS(us_socket_t *s) {
+        return (HttpResponseData<SSL> *) us_socket_ext(SSL, s);
+    }
+
     void setTimeout(uint8_t seconds) {
         auto* data = getHttpResponseData();
         data->idleTimeout = seconds;

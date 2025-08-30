@@ -303,10 +303,10 @@ public:
         auto context = (struct us_socket_context_t *)this->httpContext;
         struct us_socket_t *s = context->head_sockets;
         while (s) {
-            HttpContextData<SSL> *httpContextData = HttpContext<SSL>::getSocketContextDataS(s);
-            httpContextData->flags.shouldCloseOnceIdle = true;
+            HttpResponseData<SSL> *httpResponseData = HttpResponse<SSL>::getHttpResponseDataS(s);
+            httpResponseData->shouldCloseOnceIdle = true;
             struct us_socket_t *next = s->next;
-            if (httpContextData->flags.isIdle) {
+            if (httpResponseData->isIdle) {
                 us_socket_close(SSL, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
             }
             s = next;

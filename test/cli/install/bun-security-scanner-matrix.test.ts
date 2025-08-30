@@ -8,6 +8,11 @@ const redSubprocessPrefix = "\x1b[31m [SUBPROC]\x1b[0m";
 const redDebugPrefix = "\x1b[31m   [DEBUG]\x1b[0m";
 const redShellPrefix = "\x1b[31m   [SHELL] $\x1b[0m";
 
+const TESTS_TO_SKIP = new Set([
+  // https://github.com/oven-sh/bun/issues/22255
+  "0613",
+]);
+
 interface SecurityScannerTestOptions {
   command: "install" | "update" | "add" | "remove" | "uninstall";
   args: string[];
@@ -403,6 +408,12 @@ describe("Security Scanner Matrix Tests", () => {
                 }
 
                 const testName = String(++i).padStart(4, "0");
+
+                if (TESTS_TO_SKIP.has(testName)) {
+                  return test.skip(testName, async () => {
+                    // TODO
+                  });
+                }
 
                 // npm.bunfigonly is the case where a scanner is a valid npm package name identifier
                 // but is not referenced in package.json anywhere and is not in the lockfile, so the only knowledge

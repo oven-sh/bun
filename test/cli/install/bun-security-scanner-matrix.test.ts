@@ -200,12 +200,12 @@ scanner = "${scannerPath}"`,
     env: bunEnv,
   });
 
-  let text = "";
+  let errAndOut = "";
 
-  const write = (chunk: Uint8Array, stream: NodeJS.WriteStream, decoder: TextDecoder) => {
+  const write = (chunk: Uint8Array<ArrayBuffer>, stream: NodeJS.WriteStream, decoder: TextDecoder) => {
     const str = decoder.decode(chunk).trim();
 
-    text += str;
+    errAndOut += str;
 
     const redSubprocessPrefix = "\x1b[31m [SUBPROC] \x1b[0m";
 
@@ -217,13 +217,13 @@ scanner = "${scannerPath}"`,
   };
 
   const outDecoder = new TextDecoder();
-  const stdoutWriter = new WritableStream({
+  const stdoutWriter = new WritableStream<Uint8Array<ArrayBuffer>>({
     write: chunk => write(chunk, process.stdout, outDecoder),
     close: () => void process.stdout.write(outDecoder.decode()),
   });
 
   const errDecoder = new TextDecoder();
-  const stderrWriter = new WritableStream({
+  const stderrWriter = new WritableStream<Uint8Array<ArrayBuffer>>({
     write: chunk => write(chunk, process.stderr, errDecoder),
     close: () => void process.stderr.write(errDecoder.decode()),
   });
@@ -231,8 +231,6 @@ scanner = "${scannerPath}"`,
   await Promise.all([proc.stdout.pipeTo(stdoutWriter), proc.stderr.pipeTo(stderrWriter)]);
 
   const exitCode = await proc.exited;
-
-  const errAndOut = text;
 
   if (exitCode !== expectedExitCode) {
     console.log("Command:", cmd.join(" "));

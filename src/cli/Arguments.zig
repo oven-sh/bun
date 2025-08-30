@@ -1024,6 +1024,18 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
 
         if (args.option("--global-name")) |global_name| {
+            // --global-name is only valid with --format=iife
+            if (ctx.bundler_options.output_format != .iife) {
+                Output.errGeneric("--global-name can only be used with --format=iife", .{});
+                Global.exit(1);
+            }
+            
+            // Validate that the provided name is a valid JavaScript identifier
+            if (!bun.js_lexer.isIdentifier(global_name)) {
+                Output.errGeneric("--global-name must be a valid JavaScript identifier, got: {s}", .{global_name});
+                Global.exit(1);
+            }
+            
             ctx.bundler_options.global_name = global_name;
         }
 

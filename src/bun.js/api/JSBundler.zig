@@ -332,6 +332,14 @@ pub const JSBundler = struct {
                 try this.footer.appendSliceExact(slice.slice());
             }
 
+            if (try config.getOptional(globalThis, "globalName", ZigString.Slice)) |slice| {
+                defer slice.deinit();
+                try this.global_name.appendSliceExact(slice.slice());
+            } else if (try config.getOptional(globalThis, "global_name", ZigString.Slice)) |slice| {
+                defer slice.deinit();
+                try this.global_name.appendSliceExact(slice.slice());
+            }
+
             if (try config.getTruthy(globalThis, "sourcemap")) |source_map_js| {
                 if (source_map_js.isBoolean()) {
                     if (source_map_js == .true) {
@@ -722,6 +730,7 @@ pub const JSBundler = struct {
             self.conditions.deinit();
             self.drop.deinit();
             self.banner.deinit();
+            self.global_name.deinit();
             if (self.compile) |*compile| {
                 compile.deinit();
             }

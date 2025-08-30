@@ -500,7 +500,7 @@ pub const BundleV2 = struct {
         // pick the "module" field and the package is imported with "require" then
         // code expecting a function will crash.
         const targets: []const options.Target = this.graph.ast.items(.target);
-        const max_valid_source_index: Index.Int = @intCast(this.graph.input_files.len);
+        const max_valid_source_index: Index = .init(this.graph.input_files.len);
         const secondary_paths: []const []const u8 = this.graph.input_files.items(.secondary_path);
 
         for (ast_import_records, targets) |*ast_import_record_list, target| {
@@ -508,7 +508,7 @@ pub const BundleV2 = struct {
             const path_to_source_index_map = this.pathToSourceIndexMap(target);
             for (import_records) |*import_record| {
                 const source_index = import_record.source_index.get();
-                if (source_index >= max_valid_source_index) {
+                if (source_index >= max_valid_source_index.get()) {
                     continue;
                 }
                 const secondary_path = secondary_paths[source_index];

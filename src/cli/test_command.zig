@@ -1310,14 +1310,17 @@ pub const TestCommand = struct {
             var colon_index_opt: ?usize = null;
             var k: usize = arg.len;
             while (k > 0) : (k -= 1) {
-                if (arg[k - 1] == ':') { colon_index_opt = k - 1; break; }
+                if (arg[k - 1] == ':') {
+                    colon_index_opt = k - 1;
+                    break;
+                }
             }
             if (colon_index_opt) |colon_index| {
                 const after_colon = arg[colon_index + 1 ..];
                 if (after_colon.len > 0) {
                     if (std.fmt.parseInt(u32, after_colon, 10)) |line_num| {
                         const file_part = arg[0..colon_index];
-                        
+
                         // Convert to absolute path for exact matching
                         const absolute_file = if (std.fs.path.isAbsolute(file_part))
                             try ctx.allocator.dupe(u8, file_part)
@@ -1326,7 +1329,6 @@ pub const TestCommand = struct {
                             const cwd = bun.getcwd(&cwd_buf) catch break :blk try ctx.allocator.dupe(u8, file_part);
                             break :blk bun.path.joinAbsString(cwd, &.{file_part}, .auto);
                         };
-
 
                         // Get or create array of lines for this file
                         const result = try ctx.test_options.test_line_filters.getOrPut(ctx.allocator, absolute_file);
@@ -1472,7 +1474,10 @@ pub const TestCommand = struct {
             var colon_index_opt: ?usize = null;
             var k: usize = arg.len;
             while (k > 0) : (k -= 1) {
-                if (arg[k - 1] == ':') { colon_index_opt = k - 1; break; }
+                if (arg[k - 1] == ':') {
+                    colon_index_opt = k - 1;
+                    break;
+                }
             }
             if (colon_index_opt) |colon_index| {
                 // Check if this might be a file:line pattern
@@ -1501,7 +1506,10 @@ pub const TestCommand = struct {
                     var colon_index_opt: ?usize = null;
                     var k: usize = arg.len;
                     while (k > 0) : (k -= 1) {
-                        if (arg[k - 1] == ':') { colon_index_opt = k - 1; break; }
+                        if (arg[k - 1] == ':') {
+                            colon_index_opt = k - 1;
+                            break;
+                        }
                     }
                     if (colon_index_opt) |colon_index| {
                         // Parse file:line format

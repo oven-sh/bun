@@ -349,10 +349,10 @@ pub const TestRunner = struct {
         };
         this.files.append(this.allocator, .{ .module_scope = scope, .source = logger.Source.initEmptyFile(file_path) }) catch unreachable;
         entry.value_ptr.* = file_id;
-        
+
         // Map line filters from absolute path to file ID for performance
         this.mapLineFiltersToFileId(file_path, file_id);
-        
+
         return scope;
     }
 

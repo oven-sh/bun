@@ -24,6 +24,25 @@ describeWithContainer(
       max: 1,
     };
     const sql = new SQL(options);
+    test("should return lastInsertRowid and affectedRows", async () => {
+      await using db = new SQL({ ...options, max: 1, idleTimeout: 5 });
+      using sql = await db.reserve();
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, name text)`;
+
+      const result = await sql`INSERT INTO ${sql(random_name)} (name) VALUES (${"test"})`;
+      expect(result.lastInsertRowid).toBe(1);
+      const inspect = Bun.inspect(result);
+      expect(inspect).toContain(`affectedRows: 1`);
+      expect(inspect).toContain(`lastInsertRowid: 1`);
+
+      const result2 = await sql`UPDATE ${sql(random_name)} SET name = "test2" WHERE id = ${result.lastInsertRowid}`;
+      expect(result2.affectedRows).toBe(1);
+      const inspect2 = Bun.inspect(result2);
+      expect(inspect2).toContain(`affectedRows: 1`);
+      expect(inspect2).toContain(`lastInsertRowid: 0`);
+    });
     describe("should work with more than the max inline capacity", () => {
       for (let size of [50, 60, 62, 64, 70, 100]) {
         for (let duplicated of [true, false]) {

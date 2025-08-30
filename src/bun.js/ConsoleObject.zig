@@ -1862,6 +1862,8 @@ pub const Formatter = struct {
             single_line: bool,
             always_newline: bool = false,
             parent: JSValue,
+            has_properties: bool = false,
+            hide_first_comma: bool = false,
             const enable_ansi_colors = enable_ansi_colors_;
             pub fn handleFirstProperty(this: *@This(), globalThis: *jsc.JSGlobalObject, value: JSValue) bun.JSError!void {
                 if (value.isCell() and !value.jsType().isFunction()) {
@@ -1888,6 +1890,21 @@ pub const Formatter = struct {
                     this.writer.writeAll("{\n") catch {};
                     this.formatter.writeIndent(Writer, this.writer) catch {};
                 }
+            }
+
+            fn hasProperties(globalThis: *JSGlobalObject, ctx_ptr: ?*anyopaque, key: *ZigString, value: JSValue, _: bool, _: bool) callconv(.C) void {
+                var ctx: *@This() = bun.cast(*@This(), ctx_ptr orelse return);
+                defer ctx.i += 1;
+                const this = ctx.formatter;
+                if (ctx.has_properties) return;
+                if (key.eqlComptime("constructor")) return;
+                const tag = Tag.getAdvanced(value, globalThis, .{
+                    .hide_global = true,
+                    .disable_inspect_custom = this.disable_inspect_custom,
+                }) catch return;
+
+                if (tag.cell.isHidden()) return;
+                ctx.has_properties = true;
             }
 
             pub fn forEach(
@@ -1918,8 +1935,12 @@ pub const Formatter = struct {
                 if (tag.cell.isHidden()) return;
                 if (ctx.i == 0) {
                     handleFirstProperty(ctx, globalThis, ctx.parent) catch return;
-                } else {
-                    this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                } else if (ctx.i > 0) {
+                    if (ctx.hide_first_comma) {
+                        ctx.hide_first_comma = false;
+                    } else {
+                        this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                    }
                 }
 
                 defer ctx.i += 1;
@@ -2364,6 +2385,56 @@ pub const Formatter = struct {
                 // }
 
                 if (len == 0) {
+                    if (!jsType.isArguments()) {
+                        const Iterator = PropertyIterator(Writer, enable_ansi_colors);
+                        var _propertyCheck = Iterator{
+                            .formatter = this,
+                            .writer = writer_,
+                            .always_newline = !this.single_line and (this.always_newline_scope or this.goodTimeForANewLine()),
+                            .single_line = this.single_line,
+                            .parent = value,
+                            .i = 0,
+                        };
+                        try value.forEachPropertyNonIndexed(this.globalThis, &_propertyCheck, Iterator.hasProperties);
+                        if (_propertyCheck.has_properties) {
+                            if (!this.single_line and (this.ordered_properties or this.always_newline_scope)) {
+                                this.resetLine();
+                                writer.writeAll("[");
+                                writer.writeAll("\n");
+                                this.writeIndent(Writer, writer_) catch unreachable;
+                                this.addForNewLine(1);
+                            } else {
+                                writer.writeAll("[ ");
+                                this.addForNewLine(2);
+                            }
+                            // Is an empty array without visible properties so we can just print it as is
+                            var iter = Iterator{
+                                .formatter = this,
+                                .writer = writer_,
+                                .always_newline = !this.single_line and (this.always_newline_scope or this.goodTimeForANewLine()),
+                                .single_line = this.single_line,
+                                .parent = value,
+                                .i = 1, // 0 zero has a special case and will not be consistent with the non-empty array
+                                .hide_first_comma = true, // keep consistent behavior with the non-empty array
+                            };
+                            try value.forEachPropertyNonIndexed(this.globalThis, &iter, Iterator.forEach);
+
+                            if (!this.single_line and (this.ordered_properties or this.always_newline_scope or this.goodTimeForANewLine())) {
+                                this.resetLine();
+                                writer.writeAll("\n");
+                                this.writeIndent(Writer, writer_) catch {};
+                                writer.writeAll("]");
+                                this.resetLine();
+                                this.addForNewLine(1);
+                            } else {
+                                writer.writeAll(" ]");
+                                this.addForNewLine(2);
+                            }
+                            return;
+                        }
+                    }
+
+                    // Is an empty array without visible properties so we can just print it as is
                     writer.writeAll("[]");
                     this.addForNewLine(2);
                     return;
@@ -2452,11 +2523,13 @@ pub const Formatter = struct {
                                 }
                             }
                             const empty_count = i - empty;
-                            if (empty_count == 1) {
-                                writer.pretty("<r><d>empty item<r>", enable_ansi_colors, .{});
-                            } else {
-                                this.estimated_line_length += bun.fmt.fastDigitCount(empty_count);
-                                writer.pretty("<r><d>{d} x empty items<r>", enable_ansi_colors, .{empty_count});
+                            if (empty_count > 0) {
+                                if (empty_count == 1) {
+                                    writer.pretty("<r><d>empty item<r>", enable_ansi_colors, .{});
+                                } else {
+                                    this.estimated_line_length += bun.fmt.fastDigitCount(empty_count);
+                                    writer.pretty("<r><d>{d} x empty items<r>", enable_ansi_colors, .{empty_count});
+                                }
                             }
                             empty_start = null;
                         }

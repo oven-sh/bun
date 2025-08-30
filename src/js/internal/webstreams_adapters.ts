@@ -212,7 +212,7 @@ function newWritableStreamFromStreamWritable(streamWritable) {
   let closed;
 
   function onDrain() {
-    if (backpressurePromise !== undefined) backpressurePromise.$resolve();
+    if (backpressurePromise !== undefined) backpressurePromise.resolve();
   }
 
   const cleanup = finished(streamWritable, error => {
@@ -223,7 +223,7 @@ function newWritableStreamFromStreamWritable(streamWritable) {
     // that happen to emit an error event again after finished is called.
     streamWritable.on("error", () => {});
     if (error != null) {
-      if (backpressurePromise !== undefined) backpressurePromise.$reject(error);
+      if (backpressurePromise !== undefined) backpressurePromise.reject(error);
       // If closed is not undefined, the error is happening
       // after the WritableStream close has already started.
       // We need to reject it here.

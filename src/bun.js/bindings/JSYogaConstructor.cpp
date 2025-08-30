@@ -1,6 +1,7 @@
 #include "root.h"
 #include "JSYogaConstructor.h"
 #include "JSYogaConfig.h"
+#include "YogaConfigImpl.h"
 #include "JSYogaNode.h"
 #include "JSYogaPrototype.h"
 #include "ZigGlobalObject.h"

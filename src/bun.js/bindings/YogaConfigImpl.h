@@ -15,7 +15,7 @@ public:
     static Ref<YogaConfigImpl> create();
     ~YogaConfigImpl();
 
-    YGConfigRef yogaConfig() const { return m_yogaConfig; }
+    YGConfigRef yogaConfig() const { return m_freed ? nullptr : m_yogaConfig; }
 
     // JS wrapper management
     void setJSWrapper(JSYogaConfig*);
@@ -27,12 +27,17 @@ public:
 
     // Replace the internal YGConfigRef (used for advanced cases)
     void replaceYogaConfig(YGConfigRef newConfig);
+    
+    // Mark as freed (for JS free() method validation)
+    void markAsFreed() { m_freed = true; }
+    bool isFreed() const { return m_freed; }
 
 private:
     explicit YogaConfigImpl();
 
     YGConfigRef m_yogaConfig;
     JSC::Weak<JSYogaConfig> m_wrapper;
+    bool m_freed { false };
 };
 
 } // namespace Bun

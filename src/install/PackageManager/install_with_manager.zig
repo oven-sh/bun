@@ -723,6 +723,7 @@ pub fn installWithManager(
     }
 
     const workspace_filters, const install_root_dependencies = (try getWorkspaceFilters(manager, original_cwd));
+    defer manager.allocator.free(workspace_filters);
 
     const install_summary: PackageInstall.Summary = install_summary: {
         if (!manager.options.do.install_packages) {
@@ -992,7 +993,6 @@ pub fn getWorkspaceFilters(manager: *PackageManager, original_cwd: []const u8) !
             try workspace_filters.append(manager.allocator, try WorkspaceFilter.init(manager.allocator, pattern, original_cwd, &path_buf));
         }
     }
-    defer workspace_filters.deinit(manager.allocator);
 
     var install_root_dependencies = workspace_filters.items.len == 0;
     if (!install_root_dependencies) {
@@ -1031,7 +1031,7 @@ pub fn getWorkspaceFilters(manager: *PackageManager, original_cwd: []const u8) !
         }
     }
 
-    return .{ workspace_filters.items, install_root_dependencies };
+    return .{ try workspace_filters.toOwnedSlice(manager.allocator), install_root_dependencies };
 }
 
 const security_scanner = @import("./security_scanner.zig");

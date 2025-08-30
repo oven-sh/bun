@@ -665,7 +665,6 @@ _bun_test_completion() {
         '--timeout[Set the per-test timeout in milliseconds, default is 5000.]:timeout' \
         '--update-snapshots[Update snapshot files]' \
         '--rerun-each[Re-run each test file <NUMBER> times, helps catch certain bugs]:rerun' \
-        '--only[Only run tests that are marked with "test.only()"]' \
         '--todo[Include tests that are marked with "test.todo()"]' \
         '--coverage[Generate a coverage profile]' \
         '--bail[Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.]:bail' \

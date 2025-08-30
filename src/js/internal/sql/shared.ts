@@ -569,7 +569,13 @@ function parseUrlForAdapter(urlString: string, adapter: Bun.SQL.__internal.Adapt
   try {
     return new URL(defaultProtocol + urlString);
   } catch (error) {
-    return new URL(encodeURI(defaultProtocol + urlString));
+    try {
+      // can be a "sqlite://file with empty spaces.db"
+      return new URL(encodeURI(defaultProtocol + urlString));
+    } catch {
+      // throw the original error if the URL is invalid
+      throw error;
+    }
   }
 }
 

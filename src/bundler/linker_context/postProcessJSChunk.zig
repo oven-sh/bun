@@ -193,9 +193,27 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
         },
         .iife => {
             // Bun does not do arrow function lowering. So the wrapper can be an arrow.
-            const start = if (c.options.minify_whitespace) "(()=>{" else "(() => {\n";
-            j.pushStatic(start);
-            line_offset.advance(start);
+            if (c.options.global_name.len > 0) {
+                if (c.options.minify_whitespace) {
+                    j.pushStatic("var ");
+                    j.pushStatic(c.options.global_name);
+                    j.pushStatic("=(()=>{");
+                    line_offset.advance("var ");
+                    line_offset.advance(c.options.global_name);
+                    line_offset.advance("=(()=>{");
+                } else {
+                    j.pushStatic("var ");
+                    j.pushStatic(c.options.global_name);
+                    j.pushStatic(" = (() => {\n");
+                    line_offset.advance("var ");
+                    line_offset.advance(c.options.global_name);
+                    line_offset.advance(" = (() => {\n");
+                }
+            } else {
+                const start = if (c.options.minify_whitespace) "(()=>{" else "(() => {\n";
+                j.pushStatic(start);
+                line_offset.advance(start);
+            }
         },
         else => {}, // no wrapper
     }
@@ -747,8 +765,82 @@ pub fn generateEntryPointTailJS(
             }
         },
 
-        // TODO: iife
-        .iife => {},
+        .iife => {
+            // When globalName is specified, we need to return the exports object
+            if (c.options.global_name.len > 0) {
+                switch (flags.wrap) {
+                    .cjs => {
+                        // "return require_foo();"
+                        stmts.append(
+                            Stmt.allocate(
+                                allocator,
+                                S.Return,
+                                S.Return{
+                                    .value = Expr.init(
+                                        E.Call,
+                                        E.Call{
+                                            .target = Expr.initIdentifier(ast.wrapper_ref, Logger.Loc.Empty),
+                                        },
+                                        Logger.Loc.Empty,
+                                    ),
+                                },
+                                Logger.Loc.Empty,
+                            ),
+                        ) catch unreachable;
+                    },
+                    .esm => {
+                        // "init_foo(); return exports_entry;"
+                        if (ast.wrapper_ref.isValid()) {
+                            stmts.append(
+                                Stmt.allocate(
+                                    allocator,
+                                    S.SExpr,
+                                    S.SExpr{
+                                        .value = Expr.init(
+                                            E.Call,
+                                            E.Call{
+                                                .target = Expr.initIdentifier(ast.wrapper_ref, Logger.Loc.Empty),
+                                            },
+                                            Logger.Loc.Empty,
+                                        ),
+                                    },
+                                    Logger.Loc.Empty,
+                                ),
+                            ) catch unreachable;
+                        }
+
+                        // Return the exports object if it has exports
+                        if (ast.exports_ref.isValid()) {
+                            stmts.append(
+                                Stmt.allocate(
+                                    allocator,
+                                    S.Return,
+                                    S.Return{
+                                        .value = Expr.initIdentifier(ast.exports_ref, Logger.Loc.Empty),
+                                    },
+                                    Logger.Loc.Empty,
+                                ),
+                            ) catch unreachable;
+                        }
+                    },
+                    else => {
+                        // For other cases, try to return the exports object if available
+                        if (ast.exports_ref.isValid()) {
+                            stmts.append(
+                                Stmt.allocate(
+                                    allocator,
+                                    S.Return,
+                                    S.Return{
+                                        .value = Expr.initIdentifier(ast.exports_ref, Logger.Loc.Empty),
+                                    },
+                                    Logger.Loc.Empty,
+                                ),
+                            ) catch unreachable;
+                        }
+                    },
+                }
+            }
+        },
 
         .internal_bake_dev => {
             // nothing needs to be done here, as the exports are already

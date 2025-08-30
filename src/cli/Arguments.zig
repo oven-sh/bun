@@ -165,6 +165,7 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
     clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
     clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
+    clap.parseParam("--global-name <STR>              Global variable name for IIFE bundles") catch unreachable,
     clap.parseParam("--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS") catch unreachable,
     clap.parseParam("--dump-environment-variables") catch unreachable,
     clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
@@ -1020,6 +1021,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
                 Global.exit(1);
             }
+        }
+
+        if (args.option("--global-name")) |global_name| {
+            ctx.bundler_options.global_name = global_name;
         }
 
         if (args.flag("--splitting")) {

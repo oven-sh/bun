@@ -55,6 +55,7 @@ pub const LinkerContext = struct {
     pub const LinkerOptions = struct {
         generate_bytecode_cache: bool = false,
         output_format: options.Format = .esm,
+        global_name: []const u8 = "",
         ignore_dce_annotations: bool = false,
         emit_dce_annotations: bool = true,
         tree_shaking: bool = true,

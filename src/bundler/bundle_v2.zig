@@ -857,6 +857,7 @@ pub const BundleV2 = struct {
         this.linker.options.ignore_dce_annotations = transpiler.options.ignore_dce_annotations;
         this.linker.options.banner = transpiler.options.banner;
         this.linker.options.footer = transpiler.options.footer;
+        this.linker.options.global_name = transpiler.options.global_name;
         this.linker.options.css_chunking = transpiler.options.css_chunking;
         this.linker.options.source_maps = transpiler.options.source_map;
         this.linker.options.tree_shaking = transpiler.options.tree_shaking;
@@ -1791,6 +1792,7 @@ pub const BundleV2 = struct {
             transpiler.options.css_chunking = config.css_chunking;
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
+            transpiler.options.global_name = config.global_name.slice();
 
             transpiler.configureLinker();
             try transpiler.configureDefines();

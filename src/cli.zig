@@ -403,6 +403,7 @@ pub const Command = struct {
             ignore_dce_annotations: bool = false,
             emit_dce_annotations: bool = true,
             output_format: options.Format = .esm,
+            global_name: []const u8 = "",
             bytecode: bool = false,
             banner: []const u8 = "",
             footer: []const u8 = "",

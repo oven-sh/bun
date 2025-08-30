@@ -1063,7 +1063,6 @@ describe("bundler", () => {
     },
   });
   itBundled("importstar/ReExportStarExternalIIFE", {
-    todo: true,
     files: {
       "/entry.js": `export * from "foo"`,
     },

@@ -53,6 +53,7 @@ pub fn doPartialInstallOfSecurityScanner(
     original_cwd: []const u8,
 ) !void {
     const workspace_filters, const install_root_dependencies = try InstallWithManager.getWorkspaceFilters(manager, original_cwd);
+    defer manager.allocator.free(workspace_filters);
 
     if (!manager.options.do.install_packages) {
         return;

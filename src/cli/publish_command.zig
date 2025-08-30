@@ -451,6 +451,68 @@ pub const PublishCommand = struct {
         NeedAuth,
     };
 
+    fn checkPackageVersionExists(
+        allocator: std.mem.Allocator,
+        package_name: string,
+        version: string,
+        registry: *const Npm.Registry.Scope,
+    ) bool {
+        var url_buf = std.ArrayList(u8).init(allocator);
+        defer url_buf.deinit();
+        const registry_url = strings.withoutTrailingSlash(registry.url.href);
+        const encoded_name = bun.fmt.dependencyUrl(package_name);
+
+        url_buf.writer().print("{s}/{s}/{s}", .{ registry_url, encoded_name, version }) catch return false;
+
+        const package_version_url = URL.parse(url_buf.items);
+
+        var response_buf = MutableString.init(allocator, 64) catch return false;
+        defer response_buf.deinit();
+
+        var headers = http.HeaderBuilder{};
+        headers.count("accept", "application/json");
+
+        var auth_buf = std.ArrayList(u8).init(allocator);
+        defer auth_buf.deinit();
+
+        if (registry.token.len > 0) {
+            auth_buf.writer().print("Bearer {s}", .{registry.token}) catch return false;
+            headers.count("authorization", auth_buf.items);
+        } else if (registry.auth.len > 0) {
+            auth_buf.writer().print("Basic {s}", .{registry.auth}) catch return false;
+            headers.count("authorization", auth_buf.items);
+        }
+
+        headers.allocate(allocator) catch return false;
+        headers.append("accept", "application/json");
+
+        if (registry.token.len > 0) {
+            auth_buf.clearRetainingCapacity();
+            auth_buf.writer().print("Bearer {s}", .{registry.token}) catch return false;
+            headers.append("authorization", auth_buf.items);
+        } else if (registry.auth.len > 0) {
+            auth_buf.clearRetainingCapacity();
+            auth_buf.writer().print("Basic {s}", .{registry.auth}) catch return false;
+            headers.append("authorization", auth_buf.items);
+        }
+
+        var req = http.AsyncHTTP.initSync(
+            allocator,
+            .HEAD,
+            package_version_url,
+            headers.entries,
+            headers.content.ptr.?[0..headers.content.len],
+            &response_buf,
+            "",
+            null,
+            null,
+            .follow,
+        );
+
+        const res = req.sendSync() catch return false;
+        return res.status_code == 200;
+    }
+
     pub fn publish(
         comptime directory_publish: bool,
         ctx: *const Context(directory_publish),
@@ -459,6 +521,22 @@ pub const PublishCommand = struct {
 
         if (registry.token.len == 0 and (registry.url.password.len == 0 or registry.url.username.len == 0)) {
             return error.NeedAuth;
+        }
+
+        const tolerate_republish = ctx.manager.options.publish_config.tolerate_republish;
+        if (tolerate_republish) {
+            const version_without_build_tag = Dependency.withoutBuildTag(ctx.package_version);
+            const package_exists = checkPackageVersionExists(
+                ctx.allocator,
+                ctx.package_name,
+                version_without_build_tag,
+                registry,
+            );
+
+            if (package_exists) {
+                Output.prettyln("<yellow>warning<r>: Registry already knows about version {s}; skipping.", .{version_without_build_tag});
+                return;
+            }
         }
 
         // continues from `printSummary`

@@ -39,7 +39,8 @@ magic: if (Environment.isDebug)
     enum(u128) { valid = 0x1ffd363f121f5c12 }
 else
     enum { valid } = .valid,
-allocation_scope: if (AllocationScope.enabled) AllocationScope else void,
+/// No overhead in release builds.
+allocation_scope: AllocationScope,
 /// Absolute path to project root directory. For the HMR
 /// runtime, its module IDs are strings relative to this.
 root: []const u8,
@@ -267,8 +268,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     const separate_ssr_graph = if (options.framework.server_components) |sc| sc.separate_ssr_graph else false;
 
     const dev = bun.new(DevServer, .{
-        .allocation_scope = if (comptime AllocationScope.enabled)
-            AllocationScope.init(bun.default_allocator),
+        .allocation_scope = .initDefault(),
         .root = options.root,
         .vm = options.vm,
         .server = null,
@@ -679,15 +679,17 @@ pub fn deinit(dev: *DevServer) void {
     bun.destroy(dev);
 }
 
+const AllocationScope = bun.allocators.AllocationScopeIn(bun.DefaultAllocator);
+pub const DevAllocator = AllocationScope.Borrowed;
+
 pub fn allocator(dev: *const DevServer) Allocator {
-    return dev.dev_allocator().get();
+    return dev.allocation_scope.allocator();
 }
 
 pub fn dev_allocator(dev: *const DevServer) DevAllocator {
-    return .{ .maybe_scope = dev.allocation_scope };
+    return dev.allocation_scope.borrow();
 }
 
-pub const DevAllocator = @import("./DevServer/DevAllocator.zig");
 pub const MemoryCost = @import("./DevServer/memory_cost.zig");
 pub const memoryCost = MemoryCost.memoryCost;
 pub const memoryCostDetailed = MemoryCost.memoryCostDetailed;
@@ -3001,10 +3003,11 @@ fn printMemoryLine(dev: *DevServer) void {
         return;
     }
     if (!debug.isVisible()) return;
+    const stats = dev.allocation_scope.stats();
     Output.prettyErrorln("<d>DevServer tracked {}, measured: {} ({}), process: {}<r>", .{
         bun.fmt.size(dev.memoryCost(), .{}),
-        dev.allocation_scope.numAllocations(),
-        bun.fmt.size(dev.allocation_scope.total(), .{}),
+        stats.num_allocations,
+        bun.fmt.size(stats.total_memory_allocated, .{}),
         bun.fmt.size(bun.sys.selfProcessMemoryUsage() orelse 0, .{}),
     });
 }
@@ -3296,7 +3299,7 @@ pub fn writeMemoryVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)
         .assets = @truncate(cost.assets),
         .other = @truncate(cost.other),
         .devserver_tracked = if (comptime AllocationScope.enabled)
-            @truncate(dev.allocation_scope.total())
+            @truncate(dev.allocation_scope.stats().total_memory_allocated)
         else
             0,
         .process_used = @truncate(bun.sys.selfProcessMemoryUsage() orelse 0),
@@ -4068,7 +4071,6 @@ pub fn getDeinitCountForTesting() usize {
 }
 
 const bun = @import("bun");
-const AllocationScope = bun.AllocationScope;
 const Environment = bun.Environment;
 const Output = bun.Output;
 const SourceMap = bun.sourcemap;

@@ -2,8 +2,10 @@ const shared = @This();
 
 /// Options for `WithOptions`.
 pub const Options = struct {
-    /// Whether to call `deinit` on the data before freeing it, if such a method exists.
-    deinit: bool = true,
+    // If non-null, the shared pointer will always use the provided allocator. This saves a small
+    // amount of memory, but it means the shared pointer will be a different type from shared
+    // pointers that use different allocators.
+    Allocator: type = bun.DefaultAllocator,
 
     /// Whether to use an atomic type to store the ref count. This makes the shared pointer
     /// thread-safe, assuming the underlying data is also thread-safe.
@@ -11,12 +13,14 @@ pub const Options = struct {
 
     /// Whether to allow weak pointers to be created. This uses slightly more memory but is often
     /// negligible due to padding.
-    allow_weak: bool = true,
+    ///
+    /// There is no point in enabling this if `deinit` is false, or if your data type doesn't have
+    /// a `deinit` method, since the sole purpose of weak pointers is to allow `deinit` to be called
+    /// before the memory is freed.
+    allow_weak: bool = false,
 
-    // If non-null, the shared pointer will always use the provided allocator. This saves a small
-    // amount of memory, but it means the shared pointer will be a different type from shared
-    // pointers that use different allocators.
-    allocator: ?Allocator = bun.default_allocator,
+    /// Whether to call `deinit` on the data before freeing it, if such a method exists.
+    deinit: bool = true,
 };
 
 /// A shared pointer, allocated using the default allocator.
@@ -27,7 +31,7 @@ pub const Options = struct {
 /// This type is not thread-safe: all pointers to the same piece of data must live on the same
 /// thread. See `AtomicShared` for a thread-safe version.
 pub fn Shared(comptime Pointer: type) type {
-    return WithOptions(Pointer, .{});
+    return SharedIn(Pointer, bun.DefaultAllocator);
 }
 
 /// A thread-safe shared pointer, allocated using the default allocator.
@@ -36,24 +40,28 @@ pub fn Shared(comptime Pointer: type) type {
 /// synchronization of the data itself. You must ensure proper concurrency using mutexes or
 /// atomics.
 pub fn AtomicShared(comptime Pointer: type) type {
-    return WithOptions(Pointer, .{ .atomic = true });
+    return AtomicSharedIn(Pointer, bun.DefaultAllocator);
 }
 
-/// A shared pointer allocated using any allocator.
-pub fn Dynamic(comptime Pointer: type) type {
-    return WithOptions(Pointer, .{ .allocator = null });
+/// A shared pointer allocated using a specific type of allocator.
+///
+/// The requirements for `Allocator` are the same as `bun.ptr.OwnedIn`.
+/// `Allocator` may be `std.mem.Allocator` to allow any kind of allocator.
+pub fn SharedIn(comptime Pointer: type, comptime Allocator: type) type {
+    return WithOptions(Pointer, .{ .Allocator = Allocator });
 }
 
-/// A thread-safe shared pointer allocated using any allocator.
-pub fn DynamicAtomic(comptime Pointer: type) type {
+/// A thread-safe shared pointer allocated using a specific type of allocator.
+pub fn AtomicSharedIn(comptime Pointer: type, comptime Allocator: type) type {
     return WithOptions(Pointer, .{
+        .Allocator = Allocator,
         .atomic = true,
-        .allocator = null,
     });
 }
 
 /// Like `Shared`, but takes explicit options.
 pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
+    const Allocator = options.Allocator;
     const info = parsePointer(Pointer);
     const Child = info.Child;
     const NonOptionalPointer = info.NonOptionalPointer;
@@ -68,17 +76,16 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
             "shared.Options.allow_weak is useless if `deinit` is false",
             .{},
         );
-        bun.assertf(
-            std.meta.hasFn(Child, "deinit"),
-            "shared.Options.allow_weak is useless if type has no `deinit` method",
-            .{},
-        );
+        // Weak pointers are useless if `Child` doesn't have a `deinit` method, but don't error
+        // in this case, as that could break generic code. It should be allowed to use
+        // `WithOptions(*T, .{ .allow_weak = true }).Weak` if `T` might sometimes have a `deinit`
+        // method.
     }
 
     return struct {
         const Self = @This();
 
-        unsafe_pointer: Pointer,
+        #pointer: Pointer,
 
         /// A weak pointer.
         ///
@@ -87,43 +94,35 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         /// data will have been deinitialized in that case.
         pub const Weak = if (options.allow_weak) shared.Weak(Pointer, options);
 
-        pub const alloc = (if (options.allocator) |allocator| struct {
-            /// Allocates a shared value using `options.allocator`.
-            ///
-            /// Call `deinit` when done.
-            pub fn alloc(value: Child) Allocator.Error!Self {
-                return .allocImpl(allocator, value);
-            }
-        } else struct {
-            /// Allocates a shared value using the provided allocator.
-            ///
-            /// Call `deinit` when done.
-            pub fn alloc(allocator: Allocator, value: Child) Allocator.Error!Self {
-                return .allocImpl(allocator, value);
-            }
-        }).alloc;
-
-        const supports_default_allocator = if (options.allocator) |allocator|
-            bun.allocators.isDefault(allocator)
-        else
-            true;
-
-        /// Allocates a shared value using the default allocator. This function calls
-        /// `bun.outOfMemory` if memory allocation fails.
+        /// Allocates a shared value with a default-initialized `Allocator`.
         ///
         /// Call `deinit` when done.
-        pub const new = if (supports_default_allocator) struct {
-            pub fn new(value: Child) Self {
-                return bun.handleOom(Self.allocImpl(bun.default_allocator, value));
-            }
-        }.new;
+        pub fn alloc(value: Child) AllocError!Self {
+            return .allocImpl(bun.memory.initDefault(Allocator), value);
+        }
+
+        /// Allocates a shared value using the provided allocator.
+        ///
+        /// Call `deinit` when done.
+        pub fn allocIn(value: Child, allocator: Allocator) AllocError!Self {
+            return .allocImpl(allocator, value);
+        }
+
+        /// Allocates a shared value, calling `bun.outOfMemory` if allocation fails.
+        ///
+        /// It must be possible to default-initialize `Allocator`.
+        ///
+        /// Call `deinit` when done.
+        pub fn new(value: Child) Self {
+            return bun.handleOom(Self.alloc(value));
+        }
 
         /// Returns a pointer to the shared value.
         ///
         /// This pointer should usually not be stored directly in a struct, as it could become
         /// invalid once all the shared pointers are deinitialized.
         pub fn get(self: Self) Pointer {
-            return self.unsafe_pointer;
+            return self.#pointer;
         }
 
         /// Clones this shared pointer. This clones the pointer, not the data; the new pointer
@@ -134,24 +133,26 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
             else
                 self.getData();
             data.incrementStrong();
-            return .{ .unsafe_pointer = &data.value };
+            return .{ .#pointer = &data.value };
         }
 
         /// Creates a weak clone of this shared pointer.
         pub const cloneWeak = if (options.allow_weak) struct {
             pub fn cloneWeak(self: Self) Self.Weak {
-                return .{ .unsafe_pointer = self.unsafe_pointer };
+                return .{ .#pointer = self.#pointer };
             }
         }.cloneWeak;
 
-        /// Deinitializes this shared pointer.
+        /// Deinitializes this shared pointer. This does not deinitialize the data itself until all
+        /// other shared pointers have been deinitialized.
         ///
         /// When no more (strong) shared pointers point to a given piece of data, the data is
         /// deinitialized. Once no weak pointers exist either, the memory is freed.
         ///
-        /// The default behavior of calling `deinit` on the data before freeing it can be changed in
-        /// the `options`.
-        pub fn deinit(self: Self) void {
+        /// This method invalidates `self`. The default behavior of calling `deinit` on the data can
+        /// be changed in the `options`.
+        pub fn deinit(self: *Self) void {
+            defer self.* = undefined;
             const data = if (comptime info.isOptional())
                 self.getData() orelse return
             else
@@ -165,7 +166,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         /// It is permitted, but not required, to call `deinit` on the returned value.
         pub const initNull = if (info.isOptional()) struct {
             pub fn initNull() Self {
-                return .{ .unsafe_pointer = null };
+                return .{ .#pointer = null };
             }
         }.initNull;
 
@@ -177,7 +178,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         /// `deinit` on `self`.
         pub const take = if (info.isOptional()) struct {
             pub fn take(self: *Self) ?SharedNonOptional {
-                return .{ .unsafe_pointer = self.unsafe_pointer orelse return null };
+                return .{ .#pointer = self.#pointer orelse return null };
             }
         }.take;
 
@@ -187,8 +188,9 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         ///
         /// This method invalidates `self`.
         pub const toOptional = if (!info.isOptional()) struct {
-            pub fn toOptional(self: Self) SharedOptional {
-                return .{ .unsafe_pointer = self.unsafe_pointer };
+            pub fn toOptional(self: *Self) SharedOptional {
+                defer self.* = undefined;
+                return .{ .#pointer = self.#pointer };
             }
         }.toOptional;
 
@@ -224,11 +226,11 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
 
         fn allocImpl(allocator: Allocator, value: Child) !Self {
             const data = try Data.alloc(allocator, value);
-            return .{ .unsafe_pointer = &data.value };
+            return .{ .#pointer = &data.value };
         }
 
         fn getData(self: Self) if (info.isOptional()) ?*Data else *Data {
-            return .fromValuePtr(self.unsafe_pointer);
+            return .fromValuePtr(self.#pointer);
         }
     };
 }
@@ -240,7 +242,7 @@ fn Weak(comptime Pointer: type, comptime options: Options) type {
     const Data = FullData(Child, options);
 
     bun.assertf(
-        options.allow_weak and options.deinit and std.meta.hasFn(Child, "deinit"),
+        options.allow_weak and options.deinit,
         "options incompatible with shared.Weak",
         .{},
     );
@@ -248,7 +250,7 @@ fn Weak(comptime Pointer: type, comptime options: Options) type {
     return struct {
         const Self = @This();
 
-        unsafe_pointer: Pointer,
+        #pointer: Pointer,
 
         const SharedNonOptional = WithOptions(NonOptionalPointer, options);
 
@@ -262,7 +264,7 @@ fn Weak(comptime Pointer: type, comptime options: Options) type {
                 self.getData();
             if (!data.tryIncrementStrong()) return null;
             data.incrementWeak();
-            return .{ .unsafe_pointer = &data.value };
+            return .{ .#pointer = &data.value };
         }
 
         /// Clones this weak pointer.
@@ -272,11 +274,14 @@ fn Weak(comptime Pointer: type, comptime options: Options) type {
             else
                 self.getData();
             data.incrementWeak();
-            return .{ .unsafe_pointer = &data.value };
+            return .{ .#pointer = &data.value };
         }
 
         /// Deinitializes this weak pointer.
-        pub fn deinit(self: Self) void {
+        ///
+        /// This method invalidates `self`.
+        pub fn deinit(self: *Self) void {
+            defer self.* = undefined;
             const data = if (comptime info.isOptional())
                 self.getData() orelse return
             else
@@ -290,7 +295,7 @@ fn Weak(comptime Pointer: type, comptime options: Options) type {
         /// It is permitted, but not required, to call `deinit` on the returned value.
         pub const initNull = if (info.isOptional()) struct {
             pub fn initNull() Self {
-                return .{ .unsafe_pointer = null };
+                return .{ .#pointer = null };
             }
         }.initNull;
 
@@ -299,7 +304,7 @@ fn Weak(comptime Pointer: type, comptime options: Options) type {
         /// This method is provided only if `Pointer` is an optional type.
         pub const isNull = if (options.isOptional()) struct {
             pub fn isNull(self: Self) bool {
-                return self.unsafe_pointer == null;
+                return self.#pointer == null;
             }
         }.isNull;
 
@@ -338,12 +343,14 @@ fn Weak(comptime Pointer: type, comptime options: Options) type {
         }
 
         fn getData(self: Self) if (info.isOptional()) ?*Data else *Data {
-            return .fromValuePtr(self.unsafe_pointer);
+            return .fromValuePtr(self.#pointer);
         }
     };
 }
 
 fn FullData(comptime Child: type, comptime options: Options) type {
+    const Allocator = options.Allocator;
+
     return struct {
         const Self = @This();
 
@@ -352,7 +359,7 @@ fn FullData(comptime Child: type, comptime options: Options) type {
         /// Weak count is always >= 1 as long as strong references exist.
         /// When the last strong pointer is deinitialized, this value is decremented.
         weak_count: if (options.allow_weak) Count else void = if (options.allow_weak) .init(1),
-        allocator: if (options.allocator == null) Allocator else void,
+        allocator: Allocator,
         thread_lock: if (options.atomic) void else bun.safety.ThreadLock,
 
         const Count = if (options.atomic) AtomicCount else NonAtomicCount;
@@ -369,9 +376,9 @@ fn FullData(comptime Child: type, comptime options: Options) type {
         }
 
         pub fn alloc(allocator: Allocator, value: Child) !*Self {
-            return bun.allocators.create(Self, allocator, .{
+            return bun.memory.create(Self, bun.allocators.asStd(allocator), .{
                 .value = value,
-                .allocator = if (comptime options.allocator == null) allocator,
+                .allocator = allocator,
                 .thread_lock = if (comptime !options.atomic) .initLocked(),
             });
         }
@@ -422,18 +429,13 @@ fn FullData(comptime Child: type, comptime options: Options) type {
         }
 
         fn deinitValue(self: *Self) void {
-            if (comptime options.deinit and std.meta.hasFn(Child, "deinit")) {
-                self.value.deinit();
+            if (comptime options.deinit) {
+                bun.memory.deinit(&self.value);
             }
         }
 
-        fn getAllocator(self: Self) Allocator {
-            return (comptime options.allocator) orelse self.allocator;
-        }
-
         fn destroy(self: *Self) void {
-            self.* = undefined;
-            bun.allocators.destroy(self.getAllocator(), self);
+            bun.memory.destroy(bun.allocators.asStd(self.allocator), self);
         }
 
         fn assertThreadSafety(self: Self) void {
@@ -465,6 +467,7 @@ const NonAtomicCount = struct {
     pub fn tryIncrement(self: *Self) bool {
         if (self.value == 0) return false;
         self.increment();
+        return true;
     }
 
     /// Returns the new number of references.
@@ -529,8 +532,8 @@ fn parsePointer(comptime Pointer: type) PointerInfo {
 
 const bun = @import("bun");
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 const AtomicOrder = std.builtin.AtomicOrder;
+const AllocError = std.mem.Allocator.Error;
 
 const meta = @import("./meta.zig");
 const PointerInfo = meta.PointerInfo;

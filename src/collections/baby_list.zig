@@ -4,10 +4,12 @@ pub fn BabyList(comptime Type: type) type {
     return struct {
         const Self = @This();
 
+        // NOTE: If you add, remove, or rename any fields, you need to update
+        // `looksLikeListContainerType` in `meta.zig`.
         ptr: [*]Type = &[_]Type{},
         len: u32 = 0,
         cap: u32 = 0,
-        alloc_ptr: bun.safety.AllocPtr = .{},
+        #allocator: bun.safety.CheckedAllocator = .{},
 
         pub const Elem = Type;
 
@@ -169,7 +171,7 @@ pub fn BabyList(comptime Type: type) type {
 
         pub fn initCapacity(allocator: std.mem.Allocator, len: usize) std.mem.Allocator.Error!Self {
             var this = initWithBuffer(try allocator.alloc(Type, len));
-            this.alloc_ptr.set(allocator);
+            this.#allocator.set(allocator);
             return this;
         }
 
@@ -218,7 +220,7 @@ pub fn BabyList(comptime Type: type) type {
                 .ptr = allocated.ptr,
                 .len = @intCast(allocated.len),
                 .cap = @intCast(allocated.len),
-                .alloc_ptr = .init(allocator),
+                .#allocator = .init(allocator),
             };
         }
 
@@ -248,7 +250,7 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn listManaged(this: *Self, allocator: std.mem.Allocator) std.ArrayList(Type) {
-            this.alloc_ptr.set(allocator);
+            this.#allocator.set(allocator);
             var list_ = this.list();
             return list_.toManaged(allocator);
         }
@@ -282,7 +284,7 @@ pub fn BabyList(comptime Type: type) type {
                 .ptr = @as([*]Type, @ptrCast(items.ptr)),
                 .len = 1,
                 .cap = 1,
-                .alloc_ptr = .init(allocator),
+                .#allocator = .init(allocator),
             };
         }
 
@@ -415,6 +417,20 @@ pub fn BabyList(comptime Type: type) type {
 
         pub fn memoryCost(self: *const Self) usize {
             return self.cap;
+        }
+
+        pub fn format(
+            self: Self,
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            _ = .{ fmt, options };
+            return std.fmt.format(
+                writer,
+                "BabyList({s}){{{any}}}",
+                .{ @typeName(Type), self.list() },
+            );
         }
     };
 }

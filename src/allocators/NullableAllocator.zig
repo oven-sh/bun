@@ -4,8 +4,7 @@ const NullableAllocator = @This();
 
 ptr: *anyopaque = undefined,
 // Utilize the null pointer optimization on the vtable instead of
-// the regular ptr because some allocator implementations might tag their
-// `ptr` property.
+// the regular `ptr` because `ptr` may be undefined.
 vtable: ?*const std.mem.Allocator.VTable = null,
 
 pub inline fn init(allocator: ?std.mem.Allocator) NullableAllocator {

@@ -118,6 +118,7 @@ export interface MySQLDotZig {
     connectionTimeout: number,
     maxLifetime: number,
     useUnnamedPreparedStatements: boolean,
+    log: boolean,
   ) => $ZigGeneratedClasses.MySQLConnection;
   createQuery: (
     sql: string,
@@ -328,6 +329,7 @@ class PooledMySQLConnection {
         connectionTimeout,
         maxLifetime,
         !prepare,
+        options.log ?? false,
       );
     } catch (e) {
       onClose(e as Error);

@@ -67,8 +67,7 @@ extern fn StringBuilder__appendUChar(*anyopaque, c: u16) void;
 extern fn StringBuilder__appendQuotedJsonString(*anyopaque, str: String) void;
 
 pub fn toString(this: *StringBuilder, global: *JSGlobalObject) JSError!JSValue {
-    var scope: jsc.CatchScope = undefined;
-    scope.init(global, @src());
+    var scope: jsc.CatchScope = .init(global, @src());
     defer scope.deinit();
 
     const result = StringBuilder__toString(&this.bytes, global);

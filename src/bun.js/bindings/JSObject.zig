@@ -141,8 +141,7 @@ pub const JSObject = opaque {
         // then the JSValue is zero. the function this ends up calling can return undefined
         // with an exception:
         // https://github.com/oven-sh/WebKit/blob/397dafc9721b8f8046f9448abb6dbc14efe096d3/Source/JavaScriptCore/runtime/JSObjectInlines.h#L112
-        var scope: jsc.CatchScope = undefined;
-        scope.init(globalThis, @src());
+        var scope: jsc.CatchScope = .init(globalThis, @src());
         defer scope.deinit();
         const value = JSC__JSObject__getIndex(this, globalThis, i);
         try scope.returnIfException();

@@ -533,8 +533,7 @@ fn wrapUnhandledRejectionErrorForUncaughtException(globalObject: *JSGlobalObject
         break :blk false;
     }) return reason;
     const reasonStr = blk: {
-        var scope: jsc.CatchScope = undefined;
-        scope.init(globalObject, @src());
+        var scope: jsc.CatchScope = .init(globalObject, @src());
         defer scope.deinit();
         defer if (scope.exception()) |_| scope.clearException();
         break :blk Bun__noSideEffectsToString(globalObject.vm(), globalObject, reason);

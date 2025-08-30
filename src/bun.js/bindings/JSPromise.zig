@@ -177,8 +177,7 @@ pub const JSPromise = opaque {
             }
         };
 
-        var scope: jsc.CatchScope = undefined;
-        scope.init(globalObject, @src());
+        var scope: jsc.CatchScope = .init(globalObject, @src());
         defer scope.deinit();
         var ctx = Wrapper{ .args = args };
         const promise = JSC__JSPromise__wrap(globalObject, &ctx, @ptrCast(&Wrapper.call));

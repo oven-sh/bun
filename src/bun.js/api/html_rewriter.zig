@@ -894,8 +894,7 @@ fn HandlerCallback(
             }
 
             // Use a CatchScope to properly handle exceptions from the JavaScript callback
-            var scope: bun.jsc.CatchScope = undefined;
-            scope.init(this.global, @src());
+            var scope: bun.jsc.CatchScope = .init(this.global, @src());
             defer scope.deinit();
 
             const result = @field(this, callback_name).?.call(

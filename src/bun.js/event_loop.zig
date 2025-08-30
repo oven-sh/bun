@@ -455,8 +455,7 @@ pub fn processGCTimer(this: *EventLoop) void {
 
 pub fn tick(this: *EventLoop) void {
     jsc.markBinding(@src());
-    var scope: jsc.CatchScope = undefined;
-    scope.init(this.global, @src());
+    var scope: jsc.CatchScope = .init(this.global, @src());
     defer scope.deinit();
     this.entered_event_loop_count += 1;
     this.debug.enter();

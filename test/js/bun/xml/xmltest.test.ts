@@ -6,7 +6,9 @@ test("001", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("002", async () => {
   const xml = `
@@ -16,7 +18,9 @@ test("002", async () => {
     <doc ></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("003", async () => {
   const xml = `
@@ -26,7 +30,9 @@ test("003", async () => {
     <doc></doc >
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("004", async () => {
   const xml = `
@@ -37,7 +43,12 @@ test("004", async () => {
     <doc a1="v1"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "a1": "v1",
+    },
+    "__name": "doc",
+  });
 });
 test("005", async () => {
   const xml = `
@@ -48,7 +59,12 @@ test("005", async () => {
     <doc a1 = "v1"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "a1": "v1",
+    },
+    "__name": "doc",
+  });
 });
 test("006", async () => {
   const xml = `
@@ -59,7 +75,12 @@ test("006", async () => {
     <doc a1='v1'></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "a1": "v1",
+    },
+    "__name": "doc",
+  });
 });
 test("007", async () => {
   const xml = `
@@ -69,7 +90,10 @@ test("007", async () => {
     <doc>&#32;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": " ",
+  });
 });
 test("008", async () => {
   const xml = `
@@ -79,7 +103,10 @@ test("008", async () => {
     <doc>&amp;&lt;&gt;&quot;&apos;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "&<>\"'",
+  });
 });
 test("009", async () => {
   const xml = `
@@ -89,7 +116,10 @@ test("009", async () => {
     <doc>&#x20;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": " ",
+  });
 });
 test("010", async () => {
   const xml = `
@@ -100,7 +130,12 @@ test("010", async () => {
     <doc a1="v1" ></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "a1": "v1",
+    },
+    "__name": "doc",
+  });
 });
 test("011", async () => {
   const xml = `
@@ -111,7 +146,13 @@ test("011", async () => {
     <doc a1="v1" a2="v2"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "a1": "v1",
+      "a2": "v2",
+    },
+    "__name": "doc",
+  });
 });
 test("012", async () => {
   const xml = `
@@ -122,7 +163,12 @@ test("012", async () => {
     <doc :="v1"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      ":": "v1",
+    },
+    "__name": "doc",
+  });
 });
 test("013", async () => {
   const xml = `
@@ -133,7 +179,12 @@ test("013", async () => {
     <doc _.-0123456789="v1"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "_.-0123456789": "v1",
+    },
+    "__name": "doc",
+  });
 });
 test("014", async () => {
   const xml = `
@@ -144,7 +195,12 @@ test("014", async () => {
     <doc abcdefghijklmnopqrstuvwxyz="v1"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "abcdefghijklmnopqrstuvwxyz": "v1",
+    },
+    "__name": "doc",
+  });
 });
 test("015", async () => {
   const xml = `
@@ -155,7 +211,12 @@ test("015", async () => {
     <doc ABCDEFGHIJKLMNOPQRSTUVWXYZ="v1"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ": "v1",
+    },
+    "__name": "doc",
+  });
 });
 test("016", async () => {
   const xml = `
@@ -165,7 +226,9 @@ test("016", async () => {
     <doc><?pi?></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("017", async () => {
   const xml = `
@@ -175,7 +238,9 @@ test("017", async () => {
     <doc><?pi some data ? > <??></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("018", async () => {
   const xml = `
@@ -185,7 +250,10 @@ test("018", async () => {
     <doc><![CDATA[<foo>]]></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "<foo>",
+  });
 });
 test("019", async () => {
   const xml = `
@@ -195,7 +263,10 @@ test("019", async () => {
     <doc><![CDATA[<&]]></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "<&",
+  });
 });
 test("020", async () => {
   const xml = `
@@ -205,7 +276,10 @@ test("020", async () => {
     <doc><![CDATA[<&]>]]]></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "<&]>]",
+  });
 });
 test("021", async () => {
   const xml = `
@@ -215,7 +289,9 @@ test("021", async () => {
     <doc><!-- a comment --></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("022", async () => {
   const xml = `
@@ -225,7 +301,9 @@ test("022", async () => {
     <doc><!-- a comment ->--></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("023", async () => {
   const xml = `
@@ -236,7 +314,10 @@ test("023", async () => {
     <doc>&e;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "&e;",
+  });
 });
 test("024", async () => {
   const xml = `
@@ -248,7 +329,10 @@ test("024", async () => {
     <doc>&e;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "&e;",
+  });
 });
 test("025", async () => {
   const xml = `
@@ -259,7 +343,17 @@ test("025", async () => {
     <doc><foo/><foo></foo></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__children": [
+      {
+        "__name": "foo",
+      },
+      {
+        "__name": "foo",
+      },
+    ],
+    "__name": "doc",
+  });
 });
 test("026", async () => {
   const xml = `
@@ -270,7 +364,17 @@ test("026", async () => {
     <doc><foo/><foo></foo></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__children": [
+      {
+        "__name": "foo",
+      },
+      {
+        "__name": "foo",
+      },
+    ],
+    "__name": "doc",
+  });
 });
 test("027", async () => {
   const xml = `
@@ -281,7 +385,17 @@ test("027", async () => {
     <doc><foo/><foo></foo></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__children": [
+      {
+        "__name": "foo",
+      },
+      {
+        "__name": "foo",
+      },
+    ],
+    "__name": "doc",
+  });
 });
 test("028", async () => {
   const xml = `
@@ -292,7 +406,9 @@ test("028", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("029", async () => {
   const xml = `
@@ -303,7 +419,9 @@ test("029", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("030", async () => {
   const xml = `
@@ -314,7 +432,9 @@ test("030", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("031", async () => {
   const xml = `
@@ -325,7 +445,9 @@ test("031", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("032", async () => {
   const xml = `
@@ -336,7 +458,9 @@ test("032", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("033", async () => {
   const xml = `
@@ -347,7 +471,9 @@ test("033", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("034", async () => {
   const xml = `
@@ -357,7 +483,9 @@ test("034", async () => {
     <doc/>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("035", async () => {
   const xml = `
@@ -367,7 +495,9 @@ test("035", async () => {
     <doc />
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("036", async () => {
   const xml = `
@@ -378,7 +508,9 @@ test("036", async () => {
     <?pi data?>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("037", async () => {
   const xml = `
@@ -390,7 +522,9 @@ test("037", async () => {
 
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("038", async () => {
   const xml = `
@@ -402,7 +536,9 @@ test("038", async () => {
 
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("039", async () => {
   const xml = `
@@ -413,7 +549,9 @@ test("039", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("040", async () => {
   const xml = `
@@ -424,7 +562,12 @@ test("040", async () => {
     <doc a1="&quot;&lt;&amp;&gt;&apos;"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "a1": "\"<&>'",
+    },
+    "__name": "doc",
+  });
 });
 test("041", async () => {
   const xml = `
@@ -435,7 +578,12 @@ test("041", async () => {
     <doc a1="&#65;"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "a1": "A",
+    },
+    "__name": "doc",
+  });
 });
 test("042", async () => {
   const xml = `
@@ -445,7 +593,10 @@ test("042", async () => {
     <doc>&#00000000000000000000000000000000065;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "A",
+  });
 });
 test("043", async () => {
   const xml = `
@@ -457,7 +608,17 @@ test("043", async () => {
     bar"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toMatchInlineSnapshot(`
+    {
+      "__attrs": {
+        "a1": 
+    "foo
+        bar"
+    ,
+      },
+      "__name": "doc",
+    }
+  `);
 });
 test("044", async () => {
   const xml = `
@@ -473,7 +634,30 @@ test("044", async () => {
     </doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__children": [
+      {
+        "__attrs": {
+          "a3": "v3",
+        },
+        "__name": "e",
+      },
+      {
+        "__attrs": {
+          "a1": "w1",
+        },
+        "__name": "e",
+      },
+      {
+        "__attrs": {
+          "a2": "w2",
+          "a3": "v3",
+        },
+        "__name": "e",
+      },
+    ],
+    "__name": "doc",
+  });
 });
 test("045", async () => {
   const xml = `
@@ -485,7 +669,9 @@ test("045", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("046", async () => {
   const xml = `
@@ -497,7 +683,9 @@ test("046", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("047", async () => {
   const xml = `
@@ -508,7 +696,15 @@ test("047", async () => {
     Y</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toMatchInlineSnapshot(`
+    {
+      "__name": "doc",
+      "__text": 
+    "X
+        Y"
+    ,
+    }
+  `);
 });
 test("048", async () => {
   const xml = `
@@ -518,7 +714,10 @@ test("048", async () => {
     <doc>]</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "]",
+  });
 });
 test("049", async () => {
   const xml = `
@@ -528,7 +727,10 @@ test("049", async () => {
     <doc>£</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "£",
+  });
 });
 test("050", async () => {
   const xml = `
@@ -538,7 +740,10 @@ test("050", async () => {
     <doc>เจมส์</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "เจมส์",
+  });
 });
 test("051", async () => {
   const xml = `
@@ -548,7 +753,9 @@ test("051", async () => {
     <เจมส์></เจมส์>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "เจมส์",
+  });
 });
 test("052", async () => {
   const xml = `
@@ -558,7 +765,10 @@ test("052", async () => {
     <doc>𐀀􏿽</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "𐀀􏿽",
+  });
 });
 test("053", async () => {
   const xml = `
@@ -570,7 +780,10 @@ test("053", async () => {
     <doc>&e;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "&e;",
+  });
 });
 test("054", async () => {
   const xml = `
@@ -586,7 +799,9 @@ test("054", async () => {
 
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("055", async () => {
   const xml = `
@@ -597,7 +812,9 @@ test("055", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("056", async () => {
   const xml = `
@@ -607,7 +824,10 @@ test("056", async () => {
     <doc>&#x0000000000000000000000000000000000000041;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "A",
+  });
 });
 test("057", async () => {
   const xml = `
@@ -617,7 +837,9 @@ test("057", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("058", async () => {
   const xml = `
@@ -628,7 +850,12 @@ test("058", async () => {
     <doc a1=" 1  	2 	"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "a1": " 1  	2 	",
+    },
+    "__name": "doc",
+  });
 });
 test("059", async () => {
   const xml = `
@@ -644,7 +871,34 @@ test("059", async () => {
     </doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__children": [
+      {
+        "__attrs": {
+          "a1": "v1",
+          "a2": "v2",
+          "a3": "v3",
+        },
+        "__name": "e",
+      },
+      {
+        "__attrs": {
+          "a1": "w1",
+          "a2": "v2",
+        },
+        "__name": "e",
+      },
+      {
+        "__attrs": {
+          "a1": "v1",
+          "a2": "w2",
+          "a3": "v3",
+        },
+        "__name": "e",
+      },
+    ],
+    "__name": "doc",
+  });
 });
 test("060", async () => {
   const xml = `
@@ -654,7 +908,15 @@ test("060", async () => {
     <doc>X&#10;Y</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toMatchInlineSnapshot(`
+    {
+      "__name": "doc",
+      "__text": 
+    "X
+    Y"
+    ,
+    }
+  `);
 });
 test("061", async () => {
   const xml = `
@@ -664,7 +926,10 @@ test("061", async () => {
     <doc>&#163;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "£",
+  });
 });
 test("062", async () => {
   const xml = `
@@ -674,7 +939,10 @@ test("062", async () => {
     <doc>&#xe40;&#xe08;&#xe21;ส์</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "เจมส์",
+  });
 });
 test("063", async () => {
   const xml = `
@@ -684,7 +952,9 @@ test("063", async () => {
     <เจมส์></เจมส์>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "เจมส์",
+  });
 });
 test("064", async () => {
   const xml = `
@@ -694,7 +964,10 @@ test("064", async () => {
     <doc>&#x10000;&#x10FFFD;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "𐀀􏿽",
+  });
 });
 test("065", async () => {
   const xml = `
@@ -705,7 +978,9 @@ test("065", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("066", async () => {
   const xml = `
@@ -718,7 +993,12 @@ test("066", async () => {
     <doc a1="&e1;"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "a1": "&e1;",
+    },
+    "__name": "doc",
+  });
 });
 test("067", async () => {
   const xml = `
@@ -728,7 +1008,15 @@ test("067", async () => {
     <doc>&#13;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toMatchInlineSnapshot(`
+    {
+      "__name": "doc",
+      "__text": 
+    "
+    "
+    ,
+    }
+  `);
 });
 test("068", async () => {
   const xml = `
@@ -739,7 +1027,10 @@ test("068", async () => {
     <doc>&e;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "&e;",
+  });
 });
 test("069", async () => {
   const xml = `
@@ -750,7 +1041,9 @@ test("069", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("070", async () => {
   const xml = `
@@ -761,7 +1054,9 @@ test("070", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("071", async () => {
   const xml = `
@@ -772,7 +1067,9 @@ test("071", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("072", async () => {
   const xml = `
@@ -783,7 +1080,9 @@ test("072", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("073", async () => {
   const xml = `
@@ -794,7 +1093,9 @@ test("073", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("074", async () => {
   const xml = `
@@ -805,7 +1106,9 @@ test("074", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("075", async () => {
   const xml = `
@@ -816,7 +1119,9 @@ test("075", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("076", async () => {
   const xml = `
@@ -829,7 +1134,9 @@ test("076", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("077", async () => {
   const xml = `
@@ -840,7 +1147,9 @@ test("077", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("078", async () => {
   const xml = `
@@ -851,7 +1160,12 @@ test("078", async () => {
     <doc a="v"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "a": "v",
+    },
+    "__name": "doc",
+  });
 });
 test("079", async () => {
   const xml = `
@@ -862,7 +1176,12 @@ test("079", async () => {
     <doc a="v"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "a": "v",
+    },
+    "__name": "doc",
+  });
 });
 test("080", async () => {
   const xml = `
@@ -873,7 +1192,9 @@ test("080", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("081", async () => {
   const xml = `
@@ -886,7 +1207,25 @@ test("081", async () => {
     <doc><a/><b/><c><a/></c></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__children": [
+      {
+        "__name": "a",
+      },
+      {
+        "__name": "b",
+      },
+      {
+        "__children": [
+          {
+            "__name": "a",
+          },
+        ],
+        "__name": "c",
+      },
+    ],
+    "__name": "doc",
+  });
 });
 test("082", async () => {
   const xml = `
@@ -897,7 +1236,9 @@ test("082", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("083", async () => {
   const xml = `
@@ -908,14 +1249,18 @@ test("083", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("084", async () => {
   const xml = `
     <!DOCTYPE doc [<!ELEMENT doc (#PCDATA)>]><doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("085", async () => {
   const xml = `
@@ -927,7 +1272,10 @@ test("085", async () => {
     <doc>&e;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "&e;",
+  });
 });
 test("086", async () => {
   const xml = `
@@ -939,7 +1287,10 @@ test("086", async () => {
     <doc>&e;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "&e;",
+  });
 });
 test("087", async () => {
   const xml = `
@@ -951,7 +1302,10 @@ test("087", async () => {
     <doc>&e;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "&e;",
+  });
 });
 test("088", async () => {
   const xml = `
@@ -962,7 +1316,10 @@ test("088", async () => {
     <doc>&e;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "&e;",
+  });
 });
 test("089", async () => {
   const xml = `
@@ -973,7 +1330,10 @@ test("089", async () => {
     <doc>&e;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "&e;",
+  });
 });
 test("090", async () => {
   const xml = `
@@ -986,7 +1346,9 @@ test("090", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("091", async () => {
   const xml = `
@@ -999,7 +1361,9 @@ test("091", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("092", async () => {
   const xml = `
@@ -1015,7 +1379,20 @@ test("092", async () => {
     </doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__children": [
+      {
+        "__name": "a",
+      },
+      {
+        "__name": "a",
+      },
+      {
+        "__name": "a",
+      },
+    ],
+    "__name": "doc",
+  });
 });
 test("093", async () => {
   const xml = `
@@ -1028,7 +1405,9 @@ test("093", async () => {
     </doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("094", async () => {
   const xml = `
@@ -1040,7 +1419,9 @@ test("094", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("095", async () => {
   const xml = `
@@ -1052,7 +1433,12 @@ test("095", async () => {
     <doc a1="1  2"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "a1": "1  2",
+    },
+    "__name": "doc",
+  });
 });
 test("096", async () => {
   const xml = `
@@ -1063,7 +1449,9 @@ test("096", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("097", async () => {
   const xml = `
@@ -1077,7 +1465,9 @@ test("097", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("098", async () => {
   const xml = `
@@ -1088,7 +1478,9 @@ test("098", async () => {
     y?></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("099", async () => {
   const xml = `
@@ -1099,7 +1491,9 @@ test("099", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("100", async () => {
   const xml = `
@@ -1110,7 +1504,9 @@ test("100", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("101", async () => {
   const xml = `
@@ -1121,7 +1517,9 @@ test("101", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("102", async () => {
   const xml = `
@@ -1132,7 +1530,14 @@ test("102", async () => {
     <doc a="&#34;"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toMatchInlineSnapshot(`
+    {
+      "__attrs": {
+        "a": """,
+      },
+      "__name": "doc",
+    }
+  `);
 });
 test("103", async () => {
   const xml = `
@@ -1142,7 +1547,10 @@ test("103", async () => {
     <doc>&#60;doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "<doc>",
+  });
 });
 test("104", async () => {
   const xml = `
@@ -1153,7 +1561,12 @@ test("104", async () => {
     <doc a="x	y"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "a": "x	y",
+    },
+    "__name": "doc",
+  });
 });
 test("105", async () => {
   const xml = `
@@ -1164,7 +1577,12 @@ test("105", async () => {
     <doc a="x&#9;y"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "a": "x	y",
+    },
+    "__name": "doc",
+  });
 });
 test("106", async () => {
   const xml = `
@@ -1175,7 +1593,17 @@ test("106", async () => {
     <doc a="x&#10;y"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toMatchInlineSnapshot(`
+    {
+      "__attrs": {
+        "a": 
+    "x
+    y"
+    ,
+      },
+      "__name": "doc",
+    }
+  `);
 });
 test("107", async () => {
   const xml = `
@@ -1186,7 +1614,17 @@ test("107", async () => {
     <doc a="x&#13;y"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toMatchInlineSnapshot(`
+    {
+      "__attrs": {
+        "a": 
+    "x
+    y"
+    ,
+      },
+      "__name": "doc",
+    }
+  `);
 });
 test("108", async () => {
   const xml = `
@@ -1199,7 +1637,12 @@ test("108", async () => {
     <doc a="x&e;y"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "a": "x&e;y",
+    },
+    "__name": "doc",
+  });
 });
 test("109", async () => {
   const xml = `
@@ -1210,7 +1653,12 @@ test("109", async () => {
     <doc a=""></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "a": "",
+    },
+    "__name": "doc",
+  });
 });
 test("110", async () => {
   const xml = `
@@ -1222,7 +1670,12 @@ test("110", async () => {
     <doc a="x&e;y"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "a": "x&e;y",
+    },
+    "__name": "doc",
+  });
 });
 test("111", async () => {
   const xml = `
@@ -1233,7 +1686,12 @@ test("111", async () => {
     <doc a="&#32;x&#32;&#32;y&#32;"></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__attrs": {
+      "a": " x  y ",
+    },
+    "__name": "doc",
+  });
 });
 test("112", async () => {
   const xml = `
@@ -1244,7 +1702,14 @@ test("112", async () => {
     <doc><a></a></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__children": [
+      {
+        "__name": "a",
+      },
+    ],
+    "__name": "doc",
+  });
 });
 test("113", async () => {
   const xml = `
@@ -1255,7 +1720,9 @@ test("113", async () => {
     <doc></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("114", async () => {
   const xml = `
@@ -1266,7 +1733,10 @@ test("114", async () => {
     <doc>&e;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "&e;",
+  });
 });
 test("115", async () => {
   const xml = `
@@ -1278,7 +1748,10 @@ test("115", async () => {
     <doc>&e1;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "&e1;",
+  });
 });
 test("116", async () => {
   const xml = `
@@ -1289,7 +1762,9 @@ test("116", async () => {
     ]]></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });
 test("117", async () => {
   const xml = `
@@ -1300,7 +1775,10 @@ test("117", async () => {
     <doc>&rsqb;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "&rsqb;",
+  });
 });
 test("118", async () => {
   const xml = `
@@ -1311,7 +1789,10 @@ test("118", async () => {
     <doc>&rsqb;</doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+    "__text": "&rsqb;",
+  });
 });
 test("119", async () => {
   const xml = `
@@ -1321,5 +1802,7 @@ test("119", async () => {
     <doc><!-- -á --></doc>
   `;
   const result = Bun.XML.parse(xml);
-  expect(result).toMatchInlineSnapshot();
+  expect(result).toEqual({
+    "__name": "doc",
+  });
 });

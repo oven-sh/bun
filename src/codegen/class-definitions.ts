@@ -217,6 +217,12 @@ export class ClassDefinition {
 
   callbacks?: Record<string, string>;
 
+  /**
+   * Whether this class should inherit from Error.prototype instead of Object.prototype.
+   * This makes instances of the class satisfy `instanceof Error`.
+   */
+  inheritsFromError?: boolean;
+
   constructor(options: Partial<ClassDefinition>) {
     this.name = options.name ?? "";
     this.klass = options.klass ?? {};

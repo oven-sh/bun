@@ -60,6 +60,7 @@ public:
     JSC::IsoHeapCellType m_heapCellTypeForNodeVMGlobalObject;
     JSC::IsoHeapCellType m_heapCellTypeForNapiHandleScopeImpl;
     JSC::IsoHeapCellType m_heapCellTypeForBakeGlobalObject;
+    JSC::IsoHeapCellType m_heapCellTypeForJSResolveMessage;
 
 private:
     Lock m_lock;

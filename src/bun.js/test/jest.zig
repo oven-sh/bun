@@ -104,6 +104,9 @@ pub const TestRunner = struct {
     // Used for --test-name-pattern to reduce allocations
     filter_regex: ?*RegularExpression,
     filter_buffer: MutableString,
+    
+    // Used for --full-test-name filtering
+    full_name_filter: ?[]const u8,
 
     unhandled_errors_between_tests: u32 = 0,
     summary: Summary = Summary{},
@@ -136,7 +139,7 @@ pub const TestRunner = struct {
     }
 
     pub fn hasTestFilter(this: *const TestRunner) bool {
-        return this.filter_regex != null;
+        return this.filter_regex != null or this.full_name_filter != null;
     }
 
     pub fn setTimeout(
@@ -2002,6 +2005,19 @@ inline fn createScope(
                     is_skip = true;
                     tag_to_use = .skipped_because_label;
                 }
+            } else if (runner.full_name_filter) |full_name| {
+                var buffer: bun.MutableString = runner.filter_buffer;
+                buffer.reset();
+                appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
+                buffer.append(label) catch unreachable;
+                const full_test_name = buffer.slice();
+                // Add leading space to filter to match the format from appendParentLabel
+                var expected_name_buffer: [1024]u8 = undefined;
+                const expected_name = std.fmt.bufPrint(&expected_name_buffer, " {s}", .{full_name}) catch full_name;
+                if (!bun.strings.eql(full_test_name, expected_name)) {
+                    is_skip = true;
+                    tag_to_use = .skipped_because_label;
+                }
             }
         }
 
@@ -2374,6 +2390,19 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                     buffer.append(formattedLabel) catch unreachable;
                     const str = bun.String.fromBytes(buffer.slice());
                     is_skip = !regex.matches(str);
+                    if (is_skip) {
+                        tag_to_use = .skipped_because_label;
+                    }
+                } else if (Jest.runner.?.full_name_filter) |full_name| {
+                    var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
+                    buffer.reset();
+                    appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
+                    buffer.append(formattedLabel) catch unreachable;
+                    const full_test_name = buffer.slice();
+                    // Add leading space to filter to match the format from appendParentLabel
+                    var expected_name_buffer: [1024]u8 = undefined;
+                    const expected_name = std.fmt.bufPrint(&expected_name_buffer, " {s}", .{full_name}) catch full_name;
+                    is_skip = !bun.strings.eql(full_test_name, expected_name);
                     if (is_skip) {
                         tag_to_use = .skipped_because_label;
                     }

@@ -11,8 +11,8 @@ Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1. Us
 
 {% codetabs %}
 
-```bash#macOS/Linux_(curl)
-$ curl -fsSL https://bun.com/install | bash # for macOS, Linux, and WSL
+```bash#macOS/Linux/WSL_(curl)
+$ curl -fsSL https://bun.com/install | bash
 # to install a specific version
 $ curl -fsSL https://bun.com/install | bash -s "bun-v$BUN_LATEST_VERSION"
 ```

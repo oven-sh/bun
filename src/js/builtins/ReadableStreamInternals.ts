@@ -569,7 +569,7 @@ export function readableStreamTeePullFunction(teeState, reader, shouldClone) {
   const pullAlgorithm = function () {
     if (teeState.flags & TeeStateFlags.reading) {
       teeState.flags |= TeeStateFlags.readAgain;
-      return $Promise.$resolve();
+      return Promise.$resolve();
     }
     teeState.flags |= TeeStateFlags.reading;
     $Promise.prototype.$then.$call(
@@ -612,7 +612,7 @@ export function readableStreamTeePullFunction(teeState, reader, shouldClone) {
           $readableStreamDefaultControllerEnqueue(teeState.branch2.$readableStreamController, chunk2);
         teeState.flags &= ~TeeStateFlags.reading;
 
-        $Promise.$resolve().$then(() => {
+        Promise.$resolve().$then(() => {
           if (teeState.flags & TeeStateFlags.readAgain) pullAlgorithm();
         });
       },
@@ -621,7 +621,7 @@ export function readableStreamTeePullFunction(teeState, reader, shouldClone) {
         teeState.flags &= ~TeeStateFlags.reading;
       },
     );
-    return $Promise.$resolve();
+    return Promise.$resolve();
   };
   return pullAlgorithm;
 }
@@ -1053,7 +1053,7 @@ export function onPullDirectStream(controller: ReadableStreamDirectController) {
         controller._handleError = $handleDirectStreamErrorReject.bind(controller);
       }
 
-      Promise.prototype.catch.$call(result, controller._handleError);
+      $Promise.prototype.$catch.$call(result, controller._handleError);
     }
   } catch (e) {
     return $handleDirectStreamErrorReject.$call(controller, e);
@@ -1393,7 +1393,7 @@ export function initializeArrayStream(underlyingSource, _highWaterMark: number) 
 
   function fulfill() {
     calledDone = true;
-    closingPromise.resolve.$call(undefined, array);
+    closingPromise.$resolve.$call(undefined, array);
     return array;
   }
 

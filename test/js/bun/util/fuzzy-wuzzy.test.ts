@@ -77,13 +77,17 @@ delete process._destroy;
 delete process._events;
 delete process.openStdin;
 delete process.emitWarning;
-delete require("stream").Readable.prototype.destroy;
+require("stream").Readable.prototype.destroy = () => {};
 delete globalThis.Loader;
 // ** Uncatchable errors in tests **
 delete ReadableStreamDefaultReader.prototype["closed"];
 delete ReadableStreamBYOBReader.prototype["closed"];
 delete WritableStreamDefaultWriter.prototype["ready"];
 delete WritableStreamDefaultWriter.prototype["closed"];
+Object.defineProperty(ReadableStreamDefaultReader.prototype, "closed", { value: undefined });
+Object.defineProperty(ReadableStreamBYOBReader.prototype, "closed", { value: undefined });
+Object.defineProperty(WritableStreamDefaultWriter.prototype, "ready", { value: undefined });
+Object.defineProperty(WritableStreamDefaultWriter.prototype, "closed", { value: undefined });
 WebAssembly.compile = () => {};
 WebAssembly.instantiate = () => {};
 // ** Uncatchable errors in tests **

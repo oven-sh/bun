@@ -1,6 +1,6 @@
 const SymbolIterator = Symbol.iterator;
 const SymbolAsyncIterator = Symbol.asyncIterator;
-const PromisePrototypeThen = Promise.prototype.then;
+const PromisePrototypeThen = $Promise.prototype.$then;
 
 function from(Readable, iterable, opts) {
   let iterator;
@@ -38,6 +38,7 @@ function from(Readable, iterable, opts) {
   let reading = false;
   let isAsyncValues = false;
 
+  console.log(readable.destroy);
   readable._read = function () {
     if (!reading) {
       reading = true;

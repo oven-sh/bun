@@ -22,6 +22,9 @@ export interface BaseQueryHandle<Connection> {
 }
 
 export type { Query };
+
+const _getQueryHandle = Symbol("_getQueryHandle");
+
 class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   public [_resolve]: (value: T) => void;
   public [_reject]: (reason?: Error) => void;
@@ -46,7 +49,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     return `Query { ${query.trimEnd()} }`;
   }
 
-  private getQueryHandle() {
+  [_getQueryHandle]() {
     let handle = this[_handle];
 
     if (!handle) {
@@ -87,6 +90,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     }
 
     this[_resolve] = resolve_!;
+
     this[_reject] = reject_!;
     this[_handle] = null;
     this[_handler] = handler;
@@ -114,7 +118,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     }
 
     this[_queryStatus] |= SQLQueryStatus.executed;
-    const handle = this.getQueryHandle();
+    const handle = this[_getQueryHandle]();
 
     if (!handle) {
       return this;
@@ -129,6 +133,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       return handler(this, handle);
     } catch (err) {
       this[_queryStatus] |= SQLQueryStatus.error;
+
       this.reject(err as Error);
     }
   }
@@ -156,7 +161,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
   resolve(x: T) {
     this[_queryStatus] &= ~SQLQueryStatus.active;
-    const handle = this.getQueryHandle();
+    const handle = this[_getQueryHandle]();
 
     if (!handle) {
       return this;
@@ -172,7 +177,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     this[_queryStatus] |= SQLQueryStatus.error;
 
     if (!(this[_queryStatus] & SQLQueryStatus.invalidHandle)) {
-      const handle = this.getQueryHandle();
+      const handle = this[_getQueryHandle]();
 
       if (!handle) {
         return this[_reject](x);
@@ -193,7 +198,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     this[_queryStatus] |= SQLQueryStatus.cancelled;
 
     if (status & SQLQueryStatus.executed) {
-      const handle = this.getQueryHandle();
+      const handle = this[_getQueryHandle]();
 
       if (handle) {
         handle.cancel?.();
@@ -218,7 +223,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   raw() {
-    const handle = this.getQueryHandle();
+    const handle = this[_getQueryHandle]();
 
     if (!handle) {
       return this;
@@ -234,7 +239,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   values() {
-    const handle = this.getQueryHandle();
+    const handle = this[_getQueryHandle]();
 
     if (!handle) {
       return this;
@@ -264,7 +269,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
     this[_run](true);
 
-    const result = super.catch.$apply(this, arguments);
+    const result = super.$catch.$apply(this, arguments);
     $markPromiseAsHandled(result);
 
     return result;
@@ -277,7 +282,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
     this[_run](true);
 
-    return super.finally.$apply(this, arguments);
+    return super.$finally.$apply(this, arguments);
   }
 }
 

@@ -1237,7 +1237,13 @@ pub const DescribeScope = struct {
         if (Jest.runner.?.full_name_filters.len > 0) {
             var could_match = false;
             for (Jest.runner.?.full_name_filters) |full_name| {
-                // If any full test name could start with this describe block's label, we need to process it
+                // For trailing space case, disable optimization to let regular matching handle it
+                // This is simpler and more reliable than trying to predict nested hierarchies
+                if (bun.strings.endsWith(full_name, " ")) {
+                    could_match = true;
+                    break;
+                }
+                // Regular case: if any full test name could start with this describe block's label
                 if (bun.strings.startsWith(full_name, this.label)) {
                     could_match = true;
                     break;
@@ -2032,10 +2038,20 @@ inline fn createScope(
                 var matches = false;
                 var expected_name_buffer: [1024]u8 = undefined;
                 for (runner.full_name_filters) |full_name| {
-                    const expected_name = std.fmt.bufPrint(&expected_name_buffer, " {s}", .{full_name}) catch continue;
-                    if (bun.strings.eql(full_test_name, expected_name)) {
-                        matches = true;
-                        break;
+                    // Handle trailing space case: "auth " means "all tests starting with 'auth '"
+                    if (bun.strings.endsWith(full_name, " ")) {
+                        const expected_prefix = std.fmt.bufPrint(&expected_name_buffer, " {s}", .{full_name}) catch continue;
+                        if (bun.strings.startsWith(full_test_name, expected_prefix)) {
+                            matches = true;
+                            break;
+                        }
+                    } else {
+                        // Regular exact match case
+                        const expected_name = std.fmt.bufPrint(&expected_name_buffer, " {s}", .{full_name}) catch continue;
+                        if (bun.strings.eql(full_test_name, expected_name)) {
+                            matches = true;
+                            break;
+                        }
                     }
                 }
                 if (!matches) {
@@ -2428,10 +2444,20 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                     var matches = false;
                     var expected_name_buffer: [1024]u8 = undefined;
                     for (Jest.runner.?.full_name_filters) |full_name| {
-                        const expected_name = std.fmt.bufPrint(&expected_name_buffer, " {s}", .{full_name}) catch continue;
-                        if (bun.strings.eql(full_test_name, expected_name)) {
-                            matches = true;
-                            break;
+                        // Handle trailing space case: "auth " means "all tests starting with 'auth '"
+                        if (bun.strings.endsWith(full_name, " ")) {
+                            const expected_prefix = std.fmt.bufPrint(&expected_name_buffer, " {s}", .{full_name}) catch continue;
+                            if (bun.strings.startsWith(full_test_name, expected_prefix)) {
+                                matches = true;
+                                break;
+                            }
+                        } else {
+                            // Regular exact match case
+                            const expected_name = std.fmt.bufPrint(&expected_name_buffer, " {s}", .{full_name}) catch continue;
+                            if (bun.strings.eql(full_test_name, expected_name)) {
+                                matches = true;
+                                break;
+                            }
                         }
                     }
                     is_skip = !matches;

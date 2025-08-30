@@ -13,7 +13,7 @@ interface SecurityScannerTestOptions {
   hasExistingNodeModules: boolean;
   linker: "hoisted" | "isolated";
   scannerType: "local" | "npm" | "npm.bunfigonly";
-  scannerReturns: "clean" | "warn" | "fatal";
+  scannerReturns: "none" | "warn" | "fatal";
   shouldFail: boolean;
 
   hasLockfile: boolean;
@@ -30,7 +30,7 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
   }
 
   registry.clearRequestLog();
-  registry.setScannerBehavior(options.scannerReturns ?? "clean");
+  registry.setScannerBehavior(options.scannerReturns ?? "none");
 
   const {
     command,
@@ -287,7 +287,7 @@ scanner = "${scannerPath}"`,
         break;
       }
 
-      case "clean": {
+      case "none": {
         // When there are no security issues, packages should be installed normally
         const files = await Array.fromAsync(
           new Bun.Glob("**/*").scan({ cwd: dir, dot: true, followSymlinks: true, onlyFiles: false }),
@@ -389,7 +389,7 @@ describe("Security Scanner Matrix Tests", () => {
         describe.each(["hoisted", "isolated"] as const)("--linker=%s", linker => {
           describe.each(["local", "npm", "npm.bunfigonly"] as const)("(scanner: %s)", scannerType => {
             describe.each([true, false] as const)("(bun.lock exists: %p)", hasLockfile => {
-              describe.each(["clean", "warn", "fatal"] as const)("(returns: %s)", scannerReturns => {
+              describe.each(["none", "warn", "fatal"] as const)("(advisories: %s)", scannerReturns => {
                 if ((command === "add" || command === "uninstall" || command === "remove") && args.length === 0) {
                   // TODO(@alii): Test this case:
                   //  - Exit code 1

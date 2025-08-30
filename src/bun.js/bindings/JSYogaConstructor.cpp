@@ -123,7 +123,7 @@ JSC_DEFINE_HOST_FUNCTION(constructJSYogaNode, (JSC::JSGlobalObject * globalObjec
                 throwTypeError(globalObject, scope, "First argument must be a Yoga.Config instance"_s);
                 return {};
             }
-            config = jsConfig->internal();
+            config = jsConfig->impl().yogaConfig();
         }
     }
 

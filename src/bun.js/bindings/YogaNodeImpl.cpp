@@ -66,4 +66,16 @@ YogaNodeImpl* YogaNodeImpl::fromYGNode(YGNodeRef nodeRef)
     return static_cast<YogaNodeImpl*>(YGNodeGetContext(nodeRef));
 }
 
+void YogaNodeImpl::replaceYogaNode(YGNodeRef newNode)
+{
+    if (m_yogaNode) {
+        YGNodeSetContext(m_yogaNode, nullptr);
+        YGNodeFree(m_yogaNode);
+    }
+    m_yogaNode = newNode;
+    if (newNode) {
+        YGNodeSetContext(newNode, this);
+    }
+}
+
 } // namespace Bun

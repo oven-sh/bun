@@ -3,11 +3,14 @@
 #include <memory>
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/WriteBarrier.h>
+#include <wtf/Ref.h>
 
 // Forward declarations
 typedef struct YGConfig* YGConfigRef;
 
 namespace Bun {
+
+class YogaConfigImpl;
 
 class JSYogaConfig final : public JSC::JSDestructibleObject {
 public:
@@ -16,6 +19,7 @@ public:
     static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
 
     static JSYogaConfig* create(JSC::VM&, JSC::Structure*);
+    static JSYogaConfig* create(JSC::VM&, JSC::Structure*, Ref<YogaConfigImpl>&&);
     static void destroy(JSC::JSCell*);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue);
     ~JSYogaConfig();
@@ -26,8 +30,8 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    YGConfigRef internal() { return m_config; }
-    void clearInternal() { m_config = nullptr; }
+    YogaConfigImpl& impl() { return m_impl.get(); }
+    const YogaConfigImpl& impl() const { return m_impl.get(); }
 
     // Context storage
     JSC::WriteBarrier<JSC::Unknown> m_context;
@@ -40,9 +44,10 @@ public:
 
 private:
     JSYogaConfig(JSC::VM&, JSC::Structure*);
+    JSYogaConfig(JSC::VM&, JSC::Structure*, Ref<YogaConfigImpl>&&);
     void finishCreation(JSC::VM&);
 
-    YGConfigRef m_config;
+    Ref<YogaConfigImpl> m_impl;
 };
 
 } // namespace Bun

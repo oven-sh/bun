@@ -1,5 +1,6 @@
 #include "root.h"
 #include "JSYogaConfig.h"
+#include "YogaConfigImpl.h"
 #include "webcore/DOMIsoSubspaces.h"
 #include "webcore/DOMClientIsoSubspaces.h"
 #include "webcore/WebCoreJSClientData.h"
@@ -13,17 +14,20 @@ const JSC::ClassInfo JSYogaConfig::s_info = { "Config"_s, &Base::s_info, nullptr
 
 JSYogaConfig::JSYogaConfig(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure)
-    , m_config(nullptr)
+    , m_impl(YogaConfigImpl::create())
+{
+}
+
+JSYogaConfig::JSYogaConfig(JSC::VM& vm, JSC::Structure* structure, Ref<YogaConfigImpl>&& impl)
+    : Base(vm, structure)
+    , m_impl(WTFMove(impl))
 {
 }
 
 JSYogaConfig::~JSYogaConfig()
 {
-    // Only free if not already freed via free() method
-    if (m_config) {
-        YGConfigFree(m_config);
-        m_config = nullptr;
-    }
+    // Clear the JS wrapper reference from the C++ impl
+    m_impl->clearJSWrapper();
 }
 
 JSYogaConfig* JSYogaConfig::create(JSC::VM& vm, JSC::Structure* structure)
@@ -33,11 +37,21 @@ JSYogaConfig* JSYogaConfig::create(JSC::VM& vm, JSC::Structure* structure)
     return config;
 }
 
+JSYogaConfig* JSYogaConfig::create(JSC::VM& vm, JSC::Structure* structure, Ref<YogaConfigImpl>&& impl)
+{
+    JSYogaConfig* config = new (NotNull, JSC::allocateCell<JSYogaConfig>(vm)) JSYogaConfig(vm, structure, WTFMove(impl));
+    config->finishCreation(vm);
+    return config;
+}
+
 void JSYogaConfig::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    m_config = YGConfigNew();
+    
+    // Set this JS wrapper in the C++ impl
+    m_impl->setJSWrapper(this);
 }
+
 
 JSC::Structure* JSYogaConfig::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {

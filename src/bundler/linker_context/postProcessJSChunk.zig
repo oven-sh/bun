@@ -194,7 +194,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
         .iife => {
             // Bun does not do arrow function lowering. So the wrapper can be an arrow.
             if (c.options.global_name.len > 0) {
-                const global_name_prefix = if (c.options.minify_whitespace) 
+                const global_name_prefix = if (c.options.minify_whitespace)
                     std.fmt.allocPrint(worker.allocator, "var {s}=(()=>{{", .{c.options.global_name}) catch bun.outOfMemory()
                 else
                     std.fmt.allocPrint(worker.allocator, "var {s} = (() => {{\n", .{c.options.global_name}) catch bun.outOfMemory();
@@ -804,7 +804,7 @@ pub fn generateEntryPointTailJS(
                                 ),
                             ) catch unreachable;
                         }
-                        
+
                         // Return the exports object if it has exports
                         if (ast.exports_ref.isValid()) {
                             stmts.append(

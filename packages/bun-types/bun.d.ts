@@ -1837,11 +1837,11 @@ declare module "bun" {
 
     /**
      * Global variable name for IIFE format bundles.
-     * 
+     *
      * When using `format: "iife"` with a `globalName`, the bundle will be
      * wrapped in an IIFE and the exported values will be assigned to a global
      * variable with the specified name.
-     * 
+     *
      * @example
      * ```ts
      * await Bun.build({
@@ -1851,7 +1851,7 @@ declare module "bun" {
      *   outfile: './dist/library.js'
      * });
      * ```
-     * 
+     *
      * The `globalName` must be a valid JavaScript identifier.
      * This option is only meaningful when `format` is set to `"iife"`.
      */

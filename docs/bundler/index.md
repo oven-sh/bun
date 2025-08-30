@@ -401,6 +401,7 @@ await Bun.build({
   format: "iife",
 })
 ```
+
 ```bash#CLI
 $ bun build ./index.tsx --outdir ./out --format iife
 ```
@@ -430,6 +431,7 @@ await Bun.build({
   globalName: "MyLibrary",
 })
 ```
+
 ```bash#CLI
 $ bun build ./index.tsx --outdir ./out --format iife --global-name MyLibrary
 ```

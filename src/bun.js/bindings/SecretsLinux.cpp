@@ -52,13 +52,13 @@ struct _SecretSchema {
     SecretSchemaFlags flags;
     SecretSchemaAttribute attributes[32];
     gint reserved;
-	gpointer reserved1;
-	gpointer reserved2;
-	gpointer reserved3;
-	gpointer reserved4;
-	gpointer reserved5;
-	gpointer reserved6;
-	gpointer reserved7;
+    gpointer reserved1;
+    gpointer reserved2;
+    gpointer reserved3;
+    gpointer reserved4;
+    gpointer reserved5;
+    gpointer reserved6;
+    gpointer reserved7;
 };
 
 struct _GError {

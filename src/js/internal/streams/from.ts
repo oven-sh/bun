@@ -38,7 +38,6 @@ function from(Readable, iterable, opts) {
   let reading = false;
   let isAsyncValues = false;
 
-  console.log(readable.destroy);
   readable._read = function () {
     if (!reading) {
       reading = true;

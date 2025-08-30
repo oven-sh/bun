@@ -374,9 +374,7 @@ describe("Security Scanner Matrix Tests", () => {
       { args: ["is-even"], name: "is-even" },
       { args: ["left-pad", "is-even"], name: "left-pad,is-even" },
     ])("$name", ({ args }) => {
-      describe.each(["true", "false"] as const)("(node_modules: %s)", _hasNodeModules => {
-        const hasExistingNodeModules = _hasNodeModules === "true";
-
+      describe.each([true, false] as const)("(node_modules: %p)", hasExistingNodeModules => {
         describe.each(["hoisted", "isolated"] as const)("--linker=%s", linker => {
           describe.each(["local", "npm", "npm.bunfigonly"] as const)("(scanner: %s)", scannerType => {
             describe.each(["clean", "warn", "fatal"] as const)("(returns: %s)", scannerReturns => {

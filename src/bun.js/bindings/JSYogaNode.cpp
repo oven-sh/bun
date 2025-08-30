@@ -118,7 +118,7 @@ template<typename Visitor>
 void JSYogaNode::visitAdditionalChildren(Visitor& visitor)
 {
     fprintf(stderr, "[DEBUG] JSYogaNode::visitAdditionalChildren called for %p\n", this);
-    
+
     visitor.append(m_measureFunc);
     visitor.append(m_dirtiedFunc);
     visitor.append(m_baselineFunc);

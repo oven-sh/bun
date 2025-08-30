@@ -46,11 +46,11 @@ bool JSYogaNodeOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handl
     UNUSED_PARAM(handle);
 
     auto* impl = static_cast<YogaNodeImpl*>(context);
-    
+
     // Check if the YogaNodeImpl itself is reachable as opaque root
     bool reachable = visitor.containsOpaqueRoot(impl);
-    fprintf(stderr, "[DEBUG] JSYogaNodeOwner::isReachableFromOpaqueRoots called for YogaNodeImpl %p, reachable: %s\n", 
-            impl, reachable ? "true" : "false");
+    fprintf(stderr, "[DEBUG] JSYogaNodeOwner::isReachableFromOpaqueRoots called for YogaNodeImpl %p, reachable: %s\n",
+        impl, reachable ? "true" : "false");
 
     if (reason)
         *reason = "YogaNode reachable from root"_s;

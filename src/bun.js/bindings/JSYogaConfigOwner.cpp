@@ -25,7 +25,7 @@ bool JSYogaConfigOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> han
     UNUSED_PARAM(handle);
 
     auto* impl = static_cast<YogaConfigImpl*>(context);
-    
+
     // YogaConfig doesn't currently use opaque roots, so always return false
     // This allows normal GC collection based on JS reference reachability
     fprintf(stderr, "[DEBUG] JSYogaConfigOwner::isReachableFromOpaqueRoots called for YogaConfigImpl %p, reachable: false\n", impl);

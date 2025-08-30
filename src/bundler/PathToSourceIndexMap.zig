@@ -23,7 +23,7 @@ pub fn put(this: *PathToSourceIndexMap, allocator: std.mem.Allocator, text: []co
     try this.map.put(allocator, text, value);
 }
 
-pub fn getOrPutPath(this: *PathToSourceIndexMap, allocator: std.mem.Allocator, path: *const Fs.Path) !Map.GetOrPutResult {
+pub fn getOrPutPath(this: *PathToSourceIndexMap, allocator: std.mem.Allocator, path: *const Fs.Path) bun.OOM!Map.GetOrPutResult {
     return this.getOrPut(allocator, path.text);
 }
 

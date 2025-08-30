@@ -26,8 +26,8 @@ JSYogaConfig::JSYogaConfig(JSC::VM& vm, JSC::Structure* structure, Ref<YogaConfi
 
 JSYogaConfig::~JSYogaConfig()
 {
-    // Clear the JS wrapper reference from the C++ impl
-    m_impl->clearJSWrapper();
+    // The WeakHandleOwner::finalize should handle cleanup
+    // Don't interfere with that mechanism
 }
 
 JSYogaConfig* JSYogaConfig::create(JSC::VM& vm, JSC::Structure* structure)
@@ -75,16 +75,14 @@ JSC::GCClient::IsoSubspace* JSYogaConfig::subspaceFor(JSC::VM& vm)
         [](auto& spaces, auto&& space) { spaces.m_subspaceForJSYogaConfig = std::forward<decltype(space)>(space); });
 }
 
-DEFINE_VISIT_CHILDREN(JSYogaConfig);
-
 template<typename Visitor>
-void JSYogaConfig::visitChildrenImpl(JSC::JSCell* cell, Visitor& visitor)
+void JSYogaConfig::visitAdditionalChildren(Visitor& visitor)
 {
-    JSYogaConfig* thisObject = jsCast<JSYogaConfig*>(cell);
-    Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_context);
-    visitor.append(thisObject->m_loggerFunc);
-    visitor.append(thisObject->m_cloneNodeFunc);
+    visitor.append(m_context);
+    visitor.append(m_loggerFunc);
+    visitor.append(m_cloneNodeFunc);
 }
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSYogaConfig);
 
 } // namespace Bun

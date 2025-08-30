@@ -59,6 +59,13 @@ void YogaNodeImpl::clearJSWrapper()
     m_wrapper.clear();
 }
 
+void YogaNodeImpl::clearJSWrapperWithoutDeref()
+{
+    // Clear weak reference without deref - used by JS destructor
+    // when WeakHandleOwner::finalize will handle the deref
+    m_wrapper.clear();
+}
+
 JSYogaNode* YogaNodeImpl::jsWrapper() const
 {
     return m_wrapper.get();

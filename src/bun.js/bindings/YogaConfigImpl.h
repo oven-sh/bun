@@ -20,6 +20,7 @@ public:
     // JS wrapper management
     void setJSWrapper(JSYogaConfig*);
     void clearJSWrapper();
+    void clearJSWrapperWithoutDeref(); // Clear weak ref without deref (for JS destructor)
     JSYogaConfig* jsWrapper() const;
 
     // Helper to get YogaConfigImpl from YGConfigRef

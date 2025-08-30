@@ -28,7 +28,8 @@ public:
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM&);
 
     DECLARE_INFO;
-    DECLARE_VISIT_CHILDREN;
+    
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
 
     YogaConfigImpl& impl() { return m_impl.get(); }
     const YogaConfigImpl& impl() const { return m_impl.get(); }

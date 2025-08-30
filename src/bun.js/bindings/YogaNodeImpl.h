@@ -21,6 +21,7 @@ public:
     // JS wrapper management
     void setJSWrapper(JSYogaNode*);
     void clearJSWrapper();
+    void clearJSWrapperWithoutDeref(); // Clear weak ref without deref (for JS destructor)
     JSYogaNode* jsWrapper() const;
 
     // Config management

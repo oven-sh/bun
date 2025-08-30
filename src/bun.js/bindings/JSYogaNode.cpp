@@ -28,8 +28,8 @@ JSYogaNode::JSYogaNode(JSC::VM& vm, JSC::Structure* structure, Ref<YogaNodeImpl>
 
 JSYogaNode::~JSYogaNode()
 {
-    // Clear the JS wrapper reference from the C++ impl
-    m_impl->clearJSWrapper();
+    // The WeakHandleOwner::finalize should handle cleanup
+    // Don't interfere with that mechanism
 }
 
 JSYogaNode* JSYogaNode::create(JSC::VM& vm, JSC::Structure* structure, YGConfigRef config, JSYogaConfig* jsConfig)
@@ -114,22 +114,20 @@ JSC::GCClient::IsoSubspace* JSYogaNode::subspaceFor(JSC::VM& vm)
         [](auto& spaces, auto&& space) { spaces.m_subspaceForJSYogaNode = std::forward<decltype(space)>(space); });
 }
 
-DEFINE_VISIT_CHILDREN(JSYogaNode);
-
 template<typename Visitor>
-void JSYogaNode::visitChildrenImpl(JSC::JSCell* cell, Visitor& visitor)
+void JSYogaNode::visitAdditionalChildren(Visitor& visitor)
 {
-    JSYogaNode* thisObject = jsCast<JSYogaNode*>(cell);
-    Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_measureFunc);
-    visitor.append(thisObject->m_dirtiedFunc);
-    visitor.append(thisObject->m_baselineFunc);
-    visitor.append(thisObject->m_config);
+    visitor.append(m_measureFunc);
+    visitor.append(m_dirtiedFunc);
+    visitor.append(m_baselineFunc);
+    visitor.append(m_config);
 
     // Add the root YogaNode as an opaque root
-    if (void* yogaRoot = root(&thisObject->m_impl.get())) {
+    if (void* yogaRoot = root(&m_impl.get())) {
         visitor.addOpaqueRoot(yogaRoot);
     }
 }
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSYogaNode);
 
 } // namespace Bun

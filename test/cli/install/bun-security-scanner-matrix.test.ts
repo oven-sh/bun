@@ -4,6 +4,9 @@ import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "node:path";
 import { getRegistry, startRegistry, stopRegistry } from "./simple-dummy-registry";
 
+const redSubprocessPrefix = "\x1b[31m [SUBPROC]\x1b[0m";
+const redDebugPrefix = "\x1b[31m   [DEBUG]\x1b[0m";
+
 interface SecurityScannerTestOptions {
   command: "install" | "update" | "add" | "remove" | "uninstall";
   args: string[];
@@ -140,6 +143,10 @@ registry = "${registryUrl}/"`,
 
   ////////////////////////// POST SETUP DONE //////////////////////////
 
+  if (shouldDoInitialInstall) {
+    console.log(redDebugPrefix, "POST SETUP DONE");
+  }
+
   // write the full bunfig WITH scanner configuration
   await Bun.write(
     join(dir, "bunfig.toml"),
@@ -200,10 +207,9 @@ scanner = "${scannerPath}"`,
 
     errAndOut += str;
 
-    const redSubprocessPrefix = "\x1b[31m [SUBPROC] \x1b[0m";
-
     if (str.length > 0) {
       stream.write(redSubprocessPrefix);
+      stream.write(" ");
       stream.write(str);
       stream.write("\n");
     }
@@ -328,38 +334,6 @@ scanner = "${scannerPath}"`,
       }
     }
   }
-
-  // Verify node_modules was created for successful installs
-  // if (command === "install" && expectedExitCode === 0) {
-  //   const nodeModulesExists = await Bun.file(join(dir, "node_modules")).exists();
-  //   expect(nodeModulesExists).toBe(true);
-  // }
-
-  // // Verify packages were actually installed/removed
-  // if ((command === "add" || command === "install") && expectedExitCode === 0) {
-  //   const leftPadExists = await Bun.file(join(dir, "node_modules", "left-pad", "package.json")).exists();
-  //   expect(leftPadExists).toBe(true);
-
-  //   if (command === "add" && args.includes("is-even")) {
-  //     const isEvenExists = await Bun.file(join(dir, "node_modules", "is-even", "package.json")).exists();
-  //     expect(isEvenExists).toBe(true);
-  //   }
-  // }
-
-  // if ((command === "remove" || command === "uninstall") && expectedExitCode === 0) {
-  //   if (args.includes("is-even")) {
-  //     const isEvenExists = await Bun.file(join(dir, "node_modules", "is-even", "package.json")).exists();
-  //     expect(isEvenExists).toBe(false);
-  //   }
-
-  //   const leftPadExists = await Bun.file(join(dir, "node_modules", "left-pad", "package.json")).exists();
-  //   expect(leftPadExists).toBe(true);
-  // }
-
-  // if (expectedExitCode === 0 && command !== "update" && command !== "install") {
-  //   const lockfileExists = await Bun.file(join(dir, "bun.lock")).exists();
-  //   expect(lockfileExists).toBe(true);
-  // }
 
   const requestedPackages = registry.getRequestedPackages();
   const requestedTarballs = registry.getRequestedTarballs();

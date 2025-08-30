@@ -17,6 +17,7 @@ async function createScannerTarball(behavior: "clean" | "warn" | "fatal") {
         name: "test-security-scanner",
         version: "1.0.0",
         main: "index.js",
+        type: "module",
       }),
     );
 
@@ -63,16 +64,8 @@ async function createScannerTarball(behavior: "clean" | "warn" | "fatal") {
   }
 }
 
-async function main() {
-  console.log("Generating scanner tarballs...");
-  
-  await Promise.all([
-    createScannerTarball("clean"),
-    createScannerTarball("warn"),
-    createScannerTarball("fatal"),
-  ]);
+console.log("Generating scanner tarballs...");
 
-  console.log("All scanner tarballs generated successfully!");
-}
+await Promise.all([createScannerTarball("clean"), createScannerTarball("warn"), createScannerTarball("fatal")]);
 
-await main();
+console.log("All scanner tarballs generated successfully!");

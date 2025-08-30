@@ -2,7 +2,7 @@ pub const PackageInstaller = struct {
     manager: *PackageManager,
     lockfile: *Lockfile,
     progress: *Progress,
-    force_install_skip_prefetch_check: bool,
+    force_install_skip_prefetch_check: bool = false,
 
     // relative paths from `next` will be copied into this list.
     node_modules: NodeModulesFolder,

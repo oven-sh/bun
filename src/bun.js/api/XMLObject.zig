@@ -21,8 +21,16 @@ pub fn parse(
     var arena: bun.ArenaAllocator = .init(bun.default_allocator);
     defer arena.deinit();
 
-    const input_value = callFrame.argumentsAsArray(1)[0];
-
+    const args = callFrame.arguments();
+    if (args.len < 1) {
+        return global.throwInvalidArguments("XML.parse() requires 1 argument (xmlString)", .{});
+    }
+    
+    const input_value = args.ptr[0];
+    if (!input_value.isString()) {
+        return global.throwInvalidArguments("XML.parse() expects a string as first argument", .{});
+    }
+    
     const input_str = try input_value.toBunString(global);
     const input = input_str.toSlice(arena.allocator());
     defer input.deinit();
@@ -113,7 +121,7 @@ const ParserCtx = struct {
                 return obj;
             },
 
-            else => return .js_undefined,
+            else => return ctx.global.throwError(error.TypeError, "XML.parse: unsupported AST node type"),
         }
     }
 };

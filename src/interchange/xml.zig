@@ -36,18 +36,40 @@ const Parser = struct {
     column: u32,
 
     fn parseDocument(self: *Parser) !Expr {
-        self.skipWhitespace();
-
-        // Skip XML declaration if present
-        if (self.current + 5 < self.source.contents.len and std.mem.startsWith(u8, self.source.contents[self.current..], "<?xml")) {
-            while (self.current < self.source.contents.len and !std.mem.startsWith(u8, self.source.contents[self.current..], "?>")) {
-                self.advance();
-            }
-            if (self.current + 1 < self.source.contents.len) {
-                self.advance(); // skip '?'
-                self.advance(); // skip '>'
-            }
+        // Skip leading whitespace, XML declaration(s), and top-level comments
+        while (true) {
             self.skipWhitespace();
+
+            // XML declaration
+            if (self.current + 5 < self.source.contents.len
+                and std.mem.startsWith(u8, self.source.contents[self.current..], "<?xml"))
+            {
+                var found = false;
+                // Scan for the closing "?>"
+                while (self.current + 1 < self.source.contents.len) {
+                    if (std.mem.startsWith(u8, self.source.contents[self.current..], "?>")) {
+                        self.advance(); // skip '?'
+                        self.advance(); // skip '>'
+                        found = true;
+                        break;
+                    }
+                    self.advance();
+                }
+                if (!found) {
+                    return self.parseError("Unterminated XML declaration");
+                }
+                continue;
+            }
+
+            // Top-level comments
+            if (self.current + 3 < self.source.contents.len
+                and std.mem.startsWith(u8, self.source.contents[self.current..], "<!--"))
+            {
+                self.skipComment();
+                continue;
+            }
+
+            break;
         }
 
         if (self.current >= self.source.contents.len) {
@@ -136,6 +158,24 @@ const Parser = struct {
             {
                 // Comment found - skip it
                 self.skipComment();
+            } else if (self.current + 9 < self.source.contents.len and
+                std.mem.startsWith(u8, self.source.contents[self.current..], "<![CDATA["))
+            {
+                // CDATA section
+                self.current += 9; // move past "<![CDATA["
+                const cdata_start = self.current;
+                // scan until "]]>"
+                while (self.current + 2 < self.source.contents.len and
+                       !std.mem.startsWith(u8, self.source.contents[self.current..], "]]>"))
+                {
+                    self.advance();
+                }
+                if (self.current + 2 >= self.source.contents.len) {
+                    return self.parseError("Unterminated CDATA section");
+                }
+                const cdata_text = self.source.contents[cdata_start..self.current];
+                try text_parts.appendSlice(cdata_text);
+                self.current += 3; // skip "]]>"
             } else if (self.source.contents[self.current] == '<') {
                 // Child element
                 const child = try self.parseElementWithName();
@@ -276,7 +316,7 @@ const Parser = struct {
         const value_slice = self.source.contents[value_start..self.current];
         self.advance(); // consume closing quote
 
-        const key_expr = try self.createStringExpr(name_slice);
+        const key_expr = try self.createRawStringExpr(name_slice);
         const value_expr = try self.createStringExpr(value_slice);
 
         return G.Property{
@@ -289,6 +329,11 @@ const Parser = struct {
         // Decode XML entities before creating string
         const decoded_data = try self.decodeXmlEntities(slice);
         return Expr.init(E.String, .{ .data = decoded_data }, .Empty);
+    }
+
+    fn createRawStringExpr(self: *Parser, slice: []const u8) !Expr {
+        // Create string without entity decoding (for tag names and attribute names)
+        return Expr.init(E.String, .{ .data = try self.allocator.dupe(u8, slice) }, .Empty);
     }
 
     fn createChildrenAsProperties(self: *Parser, children: []ChildElement) !Expr {
@@ -311,10 +356,10 @@ const Parser = struct {
             const tag_name = child.tag_name;
             const total_count = child_counts.get(tag_name).?;
             const current_count = processed_tags.get(tag_name) orelse 0;
-
+            
             if (total_count == 1) {
                 // Single occurrence - add as property
-                const key_expr = try self.createStringExpr(tag_name);
+                const key_expr = try self.createRawStringExpr(tag_name);
                 try properties.append(.{ .key = key_expr, .value = child.element });
             } else {
                 // Multiple occurrences - create array
@@ -328,11 +373,11 @@ const Parser = struct {
                         }
                     }
                     const array_expr = Expr.init(E.Array, .{ .items = .fromList(child_array) }, .Empty);
-                    const key_expr = try self.createStringExpr(tag_name);
+                    const key_expr = try self.createRawStringExpr(tag_name);
                     try properties.append(.{ .key = key_expr, .value = array_expr });
                 }
             }
-
+            
             try processed_tags.put(tag_name, current_count + 1);
         }
 
@@ -361,7 +406,7 @@ const Parser = struct {
 
             if (total_count == 1) {
                 // Single occurrence - add as property
-                const key_expr = try self.createStringExpr(tag_name);
+                const key_expr = try self.createRawStringExpr(tag_name);
                 try properties.append(.{ .key = key_expr, .value = child.element });
             } else {
                 // Multiple occurrences - create array
@@ -375,7 +420,7 @@ const Parser = struct {
                         }
                     }
                     const array_expr = Expr.init(E.Array, .{ .items = .fromList(child_array) }, .Empty);
-                    const key_expr = try self.createStringExpr(tag_name);
+                    const key_expr = try self.createRawStringExpr(tag_name);
                     try properties.append(.{ .key = key_expr, .value = array_expr });
                 }
             }

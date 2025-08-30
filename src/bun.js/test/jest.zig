@@ -104,7 +104,7 @@ pub const TestRunner = struct {
     // Used for --test-name-pattern to reduce allocations
     filter_regex: ?*RegularExpression,
     filter_buffer: MutableString,
-    
+
     // Used for --full-test-name filtering
     full_name_filter: ?[]const u8,
 

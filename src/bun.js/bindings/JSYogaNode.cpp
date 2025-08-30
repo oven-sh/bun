@@ -21,7 +21,13 @@ JSYogaNode::JSYogaNode(JSC::VM& vm, JSC::Structure* structure)
 JSYogaNode::~JSYogaNode()
 {
     if (m_node) {
+        // Remove from parent to avoid use-after-free when parent tries to clear owner
+        YGNodeRef parent = YGNodeGetParent(m_node);
+        if (parent) {
+            YGNodeRemoveChild(parent, m_node);
+        }
         YGNodeFree(m_node);
+        clearInternal();
     }
 }
 

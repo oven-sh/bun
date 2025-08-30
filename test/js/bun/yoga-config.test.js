@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
+// Test if we can access Yoga via Bun.Yoga
+const Yoga = Bun.Yoga;
+
 describe("Yoga.Config", () => {
   test("Config constructor", () => {
     const config = new Yoga.Config();
@@ -46,14 +49,14 @@ describe("Yoga.Config", () => {
     const config = new Yoga.Config();
 
     // Test with different errata values
-    config.setErrata(Yoga.Errata.None);
-    expect(config.getErrata()).toBe(Yoga.Errata.None);
+    config.setErrata(Yoga.ERRATA_NONE);
+    expect(config.getErrata()).toBe(Yoga.ERRATA_NONE);
 
-    config.setErrata(Yoga.Errata.Classic);
-    expect(config.getErrata()).toBe(Yoga.Errata.Classic);
+    config.setErrata(Yoga.ERRATA_CLASSIC);
+    expect(config.getErrata()).toBe(Yoga.ERRATA_CLASSIC);
 
-    config.setErrata(Yoga.Errata.All);
-    expect(config.getErrata()).toBe(Yoga.Errata.All);
+    config.setErrata(Yoga.ERRATA_ALL);
+    expect(config.getErrata()).toBe(Yoga.ERRATA_ALL);
   });
 
   test("setExperimentalFeatureEnabled and isExperimentalFeatureEnabled", () => {
@@ -82,9 +85,8 @@ describe("Yoga.Config", () => {
     // Should not throw
     expect(() => config.free()).not.toThrow();
 
-    // After free, methods should throw or handle gracefully
-    // This depends on implementation - for now just test it doesn't crash
-    expect(() => config.free()).not.toThrow(); // double free should be safe
+    // After free, double free should throw an error (this is correct behavior)
+    expect(() => config.free()).toThrow("Cannot perform operation on freed Yoga.Config");
   });
 
   test("error handling", () => {

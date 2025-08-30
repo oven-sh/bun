@@ -1311,9 +1311,16 @@ pub const TestCommand = struct {
                 if (after_colon.len > 0) {
                     if (std.fmt.parseInt(u32, after_colon, 10)) |line_num| {
                         const file_part = arg[0..colon_index];
-                        ctx.test_options.test_line_filter_file = try ctx.allocator.dupe(u8, file_part);
-                        ctx.test_options.test_line_filter_line = line_num;
-                        break; // Only process first file:line argument
+                        const normalized_file = try ctx.allocator.dupe(u8, file_part);
+                        
+                        // Get or create array of lines for this file
+                        const result = try ctx.test_options.test_line_filters.getOrPut(ctx.allocator, normalized_file);
+                        if (!result.found_existing) {
+                            result.value_ptr.* = std.ArrayListUnmanaged(u32){};
+                        }
+                        
+                        // Add the line number to the array
+                        try result.value_ptr.append(ctx.allocator, line_num);
                     } else |_| {}
                 }
             }
@@ -1340,8 +1347,7 @@ pub const TestCommand = struct {
                 .bail = ctx.test_options.bail,
                 .filter_regex = ctx.test_options.test_filter_regex,
                 .filter_buffer = bun.MutableString.init(ctx.allocator, 0) catch unreachable,
-                .line_filter_file = ctx.test_options.test_line_filter_file,
-                .line_filter_line = ctx.test_options.test_line_filter_line,
+                .line_filters = ctx.test_options.test_line_filters,
                 .snapshots = Snapshots{
                     .allocator = ctx.allocator,
                     .update_snapshots = ctx.test_options.update_snapshots,
@@ -1749,15 +1755,24 @@ pub const TestCommand = struct {
 
                 reporter.printSummary();
             } else {
-                if (ctx.test_options.test_line_filter_file != null) {
-                    Output.prettyError("<red>error<r><d>:<r> no tests found at line {d} in <b>{}<r>. Searched {d} file{s} (skipping {d} test{s}) ", .{
-                        ctx.test_options.test_line_filter_line,
-                        bun.fmt.quote(ctx.test_options.test_line_filter_file.?),
+                if (ctx.test_options.test_line_filters.count() > 0) {
+                    Output.prettyError("<red>error<r><d>:<r> no tests found for file:line filters. Searched {d} file{s} (skipping {d} test{s}) ", .{
                         summary.files,
                         if (summary.files == 1) "" else "s",
                         summary.skipped_because_label,
                         if (summary.skipped_because_label == 1) "" else "s",
                     });
+                    
+                    // Show the specific filters that were applied
+                    var iter = ctx.test_options.test_line_filters.iterator();
+                    while (iter.next()) |entry| {
+                        const file_path = entry.key_ptr.*;
+                        const lines = entry.value_ptr.*;
+                        for (lines.items) |line| {
+                            Output.prettyError("\n  <b>{}<r>:{d}", .{ bun.fmt.quote(file_path), line });
+                        }
+                    }
+                    Output.prettyError("\n", .{});
                 } else {
                     Output.prettyError("<red>error<r><d>:<r> regex <b>{}<r> matched 0 tests. Searched {d} file{s} (skipping {d} test{s}) ", .{
                         bun.fmt.quote(ctx.test_options.test_filter_pattern.?),

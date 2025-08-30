@@ -363,4 +363,177 @@ test("outside test - should NOT run", () => {
     expect(stderr).toContain("1 pass");
     expect(stderr).toContain("1 filtered out");
   });
+
+  test("should handle multiple file:line arguments for same file", () => {
+    const cwd = tmpdirSync();
+    const testFile = createTestFile(
+      cwd,
+      "multi-line.test.ts",
+      `import { test, expect } from "bun:test";
+
+test("test 1 - SHOULD run", () => {
+  console.log("✅ Test 1 ran");
+  expect(1).toBe(1);
+});
+
+test("test 2 - should NOT run", () => {
+  console.log("❌ Test 2 ran");
+  expect(2).toBe(2);
+});
+
+test("test 3 - SHOULD run", () => {
+  console.log("✅ Test 3 ran");
+  expect(3).toBe(3);
+});`
+    );
+
+    // Target lines 3 and 13 (test 1 and test 3)
+    const { stdout, stderr, exitCode } = runTestWithOutput([`./multi-line.test.ts:3`, `./multi-line.test.ts:13`], cwd);
+    
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("✅ Test 1 ran");
+    expect(stdout).toContain("✅ Test 3 ran");
+    expect(stdout).not.toContain("❌ Test 2 ran");
+    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("1 filtered out");
+  });
+
+  test("should handle multiple file:line arguments for different files", () => {
+    const cwd = tmpdirSync();
+    const testFile1 = createTestFile(
+      cwd,
+      "file1.test.ts",
+      `import { test, expect } from "bun:test";
+
+test("file1 test1 - SHOULD run", () => {
+  console.log("✅ File1 Test1 ran");
+  expect(1).toBe(1);
+});
+
+test("file1 test2 - should NOT run", () => {
+  console.log("❌ File1 Test2 ran");
+  expect(2).toBe(2);
+});`
+    );
+
+    const testFile2 = createTestFile(
+      cwd,
+      "file2.test.ts",
+      `import { test, expect } from "bun:test";
+
+test("file2 test1 - should NOT run", () => {
+  console.log("❌ File2 Test1 ran");
+  expect(1).toBe(1);
+});
+
+test("file2 test2 - SHOULD run", () => {
+  console.log("✅ File2 Test2 ran");
+  expect(2).toBe(2);
+});`
+    );
+
+    // Target line 3 in file1 and line 8 in file2
+    const { stdout, stderr, exitCode } = runTestWithOutput([`./file1.test.ts:3`, `./file2.test.ts:8`], cwd);
+    
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("✅ File1 Test1 ran");
+    expect(stdout).toContain("✅ File2 Test2 ran");
+    expect(stdout).not.toContain("❌ File1 Test2 ran");
+    expect(stdout).not.toContain("❌ File2 Test1 ran");
+    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("2 filtered out");
+  });
+
+  test("should handle describe blocks in multiple files", () => {
+    const cwd = tmpdirSync();
+    const testFile1 = createTestFile(
+      cwd,
+      "describe1.test.ts",
+      `import { test, expect, describe } from "bun:test";
+
+describe("group1", () => {
+  test("group1 test1 - SHOULD run", () => {
+    console.log("✅ Group1 Test1 ran");
+    expect(1).toBe(1);
+  });
+
+  test("group1 test2 - SHOULD run", () => {
+    console.log("✅ Group1 Test2 ran");
+    expect(2).toBe(2);
+  });
+});
+
+test("outside test - should NOT run", () => {
+  console.log("❌ Outside test ran");
+  expect(3).toBe(3);
+});`
+    );
+
+    const testFile2 = createTestFile(
+      cwd,
+      "describe2.test.ts",
+      `import { test, expect, describe } from "bun:test";
+
+test("standalone test - should NOT run", () => {
+  console.log("❌ Standalone test ran");
+  expect(1).toBe(1);
+});
+
+describe("group2", () => {
+  test("group2 test1 - SHOULD run", () => {
+    console.log("✅ Group2 Test1 ran");
+    expect(1).toBe(1);
+  });
+
+  test("group2 test2 - SHOULD run", () => {
+    console.log("✅ Group2 Test2 ran");
+    expect(2).toBe(2);
+  });
+});`
+    );
+
+    // Target line 3 in describe1 (describe block) and line 7 in describe2 (describe block)
+    const { stdout, stderr, exitCode } = runTestWithOutput([`./describe1.test.ts:3`, `./describe2.test.ts:7`], cwd);
+    
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("✅ Group1 Test1 ran");
+    expect(stdout).toContain("✅ Group1 Test2 ran");
+    expect(stdout).toContain("✅ Group2 Test1 ran");
+    expect(stdout).toContain("✅ Group2 Test2 ran");
+    expect(stdout).not.toContain("❌ Outside test ran");
+    expect(stdout).not.toContain("❌ Standalone test ran");
+    expect(stderr).toContain("4 pass");
+    expect(stderr).toContain("2 filtered out");
+  });
+
+  test("should show error message for multiple file:line filters with no matches", () => {
+    const cwd = tmpdirSync();
+    const testFile1 = createTestFile(
+      cwd,
+      "empty1.test.ts",
+      `import { test, expect } from "bun:test";
+
+test("some test", () => {
+  expect(1).toBe(1);
+});`
+    );
+
+    const testFile2 = createTestFile(
+      cwd,
+      "empty2.test.ts",
+      `import { test, expect } from "bun:test";
+
+test("another test", () => {
+  expect(2).toBe(2);
+});`
+    );
+
+    // Target non-existent lines
+    const { stdout, stderr, exitCode } = runTestWithOutput([`./empty1.test.ts:99`, `./empty2.test.ts:88`], cwd);
+    
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("no tests found for file:line filters");
+    expect(stderr).toContain("empty1.test.ts:99");
+    expect(stderr).toContain("empty2.test.ts:88");
+  });
 });

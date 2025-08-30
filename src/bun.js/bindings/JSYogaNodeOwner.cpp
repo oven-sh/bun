@@ -34,6 +34,8 @@ void JSYogaNodeOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
     // The context contains our YogaNodeImpl
     auto* impl = static_cast<YogaNodeImpl*>(context);
 
+    fprintf(stderr, "[DEBUG] JSYogaNodeOwner::finalize called for YogaNodeImpl %p\n", impl);
+
     // Deref the YogaNodeImpl - this will decrease its reference count
     // and potentially destroy it if no other references exist
     impl->deref();
@@ -44,12 +46,16 @@ bool JSYogaNodeOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handl
     UNUSED_PARAM(handle);
 
     auto* impl = static_cast<YogaNodeImpl*>(context);
-    void* yogaRoot = root(impl);
+    
+    // Check if the YogaNodeImpl itself is reachable as opaque root
+    bool reachable = visitor.containsOpaqueRoot(impl);
+    fprintf(stderr, "[DEBUG] JSYogaNodeOwner::isReachableFromOpaqueRoots called for YogaNodeImpl %p, reachable: %s\n", 
+            impl, reachable ? "true" : "false");
 
     if (reason)
         *reason = "YogaNode reachable from root"_s;
 
-    return visitor.containsOpaqueRoot(yogaRoot);
+    return reachable;
 }
 
 JSYogaNodeOwner& jsYogaNodeOwner()

@@ -117,15 +117,17 @@ JSC::GCClient::IsoSubspace* JSYogaNode::subspaceFor(JSC::VM& vm)
 template<typename Visitor>
 void JSYogaNode::visitAdditionalChildren(Visitor& visitor)
 {
+    fprintf(stderr, "[DEBUG] JSYogaNode::visitAdditionalChildren called for %p\n", this);
+    
     visitor.append(m_measureFunc);
     visitor.append(m_dirtiedFunc);
     visitor.append(m_baselineFunc);
     visitor.append(m_config);
 
-    // Add the root YogaNode as an opaque root
-    if (void* yogaRoot = root(&m_impl.get())) {
-        visitor.addOpaqueRoot(yogaRoot);
-    }
+    // Use the YogaNodeImpl pointer as opaque root instead of YGNodeRef
+    // This avoids use-after-free when YGNode memory is freed but YogaNodeImpl still exists
+    fprintf(stderr, "[DEBUG] JSYogaNode::visitAdditionalChildren adding YogaNodeImpl %p as opaque root for JSYogaNode %p\n", &m_impl.get(), this);
+    visitor.addOpaqueRoot(&m_impl.get());
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSYogaNode);
@@ -134,6 +136,7 @@ template<typename Visitor>
 void JSYogaNode::visitOutputConstraints(JSC::JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = jsCast<JSYogaNode*>(cell);
+    fprintf(stderr, "[DEBUG] JSYogaNode::visitOutputConstraints called for %p\n", thisObject);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
     thisObject->visitAdditionalChildren(visitor);

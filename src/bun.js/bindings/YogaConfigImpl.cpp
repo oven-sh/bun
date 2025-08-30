@@ -1,6 +1,6 @@
 #include "YogaConfigImpl.h"
 #include "JSYogaConfig.h"
-#include "JSYogaNodeOwner.h"
+#include "JSYogaConfigOwner.h"
 #include <yoga/Yoga.h>
 
 namespace Bun {
@@ -32,11 +32,14 @@ void YogaConfigImpl::setJSWrapper(JSYogaConfig* wrapper)
     // This prevents ref count leaks if setJSWrapper is called multiple times
     if (!m_wrapper) {
         // Increment ref count for the weak handle context
+        fprintf(stderr, "[DEBUG] YogaConfigImpl::setJSWrapper %p calling ref() for JS wrapper %p\n", this, wrapper);
         this->ref();
+    } else {
+        fprintf(stderr, "[DEBUG] YogaConfigImpl::setJSWrapper %p already has wrapper, replacing with %p\n", this, wrapper);
     }
 
     // Create weak reference with our JS owner
-    m_wrapper = JSC::Weak<JSYogaConfig>(wrapper, &jsYogaNodeOwner(), this);
+    m_wrapper = JSC::Weak<JSYogaConfig>(wrapper, &jsYogaConfigOwner(), this);
 }
 
 void YogaConfigImpl::clearJSWrapper()

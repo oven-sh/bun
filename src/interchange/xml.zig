@@ -5,6 +5,11 @@ const Expr = bun.ast.Expr;
 const E = bun.ast.E;
 const G = bun.ast.G;
 
+const ChildElement = struct {
+    tag_name: []const u8,
+    element: Expr,
+};
+
 pub const XML = struct {
     const ParseError = error{ OutOfMemory, SyntaxError, StackOverflow };
 
@@ -56,10 +61,11 @@ const Parser = struct {
             return self.parseError("No root element found");
         }
         
-        return self.parseElement();
+        const result = try self.parseElementWithName();
+        return result.element;
     }
 
-    fn parseElement(self: *Parser) !Expr {
+    fn parseElementWithName(self: *Parser) !ChildElement {
         if (self.current >= self.source.contents.len or self.source.contents[self.current] != '<') {
             return self.parseError("Expected '<' to start element");
         }
@@ -106,7 +112,11 @@ const Parser = struct {
                 try properties.append(.{ .key = attrs_key, .value = attrs_obj });
             }
             
-            return Expr.init(E.Object, .{ .properties = .fromList(properties) }, .Empty);
+            const element = Expr.init(E.Object, .{ .properties = .fromList(properties) }, .Empty);
+            return ChildElement{
+                .tag_name = tag_name_slice,
+                .element = element,
+            };
         }
 
         // Must be closing '>'
@@ -116,7 +126,7 @@ const Parser = struct {
         self.advance(); // consume '>'
 
         // Parse content (text and child elements)
-        var children = std.ArrayList(Expr).init(self.allocator);
+        var children = std.ArrayList(ChildElement).init(self.allocator);
         var text_parts = std.ArrayList(u8).init(self.allocator);
         defer text_parts.deinit();
 
@@ -132,7 +142,7 @@ const Parser = struct {
                 self.skipComment();
             } else if (self.source.contents[self.current] == '<') {
                 // Child element
-                const child = try self.parseElement();
+                const child = try self.parseElementWithName();
                 try children.append(child);
             } else {
                 // Text content
@@ -179,10 +189,23 @@ const Parser = struct {
 
         // If only text content and no attributes, return as string
         if (children.items.len == 0 and attributes.items.len == 0 and trimmed_text.len > 0) {
-            return try self.createStringExpr(trimmed_text);
+            const element = try self.createStringExpr(trimmed_text);
+            return ChildElement{
+                .tag_name = tag_name_slice,
+                .element = element,
+            };
         }
 
-        // Otherwise create object
+        // If only children and no attributes/text, return children directly as object properties
+        if (children.items.len > 0 and attributes.items.len == 0 and trimmed_text.len == 0) {
+            const element = try self.createChildrenAsProperties(children.items);
+            return ChildElement{
+                .tag_name = tag_name_slice,
+                .element = element,
+            };
+        }
+
+        // Otherwise create object with mixed content
         var properties = std.ArrayList(G.Property).init(self.allocator);
         
         // Add attributes
@@ -192,11 +215,9 @@ const Parser = struct {
             try properties.append(.{ .key = attrs_key, .value = attrs_obj });
         }
 
-        // Add children
+        // Add children as properties if we have other properties
         if (children.items.len > 0) {
-            const children_array = Expr.init(E.Array, .{ .items = .fromList(children) }, .Empty);
-            const children_key = try self.createStringExpr("children");
-            try properties.append(.{ .key = children_key, .value = children_array });
+            try self.addChildrenAsProperties(&properties, children.items);
         }
 
         // Add text content if present
@@ -206,7 +227,11 @@ const Parser = struct {
             try properties.append(.{ .key = text_key, .value = text_expr });
         }
 
-        return Expr.init(E.Object, .{ .properties = .fromList(properties) }, .Empty);
+        const element = Expr.init(E.Object, .{ .properties = .fromList(properties) }, .Empty);
+        return ChildElement{
+            .tag_name = tag_name_slice,
+            .element = element,
+        };
     }
 
 
@@ -269,6 +294,100 @@ const Parser = struct {
         const decoded_data = try self.decodeXmlEntities(slice);
         return Expr.init(E.String, .{ .data = decoded_data }, .Empty);
     }
+
+    fn createChildrenAsProperties(self: *Parser, children: []ChildElement) !Expr {
+        var properties = std.ArrayList(G.Property).init(self.allocator);
+        var child_counts = std.StringHashMap(u32).init(self.allocator);
+        defer child_counts.deinit();
+
+        // First pass: count occurrences of each tag name to handle duplicates
+        for (children) |child| {
+            const tag_name = child.tag_name;
+            const count = child_counts.get(tag_name) orelse 0;
+            try child_counts.put(tag_name, count + 1);
+        }
+
+        // Second pass: create properties
+        var processed_tags = std.StringHashMap(u32).init(self.allocator);
+        defer processed_tags.deinit();
+
+        for (children) |child| {
+            const tag_name = child.tag_name;
+            const total_count = child_counts.get(tag_name).?;
+            const current_count = processed_tags.get(tag_name) orelse 0;
+            
+            if (total_count == 1) {
+                // Single occurrence - add as property
+                const key_expr = try self.createStringExpr(tag_name);
+                try properties.append(.{ .key = key_expr, .value = child.element });
+            } else {
+                // Multiple occurrences - create array
+                if (current_count == 0) {
+                    // First occurrence - create array
+                    var child_array = std.ArrayList(Expr).init(self.allocator);
+                    for (children) |other_child| {
+                        const other_tag_name = other_child.tag_name;
+                        if (std.mem.eql(u8, tag_name, other_tag_name)) {
+                            try child_array.append(other_child.element);
+                        }
+                    }
+                    const array_expr = Expr.init(E.Array, .{ .items = .fromList(child_array) }, .Empty);
+                    const key_expr = try self.createStringExpr(tag_name);
+                    try properties.append(.{ .key = key_expr, .value = array_expr });
+                }
+            }
+            
+            try processed_tags.put(tag_name, current_count + 1);
+        }
+
+        return Expr.init(E.Object, .{ .properties = .fromList(properties) }, .Empty);
+    }
+
+    fn addChildrenAsProperties(self: *Parser, properties: *std.ArrayList(G.Property), children: []ChildElement) !void {
+        var child_counts = std.StringHashMap(u32).init(self.allocator);
+        defer child_counts.deinit();
+
+        // First pass: count occurrences of each tag name
+        for (children) |child| {
+            const tag_name = child.tag_name;
+            const count = child_counts.get(tag_name) orelse 0;
+            try child_counts.put(tag_name, count + 1);
+        }
+
+        // Second pass: create properties
+        var processed_tags = std.StringHashMap(u32).init(self.allocator);
+        defer processed_tags.deinit();
+
+        for (children) |child| {
+            const tag_name = child.tag_name;
+            const total_count = child_counts.get(tag_name).?;
+            const current_count = processed_tags.get(tag_name) orelse 0;
+            
+            if (total_count == 1) {
+                // Single occurrence - add as property
+                const key_expr = try self.createStringExpr(tag_name);
+                try properties.append(.{ .key = key_expr, .value = child.element });
+            } else {
+                // Multiple occurrences - create array
+                if (current_count == 0) {
+                    // First occurrence - create array
+                    var child_array = std.ArrayList(Expr).init(self.allocator);
+                    for (children) |other_child| {
+                        const other_tag_name = other_child.tag_name;
+                        if (std.mem.eql(u8, tag_name, other_tag_name)) {
+                            try child_array.append(other_child.element);
+                        }
+                    }
+                    const array_expr = Expr.init(E.Array, .{ .items = .fromList(child_array) }, .Empty);
+                    const key_expr = try self.createStringExpr(tag_name);
+                    try properties.append(.{ .key = key_expr, .value = array_expr });
+                }
+            }
+            
+            try processed_tags.put(tag_name, current_count + 1);
+        }
+    }
+
     
     fn decodeXmlEntities(self: *Parser, input: []const u8) ![]u8 {
         var result = std.ArrayList(u8).init(self.allocator);

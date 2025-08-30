@@ -66,7 +66,8 @@ test("Bun.XML.parse - nested elements", () => {
   </person>`;
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
-    children: ["John", "30"]
+    name: "John",
+    age: "30"
   });
 });
 
@@ -81,12 +82,12 @@ test("Bun.XML.parse - complex nested structure", () => {
     __attrs: {
       name: "John"
     },
-    children: [{
+    address: {
       __attrs: {
         type: "home"
       },
-      children: ["New York"]
-    }]
+      city: "New York"
+    }
   });
 });
 
@@ -98,7 +99,7 @@ test("Bun.XML.parse - mixed content (text and children)", () => {
   </doc>`;
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
-    children: ["value"],
+    child: "value",
     __text: "Some text\n    \n    More text"
   });
 });
@@ -134,6 +135,6 @@ test("Bun.XML.parse - XML comments are ignored", () => {
   </root>`;
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
-    children: ["Hello"]
+    message: "Hello"
   });
 });

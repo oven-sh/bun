@@ -209,11 +209,11 @@ pub noinline fn computeChunks(
                             var needs_runtime = false;
                             const exports_kind = this.graph.ast.items(.exports_kind);
                             const wrap_flags = this.graph.meta.items(.flags);
-                            
+
                             for (this.graph.reachable_files) |file_index| {
                                 const file_exports_kind = exports_kind[file_index.get()];
                                 const file_wrap_flags = wrap_flags[file_index.get()];
-                                
+
                                 // Need runtime helpers if:
                                 // 1. File is CommonJS
                                 // 2. File needs wrapping (mixed ESM/CJS)
@@ -222,7 +222,7 @@ pub noinline fn computeChunks(
                                     needs_runtime = true;
                                     break;
                                 }
-                                
+
                                 // Simple decorator detection: TypeScript files are more likely to use decorators
                                 // This is a heuristic, but better than breaking decorator support entirely
                                 const file_loaders = this.parse_graph.input_files.items(.loader);
@@ -231,10 +231,10 @@ pub noinline fn computeChunks(
                                     break;
                                 }
                             }
-                            
+
                             if (!needs_runtime) continue;
                         }
-                        
+
                         const js_chunk_key = try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len));
                         var js_chunk_entry = try js_chunks.getOrPut(js_chunk_key);
 

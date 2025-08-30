@@ -1304,6 +1304,21 @@ pub const TestCommand = struct {
         var inline_snapshots_to_write = std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(Snapshots.InlineSnapshotToWrite)).init(ctx.allocator);
         jsc.VirtualMachine.isBunTest = true;
 
+        // Parse file:line arguments early, before creating TestRunner
+        for (ctx.positionals) |arg| {
+            if (strings.indexOf(arg, ":")) |colon_index| {
+                const after_colon = arg[colon_index + 1..];
+                if (after_colon.len > 0) {
+                    if (std.fmt.parseInt(u32, after_colon, 10)) |line_num| {
+                        const file_part = arg[0..colon_index];
+                        ctx.test_options.test_line_filter_file = try ctx.allocator.dupe(u8, file_part);
+                        ctx.test_options.test_line_filter_line = line_num;
+                        break; // Only process first file:line argument
+                    } else |_| {}
+                }
+            }
+        }
+
         var reporter = try ctx.allocator.create(CommandLineReporter);
         defer {
             if (reporter.file_reporter) |*file_reporter| {
@@ -1325,6 +1340,8 @@ pub const TestCommand = struct {
                 .bail = ctx.test_options.bail,
                 .filter_regex = ctx.test_options.test_filter_regex,
                 .filter_buffer = bun.MutableString.init(ctx.allocator, 0) catch unreachable,
+                .line_filter_file = ctx.test_options.test_line_filter_file,
+                .line_filter_line = ctx.test_options.test_line_filter_line,
                 .snapshots = Snapshots{
                     .allocator = ctx.allocator,
                     .update_snapshots = ctx.test_options.update_snapshots,
@@ -1336,6 +1353,8 @@ pub const TestCommand = struct {
             },
             .callback = undefined,
         };
+        
+        
         reporter.callback = TestRunner.Callback{
             .onUpdateCount = CommandLineReporter.handleUpdateCount,
             .onTestStart = CommandLineReporter.handleTestStart,
@@ -1426,7 +1445,20 @@ pub const TestCommand = struct {
 
         var scanner = bun.handleOom(Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len));
         defer scanner.deinit();
+        // Check if any argument is a file path or file:line pattern
+        var has_file_line_arg: bool = false;
         const has_relative_path = for (ctx.positionals) |arg| {
+            if (strings.indexOf(arg, ":")) |colon_index| {
+                // Check if this might be a file:line pattern
+                const after_colon = arg[colon_index + 1..];
+                if (after_colon.len > 0) {
+                    if (std.fmt.parseInt(u32, after_colon, 10)) |_| {
+                        has_file_line_arg = true;
+                        break true;
+                    } else |_| {}
+                }
+            }
+            
             if (std.fs.path.isAbsolute(arg) or
                 strings.startsWith(arg, "./") or
                 strings.startsWith(arg, "../") or
@@ -1438,6 +1470,30 @@ pub const TestCommand = struct {
             // arguments as filters, treat them as filepaths
             const file_or_dirnames = ctx.positionals[1..];
             for (file_or_dirnames) |arg| {
+                if (has_file_line_arg) {
+                    if (strings.indexOf(arg, ":")) |colon_index| {
+                        // Parse file:line format
+                        const file_part = arg[0..colon_index];
+                        const line_part = arg[colon_index + 1..];
+                        
+                        if (std.fmt.parseInt(u32, line_part, 10)) |line_num| {
+                            // This file:line pattern was already processed earlier
+                            _ = line_num;
+                            
+                            // Only scan the file, not the file:line argument
+                            scanner.scan(file_part) catch |err| switch (err) {
+                                error.OutOfMemory => bun.outOfMemory(),
+                                error.DoesNotExist => if (file_or_dirnames.len == 1) {
+                                    Output.prettyErrorln("Test file <b>{}<r> not found", .{bun.fmt.quote(file_part)});
+                                    Global.exit(1);
+                                },
+                            };
+                            continue;
+                        } else |_| {}
+                    }
+                }
+                
+                // Regular file or directory
                 scanner.scan(arg) catch |err| switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
                     // don't error if multiple are passed; one might fail
@@ -1693,13 +1749,24 @@ pub const TestCommand = struct {
 
                 reporter.printSummary();
             } else {
-                Output.prettyError("<red>error<r><d>:<r> regex <b>{}<r> matched 0 tests. Searched {d} file{s} (skipping {d} test{s}) ", .{
-                    bun.fmt.quote(ctx.test_options.test_filter_pattern.?),
-                    summary.files,
-                    if (summary.files == 1) "" else "s",
-                    summary.skipped_because_label,
-                    if (summary.skipped_because_label == 1) "" else "s",
-                });
+                if (ctx.test_options.test_line_filter_file != null) {
+                    Output.prettyError("<red>error<r><d>:<r> no tests found at line {d} in <b>{}<r>. Searched {d} file{s} (skipping {d} test{s}) ", .{
+                        ctx.test_options.test_line_filter_line,
+                        bun.fmt.quote(ctx.test_options.test_line_filter_file.?),
+                        summary.files,
+                        if (summary.files == 1) "" else "s",
+                        summary.skipped_because_label,
+                        if (summary.skipped_because_label == 1) "" else "s",
+                    });
+                } else {
+                    Output.prettyError("<red>error<r><d>:<r> regex <b>{}<r> matched 0 tests. Searched {d} file{s} (skipping {d} test{s}) ", .{
+                        bun.fmt.quote(ctx.test_options.test_filter_pattern.?),
+                        summary.files,
+                        if (summary.files == 1) "" else "s",
+                        summary.skipped_because_label,
+                        if (summary.skipped_because_label == 1) "" else "s",
+                    });
+                }
                 Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
             }
         }

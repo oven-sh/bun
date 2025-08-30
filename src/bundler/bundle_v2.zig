@@ -677,6 +677,8 @@ pub const BundleV2 = struct {
                 {
                     const secondary_path_to_copy = secondary.dupeAlloc(this.allocator()) catch |err| bun.handleOom(err);
                     this.graph.input_files.items(.secondary_path)[idx] = secondary_path_to_copy.text;
+                    // Ensure the determinism pass runs.
+                    this.graph.has_any_secondary_paths = true;
                 }
             }
 

@@ -44,7 +44,8 @@ describe("Bun.Glob absolute paths issue #16709", () => {
   });
 
   test("should handle non-existent absolute paths gracefully", async () => {
-    const nonExistentPath = path.join("/tmp", "definitely-does-not-exist-" + Date.now());
+    const tempdir = tempDirWithFiles("glob-absolute-test-missing", {});
+    const nonExistentPath = path.join(tempdir, "definitely-does-not-exist-" + Date.now());
     const glob = new Bun.Glob(nonExistentPath);
     const results = await Array.fromAsync(glob.scan());
     expect(results).toHaveLength(0);

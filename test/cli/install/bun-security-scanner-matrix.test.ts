@@ -6,6 +6,7 @@ import { getRegistry, startRegistry, stopRegistry } from "./simple-dummy-registr
 
 const redSubprocessPrefix = "\x1b[31m [SUBPROC]\x1b[0m";
 const redDebugPrefix = "\x1b[31m   [DEBUG]\x1b[0m";
+const redShellPrefix = "\x1b[31m   [SHELL] $\x1b[0m";
 
 interface SecurityScannerTestOptions {
   command: "install" | "update" | "add" | "remove" | "uninstall";
@@ -93,28 +94,32 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
 
   // Base files for the test directory
   const files: Record<string, string> = {
-    "package.json": JSON.stringify({
-      name: "test-app",
-      version: "1.0.0",
-      dependencies: {
-        "left-pad": "1.3.0",
+    "package.json": JSON.stringify(
+      {
+        name: "test-app",
+        version: "1.0.0",
+        dependencies: {
+          "left-pad": "1.3.0",
 
-        // For remove/uninstall commands, add the packages we're trying to remove
-        ...(command === "remove" || command === "uninstall"
-          ? {
-              "is-even": "1.0.0",
-              "is-odd": "1.0.0",
-            }
-          : {}),
+          // For remove/uninstall commands, add the packages we're trying to remove
+          ...(command === "remove" || command === "uninstall"
+            ? {
+                "is-even": "1.0.0",
+                "is-odd": "1.0.0",
+              }
+            : {}),
 
-        // For npm scanner, add it to dependencies so it gets installed
-        ...(scannerType === "npm"
-          ? {
-              "test-security-scanner": "1.0.0",
-            }
-          : {}),
+          // For npm scanner, add it to dependencies so it gets installed
+          ...(scannerType === "npm"
+            ? {
+                "test-security-scanner": "1.0.0",
+              }
+            : {}),
+        },
       },
-    }),
+      null,
+      "\t",
+    ),
   };
 
   if (scannerType === "local") {
@@ -136,22 +141,29 @@ registry = "${registryUrl}/"`,
 
   const shouldDoInitialInstall = hasExistingNodeModules || hasLockfile;
   if (hasExistingNodeModules || hasLockfile) {
+    console.log(redShellPrefix, `${bunExe()} install`);
     await $`${bunExe()} install`.cwd(dir).env(bunEnv);
   }
 
   if (shouldDoInitialInstall && !hasExistingNodeModules) {
+    console.log(redShellPrefix, `rm -rf ${dir}/node_modules`);
     await $`rm -rf node_modules`.cwd(dir);
   }
 
   if (shouldDoInitialInstall && !hasLockfile) {
+    console.log(redShellPrefix, `rm ${dir}/bun.lock`);
     await $`rm bun.lock`.cwd(dir);
   }
 
+  console.log(redDebugPrefix, await globEverything(dir));
+
   ////////////////////////// POST SETUP DONE //////////////////////////
 
-  if (shouldDoInitialInstall) {
-    console.log(redDebugPrefix, "POST SETUP DONE");
-  }
+  const cmd = [bunExe(), command, ...args];
+
+  console.log(redDebugPrefix, "SETUP DONE");
+  console.log("-------------------------------- THE REAL TEST IS ABOUT TO HAPPEN --------------------------------");
+  console.log(redShellPrefix, cmd.join(" "));
 
   // write the full bunfig WITH scanner configuration
   await Bun.write(
@@ -164,8 +176,6 @@ registry = "${registryUrl}/"
 [install.security]
 scanner = "${scannerPath}"`,
   );
-
-  const cmd = [bunExe(), command, ...args];
 
   if (process.env.SCANNER_TEST_DEBUG) {
     console.log(`[DEBUG] Test directory: ${dir}`);
@@ -207,14 +217,15 @@ scanner = "${scannerPath}"`,
   let errAndOut = "";
 
   const write = (chunk: Uint8Array<ArrayBuffer>, stream: NodeJS.WriteStream, decoder: TextDecoder) => {
-    const str = decoder.decode(chunk).trim();
+    const str = decoder.decode(chunk);
 
     errAndOut += str;
 
-    if (str.length > 0) {
+    const lines = str.split("\n");
+    for (const line of lines) {
       stream.write(redSubprocessPrefix);
       stream.write(" ");
-      stream.write(str);
+      stream.write(line);
       stream.write("\n");
     }
   };

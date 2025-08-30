@@ -403,7 +403,7 @@ export function writableStreamRejectCloseAndClosedPromiseIfNeeded(stream) {
   const writer = $getByIdDirectPrivate(stream, "writer");
   if (writer !== undefined) {
     const closedPromise = $getByIdDirectPrivate(writer, "closedPromise");
-    closedPromise.$reject.$call(undefined, storedError);
+    closedPromise.reject.$call(undefined, storedError);
     $markPromiseAsHandled(closedPromise.promise);
   }
 }

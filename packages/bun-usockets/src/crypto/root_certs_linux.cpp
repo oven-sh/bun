@@ -3,6 +3,7 @@
 
 #include <dirent.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <limits.h>
 #include <openssl/x509.h>
@@ -42,7 +43,9 @@ static void load_certs_from_directory(const char* dir_path, STACK_OF(X509)* cert
       fclose(file);
       
       if (cert) {
-        sk_X509_push(cert_stack, cert);
+        if (!sk_X509_push(cert_stack, cert)) {
+          X509_free(cert);
+        }
       }
     }
   }
@@ -59,8 +62,12 @@ static void load_certs_from_bundle(const char* bundle_path, STACK_OF(X509)* cert
   
   X509* cert;
   while ((cert = PEM_read_X509(file, NULL, NULL, NULL)) != NULL) {
-    sk_X509_push(cert_stack, cert);
+    if (!sk_X509_push(cert_stack, cert)) {
+      X509_free(cert);
+      break;
+    }
   }
+  ERR_clear_error();
   
   fclose(file);
 }
@@ -81,14 +88,24 @@ extern "C" void us_load_system_certificates_linux(STACK_OF(X509) **system_certs)
     load_certs_from_bundle(ssl_cert_file, *system_certs);
   }
   
-  // If SSL_CERT_DIR is set, load from it
+  // If SSL_CERT_DIR is set, load from each directory (colon-separated)
   if (ssl_cert_dir && strlen(ssl_cert_dir) > 0) {
-    load_certs_from_directory(ssl_cert_dir, *system_certs);
+    char* dir_copy = strdup(ssl_cert_dir);
+    if (dir_copy) {
+      char* token = strtok(dir_copy, ":");
+      while (token != NULL) {
+        // Skip empty tokens
+        if (strlen(token) > 0) {
+          load_certs_from_directory(token, *system_certs);
+        }
+        token = strtok(NULL, ":");
+      }
+      free(dir_copy);
+    }
   }
   
-  // If environment variables were set and we loaded some certs, we're done
-  // This matches OpenSSL behavior - when env vars are set, only use those
-  if ((ssl_cert_file || ssl_cert_dir) && sk_X509_num(*system_certs) > 0) {
+  // If environment variables were set, use only those (even if they yield zero certs)
+  if (ssl_cert_file || ssl_cert_dir) {
     return;
   }
 

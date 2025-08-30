@@ -17,7 +17,7 @@ pub const Scripts = extern struct {
     }
 
     pub const List = struct {
-        items: [Lockfile.Scripts.names.len]?Lockfile.Scripts.Entry,
+        items: [Lockfile.Scripts.names.len]?string,
         first_index: u8,
         total: u8,
         cwd: stringZ,
@@ -51,34 +51,34 @@ pub const Scripts = extern struct {
                 if (maybe_script) |script| {
                     Output.pretty(fmt, .{
                         Lockfile.Scripts.names[script_index],
-                        script.script,
+                        script,
                     });
                 }
             }
         }
 
-        pub fn first(this: Package.Scripts.List) Lockfile.Scripts.Entry {
+        pub fn first(this: Package.Scripts.List) string {
             if (comptime Environment.allow_assert) {
                 assert(this.items[this.first_index] != null);
             }
             return this.items[this.first_index].?;
         }
 
-        pub fn deinit(this: Package.Scripts.List, allocator: std.mem.Allocator) void {
-            for (this.items) |maybe_item| {
-                if (maybe_item) |item| {
-                    allocator.free(item.script);
-                }
-            }
+        // pub fn deinit(this: Package.Scripts.List, allocator: std.mem.Allocator) void {
+        //     for (this.items) |maybe_item| {
+        //         if (maybe_item) |item| {
+        //             allocator.free(item);
+        //         }
+        //     }
 
-            allocator.free(this.cwd);
-        }
+        //     allocator.free(this.cwd);
+        // }
 
         pub fn appendToLockfile(this: Package.Scripts.List, lockfile: *Lockfile) void {
             inline for (this.items, 0..) |maybe_script, i| {
                 if (maybe_script) |script| {
                     debug("enqueue({s}, {s}) in {s}", .{ "prepare", this.package_name, this.cwd });
-                    @field(lockfile.scripts, Lockfile.Scripts.names[i]).append(lockfile.allocator, script) catch bun.outOfMemory();
+                    bun.handleOom(@field(lockfile.scripts, Lockfile.Scripts.names[i]).append(lockfile.allocator, script));
                 }
             }
         }
@@ -110,37 +110,31 @@ pub const Scripts = extern struct {
 
     pub fn getScriptEntries(
         this: *const Package.Scripts,
-        lockfile: *Lockfile,
+        lockfile: *const Lockfile,
         lockfile_buf: string,
         resolution_tag: Resolution.Tag,
         add_node_gyp_rebuild_script: bool,
         // return: first_index, total, entries
-    ) struct { i8, u8, [Lockfile.Scripts.names.len]?Lockfile.Scripts.Entry } {
+    ) struct { i8, u8, [Lockfile.Scripts.names.len]?string } {
         const allocator = lockfile.allocator;
         var script_index: u8 = 0;
         var first_script_index: i8 = -1;
-        var scripts: [6]?Lockfile.Scripts.Entry = .{null} ** 6;
+        var scripts: [6]?string = .{null} ** 6;
         var counter: u8 = 0;
 
         if (add_node_gyp_rebuild_script) {
             {
                 script_index += 1;
-                const entry: Lockfile.Scripts.Entry = .{
-                    .script = allocator.dupe(u8, "node-gyp rebuild") catch unreachable,
-                };
                 if (first_script_index == -1) first_script_index = @intCast(script_index);
-                scripts[script_index] = entry;
+                scripts[script_index] = allocator.dupe(u8, "node-gyp rebuild") catch unreachable;
                 script_index += 1;
                 counter += 1;
             }
 
             // missing install and preinstall, only need to check postinstall
             if (!this.postinstall.isEmpty()) {
-                const entry: Lockfile.Scripts.Entry = .{
-                    .script = allocator.dupe(u8, this.preinstall.slice(lockfile_buf)) catch unreachable,
-                };
                 if (first_script_index == -1) first_script_index = @intCast(script_index);
-                scripts[script_index] = entry;
+                scripts[script_index] = allocator.dupe(u8, this.preinstall.slice(lockfile_buf)) catch unreachable;
                 counter += 1;
             }
             script_index += 1;
@@ -154,11 +148,8 @@ pub const Scripts = extern struct {
             inline for (install_scripts) |hook| {
                 const script = @field(this, hook);
                 if (!script.isEmpty()) {
-                    const entry: Lockfile.Scripts.Entry = .{
-                        .script = allocator.dupe(u8, script.slice(lockfile_buf)) catch unreachable,
-                    };
                     if (first_script_index == -1) first_script_index = @intCast(script_index);
-                    scripts[script_index] = entry;
+                    scripts[script_index] = allocator.dupe(u8, script.slice(lockfile_buf)) catch unreachable;
                     counter += 1;
                 }
                 script_index += 1;
@@ -176,11 +167,8 @@ pub const Scripts = extern struct {
                 inline for (prepare_scripts) |hook| {
                     const script = @field(this, hook);
                     if (!script.isEmpty()) {
-                        const entry: Lockfile.Scripts.Entry = .{
-                            .script = allocator.dupe(u8, script.slice(lockfile_buf)) catch unreachable,
-                        };
                         if (first_script_index == -1) first_script_index = @intCast(script_index);
-                        scripts[script_index] = entry;
+                        scripts[script_index] = allocator.dupe(u8, script.slice(lockfile_buf)) catch unreachable;
                         counter += 1;
                     }
                     script_index += 1;
@@ -189,11 +177,8 @@ pub const Scripts = extern struct {
             .workspace => {
                 script_index += 1;
                 if (!this.prepare.isEmpty()) {
-                    const entry: Lockfile.Scripts.Entry = .{
-                        .script = allocator.dupe(u8, this.prepare.slice(lockfile_buf)) catch unreachable,
-                    };
                     if (first_script_index == -1) first_script_index = @intCast(script_index);
-                    scripts[script_index] = entry;
+                    scripts[script_index] = allocator.dupe(u8, this.prepare.slice(lockfile_buf)) catch unreachable;
                     counter += 1;
                 }
                 script_index += 2;
@@ -206,9 +191,9 @@ pub const Scripts = extern struct {
 
     pub fn createList(
         this: *const Package.Scripts,
-        lockfile: *Lockfile,
+        lockfile: *const Lockfile,
         lockfile_buf: []const u8,
-        cwd_: string,
+        cwd_: *bun.AbsPath(.{ .sep = .auto }),
         package_name: string,
         resolution_tag: Resolution.Tag,
         add_node_gyp_rebuild_script: bool,
@@ -219,24 +204,18 @@ pub const Scripts = extern struct {
             var cwd_buf: if (Environment.isWindows) bun.PathBuffer else void = undefined;
 
             const cwd = if (comptime !Environment.isWindows)
-                cwd_
+                cwd_.slice()
             else brk: {
-                @memcpy(cwd_buf[0..cwd_.len], cwd_);
-                cwd_buf[cwd_.len] = 0;
-                const cwd_handle = bun.openDirNoRenamingOrDeletingWindows(bun.invalid_fd, cwd_buf[0..cwd_.len :0]) catch break :brk cwd_;
-
-                var buf: bun.WPathBuffer = undefined;
-                const new_cwd = bun.windows.GetFinalPathNameByHandle(cwd_handle.fd, .{}, &buf) catch break :brk cwd_;
-
-                break :brk strings.convertUTF16toUTF8InBuffer(&cwd_buf, new_cwd) catch break :brk cwd_;
+                const cwd_handle = bun.openDirNoRenamingOrDeletingWindows(bun.invalid_fd, cwd_.sliceZ()) catch break :brk cwd_.slice();
+                break :brk FD.fromStdDir(cwd_handle).getFdPath(&cwd_buf) catch break :brk cwd_.slice();
             };
 
             return .{
                 .items = scripts,
                 .first_index = @intCast(first_index),
                 .total = total,
-                .cwd = allocator.dupeZ(u8, cwd) catch bun.outOfMemory(),
-                .package_name = lockfile.allocator.dupe(u8, package_name) catch bun.outOfMemory(),
+                .cwd = bun.handleOom(allocator.dupeZ(u8, cwd)),
+                .package_name = bun.handleOom(lockfile.allocator.dupe(u8, package_name)),
             };
         }
 
@@ -274,54 +253,36 @@ pub const Scripts = extern struct {
     pub fn getList(
         this: *Package.Scripts,
         log: *logger.Log,
-        lockfile: *Lockfile,
-        node_modules: *PackageManager.PackageInstaller.LazyPackageDestinationDir,
-        abs_node_modules_path: string,
+        lockfile: *const Lockfile,
+        folder_path: *bun.AbsPath(.{ .sep = .auto }),
         folder_name: string,
         resolution: *const Resolution,
     ) !?Package.Scripts.List {
-        var path_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
         if (this.hasAny()) {
             const add_node_gyp_rebuild_script = if (lockfile.hasTrustedDependency(folder_name) and
                 this.install.isEmpty() and
                 this.preinstall.isEmpty())
             brk: {
-                const binding_dot_gyp_path = Path.joinAbsStringZ(
-                    abs_node_modules_path,
-                    &[_]string{ folder_name, "binding.gyp" },
-                    .auto,
-                );
+                var save = folder_path.save();
+                defer save.restore();
+                folder_path.append("binding.gyp");
 
-                break :brk bun.sys.exists(binding_dot_gyp_path);
+                break :brk bun.sys.exists(folder_path.slice());
             } else false;
-
-            const cwd = Path.joinAbsStringBufZTrailingSlash(
-                abs_node_modules_path,
-                &path_buf,
-                &[_]string{folder_name},
-                .auto,
-            );
 
             return this.createList(
                 lockfile,
                 lockfile.buffers.string_bytes.items,
-                cwd,
+                folder_path,
                 folder_name,
                 resolution.tag,
                 add_node_gyp_rebuild_script,
             );
         } else if (!this.filled) {
-            const abs_folder_path = Path.joinAbsStringBufZTrailingSlash(
-                abs_node_modules_path,
-                &path_buf,
-                &[_]string{folder_name},
-                .auto,
-            );
             return this.createFromPackageJSON(
                 log,
                 lockfile,
-                node_modules,
-                abs_folder_path,
+                folder_path,
                 folder_name,
                 resolution.tag,
             );
@@ -335,14 +296,16 @@ pub const Scripts = extern struct {
         allocator: std.mem.Allocator,
         string_builder: *Lockfile.StringBuilder,
         log: *logger.Log,
-        node_modules: *PackageManager.PackageInstaller.LazyPackageDestinationDir,
-        folder_name: string,
+        folder_path: *bun.AbsPath(.{ .sep = .auto }),
     ) !void {
         const json = brk: {
+            var save = folder_path.save();
+            defer save.restore();
+            folder_path.append("package.json");
+
             const json_src = brk2: {
-                const json_path = bun.path.joinZ([_]string{ folder_name, "package.json" }, .auto);
-                const buf = try bun.sys.File.readFrom(try node_modules.getDir(), json_path, allocator).unwrap();
-                break :brk2 logger.Source.initPathString(json_path, buf);
+                const buf = try bun.sys.File.readFrom(bun.FD.cwd(), folder_path.sliceZ(), allocator).unwrap();
+                break :brk2 logger.Source.initPathString(folder_path.slice(), buf);
             };
 
             initializeStore();
@@ -362,9 +325,8 @@ pub const Scripts = extern struct {
     pub fn createFromPackageJSON(
         this: *Package.Scripts,
         log: *logger.Log,
-        lockfile: *Lockfile,
-        node_modules: *PackageManager.PackageInstaller.LazyPackageDestinationDir,
-        abs_folder_path: string,
+        lockfile: *const Lockfile,
+        folder_path: *bun.AbsPath(.{ .sep = .auto }),
         folder_name: string,
         resolution_tag: Resolution.Tag,
     ) !?Package.Scripts.List {
@@ -372,22 +334,20 @@ pub const Scripts = extern struct {
         tmp.initEmpty(lockfile.allocator);
         defer tmp.deinit();
         var builder = tmp.stringBuilder();
-        try this.fillFromPackageJSON(lockfile.allocator, &builder, log, node_modules, folder_name);
+        try this.fillFromPackageJSON(lockfile.allocator, &builder, log, folder_path);
 
         const add_node_gyp_rebuild_script = if (this.install.isEmpty() and this.preinstall.isEmpty()) brk: {
-            const binding_dot_gyp_path = Path.joinAbsStringZ(
-                abs_folder_path,
-                &[_]string{"binding.gyp"},
-                .auto,
-            );
+            const save = folder_path.save();
+            defer save.restore();
+            folder_path.append("binding.gyp");
 
-            break :brk bun.sys.exists(binding_dot_gyp_path);
+            break :brk bun.sys.exists(folder_path.slice());
         } else false;
 
         return this.createList(
             lockfile,
             tmp.buffers.string_bytes.items,
-            abs_folder_path,
+            folder_path,
             folder_name,
             resolution_tag,
             add_node_gyp_rebuild_script,
@@ -395,27 +355,30 @@ pub const Scripts = extern struct {
     }
 };
 
-const Allocator = std.mem.Allocator;
-const Environment = bun.Environment;
-const Expr = bun.JSAst.Expr;
-const JSAst = bun.JSAst;
-const JSON = bun.JSON;
-const Lockfile = install.Lockfile;
-const Output = bun.Output;
-const PackageManager = install.PackageManager;
-const Path = bun.path;
-const Resolution = bun.install.Resolution;
-const Semver = bun.Semver;
-const String = Semver.String;
-const StringBuilder = Lockfile.StringBuilder;
-const assert = bun.assert;
-const bun = @import("bun");
-const initializeStore = install.initializeStore;
-const install = bun.install;
-const logger = bun.logger;
-const std = @import("std");
 const string = []const u8;
 const stringZ = [:0]const u8;
+const debug = Output.scoped(.Lockfile, .hidden);
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FD = bun.FD;
+const JSON = bun.json;
+const Output = bun.Output;
+const assert = bun.assert;
+const logger = bun.logger;
 const strings = bun.strings;
+const Expr = bun.ast.Expr;
+
+const Semver = bun.Semver;
+const String = Semver.String;
+
+const install = bun.install;
+const Resolution = bun.install.Resolution;
+const initializeStore = install.initializeStore;
+
+const Lockfile = install.Lockfile;
 const Package = Lockfile.Package;
-const debug = Output.scoped(.Lockfile, true);
+const StringBuilder = Lockfile.StringBuilder;

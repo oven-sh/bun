@@ -1,23 +1,5 @@
-const std = @import("std");
-const logger = bun.logger;
-const tables = @import("js_lexer_tables.zig");
-const js_ast = bun.JSAst;
-
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const CodePoint = bun.CodePoint;
-const MutableString = bun.MutableString;
-
-const FeatureFlags = @import("feature_flags.zig");
 const JavascriptString = []const u16;
-const Indentation = bun.js_printer.Options.Indentation;
 
-const unicode = std.unicode;
-
-const Source = logger.Source;
 pub const T = tables.T;
 pub const Keywords = tables.Keywords;
 pub const tokenToString = tables.tokenToString;
@@ -782,7 +764,10 @@ fn NewLexer_(
 
             // Reset string literal
             const base = if (comptime quote == 0) lexer.start else lexer.start + 1;
-            lexer.string_literal_raw_content = lexer.source.contents[base..@min(lexer.source.contents.len, lexer.end - @as(usize, string_literal_details.suffix_len))];
+            const suffix_len = @as(usize, string_literal_details.suffix_len);
+            const end_pos = if (lexer.end >= suffix_len) lexer.end - suffix_len else lexer.end;
+            const slice_end = @min(lexer.source.contents.len, @max(base, end_pos));
+            lexer.string_literal_raw_content = lexer.source.contents[base..slice_end];
             lexer.string_literal_raw_format = if (string_literal_details.needs_decode) .needs_decode else .ascii;
             lexer.string_literal_start = lexer.start;
             if (comptime is_json) lexer.is_ascii_only = lexer.is_ascii_only and !string_literal_details.needs_decode;
@@ -1120,7 +1105,7 @@ fn NewLexer_(
                         if (comptime is_json) {
                             return lexer.addUnsupportedSyntaxError("Private identifiers are not allowed in JSON");
                         }
-                        if (lexer.start == 0 and lexer.source.contents[1] == '!') {
+                        if (lexer.start == 0 and lexer.source.contents.len > 1 and lexer.source.contents[1] == '!') {
                             // "#!/usr/bin/env node"
                             lexer.token = .t_hashbang;
                             hashbang: while (true) {
@@ -1533,21 +1518,20 @@ fn NewLexer_(
                                             );
                                         },
                                         else => {
-                                            // if (comptime Environment.enableSIMD) {
-                                            // TODO: this seems to work, but we shouldn't enable this until after improving test coverage
-                                            // if (lexer.code_point < 128) {
-                                            //     const remainder = lexer.source.contents[lexer.current..];
-                                            //     if (remainder.len >= 4096) {
-                                            //         lexer.current += skipToInterestingCharacterInMultilineComment(remainder) orelse {
-                                            //             lexer.step();
-                                            //             continue;
-                                            //         };
-                                            //         lexer.end = lexer.current -| 1;
-                                            //         lexer.step();
-                                            //         continue;
-                                            //     }
-                                            // }
-                                            // }
+                                            if (comptime Environment.enableSIMD) {
+                                                if (lexer.code_point < 128) {
+                                                    const remainder = lexer.source.contents[lexer.current..];
+                                                    if (remainder.len >= 512) {
+                                                        lexer.current += skipToInterestingCharacterInMultilineComment(remainder) orelse {
+                                                            lexer.step();
+                                                            continue;
+                                                        };
+                                                        lexer.end = lexer.current -| 1;
+                                                        lexer.step();
+                                                        continue;
+                                                    }
+                                                }
+                                            }
 
                                             lexer.step();
                                         },
@@ -2691,7 +2675,7 @@ fn NewLexer_(
             // them. <CR><LF> and <CR> LineTerminatorSequences are normalized to
             // <LF> for both TV and TRV. An explicit EscapeSequence is needed to
             // include a <CR> or <CR><LF> sequence.
-            var bytes = MutableString.initCopy(lexer.allocator, text) catch bun.outOfMemory();
+            var bytes = bun.handleOom(MutableString.initCopy(lexer.allocator, text));
             var end: usize = 0;
             var i: usize = 0;
             var c: u8 = '0';
@@ -3035,7 +3019,6 @@ fn NewLexer_(
 
 pub const Lexer = NewLexer(.{});
 
-const JSIdentifier = @import("./js_lexer/identifier.zig");
 pub inline fn isIdentifierStart(codepoint: i32) bool {
     return JSIdentifier.isIdentifierStart(codepoint);
 }
@@ -3353,8 +3336,8 @@ fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
     const V1x16 = strings.AsciiVectorU1;
 
     const text_end_len = text.len & ~(@as(usize, strings.ascii_vector_size) - 1);
-    bun.assert(text_end_len % strings.ascii_vector_size == 0);
-    bun.assert(text_end_len <= text.len);
+    bun.assertWithLocation(text_end_len % strings.ascii_vector_size == 0, @src());
+    bun.assertWithLocation(text_end_len <= text.len, @src());
 
     const text_end_ptr = text.ptr + text_end_len;
 
@@ -3370,8 +3353,8 @@ fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
         if (@reduce(.Max, any_significant) > 0) {
             const bitmask = @as(u16, @bitCast(any_significant));
             const first = @ctz(bitmask);
-            bun.assert(first < strings.ascii_vector_size);
-            bun.assert(text.ptr[first] == '*' or text.ptr[first] == '\r' or text.ptr[first] == '\n' or text.ptr[first] > 127);
+            bun.assertWithLocation(first < strings.ascii_vector_size, @src());
+            bun.assertWithLocation(text.ptr[first] == '*' or text.ptr[first] == '\r' or text.ptr[first] == '\n' or text.ptr[first] > 127, @src());
             return @as(u32, @truncate(first + (@intFromPtr(text.ptr) - @intFromPtr(text_.ptr))));
         }
         text.ptr += strings.ascii_vector_size;
@@ -3383,3 +3366,24 @@ fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
 fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usize {
     return bun.highway.indexOfInterestingCharacterInStringLiteral(text_, quote);
 }
+
+const string = []const u8;
+
+const FeatureFlags = @import("./feature_flags.zig");
+const JSIdentifier = @import("./js_lexer/identifier.zig");
+const tables = @import("./js_lexer_tables.zig");
+
+const bun = @import("bun");
+const CodePoint = bun.CodePoint;
+const Environment = bun.Environment;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const js_ast = bun.ast;
+const strings = bun.strings;
+const Indentation = bun.js_printer.Options.Indentation;
+
+const logger = bun.logger;
+const Source = logger.Source;
+
+const std = @import("std");
+const unicode = std.unicode;

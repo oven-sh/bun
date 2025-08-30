@@ -22,11 +22,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-const std = @import("std");
-const bun = @import("bun");
-
-const Allocator = std.mem.Allocator;
-
 /// used in matchBrace to determine the size of the stack buffer used in the stack fallback allocator
 /// that is created for handling braces
 /// One such stack buffer is created recursively for each pair of braces
@@ -36,7 +31,7 @@ const Brace = struct {
     open_brace_idx: u32,
     branch_idx: u32,
 };
-const BraceStack = std.BoundedArray(Brace, 10);
+const BraceStack = bun.BoundedArray(Brace, 10);
 
 pub const MatchResult = enum {
     no_match,
@@ -528,3 +523,7 @@ const BraceIndex = struct {
     start: u32 = 0,
     end: u32 = 0,
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;

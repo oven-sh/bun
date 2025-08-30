@@ -75,7 +75,7 @@ enum class SerializationContext { Default,
     WindowPostMessage };
 enum class SerializationForStorage : bool { No,
     Yes };
-enum class SerializationForTransfer : bool { No,
+enum class SerializationForCrossProcessTransfer : bool { No,
     Yes };
 
 using ArrayBufferContentsArray = Vector<JSC::ArrayBufferContents>;
@@ -86,20 +86,23 @@ using WasmMemoryHandleArray = Vector<RefPtr<JSC::SharedArrayBufferContents>>;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(SerializedScriptValue);
 class SerializedScriptValue : public ThreadSafeRefCounted<SerializedScriptValue> {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(SerializedScriptValue);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(SerializedScriptValue, SerializedScriptValue);
 
 public:
     static SYSV_ABI void writeBytesForBun(CloneSerializer*, const uint8_t*, uint32_t);
     static SYSV_ABI bool isTransferable(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
 
-    WEBCORE_EXPORT static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, Vector<RefPtr<MessagePort>>&, SerializationForStorage = SerializationForStorage::No, SerializationContext = SerializationContext::Default, SerializationForTransfer = SerializationForTransfer::No);
+    WEBCORE_EXPORT static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, Vector<RefPtr<MessagePort>>&, SerializationForStorage = SerializationForStorage::No, SerializationContext = SerializationContext::Default, SerializationForCrossProcessTransfer = SerializationForCrossProcessTransfer::No);
     // WEBCORE_EXPORT static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, SerializationForStorage = SerializationForStorage::No, SerializationContext = SerializationContext::Default);
 
-    WEBCORE_EXPORT static RefPtr<SerializedScriptValue> create(JSC::JSGlobalObject&, JSC::JSValue, SerializationForStorage = SerializationForStorage::No, SerializationErrorMode = SerializationErrorMode::Throwing, SerializationContext = SerializationContext::Default, SerializationForTransfer = SerializationForTransfer::No);
+    WEBCORE_EXPORT static RefPtr<SerializedScriptValue> create(JSC::JSGlobalObject&, JSC::JSValue, SerializationForStorage = SerializationForStorage::No, SerializationErrorMode = SerializationErrorMode::Throwing, SerializationContext = SerializationContext::Default, SerializationForCrossProcessTransfer = SerializationForCrossProcessTransfer::No);
 
     static RefPtr<SerializedScriptValue> convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value) { return create(globalObject, value, SerializationForStorage::Yes); }
 
     WEBCORE_EXPORT static RefPtr<SerializedScriptValue> create(StringView);
+
+    // Fast path for postMessage with pure strings
+    static Ref<SerializedScriptValue> createStringFastPath(const String& string);
 
     static Ref<SerializedScriptValue> nullValue();
 
@@ -151,7 +154,7 @@ private:
     //         Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>&& = {}, Vector<WebCodecsVideoFrameData>&& = {}
     // #endif
     //     );
-    static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, Vector<RefPtr<MessagePort>>&, SerializationForStorage, SerializationErrorMode, SerializationContext, SerializationForTransfer);
+    static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, Vector<RefPtr<MessagePort>>&, SerializationForStorage, SerializationErrorMode, SerializationContext, SerializationForCrossProcessTransfer);
     WEBCORE_EXPORT SerializedScriptValue(Vector<unsigned char>&&, std::unique_ptr<ArrayBufferContentsArray>&& = nullptr
 #if ENABLE(WEB_RTC)
         ,
@@ -200,6 +203,9 @@ private:
 #endif
     );
 
+    // Constructor for string fast path
+    explicit SerializedScriptValue(const String& fastPathString);
+
     size_t computeMemoryCost() const;
 
     Vector<unsigned char> m_data;
@@ -221,6 +227,11 @@ private:
     Vector<WebCodecsVideoFrameData> m_serializedVideoFrames;
 #endif
     // Vector<URLKeepingBlobAlive> m_blobHandles;
+
+    // Fast path for postMessage with pure strings - avoids serialization overhead
+    String m_fastPathString;
+    bool m_isStringFastPath { false };
+
     size_t m_memoryCost { 0 };
 };
 
@@ -249,7 +260,7 @@ void SerializedScriptValue::encode(Encoder& encoder) const
     for (const auto& videoChunk : m_serializedVideoChunks)
         encoder << videoChunk->data();
 
-        // FIXME: encode video frames
+    // FIXME: encode video frames
 #endif
 }
 

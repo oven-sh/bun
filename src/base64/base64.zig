@@ -1,6 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
 const mixed_decoder = brk: {
     var decoder = zig_base64.standard.decoderWithIgnore("\xff \t\r\n" ++ [_]u8{
         std.ascii.control_code.vt,
@@ -102,7 +99,7 @@ pub fn urlSafeEncodeLen(source: anytype) usize {
 }
 extern fn WTF__base64URLEncode(input: [*]const u8, input_len: usize, output: [*]u8, output_len: usize) usize;
 pub fn encodeURLSafe(dest: []u8, source: []const u8) usize {
-    bun.JSC.markBinding(@src());
+    bun.jsc.markBinding(@src());
     return WTF__base64URLEncode(source.ptr, source.len, dest.ptr, dest.len);
 }
 
@@ -556,3 +553,6 @@ const zig_base64 = struct {
         } else |err| if (err != error.NoSpaceLeft) return err;
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");

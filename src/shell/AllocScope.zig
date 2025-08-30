@@ -1,5 +1,6 @@
 //! This is just a wrapper around `bun.AllocationScope` that ensures that it is
 //! zero-cost in release builds.
+
 const AllocScope = @This();
 
 __scope: if (bun.Environment.enableAllocScopes) bun.AllocationScope else void,
@@ -37,5 +38,5 @@ pub inline fn allocator(this: *AllocScope) std.mem.Allocator {
     return bun.default_allocator;
 }
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");

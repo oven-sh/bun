@@ -13,7 +13,10 @@ export const isEnabled =
         stdout: "pipe",
         stderr: "inherit",
         env: bunEnv,
+        timeout: 5_000,
       });
+      if (info.exitCode !== 0) return false;
+      if (info.signalCode) return false;
       return info.stdout.toString().indexOf("Server Version:") !== -1;
     } catch (error) {
       return false;
@@ -271,9 +274,9 @@ async function startContainer(): Promise<ContainerConfiguration> {
     async function tryStartContainer(attempt = 1, maxAttempts = 3) {
       const currentPort = attempt === 1 ? port : randomPort();
       const currentTlsPort = attempt === 1 ? tlsPort : randomPort();
-      
+
       console.log(`Attempt ${attempt}: Using ports ${currentPort}:6379 and ${currentTlsPort}:6380...`);
-      
+
       const startProcess = Bun.spawn({
         cmd: [
           dockerCLI,
@@ -317,7 +320,7 @@ async function startContainer(): Promise<ContainerConfiguration> {
           AUTH_REDIS_URL = `redis://testuser:test123@${REDIS_HOST}:${REDIS_PORT}`;
           READONLY_REDIS_URL = `redis://readonly:readonly@${REDIS_HOST}:${REDIS_PORT}`;
           WRITEONLY_REDIS_URL = `redis://writeonly:writeonly@${REDIS_HOST}:${REDIS_PORT}`;
-          
+
           containerConfig = {
             port: currentPort,
             tlsPort: currentTlsPort,
@@ -327,7 +330,7 @@ async function startContainer(): Promise<ContainerConfiguration> {
         }
         return { containerID, success: true };
       }
-      
+
       // If the error is related to port already in use, try again with different ports
       if (startError.includes("address already in use") && attempt < maxAttempts) {
         console.log(`Port conflict detected. Retrying with different ports...`);
@@ -337,11 +340,11 @@ async function startContainer(): Promise<ContainerConfiguration> {
         }
         return tryStartContainer(attempt + 1, maxAttempts);
       }
-      
+
       console.error(`Failed to start container. Exit code: ${startExitCode}, Error: ${startError}`);
       throw new Error(`Failed to start Redis container: ${startError || "unknown error"}`);
     }
-    
+
     const { containerID } = await tryStartContainer();
 
     console.log(`Container started with ID: ${containerID.trim()}`);
@@ -536,6 +539,7 @@ export interface TestContext {
   redisReadOnly?: RedisClient;
   redisWriteOnly?: RedisClient;
   id: number;
+  restartServer: () => Promise<void>;
 }
 
 // Create a singleton promise for Docker initialization
@@ -557,6 +561,7 @@ export const context: TestContext = {
   redisReadOnly: undefined,
   redisWriteOnly: undefined,
   id,
+  restartServer: restartRedisContainer,
 };
 export { context as ctx };
 
@@ -728,4 +733,53 @@ export async function retry<T>(
   }
 
   throw new Error(`Retry failed after ${attempts} attempts (${Date.now() - startTime}ms)`);
+}
+
+/**
+ * Get the name of the running Redis container
+ */
+async function getRedisContainerName(): Promise<string> {
+  if (!dockerCLI) {
+    throw new Error("Docker CLI not available");
+  }
+
+  const listProcess = Bun.spawn({
+    cmd: [dockerCLI, "ps", "--filter", "name=valkey-unified-test", "--format", "{{.Names}}"],
+    stdout: "pipe",
+    env: bunEnv,
+  });
+
+  const containerName = (await new Response(listProcess.stdout).text()).trim();
+  if (!containerName) {
+    throw new Error("No Redis container found");
+  }
+
+  return containerName;
+}
+
+/**
+ * Restart the Redis container to simulate connection drop
+ */
+export async function restartRedisContainer(): Promise<void> {
+  const containerName = await getRedisContainerName();
+
+  console.log(`Restarting Redis container: ${containerName}`);
+
+  const restartProcess = Bun.spawn({
+    cmd: [dockerCLI, "restart", containerName],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  const exitCode = await restartProcess.exited;
+  if (exitCode !== 0) {
+    const stderr = await new Response(restartProcess.stderr).text();
+    throw new Error(`Failed to restart container: ${stderr}`);
+  }
+
+  // Wait a moment for the container to fully restart
+  await delay(2000);
+
+  console.log(`Redis container restarted: ${containerName}`);
 }

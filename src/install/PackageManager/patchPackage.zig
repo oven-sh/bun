@@ -433,8 +433,8 @@ pub fn doPatchCommit(
         .posix,
     );
 
-    var nodefs = bun.JSC.Node.fs.NodeFS{};
-    const args = bun.JSC.Node.fs.Arguments.Mkdir{
+    var nodefs = bun.jsc.Node.fs.NodeFS{};
+    const args = bun.jsc.Node.fs.Arguments.Mkdir{
         .path = .{ .string = bun.PathString.init(manager.options.patch_features.commit.patches_dir) },
     };
     if (nodefs.mkdirRecursive(args).asErr()) |e| {
@@ -454,8 +454,8 @@ pub fn doPatchCommit(
         Global.crash();
     }
 
-    const patch_key = std.fmt.allocPrint(manager.allocator, "{s}", .{resolution_label}) catch bun.outOfMemory();
-    const patchfile_path = manager.allocator.dupe(u8, path_in_patches_dir) catch bun.outOfMemory();
+    const patch_key = bun.handleOom(std.fmt.allocPrint(manager.allocator, "{s}", .{resolution_label}));
+    const patchfile_path = bun.handleOom(manager.allocator.dupe(u8, path_in_patches_dir));
     _ = bun.sys.unlink(bun.path.joinZ(&[_][]const u8{ changes_dir, ".bun-patch-tag" }, .auto));
 
     return .{
@@ -527,7 +527,7 @@ fn escapePatchFilename(allocator: std.mem.Allocator, name: []const u8) ?[]const 
     var count: usize = 0;
     for (name) |c| count += if (ESCAPE_TABLE[c].escaped()) |e| e.len else 1;
     if (count == name.len) return null;
-    var buf = allocator.alloc(u8, count) catch bun.outOfMemory();
+    var buf = bun.handleOom(allocator.alloc(u8, count));
     var i: usize = 0;
     for (name) |c| {
         const e = ESCAPE_TABLE[c].escaped() orelse &[_]u8{c};
@@ -760,10 +760,9 @@ fn overwritePackageInNodeModulesFolder(
             var pathbuf2: bun.PathBuffer = undefined;
             // _ = pathbuf; // autofix
 
-            while (try walker.next()) |entry| {
+            while (try walker.next().unwrap()) |entry| {
                 if (entry.kind != .file) continue;
                 real_file_count += 1;
-                const openFile = std.fs.Dir.openFile;
                 const createFile = std.fs.Dir.createFile;
 
                 // 1. rename original file in node_modules to tmp_dir_in_node_modules
@@ -807,7 +806,7 @@ fn overwritePackageInNodeModulesFolder(
                         Global.crash();
                     };
                 } else if (comptime Environment.isPosix) {
-                    var in_file = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
+                    var in_file = try entry.dir.openat(entry.basename, bun.O.RDONLY, 0).unwrap();
                     defer in_file.close();
 
                     @memcpy(pathbuf[0..entry.path.len], entry.path);
@@ -824,10 +823,10 @@ fn overwritePackageInNodeModulesFolder(
                     var outfile = try createFile(destination_dir_, entry.path, .{});
                     defer outfile.close();
 
-                    const stat = in_file.stat() catch continue;
+                    const stat = in_file.stat().unwrap() catch continue;
                     _ = bun.c.fchmod(outfile.handle, @intCast(stat.mode));
 
-                    bun.copyFileWithState(.fromStdFile(in_file), .fromStdFile(outfile), &copy_file_state).unwrap() catch |err| {
+                    bun.copyFileWithState(in_file, .fromStdFile(outfile), &copy_file_state).unwrap() catch |err| {
                         Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                         Global.crash();
                     };
@@ -840,7 +839,7 @@ fn overwritePackageInNodeModulesFolder(
 
     var pkg_in_cache_dir = try cache_dir.openDir(cache_dir_subpath, .{ .iterate = true });
     defer pkg_in_cache_dir.close();
-    var walker = Walker.walk(pkg_in_cache_dir, manager.allocator, &.{}, IGNORED_PATHS) catch bun.outOfMemory();
+    var walker = bun.handleOom(Walker.walk(.fromStdDir(pkg_in_cache_dir), manager.allocator, &.{}, IGNORED_PATHS));
     defer walker.deinit();
 
     var buf1: if (bun.Environment.isWindows) bun.WPathBuffer else void = undefined;
@@ -925,7 +924,7 @@ fn pkgInfoForNameAndVersion(
     version: ?[]const u8,
 ) struct { PackageID, Lockfile.Tree.Iterator(.node_modules).Next } {
     var sfb = std.heap.stackFallback(@sizeOf(IdPair) * 4, lockfile.allocator);
-    var pairs = std.ArrayList(IdPair).initCapacity(sfb.get(), 8) catch bun.outOfMemory();
+    var pairs = bun.handleOom(std.ArrayList(IdPair).initCapacity(sfb.get(), 8));
     defer pairs.deinit();
 
     const name_hash = String.Builder.stringHash(name);
@@ -943,10 +942,10 @@ fn pkgInfoForNameAndVersion(
         if (version) |v| {
             const label = std.fmt.bufPrint(buf[0..], "{}", .{pkg.resolution.fmt(strbuf, .posix)}) catch @panic("Resolution name too long");
             if (std.mem.eql(u8, label, v)) {
-                pairs.append(.{ @intCast(dep_id), pkg_id }) catch bun.outOfMemory();
+                bun.handleOom(pairs.append(.{ @intCast(dep_id), pkg_id }));
             }
         } else {
-            pairs.append(.{ @intCast(dep_id), pkg_id }) catch bun.outOfMemory();
+            bun.handleOom(pairs.append(.{ @intCast(dep_id), pkg_id }));
         }
     }
 
@@ -1070,7 +1069,7 @@ fn pathArgumentRelativeToRootWorkspacePackage(manager: *PackageManager, lockfile
     if (workspace_package_id == 0) return null;
     const workspace_res = lockfile.packages.items(.resolution)[workspace_package_id];
     const rel_path: []const u8 = workspace_res.value.workspace.slice(lockfile.buffers.string_bytes.items);
-    return bun.default_allocator.dupe(u8, bun.path.join(&[_][]const u8{ rel_path, argument }, .posix)) catch bun.outOfMemory();
+    return bun.handleOom(bun.default_allocator.dupe(u8, bun.path.join(&[_][]const u8{ rel_path, argument }, .posix)));
 }
 
 const PatchArgKind = enum {
@@ -1084,7 +1083,8 @@ const PatchArgKind = enum {
     }
 };
 
-// @sortImports
+const string = []const u8;
+const stringZ = [:0]const u8;
 
 const Walker = @import("../../walker_skippable.zig");
 const std = @import("std");
@@ -1093,13 +1093,11 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
 const Global = bun.Global;
-const JSC = bun.JSC;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.string;
-const stringZ = bun.stringZ;
 const strings = bun.strings;
 const File = bun.sys.File;
 

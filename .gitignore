@@ -36,6 +36,7 @@
 *.out.refresh.js
 *.pdb
 *.sqlite
+*.swp
 *.tmp
 *.trace
 *.wat
@@ -184,3 +185,5 @@ codegen-for-zig-team.tar.gz
 scratch*.{js,ts,tsx,cjs,mjs}
 
 *.bun-build
+
+scripts/lldb-inline

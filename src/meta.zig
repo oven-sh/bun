@@ -1,6 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
 pub fn OptionalChild(comptime T: type) type {
     const tyinfo = @typeInfo(T);
     if (tyinfo != .pointer) @compileError("OptionalChild(T) requires that T be a pointer to an optional type.");
@@ -304,10 +301,11 @@ pub fn looksLikeListContainerType(comptime T: type) ?struct { list: ListContaine
             return .{ .list = .array_list, .child = std.meta.Child(tyinfo.@"struct".fields[0].type) };
 
         // Looks like babylist
-        if (tyinfo.@"struct".fields.len == 3 and
+        if (tyinfo.@"struct".fields.len == 4 and
             std.mem.eql(u8, tyinfo.@"struct".fields[0].name, "ptr") and
             std.mem.eql(u8, tyinfo.@"struct".fields[1].name, "len") and
-            std.mem.eql(u8, tyinfo.@"struct".fields[2].name, "cap"))
+            std.mem.eql(u8, tyinfo.@"struct".fields[2].name, "cap") and
+            std.mem.eql(u8, tyinfo.@"struct".fields[3].name, "alloc_ptr"))
             return .{ .list = .baby_list, .child = std.meta.Child(tyinfo.@"struct".fields[0].type) };
 
         // Looks like SmallList
@@ -338,3 +336,42 @@ pub fn SliceChild(comptime T: type) type {
     }
     return T;
 }
+
+/// userland implementation of https://github.com/ziglang/zig/issues/21879
+pub fn useAllFields(comptime T: type, _: VoidFields(T)) void {}
+
+fn VoidFields(comptime T: type) type {
+    const fields = @typeInfo(T).@"struct".fields;
+    var new_fields = fields[0..fields.len].*;
+    for (&new_fields) |*field| {
+        field.type = void;
+        field.default_value_ptr = null;
+    }
+    return @Type(.{ .@"struct" = .{
+        .layout = .auto,
+        .fields = &new_fields,
+        .decls = &.{},
+        .is_tuple = false,
+    } });
+}
+
+pub fn voidFieldTypeDiscardHelper(data: anytype) void {
+    _ = data;
+}
+
+pub fn hasDecl(comptime T: type, comptime name: []const u8) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct", .@"union", .@"enum", .@"opaque" => @hasDecl(T, name),
+        else => false,
+    };
+}
+
+pub fn hasField(comptime T: type, comptime name: []const u8) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct", .@"union", .@"enum" => @hasField(T, name),
+        else => false,
+    };
+}
+
+const bun = @import("bun");
+const std = @import("std");

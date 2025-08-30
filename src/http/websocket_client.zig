@@ -36,7 +36,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         send_buffer: bun.LinearFifo(u8, .Dynamic),
 
-        globalThis: *JSC.JSGlobalObject,
+        globalThis: *jsc.JSGlobalObject,
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
 
         header_fragment: ?u8 = null,
@@ -45,7 +45,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         payload_length_frame_len: u8 = 0,
 
         initial_data_handler: ?*InitialDataHandler = null,
-        event_loop: *JSC.EventLoop = undefined,
+        event_loop: *jsc.EventLoop = undefined,
         deflate: ?*WebSocketDeflate = null,
 
         // Track if current message is compressed
@@ -74,7 +74,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             return true;
         }
 
-        pub fn register(global: *JSC.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.C) void {
+        pub fn register(global: *jsc.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.C) void {
             const vm = global.bunVM();
             const loop = @as(*uws.Loop, @ptrCast(@alignCast(loop_)));
 
@@ -130,7 +130,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn fail(this: *WebSocket, code: ErrorCode) void {
-            JSC.markBinding(@src());
+            jsc.markBinding(@src());
             if (this.outgoing_websocket) |ws| {
                 this.outgoing_websocket = null;
                 log("fail ({s})", .{@tagName(code)});
@@ -142,7 +142,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn handleHandshake(this: *WebSocket, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
-            JSC.markBinding(@src());
+            jsc.markBinding(@src());
 
             const authorized = if (success == 1) true else false;
 
@@ -182,7 +182,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
         pub fn handleClose(this: *WebSocket, _: Socket, _: c_int, _: ?*anyopaque) void {
             log("onClose", .{});
-            JSC.markBinding(@src());
+            jsc.markBinding(@src());
             this.clearData();
             this.tcp.detach();
 
@@ -257,20 +257,20 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         this.terminate(ErrorCode.invalid_utf8);
                         return;
                     };
-                    var outstring = JSC.ZigString.Empty;
+                    var outstring = jsc.ZigString.Empty;
                     if (utf16_bytes_) |utf16| {
-                        outstring = JSC.ZigString.from16Slice(utf16);
+                        outstring = jsc.ZigString.from16Slice(utf16);
                         outstring.mark();
-                        JSC.markBinding(@src());
+                        jsc.markBinding(@src());
                         out.didReceiveText(false, &outstring);
                     } else {
-                        outstring = JSC.ZigString.init(data_);
-                        JSC.markBinding(@src());
+                        outstring = jsc.ZigString.init(data_);
+                        jsc.markBinding(@src());
                         out.didReceiveText(true, &outstring);
                     }
                 },
                 .Binary, .Ping, .Pong => {
-                    JSC.markBinding(@src());
+                    jsc.markBinding(@src());
                     out.didReceiveBytes(data_.ptr, data_.len, @as(u8, @intFromEnum(kind)));
                 },
                 else => {
@@ -710,7 +710,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             // fast path: no backpressure, no queue, just send the bytes.
             if (!this.hasBackpressure()) {
                 // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
-                const wrote = socket.write(bytes, false);
+                const wrote = socket.write(bytes);
                 const expected = @as(c_int, @intCast(bytes.len));
                 if (wrote == expected) {
                     return true;
@@ -831,7 +831,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             if (this.tcp.isClosed()) {
                 return false;
             }
-            const wrote = this.tcp.write(out_buf, false);
+            const wrote = this.tcp.write(out_buf);
             if (wrote < 0) {
                 this.terminate(ErrorCode.failed_to_write);
                 return false;
@@ -906,7 +906,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         this.terminate(ErrorCode.invalid_utf8);
                         return;
                     }
-                    reason = bun.String.createUTF8(body_slice);
+                    reason = bun.String.cloneUTF8(body_slice);
                     @memcpy(final_body_bytes[8..][0..body_len], body_slice);
                 }
             }
@@ -984,9 +984,51 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             return !this.tcp.isClosed() and !this.tcp.isShutdown();
         }
 
+        pub fn writeBlob(
+            this: *WebSocket,
+            blob_value: jsc.JSValue,
+            op: u8,
+        ) callconv(.C) void {
+            if (!this.hasTCP() or op > 0xF) {
+                this.dispatchAbruptClose(ErrorCode.ended);
+                return;
+            }
+
+            const opcode: Opcode = @enumFromInt(op);
+
+            // Cast the JSValue to a Blob
+            if (blob_value.as(jsc.WebCore.Blob)) |blob| {
+                // Get the shared view of the blob data
+                const data = blob.sharedView();
+                if (data.len == 0) {
+                    // Empty blob, send empty frame
+                    const bytes = Copy{ .bytes = &[0]u8{} };
+                    _ = this.sendData(bytes, !this.hasBackpressure(), opcode);
+                    return;
+                }
+
+                // Send the blob data similar to writeBinaryData
+                const bytes = Copy{ .bytes = data };
+
+                // Fast path for small blobs
+                const frame_size = WebsocketHeader.frameSizeIncludingMask(data.len);
+                if (!this.hasBackpressure() and frame_size < stack_frame_size) {
+                    var inline_buf: [stack_frame_size]u8 = undefined;
+                    bytes.copy(this.globalThis, inline_buf[0..frame_size], data.len, opcode);
+                    _ = this.enqueueEncodedBytes(this.tcp, inline_buf[0..frame_size]);
+                    return;
+                }
+
+                _ = this.sendData(bytes, !this.hasBackpressure(), opcode);
+            } else {
+                // Invalid blob, close connection
+                this.dispatchAbruptClose(ErrorCode.ended);
+            }
+        }
+
         pub fn writeString(
             this: *WebSocket,
-            str_: *const JSC.ZigString,
+            str_: *const jsc.ZigString,
             op: u8,
         ) callconv(.C) void {
             const str = str_.*;
@@ -1037,7 +1079,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         fn dispatchAbruptClose(this: *WebSocket, code: ErrorCode) void {
             var out = this.outgoing_websocket orelse return;
             this.poll_ref.unref(this.globalThis.bunVM());
-            JSC.markBinding(@src());
+            jsc.markBinding(@src());
             this.outgoing_websocket = null;
             out.didAbruptClose(code);
             this.deref();
@@ -1046,13 +1088,13 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         fn dispatchClose(this: *WebSocket, code: u16, reason: *bun.String) void {
             var out = this.outgoing_websocket orelse return;
             this.poll_ref.unref(this.globalThis.bunVM());
-            JSC.markBinding(@src());
+            jsc.markBinding(@src());
             this.outgoing_websocket = null;
             out.didClose(code, reason);
             this.deref();
         }
 
-        pub fn close(this: *WebSocket, code: u16, reason: ?*const JSC.ZigString) callconv(.C) void {
+        pub fn close(this: *WebSocket, code: u16, reason: ?*const jsc.ZigString) callconv(.C) void {
             if (!this.hasTCP())
                 return;
             const tcp = this.tcp;
@@ -1075,7 +1117,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             ws: *CppWebSocket,
             slice: []u8,
 
-            pub const Handle = JSC.AnyTask.New(@This(), handle);
+            pub const Handle = jsc.AnyTask.New(@This(), handle);
 
             pub const new = bun.TrivialNew(@This());
 
@@ -1106,7 +1148,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             outgoing: *CppWebSocket,
             input_socket: *anyopaque,
             socket_ctx: *anyopaque,
-            globalThis: *JSC.JSGlobalObject,
+            globalThis: *jsc.JSGlobalObject,
             buffered_data: [*]u8,
             buffered_data_len: usize,
             deflate_params: ?*const WebSocketDeflate.Params,
@@ -1143,8 +1185,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 return null;
             }
 
-            ws.send_buffer.ensureTotalCapacity(2048) catch bun.outOfMemory();
-            ws.receive_buffer.ensureTotalCapacity(2048) catch bun.outOfMemory();
+            bun.handleOom(ws.send_buffer.ensureTotalCapacity(2048));
+            bun.handleOom(ws.receive_buffer.ensureTotalCapacity(2048));
             ws.poll_ref.ref(globalThis.bunVM());
 
             const buffered_slice: []u8 = buffered_data[0..buffered_data_len];
@@ -1216,6 +1258,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 @export(&memoryCost, .{ .name = "Bun__" ++ name ++ "__memoryCost" });
                 @export(&register, .{ .name = "Bun__" ++ name ++ "__register" });
                 @export(&writeBinaryData, .{ .name = "Bun__" ++ name ++ "__writeBinaryData" });
+                @export(&writeBlob, .{ .name = "Bun__" ++ name ++ "__writeBlob" });
                 @export(&writeString, .{ .name = "Bun__" ++ name ++ "__writeString" });
             }
         }
@@ -1257,10 +1300,8 @@ pub const ErrorCode = enum(i32) {
     protocol_error = 32,
 };
 
-const CppWebSocket = @import("./websocket_client/CppWebSocket.zig").CppWebSocket;
-
 pub const Mask = struct {
-    pub fn fill(globalThis: *JSC.JSGlobalObject, mask_buf: *[4]u8, output_: []u8, input_: []const u8) void {
+    pub fn fill(globalThis: *jsc.JSGlobalObject, mask_buf: *[4]u8, output_: []u8, input_: []const u8) void {
         mask_buf.* = globalThis.bunVM().rareData().entropySlice(4)[0..4].*;
         const mask = mask_buf.*;
 
@@ -1407,7 +1448,7 @@ const Copy = union(enum) {
         }
     }
 
-    pub fn copy(this: @This(), globalThis: *JSC.JSGlobalObject, buf: []u8, content_byte_len: usize, opcode: Opcode) void {
+    pub fn copy(this: @This(), globalThis: *jsc.JSGlobalObject, buf: []u8, content_byte_len: usize, opcode: Opcode) void {
         if (this == .raw) {
             bun.assert(buf.len >= this.raw.len);
             bun.assert(buf.ptr != this.raw.ptr);
@@ -1476,7 +1517,7 @@ const Copy = union(enum) {
         }
     }
 
-    pub fn copyCompressed(globalThis: *JSC.JSGlobalObject, buf: []u8, compressed_data: []const u8, opcode: Opcode, is_first_fragment: bool) void {
+    pub fn copyCompressed(globalThis: *jsc.JSGlobalObject, buf: []u8, compressed_data: []const u8, opcode: Opcode, is_first_fragment: bool) void {
         const content_byte_len = compressed_data.len;
         const how_big_is_the_length_integer = WebsocketHeader.lengthByteCount(content_byte_len);
         const how_big_is_the_mask = 4;
@@ -1513,20 +1554,23 @@ const Copy = union(enum) {
     }
 };
 
-const std = @import("std");
-const JSC = bun.JSC;
-const bun = @import("bun");
+const log = Output.scoped(.WebSocketClient, .visible);
 
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-const uws = bun.uws;
-const Async = bun.Async;
+const string = []const u8;
+
+const WebSocketDeflate = @import("./websocket_client/WebSocketDeflate.zig");
+const std = @import("std");
+const CppWebSocket = @import("./websocket_client/CppWebSocket.zig").CppWebSocket;
+
 const Opcode = @import("./websocket.zig").Opcode;
 const WebsocketHeader = @import("./websocket.zig").WebsocketHeader;
-const BoringSSL = bun.BoringSSL;
-const WebSocketDeflate = @import("./websocket_client/WebSocketDeflate.zig");
 
-const log = Output.scoped(.WebSocketClient, false);
+const bun = @import("bun");
+const Async = bun.Async;
+const BoringSSL = bun.BoringSSL;
+const Environment = bun.Environment;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
+const strings = bun.strings;
+const uws = bun.uws;

@@ -1,10 +1,10 @@
 // Hardcoded module "node:tls"
 const { isArrayBufferView, isTypedArray } = require("node:util/types");
 const net = require("node:net");
-const { Duplex } = require("node:stream");
+const Duplex = require("internal/streams/duplex");
 const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
-const { throwOnInvalidTLSArray, DEFAULT_CIPHERS, validateCiphers } = require("internal/tls");
+const { throwOnInvalidTLSArray } = require("internal/tls");
 const { validateString } = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
@@ -12,6 +12,200 @@ const { Server: NetServer, Socket: NetSocket } = net;
 const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
 const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
 const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
+
+const getTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "getDefaultCiphers", 0);
+const setTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "setDefaultCiphers", 1);
+let _VALID_CIPHERS_SET: Set<string> | undefined;
+function getValidCiphersSet() {
+  if (!_VALID_CIPHERS_SET) {
+    _VALID_CIPHERS_SET = new Set([
+      "EXP1024-RC4-MD5",
+      "EXP1024-RC2-CBC-MD5",
+      "EXP1024-DES-CBC-SHA",
+      "EXP1024-DHE-DSS-DES-CBC-SHA",
+      "EXP1024-RC4-SHA",
+      "EXP1024-DHE-DSS-RC4-SHA",
+      "DHE-DSS-RC4-SHA",
+
+      // AES ciphersuites from RFC 3268
+      "AES128-SHA",
+      "DH-DSS-AES128-SHA",
+      "DH-RSA-AES128-SHA",
+      "DHE-DSS-AES128-SHA",
+      "DHE-RSA-AES128-SHA",
+      "ADH-AES128-SHA",
+      "AES256-SHA",
+      "DH-DSS-AES256-SHA",
+      "DH-RSA-AES256-SHA",
+      "DHE-DSS-AES256-SHA",
+      "DHE-RSA-AES256-SHA",
+      "ADH-AES256-SHA",
+
+      // ECC ciphersuites from RFC 4492
+      "ECDH-ECDSA-NULL-SHA",
+      "ECDH-ECDSA-RC4-SHA",
+      "ECDH-ECDSA-DES-CBC3-SHA",
+      "ECDH-ECDSA-AES128-SHA",
+      "ECDH-ECDSA-AES256-SHA",
+      "ECDHE-ECDSA-NULL-SHA",
+      "ECDHE-ECDSA-RC4-SHA",
+      "ECDHE-ECDSA-DES-CBC3-SHA",
+      "ECDHE-ECDSA-AES128-SHA",
+      "ECDHE-ECDSA-AES256-SHA",
+
+      "ECDH-RSA-NULL-SHA",
+      "ECDH-RSA-RC4-SHA",
+      "ECDH-RSA-DES-CBC3-SHA",
+      "ECDH-RSA-AES128-SHA",
+      "ECDH-RSA-AES256-SHA",
+      "ECDHE-RSA-NULL-SHA",
+      "ECDHE-RSA-RC4-SHA",
+      "ECDHE-RSA-DES-CBC3-SHA",
+      "ECDHE-RSA-AES128-SHA",
+      "ECDHE-RSA-AES256-SHA",
+      "ECDHE-RSA-AES128-SHA256",
+      "AECDH-NULL-SHA",
+      "AECDH-RC4-SHA",
+      "AECDH-DES-CBC3-SHA",
+      "AECDH-AES128-SHA",
+      "AECDH-AES256-SHA",
+
+      // PSK ciphersuites from RFC 4279
+      "PSK-RC4-SHA",
+      "PSK-3DES-EDE-CBC-SHA",
+      "PSK-AES128-CBC-SHA",
+      "PSK-AES256-CBC-SHA",
+
+      // PSK ciphersuites from RFC 5489
+      "ECDHE-PSK-AES128-CBC-SHA",
+      "ECDHE-PSK-AES256-CBC-SHA",
+
+      // SRP ciphersuite from RFC 5054
+      "SRP-3DES-EDE-CBC-SHA",
+      "SRP-RSA-3DES-EDE-CBC-SHA",
+      "SRP-DSS-3DES-EDE-CBC-SHA",
+      "SRP-AES-128-CBC-SHA",
+      "SRP-RSA-AES-128-CBC-SHA",
+      "SRP-DSS-AES-128-CBC-SHA",
+      "SRP-AES-256-CBC-SHA",
+      "SRP-RSA-AES-256-CBC-SHA",
+      "SRP-DSS-AES-256-CBC-SHA",
+
+      // Camellia ciphersuites from RFC 4132
+      "CAMELLIA128-SHA",
+      "DH-DSS-CAMELLIA128-SHA",
+      "DH-RSA-CAMELLIA128-SHA",
+      "DHE-DSS-CAMELLIA128-SHA",
+      "DHE-RSA-CAMELLIA128-SHA",
+      "ADH-CAMELLIA128-SHA",
+
+      "CAMELLIA256-SHA",
+      "DH-DSS-CAMELLIA256-SHA",
+      "DH-RSA-CAMELLIA256-SHA",
+      "DHE-DSS-CAMELLIA256-SHA",
+      "DHE-RSA-CAMELLIA256-SHA",
+      "ADH-CAMELLIA256-SHA",
+
+      // SEED ciphersuites from RFC 4162
+      "SEED-SHA",
+      "DH-DSS-SEED-SHA",
+      "DH-RSA-SEED-SHA",
+      "DHE-DSS-SEED-SHA",
+      "DHE-RSA-SEED-SHA",
+      "ADH-SEED-SHA",
+
+      // TLS v1.2 ciphersuites
+      "NULL-SHA256",
+      "AES128-SHA256",
+      "AES256-SHA256",
+      "DH-DSS-AES128-SHA256",
+      "DH-RSA-AES128-SHA256",
+      "DHE-DSS-AES128-SHA256",
+      "DHE-RSA-AES128-SHA256",
+      "DH-DSS-AES256-SHA256",
+      "DH-RSA-AES256-SHA256",
+      "DHE-DSS-AES256-SHA256",
+      "DHE-RSA-AES256-SHA256",
+      "ADH-AES128-SHA256",
+      "ADH-AES256-SHA256",
+
+      // TLS v1.2 GCM ciphersuites from RFC 5288
+      "AES128-GCM-SHA256",
+      "AES256-GCM-SHA384",
+      "DHE-RSA-AES128-GCM-SHA256",
+      "DHE-RSA-AES256-GCM-SHA384",
+      "DH-RSA-AES128-GCM-SHA256",
+      "DH-RSA-AES256-GCM-SHA384",
+      "DHE-DSS-AES128-GCM-SHA256",
+      "DHE-DSS-AES256-GCM-SHA384",
+      "DH-DSS-AES128-GCM-SHA256",
+      "DH-DSS-AES256-GCM-SHA384",
+      "ADH-AES128-GCM-SHA256",
+      "ADH-AES256-GCM-SHA384",
+
+      // ECDH HMAC based ciphersuites from RFC 5289
+
+      "ECDHE-ECDSA-AES128-SHA256",
+      "ECDHE-ECDSA-AES256-SHA384",
+      "ECDH-ECDSA-AES128-SHA256",
+      "ECDH-ECDSA-AES256-SHA384",
+      "ECDHE-RSA-AES128-SHA256",
+      "ECDHE-RSA-AES256-SHA384",
+      "ECDH-RSA-AES128-SHA256",
+      "ECDH-RSA-AES256-SHA384",
+
+      // ECDH GCM based ciphersuites from RFC 5289
+      "ECDHE-ECDSA-AES128-GCM-SHA256",
+      "ECDHE-ECDSA-AES256-GCM-SHA384",
+      "ECDH-ECDSA-AES128-GCM-SHA256",
+      "ECDH-ECDSA-AES256-GCM-SHA384",
+      "ECDHE-RSA-AES128-GCM-SHA256",
+      "ECDHE-RSA-AES256-GCM-SHA384",
+      "ECDH-RSA-AES128-GCM-SHA256",
+      "ECDH-RSA-AES256-GCM-SHA384",
+      "ECDHE-RSA-CHACHA20-POLY1305",
+      "ECDHE-ECDSA-CHACHA20-POLY1305",
+      "ECDHE-PSK-CHACHA20-POLY1305",
+
+      // TLS 1.3 ciphersuites from RFC 8446.
+      "TLS_AES_128_GCM_SHA256",
+      "TLS_AES_256_GCM_SHA384",
+      "TLS_CHACHA20_POLY1305_SHA256",
+
+      // Configurations include in the default cipher list
+      "HIGH",
+      "!aNULL",
+      "!eNULL",
+      "!EXPORT",
+      "!DES",
+      "!RC4",
+      "!MD5",
+      "!PSK",
+      "!SRP",
+      "!CAMELLIA",
+    ]);
+  }
+  return _VALID_CIPHERS_SET;
+}
+
+function validateCiphers(ciphers: string, name: string = "options") {
+  // Set the cipher list and cipher suite before anything else because
+  // @SECLEVEL=<n> changes the security level and that affects subsequent
+  // operations.
+  if (ciphers !== undefined && ciphers !== null) {
+    validateString(ciphers, `${name}.ciphers`);
+
+    // TODO: right now we need this because we dont create the CTX before listening/connecting
+    // we need to change that in the future and let BoringSSL do the validation
+    const ciphersSet = getValidCiphersSet();
+    const requested = ciphers.split(":");
+    for (const r of requested) {
+      if (r && !ciphersSet.has(r)) {
+        throw $ERR_SSL_NO_CIPHER_MATCH();
+      }
+    }
+  }
+}
 
 const SymbolReplace = Symbol.replace;
 const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
@@ -601,7 +795,7 @@ function Server(options, secureConnectionListener): void {
 
         validateCiphers(options.ciphers);
 
-        // TODO: Pass the ciphers
+        this.ciphers = options.ciphers;
       }
     }
   };
@@ -629,6 +823,7 @@ function Server(options, secureConnectionListener): void {
         clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
         clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
         contexts: contexts,
+        ciphers: this.ciphers,
       },
       TLSSocket,
     ];
@@ -680,7 +875,7 @@ function connect(...args) {
 }
 
 function getCiphers() {
-  return DEFAULT_CIPHERS.split(":");
+  return getDefaultCiphers().split(":");
 }
 
 // Convert protocols array into valid OpenSSL protocols list
@@ -783,6 +978,16 @@ function getCACertificates(type = "default") {
   }
 }
 
+function tlsCipherFilter(a: string) {
+  return !a.startsWith("TLS_");
+}
+
+function getDefaultCiphers() {
+  // TLS_ will always be present until SSL_CTX_set_cipher_list is supported see default_ciphers.h
+  const ciphers = getTLSDefaultCiphers();
+  return `TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256${ciphers ? ":" + ciphers : ""}`;
+}
+
 export default {
   CLIENT_RENEG_LIMIT,
   CLIENT_RENEG_WINDOW,
@@ -790,7 +995,18 @@ export default {
   convertALPNProtocols,
   createSecureContext,
   createServer,
-  DEFAULT_CIPHERS,
+  get DEFAULT_CIPHERS() {
+    return getDefaultCiphers();
+  },
+  set DEFAULT_CIPHERS(value) {
+    if (value) {
+      validateCiphers(value, "value");
+      // filter out TLS_ ciphers
+      const ciphers = value.split(":");
+      value = ciphers.filter(tlsCipherFilter).join(":");
+    }
+    setTLSDefaultCiphers(value);
+  },
   DEFAULT_ECDH_CURVE,
   DEFAULT_MAX_VERSION,
   DEFAULT_MIN_VERSION,

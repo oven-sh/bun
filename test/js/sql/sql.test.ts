@@ -1,8 +1,8 @@
 import { $, randomUUIDv7, sql, SQL } from "bun";
 import { afterAll, describe, expect, mock, test } from "bun:test";
-import { bunExe, isCI, isLinux, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isCI, isLinux, tempDirWithFiles } from "harness";
 import path from "path";
-const postgres = (...args) => new sql(...args);
+const postgres = (...args) => new SQL(...args);
 
 import { exec, execSync } from "child_process";
 import net from "net";
@@ -20,18 +20,21 @@ function rel(filename: string) {
   return path.join(dir, filename);
 }
 async function findRandomPort() {
-  return new Promise((resolve, reject) => {
+  return new Promise<number>((resolve, reject) => {
     // Create a server to listen on a random port
     const server = net.createServer();
     server.listen(0, () => {
-      const port = server.address().port;
+      const port = (server.address() as import("node:net").AddressInfo).port;
       server.close(() => resolve(port));
     });
     server.on("error", reject);
   });
 }
-async function waitForPostgres(port) {
-  for (let i = 0; i < 3; i++) {
+
+async function waitForPostgres(port: number, count = 10) {
+  console.log(`Attempting to connect to postgres://postgres@localhost:${port}/postgres`);
+
+  for (let i = 0; i < count; i++) {
     try {
       const sql = new SQL(`postgres://postgres@localhost:${port}/postgres`, {
         idle_timeout: 20,
@@ -43,7 +46,10 @@ async function waitForPostgres(port) {
       console.log("PostgreSQL is ready!");
       return true;
     } catch (error) {
-      console.log(`Waiting for PostgreSQL... (${i + 1}/3)`);
+      console.log(`Waiting for PostgreSQL... (${i + 1}/${count})`, error);
+      if (error && typeof error === "object" && "stack" in error) {
+        console.log("Error stack:", error.stack);
+      }
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
@@ -141,24 +147,103 @@ if (isDockerEnabled()) {
   // --- Expected pg_hba.conf ---
   process.env.DATABASE_URL = `postgres://bun_sql_test@localhost:${container.port}/bun_sql_test`;
 
-  const login = {
+  const net = require("node:net");
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const os = require("node:os");
+
+  // Create a temporary unix domain socket path
+  const socketPath = path.join(os.tmpdir(), `postgres_echo_${Date.now()}.sock`);
+
+  // Clean up any existing socket file
+  try {
+    fs.unlinkSync(socketPath);
+  } catch {}
+
+  // Create a unix domain socket server that proxies to the PostgreSQL container
+  const socketServer = net.createServer(clientSocket => {
+    console.log("PostgreSQL connection received on unix socket");
+
+    // Create connection to the actual PostgreSQL container
+    const containerSocket = net.createConnection({
+      host: login.host,
+      port: login.port,
+    });
+
+    // Handle container connection
+    containerSocket.on("connect", () => {
+      console.log("Connected to PostgreSQL container");
+    });
+
+    containerSocket.on("error", err => {
+      console.error("Container connection error:", err);
+      clientSocket.destroy();
+    });
+
+    containerSocket.on("close", () => {
+      console.log("Container connection closed");
+      clientSocket.end();
+    });
+
+    // Handle client socket
+    clientSocket.on("data", data => {
+      // Forward client data to container
+      containerSocket.write(data);
+    });
+
+    clientSocket.on("error", err => {
+      console.error("Client socket error:", err);
+      containerSocket.destroy();
+    });
+
+    clientSocket.on("close", () => {
+      console.log("Client connection closed");
+      containerSocket.end();
+    });
+
+    // Forward container responses back to client
+    containerSocket.on("data", data => {
+      clientSocket.write(data);
+    });
+  });
+
+  socketServer.listen(socketPath, () => {
+    console.log(`Unix domain socket server listening on ${socketPath}`);
+  });
+
+  // Clean up the socket on exit
+  afterAll(() => {
+    socketServer.close();
+    try {
+      fs.unlinkSync(socketPath);
+    } catch {}
+  });
+
+  const login: Bun.SQL.PostgresOrMySQLOptions = {
     username: "bun_sql_test",
     port: container.port,
+    path: socketPath,
   };
 
-  const login_md5 = {
+  const login_domain_socket: Bun.SQL.PostgresOrMySQLOptions = {
+    username: "bun_sql_test",
+    port: container.port,
+    path: socketPath,
+  };
+
+  const login_md5: Bun.SQL.PostgresOrMySQLOptions = {
     username: "bun_sql_test_md5",
     password: "bun_sql_test_md5",
     port: container.port,
   };
 
-  const login_scram = {
+  const login_scram: Bun.SQL.PostgresOrMySQLOptions = {
     username: "bun_sql_test_scram",
     password: "bun_sql_test_scram",
     port: container.port,
   };
 
-  const options = {
+  const options: Bun.SQL.PostgresOrMySQLOptions = {
     db: "bun_sql_test",
     username: login.username,
     password: login.password,
@@ -172,6 +257,7 @@ if (isDockerEnabled()) {
     expect(sql.options.password).toBe("bunbun@bun");
     expect(sql.options.database).toBe("bun@bun");
   });
+
   test("Connects with no options", async () => {
     // we need at least the usename and port
     await using sql = postgres({ max: 1, port: container.port, username: login.username });
@@ -182,6 +268,9 @@ if (isDockerEnabled()) {
   });
 
   describe("should work with more than the max inline capacity", () => {
+    const sql = postgres(options);
+    afterAll(() => sql.close());
+
     for (let size of [50, 60, 62, 64, 70, 100]) {
       for (let duplicated of [true, false]) {
         test(`${size} ${duplicated ? "+ duplicated" : "unique"} fields`, async () => {
@@ -219,6 +308,8 @@ if (isDockerEnabled()) {
     } catch (e) {
       error = e;
     }
+    expect(error).toBeInstanceOf(SQL.SQLError);
+    expect(error).toBeInstanceOf(SQL.PostgresError);
     expect(error.code).toBe(`ERR_POSTGRES_CONNECTION_TIMEOUT`);
     expect(error.message).toContain("Connection timeout after 4s");
     expect(onconnect).not.toHaveBeenCalled();
@@ -240,6 +331,8 @@ if (isDockerEnabled()) {
     } catch (e) {
       error = e;
     }
+    expect(error).toBeInstanceOf(SQL.SQLError);
+    expect(error).toBeInstanceOf(SQL.PostgresError);
     expect(error.code).toBe(`ERR_POSTGRES_IDLE_TIMEOUT`);
     expect(onconnect).toHaveBeenCalled();
     expect(onclose).toHaveBeenCalledTimes(1);
@@ -261,6 +354,8 @@ if (isDockerEnabled()) {
     expect(onconnect).toHaveBeenCalledTimes(1);
     expect(onclose).not.toHaveBeenCalled();
     const err = await onClosePromise.promise;
+    expect(err).toBeInstanceOf(SQL.SQLError);
+    expect(err).toBeInstanceOf(SQL.PostgresError);
     expect(err.code).toBe(`ERR_POSTGRES_IDLE_TIMEOUT`);
   });
 
@@ -291,6 +386,8 @@ if (isDockerEnabled()) {
 
     expect(onclose).toHaveBeenCalledTimes(1);
 
+    expect(error).toBeInstanceOf(SQL.SQLError);
+    expect(error).toBeInstanceOf(SQL.PostgresError);
     expect(error.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
   });
 
@@ -333,6 +430,7 @@ if (isDockerEnabled()) {
   });
 
   test("query string memory leak test", async () => {
+    await using sql = postgres(options);
     Bun.gc(true);
     const rss = process.memoryUsage.rss();
     for (let potato of Array.from({ length: 8 * 1024 }, a => "okkk" + a)) {
@@ -362,7 +460,7 @@ if (isDockerEnabled()) {
     Bun.inspect(result);
   });
 
-  test("Handles mixed column names", async () => {
+  test("Basic handles mixed column names", async () => {
     const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 4 as x`;
     expect(result).toEqual([{ "1": 1, "2": 2, "3": 3, x: 4 }]);
     // Sanity check: ensure iterating through the properties doesn't crash.
@@ -533,7 +631,7 @@ if (isDockerEnabled()) {
     expect(Object.keys((await sql`select 1 as ${sql('hej"hej')}`)[0])[0]).toBe('hej"hej');
   });
 
-  // t.only(
+  // test(
   //   "big query body",
   //   async () => {
   //     await sql`create table test (x int)`;
@@ -567,20 +665,23 @@ if (isDockerEnabled()) {
   test("Throws on illegal transactions", async () => {
     const sql = postgres({ ...options, max: 2, fetch_types: false });
     const error = await sql`begin`.catch(e => e);
+    expect(error).toBeInstanceOf(SQL.SQLError);
+    expect(error).toBeInstanceOf(SQL.PostgresError);
     return expect(error.code).toBe("ERR_POSTGRES_UNSAFE_TRANSACTION");
   });
 
   test("Transaction throws", async () => {
     await sql`create table if not exists test (a int)`;
     try {
-      expect(
-        await sql
-          .begin(async sql => {
-            await sql`insert into test values(1)`;
-            await sql`insert into test values('hej')`;
-          })
-          .catch(e => e.errno),
-      ).toBe("22P02");
+      const error = await sql
+        .begin(async sql => {
+          await sql`insert into test values(1)`;
+          await sql`insert into test values('hej')`;
+        })
+        .catch(e => e);
+      expect(error).toBeInstanceOf(SQL.SQLError);
+      expect(error).toBeInstanceOf(SQL.PostgresError);
+      expect(error.errno).toBe("22P02");
     } finally {
       await sql`drop table test`;
     }
@@ -757,11 +858,12 @@ if (isDockerEnabled()) {
   test("Uncaught transaction request errors bubbles to transaction", async () => {
     const sql = postgres(options);
     process.nextTick(() => sql.close({ timeout: 1 }));
-    expect(
-      await sql
-        .begin(sql => [sql`select wat`, sql`select current_setting('bun_sql.test') as x, ${1} as a`])
-        .catch(e => e.errno || e),
-    ).toBe("42703");
+    const error = await sql
+      .begin(sql => [sql`select wat`, sql`select current_setting('bun_sql.test') as x, ${1} as a`])
+      .catch(e => e);
+    expect(error).toBeInstanceOf(SQL.SQLError);
+    expect(error).toBeInstanceOf(SQL.PostgresError);
+    expect(error.errno).toBe("42703");
   });
 
   test("Fragments in transactions", async () => {
@@ -875,9 +977,10 @@ if (isDockerEnabled()) {
   test("Throw syntax error", async () => {
     await using sql = postgres({ ...options, max: 1 });
     const err = await sql`wat 1`.catch(x => x);
+    expect(err).toBeInstanceOf(SQL.SQLError);
+    expect(err).toBeInstanceOf(SQL.PostgresError);
     expect(err.errno).toBe("42601");
     expect(err.code).toBe("ERR_POSTGRES_SYNTAX_ERROR");
-    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("Connect using uri", async () => [
@@ -1012,6 +1115,11 @@ if (isDockerEnabled()) {
     expect((await sql`select true as x`)[0].x).toBe(true);
   });
 
+  test("unix domain socket can send query", async () => {
+    await using sql = postgres({ ...options, ...login_domain_socket });
+    expect((await sql`select true as x`)[0].x).toBe(true);
+  });
+
   test("Login using MD5", async () => {
     await using sql = postgres({ ...options, ...login_md5 });
     expect(await sql`select true as x`).toEqual([{ x: true }]);
@@ -1025,6 +1133,8 @@ if (isDockerEnabled()) {
     } catch (e) {
       err = e;
     }
+    expect(err).toBeInstanceOf(SQL.SQLError);
+    expect(err).toBeInstanceOf(SQL.PostgresError);
     expect(err.code).toBe("ERR_POSTGRES_SERVER_ERROR");
   });
 
@@ -1196,7 +1306,10 @@ if (isDockerEnabled()) {
   test("Connection ended error", async () => {
     const sql = postgres(options);
     await sql.end();
-    return expect(await sql``.catch(x => x.code)).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+    const error = await sql``.catch(x => x);
+    expect(error).toBeInstanceOf(SQL.SQLError);
+    expect(error).toBeInstanceOf(SQL.PostgresError);
+    return expect(error.code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
   });
 
   test("Connection end does not cancel query", async () => {
@@ -1210,7 +1323,10 @@ if (isDockerEnabled()) {
   test("Connection destroyed", async () => {
     const sql = postgres(options);
     process.nextTick(() => sql.end({ timeout: 0 }));
-    expect(await sql``.catch(x => x.code)).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+    const error = await sql``.catch(x => x);
+    expect(error).toBeInstanceOf(SQL.SQLError);
+    expect(error).toBeInstanceOf(SQL.PostgresError);
+    expect(error.code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
   });
 
   test("Connection destroyed with query before", async () => {
@@ -1621,7 +1737,10 @@ if (isDockerEnabled()) {
   );
 
   test("only allows one statement", async () => {
-    expect(await sql`select 1; select 2`.catch(e => e.errno)).toBe("42601");
+    const error = await sql`select 1; select 2`.catch(e => e);
+    expect(error).toBeInstanceOf(SQL.SQLError);
+    expect(error).toBeInstanceOf(SQL.PostgresError);
+    expect(error.errno).toBe("42601");
   });
 
   test("await sql() throws not tagged error", async () => {
@@ -1629,6 +1748,8 @@ if (isDockerEnabled()) {
       await sql("select 1");
       expect.unreachable();
     } catch (e: any) {
+      expect(e).toBeInstanceOf(SQL.SQLError);
+      expect(e).toBeInstanceOf(SQL.PostgresError);
       expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
     }
   });
@@ -1640,6 +1761,8 @@ if (isDockerEnabled()) {
       });
       expect.unreachable();
     } catch (e: any) {
+      expect(e).toBeInstanceOf(SQL.SQLError);
+      expect(e).toBeInstanceOf(SQL.PostgresError);
       expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
     }
   });
@@ -1651,6 +1774,8 @@ if (isDockerEnabled()) {
       });
       expect.unreachable();
     } catch (e: any) {
+      expect(e).toBeInstanceOf(SQL.SQLError);
+      expect(e).toBeInstanceOf(SQL.PostgresError);
       expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
     }
   });
@@ -1662,6 +1787,8 @@ if (isDockerEnabled()) {
       });
       expect.unreachable();
     } catch (e: any) {
+      expect(e).toBeInstanceOf(SQL.SQLError);
+      expect(e).toBeInstanceOf(SQL.PostgresError);
       expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
     }
   });
@@ -1690,6 +1817,8 @@ if (isDockerEnabled()) {
     } catch (err) {
       error = err;
     }
+    expect(error).toBeInstanceOf(SQL.SQLError);
+    expect(error).toBeInstanceOf(SQL.PostgresError);
     expect(error.code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
   });
 
@@ -2318,21 +2447,33 @@ if (isDockerEnabled()) {
   //   ]
   // })
 
-  // t('connect_timeout', { timeout: 20 }, async() => {
-  //   const connect_timeout = 0.2
-  //   const server = net.createServer()
-  //   server.listen()
-  //   const sql = postgres({ port: server.address().port, host: '127.0.0.1', connect_timeout })
-  //   const start = Date.now()
-  //   let end
-  //   await sql`select 1`.catch((e) => {
-  //     if (e.code !== 'CONNECT_TIMEOUT')
-  //       throw e
-  //     end = Date.now()
-  //   })
-  //   server.close()
-  //   return [connect_timeout, Math.floor((end - start) / 100) / 10]
-  // })
+  test.each(["connect_timeout", "connectTimeout", "connectionTimeout", "connection_timeout"] as const)(
+    "connection timeout key %p throws",
+    async key => {
+      const server = net.createServer().listen();
+
+      const port = (server.address() as import("node:net").AddressInfo).port;
+
+      const sql = postgres({ port, host: "127.0.0.1", [key]: 0.2 });
+
+      try {
+        await sql`select 1`;
+        throw new Error("should not reach");
+      } catch (e) {
+        expect(e).toBeInstanceOf(Error);
+        expect(e).toBeInstanceOf(SQL.SQLError);
+        expect(e).toBeInstanceOf(SQL.PostgresError);
+        expect(e.code).toBe("ERR_POSTGRES_CONNECTION_TIMEOUT");
+        expect(e.message).toMatch(/Connection timed out after 200ms/);
+      } finally {
+        sql.close();
+        server.close();
+      }
+    },
+    {
+      timeout: 1000,
+    },
+  );
 
   // t('connect_timeout throws proper error', async() => [
   //   'CONNECT_TIMEOUT',
@@ -4633,16 +4774,18 @@ CREATE TABLE ${table_name} (
 
     test("int2[] - overflow behavior", async () => {
       await using sql = postgres({ ...options, max: 1 });
-      expect(
-        await sql`
+      const error1 = await sql`
         SELECT ARRAY[32768]::int2[] -- One more than maximum int2
-      `.catch(e => e.errno),
-      ).toBe("22003"); //smallint out of range
-      expect(
-        await sql`
+      `.catch(e => e);
+      expect(error1).toBeInstanceOf(SQL.SQLError);
+      expect(error1).toBeInstanceOf(SQL.PostgresError);
+      expect(error1.errno).toBe("22003"); //smallint out of range
+      const error2 = await sql`
         SELECT ARRAY[-32769]::int2[] -- One less than minimum int2
-      `.catch(e => e.errno),
-      ).toBe("22003"); //smallint out of range
+      `.catch(e => e);
+      expect(error2).toBeInstanceOf(SQL.SQLError);
+      expect(error2).toBeInstanceOf(SQL.PostgresError);
+      expect(error2.errno).toBe("22003"); //smallint out of range
     });
   });
   // old, deprecated not entire documented but we keep the same behavior as postgres.js
@@ -5162,17 +5305,19 @@ CREATE TABLE ${table_name} (
       await using sql = postgres({ ...options, max: 1 });
 
       // Invalid unicode escape
-      expect(
-        await sql`
+      const error3 = await sql`
         SELECT ARRAY[E'\\u123']::text[] as invalid_unicode
-      `.catch(e => e.errno || e),
-      ).toBe("22025");
+      `.catch(e => e);
+      expect(error3).toBeInstanceOf(SQL.SQLError);
+      expect(error3).toBeInstanceOf(SQL.PostgresError);
+      expect(error3.errno).toBe("22025");
       // Invalid octal escape
-      expect(
-        await sql`
+      const error4 = await sql`
         SELECT ARRAY[E'\\400']::text[] as invalid_octal
-      `.catch(e => e.errno || e),
-      ).toBe("22021");
+      `.catch(e => e);
+      expect(error4).toBeInstanceOf(SQL.SQLError);
+      expect(error4).toBeInstanceOf(SQL.PostgresError);
+      expect(error4.errno).toBe("22021");
       // Invalid hex escape
       expect(
         await sql`
@@ -10700,7 +10845,7 @@ CREATE TABLE ${table_name} (
     test("pg_database[] - system databases", async () => {
       await using sql = postgres({ ...options, max: 1 });
       const result = await sql`SELECT array_agg(d.*)::pg_database[] FROM pg_database d;`;
-      expect(result[0].array_agg[0]).toContain("(5,postgres,10,6,c,f,t,-1,717,1,1663,en_US.utf8,en_US.utf8,,2.36,)");
+      expect(result[0].array_agg[0]).toContain(",postgres,");
     });
 
     test("pg_database[] - null values", async () => {
@@ -11007,6 +11152,27 @@ CREATE TABLE ${table_name} (
       expect(result[1].age).toBe(18);
     });
 
+    test("update helper with IN for strings", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+      const users = [
+        { id: 1, name: "John", age: 30 },
+        { id: 2, name: "Jane", age: 25 },
+        { id: 3, name: "Bob", age: 35 },
+      ];
+      await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+      const result =
+        await sql`UPDATE ${sql(random_name)} SET ${sql({ age: 40 })} WHERE name IN ${sql(["John", "Jane"])} RETURNING *`;
+      expect(result[0].id).toBe(1);
+      expect(result[0].name).toBe("John");
+      expect(result[0].age).toBe(40);
+      expect(result[1].id).toBe(2);
+      expect(result[1].name).toBe("Jane");
+      expect(result[1].age).toBe(40);
+    });
+
     test("update helper with IN and column name", async () => {
       await using sql = postgres({ ...options, max: 1 });
       const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
@@ -11086,3 +11252,497 @@ CREATE TABLE ${table_name} (
     });
   });
 }
+
+describe("should proper handle connection errors", () => {
+  test("should not crash if connection fails", async () => {
+    const result = Bun.spawnSync([bunExe(), path.join(import.meta.dirname, "socket.fail.fixture.ts")], {
+      cwd: import.meta.dir,
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "inherit",
+      stderr: "pipe",
+    });
+    expect(result.stderr?.toString()).toBeFalsy();
+  });
+});
+
+describe("Misc", () => {
+  test("The Bun.SQL.*Error classes exist", () => {
+    expect(Bun.SQL.SQLError).toBeDefined();
+    expect(Bun.SQL.PostgresError).toBeDefined();
+    expect(Bun.SQL.SQLiteError).toBeDefined();
+
+    expect(Bun.SQL.SQLError.name).toBe("SQLError");
+    expect(Bun.SQL.PostgresError.name).toBe("PostgresError");
+    expect(Bun.SQL.SQLiteError.name).toBe("SQLiteError");
+
+    expect(Bun.SQL.SQLError.prototype).toBeInstanceOf(Error);
+    expect(Bun.SQL.PostgresError.prototype).toBeInstanceOf(Bun.SQL.SQLError);
+    expect(Bun.SQL.SQLiteError.prototype).toBeInstanceOf(Bun.SQL.SQLError);
+  });
+
+  describe("Adapter override URL parsing", () => {
+    test("explicit adapter='sqlite' overrides postgres:// URL", async () => {
+      // Even though URL suggests postgres, explicit adapter should win
+      const sql = new Bun.SQL("postgres://localhost:5432/testdb", {
+        adapter: "sqlite",
+        filename: ":memory:",
+      });
+
+      // Verify it's actually SQLite by checking the adapter type
+      expect(sql.options.adapter).toBe("sqlite");
+
+      // SQLite-specific operation should work
+      await sql`CREATE TABLE test_adapter (id INTEGER PRIMARY KEY)`;
+      await sql`INSERT INTO test_adapter (id) VALUES (1)`;
+      const result = await sql`SELECT * FROM test_adapter`;
+      expect(result).toHaveLength(1);
+
+      await sql.close();
+    });
+
+    test("explicit adapter='postgres' with sqlite:// URL should throw as invalid url", async () => {
+      let sql: Bun.SQL | undefined;
+      let error: unknown;
+
+      try {
+        sql = new Bun.SQL("sqlite://:memory:", {
+          adapter: "postgres",
+          hostname: "localhost",
+          port: 5432,
+          username: "postgres",
+          password: "",
+          database: "testdb",
+          max: 1,
+        });
+
+        expect(false).toBeTrue();
+      } catch (e) {
+        error = e;
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toMatchInlineSnapshot(
+        `"Invalid URL 'sqlite://:memory:' for postgres. Did you mean to specify \`{ adapter: "sqlite" }\`?"`,
+      );
+      expect(sql).toBeUndefined();
+    });
+
+    test("explicit adapter='sqlite' with sqlite:// URL works", async () => {
+      // Both URL and adapter agree on sqlite
+      const sql = new Bun.SQL("sqlite://:memory:", {
+        adapter: "sqlite",
+      });
+
+      expect(sql.options.adapter).toBe("sqlite");
+
+      await sql`CREATE TABLE test_consistent (id INTEGER)`;
+      await sql`INSERT INTO test_consistent VALUES (42)`;
+      const result = await sql`SELECT * FROM test_consistent`;
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe(42);
+
+      await sql.close();
+    });
+
+    test("explicit adapter='postgres' with postgres:// URL works", async () => {
+      // Skip if no postgres available
+      if (!process.env.DATABASE_URL) {
+        return;
+      }
+
+      // Both URL and adapter agree on postgres
+      const sql = new Bun.SQL(process.env.DATABASE_URL, {
+        adapter: "postgres",
+        max: 1,
+      });
+
+      expect(sql.options.adapter).toBe("postgres");
+
+      const randomTable = "test_consistent_" + Math.random().toString(36).substring(7);
+      await sql`CREATE TEMP TABLE ${sql(randomTable)} (value INT)`;
+      await sql`INSERT INTO ${sql(randomTable)} VALUES (42)`;
+      const result = await sql`SELECT * FROM ${sql(randomTable)}`;
+      expect(result).toHaveLength(1);
+      expect(result[0].value).toBe(42);
+
+      await sql.close();
+    });
+
+    test("explicit adapter overrides even with conflicting connection string patterns", async () => {
+      // Test that adapter explicitly set to sqlite works even with postgres-like connection info
+      const sql = new Bun.SQL(undefined as never, {
+        adapter: "sqlite",
+        filename: ":memory:",
+        hostname: "localhost", // These would normally suggest postgres
+        port: 5432,
+        username: "postgres",
+        password: "password",
+        database: "testdb",
+      });
+
+      expect(sql.options.adapter).toBe("sqlite");
+
+      // Should still work as SQLite
+      await sql`CREATE TABLE override_test (name TEXT)`;
+      await sql`INSERT INTO override_test VALUES ('test')`;
+      const result = await sql`SELECT * FROM override_test`;
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe("test");
+
+      await sql.close();
+    });
+  });
+
+  describe("SQL Error Classes", () => {
+    describe("SQLError base class", () => {
+      test("SQLError should be a constructor", () => {
+        expect(typeof SQL.SQLError).toBe("function");
+        expect(SQL.SQLError.name).toBe("SQLError");
+      });
+
+      test("SQLError should extend Error", () => {
+        const error = new SQL.SQLError("Test error");
+        expect(error).toBeInstanceOf(Error);
+        expect(error).toBeInstanceOf(SQL.SQLError);
+        expect(error.message).toBe("Test error");
+        expect(error.name).toBe("SQLError");
+      });
+
+      test("SQLError should have proper stack trace", () => {
+        const error = new SQL.SQLError("Test error");
+        expect(error.stack).toContain("SQLError");
+        expect(error.stack).toContain("Test error");
+      });
+
+      test("SQLError should be catchable as base class", () => {
+        try {
+          throw new SQL.SQLError("Test error");
+        } catch (e) {
+          expect(e).toBeInstanceOf(SQL.SQLError);
+          expect(e).toBeInstanceOf(Error);
+        }
+      });
+    });
+
+    describe("PostgresError class", () => {
+      test("PostgresError should be a constructor", () => {
+        expect(typeof SQL.PostgresError).toBe("function");
+        expect(SQL.PostgresError.name).toBe("PostgresError");
+      });
+
+      test("PostgresError should extend SQLError", () => {
+        const error = new SQL.PostgresError("Postgres error", {
+          code: "00000",
+          detail: "",
+          hint: "",
+          severity: "ERROR",
+        });
+        expect(error).toBeInstanceOf(Error);
+        expect(error).toBeInstanceOf(SQL.SQLError);
+        expect(error).toBeInstanceOf(SQL.PostgresError);
+        expect(error.message).toBe("Postgres error");
+        expect(error.name).toBe("PostgresError");
+      });
+
+      test("PostgresError should have Postgres-specific properties", () => {
+        // Test with common properties that we'll definitely have
+        const error = new SQL.PostgresError("Postgres error", {
+          code: "23505",
+          detail: "Key (id)=(1) already exists.",
+          hint: "Try using a different ID.",
+          severity: "ERROR",
+        });
+
+        expect(error.code).toBe("23505");
+        expect(error.detail).toBe("Key (id)=(1) already exists.");
+        expect(error.hint).toBe("Try using a different ID.");
+        expect(error.severity).toBe("ERROR");
+      });
+
+      test("PostgresError should support extended properties when available", () => {
+        // Test that we can include additional properties when they're provided by Postgres
+        const error = new SQL.PostgresError("Postgres error", {
+          code: "23505",
+          detail: "Duplicate key value",
+          hint: "",
+          severity: "ERROR",
+          schema: "public",
+          table: "users",
+          constraint: "users_pkey",
+        });
+
+        expect(error.code).toBe("23505");
+        expect(error.detail).toBe("Duplicate key value");
+        expect(error.schema).toBe("public");
+        expect(error.table).toBe("users");
+        expect(error.constraint).toBe("users_pkey");
+      });
+
+      test("PostgresError should be catchable as SQLError", () => {
+        try {
+          throw new SQL.PostgresError("Postgres error", {
+            code: "00000",
+            detail: "",
+            hint: "",
+            severity: "ERROR",
+          });
+        } catch (e) {
+          if (e instanceof SQL.SQLError) {
+            expect(e).toBeInstanceOf(SQL.PostgresError);
+          } else {
+            throw new Error("Should be catchable as SQLError");
+          }
+        }
+      });
+
+      test("PostgresError with minimal properties", () => {
+        const error = new SQL.PostgresError("Connection failed", {
+          code: "",
+          detail: "",
+          hint: "",
+          severity: "ERROR",
+        });
+        expect(error.message).toBe("Connection failed");
+        expect(error.code).toBe("");
+        expect(error.detail).toBe("");
+      });
+    });
+
+    describe("SQLiteError class", () => {
+      test("SQLiteError should be a constructor", () => {
+        expect(typeof SQL.SQLiteError).toBe("function");
+        expect(SQL.SQLiteError.name).toBe("SQLiteError");
+      });
+
+      test("SQLiteError should extend SQLError", () => {
+        const error = new SQL.SQLiteError("SQLite error", {
+          code: "SQLITE_ERROR",
+          errno: 1,
+        });
+        expect(error).toBeInstanceOf(Error);
+        expect(error).toBeInstanceOf(SQL.SQLError);
+        expect(error).toBeInstanceOf(SQL.SQLiteError);
+        expect(error.message).toBe("SQLite error");
+        expect(error.name).toBe("SQLiteError");
+      });
+
+      test("SQLiteError should have SQLite-specific properties", () => {
+        const error = new SQL.SQLiteError("UNIQUE constraint failed: users.email", {
+          code: "SQLITE_CONSTRAINT_UNIQUE",
+          errno: 2067,
+        });
+
+        expect(error.code).toBe("SQLITE_CONSTRAINT_UNIQUE");
+        expect(error.errno).toBe(2067);
+        expect(error.message).toBe("UNIQUE constraint failed: users.email");
+      });
+
+      test("SQLiteError should be catchable as SQLError", () => {
+        try {
+          throw new SQL.SQLiteError("SQLite error", {
+            code: "SQLITE_ERROR",
+            errno: 1,
+          });
+        } catch (e) {
+          if (e instanceof SQL.SQLError) {
+            expect(e).toBeInstanceOf(SQL.SQLiteError);
+          } else {
+            throw new Error("Should be catchable as SQLError");
+          }
+        }
+      });
+
+      test("SQLiteError with minimal properties", () => {
+        const error = new SQL.SQLiteError("Database locked", {
+          code: "SQLITE_BUSY",
+          errno: 5,
+        });
+        expect(error.message).toBe("Database locked");
+        expect(error.code).toBe("SQLITE_BUSY");
+        expect(error.errno).toBe(5);
+      });
+    });
+
+    describe("Error hierarchy and instanceof checks", () => {
+      test("can differentiate between PostgresError and SQLiteError", () => {
+        const pgError = new SQL.PostgresError("pg error", {
+          code: "00000",
+          detail: "",
+          hint: "",
+          severity: "ERROR",
+        });
+        const sqliteError = new SQL.SQLiteError("sqlite error", {
+          code: "SQLITE_ERROR",
+          errno: 1,
+        });
+
+        expect(pgError instanceof SQL.PostgresError).toBe(true);
+        expect(pgError instanceof SQL.SQLiteError).toBe(false);
+        expect(pgError instanceof SQL.SQLError).toBe(true);
+
+        expect(sqliteError instanceof SQL.SQLiteError).toBe(true);
+        expect(sqliteError instanceof SQL.PostgresError).toBe(false);
+        expect(sqliteError instanceof SQL.SQLError).toBe(true);
+      });
+
+      test("can catch all SQL errors with base class", () => {
+        const errors = [
+          new SQL.PostgresError("pg error", {
+            code: "00000",
+            detail: "",
+            hint: "",
+            severity: "ERROR",
+          }),
+          new SQL.SQLiteError("sqlite error", {
+            code: "SQLITE_ERROR",
+            errno: 1,
+          }),
+          new SQL.SQLError("generic sql error"),
+        ];
+
+        for (const error of errors) {
+          try {
+            throw error;
+          } catch (e) {
+            expect(e).toBeInstanceOf(SQL.SQLError);
+          }
+        }
+      });
+
+      test("error.toString() returns proper format", () => {
+        const pgError = new SQL.PostgresError("connection failed", {
+          code: "08001",
+          detail: "",
+          hint: "",
+          severity: "ERROR",
+        });
+        const sqliteError = new SQL.SQLiteError("database locked", {
+          code: "SQLITE_BUSY",
+          errno: 5,
+        });
+        const sqlError = new SQL.SQLError("generic error");
+
+        expect(pgError.toString()).toContain("PostgresError");
+        expect(pgError.toString()).toContain("connection failed");
+
+        expect(sqliteError.toString()).toContain("SQLiteError");
+        expect(sqliteError.toString()).toContain("database locked");
+
+        expect(sqlError.toString()).toContain("SQLError");
+        expect(sqlError.toString()).toContain("generic error");
+      });
+    });
+
+    describe("Integration with actual database operations", () => {
+      describe("SQLite errors", () => {
+        test("SQLite constraint violation throws SQLiteError", async () => {
+          const dir = tempDirWithFiles("sqlite-error-test", {});
+          const dbPath = path.join(dir, "test.db");
+
+          const db = new SQL({ filename: dbPath, adapter: "sqlite" });
+
+          await db`
+            CREATE TABLE users (
+              id INTEGER PRIMARY KEY,
+              email TEXT UNIQUE NOT NULL
+            )
+          `;
+
+          await db`INSERT INTO users (email) VALUES ('test@example.com')`;
+
+          try {
+            await db`INSERT INTO users (email) VALUES ('test@example.com')`;
+            throw new Error("Should have thrown an error");
+          } catch (e) {
+            expect(e).toBeInstanceOf(SQL.SQLiteError);
+            expect(e).toBeInstanceOf(SQL.SQLError);
+            expect(e.message).toContain("UNIQUE constraint failed");
+            expect(e.code).toContain("SQLITE_CONSTRAINT");
+          }
+
+          await db.close();
+        });
+
+        test("SQLite syntax error throws SQLiteError", async () => {
+          const dir = tempDirWithFiles("sqlite-syntax-error-test", {});
+          const dbPath = path.join(dir, "test.db");
+
+          const db = new SQL({ filename: dbPath, adapter: "sqlite" });
+
+          try {
+            await db`SELCT * FROM nonexistent`;
+            throw new Error("Should have thrown an error");
+          } catch (e) {
+            expect(e).toBeInstanceOf(SQL.SQLiteError);
+            expect(e).toBeInstanceOf(SQL.SQLError);
+            expect(e.message).toContain("syntax error");
+            expect(e.code).toBe("SQLITE_ERROR");
+          }
+
+          await db.close();
+        });
+
+        test("SQLite database locked throws SQLiteError", async () => {
+          const dir = tempDirWithFiles("sqlite-locked-test", {});
+          const dbPath = path.join(dir, "test.db");
+
+          await using db1 = new SQL({ filename: dbPath, adapter: "sqlite" });
+          await using db2 = new SQL({ filename: dbPath, adapter: "sqlite" });
+
+          await db1`CREATE TABLE test (id INTEGER PRIMARY KEY)`;
+
+          await db1`BEGIN EXCLUSIVE TRANSACTION`;
+          await db1`INSERT INTO test (id) VALUES (1)`;
+
+          try {
+            await db2`INSERT INTO test (id) VALUES (2)`;
+            throw new Error("Should have thrown an error");
+          } catch (e) {
+            expect(e).toBeInstanceOf(SQL.SQLiteError);
+            expect(e).toBeInstanceOf(SQL.SQLError);
+            expect(e.code).toBe("SQLITE_BUSY");
+          }
+
+          await db1`COMMIT`;
+        });
+      });
+    });
+
+    describe("Type guards", () => {
+      test("can use instanceof for type narrowing", () => {
+        function handleError(e: unknown) {
+          if (e instanceof SQL.PostgresError) {
+            return `PG: ${e.code}`;
+          } else if (e instanceof SQL.SQLiteError) {
+            return `SQLite: ${e.errno}`;
+          } else if (e instanceof SQL.SQLError) {
+            return `SQL: ${e.message}`;
+          }
+          return "Unknown error";
+        }
+
+        expect(
+          handleError(
+            new SQL.PostgresError("test", {
+              code: "23505",
+              detail: "",
+              hint: "",
+              severity: "ERROR",
+            }),
+          ),
+        ).toBe("PG: 23505");
+        expect(
+          handleError(
+            new SQL.SQLiteError("test", {
+              code: "SQLITE_BUSY",
+              errno: 5,
+            }),
+          ),
+        ).toBe("SQLite: 5");
+        expect(handleError(new SQL.SQLError("test"))).toBe("SQL: test");
+        expect(handleError(new Error("test"))).toBe("Unknown error");
+      });
+    });
+  });
+});

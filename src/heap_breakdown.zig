@@ -1,13 +1,9 @@
-const bun = @import("bun");
-const std = @import("std");
-const Environment = bun.Environment;
-const Allocator = std.mem.Allocator;
 const vm_size_t = usize;
 
 pub const enabled = Environment.allow_assert and Environment.isMac;
 
 fn heapLabel(comptime T: type) [:0]const u8 {
-    const base_name = if (@hasDecl(T, "heap_label"))
+    const base_name = if (comptime bun.meta.hasDecl(T, "heap_label"))
         T.heap_label
     else
         bun.meta.typeBaseName(@typeName(T));
@@ -99,6 +95,11 @@ pub const Zone = opaque {
 
     /// Create a single-item pointer with initialized data.
     pub inline fn create(zone: *Zone, comptime T: type, data: T) *T {
+        return bun.handleOom(zone.tryCreate(T, data));
+    }
+
+    /// Error-returning version of `create`.
+    pub inline fn tryCreate(zone: *Zone, comptime T: type, data: T) !*T {
         const alignment: std.mem.Alignment = .fromByteUnits(@alignOf(T));
         const ptr: *T = @alignCast(@ptrCast(
             rawAlloc(zone, @sizeOf(T), alignment, @returnAddress()) orelse bun.outOfMemory(),
@@ -110,6 +111,10 @@ pub const Zone = opaque {
     /// Free a single-item pointer
     pub inline fn destroy(zone: *Zone, comptime T: type, ptr: *T) void {
         malloc_zone_free(zone, @ptrCast(ptr));
+    }
+
+    pub fn isInstance(allocator_: std.mem.Allocator) bool {
+        return allocator_.vtable == &vtable;
     }
 
     pub extern fn malloc_default_zone() *Zone;
@@ -133,3 +138,9 @@ pub const Zone = opaque {
     pub extern fn malloc_get_zone_name(zone: *Zone) ?[*:0]const u8;
     pub extern fn malloc_zone_pressure_relief(zone: *Zone, goal: usize) usize;
 };
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Environment = bun.Environment;

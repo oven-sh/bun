@@ -10,10 +10,38 @@ pub const BuntagHashBuf = [max_buntag_hash_buf_len]u8;
 
 pub fn buntaghashbuf_make(buf: *BuntagHashBuf, patch_hash: u64) [:0]u8 {
     @memcpy(buf[0..bun_hash_tag.len], bun_hash_tag);
-    const digits = std.fmt.bufPrint(buf[bun_hash_tag.len..], "{x}", .{patch_hash}) catch bun.outOfMemory();
+    const digits = std.fmt.bufPrint(buf[bun_hash_tag.len..], "{x}", .{patch_hash}) catch |err|
+        switch (err) {
+            error.NoSpaceLeft => unreachable,
+        };
     buf[bun_hash_tag.len + digits.len] = 0;
     const bunhashtag = buf[0 .. bun_hash_tag.len + digits.len :0];
     return bunhashtag;
+}
+
+pub const StorePathFormatter = struct {
+    str: string,
+
+    pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+        // if (!this.opts.replace_slashes) {
+        //     try writer.writeAll(this.str);
+        //     return;
+        // }
+
+        for (this.str) |c| {
+            switch (c) {
+                '/' => try writer.writeByte('+'),
+                '\\' => try writer.writeByte('+'),
+                else => try writer.writeByte(c),
+            }
+        }
+    }
+};
+
+pub fn fmtStorePath(str: string) StorePathFormatter {
+    return .{
+        .str = str,
+    };
 }
 
 // these bytes are skipped
@@ -44,9 +72,9 @@ pub fn initializeMiniStore() void {
         pub threadlocal var instance: ?*@This() = null;
     };
     if (MiniStore.instance == null) {
-        var mini_store = bun.default_allocator.create(MiniStore) catch bun.outOfMemory();
+        var mini_store = bun.handleOom(bun.default_allocator.create(MiniStore));
         mini_store.* = .{
-            .heap = bun.MimallocArena.init() catch bun.outOfMemory(),
+            .heap = bun.MimallocArena.init(),
             .memory_allocator = undefined,
         };
         mini_store.memory_allocator = .{ .allocator = mini_store.heap.allocator() };
@@ -57,7 +85,7 @@ pub fn initializeMiniStore() void {
         var mini_store = MiniStore.instance.?;
         if (mini_store.memory_allocator.stack_allocator.fixed_buffer_allocator.end_index >= mini_store.memory_allocator.stack_allocator.fixed_buffer_allocator.buffer.len -| 1) {
             mini_store.heap.deinit();
-            mini_store.heap = bun.MimallocArena.init() catch bun.outOfMemory();
+            mini_store.heap = bun.MimallocArena.init();
             mini_store.memory_allocator.allocator = mini_store.heap.allocator();
         }
         mini_store.memory_allocator.reset();
@@ -192,6 +220,7 @@ pub const DependencyInstallContext = struct {
 pub const TaskCallbackContext = union(enum) {
     dependency: DependencyID,
     dependency_install_context: DependencyInstallContext,
+    isolated_package_install_context: Store.Entry.Id,
     root_dependency: DependencyID,
     root_request_id: PackageID,
 };
@@ -211,22 +240,21 @@ pub const PackageManifestError = error{
     PackageManifestHTTP5xx,
 };
 
-// @sortImports
-
 pub const ExtractTarball = @import("./extract_tarball.zig");
-pub const NetworkTask = @import("NetworkTask.zig");
+pub const NetworkTask = @import("./NetworkTask.zig");
 pub const Npm = @import("./npm.zig");
-pub const PackageManager = @import("PackageManager.zig");
-pub const PackageManifestMap = @import("PackageManifestMap.zig");
-pub const Task = @import("PackageManagerTask.zig");
+pub const PackageManager = @import("./PackageManager.zig");
+pub const PackageManifestMap = @import("./PackageManifestMap.zig");
+pub const Task = @import("./PackageManagerTask.zig");
 pub const TextLockfile = @import("./lockfile/bun.lock.zig");
-const std = @import("std");
 pub const Bin = @import("./bin.zig").Bin;
 pub const FolderResolution = @import("./resolvers/folder_resolver.zig").FolderResolution;
 pub const LifecycleScriptSubprocess = @import("./lifecycle_script_runner.zig").LifecycleScriptSubprocess;
+pub const SecurityScanSubprocess = @import("./PackageManager/security_scanner.zig").SecurityScanSubprocess;
 pub const PackageInstall = @import("./PackageInstall.zig").PackageInstall;
 pub const Repository = @import("./repository.zig").Repository;
 pub const Resolution = @import("./resolution.zig").Resolution;
+pub const Store = @import("./isolated_install/Store.zig").Store;
 
 pub const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 pub const IdentityContext = @import("../identity_context.zig").IdentityContext;
@@ -247,10 +275,13 @@ pub const PatchedDep = Lockfile.PatchedDep;
 pub const patch = @import("./patch_install.zig");
 pub const PatchTask = patch.PatchTask;
 
+const string = []const u8;
+
+const std = @import("std");
+
 const bun = @import("bun");
-const JSAst = bun.JSAst;
+const JSAst = bun.ast;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
 
 const Semver = bun.Semver;
 const String = Semver.String;

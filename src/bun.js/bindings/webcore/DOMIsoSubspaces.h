@@ -11,7 +11,7 @@ using namespace JSC;
 
 class DOMIsoSubspaces {
     WTF_MAKE_NONCOPYABLE(DOMIsoSubspaces);
-    WTF_MAKE_FAST_ALLOCATED(DOMIsoSubspaces);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DOMIsoSubspaces);
 
 public:
     DOMIsoSubspaces() = default;
@@ -36,6 +36,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForRequireResolveFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForBundlerPlugin;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMGlobalObject;
+    std::unique_ptr<IsoSubspace> m_subspaceForNodeVMSpecialSandbox;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMScript;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMSourceTextModule;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMSyntheticModule;
@@ -70,6 +71,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSNodePerformanceHooksHistogram;
     std::unique_ptr<IsoSubspace> m_subspaceForJSYogaConfig;
     std::unique_ptr<IsoSubspace> m_subspaceForJSYogaNode;
+    std::unique_ptr<IsoSubspace> m_subspaceForWasmStreamingCompiler;
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 

@@ -51,6 +51,7 @@
 #include "wtf/text/StringView.h"
 
 #include "isBuiltinModule.h"
+#include "WebCoreJSBuiltins.h"
 
 namespace Zig {
 using namespace JSC;
@@ -143,7 +144,13 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, co
 {
     VM& vm = globalObject->vm();
     Zig::GlobalObject* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
-    auto structure = zigGlobalObject->ImportMetaObjectStructure();
+    bool isBake = url.startsWith("bake:"_s);
+
+    // Get the appropriate structure
+    Structure* structure = isBake
+        ? zigGlobalObject->ImportMetaBakeObjectStructure()
+        : zigGlobalObject->ImportMetaObjectStructure();
+
     return create(vm, globalObject, structure, url);
 }
 
@@ -592,7 +599,21 @@ static const HashTableValue ImportMetaObjectPrototypeValues[] = {
     { "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_url, 0 } },
 };
 
-class ImportMetaObjectPrototype final : public JSC::JSNonFinalObject {
+static const HashTableValue ImportMetaObjectBakePrototypeValues[] = {
+    { "bakeBuiltin"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, commonJSRequireESMCodeGenerator, 0 } },
+    { "dir"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_dir, 0 } },
+    { "dirname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_dir, 0 } },
+    { "env"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_env, 0 } },
+    { "file"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_file, 0 } },
+    { "filename"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_path, 0 } },
+    { "path"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_path, 0 } },
+    { "require"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_require, jsImportMetaObjectSetter_require } },
+    { "resolve"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMeta__resolve, 0 } },
+    { "resolveSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMeta__resolveSync, 0 } },
+    { "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_url, 0 } },
+};
+
+class ImportMetaObjectPrototype : public JSC::JSNonFinalObject {
 public:
     DECLARE_INFO;
     using Base = JSC::JSNonFinalObject;
@@ -602,10 +623,10 @@ public:
         return Structure::create(vm, globalObject, globalObject->objectPrototype(), TypeInfo(ObjectType, StructureFlags), info());
     }
 
-    static ImportMetaObjectPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+    static ImportMetaObjectPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, bool isBake = false)
     {
         ImportMetaObjectPrototype* prototype = new (NotNull, JSC::allocateCell<ImportMetaObjectPrototype>(vm)) ImportMetaObjectPrototype(vm, structure);
-        prototype->finishCreation(vm, globalObject);
+        prototype->finishCreation(vm, globalObject, isBake);
         return prototype;
     }
 
@@ -616,14 +637,19 @@ public:
         return &vm.plainObjectSpace();
     }
 
-    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool isBake)
     {
         Base::finishCreation(vm);
 
         auto* clientData = WebCore::clientData(vm);
         auto& builtinNames = clientData->builtinNames();
 
-        reifyStaticProperties(vm, ImportMetaObject::info(), ImportMetaObjectPrototypeValues, *this);
+        // Use the appropriate prototype values based on whether this is a bake import meta object
+        if (isBake) {
+            reifyStaticProperties(vm, ImportMetaObject::info(), ImportMetaObjectBakePrototypeValues, *this);
+        } else {
+            reifyStaticProperties(vm, ImportMetaObject::info(), ImportMetaObjectPrototypeValues, *this);
+        }
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 
         auto mainGetter = JSFunction::create(vm, globalObject, importMetaObjectMainCodeGenerator(vm), globalObject);
@@ -647,11 +673,12 @@ const ClassInfo ImportMetaObjectPrototype::s_info = {
     &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ImportMetaObjectPrototype)
 };
 
-JSC::Structure* ImportMetaObject::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+JSC::Structure* ImportMetaObject::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool isBake)
 {
     ImportMetaObjectPrototype* prototype = ImportMetaObjectPrototype::create(vm,
         globalObject,
-        ImportMetaObjectPrototype::createStructure(vm, globalObject));
+        ImportMetaObjectPrototype::createStructure(vm, globalObject),
+        isBake);
 
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), ImportMetaObject::info());
 }

@@ -92,9 +92,21 @@ export class ClassDefinition {
    */
   name: string;
   /**
-   * Class constructor is newable.
+   * Class constructor is newable. Called before the JSValue corresponding to
+   * the object is created. Throwing an exception prevents the object from being
+   * created.
    */
   construct?: boolean;
+
+  /**
+   * Class constructor needs `this` value.
+   *
+   * Makes the code generator call the Zig constructor function **after** the
+   * JSValue is instantiated. Only use this if you must, as it probably isn't
+   * good for GC since it means if the constructor throws the GC will have to
+   * clean up the object that never reached JS.
+   */
+  constructNeedsThis?: boolean;
   /**
    * Class constructor is callable. In JS, ES6 class constructors are not
    * callable.
@@ -168,10 +180,6 @@ export class ClassDefinition {
 
   final?: boolean;
 
-  // Do not try to track the `this` value in the constructor automatically.
-  // That is a memory leak.
-  wantsThis?: never;
-
   /**
    * Class has an `estimatedSize` function that reports external allocations to GC.
    * Called from any thread.
@@ -204,7 +212,7 @@ export class ClassDefinition {
 
   configurable?: boolean;
   enumerable?: boolean;
-  structuredClone?: { transferable: boolean; tag: number };
+  structuredClone?: { transferable: boolean; tag: number; storable: boolean };
   inspectCustom?: boolean;
 
   callbacks?: Record<string, string>;

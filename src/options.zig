@@ -1,32 +1,9 @@
 /// This file is mostly the API schema but with all the options normalized.
 /// Normalization is necessary because most fields in the API schema are optional
 const std = @import("std");
-const logger = bun.logger;
-const Fs = @import("fs.zig");
-
-const resolver = @import("./resolver/resolver.zig");
-const api = @import("./api/schema.zig");
-const Api = api.Api;
-const URL = @import("./url.zig").URL;
-const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-
-const JSC = bun.JSC;
-const Runtime = @import("./runtime.zig").Runtime;
-const Analytics = @import("./analytics/analytics_thread.zig");
-const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
-const DotEnv = @import("./env_loader.zig");
-const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 
 pub const defines = @import("./defines.zig");
 pub const Define = defines.Define;
-
-const assert = bun.assert;
 
 pub const WriteDestination = enum {
     stdout,
@@ -61,10 +38,10 @@ pub fn validatePath(
     return out;
 }
 
-pub fn stringHashMapFromArrays(comptime t: type, allocator: std.mem.Allocator, keys: anytype, values: anytype) !t {
+pub fn stringHashMapFromArrays(comptime t: type, allocator: std.mem.Allocator, total_capacity: usize, keys: anytype, values: anytype) !t {
     var hash_map = t.init(allocator);
     if (keys.len > 0) {
-        try hash_map.ensureTotalCapacity(@as(u32, @intCast(keys.len)));
+        try hash_map.ensureTotalCapacity(@as(u32, @intCast(total_capacity)));
         for (keys, 0..) |key, i| {
             hash_map.putAssumeCapacity(key, values[i]);
         }
@@ -84,7 +61,7 @@ pub const ExternalModules = struct {
     };
 
     pub fn isNodeBuiltin(str: string) bool {
-        return bun.JSC.ModuleLoader.HardcodedModule.Alias.has(str, .node);
+        return bun.jsc.ModuleLoader.HardcodedModule.Alias.has(str, .node);
     }
 
     const default_wildcard_patterns = &[_]WildcardPattern{
@@ -165,7 +142,7 @@ pub const ExternalModules = struct {
             }
         }
 
-        result.patterns = patterns.toOwnedSlice() catch bun.outOfMemory();
+        result.patterns = bun.handleOom(patterns.toOwnedSlice());
 
         return result;
     }
@@ -391,14 +368,14 @@ pub const Target = enum {
         .{ "node", .node },
     });
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!?Target {
+    pub fn fromJS(global: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!?Target {
         if (!value.isString()) {
             return global.throwInvalidArguments("target must be a string", .{});
         }
         return Map.fromJS(global, value);
     }
 
-    pub fn toAPI(this: Target) Api.Target {
+    pub fn toAPI(this: Target) api.Target {
         return switch (this) {
             .node => .node,
             .browser => .browser,
@@ -465,8 +442,8 @@ pub const Target = enum {
         return exts;
     }
 
-    pub fn from(plat: ?api.Api.Target) Target {
-        return switch (plat orelse api.Api.Target._none) {
+    pub fn from(plat: ?api.Target) Target {
+        return switch (plat orelse api.Target._none) {
             .node => .node,
             .browser => .browser,
             .bun => .bun,
@@ -606,7 +583,7 @@ pub const Format = enum {
         .{ "internal_bake_dev", .internal_bake_dev },
     });
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, format: JSC.JSValue) bun.JSError!?Format {
+    pub fn fromJS(global: *jsc.JSGlobalObject, format: jsc.JSValue) bun.JSError!?Format {
         if (format.isUndefinedOrNull()) return null;
 
         if (!format.isString()) {
@@ -623,25 +600,40 @@ pub const Format = enum {
     }
 };
 
+pub const WindowsOptions = struct {
+    hide_console: bool = false,
+    icon: ?[]const u8 = null,
+    title: ?[]const u8 = null,
+    publisher: ?[]const u8 = null,
+    version: ?[]const u8 = null,
+    description: ?[]const u8 = null,
+    copyright: ?[]const u8 = null,
+};
+
+// The max integer value in this enum can only be appended to.
+// It has dependencies in several places:
+// - bun-native-bundler-plugin-api/bundler_plugin.h
+// - src/bun.js/bindings/headers-handwritten.h
 pub const Loader = enum(u8) {
-    jsx,
-    js,
-    ts,
-    tsx,
-    css,
-    file,
-    json,
-    jsonc,
-    toml,
-    wasm,
-    napi,
-    base64,
-    dataurl,
-    text,
-    bunsh,
-    sqlite,
-    sqlite_embedded,
-    html,
+    jsx = 0,
+    js = 1,
+    ts = 2,
+    tsx = 3,
+    css = 4,
+    file = 5,
+    json = 6,
+    jsonc = 7,
+    toml = 8,
+    wasm = 9,
+    napi = 10,
+    base64 = 11,
+    dataurl = 12,
+    text = 13,
+    bunsh = 14,
+    sqlite = 15,
+    sqlite_embedded = 16,
+    html = 17,
+    yaml = 18,
 
     pub const Optional = enum(u8) {
         none = 254,
@@ -702,7 +694,7 @@ pub const Loader = enum(u8) {
         return switch (this) {
             .jsx, .js, .ts, .tsx => bun.http.MimeType.javascript,
             .css => bun.http.MimeType.css,
-            .toml, .json, .jsonc => bun.http.MimeType.json,
+            .toml, .yaml, .json, .jsonc => bun.http.MimeType.json,
             .wasm => bun.http.MimeType.wasm,
             .html => bun.http.MimeType.html,
             else => {
@@ -750,6 +742,7 @@ pub const Loader = enum(u8) {
         map.set(.file, "input");
         map.set(.json, "input.json");
         map.set(.toml, "input.toml");
+        map.set(.yaml, "input.yaml");
         map.set(.wasm, "input.wasm");
         map.set(.napi, "input.node");
         map.set(.text, "input.txt");
@@ -762,19 +755,19 @@ pub const Loader = enum(u8) {
         return stdin_name.get(this);
     }
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, loader: JSC.JSValue) bun.JSError!?Loader {
+    pub fn fromJS(global: *jsc.JSGlobalObject, loader: jsc.JSValue) bun.JSError!?Loader {
         if (loader.isUndefinedOrNull()) return null;
 
         if (!loader.isString()) {
             return global.throwInvalidArguments("loader must be a string", .{});
         }
 
-        var zig_str = JSC.ZigString.init("");
+        var zig_str = jsc.ZigString.init("");
         try loader.toZigString(&zig_str, global);
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, wasm, bunsh, or json", .{});
+            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, or json", .{});
         };
     }
 
@@ -792,6 +785,7 @@ pub const Loader = enum(u8) {
         .{ "json", .json },
         .{ "jsonc", .jsonc },
         .{ "toml", .toml },
+        .{ "yaml", .yaml },
         .{ "wasm", .wasm },
         .{ "napi", .napi },
         .{ "node", .napi },
@@ -805,7 +799,7 @@ pub const Loader = enum(u8) {
         .{ "html", .html },
     });
 
-    pub const api_names = bun.ComptimeStringMap(Api.Loader, .{
+    pub const api_names = bun.ComptimeStringMap(api.Loader, .{
         .{ "js", .js },
         .{ "mjs", .js },
         .{ "cjs", .js },
@@ -819,6 +813,7 @@ pub const Loader = enum(u8) {
         .{ "json", .json },
         .{ "jsonc", .json },
         .{ "toml", .toml },
+        .{ "yaml", .yaml },
         .{ "wasm", .wasm },
         .{ "node", .napi },
         .{ "dataurl", .dataurl },
@@ -846,7 +841,7 @@ pub const Loader = enum(u8) {
         };
     }
 
-    pub fn toAPI(loader: Loader) Api.Loader {
+    pub fn toAPI(loader: Loader) api.Loader {
         return switch (loader) {
             .jsx => .jsx,
             .js => .js,
@@ -858,6 +853,7 @@ pub const Loader = enum(u8) {
             .json => .json,
             .jsonc => .json,
             .toml => .toml,
+            .yaml => .yaml,
             .wasm => .wasm,
             .napi => .napi,
             .base64 => .base64,
@@ -867,7 +863,7 @@ pub const Loader = enum(u8) {
         };
     }
 
-    pub fn fromAPI(loader: Api.Loader) Loader {
+    pub fn fromAPI(loader: api.Loader) Loader {
         return switch (loader) {
             ._none => .file,
             .jsx => .jsx,
@@ -877,14 +873,18 @@ pub const Loader = enum(u8) {
             .css => .css,
             .file => .file,
             .json => .json,
+            .jsonc => .jsonc,
             .toml => .toml,
+            .yaml => .yaml,
             .wasm => .wasm,
             .napi => .napi,
             .base64 => .base64,
             .dataurl => .dataurl,
             .text => .text,
+            .bunsh => .bunsh,
             .html => .html,
             .sqlite => .sqlite,
+            .sqlite_embedded => .sqlite_embedded,
             _ => .file,
         };
     }
@@ -908,8 +908,8 @@ pub const Loader = enum(u8) {
         return switch (loader) {
             .jsx, .js, .ts, .tsx, .json, .jsonc => true,
 
-            // toml is included because we can serialize to the same AST as JSON
-            .toml => true,
+            // toml and yaml are included because we can serialize to the same AST as JSON
+            .toml, .yaml => true,
 
             else => false,
         };
@@ -924,7 +924,7 @@ pub const Loader = enum(u8) {
 
     pub fn sideEffects(this: Loader) bun.resolver.SideEffects {
         return switch (this) {
-            .text, .json, .jsonc, .toml, .file => bun.resolver.SideEffects.no_side_effects__pure_data,
+            .text, .json, .jsonc, .toml, .yaml, .file => bun.resolver.SideEffects.no_side_effects__pure_data,
             else => bun.resolver.SideEffects.has_side_effects,
         };
     }
@@ -954,7 +954,7 @@ pub const Loader = enum(u8) {
 };
 
 pub fn normalizeSpecifier(
-    jsc_vm: *bun.JSC.VirtualMachine,
+    jsc_vm: *bun.jsc.VirtualMachine,
     slice_: string,
 ) struct { string, string, string } {
     var slice = slice_;
@@ -995,9 +995,9 @@ const LoaderResult = struct {
 
 pub fn getLoaderAndVirtualSource(
     specifier_str: string,
-    jsc_vm: *JSC.VirtualMachine,
+    jsc_vm: *jsc.VirtualMachine,
     virtual_source_to_use: *?logger.Source,
-    blob_to_deinit: *?JSC.WebCore.Blob,
+    blob_to_deinit: *?jsc.WebCore.Blob,
     type_attribute_str: ?string,
 ) GetLoaderAndVirtualSourceErr!LoaderResult {
     const normalized_file_path_from_specifier, const specifier, const query = normalizeSpecifier(
@@ -1020,8 +1020,8 @@ pub fn getLoaderAndVirtualSource(
         }
     }
 
-    if (JSC.WebCore.ObjectURLRegistry.isBlobURL(specifier)) {
-        if (JSC.WebCore.ObjectURLRegistry.singleton().resolveAndDupe(specifier["blob:".len..])) |blob| {
+    if (jsc.WebCore.ObjectURLRegistry.isBlobURL(specifier)) {
+        if (jsc.WebCore.ObjectURLRegistry.singleton().resolveAndDupe(specifier["blob:".len..])) |blob| {
             blob_to_deinit.* = blob;
             loader = blob.getLoader(jsc_vm);
 
@@ -1095,6 +1095,8 @@ const default_loaders_posix = .{
     .{ ".cts", .ts },
 
     .{ ".toml", .toml },
+    .{ ".yaml", .yaml },
+    .{ ".yml", .yaml },
     .{ ".wasm", .wasm },
     .{ ".node", .napi },
     .{ ".txt", .text },
@@ -1116,27 +1118,41 @@ pub const ESMConditions = struct {
     require: ConditionsMap,
     style: ConditionsMap,
 
-    pub fn init(allocator: std.mem.Allocator, defaults: []const string) bun.OOM!ESMConditions {
+    pub fn init(allocator: std.mem.Allocator, defaults: []const string, allow_addons: bool, conditions: []const string) bun.OOM!ESMConditions {
         var default_condition_amp = ConditionsMap.init(allocator);
 
         var import_condition_map = ConditionsMap.init(allocator);
         var require_condition_map = ConditionsMap.init(allocator);
         var style_condition_map = ConditionsMap.init(allocator);
 
-        try default_condition_amp.ensureTotalCapacity(defaults.len + 2);
-        try import_condition_map.ensureTotalCapacity(defaults.len + 2);
-        try require_condition_map.ensureTotalCapacity(defaults.len + 2);
-        try style_condition_map.ensureTotalCapacity(defaults.len + 2);
+        try default_condition_amp.ensureTotalCapacity(defaults.len + 2 + if (allow_addons) 1 else 0 + conditions.len);
+        try import_condition_map.ensureTotalCapacity(defaults.len + 2 + if (allow_addons) 1 else 0 + conditions.len);
+        try require_condition_map.ensureTotalCapacity(defaults.len + 2 + if (allow_addons) 1 else 0 + conditions.len);
+        try style_condition_map.ensureTotalCapacity(defaults.len + 2 + conditions.len);
 
         import_condition_map.putAssumeCapacity("import", {});
         require_condition_map.putAssumeCapacity("require", {});
         style_condition_map.putAssumeCapacity("style", {});
 
+        for (conditions) |condition| {
+            import_condition_map.putAssumeCapacity(condition, {});
+            require_condition_map.putAssumeCapacity(condition, {});
+            default_condition_amp.putAssumeCapacity(condition, {});
+        }
+
         for (defaults) |default| {
-            default_condition_amp.putAssumeCapacityNoClobber(default, {});
-            import_condition_map.putAssumeCapacityNoClobber(default, {});
-            require_condition_map.putAssumeCapacityNoClobber(default, {});
-            style_condition_map.putAssumeCapacityNoClobber(default, {});
+            default_condition_amp.putAssumeCapacity(default, {});
+            import_condition_map.putAssumeCapacity(default, {});
+            require_condition_map.putAssumeCapacity(default, {});
+            style_condition_map.putAssumeCapacity(default, {});
+        }
+
+        if (allow_addons) {
+            default_condition_amp.putAssumeCapacity("node-addons", {});
+            import_condition_map.putAssumeCapacity("node-addons", {});
+            require_condition_map.putAssumeCapacity("node-addons", {});
+
+            // style is not here because you don't import N-API addons inside css files.
         }
 
         default_condition_amp.putAssumeCapacity("default", {});
@@ -1352,7 +1368,7 @@ pub const JSX = struct {
             return out[0..i];
         }
 
-        pub fn fromApi(jsx: api.Api.Jsx, allocator: std.mem.Allocator) !Pragma {
+        pub fn fromApi(jsx: api.Jsx, allocator: std.mem.Allocator) !Pragma {
             var pragma = JSX.Pragma{};
 
             if (jsx.fragment.len > 0) {
@@ -1377,7 +1393,7 @@ pub const JSX = struct {
         }
     };
 
-    pub const Runtime = api.Api.JsxRuntime;
+    pub const Runtime = api.JsxRuntime;
 };
 
 pub const DefaultUserDefines = struct {
@@ -1395,26 +1411,29 @@ pub const DefaultUserDefines = struct {
 pub fn definesFromTransformOptions(
     allocator: std.mem.Allocator,
     log: *logger.Log,
-    maybe_input_define: ?Api.StringMap,
+    maybe_input_define: ?api.StringMap,
     target: Target,
     env_loader: ?*DotEnv.Loader,
     framework_env: ?*const Env,
     NODE_ENV: ?string,
     drop: []const []const u8,
+    omit_unused_global_calls: bool,
 ) !*defines.Define {
-    const input_user_define = maybe_input_define orelse std.mem.zeroes(Api.StringMap);
+    const input_user_define = maybe_input_define orelse std.mem.zeroes(api.StringMap);
 
     var user_defines = try stringHashMapFromArrays(
         defines.RawDefines,
         allocator,
+        input_user_define.keys.len + 4,
         input_user_define.keys,
         input_user_define.values,
     );
+    defer user_defines.deinit();
 
     var environment_defines = defines.UserDefinesArray.init(allocator);
     defer environment_defines.deinit();
 
-    var behavior: Api.DotEnvBehavior = .disable;
+    var behavior: api.DotEnvBehavior = .disable;
 
     load_env: {
         const env = env_loader orelse break :load_env;
@@ -1483,11 +1502,11 @@ pub fn definesFromTransformOptions(
 
     if (target.isBun()) {
         if (!user_defines.contains("window")) {
-            _ = try environment_defines.getOrPutValue("window", .{
+            _ = try environment_defines.getOrPutValue("window", .init(.{
                 .valueless = true,
                 .original_name = "window",
                 .value = .{ .e_undefined = .{} },
-            });
+            }));
         }
     }
 
@@ -1502,6 +1521,7 @@ pub fn definesFromTransformOptions(
         resolved_defines,
         environment_defines,
         drop_debugger,
+        omit_unused_global_calls,
     );
 }
 
@@ -1515,7 +1535,8 @@ const default_loader_ext = [_]string{
     ".ts",    ".tsx",
     ".mts",   ".cts",
 
-    ".toml",  ".wasm",
+    ".toml",  ".yaml",
+    ".yml",   ".wasm",
     ".txt",   ".text",
 
     ".jsonc",
@@ -1526,7 +1547,6 @@ const default_loader_ext_browser = [_]string{
     ".html",
 };
 
-const node_modules_default_loader_ext_bun = [_]string{".node"};
 const node_modules_default_loader_ext = [_]string{
     ".jsx",
     ".js",
@@ -1535,6 +1555,8 @@ const node_modules_default_loader_ext = [_]string{
     ".ts",
     ".mts",
     ".toml",
+    ".yaml",
+    ".yml",
     ".txt",
     ".json",
     ".jsonc",
@@ -1573,9 +1595,10 @@ pub const ResolveFileExtensions = struct {
     };
 };
 
-pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap, target: Target) std.mem.Allocator.Error!bun.StringArrayHashMap(Loader) {
-    const input_loaders = _loaders orelse std.mem.zeroes(Api.LoaderMap);
+pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?api.LoaderMap, target: Target) std.mem.Allocator.Error!bun.StringArrayHashMap(Loader) {
+    const input_loaders = _loaders orelse std.mem.zeroes(api.LoaderMap);
     const loader_values = try allocator.alloc(Loader, input_loaders.loaders.len);
+    defer allocator.free(loader_values);
 
     for (loader_values, input_loaders.loaders) |*loader, input| {
         loader.* = Loader.fromAPI(input);
@@ -1584,9 +1607,14 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
     var loaders = try stringHashMapFromArrays(
         bun.StringArrayHashMap(Loader),
         allocator,
+        input_loaders.extensions.len +
+            if (target.isBun()) default_loader_ext_bun.len else 0 +
+                if (target == .browser) default_loader_ext_browser.len else 0 +
+                    default_loader_ext.len,
         input_loaders.extensions,
         loader_values,
     );
+    errdefer loaders.deinit();
 
     inline for (default_loader_ext) |ext| {
         _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
@@ -1615,7 +1643,7 @@ pub const SourceMapOption = enum {
     external,
     linked,
 
-    pub fn fromApi(source_map: ?Api.SourceMapMode) SourceMapOption {
+    pub fn fromApi(source_map: ?api.SourceMapMode) SourceMapOption {
         return switch (source_map orelse .none) {
             .external => .external,
             .@"inline" => .@"inline",
@@ -1624,7 +1652,7 @@ pub const SourceMapOption = enum {
         };
     }
 
-    pub fn toAPI(source_map: ?SourceMapOption) Api.SourceMapMode {
+    pub fn toAPI(source_map: ?SourceMapOption) api.SourceMapMode {
         return switch (source_map orelse .none) {
             .external => .external,
             .@"inline" => .@"inline",
@@ -1652,7 +1680,7 @@ pub const PackagesOption = enum {
     bundle,
     external,
 
-    pub fn fromApi(packages: ?Api.PackagesMode) PackagesOption {
+    pub fn fromApi(packages: ?api.PackagesMode) PackagesOption {
         return switch (packages orelse .bundle) {
             .external => .external,
             .bundle => .bundle,
@@ -1660,7 +1688,7 @@ pub const PackagesOption = enum {
         };
     }
 
-    pub fn toAPI(packages: ?PackagesOption) Api.PackagesMode {
+    pub fn toAPI(packages: ?PackagesOption) api.PackagesMode {
         return switch (packages orelse .bundle) {
             .external => .external,
             .bundle => .bundle,
@@ -1731,7 +1759,7 @@ pub const BundleOptions = struct {
     import_path_format: ImportPathFormat = ImportPathFormat.relative,
     defines_loaded: bool = false,
     env: Env = Env{},
-    transform_options: Api.TransformOptions,
+    transform_options: api.TransformOptions,
     polyfill_node_globals: bool = false,
     transform_only: bool = false,
     load_tsconfig_json: bool = true,
@@ -1752,7 +1780,7 @@ pub const BundleOptions = struct {
     global_cache: GlobalCache = .disable,
     prefer_offline_install: bool = false,
     prefer_latest_install: bool = false,
-    install: ?*Api.BunInstall = null,
+    install: ?*api.BunInstall = null,
 
     inlining: bool = false,
     inline_entrypoint_import_meta_main: bool = false,
@@ -1824,7 +1852,7 @@ pub const BundleOptions = struct {
         "react-refresh",
     };
 
-    pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
+    pub inline fn cssImportBehavior(this: *const BundleOptions) api.CssInJsBehavior {
         switch (this.target) {
             .browser => {
                 return .auto_onimportcss;
@@ -1863,6 +1891,7 @@ pub const BundleOptions = struct {
                 break :node_env "\"development\"";
             },
             this.drop,
+            this.dead_code_elimination and this.minify_syntax,
         );
         this.defines_loaded = true;
     }
@@ -1949,7 +1978,7 @@ pub const BundleOptions = struct {
         allocator: std.mem.Allocator,
         fs: *Fs.FileSystem,
         log: *logger.Log,
-        transform: Api.TransformOptions,
+        transform: api.TransformOptions,
     ) !BundleOptions {
         var opts: BundleOptions = BundleOptions{
             .log = log,
@@ -1967,8 +1996,8 @@ pub const BundleOptions = struct {
             .drop = transform.drop,
         };
 
-        Analytics.Features.define += @as(usize, @intFromBool(transform.define != null));
-        Analytics.Features.loaders += @as(usize, @intFromBool(transform.loaders != null));
+        analytics.Features.define += @as(usize, @intFromBool(transform.define != null));
+        analytics.Features.loaders += @as(usize, @intFromBool(transform.loaders != null));
 
         opts.serve_plugins = transform.serve_plugins;
         opts.bunfig_path = transform.bunfig_path;
@@ -1999,21 +2028,12 @@ pub const BundleOptions = struct {
             // 1. defaults
             // 2. node-addons
             // 3. user conditions
-            opts.conditions = try ESMConditions.init(allocator, opts.target.defaultConditions());
-
-            dont_append_node_addons: {
-                if (transform.allow_addons) |allow_addons| {
-                    if (!allow_addons) {
-                        break :dont_append_node_addons;
-                    }
-                }
-
-                try opts.conditions.append("node-addons");
-            }
-
-            if (transform.conditions.len > 0) {
-                try opts.conditions.appendSlice(transform.conditions);
-            }
+            opts.conditions = try ESMConditions.init(
+                allocator,
+                opts.target.defaultConditions(),
+                transform.allow_addons orelse true,
+                transform.conditions,
+            );
         }
 
         switch (opts.target) {
@@ -2061,8 +2081,12 @@ pub const BundleOptions = struct {
 
         opts.polyfill_node_globals = opts.target == .browser;
 
-        Analytics.Features.macros += @as(usize, @intFromBool(opts.target == .bun_macro));
-        Analytics.Features.external += @as(usize, @intFromBool(transform.external.len > 0));
+        if (transform.tsconfig_override) |tsconfig| {
+            opts.tsconfig_override = tsconfig;
+        }
+
+        analytics.Features.macros += @as(usize, @intFromBool(opts.target == .bun_macro));
+        analytics.Features.external += @as(usize, @intFromBool(transform.external.len > 0));
         return opts;
     }
 };
@@ -2179,7 +2203,7 @@ pub const Env = struct {
     };
     const List = std.MultiArrayList(Entry);
 
-    behavior: Api.DotEnvBehavior = Api.DotEnvBehavior.disable,
+    behavior: api.DotEnvBehavior = api.DotEnvBehavior.disable,
     prefix: string = "",
     defaults: List = List{},
     allocator: std.mem.Allocator = undefined,
@@ -2194,7 +2218,7 @@ pub const Env = struct {
             .allocator = allocator,
             .defaults = List{},
             .prefix = "",
-            .behavior = Api.DotEnvBehavior.disable,
+            .behavior = api.DotEnvBehavior.disable,
         };
     }
 
@@ -2202,7 +2226,7 @@ pub const Env = struct {
         try this.defaults.ensureTotalCapacity(this.allocator, capacity);
     }
 
-    pub fn setDefaultsMap(this: *Env, defaults: Api.StringMap) !void {
+    pub fn setDefaultsMap(this: *Env, defaults: api.StringMap) !void {
         this.defaults.shrinkRetainingCapacity(0);
 
         if (defaults.keys.len == 0) {
@@ -2217,7 +2241,7 @@ pub const Env = struct {
     }
 
     // For reading from API
-    pub fn setFromAPI(this: *Env, config: Api.EnvConfig) !void {
+    pub fn setFromAPI(this: *Env, config: api.EnvConfig) !void {
         this.setBehaviorFromPrefix(config.prefix orelse "");
 
         if (config.defaults) |defaults| {
@@ -2226,23 +2250,23 @@ pub const Env = struct {
     }
 
     pub fn setBehaviorFromPrefix(this: *Env, prefix: string) void {
-        this.behavior = Api.DotEnvBehavior.disable;
+        this.behavior = api.DotEnvBehavior.disable;
         this.prefix = "";
 
         if (strings.eqlComptime(prefix, "*")) {
-            this.behavior = Api.DotEnvBehavior.load_all;
+            this.behavior = api.DotEnvBehavior.load_all;
         } else if (prefix.len > 0) {
-            this.behavior = Api.DotEnvBehavior.prefix;
+            this.behavior = api.DotEnvBehavior.prefix;
             this.prefix = prefix;
         }
     }
 
-    pub fn setFromLoaded(this: *Env, config: Api.LoadedEnvConfig, allocator: std.mem.Allocator) !void {
+    pub fn setFromLoaded(this: *Env, config: api.LoadedEnvConfig, allocator: std.mem.Allocator) !void {
         this.allocator = allocator;
         this.behavior = switch (config.dotenv) {
-            Api.DotEnvBehavior.prefix => Api.DotEnvBehavior.prefix,
-            Api.DotEnvBehavior.load_all => Api.DotEnvBehavior.load_all,
-            else => Api.DotEnvBehavior.disable,
+            api.DotEnvBehavior.prefix => api.DotEnvBehavior.prefix,
+            api.DotEnvBehavior.load_all => api.DotEnvBehavior.load_all,
+            else => api.DotEnvBehavior.disable,
         };
 
         this.prefix = config.prefix;
@@ -2250,10 +2274,10 @@ pub const Env = struct {
         try this.setDefaultsMap(config.defaults);
     }
 
-    pub fn toAPI(this: *const Env) Api.LoadedEnvConfig {
+    pub fn toAPI(this: *const Env) api.LoadedEnvConfig {
         var slice = this.defaults.slice();
 
-        return Api.LoadedEnvConfig{
+        return api.LoadedEnvConfig{
             .dotenv = this.behavior,
             .prefix = this.prefix,
             .defaults = .{ .keys = slice.items(.key), .values = slice.items(.value) },
@@ -2289,7 +2313,7 @@ pub const EntryPoint = struct {
         fallback,
         disabled,
 
-        pub fn toAPI(this: Kind) Api.FrameworkEntryPointType {
+        pub fn toAPI(this: Kind) api.FrameworkEntryPointType {
             return switch (this) {
                 .client => .client,
                 .server => .server,
@@ -2299,11 +2323,11 @@ pub const EntryPoint = struct {
         }
     };
 
-    pub fn toAPI(this: *const EntryPoint, allocator: std.mem.Allocator, toplevel_path: string, kind: Kind) !?Api.FrameworkEntryPoint {
+    pub fn toAPI(this: *const EntryPoint, allocator: std.mem.Allocator, toplevel_path: string, kind: Kind) !?api.FrameworkEntryPoint {
         if (this.kind == .disabled)
             return null;
 
-        return Api.FrameworkEntryPoint{ .kind = kind.toAPI(), .env = this.env.toAPI(), .path = try this.normalizedPath(allocator, toplevel_path) };
+        return api.FrameworkEntryPoint{ .kind = kind.toAPI(), .env = this.env.toAPI(), .path = try this.normalizedPath(allocator, toplevel_path) };
     }
 
     fn normalizedPath(this: *const EntryPoint, allocator: std.mem.Allocator, toplevel_path: string) !string {
@@ -2329,7 +2353,7 @@ pub const EntryPoint = struct {
 
     pub fn fromLoaded(
         this: *EntryPoint,
-        framework_entry_point: Api.FrameworkEntryPoint,
+        framework_entry_point: api.FrameworkEntryPoint,
         allocator: std.mem.Allocator,
         kind: Kind,
     ) !void {
@@ -2340,7 +2364,7 @@ pub const EntryPoint = struct {
 
     pub fn fromAPI(
         this: *EntryPoint,
-        framework_entry_point: Api.FrameworkEntryPointMessage,
+        framework_entry_point: api.FrameworkEntryPointMessage,
         allocator: std.mem.Allocator,
         kind: Kind,
     ) !void {
@@ -2375,7 +2399,7 @@ pub const RouteConfig = struct {
     extensions: []const string = &[_]string{},
     routes_enabled: bool = false,
 
-    pub fn toAPI(this: *const RouteConfig) Api.LoadedRouteConfig {
+    pub fn toAPI(this: *const RouteConfig) api.LoadedRouteConfig {
         return .{
             .asset_prefix = this.asset_prefix_path,
             .dir = if (this.routes_enabled) this.dir else "",
@@ -2396,7 +2420,7 @@ pub const RouteConfig = struct {
         };
     }
 
-    pub fn fromLoadedRoutes(loaded: Api.LoadedRouteConfig) RouteConfig {
+    pub fn fromLoadedRoutes(loaded: api.LoadedRouteConfig) RouteConfig {
         return RouteConfig{
             .extensions = loaded.extensions,
             .dir = loaded.dir,
@@ -2407,7 +2431,7 @@ pub const RouteConfig = struct {
         };
     }
 
-    pub fn fromApi(router_: Api.RouteConfig, allocator: std.mem.Allocator) !RouteConfig {
+    pub fn fromApi(router_: api.RouteConfig, allocator: std.mem.Allocator) !RouteConfig {
         var router = zero();
 
         const static_dir: string = std.mem.trimRight(u8, router_.static_dir orelse "", "/\\");
@@ -2603,3 +2627,26 @@ pub const PathTemplate = struct {
         .placeholder = .{},
     };
 };
+
+const string = []const u8;
+
+const DotEnv = @import("./env_loader.zig");
+const Fs = @import("./fs.zig");
+const resolver = @import("./resolver/resolver.zig");
+const Runtime = @import("./runtime.zig").Runtime;
+const URL = @import("./url.zig").URL;
+
+const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
+const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
+const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const analytics = bun.analytics;
+const assert = bun.assert;
+const jsc = bun.jsc;
+const logger = bun.logger;
+const strings = bun.strings;
+const api = bun.schema.api;

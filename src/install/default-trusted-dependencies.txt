@@ -359,7 +359,6 @@ wordpos
 workerd
 wrtc
 xxhash
-yarn
 yo
 yorkie
 zeromq

@@ -20,6 +20,9 @@
 /// <reference path="./deprecated.d.ts" />
 /// <reference path="./redis.d.ts" />
 /// <reference path="./shell.d.ts" />
+/// <reference path="./experimental.d.ts" />
+/// <reference path="./sql.d.ts" />
+/// <reference path="./security.d.ts" />
 
 /// <reference path="./bun.ns.d.ts" />
 

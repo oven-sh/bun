@@ -18,6 +18,7 @@
     macro(SHA512) \
     macro(SHA512_256) \
     macro(TOML) \
+    macro(YAML) \
     macro(Transpiler) \
     macro(ValkeyClient) \
     macro(argv) \
@@ -27,7 +28,6 @@
     macro(enableANSIColors) \
     macro(hash) \
     macro(inspect) \
-    macro(main) \
     macro(origin) \
     macro(s3) \
     macro(semver) \
@@ -83,12 +83,14 @@
 FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);
 #undef DECLARE_ZIG_BUN_OBJECT_CALLBACK
 
-#define DECLARE_ZIG_BUN_OBJECT_GETTER(name) extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_##name(JSC::JSGlobalObject*, JSC::JSObject*);
+// declaration for the exported function in BunObject.zig
+#define DECLARE_ZIG_BUN_OBJECT_GETTER(name) extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_lazyPropCb_##name(JSC::JSGlobalObject*, JSC::JSObject*);
 FOR_EACH_GETTER(DECLARE_ZIG_BUN_OBJECT_GETTER);
 #undef DECLARE_ZIG_BUN_OBJECT_GETTER
 
-#define DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER(name) static JSC::JSValue BunObject_getter_wrap_##name(JSC::VM &vm, JSC::JSObject *object) { \
-    return JSC::JSValue::decode(BunObject_getter_##name(object->globalObject(), object)); \
+// definition of the C++ wrapper to call the Zig function
+#define DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER(name) static JSC::JSValue BunObject_lazyPropCb_wrap_##name(JSC::VM &vm, JSC::JSObject *object) { \
+    return JSC::JSValue::decode(BunObject_lazyPropCb_##name(object->globalObject(), object)); \
 } \
 
 FOR_EACH_GETTER(DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER);

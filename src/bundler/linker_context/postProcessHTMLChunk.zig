@@ -20,17 +20,16 @@ pub fn postProcessHTMLChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, c
         worker.allocator,
         &j,
         @as(u32, @truncate(ctx.chunks.len)),
-    ) catch bun.outOfMemory();
+    ) catch |err| bun.handleOom(err);
 
     chunk.isolated_hash = c.generateIsolatedHash(chunk);
 }
 
 const bun = @import("bun");
-const LinkerContext = bun.bundle_v2.LinkerContext;
+const StringJoiner = bun.StringJoiner;
 
 const Chunk = bun.bundle_v2.Chunk;
-
-const GenerateChunkCtx = bun.bundle_v2.LinkerContext.GenerateChunkCtx;
 const ThreadPool = bun.bundle_v2.ThreadPool;
 
-const StringJoiner = bun.StringJoiner;
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const GenerateChunkCtx = bun.bundle_v2.LinkerContext.GenerateChunkCtx;

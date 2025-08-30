@@ -1,8 +1,8 @@
 pub fn installWithManager(
     manager: *PackageManager,
     ctx: Command.Context,
-    root_package_json_contents: string,
-    original_cwd: string,
+    root_package_json_contents: []const u8,
+    original_cwd: []const u8,
 ) !void {
     const log_level = manager.options.log_level;
 
@@ -109,7 +109,7 @@ pub fn installWithManager(
                         const tag_total = original.tag.pre.len() + original.tag.build.len();
                         if (tag_total > 0) {
                             // clone because don't know if lockfile buffer will reallocate
-                            const tag_buf = manager.allocator.alloc(u8, tag_total) catch bun.outOfMemory();
+                            const tag_buf = bun.handleOom(manager.allocator.alloc(u8, tag_total));
                             var ptr = tag_buf;
                             original.tag = original_resolution.value.npm.version.tag.cloneInto(
                                 lockfile.buffers.string_bytes.items,
@@ -468,7 +468,6 @@ pub fn installWithManager(
                             this,
                             .{
                                 .onExtract = {},
-                                .onPatch = {},
                                 .onResolve = {},
                                 .onPackageManifestError = {},
                                 .onPackageDownloadError = {},
@@ -564,7 +563,12 @@ pub fn installWithManager(
                 return error.InstallFailed;
             }
         }
+
         manager.verifyResolutions(log_level);
+
+        if (manager.subcommand == .add and manager.options.security_scanner != null) {
+            try security_scanner.performSecurityScanAfterResolution(manager);
+        }
     }
 
     // append scripts to lockfile before generating new metahash
@@ -601,7 +605,7 @@ pub fn installWithManager(
                                     @field(manager.lockfile.scripts, Lockfile.Scripts.names[i]).append(
                                         manager.lockfile.allocator,
                                         entry,
-                                    ) catch bun.outOfMemory();
+                                    ) catch |err| bun.handleOom(err);
                                 }
                             }
                         }
@@ -622,7 +626,7 @@ pub fn installWithManager(
                                 @field(manager.lockfile.scripts, Lockfile.Scripts.names[i]).append(
                                     manager.lockfile.allocator,
                                     entry,
-                                ) catch bun.outOfMemory();
+                                ) catch |err| bun.handleOom(err);
                             }
                         }
                     }
@@ -639,7 +643,7 @@ pub fn installWithManager(
 
     if (manager.options.enable.frozen_lockfile and load_result != .not_found) frozen_lockfile: {
         if (load_result.loadedFromTextLockfile()) {
-            if (manager.lockfile.eql(lockfile_before_clean, packages_len_before_install, manager.allocator) catch bun.outOfMemory()) {
+            if (bun.handleOom(manager.lockfile.eql(lockfile_before_clean, packages_len_before_install, manager.allocator))) {
                 break :frozen_lockfile;
             }
         } else {
@@ -735,16 +739,33 @@ pub fn installWithManager(
         }
     }
 
-    var install_summary = PackageInstall.Summary{};
-    if (manager.options.do.install_packages) {
-        install_summary = try @import("../hoisted_install.zig").installHoistedPackages(
-            manager,
-            ctx,
-            workspace_filters.items,
-            install_root_dependencies,
-            log_level,
-        );
-    }
+    const install_summary: PackageInstall.Summary = install_summary: {
+        if (!manager.options.do.install_packages) {
+            break :install_summary .{};
+        }
+
+        switch (manager.options.node_linker) {
+            .hoisted,
+            // TODO
+            .auto,
+            => break :install_summary try installHoistedPackages(
+                manager,
+                ctx,
+                workspace_filters.items,
+                install_root_dependencies,
+                log_level,
+            ),
+
+            .isolated => break :install_summary installIsolatedPackages(
+                manager,
+                ctx,
+                install_root_dependencies,
+                workspace_filters.items,
+            ) catch |err| switch (err) {
+                error.OutOfMemory => bun.outOfMemory(),
+            },
+        }
+    };
 
     if (log_level != .silent) {
         try manager.log.print(Output.errorWriter());
@@ -821,11 +842,12 @@ pub fn installWithManager(
             // have finished, and lockfiles have been saved
             const optional = false;
             const output_in_foreground = true;
-            try manager.spawnPackageLifecycleScripts(ctx, scripts, optional, output_in_foreground);
+            try manager.spawnPackageLifecycleScripts(ctx, scripts, optional, output_in_foreground, null);
 
+            // .monotonic is okay because at this point, this value is only accessed from this
+            // thread.
             while (manager.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
                 manager.reportSlowLifecycleScripts();
-
                 manager.sleep();
             }
         }
@@ -849,6 +871,8 @@ fn printInstallSummary(
     did_meta_hash_change: bool,
     log_level: Options.LogLevel,
 ) !void {
+    defer Output.flush();
+
     var printed_timestamp = false;
     if (this.options.do.summary) {
         var printer = Lockfile.Printer{
@@ -858,10 +882,17 @@ fn printInstallSummary(
             .successfully_installed = install_summary.successfully_installed,
         };
 
-        switch (Output.enable_ansi_colors) {
-            inline else => |enable_ansi_colors| {
-                try Lockfile.Printer.Tree.print(&printer, this, Output.WriterType, Output.writer(), enable_ansi_colors, log_level);
-            },
+        {
+            Output.flush();
+            // Ensure at this point buffering is enabled.
+            // We deliberately do not disable it after this.
+            Output.enableBuffering();
+            const writer = Output.writerBuffered();
+            switch (Output.enable_ansi_colors) {
+                inline else => |enable_ansi_colors| {
+                    try Lockfile.Printer.Tree.print(&printer, this, @TypeOf(writer), writer, enable_ansi_colors, log_level);
+                },
+            }
         }
 
         if (!did_meta_hash_change) {
@@ -961,9 +992,10 @@ fn printBlockedPackagesInfo(summary: *const PackageInstall.Summary, global: bool
     }
 }
 
-// @sortImports
-
+const security_scanner = @import("./security_scanner.zig");
 const std = @import("std");
+const installHoistedPackages = @import("../hoisted_install.zig").installHoistedPackages;
+const installIsolatedPackages = @import("../isolated_install.zig").installIsolatedPackages;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -973,9 +1005,8 @@ const Path = bun.path;
 const Progress = bun.Progress;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 
 const Semver = bun.Semver;
 const String = Semver.String;

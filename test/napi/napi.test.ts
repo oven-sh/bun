@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { readdirSync } from "fs";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isCI, isMacOS, isMusl, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe("napi", () => {
@@ -185,9 +185,10 @@ describe("napi", () => {
       expect(result).toEndWith("str: abcdef");
     });
 
-    it("copies auto len", async () => {
+    // TODO: once we upgrade the Node version on macOS and musl to Node v24.3.0, remove this TODO
+    it.todoIf(isCI && (isMacOS || isMusl))("copies auto len", async () => {
       const result = await checkSameOutput("test_napi_get_value_string_utf8_with_buffer", ["abcdef", 424242]);
-      expect(result).toEndWith("str:");
+      expect(result).toEndWith("str: abcdef");
     });
   });
 
@@ -259,6 +260,10 @@ describe("napi", () => {
     it("allows creating a handle scope in the finalizer", async () => {
       await checkSameOutput("test_napi_handle_scope_finalizer", []);
     });
+    it("prevents underflow when unref called on zero refcount", async () => {
+      // This tests the fix for napi_reference_unref underflow protection
+      await checkSameOutput("test_ref_unref_underflow", []);
+    });
   });
 
   describe("napi_async_work", () => {
@@ -275,18 +280,23 @@ describe("napi", () => {
         runOn("node", "test_napi_async_work_complete_null_check", []),
         runOn(bunExe(), "test_napi_async_work_complete_null_check", []),
       ]);
-      
+
       // Filter out debug logs and normalize
-      const cleanBunResult = bunResult
-        .replaceAll(/^\[\w+\].+$/gm, "")
-        .trim();
-      
+      const cleanBunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
+
       // Both should contain these two lines, but order may vary
       const expectedLines = ["execute called!", "resolved to undefined"];
-      
-      const nodeLines = nodeResult.trim().split('\n').filter(line => line).sort();
-      const bunLines = cleanBunResult.split('\n').filter(line => line).sort();
-      
+
+      const nodeLines = nodeResult
+        .trim()
+        .split("\n")
+        .filter(line => line)
+        .sort();
+      const bunLines = cleanBunResult
+        .split("\n")
+        .filter(line => line)
+        .sort();
+
       expect(bunLines).toEqual(nodeLines);
       expect(bunLines).toEqual(expectedLines.sort());
     });
@@ -467,6 +477,12 @@ describe("napi", () => {
     it("works", async () => {
       await checkSameOutput("test_create_bigint_words", []);
     });
+
+    it("returns correct word count with small buffer", async () => {
+      // This tests the fix for the BigInt word count bug
+      // When buffer is smaller than needed, word_count should still return actual words needed
+      await checkSameOutput("test_bigint_word_count", []);
+    });
   });
 
   describe("napi_get_last_error_info", () => {
@@ -506,6 +522,33 @@ describe("napi", () => {
   it("works when the module register function throws", async () => {
     expect(() => require("./napi-app/build/Debug/throw_addon.node")).toThrow(new Error("oops!"));
   });
+
+  it("runs the napi_module_register callback after dlopen finishes", async () => {
+    await checkSameOutput("test_constructor_order", []);
+  });
+
+  it("behaves as expected when performing operations with an exception pending", async () => {
+    await checkSameOutput("test_deferred_exceptions", []);
+  });
+
+  it("NAPI finalizer iterator invalidation crash prevention", () => {
+    // This test verifies that the DeferGCForAWhile fix prevents iterator invalidation
+    // during NAPI finalizer cleanup. While we couldn't reproduce the exact crash
+    // conditions, this test ensures the addon loads and runs without issues.
+
+    const addon = require("./napi-app/build/Debug/test_finalizer_iterator_invalidation.node");
+
+    // Create objects with finalizers (should not crash)
+    const objects = addon.createProblematicObjects(5);
+    expect(objects).toHaveLength(5);
+
+    // Clear references
+    objects.length = 0;
+
+    // Get initial count
+    const count = addon.getFinalizeCount();
+    expect(typeof count).toBe("number");
+  });
 });
 
 async function checkSameOutput(test: string, args: any[] | string, envArgs: Record<string, string> = {}) {
@@ -525,10 +568,7 @@ async function checkSameOutput(test: string, args: any[] | string, envArgs: Reco
 }
 
 async function runOn(executable: string, test: string, args: any[] | string, envArgs: Record<string, string> = {}) {
-  // when the inspector runs (can be due to VSCode extension), there is
-  // a bug that in debug modes the console logs extra stuff
-  const { BUN_INSPECT_CONNECT_TO: _, ...rest } = bunEnv;
-  const env = { ...rest, ...envArgs };
+  const env = { ...bunEnv, ...envArgs };
   const exec = spawn({
     cmd: [
       executable,
@@ -554,3 +594,57 @@ async function runOn(executable: string, test: string, args: any[] | string, env
   expect(result).toBe(0);
   return stdout;
 }
+
+async function checkBothFail(test: string, args: any[] | string, envArgs: Record<string, string> = {}) {
+  const [node, bun] = await Promise.all(
+    ["node", bunExe()].map(async executable => {
+      const { BUN_INSPECT_CONNECT_TO: _, ...rest } = bunEnv;
+      const env = { ...rest, BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1", ...envArgs };
+      const exec = spawn({
+        cmd: [
+          executable,
+          "--expose-gc",
+          join(__dirname, "napi-app/main.js"),
+          test,
+          typeof args == "string" ? args : JSON.stringify(args),
+        ],
+        env,
+        stdout: Bun.version_with_sha.includes("debug") ? "inherit" : "pipe",
+        stderr: Bun.version_with_sha.includes("debug") ? "inherit" : "pipe",
+        stdin: "inherit",
+      });
+      const exitCode = await exec.exited;
+      return { exitCode, signalCode: exec.signalCode };
+    }),
+  );
+  expect(node.exitCode || node.signalCode).toBeTruthy();
+  expect(!!node.exitCode).toEqual(!!bun.exitCode);
+  expect(!!node.signalCode).toEqual(!!bun.signalCode);
+}
+
+describe("cleanup hooks", () => {
+  describe("execution order", () => {
+    it("executes in reverse insertion order like Node.js", async () => {
+      // Test that cleanup hooks execute in reverse insertion order (LIFO)
+      await checkSameOutput("test_cleanup_hook_order", []);
+    });
+  });
+
+  describe("error handling", () => {
+    it("removing non-existent env cleanup hook should not crash", async () => {
+      // Test that removing non-existent hooks doesn't crash the process
+      await checkSameOutput("test_cleanup_hook_remove_nonexistent", []);
+    });
+
+    it("removing non-existent async cleanup hook should not crash", async () => {
+      // Test that removing non-existent async hooks doesn't crash
+      await checkSameOutput("test_async_cleanup_hook_remove_nonexistent", []);
+    });
+  });
+
+  describe("duplicate prevention", () => {
+    it("should crash on duplicate hooks", async () => {
+      await checkBothFail("test_cleanup_hook_duplicates", []);
+    });
+  });
+});

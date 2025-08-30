@@ -1,3 +1,5 @@
+const Query = @This();
+
 /// Linked-list of AND ranges
 /// "^1 ^2"
 /// ----|-----
@@ -774,18 +776,18 @@ pub fn parse(
     return list;
 }
 
-const Query = @This();
+const string = []const u8;
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const string = bun.string;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
 
+const bun = @import("bun");
+const Environment = bun.Environment;
 const OOM = bun.OOM;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const strings = bun.strings;
+
+const Range = bun.Semver.Range;
 const SlicedString = bun.Semver.SlicedString;
 const Version = bun.Semver.Version;
-const Range = bun.Semver.Range;
-const assert = bun.assert;

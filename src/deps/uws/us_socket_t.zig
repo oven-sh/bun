@@ -1,10 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-const uws = @import("../uws.zig");
-
-const SocketContext = uws.SocketContext;
-
-const debug = bun.Output.scoped(.uws, false);
+const debug = bun.Output.scoped(.uws, .visible);
 const max_i32 = std.math.maxInt(i32);
 
 /// Zig bindings for `us_socket_t`
@@ -132,8 +126,8 @@ pub const us_socket_t = opaque {
         return c.us_socket_context(@intFromBool(ssl), this).?;
     }
 
-    pub fn write(this: *us_socket_t, ssl: bool, data: []const u8, msg_more: bool) i32 {
-        const rc = c.us_socket_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len), @intFromBool(msg_more));
+    pub fn write(this: *us_socket_t, ssl: bool, data: []const u8) i32 {
+        const rc = c.us_socket_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len));
         debug("us_socket_write({d}, {d}) = {d}", .{ @intFromPtr(this), data.len, rc });
         return rc;
     }
@@ -151,9 +145,9 @@ pub const us_socket_t = opaque {
         return rc;
     }
 
-    pub fn rawWrite(this: *us_socket_t, ssl: bool, data: []const u8, msg_more: bool) i32 {
+    pub fn rawWrite(this: *us_socket_t, ssl: bool, data: []const u8) i32 {
         debug("us_socket_raw_write({d}, {d})", .{ @intFromPtr(this), data.len });
-        return c.us_socket_raw_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len), @intFromBool(msg_more));
+        return c.us_socket_raw_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len));
     }
 
     pub fn flush(this: *us_socket_t, ssl: bool) void {
@@ -204,10 +198,10 @@ pub const c = struct {
     pub extern fn us_socket_ext(ssl: i32, s: ?*us_socket_t) ?*anyopaque; // nullish to be safe
     pub extern fn us_socket_context(ssl: i32, s: ?*us_socket_t) ?*SocketContext;
 
-    pub extern fn us_socket_write(ssl: i32, s: ?*us_socket_t, data: [*c]const u8, length: i32, msg_more: i32) i32;
+    pub extern fn us_socket_write(ssl: i32, s: ?*us_socket_t, data: [*c]const u8, length: i32) i32;
     pub extern fn us_socket_ipc_write_fd(s: ?*us_socket_t, data: [*c]const u8, length: i32, fd: i32) i32;
     pub extern fn us_socket_write2(ssl: i32, *us_socket_t, header: ?[*]const u8, len: usize, payload: ?[*]const u8, usize) i32;
-    pub extern fn us_socket_raw_write(ssl: i32, s: ?*us_socket_t, data: [*c]const u8, length: i32, msg_more: i32) i32;
+    pub extern fn us_socket_raw_write(ssl: i32, s: ?*us_socket_t, data: [*c]const u8, length: i32) i32;
     pub extern fn us_socket_flush(ssl: i32, s: ?*us_socket_t) void;
 
     // if a TLS socket calls this, it will start SSL instance and call open event will also do TLS handshake if required
@@ -233,3 +227,9 @@ pub const c = struct {
     pub extern fn us_socket_get_error(ssl: i32, s: *uws.us_socket_t) c_int;
     pub extern fn us_socket_is_established(ssl: i32, s: *uws.us_socket_t) i32;
 };
+
+const bun = @import("bun");
+const std = @import("std");
+
+const uws = @import("../uws.zig");
+const SocketContext = uws.SocketContext;

@@ -1,18 +1,3 @@
-const bun = @import("bun");
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const std = @import("std");
-const RunCommand = @import("run_command.zig").RunCommand;
-const DependencyMap = @import("../resolver/package_json.zig").DependencyMap;
-
-const CLI = bun.CLI;
-const Command = CLI.Command;
-
-const transpiler = bun.transpiler;
-
-const FilterArg = @import("filter_arg.zig");
-
 const ScriptConfig = struct {
     package_json_path: []u8,
     package_name: []const u8,
@@ -73,8 +58,8 @@ pub const ProcessHandle = struct {
             var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();
             const original_path = this.state.env.map.get("PATH") orelse "";
-            this.state.env.map.put("PATH", this.config.PATH) catch bun.outOfMemory();
-            defer this.state.env.map.put("PATH", original_path) catch bun.outOfMemory();
+            bun.handleOom(this.state.env.map.put("PATH", this.config.PATH));
+            defer bun.handleOom(this.state.env.map.put("PATH", original_path));
             const envp = try this.state.env.map.createNullDelimitedEnvMap(arena.allocator());
 
             break :brk try (try bun.spawn.spawnProcess(&this.options, argv[0..], envp)).unwrap();
@@ -138,7 +123,7 @@ pub const ProcessHandle = struct {
         this.state.processExit(this) catch {};
     }
 
-    pub fn eventLoop(this: *This) *bun.JSC.MiniEventLoop {
+    pub fn eventLoop(this: *This) *bun.jsc.MiniEventLoop {
         return this.state.event_loop;
     }
 
@@ -155,7 +140,7 @@ const State = struct {
     const This = @This();
 
     handles: []ProcessHandle,
-    event_loop: *bun.JSC.MiniEventLoop,
+    event_loop: *bun.jsc.MiniEventLoop,
     remaining_scripts: usize = 0,
     // buffer for batched output
     draw_buf: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
@@ -176,7 +161,7 @@ const State = struct {
 
     fn readChunk(this: *This, handle: *ProcessHandle, chunk: []const u8) !void {
         if (this.pretty_output) {
-            handle.buffer.appendSlice(chunk) catch bun.outOfMemory();
+            bun.handleOom(handle.buffer.appendSlice(chunk));
             this.redraw(false) catch {};
         } else {
             var content = chunk;
@@ -270,7 +255,7 @@ const State = struct {
     fn redraw(this: *This, is_abort: bool) !void {
         if (!this.pretty_output) return;
         this.draw_buf.clearRetainingCapacity();
-        try this.draw_buf.appendSlice("\x1b[?2026h");
+        try this.draw_buf.appendSlice(Output.synchronized_start);
         if (this.last_lines_written > 0) {
             // move cursor to the beginning of the line and clear it
             try this.draw_buf.appendSlice("\x1b[0G\x1b[K");
@@ -339,7 +324,7 @@ const State = struct {
                 try this.draw_buf.writer().print(fmt("<cyan><d>Waiting for {d} other script(s)<r>\n"), .{handle.remaining_dependencies});
             }
         }
-        try this.draw_buf.appendSlice("\x1b[?2026l");
+        try this.draw_buf.appendSlice(Output.synchronized_end);
         this.last_lines_written = 0;
         for (this.draw_buf.items) |c| {
             if (c == '\n') {
@@ -519,7 +504,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         Global.exit(1);
     }
 
-    const event_loop = bun.JSC.MiniEventLoop.initGlobal(this_transpiler.env);
+    const event_loop = bun.jsc.MiniEventLoop.initGlobal(this_transpiler.env);
     const shell_bin: [:0]const u8 = if (Environment.isPosix)
         RunCommand.findShell(this_transpiler.env.get("PATH") orelse "", fsinstance.top_level_dir) orelse return error.MissingShell
     else
@@ -550,7 +535,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
                 .stdout = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
                 .stderr = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
                 .cwd = std.fs.path.dirname(script.package_json_path) orelse "",
-                .windows = if (Environment.isWindows) .{ .loop = bun.JSC.EventLoopHandle.init(event_loop) },
+                .windows = if (Environment.isWindows) .{ .loop = bun.jsc.EventLoopHandle.init(event_loop) },
                 .stream = true,
             },
         };
@@ -653,3 +638,17 @@ fn hasCycle(current: *ProcessHandle) bool {
     current.visiting = false;
     return false;
 }
+
+const FilterArg = @import("./filter_arg.zig");
+const std = @import("std");
+const DependencyMap = @import("../resolver/package_json.zig").DependencyMap;
+const RunCommand = @import("./run_command.zig").RunCommand;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const transpiler = bun.transpiler;
+
+const CLI = bun.cli;
+const Command = CLI.Command;

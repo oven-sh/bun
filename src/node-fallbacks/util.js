@@ -947,3 +947,13 @@ export function callbackify(original) {
 
 export const TextEncoder = /* @__PURE__ */ globalThis.TextEncoder;
 export const TextDecoder = /* @__PURE__ */ globalThis.TextDecoder;
+export default {
+  TextEncoder,
+  TextDecoder,
+  promisify,
+  log,
+  inherits,
+  _extend,
+  callbackifyOnRejected,
+  callbackify,
+};

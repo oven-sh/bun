@@ -4,7 +4,7 @@ pub const InstallCommand = struct {
             error.InstallFailed,
             error.InvalidPackageJSON,
             => {
-                const log = &bun.CLI.Cli.log_;
+                const log = &bun.cli.Cli.log_;
                 log.print(bun.Output.errorWriter()) catch {};
                 bun.Global.exit(1);
             },
@@ -27,7 +27,7 @@ fn install(ctx: Command.Context) !void {
             cli: *CommandLineArguments,
             pub fn onAnalyze(this: *@This(), result: *bun.bundle_v2.BundleV2.DependenciesScanner.Result) anyerror!void {
                 // TODO: add separate argument that makes it so positionals[1..] is not done     and instead the positionals are passed
-                var positionals = bun.default_allocator.alloc(string, result.dependencies.keys().len + 1) catch bun.outOfMemory();
+                var positionals = bun.handleOom(bun.default_allocator.alloc(string, result.dependencies.keys().len + 1));
                 positionals[0] = "install";
                 bun.copy(string, positionals[1..], result.dependencies.keys());
                 this.cli.positionals = positionals;
@@ -48,7 +48,7 @@ fn install(ctx: Command.Context) !void {
             .onFetch = @ptrCast(&Analyzer.onAnalyze),
         };
 
-        try bun.CLI.BuildCommand.exec(bun.CLI.Command.get(), &fetcher);
+        try bun.cli.BuildCommand.exec(bun.cli.Command.get(), &fetcher);
         return;
     }
 
@@ -92,7 +92,7 @@ fn installWithCLI(ctx: Command.Context, cli: CommandLineArguments) !void {
     }
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
@@ -100,8 +100,7 @@ const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 
 const PackageManager = bun.install.PackageManager;
 const CommandLineArguments = PackageManager.CommandLineArguments;

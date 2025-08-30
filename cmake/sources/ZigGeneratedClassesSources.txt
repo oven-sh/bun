@@ -6,13 +6,15 @@ src/bun.js/api/Glob.classes.ts
 src/bun.js/api/h2.classes.ts
 src/bun.js/api/html_rewriter.classes.ts
 src/bun.js/api/JSBundler.classes.ts
-src/bun.js/api/postgres.classes.ts
+src/bun.js/api/ResumableSink.classes.ts
 src/bun.js/api/S3Client.classes.ts
 src/bun.js/api/S3Stat.classes.ts
 src/bun.js/api/server.classes.ts
 src/bun.js/api/Shell.classes.ts
 src/bun.js/api/ShellArgs.classes.ts
 src/bun.js/api/sockets.classes.ts
+src/bun.js/api/sourcemap.classes.ts
+src/bun.js/api/sql.classes.ts
 src/bun.js/api/streams.classes.ts
 src/bun.js/api/valkey.classes.ts
 src/bun.js/api/zlib.classes.ts

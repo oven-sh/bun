@@ -1,9 +1,3 @@
-const bun = @import("bun");
-const jsc = bun.JSC;
-const api = bun.api;
-const node = api.node;
-const webcore = bun.webcore;
-
 pub const Classes = struct {
     pub const Blob = webcore.Blob;
     pub const HTMLRewriter = api.HTMLRewriter.HTMLRewriter;
@@ -27,6 +21,7 @@ pub const Classes = struct {
     pub const ExpectStringContaining = jsc.Expect.ExpectStringContaining;
     pub const ExpectStringMatching = jsc.Expect.ExpectStringMatching;
     pub const ExpectArrayContaining = jsc.Expect.ExpectArrayContaining;
+    pub const ExpectTypeOf = jsc.Expect.ExpectTypeOf;
     pub const FileSystemRouter = api.FileSystemRouter;
     pub const Glob = api.Glob;
     pub const ShellInterpreter = api.Shell.Interpreter;
@@ -74,17 +69,29 @@ pub const Classes = struct {
     pub const BlobInternalReadableStreamSource = webcore.ByteBlobLoader.Source;
     pub const BytesInternalReadableStreamSource = webcore.ByteStream.Source;
     pub const PostgresSQLConnection = api.Postgres.PostgresSQLConnection;
+    pub const MySQLConnection = api.MySQL.MySQLConnection;
     pub const PostgresSQLQuery = api.Postgres.PostgresSQLQuery;
+    pub const MySQLQuery = api.MySQL.MySQLQuery;
     pub const TextEncoderStreamEncoder = webcore.TextEncoderStreamEncoder;
     pub const NativeZlib = api.NativeZlib;
     pub const NativeBrotli = api.NativeBrotli;
     pub const NodeHTTPResponse = api.NodeHTTPResponse;
     pub const FrameworkFileSystemRouter = bun.bake.FrameworkRouter.JSFrameworkRouter;
-    pub const DNSResolver = api.DNS.DNSResolver;
+    pub const DNSResolver = api.dns.Resolver;
     pub const S3Client = webcore.S3Client;
     pub const S3Stat = webcore.S3Stat;
+    pub const ResumableFetchSink = webcore.ResumableFetchSink;
+    pub const ResumableS3UploadSink = webcore.ResumableS3UploadSink;
     pub const HTMLBundle = api.HTMLBundle;
     pub const RedisClient = api.Valkey;
     pub const BlockList = api.BlockList;
     pub const NativeZstd = api.NativeZstd;
+    pub const SourceMap = bun.sourcemap.JSSourceMap;
 };
+
+const bun = @import("bun");
+const jsc = bun.jsc;
+const webcore = bun.webcore;
+
+const api = bun.api;
+const node = api.node;

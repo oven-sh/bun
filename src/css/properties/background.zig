@@ -1,8 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
-
 pub const css = @import("../css_parser.zig");
 
 const Property = css.Property;
@@ -739,7 +734,7 @@ pub const BackgroundHandler = struct {
                         bun.bits.insert(BackgroundProperty, &this.flushed_properties, prop);
                     }
 
-                    dest.append(allocator, Property{ .unparsed = unparsed }) catch bun.outOfMemory();
+                    bun.handleOom(dest.append(allocator, Property{ .unparsed = unparsed }));
                 } else return false;
             },
             else => return false,
@@ -789,7 +784,7 @@ pub const BackgroundHandler = struct {
             }
         }.predicate);
         if (this.has_prefix) {
-            this.decls.append(allocator, property.deepClone(allocator)) catch bun.outOfMemory();
+            bun.handleOom(this.decls.append(allocator, property.deepClone(allocator)));
         } else if (context.targets.browsers != null) {
             this.decls.clearRetainingCapacity();
         }
@@ -817,7 +812,7 @@ pub const BackgroundHandler = struct {
         this.has_any = false;
         const push = struct {
             fn push(self: *BackgroundHandler, alloc: Allocator, d: *css.DeclarationList, comptime property_field_name: []const u8, val: anytype) void {
-                d.append(alloc, @unionInit(Property, property_field_name, val)) catch bun.outOfMemory();
+                bun.handleOom(d.append(alloc, @unionInit(Property, property_field_name, val)));
                 const prop = @field(BackgroundProperty, property_field_name);
                 bun.bits.insert(BackgroundProperty, &self.flushed_properties, prop);
             }
@@ -924,7 +919,7 @@ pub const BackgroundHandler = struct {
                 push(this, allocator, dest, "background", backgrounds);
 
                 if (clip_property) |clip| {
-                    dest.append(allocator, clip) catch bun.outOfMemory();
+                    bun.handleOom(dest.append(allocator, clip));
                     this.flushed_properties.clip = true;
                 }
 
@@ -999,7 +994,7 @@ pub const BackgroundHandler = struct {
                 Property{
                     .@"background-clip" = .{ clips.deepClone(allocator), prefixes },
                 },
-            ) catch bun.outOfMemory();
+            ) catch |err| bun.handleOom(err);
             this.flushed_properties.clip = true;
         }
 
@@ -1038,7 +1033,7 @@ pub const BackgroundHandler = struct {
             }
         }
 
-        dest.appendSlice(allocator, this.decls.items) catch bun.outOfMemory();
+        bun.handleOom(dest.appendSlice(allocator, this.decls.items));
         this.decls.clearRetainingCapacity();
 
         this.flush(allocator, dest, context);
@@ -1063,3 +1058,9 @@ fn isBackgroundProperty(property_id: css.PropertyId) bool {
         else => false,
     };
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

@@ -100,7 +100,7 @@ fn link(ctx: Command.Context) !void {
                 );
                 link_path_buf[top_level.len] = 0;
                 const link_path = link_path_buf[0..top_level.len :0];
-                const global_path = try manager.globalLinkDirPath();
+                const global_path = manager.globalLinkDirPath();
                 const dest_path = Path.joinAbsStringZ(global_path, &.{name}, .windows);
                 switch (bun.sys.sys_uv.symlinkUV(
                     link_path,
@@ -128,16 +128,18 @@ fn link(ctx: Command.Context) !void {
             var link_target_buf: bun.PathBuffer = undefined;
             var link_dest_buf: bun.PathBuffer = undefined;
             var link_rel_buf: bun.PathBuffer = undefined;
-            var node_modules_path_buf: bun.PathBuffer = undefined;
+
+            var node_modules_path = bun.AbsPath(.{}).initFdPath(.fromStdDir(node_modules)) catch |err| {
+                if (manager.options.log_level != .silent) {
+                    Output.err(err, "failed to link binary", .{});
+                }
+                Global.crash();
+            };
+            defer node_modules_path.deinit();
+
             var bin_linker = Bin.Linker{
                 .bin = package.bin,
-                .node_modules = .fromStdDir(node_modules),
-                .node_modules_path = bun.getFdPath(.fromStdDir(node_modules), &node_modules_path_buf) catch |err| {
-                    if (manager.options.log_level != .silent) {
-                        Output.err(err, "failed to link binary", .{});
-                    }
-                    Global.crash();
-                },
+                .node_modules_path = &node_modules_path,
                 .global_bin_path = manager.options.bin_path,
 
                 // .destination_dir_subpath = destination_dir_subpath,
@@ -185,7 +187,7 @@ fn link(ctx: Command.Context) !void {
     }
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
@@ -194,9 +196,8 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
 const Path = bun.path;
-const string = bun.string;
 const strings = bun.strings;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 const File = bun.sys.File;
 
 const Fs = bun.fs;

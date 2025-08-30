@@ -29,7 +29,7 @@ pub const Source = webcore.ReadableStream.NewSource(
     toBufferedValue,
 );
 
-const log = Output.scoped(.ByteStream, false);
+const log = Output.scoped(.ByteStream, .visible);
 
 pub const tag = webcore.ReadableStream.Tag.Bytes;
 
@@ -145,13 +145,13 @@ pub fn onData(
             }
             log("ByteStream.onData appendSlice and action.fulfill()", .{});
 
-            this.buffer.appendSlice(chunk) catch bun.outOfMemory();
+            bun.handleOom(this.buffer.appendSlice(chunk));
             var blob = this.toAnyBlob().?;
             action.fulfill(this.parent().globalThis, &blob);
 
             return;
         } else {
-            this.buffer.appendSlice(chunk) catch bun.outOfMemory();
+            bun.handleOom(this.buffer.appendSlice(chunk));
 
             if (stream == .owned_and_done or stream == .owned) {
                 allocator.free(stream.slice());
@@ -224,15 +224,16 @@ pub fn append(
     base_address: []const u8,
     allocator: std.mem.Allocator,
 ) !void {
+    var stream_ = stream;
     const chunk = stream.slice()[offset..];
 
     if (this.buffer.capacity == 0) {
-        switch (stream) {
-            .owned => |owned| {
+        switch (stream_) {
+            .owned => |*owned| {
                 this.buffer = owned.listManaged(allocator);
                 this.offset += offset;
             },
-            .owned_and_done => |owned| {
+            .owned_and_done => |*owned| {
                 this.buffer = owned.listManaged(allocator);
                 this.offset += offset;
             },
@@ -453,12 +454,16 @@ pub fn toBufferedValue(this: *@This(), globalThis: *jsc.JSGlobalObject, action: 
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
 const Output = bun.Output;
-const webcore = bun.webcore;
-const streams = webcore.streams;
+
 const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+
+const webcore = bun.webcore;
 const Blob = webcore.Blob;
 const Pipe = webcore.Pipe;
+
+const streams = webcore.streams;
 const BufferAction = streams.BufferAction;
-const JSValue = jsc.JSValue;

@@ -1,11 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Environment = bun.Environment;
-const strings = bun.strings;
-
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-
 // https://github.com/Vexu/zuri/blob/master/src/zuri.zig#L61-L127
 pub const PercentEncoding = struct {
     /// possible errors for decode and encode
@@ -151,7 +143,7 @@ pub const DataURL = struct {
             return buf.items;
         }
 
-        const base64buf = allocator.alloc(u8, total_base64_encode_len) catch bun.outOfMemory();
+        const base64buf = bun.handleOom(allocator.alloc(u8, total_base64_encode_len));
         return std.fmt.bufPrint(base64buf, "data:{s};base64,{s}", .{ mime_type, text }) catch unreachable;
     }
 
@@ -229,3 +221,12 @@ pub const DataURL = struct {
         return true;
     }
 };
+
+const string = []const u8;
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const strings = bun.strings;

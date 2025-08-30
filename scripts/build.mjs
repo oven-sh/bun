@@ -5,7 +5,9 @@ import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync } from "node:fs"
 import { basename, join, relative, resolve } from "node:path";
 import {
   formatAnnotationToHtml,
+  getSecret,
   isCI,
+  isWindows,
   parseAnnotations,
   printEnvironment,
   reportAnnotationToBuildKite,
@@ -214,15 +216,73 @@ function parseOptions(args, flags = []) {
 async function spawn(command, args, options, label) {
   const effectiveArgs = args.filter(Boolean);
   const description = [command, ...effectiveArgs].map(arg => (arg.includes(" ") ? JSON.stringify(arg) : arg)).join(" ");
+  let env = options?.env;
+
   console.log("$", description);
 
   label ??= basename(command);
 
   const pipe = process.env.CI === "true";
+
+  if (isBuildkite()) {
+    if (process.env.BUN_LINK_ONLY && isWindows) {
+      env ||= options?.env || { ...process.env };
+
+      // Pass signing secrets directly to the build process
+      // The PowerShell signing script will handle certificate decoding
+      env.SM_CLIENT_CERT_PASSWORD = getSecret("SM_CLIENT_CERT_PASSWORD", {
+        redact: true,
+        required: true,
+      });
+      env.SM_CLIENT_CERT_FILE = getSecret("SM_CLIENT_CERT_FILE", {
+        redact: true,
+        required: true,
+      });
+      env.SM_API_KEY = getSecret("SM_API_KEY", {
+        redact: true,
+        required: true,
+      });
+      env.SM_KEYPAIR_ALIAS = getSecret("SM_KEYPAIR_ALIAS", {
+        redact: true,
+        required: true,
+      });
+      env.SM_HOST = getSecret("SM_HOST", {
+        redact: true,
+        required: true,
+      });
+    }
+  }
+
   const subprocess = nodeSpawn(command, effectiveArgs, {
     stdio: pipe ? "pipe" : "inherit",
     ...options,
+    env,
   });
+
+  let killedManually = false;
+
+  function onKill() {
+    clearOnKill();
+    if (!subprocess.killed) {
+      killedManually = true;
+      subprocess.kill?.();
+    }
+  }
+
+  function clearOnKill() {
+    process.off("beforeExit", onKill);
+    process.off("SIGINT", onKill);
+    process.off("SIGTERM", onKill);
+  }
+
+  // Kill the entire process tree so everything gets cleaned up. On Windows, job
+  // control groups make this haappen automatically so we don't need to do this
+  // on Windows.
+  if (process.platform !== "win32") {
+    process.once("beforeExit", onKill);
+    process.once("SIGINT", onKill);
+    process.once("SIGTERM", onKill);
+  }
 
   let timestamp;
   subprocess.on("spawn", () => {
@@ -253,8 +313,14 @@ async function spawn(command, args, options, label) {
   }
 
   const { error, exitCode, signalCode } = await new Promise(resolve => {
-    subprocess.on("error", error => resolve({ error }));
-    subprocess.on("exit", (exitCode, signalCode) => resolve({ exitCode, signalCode }));
+    subprocess.on("error", error => {
+      clearOnKill();
+      resolve({ error });
+    });
+    subprocess.on("exit", (exitCode, signalCode) => {
+      clearOnKill();
+      resolve({ exitCode, signalCode });
+    });
   });
 
   if (done) {
@@ -301,7 +367,9 @@ async function spawn(command, args, options, label) {
   }
 
   if (signalCode) {
-    console.error(`Command killed: ${signalCode}`);
+    if (!killedManually) {
+      console.error(`Command killed: ${signalCode}`);
+    }
   } else {
     console.error(`Command exited: code ${exitCode}`);
   }

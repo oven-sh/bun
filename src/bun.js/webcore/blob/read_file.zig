@@ -1,21 +1,6 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const std = @import("std");
-const Blob = bun.webcore.Blob;
-const invalid_fd = bun.invalid_fd;
+const bloblog = bun.Output.scoped(.WriteFile, .hidden);
 
-const SystemError = JSC.SystemError;
-const SizeType = Blob.SizeType;
-const io = bun.io;
-const FileOpener = Blob.FileOpener;
-const FileCloser = Blob.FileCloser;
-const Environment = bun.Environment;
-const bloblog = bun.Output.scoped(.WriteFile, true);
-const JSPromise = JSC.JSPromise;
-const JSGlobalObject = JSC.JSGlobalObject;
-const libuv = bun.windows.libuv;
-
-const log = bun.Output.scoped(.ReadFile, true);
+const log = bun.Output.scoped(.ReadFile, .hidden);
 
 pub fn NewReadFileHandler(comptime Function: anytype) type {
     return struct {
@@ -35,12 +20,12 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
                     if (blob.size > 0)
                         blob.size = @min(@as(SizeType, @truncate(bytes.len)), blob.size);
                     const WrappedFn = struct {
-                        pub fn wrapped(b: *Blob, g: *JSGlobalObject, by: []u8) JSC.JSValue {
-                            return JSC.toJSHostCall(g, @src(), Function, .{ b, g, by, .temporary });
+                        pub fn wrapped(b: *Blob, g: *JSGlobalObject, by: []u8) jsc.JSValue {
+                            return jsc.toJSHostCall(g, @src(), Function, .{ b, g, by, .temporary });
                         }
                     };
 
-                    JSC.AnyPromise.wrap(.{ .normal = promise }, globalThis, WrappedFn.wrapped, .{ &blob, globalThis, bytes });
+                    jsc.AnyPromise.wrap(.{ .normal = promise }, globalThis, WrappedFn.wrapped, .{ &blob, globalThis, bytes });
                 },
                 .err => |err| {
                     promise.reject(globalThis, err.toErrorInstance(globalThis));
@@ -50,15 +35,10 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
     };
 }
 
-const FileStore = Blob.Store.File;
-const ByteStore = Blob.Store.Bytes;
-const Store = Blob.Store;
-const ClosingState = Blob.ClosingState;
-
 pub const ReadFileOnReadFileCallback = *const fn (ctx: *anyopaque, bytes: ReadFileResultType) void;
 pub const ReadFileRead = struct { buf: []u8, is_temporary: bool = false, total_size: SizeType = 0 };
 pub const ReadFileResultType = SystemError.Maybe(ReadFileRead);
-pub const ReadFileTask = JSC.WorkTask(ReadFile);
+pub const ReadFileTask = jsc.WorkTask(ReadFile);
 
 pub const ReadFile = struct {
     file_store: FileStore,
@@ -73,7 +53,7 @@ pub const ReadFile = struct {
     size: SizeType = 0,
     buffer: std.ArrayListUnmanaged(u8) = .{},
     task: bun.ThreadPool.Task = undefined,
-    system_error: ?JSC.SystemError = null,
+    system_error: ?jsc.SystemError = null,
     errno: ?anyerror = null,
     onCompleteCtx: *anyopaque = undefined,
     onCompleteCallback: ReadFileOnReadFileCallback = undefined,
@@ -159,7 +139,7 @@ pub const ReadFile = struct {
             this.close_after_io = this.io_request.scheduled;
         }
 
-        JSC.WorkPool.schedule(&this.task);
+        jsc.WorkPool.schedule(&this.task);
     }
 
     pub fn onIOError(this: *ReadFile, err: bun.sys.Error) void {
@@ -174,7 +154,7 @@ pub const ReadFile = struct {
             // unless pending IO has been scheduled in-between.
             this.close_after_io = this.io_request.scheduled;
         }
-        JSC.WorkPool.schedule(&this.task);
+        jsc.WorkPool.schedule(&this.task);
     }
 
     pub fn onRequestReadable(request: *io.Request) io.Action {
@@ -207,7 +187,7 @@ pub const ReadFile = struct {
     }
 
     pub fn doRead(this: *ReadFile, buffer: []u8, read_len: *usize, retry: *bool) bool {
-        const result: JSC.Maybe(usize) = brk: {
+        const result: bun.sys.Maybe(usize) = brk: {
             if (std.posix.S.ISSOCK(this.file_store.mode)) {
                 break :brk bun.sys.recvNonBlock(this.opened_fd, buffer);
             }
@@ -238,7 +218,7 @@ pub const ReadFile = struct {
                             this.system_error = err.toSystemError();
                             if (this.system_error.?.path.isEmpty()) {
                                 this.system_error.?.path = if (this.file_store.pathlike == .path)
-                                    bun.String.createUTF8(this.file_store.pathlike.path.slice())
+                                    bun.String.cloneUTF8(this.file_store.pathlike.path.slice())
                                 else
                                     bun.String.empty;
                             }
@@ -253,7 +233,7 @@ pub const ReadFile = struct {
         return true;
     }
 
-    pub fn then(this: *ReadFile, _: *JSC.JSGlobalObject) void {
+    pub fn then(this: *ReadFile, _: *jsc.JSGlobalObject) void {
         const cb = this.onCompleteCallback;
         const cb_ctx = this.onCompleteCtx;
 
@@ -342,16 +322,16 @@ pub const ReadFile = struct {
 
         if (this.store) |store| {
             if (store.data == .file) {
-                store.data.file.last_modified = JSC.toJSTime(stat.mtime().sec, stat.mtime().nsec);
+                store.data.file.last_modified = jsc.toJSTime(stat.mtime().sec, stat.mtime().nsec);
             }
         }
 
         if (bun.S.ISDIR(@intCast(stat.mode))) {
             this.errno = error.EISDIR;
-            this.system_error = JSC.SystemError{
+            this.system_error = jsc.SystemError{
                 .code = bun.String.static("EISDIR"),
                 .path = if (this.file_store.pathlike == .path)
-                    bun.String.createUTF8(this.file_store.pathlike.path.slice())
+                    bun.String.cloneUTF8(this.file_store.pathlike.path.slice())
                 else
                     bun.String.empty,
                 .message = bun.String.static("Directories cannot be read like files"),
@@ -433,7 +413,7 @@ pub const ReadFile = struct {
         this.doReadLoop();
     }
 
-    fn doReadLoopTask(task: *JSC.WorkPoolTask) void {
+    fn doReadLoopTask(task: *jsc.WorkPoolTask) void {
         var this: *ReadFile = @alignCast(@fieldParentPtr("task", task));
 
         this.update();
@@ -462,9 +442,9 @@ pub const ReadFile = struct {
                         // We need to allocate a new buffer
                         // In this case, we want to use `ensureTotalCapacityPrecis` so that it's an exact amount
                         // We want to avoid over-allocating incase it's a large amount of data sent in a single chunk followed by a 0 byte chunk.
-                        this.buffer.ensureTotalCapacityPrecise(bun.default_allocator, read.len) catch bun.outOfMemory();
+                        bun.handleOom(this.buffer.ensureTotalCapacityPrecise(bun.default_allocator, read.len));
                     } else {
-                        this.buffer.ensureUnusedCapacity(bun.default_allocator, read.len) catch bun.outOfMemory();
+                        bun.handleOom(this.buffer.ensureUnusedCapacity(bun.default_allocator, read.len));
                     }
                     this.buffer.appendSliceAssumeCapacity(read);
                 } else {
@@ -556,7 +536,7 @@ pub const ReadFileUV = struct {
     read_eof: bool = false,
     size: SizeType = 0,
     buffer: std.ArrayListUnmanaged(u8) = .{},
-    system_error: ?JSC.SystemError = null,
+    system_error: ?jsc.SystemError = null,
     errno: ?anyerror = null,
     on_complete_data: *anyopaque = undefined,
     on_complete_fn: ReadFileOnReadFileCallback,
@@ -657,15 +637,15 @@ pub const ReadFileUV = struct {
 
         // keep in sync with resolveSizeAndLastModified
         if (this.store.data == .file) {
-            this.store.data.file.last_modified = JSC.toJSTime(stat.mtime().sec, stat.mtime().nsec);
+            this.store.data.file.last_modified = jsc.toJSTime(stat.mtime().sec, stat.mtime().nsec);
         }
 
         if (bun.S.ISDIR(@intCast(stat.mode))) {
             this.errno = error.EISDIR;
-            this.system_error = JSC.SystemError{
+            this.system_error = jsc.SystemError{
                 .code = bun.String.static("EISDIR"),
                 .path = if (this.file_store.pathlike == .path)
-                    bun.String.createUTF8(this.file_store.pathlike.path.slice())
+                    bun.String.cloneUTF8(this.file_store.pathlike.path.slice())
                 else
                     bun.String.empty,
                 .message = bun.String.static("Directories cannot be read like files"),
@@ -816,3 +796,26 @@ pub const ReadFileUV = struct {
         this.queueRead();
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const invalid_fd = bun.invalid_fd;
+const io = bun.io;
+const libuv = bun.windows.libuv;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSPromise = jsc.JSPromise;
+const SystemError = jsc.SystemError;
+
+const Blob = bun.webcore.Blob;
+const ClosingState = Blob.ClosingState;
+const FileCloser = Blob.FileCloser;
+const FileOpener = Blob.FileOpener;
+const SizeType = Blob.SizeType;
+
+const Store = Blob.Store;
+const ByteStore = Blob.Store.Bytes;
+const FileStore = Blob.Store.File;

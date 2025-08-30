@@ -8,6 +8,16 @@ declare module "*.toml" {
   export = contents;
 }
 
+declare module "*.yaml" {
+  var contents: any;
+  export = contents;
+}
+
+declare module "*.yml" {
+  var contents: any;
+  export = contents;
+}
+
 declare module "*.jsonc" {
   var contents: any;
   export = contents;
@@ -19,7 +29,7 @@ declare module "*/bun.lock" {
 }
 
 declare module "*.html" {
-  // In Bun v1.2, this might change to Bun.HTMLBundle
-  var contents: any;
+  var contents: import("bun").HTMLBundle;
+
   export = contents;
 }

@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { isASAN } from "harness";
+
+const ASAN_MULTIPLIER = isASAN ? 1 / 10 : 1;
 
 const constructorArgs = [
   [
@@ -56,13 +59,13 @@ for (let i = 0; i < constructorArgs.length; i++) {
   test("new Request(test #" + i + ")", () => {
     Bun.gc(true);
 
-    for (let i = 0; i < 1000; i++) {
+    for (let i = 0; i < 1000 * ASAN_MULTIPLIER; i++) {
       new Request(...args);
     }
 
     Bun.gc(true);
     const baseline = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-    for (let i = 0; i < 2000; i++) {
+    for (let i = 0; i < 2000 * ASAN_MULTIPLIER; i++) {
       for (let j = 0; j < 500; j++) {
         new Request(...args);
       }
@@ -79,15 +82,15 @@ for (let i = 0; i < constructorArgs.length; i++) {
   test("request.clone(test #" + i + ")", () => {
     Bun.gc(true);
 
-    for (let i = 0; i < 1000; i++) {
+    for (let i = 0; i < 1000 * ASAN_MULTIPLIER; i++) {
       const request = new Request(...args);
       request.clone();
     }
 
     Bun.gc(true);
     const baseline = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-    for (let i = 0; i < 2000; i++) {
-      for (let j = 0; j < 500; j++) {
+    for (let i = 0; i < 2000 * ASAN_MULTIPLIER; i++) {
+      for (let j = 0; j < 500 * ASAN_MULTIPLIER; j++) {
         const request = new Request(...args);
         request.clone();
       }

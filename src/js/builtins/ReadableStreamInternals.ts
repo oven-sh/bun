@@ -758,6 +758,123 @@ export function assignToStream(stream, sink) {
   return $readStreamIntoSink(stream, sink, true);
 }
 
+$linkTimeConstant;
+export function assignStreamIntoResumableSink(stream, sink) {
+  const highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark") || 0;
+  let error: Error | null = null;
+  let reading = false;
+  let closed = false;
+  let reader: ReadableStreamDefaultReader | undefined;
+
+  function releaseReader() {
+    if (reader) {
+      try {
+        reader.releaseLock();
+      } catch {}
+      reader = undefined;
+    }
+    sink = undefined;
+    if (stream) {
+      var streamState = $getByIdDirectPrivate(stream, "state");
+      // make it easy for this to be GC'd
+      // but don't do property transitions
+      var readableStreamController = $getByIdDirectPrivate(stream, "readableStreamController");
+      if (readableStreamController) {
+        if ($getByIdDirectPrivate(readableStreamController, "underlyingSource"))
+          $putByIdDirectPrivate(readableStreamController, "underlyingSource", null);
+        if ($getByIdDirectPrivate(readableStreamController, "controlledReadableStream"))
+          $putByIdDirectPrivate(readableStreamController, "controlledReadableStream", null);
+
+        $putByIdDirectPrivate(stream, "readableStreamController", null);
+        if ($getByIdDirectPrivate(stream, "underlyingSource")) $putByIdDirectPrivate(stream, "underlyingSource", null);
+        readableStreamController = undefined;
+      }
+
+      if (stream && !error && streamState !== $streamClosed && streamState !== $streamErrored) {
+        $readableStreamCloseIfPossible(stream);
+      }
+      stream = undefined;
+    }
+  }
+  function endSink(...args: any[]) {
+    try {
+      sink?.end(...args);
+    } catch {} // should never throw
+    releaseReader();
+  }
+
+  try {
+    // always call start even if reader throws
+
+    sink.start({ highWaterMark });
+
+    reader = stream.getReader();
+
+    async function drainReaderIntoSink() {
+      if (error || closed || reading) return;
+      reading = true;
+
+      try {
+        while (true) {
+          var { value, done } = await reader!.read();
+          if (closed) break;
+
+          if (done) {
+            closed = true;
+            // lets cover just in case we have a value when done is true
+            // this shouldn't happen but just in case
+            if (value) {
+              sink.write(value);
+            }
+            // clean end
+            return endSink();
+          }
+
+          if (value) {
+            // write returns false under backpressure
+            if (!sink.write(value)) {
+              break;
+            }
+          }
+        }
+      } catch (e: any) {
+        error = e;
+        closed = true;
+        try {
+          const prom = stream?.cancel(e);
+          if ($isPromise(prom)) {
+            $markPromiseAsHandled(prom);
+          }
+        } catch {}
+        // end with the error NT so we can simplify the flow to only listen to end
+        queueMicrotask(endSink.bind(null, e));
+      } finally {
+        reading = false;
+      }
+    }
+
+    function cancelStream(reason: Error | null) {
+      if (closed) return;
+      let wasClosed = closed;
+      closed = true;
+      if (stream && !error && !wasClosed && stream.$state !== $streamClosed) {
+        $readableStreamCancel(stream, reason);
+      }
+      releaseReader();
+    }
+    // drain is called when the backpressure is release so we can continue draining
+    // cancel is called if closed or errored by the other side
+    sink.setHandlers(drainReaderIntoSink, cancelStream);
+
+    drainReaderIntoSink();
+  } catch (e: any) {
+    error = e;
+    closed = true;
+    // end with the error
+    queueMicrotask(endSink.bind(null, e));
+  }
+}
+
 export async function readStreamIntoSink(stream: ReadableStream, sink, isNative) {
   var didClose = false;
   var didThrow = false;
@@ -842,8 +959,8 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
       reader = undefined;
     }
     sink = undefined;
-    var streamState = $getByIdDirectPrivate(stream, "state");
     if (stream) {
+      var streamState = $getByIdDirectPrivate(stream, "state");
       // make it easy for this to be GC'd
       // but don't do property transitions
       var readableStreamController = $getByIdDirectPrivate(stream, "readableStreamController");
@@ -858,7 +975,7 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
         readableStreamController = undefined;
       }
 
-      if (!didThrow && streamState !== $streamClosed && streamState !== $streamErrored) {
+      if (stream && !didThrow && streamState !== $streamClosed && streamState !== $streamErrored) {
         $readableStreamCloseIfPossible(stream);
       }
       stream = undefined;
@@ -1099,6 +1216,7 @@ export function onCloseDirectStream(reason) {
 
 export function onFlushDirectStream() {
   var stream = this.$controlledReadableStream;
+  if (!stream) return;
   var reader = $getByIdDirectPrivate(stream, "reader");
   if (!reader || !$isReadableStreamDefaultReader(reader)) {
     return;
@@ -1932,7 +2050,6 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       throw $ERR_INVALID_STATE("Internal error: invalid result from pull. This is a bug in Bun. Please report it.");
     }
 
-    // eslint-disable-next-line no-unused-private-class-members
     #pull(controller) {
       var handle = $getByIdDirectPrivate(this, "stream");
 
@@ -1985,7 +2102,6 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       }
     }
 
-    // eslint-disable-next-line no-unused-private-class-members
     #cancel(reason) {
       var handle = $getByIdDirectPrivate(this, "stream");
       this.$data = undefined;

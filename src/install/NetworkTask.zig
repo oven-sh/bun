@@ -1,6 +1,6 @@
 unsafe_http_client: AsyncHTTP = undefined,
 response: bun.http.HTTPClientResult = .{},
-task_id: u64,
+task_id: Task.Id,
 url_buf: []const u8 = &[_]u8{},
 retried: u16 = 0,
 allocator: std.mem.Allocator,
@@ -24,7 +24,7 @@ next: ?*NetworkTask = null,
 pub const DedupeMapEntry = struct {
     is_required: bool,
 };
-pub const DedupeMap = std.HashMap(u64, DedupeMapEntry, IdentityContext(u64), 80);
+pub const DedupeMap = std.HashMap(Task.Id, DedupeMapEntry, IdentityContext(Task.Id), 80);
 
 pub fn notify(this: *NetworkTask, async_http: *AsyncHTTP, result: bun.http.HTTPClientResult) void {
     defer this.package_manager.wake();
@@ -92,9 +92,9 @@ pub fn forManifest(
             encoded_name = try std.mem.replaceOwned(u8, stack_fallback_allocator.get(), name, "/", "%2f");
         }
 
-        const tmp = bun.JSC.URL.join(
-            bun.String.fromUTF8(scope.url.href),
-            bun.String.fromUTF8(encoded_name),
+        const tmp = bun.jsc.URL.join(
+            bun.String.borrowUTF8(scope.url.href),
+            bun.String.borrowUTF8(encoded_name),
         );
         defer tmp.deref();
 
@@ -106,7 +106,7 @@ pub fn forManifest(
                     allocator,
                     "Failed to join registry {} and package {} URLs",
                     .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             } else {
                 this.package_manager.log.addWarningFmt(
                     null,
@@ -114,7 +114,7 @@ pub fn forManifest(
                     allocator,
                     "Failed to join registry {} and package {} URLs",
                     .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             }
             return error.InvalidURL;
         }
@@ -127,7 +127,7 @@ pub fn forManifest(
                     allocator,
                     "Registry URL must be http:// or https://\nReceived: \"{}\"",
                     .{tmp},
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             } else {
                 this.package_manager.log.addWarningFmt(
                     null,
@@ -135,7 +135,7 @@ pub fn forManifest(
                     allocator,
                     "Registry URL must be http:// or https://\nReceived: \"{}\"",
                     .{tmp},
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             }
             return error.InvalidURL;
         }
@@ -301,9 +301,17 @@ pub fn forTarball(
     }
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
+
+const install = @import("./install.zig");
+const ExtractTarball = install.ExtractTarball;
+const NetworkTask = install.NetworkTask;
+const Npm = install.Npm;
+const PackageManager = install.PackageManager;
+const PatchTask = install.PatchTask;
+const Task = install.Task;
 
 const bun = @import("bun");
 const GlobalStringBuilder = bun.StringBuilder;
@@ -313,7 +321,6 @@ const OOM = bun.OOM;
 const ThreadPool = bun.ThreadPool;
 const URL = bun.URL;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 
 const Fs = bun.fs;
@@ -322,11 +329,3 @@ const FileSystem = Fs.FileSystem;
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
 const HeaderBuilder = HTTP.HeaderBuilder;
-
-const install = @import("install.zig");
-const ExtractTarball = install.ExtractTarball;
-const NetworkTask = install.NetworkTask;
-const Npm = install.Npm;
-const PackageManager = install.PackageManager;
-const PatchTask = install.PatchTask;
-const Task = install.Task;

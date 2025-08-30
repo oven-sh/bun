@@ -209,7 +209,7 @@ pub fn enqueueGitForCheckout(
 
 pub fn enqueueParseNPMPackage(
     this: *PackageManager,
-    task_id: u64,
+    task_id: Task.Id,
     name: strings.StringOrTinyString,
     network_task: *NetworkTask,
 ) *ThreadPool.Task {
@@ -252,6 +252,9 @@ pub fn enqueuePackageForDownload(
     );
 
     if (task_queue.found_existing) return;
+
+    // Skip tarball download when prefetch_resolved_tarballs is disabled (e.g., --lockfile-only)
+    if (!this.options.do.prefetch_resolved_tarballs) return;
 
     const is_required = this.lockfile.buffers.dependencies.items[dependency_id].behavior.isRequired();
 
@@ -478,7 +481,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
 
         // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>" or
         // if it's a workspaceOnly dependency
-        if (!dependency.behavior.isWorkspaceOnly() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias)) {
+        if (!dependency.behavior.isWorkspace() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias)) {
             if (this.lockfile.overrides.get(name_hash)) |new| {
                 debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
 
@@ -652,7 +655,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                         const name_str = this.lockfile.str(&name);
                         const task_id = Task.Id.forManifest(name_str);
 
-                        if (comptime Environment.allow_assert) bun.assert(task_id != 0);
+                        if (comptime Environment.allow_assert) bun.assert(task_id.get() != 0);
 
                         if (comptime Environment.allow_assert)
                             debug(
@@ -924,7 +927,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                 \\
                 \\Searched in <b>{[search_path]}<r>
                 \\
-                \\Workspace documentation: https://bun.sh/docs/install/workspaces
+                \\Workspace documentation: https://bun.com/docs/install/workspaces
                 \\
             ;
             const link_not_found_fmt =
@@ -1132,7 +1135,7 @@ pub fn enqueueExtractNPMPackage(
 
 fn enqueueGitClone(
     this: *PackageManager,
-    task_id: u64,
+    task_id: Task.Id,
     name: string,
     repository: *const Repository,
     dep_id: DependencyID,
@@ -1182,7 +1185,7 @@ fn enqueueGitClone(
 
 pub fn enqueueGitCheckout(
     this: *PackageManager,
-    task_id: u64,
+    task_id: Task.Id,
     dir: bun.FileDescriptor,
     dependency_id: DependencyID,
     name: string,
@@ -1238,7 +1241,7 @@ pub fn enqueueGitCheckout(
 
 fn enqueueLocalTarball(
     this: *PackageManager,
-    task_id: u64,
+    task_id: Task.Id,
     dependency_id: DependencyID,
     name: string,
     path: string,
@@ -1382,6 +1385,11 @@ fn getOrPutResolvedPackageWithFindResult(
         .done => .{ .package = package, .is_first_time = true },
         // Do we need to download the tarball?
         .extract => extract: {
+            // Skip tarball download when prefetch_resolved_tarballs is disabled (e.g., --lockfile-only)
+            if (!this.options.do.prefetch_resolved_tarballs) {
+                break :extract .{ .package = package, .is_first_time = true };
+            }
+
             const task_id = Task.Id.forNPMPackage(this.lockfile.str(&name), package.resolution.value.npm.version);
             bun.debugAssert(!this.network_dedupe_map.contains(task_id));
 
@@ -1412,7 +1420,7 @@ fn getOrPutResolvedPackageWithFindResult(
                     .{
                         .pkg_id = package.meta.id,
                         .dependency_id = dependency_id,
-                        .url = this.allocator.dupe(u8, manifest.str(&find_result.package.tarball_url)) catch bun.outOfMemory(),
+                        .url = bun.handleOom(this.allocator.dupe(u8, manifest.str(&find_result.package.tarball_url))),
                     },
                 ),
             },
@@ -1641,6 +1649,12 @@ fn getOrPutResolvedPackage(
                         //     .auto,
                         // );
                     };
+
+                    // if (strings.eqlLong(strings.withoutTrailingSlash(folder_path_abs), strings.withoutTrailingSlash(FileSystem.instance.top_level_dir), true)) {
+                    //     successFn(this, dependency_id, 0);
+                    //     return .{ .package = this.lockfile.packages.get(0) };
+                    // }
+
                     break :res FolderResolution.getOrPut(.{ .relative = .folder }, version, folder_path_abs, this);
                 }
 
@@ -1656,7 +1670,7 @@ fn getOrPutResolvedPackage(
                     builder.count(name_slice);
                     builder.count(folder_path);
 
-                    builder.allocate() catch bun.outOfMemory();
+                    bun.handleOom(builder.allocate());
 
                     name_slice = this.lockfile.str(&name);
                     folder_path = this.lockfile.str(&version.value.folder);
@@ -1675,7 +1689,7 @@ fn getOrPutResolvedPackage(
                 }
 
                 // these are always new
-                package = this.lockfile.appendPackage(package) catch bun.outOfMemory();
+                package = bun.handleOom(this.lockfile.appendPackage(package));
 
                 break :res .{
                     .new_package_id = package.meta.id,
@@ -1720,7 +1734,7 @@ fn getOrPutResolvedPackage(
             }
         },
         .symlink => {
-            const res = FolderResolution.getOrPut(.{ .global = try this.globalLinkDirPath() }, version, this.lockfile.str(&version.value.symlink), this);
+            const res = FolderResolution.getOrPut(.{ .global = this.globalLinkDirPath() }, version, this.lockfile.str(&version.value.symlink), this);
 
             switch (res) {
                 .err => |err| return err,
@@ -1757,7 +1771,7 @@ fn resolutionSatisfiesDependency(this: *PackageManager, resolution: Resolution, 
     return false;
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
@@ -1767,7 +1781,6 @@ const Output = bun.Output;
 const Path = bun.path;
 const ThreadPool = bun.ThreadPool;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 
 const Semver = bun.Semver;

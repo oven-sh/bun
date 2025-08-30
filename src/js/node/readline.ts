@@ -28,6 +28,7 @@
 const EventEmitter = require("node:events");
 const { StringDecoder } = require("node:string_decoder");
 const { promisify } = require("internal/promisify");
+const { SafeStringIterator } = require("internal/primordials");
 
 const {
   validateFunction,
@@ -54,9 +55,7 @@ var debug = process.env.BUN_JS_DEBUG ? console.log : () => {};
 // ----------------------------------------------------------------------------
 
 const SymbolAsyncIterator = Symbol.asyncIterator;
-const SymbolIterator = Symbol.iterator;
 const SymbolFor = Symbol.for;
-const SymbolReplace = Symbol.replace;
 const ArrayFrom = Array.from;
 const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeSort = Array.prototype.sort;
@@ -71,7 +70,6 @@ const ArrayPrototypeReverse = Array.prototype.reverse;
 const ArrayPrototypeShift = Array.prototype.shift;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const RegExpPrototypeExec = RegExp.prototype.exec;
-const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
 const StringFromCharCode = String.fromCharCode;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeCodePointAt = String.prototype.codePointAt;
@@ -88,34 +86,9 @@ const MathCeil = Math.ceil;
 const MathFloor = Math.floor;
 const MathMax = Math.max;
 const DateNow = Date.now;
-const StringPrototype = String.prototype;
-const StringPrototypeSymbolIterator = StringPrototype[SymbolIterator];
-const StringIteratorPrototypeNext = StringPrototypeSymbolIterator.$call("").next;
-const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ObjectDefineProperties = Object.defineProperties;
 const ObjectFreeze = Object.freeze;
 const ObjectCreate = Object.create;
-
-var createSafeIterator = (factory, next) => {
-  class SafeIterator {
-    #iterator;
-    constructor(iterable) {
-      this.#iterator = factory.$call(iterable);
-    }
-    next() {
-      return next.$call(this.#iterator);
-    }
-    [SymbolIterator]() {
-      return this;
-    }
-  }
-  ObjectSetPrototypeOf(SafeIterator.prototype, null);
-  ObjectFreeze(SafeIterator.prototype);
-  ObjectFreeze(SafeIterator);
-  return SafeIterator;
-};
-
-var SafeStringIterator = createSafeIterator(StringPrototypeSymbolIterator, StringIteratorPrototypeNext);
 
 // ----------------------------------------------------------------------------
 // Section: "Internal" modules
@@ -130,23 +103,14 @@ var getStringWidth = function getStringWidth(str, removeControlChars = true) {
   return internalGetStringWidth(str);
 };
 
-// Regex used for ansi escape code splitting
-// Adopted from https://github.com/chalk/ansi-regex/blob/HEAD/index.js
-// License: MIT, authors: @sindresorhus, Qix-, arjunmehta and LitoMore
-// Matches all ansi escape code sequences in a string
-var ansiPattern =
-  "[\\u001B\\u009B][[\\]()#;?]*" +
-  "(?:(?:(?:(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]+)*" +
-  "|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)" +
-  "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-ntqry=><~]))";
-var ansi = new RegExp(ansiPattern, "g");
+const stripANSI = Bun.stripANSI;
 
 /**
  * Remove all VT control characters. Use to estimate displayed string width.
  */
 function stripVTControlCharacters(str) {
   validateString(str, "str");
-  return RegExpPrototypeSymbolReplace.$call(ansi, str, "");
+  return stripANSI(str);
 }
 
 // Constants
@@ -1237,15 +1201,15 @@ function InterfaceConstructor(input, output, completer, terminal) {
 
   input.resume();
 }
-InterfaceConstructor.prototype = {};
-
-ObjectSetPrototypeOf(InterfaceConstructor.prototype, EventEmitter.prototype);
-// ObjectSetPrototypeOf(InterfaceConstructor, EventEmitter);
+$toClass(InterfaceConstructor, "InterfaceConstructor", EventEmitter);
 
 var _Interface = class Interface extends InterfaceConstructor {
   // eslint-disable-next-line no-useless-constructor
   constructor(input, output, completer, terminal) {
     super(input, output, completer, terminal);
+  }
+  [Symbol.dispose]() {
+    this.close();
   }
   get columns() {
     var output = this.output;
@@ -2221,10 +2185,7 @@ function Interface(input, output, completer, terminal) {
     this._ttyWrite = _ttyWriteDumb.bind(this);
   }
 }
-Interface.prototype = {};
-
-ObjectSetPrototypeOf(Interface.prototype, _Interface.prototype);
-ObjectSetPrototypeOf(Interface, _Interface);
+$toClass(Interface, "Interface", _Interface);
 
 /**
  * Displays `query` by writing it to the `output`.
@@ -2543,6 +2504,7 @@ Interface.prototype._getDisplayPos = _Interface.prototype[kGetDisplayPos];
 Interface.prototype._getCursorPos = _Interface.prototype.getCursorPos;
 Interface.prototype._moveCursor = _Interface.prototype[kMoveCursor];
 Interface.prototype._ttyWrite = _Interface.prototype[kTtyWrite];
+Interface.prototype[Symbol.dispose] = _Interface.prototype[Symbol.dispose];
 
 function _ttyWriteDumb(s, key) {
   key = key || kEmptyObject;

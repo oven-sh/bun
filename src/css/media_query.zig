@@ -1,10 +1,5 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-
 pub const css = @import("./css_parser.zig");
 pub const Error = css.Error;
-const ArrayList = std.ArrayListUnmanaged;
 
 const Length = css.css_values.length.Length;
 const CSSNumber = css.css_values.number.CSSNumber;
@@ -52,7 +47,7 @@ pub const MediaList = struct {
                     return .{ .err = e };
                 },
             };
-            media_queries.append(input.allocator(), mq) catch bun.outOfMemory();
+            bun.handleOom(media_queries.append(input.allocator(), mq));
 
             if (input.next().asValue()) |tok| {
                 if (tok.* != .comma) {
@@ -964,7 +959,7 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                     return parseValueFirst(input);
                 },
             }
-            return Result(This).success;
+            return .success;
         }
 
         pub fn parseNameFirst(input: *css.Parser) Result(This) {
@@ -1496,7 +1491,7 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
             const final_name = if (is_webkit) name: {
                 // PERF: stack buffer here?
                 free_str = true;
-                break :name std.fmt.allocPrint(input.allocator(), "-webkit-{s}", .{name}) catch bun.outOfMemory();
+                break :name bun.handleOom(std.fmt.allocPrint(input.allocator(), "-webkit-{s}", .{name}));
             } else name;
 
             defer if (is_webkit) {
@@ -1572,3 +1567,9 @@ fn writeMinMax(
 
     return dest.writeChar(')');
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

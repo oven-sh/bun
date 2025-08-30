@@ -1037,6 +1037,11 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
                 res->writeMark();
             }
         }
+
+        // Prevent automatic Date header insertion when user provides one
+        if (header.key == WebCore::HTTPHeaderName::Date) {
+            data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
+        }
         writeResponseHeader<isSSL>(res, name, value);
     }
 
@@ -1088,9 +1093,7 @@ static void NodeHTTPServer__writeHead(
 
                 String key = entry.key();
                 String value = headerValue.toWTFString(globalObject);
-                if (scope.exception()) [[unlikely]] {
-                    return false;
-                }
+                RETURN_IF_EXCEPTION(scope, false);
 
                 writeResponseHeader<isSSL>(response, key, value);
 
@@ -1350,7 +1353,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFr
             const auto name = nameString->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             if (WTF::equalIgnoringASCIICase(name, "set-cookie"_s)) {
-                return fetchHeadersGetSetCookie(globalObject, vm, impl);
+                RELEASE_AND_RETURN(scope, fetchHeadersGetSetCookie(globalObject, vm, impl));
             }
 
             WebCore::ExceptionOr<String> res = impl->get(name);
@@ -1396,9 +1399,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
                 unsigned length = array->length();
                 if (length > 0) {
                     JSValue item = array->getIndex(globalObject, 0);
-                    if (scope.exception()) [[unlikely]]
-                        return JSValue::encode(jsUndefined());
-
+                    RETURN_IF_EXCEPTION(scope, {});
                     auto value = item.toWTFString(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
                     impl->set(name, value);
@@ -1406,8 +1407,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
                 }
                 for (unsigned i = 1; i < length; ++i) {
                     JSValue value = array->getIndex(globalObject, i);
-                    if (scope.exception()) [[unlikely]]
-                        return JSValue::encode(jsUndefined());
+                    RETURN_IF_EXCEPTION(scope, {});
                     auto string = value.toWTFString(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
                     impl->append(name, string);

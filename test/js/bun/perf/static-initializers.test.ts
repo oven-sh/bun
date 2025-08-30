@@ -64,6 +64,6 @@ describe("static initializers", () => {
     expect(
       bunInitializers.length,
       `Do not add static initializers to Bun. Static initializers are called when Bun starts up, regardless of whether you use the variables or not. This makes Bun slower.`,
-    ).toBe(process.arch == "arm64" ? 1 : 2);
+    ).toBe(process.arch === "arm64" ? 1 : 2);
   });
 });

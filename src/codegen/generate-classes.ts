@@ -406,10 +406,17 @@ function generatePrototype(typeName, obj) {
   var staticPrototypeValues = "";
 
   if (obj.construct) {
-    externs += `
+    if (obj.constructNeedsThis) {
+      externs += `
+extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${classSymbolName(typeName, "construct")}(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::EncodedJSValue);
+JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
+`;
+    } else {
+      externs += `
 extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${classSymbolName(typeName, "construct")}(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
 `;
+    }
   }
 
   if (obj.structuredClone) {
@@ -622,7 +629,8 @@ function generateConstructorImpl(typeName, obj: ClassDefinition) {
     externs += `extern JSC_CALLCONV size_t ${symbolName(typeName, "estimatedSize")}(void* ptr);` + "\n";
   }
 
-  return `
+  return (
+    `
 ${renderStaticDecls(classSymbolName, typeName, fields, obj.supportsObjectCreate || false)}
 ${hashTable}
 
@@ -635,14 +643,14 @@ void ${name}::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, ${protot
 }
 
 ${name}::${name}(JSC::VM& vm, JSC::Structure* structure) : Base(vm, structure, ${
-    obj.call ? classSymbolName(typeName, "call") : "call"
-  }, construct) {
+      obj.call ? classSymbolName(typeName, "call") : "call"
+    }, construct) {
 
   }
 
 ${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, ${prototypeName(
-    typeName,
-  )}* prototype) {
+      typeName,
+    )}* prototype) {
     ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure);
     ptr->finishCreation(vm, globalObject, prototype);
     return ptr;
@@ -653,6 +661,10 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::call(JSC::JSGlobalObject* 
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSC::VM &vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+${
+  !obj.constructNeedsThis
+    ? `
     void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame);
 
     if (!ptr || scope.exception()) [[unlikely]] {
@@ -661,6 +673,21 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::call(JSC::JSGlobalObject* 
 
     Structure* structure = globalObject->${className(typeName)}Structure();
     ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr);
+`
+    : `
+    Structure* structure = globalObject->${className(typeName)}Structure();
+    ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, nullptr);
+
+    void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame, JSValue::encode(instance));
+    if (scope.exception()) [[unlikely]] {
+      ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new ${typeName}() allocated memory without checking for exceptions.");
+      return JSValue::encode(JSC::jsUndefined());
+    }
+
+    instance->m_ctx = ptr;
+`
+}
+
     RETURN_IF_EXCEPTION(scope, {});
   ${
     obj.estimatedSize
@@ -688,13 +715,13 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
         getFunctionRealm(globalObject, newTarget)
       );
       RETURN_IF_EXCEPTION(scope, {});
-      structure = InternalFunction::createSubclassStructure(
-        globalObject,
-        newTarget,
-        functionGlobalObject->${className(typeName)}Structure()
-      );
+      structure = InternalFunction::createSubclassStructure(globalObject, newTarget, functionGlobalObject->${className(typeName)}Structure());
+      RETURN_IF_EXCEPTION(scope, {});
     }
-
+    
+` +
+    (!obj.constructNeedsThis
+      ? `
     void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame);
 
     if (scope.exception()) [[unlikely]] {
@@ -704,6 +731,19 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
 
     ASSERT_WITH_MESSAGE(ptr, "Incorrect exception handling: new ${typeName} returned a null pointer, indicating an exception - but did not throw an exception.");
     ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr);
+`
+      : `
+    ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, nullptr);
+
+    void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame, JSValue::encode(instance));
+    if (scope.exception()) [[unlikely]] {
+      ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new ${typeName}() allocated memory without checking for exceptions.");
+      return JSValue::encode(JSC::jsUndefined());
+    }
+
+    instance->m_ctx = ptr;
+    `) +
+    `
   ${
     obj.estimatedSize
       ? `
@@ -728,7 +768,8 @@ ${
 }
 
 
-      `;
+      `
+  );
 }
 
 function renderCachedFieldsHeader(typeName, klass, proto, values) {
@@ -1788,6 +1829,7 @@ function generateZig(
     proto = {},
     own = {},
     construct,
+    constructNeedsThis = false,
     finalize,
     noConstructor = false,
     overridesToJS = false,
@@ -1826,11 +1868,50 @@ function generateZig(
     ...proto,
   };
 
-  const externs = Object.entries({
+  const gc_fields = Object.entries({
     ...proto,
     ...Object.fromEntries((values || []).map(a => [a, { internal: true }])),
-  })
-    .filter(([name, { cache, internal }]) => (cache && typeof cache !== "string") || internal)
+  }).filter(([name, { cache, internal }]) => (cache && typeof cache !== "string") || internal);
+
+  const cached_values_string =
+    gc_fields.length > 0
+      ? `
+    pub const gc = enum (u8) {
+      ${gc_fields.map(([name]) => `${name},`).join("\n")}
+
+        pub fn get(comptime field: gc, thisValue: jsc.JSValue) ?jsc.JSValue {
+          const value = switch (field) {
+            ${gc_fields
+              .map(([name]) => `    .${name} => ${protoSymbolName(typeName, name)}GetCachedValue(thisValue),`)
+              .join("\n        ")}
+          };
+
+          if (value == .zero) {
+            return null;
+          }
+
+          return value;
+        }
+
+        pub fn clear(comptime field: gc, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject) void {
+          field.set(thisValue, globalObject, .zero);
+        }
+
+        pub fn set(comptime field: gc, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) void {
+          switch (field) {
+            ${gc_fields
+              .map(
+                ([name]) =>
+                  `    .${name} => ${protoSymbolName(typeName, name)}SetCachedValue(thisValue, globalObject, value),`,
+              )
+              .join("\n")}
+          }
+        }
+    };
+  `
+      : "";
+
+  const externs = gc_fields
     .map(
       ([name]) =>
         `extern fn ${protoSymbolName(typeName, name)}SetCachedValue(jsc.JSValue, *jsc.JSGlobalObject, jsc.JSValue) callconv(jsc.conv) void;
@@ -1913,7 +1994,21 @@ const JavaScriptCoreBindings = struct {
 
     if (construct && !noConstructor) {
       exports.set("construct", classSymbolName(typeName, "construct"));
-      output += `
+      if (constructNeedsThis) {
+        output += `
+        pub fn ${classSymbolName(typeName, "construct")}(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, thisValue: jsc.JSValue) callconv(jsc.conv) ?*anyopaque {
+          if (comptime Environment.enable_logs) log_zig_constructor("${typeName}", callFrame);
+          return @as(*${typeName}, ${typeName}.constructor(globalObject, callFrame, thisValue) catch |err| switch (err) {
+            error.JSError => return null,
+            error.OutOfMemory => {
+              globalObject.throwOutOfMemory() catch {};
+              return null;
+            },
+          });
+        }
+      `;
+      } else {
+        output += `
         pub fn ${classSymbolName(typeName, "construct")}(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) callconv(jsc.conv) ?*anyopaque {
           if (comptime Environment.enable_logs) log_zig_constructor("${typeName}", callFrame);
           return @as(*${typeName}, ${typeName}.constructor(globalObject, callFrame) catch |err| switch (err) {
@@ -1925,6 +2020,7 @@ const JavaScriptCoreBindings = struct {
           });
         }
       `;
+      }
     }
 
     if (call) {
@@ -2134,6 +2230,7 @@ pub const ${className(typeName)} = struct {
     }
 
     ${externs}
+    ${cached_values_string}
 
     ${
       !noConstructor
@@ -2398,7 +2495,7 @@ const jsc = bun.jsc;
 const Classes = jsc.GeneratedClassesList;
 const Environment = bun.Environment;
 const std = @import("std");
-const zig = bun.Output.scoped(.zig, true);
+const zig = bun.Output.scoped(.zig, .hidden);
 
 const wrapHostFunction = bun.gen_classes_lib.wrapHostFunction;
 const wrapMethod = bun.gen_classes_lib.wrapMethod;
@@ -2415,19 +2512,35 @@ pub const WriteBytesFn = *const fn(*anyopaque, ptr: [*]const u8, len: u32) callc
 `;
 
 const classes: ClassDefinition[] = [];
-for (const file of files) {
-  const result = require(path.resolve(file));
-  if (!(result?.default?.length ?? 0)) continue;
-  console.log("Found", result.default.length, "classes from", file);
-  for (let { name, proto = {}, klass = {} } of result.default) {
-    let protoProps = Object.keys(proto).length ? `${Object.keys(proto).length} fields` : "";
-    let klassProps = Object.keys(klass).length ? `${Object.keys(klass).length} class fields` : "";
-    let props = [protoProps, klassProps].filter(Boolean).join(", ");
-    if (props.length) props = ` (${props})`;
-    console.log(`  - ${name}` + props);
+{
+  let errors = [];
+  for (const file of files) {
+    const filepath = path.resolve(file);
+    const result = require(filepath);
+    if (!(result?.default?.length ?? 0)) {
+      errors.push(
+        new TypeError(
+          `Missing classes in "${path.relative(process.cwd(), filepath)}". Expected \`export default [ define(...) ] satisfies Array<ClassDefinition>\` but got ${Bun.inspect(result).slice(0, 100) + "..."} `,
+        ),
+      );
+      continue;
+    }
+
+    console.log("Found", result.default.length, "classes from", file);
+    for (let { name, proto = {}, klass = {} } of result.default) {
+      let protoProps = Object.keys(proto).length ? `${Object.keys(proto).length} fields` : "";
+      let klassProps = Object.keys(klass).length ? `${Object.keys(klass).length} class fields` : "";
+      let props = [protoProps, klassProps].filter(Boolean).join(", ");
+      if (props.length) props = ` (${props})`;
+      console.log(`  - ${name}` + props);
+    }
+
+    classes.push(...result.default);
   }
 
-  classes.push(...result.default);
+  if (errors.length) {
+    throw new AggregateError(errors, "Failed to generate classes");
+  }
 }
 classes.sort((a, b) => (a.name < b.name ? -1 : 1));
 
@@ -2454,10 +2567,13 @@ class StructuredCloneableSerialize {
     CppStructuredCloneableSerializeFunction cppWriteBytes;
     ZigStructuredCloneableSerializeFunction zigFunction;
 
-    uint8_t tag;
+    uint8_t tag = 0;
 
     // the type from zig
-    void* impl;
+    void* impl = nullptr;
+
+    bool isForTransfer = false;
+    bool isForStorage = false;
 
     static std::optional<StructuredCloneableSerialize> fromJS(JSC::JSValue);
     void write(CloneSerializer* serializer, JSC::JSGlobalObject* globalObject)
@@ -2488,7 +2604,7 @@ function writeCppSerializers() {
       return StructuredCloneableSerialize { .cppWriteBytes = SerializedScriptValue::writeBytesForBun, .zigFunction = ${symbolName(
         klass.name,
         "onStructuredCloneSerialize",
-      )}, .tag = ${klass.structuredClone.tag}, .impl = result->wrapped() };
+      )}, .tag = ${klass.structuredClone.tag}, .impl = result->wrapped(), .isForTransfer = ${!!klass.structuredClone.transferable}, .isForStorage = ${!!klass.structuredClone.storable} };
     }
     `;
   }
@@ -2547,7 +2663,7 @@ fn log_zig_getter(typename: []const u8, property_name: []const u8) callconv(bun.
 
 fn log_zig_setter(typename: []const u8, property_name: []const u8, value: jsc.JSValue) callconv(bun.callconv_inline) void {
   if (comptime Environment.enable_logs) {
-    zig("<r><blue>set<r> {s}<d>.<r>{s} = {}", .{typename, property_name, value});
+    zig("<r><blue>set<r> {s}<d>.<r>{s} = {?s}", .{typename, property_name, bun.tagName(jsc.JSValue, value)});
   }
 }
 

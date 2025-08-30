@@ -19,7 +19,7 @@ describe("spawn stdin ReadableStream integration", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     console.log(text); // "some data from a stream"
     expect(text).toBe("some data from a stream");
   });
@@ -56,7 +56,7 @@ describe("spawn stdin ReadableStream integration", () => {
       stdout: "pipe",
       env: bunEnv,
     });
-    const output = await new Response(proc.stdout).text();
+    const output = await proc.stdout.text();
     expect(parseInt(output.trim())).toBe(3);
   });
 
@@ -89,7 +89,7 @@ describe("spawn stdin ReadableStream integration", () => {
       env: bunEnv,
     });
 
-    const result = await new Response(proc.stdout).text();
+    const result = await proc.stdout.text();
     expect(result).toBe("HELLO WORLD\nFOO BAR");
   });
 
@@ -119,7 +119,7 @@ describe("spawn stdin ReadableStream integration", () => {
       env: bunEnv,
     });
 
-    const result = await new Response(proc.stdout).text();
+    const result = await proc.stdout.text();
     const lines = result.trim().split("\n");
     expect(lines.length).toBe(numChunks);
     expect(lines[0]).toStartWith("Chunk 0:");
@@ -171,7 +171,7 @@ describe("spawn stdin ReadableStream integration", () => {
       env: bunEnv,
     });
 
-    const avgStr = await new Response(proc.stdout).text();
+    const avgStr = await proc.stdout.text();
     const avg = parseFloat(avgStr.trim());
 
     // Average should be between 0 and 100

@@ -193,7 +193,7 @@ pub fn addUrlForCss(
             const encode_len = bun.base64.encodeLen(contents);
             const data_url_prefix_len = "data:".len + mime_type.len + ";base64,".len;
             const total_buffer_len = data_url_prefix_len + encode_len;
-            var encoded = allocator.alloc(u8, total_buffer_len) catch bun.outOfMemory();
+            var encoded = bun.handleOom(allocator.alloc(u8, total_buffer_len));
             _ = std.fmt.bufPrint(encoded[0..data_url_prefix_len], "data:{s};base64,", .{mime_type}) catch unreachable;
             const len = bun.base64.encode(encoded[data_url_prefix_len..], contents);
             break :url_for_css encoded[0 .. data_url_prefix_len + len];
@@ -201,18 +201,24 @@ pub fn addUrlForCss(
     }
 }
 
-// @sortImports
+pub const CommonJSNamedExports = Ast.CommonJSNamedExports;
+pub const ConstValuesMap = Ast.ConstValuesMap;
+pub const NamedExports = Ast.NamedExports;
+pub const NamedImports = Ast.NamedImports;
+pub const TopLevelSymbolToParts = Ast.TopLevelSymbolToParts;
+
+const string = []const u8;
 
 const std = @import("std");
 
 const bun = @import("bun");
 const ImportRecord = bun.ImportRecord;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 const MimeType = bun.http.MimeType;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
+const Ast = js_ast.Ast;
 const BundledAst = js_ast.BundledAst;
 const CharFreq = js_ast.CharFreq;
 const ExportsKind = js_ast.ExportsKind;
@@ -222,10 +228,3 @@ const Scope = js_ast.Scope;
 const SlotCounts = js_ast.SlotCounts;
 const Symbol = js_ast.Symbol;
 const TlaCheck = js_ast.TlaCheck;
-
-const Ast = js_ast.Ast;
-pub const CommonJSNamedExports = Ast.CommonJSNamedExports;
-pub const ConstValuesMap = Ast.ConstValuesMap;
-pub const NamedExports = Ast.NamedExports;
-pub const NamedImports = Ast.NamedImports;
-pub const TopLevelSymbolToParts = Ast.TopLevelSymbolToParts;

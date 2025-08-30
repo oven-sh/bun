@@ -1,11 +1,14 @@
 import { $, which } from "bun";
 
-const cat = which("cat");
+const cmd = which("true");
 
 const promises = [];
-for (let j = 0; j < 500; j++) {
+
+const upperCount = process.platform === "darwin" ? 100 : 300;
+
+for (let j = 0; j < upperCount; j++) {
   for (let i = 0; i < 100; i++) {
-    promises.push($`${cat} ${import.meta.path}`.text().then(() => {}));
+    promises.push($`${cmd}`.text().then(() => {}));
   }
   if (j % 10 === 0) {
     await Promise.all(promises);

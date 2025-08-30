@@ -4,9 +4,9 @@ This is the Bun repository - an all-in-one JavaScript runtime & toolkit designed
 
 ### Build Commands
 
-- **Build debug version**: `bun bd` or `bun run build:debug`
+- **Build debug version**: `bun bd`
   - Creates a debug build at `./build/debug/bun-debug`
-  - Compilation takes ~2.5 minutes
+  - **CRITICAL**: DO NOT set a build timeout. Compilation takes ~5 minutes. Be patient.
 - **Run tests with your debug build**: `bun bd test <test-file>`
   - **CRITICAL**: Never use `bun test` directly - it won't include your changes
 - **Run any command with debug build**: `bun bd <command>`
@@ -43,7 +43,12 @@ Tests use Bun's Jest-compatible test runner with proper test fixtures:
 
 ```typescript
 import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  normalizeBunSnapshot,
+  tempDirWithFiles,
+} from "harness";
 
 test("my feature", async () => {
   // Create temp directory with test files
@@ -56,18 +61,24 @@ test("my feature", async () => {
     cmd: [bunExe(), "index.js"],
     env: bunEnv,
     cwd: dir,
+    stderr: "pipe",
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
+    proc.stdout.text(),
+    proc.stderr.text(),
     proc.exited,
   ]);
 
   expect(exitCode).toBe(0);
-  expect(stdout).toBe("hello\n");
+  // Prefer snapshot tests over expect(stdout).toBe("hello\n");
+  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`"hello"`);
 });
 ```
+
+- Always use `port: 0`. Do not hardcode ports. Do not use your own random port number function.
+- Use `normalizeBunSnapshot` to normalize snapshot output of the test.
+- NEVER write tests that check for no "panic" or "uncaught exception" or similar in the test output. That is NOT a valid test.
 
 ## Code Architecture
 
@@ -133,7 +144,6 @@ test("my feature", async () => {
 When implementing JavaScript classes in C++:
 
 1. Create three classes if there's a public constructor:
-
    - `class Foo : public JSC::JSDestructibleObject` (if has C++ fields)
    - `class FooPrototype : public JSC::JSNonFinalObject`
    - `class FooConstructor : public JSC::InternalFunction`
@@ -193,7 +203,6 @@ Built-in JavaScript modules use special syntax and are organized as:
    ```
 
 3. **Debug helpers**:
-
    - `$debug()` - Like console.log but stripped in release builds
    - `$assert()` - Assertions stripped in release builds
    - `if($debug) {}` - Check if debug env var is set
@@ -221,15 +230,17 @@ bun ci
 ## Important Development Notes
 
 1. **Never use `bun test` or `bun <file>` directly** - always use `bun bd test` or `bun bd <command>`. `bun bd` compiles & runs the debug build.
-2. **Use `await using`** for proper resource cleanup with Bun APIs (Bun.spawn, Bun.serve, Bun.connect, etc.)
-3. **Follow existing code style** - check neighboring files for patterns
-4. **Create regression tests** in `test/regression/issue/` when fixing bugs
-5. **Use absolute paths** - Always use absolute paths in file operations
-6. **Avoid shell commands** - Don't use `find` or `grep` in tests; use Bun's Glob and built-in tools
-7. **Memory management** - In Zig code, be careful with allocators and use defer for cleanup
-8. **Cross-platform** - Test on macOS, Linux, and Windows when making platform-specific changes
-9. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<scope>=1` to enable specific scopes
-10. **Transpiled source** - Find transpiled files in `/tmp/bun-debug-src/` for debugging
+2. **All changes must be tested** - if you're not testing your changes, you're not done.
+3. **Get your tests to pass**. If you didn't run the tests, your code does not work.
+4. **Follow existing code style** - check neighboring files for patterns
+5. **Create tests in the right folder** in `test/` and the test must end in `.test.ts` or `.test.tsx`
+6. **Use absolute paths** - Always use absolute paths in file operations
+7. **Avoid shell commands** - Don't use `find` or `grep` in tests; use Bun's Glob and built-in tools
+8. **Memory management** - In Zig code, be careful with allocators and use defer for cleanup
+9. **Cross-platform** - Run `bun run zig:check-all` to compile the Zig code on all platforms when making platform-specific changes
+10. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<scope>=1` to enable specific scopes
+11. **Be humble & honest** - NEVER overstate what you got done or what actually works in commits, PRs or in messages to the user.
+12. **Branch names must start with `claude/`** - This is a requirement for the CI to work.
 
 ## Key APIs and Features
 

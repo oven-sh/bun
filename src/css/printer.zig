@@ -1,17 +1,9 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-
 pub const css = @import("./css_parser.zig");
 pub const css_values = @import("./values/values.zig");
 const DashedIdent = css_values.ident.DashedIdent;
 pub const Error = css.Error;
 const Location = css.Location;
 const PrintErr = css.PrintErr;
-
-const ArrayList = std.ArrayListUnmanaged;
-
-const sourcemap = @import("./sourcemap.zig");
 
 /// Options that control how CSS is serialized to a string.
 pub const PrinterOptions = struct {
@@ -131,7 +123,7 @@ pub fn Printer(comptime Writer: type) type {
         error_kind: ?css.PrinterError = null,
         import_info: ?ImportInfo = null,
         public_path: []const u8,
-        symbols: *const bun.JSAst.Symbol.Map,
+        symbols: *const bun.ast.Symbol.Map,
         local_names: ?*const css.LocalsResultsMap = null,
         /// NOTE This should be the same mimalloc heap arena allocator
         allocator: Allocator,
@@ -249,7 +241,7 @@ pub fn Printer(comptime Writer: type) type {
             options: PrinterOptions,
             import_info: ?ImportInfo,
             local_names: ?*const css.LocalsResultsMap,
-            symbols: *const bun.JSAst.Symbol.Map,
+            symbols: *const bun.ast.Symbol.Map,
         ) This {
             return .{
                 .sources = null,
@@ -360,13 +352,13 @@ pub fn Printer(comptime Writer: type) type {
         pub fn writeFmt(this: *This, comptime fmt: []const u8, args: anytype) PrintErr!void {
             // assuming the writer comes from an ArrayList
             const start: usize = getWrittenAmt(this.dest);
-            this.dest.print(fmt, args) catch bun.outOfMemory();
+            bun.handleOom(this.dest.print(fmt, args));
             const written = getWrittenAmt(this.dest) - start;
             this.col += @intCast(written);
         }
 
         fn replaceDots(allocator: Allocator, s: []const u8) []const u8 {
-            var str = allocator.dupe(u8, s) catch bun.outOfMemory();
+            var str = bun.handleOom(allocator.dupe(u8, s));
             std.mem.replaceScalar(u8, str[0..], '.', '-');
             return str;
         }
@@ -582,3 +574,10 @@ pub fn Printer(comptime Writer: type) type {
         }
     };
 }
+
+const bun = @import("bun");
+const sourcemap = @import("./sourcemap.zig");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

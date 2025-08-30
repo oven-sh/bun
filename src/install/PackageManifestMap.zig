@@ -50,7 +50,7 @@ pub fn byNameHashAllowExpired(
         };
     }
 
-    const entry = this.hash_map.getOrPut(bun.default_allocator, name_hash) catch bun.outOfMemory();
+    const entry = bun.handleOom(this.hash_map.getOrPut(bun.default_allocator, name_hash));
     if (entry.found_existing) {
         if (entry.value_ptr.* == .manifest) {
             return &entry.value_ptr.manifest;
@@ -93,19 +93,18 @@ pub fn byNameHashAllowExpired(
     return null;
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
-const bun = @import("bun");
-const IdentityContext = bun.IdentityContext;
-const string = bun.string;
-
-const Semver = bun.Semver;
-const String = Semver.String;
-
-const install = @import("install.zig");
+const install = @import("./install.zig");
 const Npm = install.Npm;
 const PackageManager = install.PackageManager;
 const PackageManifestMap = install.PackageManifestMap;
 const PackageNameHash = install.PackageNameHash;
+
+const bun = @import("bun");
+const IdentityContext = bun.IdentityContext;
+
+const Semver = bun.Semver;
+const String = Semver.String;

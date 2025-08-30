@@ -1,18 +1,6 @@
-const std = @import("std");
-const Api = @import("./api/schema.zig").Api;
-const resolve_path = @import("./resolver/resolve_path.zig");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
-const JSC = bun.JSC;
-
 // This is close to WHATWG URL, but we don't want the validation errors
 pub const URL = struct {
-    const log = Output.scoped(.URL, false);
+    const log = Output.scoped(.URL, .visible);
 
     hash: string = "",
     /// hostname, but with a port
@@ -52,11 +40,11 @@ pub const URL = struct {
     }
 
     pub fn isBlob(this: *const URL) bool {
-        return this.href.len == JSC.WebCore.ObjectURLRegistry.specifier_len and strings.hasPrefixComptime(this.href, "blob:");
+        return this.href.len == jsc.WebCore.ObjectURLRegistry.specifier_len and strings.hasPrefixComptime(this.href, "blob:");
     }
 
-    pub fn fromJS(js_value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator) !URL {
-        var href = JSC.URL.hrefFromJS(globalObject, js_value);
+    pub fn fromJS(js_value: jsc.JSValue, globalObject: *jsc.JSGlobalObject, allocator: std.mem.Allocator) !URL {
+        var href = jsc.URL.hrefFromJS(globalObject, js_value);
         if (href.tag == .Dead) {
             return error.InvalidURL;
         }
@@ -65,7 +53,7 @@ pub const URL = struct {
     }
 
     pub fn fromString(allocator: std.mem.Allocator, input: bun.String) !URL {
-        var href = JSC.URL.hrefFromString(input);
+        var href = jsc.URL.hrefFromString(input);
         if (href.tag == .Dead) {
             return error.InvalidURL;
         }
@@ -75,7 +63,7 @@ pub const URL = struct {
     }
 
     pub fn fromUTF8(allocator: std.mem.Allocator, input: []const u8) !URL {
-        return fromString(allocator, bun.String.fromUTF8(input));
+        return fromString(allocator, bun.String.borrowUTF8(input));
     }
 
     pub fn isLocalhost(this: *const URL) bool {
@@ -568,7 +556,7 @@ pub const QueryStringMap = struct {
         }
     };
 
-    pub fn str(this: *const QueryStringMap, ptr: Api.StringPointer) string {
+    pub fn str(this: *const QueryStringMap, ptr: api.StringPointer) string {
         return this.slice[ptr.offset .. ptr.offset + ptr.length];
     }
 
@@ -609,9 +597,9 @@ pub const QueryStringMap = struct {
     }
 
     pub const Param = struct {
-        name: Api.StringPointer,
+        name: api.StringPointer,
         name_hash: u64,
-        value: Api.StringPointer,
+        value: api.StringPointer,
 
         pub const List = std.MultiArrayList(Param);
     };
@@ -887,7 +875,7 @@ pub const PercentEncoding = struct {
 pub const FormData = struct {
     fields: Map,
     buffer: []const u8,
-    const log = Output.scoped(.FormData, false);
+    const log = Output.scoped(.FormData, .visible);
 
     pub const Map = std.ArrayHashMapUnmanaged(
         bun.Semver.String,
@@ -937,10 +925,10 @@ pub const FormData = struct {
             this.allocator.destroy(this);
         }
 
-        pub fn toJS(this: *AsyncFormData, global: *JSC.JSGlobalObject, data: []const u8, promise: JSC.AnyPromise) void {
+        pub fn toJS(this: *AsyncFormData, global: *jsc.JSGlobalObject, data: []const u8, promise: jsc.AnyPromise) void {
             if (this.encoding == .Multipart and this.encoding.Multipart.len == 0) {
                 log("AsnycFormData.toJS -> promise.reject missing boundary", .{});
-                promise.reject(global, JSC.ZigString.init("FormData missing boundary").toErrorInstance(global));
+                promise.reject(global, jsc.ZigString.init("FormData missing boundary").toErrorInstance(global));
                 return;
             }
 
@@ -986,27 +974,27 @@ pub const FormData = struct {
         };
 
         pub const External = extern struct {
-            name: JSC.ZigString,
-            value: JSC.ZigString,
-            blob: ?*JSC.WebCore.Blob = null,
+            name: jsc.ZigString,
+            value: jsc.ZigString,
+            blob: ?*jsc.WebCore.Blob = null,
         };
     };
 
-    pub fn toJS(globalThis: *JSC.JSGlobalObject, input: []const u8, encoding: Encoding) !JSC.JSValue {
+    pub fn toJS(globalThis: *jsc.JSGlobalObject, input: []const u8, encoding: Encoding) !jsc.JSValue {
         switch (encoding) {
             .URLEncoded => {
-                var str = JSC.ZigString.fromUTF8(strings.withoutUTF8BOM(input));
-                return JSC.DOMFormData.createFromURLQuery(globalThis, &str);
+                var str = jsc.ZigString.fromUTF8(strings.withoutUTF8BOM(input));
+                return jsc.DOMFormData.createFromURLQuery(globalThis, &str);
             },
             .Multipart => |boundary| return toJSFromMultipartData(globalThis, input, boundary),
         }
     }
 
     pub fn fromMultipartData(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        JSC.markBinding(@src());
+        globalThis: *jsc.JSGlobalObject,
+        callframe: *jsc.CallFrame,
+    ) bun.JSError!jsc.JSValue {
+        jsc.markBinding(@src());
 
         const args_ = callframe.arguments_old(2);
 
@@ -1014,7 +1002,7 @@ pub const FormData = struct {
 
         const input_value = args[0];
         const boundary_value = args[1];
-        var boundary_slice = JSC.ZigString.Slice.empty;
+        var boundary_slice = jsc.ZigString.Slice.empty;
         defer boundary_slice.deinit();
 
         var encoding = Encoding{
@@ -1038,7 +1026,7 @@ pub const FormData = struct {
                 return globalThis.throwInvalidArguments("boundary must be a string or ArrayBufferView", .{});
             }
         }
-        var input_slice = JSC.ZigString.Slice{};
+        var input_slice = jsc.ZigString.Slice{};
         defer input_slice.deinit();
         var input: []const u8 = "";
 
@@ -1047,7 +1035,7 @@ pub const FormData = struct {
         } else if (input_value.isString()) {
             input_slice = try input_value.toSliceOrNull(globalThis);
             input = input_slice.slice();
-        } else if (input_value.as(JSC.WebCore.Blob)) |blob| {
+        } else if (input_value.as(jsc.WebCore.Blob)) |blob| {
             input = blob.sharedView();
         } else {
             return globalThis.throwInvalidArguments("input must be a string or ArrayBufferView", .{});
@@ -1057,35 +1045,35 @@ pub const FormData = struct {
     }
 
     comptime {
-        const jsFunctionFromMultipartData = JSC.toJSHostFn(fromMultipartData);
+        const jsFunctionFromMultipartData = jsc.toJSHostFn(fromMultipartData);
         @export(&jsFunctionFromMultipartData, .{ .name = "FormData__jsFunctionFromMultipartData" });
     }
 
     pub fn toJSFromMultipartData(
-        globalThis: *JSC.JSGlobalObject,
+        globalThis: *jsc.JSGlobalObject,
         input: []const u8,
         boundary: []const u8,
-    ) !JSC.JSValue {
-        const form_data_value = JSC.DOMFormData.create(globalThis);
+    ) !jsc.JSValue {
+        const form_data_value = jsc.DOMFormData.create(globalThis);
         form_data_value.ensureStillAlive();
-        const form = JSC.DOMFormData.fromJS(form_data_value) orelse {
+        const form = jsc.DOMFormData.fromJS(form_data_value) orelse {
             log("failed to create DOMFormData.fromJS", .{});
             return error.@"failed to parse multipart data";
         };
         const Wrapper = struct {
-            globalThis: *JSC.JSGlobalObject,
-            form: *JSC.DOMFormData,
+            globalThis: *jsc.JSGlobalObject,
+            form: *jsc.DOMFormData,
 
             pub fn onEntry(wrap: *@This(), name: bun.Semver.String, field: Field, buf: []const u8) void {
                 const value_str = field.value.slice(buf);
-                var key = JSC.ZigString.initUTF8(name.slice(buf));
+                var key = jsc.ZigString.initUTF8(name.slice(buf));
 
                 if (field.is_file) {
                     const filename_str = field.filename.slice(buf);
 
-                    var blob = JSC.WebCore.Blob.create(value_str, bun.default_allocator, wrap.globalThis, false);
+                    var blob = jsc.WebCore.Blob.create(value_str, bun.default_allocator, wrap.globalThis, false);
                     defer blob.detach();
-                    var filename = JSC.ZigString.initUTF8(filename_str);
+                    var filename = jsc.ZigString.initUTF8(filename_str);
                     const content_type: []const u8 = brk: {
                         if (!field.content_type.isEmpty()) {
                             break :brk field.content_type.slice(buf);
@@ -1120,7 +1108,7 @@ pub const FormData = struct {
 
                     wrap.form.appendBlob(wrap.globalThis, &key, &blob, &filename);
                 } else {
-                    var value = JSC.ZigString.initUTF8(
+                    var value = jsc.ZigString.initUTF8(
                         // > Each part whose `Content-Disposition` header does not
                         // > contain a `filename` parameter must be parsed into an
                         // > entry whose value is the UTF-8 decoded without BOM
@@ -1276,7 +1264,6 @@ pub const FormData = struct {
     }
 };
 
-const ParamsList = @import("./router.zig").Param.List;
 pub const CombinedScanner = struct {
     query: Scanner,
     pathname: PathnameScanner,
@@ -1297,25 +1284,25 @@ pub const CombinedScanner = struct {
     }
 };
 
-fn stringPointerFromStrings(parent: string, in: string) Api.StringPointer {
-    if (in.len == 0 or parent.len == 0) return Api.StringPointer{};
+fn stringPointerFromStrings(parent: string, in: string) api.StringPointer {
+    if (in.len == 0 or parent.len == 0) return api.StringPointer{};
 
     if (bun.rangeOfSliceInBuffer(in, parent)) |range| {
-        return Api.StringPointer{ .offset = range[0], .length = range[1] };
+        return api.StringPointer{ .offset = range[0], .length = range[1] };
     } else {
         if (strings.indexOf(parent, in)) |i| {
             if (comptime Environment.allow_assert) {
                 bun.assert(strings.eqlLong(parent[i..][0..in.len], in, false));
             }
 
-            return Api.StringPointer{
+            return api.StringPointer{
                 .offset = @as(u32, @truncate(i)),
                 .length = @as(u32, @truncate(in.len)),
             };
         }
     }
 
-    return Api.StringPointer{};
+    return api.StringPointer{};
 }
 
 pub const PathnameScanner = struct {
@@ -1379,8 +1366,8 @@ pub const Scanner = struct {
     pub const Result = struct {
         name_needs_decoding: bool = false,
         value_needs_decoding: bool = false,
-        name: Api.StringPointer,
-        value: Api.StringPointer,
+        name: api.StringPointer,
+        value: api.StringPointer,
 
         pub inline fn rawName(this: *const Result, query_string: string) string {
             return if (this.name.length > 0) query_string[this.name.offset..][0..this.name.length] else "";
@@ -1403,8 +1390,8 @@ pub const Scanner = struct {
 
             const slice = this.query_string[this.i..];
             relative_i = 0;
-            var name = Api.StringPointer{ .offset = @as(u32, @truncate(this.i)), .length = 0 };
-            var value = Api.StringPointer{ .offset = 0, .length = 0 };
+            var name = api.StringPointer{ .offset = @as(u32, @truncate(this.i)), .length = 0 };
+            var value = api.StringPointer{ .offset = 0, .length = 0 };
             var name_needs_decoding = false;
 
             while (relative_i < slice.len) {
@@ -1463,4 +1450,17 @@ pub const Scanner = struct {
     }
 };
 
+const string = []const u8;
+
+const resolve_path = @import("./resolver/resolve_path.zig");
+const std = @import("std");
+const ParamsList = @import("./router.zig").Param.List;
 const expect = std.testing.expect;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
+const strings = bun.strings;
+const api = bun.schema.api;

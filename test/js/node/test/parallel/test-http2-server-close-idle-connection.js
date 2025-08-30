@@ -28,7 +28,7 @@ server.on('session', common.mustCall((session) => {
 // Start the server
 server.listen(0, common.mustCall(() => {
   // Create client and initial request
-  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  const client = http2.connect(`http://localhost:${server.address().port}`);
 
   // This will ensure that server closed the idle connection
   client.on('close', common.mustCall());

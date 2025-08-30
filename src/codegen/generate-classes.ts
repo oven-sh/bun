@@ -1142,7 +1142,10 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
         }
       }
       rows.push(writeBarrier(symbolName, typeName, name, cacheName));
-    } else if (("getter" in proto[name] || ("accessor" in proto[name] && proto[name].getter)) && !name.startsWith("@@")) {
+    } else if (
+      ("getter" in proto[name] || ("accessor" in proto[name] && proto[name].getter)) &&
+      !name.startsWith("@@")
+    ) {
       if (!supportsObjectCreate) {
         rows.push(`
 JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, PropertyName attributeName))
@@ -1394,8 +1397,12 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
                 [](auto& spaces) { return spaces.${clientSubspaceFor(typeName)}.get(); },
                 [](auto& spaces, auto&& space) { spaces.${clientSubspaceFor(typeName)} = std::forward<decltype(space)>(space); },
                 [](auto& spaces) { return spaces.${subspaceFor(typeName)}.get(); },
-                [](auto& spaces, auto&& space) { spaces.${subspaceFor(typeName)} = std::forward<decltype(space)>(space); }${obj.inheritsFromError ? `,
-                [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeFor${name}; }` : ""});
+                [](auto& spaces, auto&& space) { spaces.${subspaceFor(typeName)} = std::forward<decltype(space)>(space); }${
+                  obj.inheritsFromError
+                    ? `,
+                [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeFor${name}; }`
+                    : ""
+                });
         }
 
         static void destroy(JSC::JSCell*);

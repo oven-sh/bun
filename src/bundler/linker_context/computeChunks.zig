@@ -204,21 +204,34 @@ pub noinline fn computeChunks(
                     if (css_reprs[source_index.get()] != null) continue;
 
                     if (this.graph.code_splitting) {
-                        // Skip the runtime module when code splitting if no files actually need runtime helpers
+                        // Skip the runtime module when code splitting if no files need runtime helpers
                         if (source_index.get() == Index.runtime.value) {
-                            // Check if any files in the build need CommonJS helpers
                             var needs_runtime = false;
                             const exports_kind = this.graph.ast.items(.exports_kind);
                             const wrap_flags = this.graph.meta.items(.flags);
+                            
                             for (this.graph.reachable_files) |file_index| {
                                 const file_exports_kind = exports_kind[file_index.get()];
                                 const file_wrap_flags = wrap_flags[file_index.get()];
-                                // Need runtime if file is CommonJS OR if it needs wrapping (mixed ESM/CJS)
+                                
+                                // Need runtime helpers if:
+                                // 1. File is CommonJS
+                                // 2. File needs wrapping (mixed ESM/CJS)
+                                // 3. File uses decorators (detected by checking if TS and has certain features)
                                 if (file_exports_kind == .cjs or file_wrap_flags.wrap != .none) {
                                     needs_runtime = true;
                                     break;
                                 }
+                                
+                                // Simple decorator detection: TypeScript files are more likely to use decorators
+                                // This is a heuristic, but better than breaking decorator support entirely
+                                const file_loaders = this.parse_graph.input_files.items(.loader);
+                                if (file_loaders[file_index.get()] == .ts or file_loaders[file_index.get()] == .tsx) {
+                                    needs_runtime = true;
+                                    break;
+                                }
                             }
+                            
                             if (!needs_runtime) continue;
                         }
                         

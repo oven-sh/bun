@@ -144,31 +144,31 @@ pub const TestRunner = struct {
 
     pub fn matchesLineFilter(this: *const TestRunner, file_path: []const u8, line_number: u32, parent: ?*DescribeScope) bool {
         if (this.line_filters.count() == 0) return true;
-        
+
         // Iterate through all line filters to find matches
         var iter = this.line_filters.iterator();
         while (iter.next()) |entry| {
             const filter_file = entry.key_ptr.*;
             const lines = &entry.value_ptr.*;
-            
+
             // Normalize the filter file by removing ./ prefix if it exists
             const normalized_filter = if (bun.strings.startsWith(filter_file, "./"))
                 filter_file[2..]
             else
                 filter_file;
-                
+
             // Check if the file path ends with the normalized filter file
             if (!bun.strings.endsWith(file_path, normalized_filter)) {
                 continue;
             }
-            
+
             // Check if any of the specified lines match
             for (lines.items) |filter_line| {
                 // If the test is directly on the specified line, it matches
                 if (line_number == filter_line) {
                     return true;
                 }
-                
+
                 // Check if the test is within a describe block that starts at the specified line
                 var current_parent = parent;
                 while (current_parent) |p| {
@@ -181,7 +181,7 @@ pub const TestRunner = struct {
                 }
             }
         }
-        
+
         return false;
     }
 
@@ -2049,7 +2049,7 @@ inline fn createScope(
                     tag_to_use = .skipped_because_label;
                 }
             }
-            
+
             // Apply line-based filtering
             if (runner.line_filters.count() > 0) {
                 const current_file = runner.files.items(.source)[parent.file_id].path.text;
@@ -2434,7 +2434,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                         tag_to_use = .skipped_because_label;
                     }
                 }
-                
+
                 // Apply line-based filtering
                 if (Jest.runner.?.line_filters.count() > 0) {
                     const current_file = Jest.runner.?.files.items(.source)[parent.file_id].path.text;

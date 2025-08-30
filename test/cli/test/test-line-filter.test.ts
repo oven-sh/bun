@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
-import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles, tmpdirSync } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -44,12 +44,12 @@ test("test 2 - SHOULD run", () => {
 test("test 3 - should NOT run", () => {
   console.log("❌ Test 3 ran");
   expect(3).toBe(3);
-});`
+});`,
     );
 
     // Target line 8 which contains "test 2"
     const { stdout, stderr, exitCode } = runTestWithOutput([`./single-test.test.ts:8`], cwd);
-    
+
     expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Test 2 ran");
     expect(stdout).not.toContain("❌ Test 1 ran");
@@ -87,12 +87,12 @@ describe("other block", () => {
     console.log("❌ Test C ran");
     expect(4).toBe(4);
   });
-});`
+});`,
     );
 
-    // Target line 8 which contains the describe "target block" 
+    // Target line 8 which contains the describe "target block"
     const { stdout, stderr, exitCode } = runTestWithOutput([`./describe-block.test.ts:8`], cwd);
-    
+
     expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Test A ran");
     expect(stdout).toContain("✅ Test B ran");
@@ -131,12 +131,12 @@ describe("outer", () => {
     console.log("❌ Another outer test ran");
     expect(4).toBe(4);
   });
-});`
+});`,
     );
 
-    // Target line 9 which contains the inner describe "inner target" 
+    // Target line 9 which contains the inner describe "inner target"
     const { stdout, stderr, exitCode } = runTestWithOutput([`./nested-describe.test.ts:9`], cwd);
-    
+
     expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Inner test A ran");
     expect(stdout).toContain("✅ Inner test B ran");
@@ -155,12 +155,12 @@ describe("outer", () => {
 
 test("only test", () => {
   expect(1).toBe(1);
-});`
+});`,
     );
 
     // Target line 10 which is beyond the file content
     const { stdout, stderr, exitCode } = runTestWithOutput([`./empty-line.test.ts:10`], cwd);
-    
+
     expect(exitCode).toBe(1);
     expect(stderr).toContain("no tests found at line 10");
     expect(stderr).toContain("skipping 1 test");
@@ -168,9 +168,9 @@ test("only test", () => {
 
   test("should show error when targeting non-existent file", () => {
     const cwd = tmpdirSync();
-    
+
     const { stdout, stderr, exitCode } = runTestWithOutput([`./non-existent.test.ts:5`], cwd);
-    
+
     expect(exitCode).toBe(1);
     expect(stderr).toContain("Test file");
     expect(stderr).toContain("non-existent.test.ts");
@@ -191,12 +191,12 @@ test("test 1", () => {
 test("target test", () => {
   console.log("✅ Target test ran");
   expect(2).toBe(2);
-});`
+});`,
     );
 
     // Use absolute path with line number (target the test on line 7)
     const { stdout, stderr, exitCode } = runTestWithOutput([`${testFile}:7`], cwd);
-    
+
     expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Target test ran");
     expect(stderr).toContain("1 pass");
@@ -217,12 +217,12 @@ test("test 1", () => {
 test("target test", () => {
   console.log("✅ Target test ran");
   expect(2).toBe(2);
-});`
+});`,
     );
 
     // Use ./relative path with line number (target the test on line 7)
     const { stdout, stderr, exitCode } = runTestWithOutput([`./relative-path.test.ts:7`], cwd);
-    
+
     expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Target test ran");
     expect(stderr).toContain("1 pass");
@@ -260,12 +260,12 @@ describe("third block", () => {
     console.log("❌ Third test ran");
     expect(4).toBe(4);
   });
-});`
+});`,
     );
 
     // Target line 10 which contains "describe second block"
     const { stdout, stderr, exitCode } = runTestWithOutput([`./multi-describe.test.ts:10`], cwd);
-    
+
     expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Second test A ran");
     expect(stdout).toContain("✅ Second test B ran");
@@ -295,12 +295,12 @@ test.each([1, 2, 3])("each test %s - SHOULD run", (num) => {
 test("another test - should NOT run", () => {
   console.log("❌ Another test ran");
   expect(2).toBe(2);
-});`
+});`,
     );
 
     // Target line 8 which contains the test.each
     const { stdout, stderr, exitCode } = runTestWithOutput([`./test-each.test.ts:8`], cwd);
-    
+
     expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Each test 1 ran");
     expect(stdout).toContain("✅ Each test 2 ran");
@@ -318,13 +318,13 @@ test("another test - should NOT run", () => {
 
 test("test", () => {
   expect(1).toBe(1);
-});`
+});`,
     );
 
     // Target line 0 (invalid)
     const result1 = runTestWithOutput([`./valid-file.test.ts:0`], cwd);
     expect(result1.stderr).toContain("no tests found at line 0");
-    
+
     // Target negative line (this should be treated as a filename, not file:line)
     const result2 = runTestWithOutput([`./valid-file.test.ts:-5`], cwd);
     expect(result2.stderr).toContain("had no matches"); // Treated as filename
@@ -351,12 +351,12 @@ describe("comment test block", () => {
 test("outside test - should NOT run", () => {
   console.log("❌ Outside test ran");
   expect(2).toBe(2);
-});`
+});`,
     );
 
     // Target line 5 which is the describe line
     const { stdout, stderr, exitCode } = runTestWithOutput([`./comment-lines.test.ts:5`], cwd);
-    
+
     expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Test inside ran");
     expect(stdout).not.toContain("❌ Outside test ran");
@@ -384,12 +384,12 @@ test("test 2 - should NOT run", () => {
 test("test 3 - SHOULD run", () => {
   console.log("✅ Test 3 ran");
   expect(3).toBe(3);
-});`
+});`,
     );
 
     // Target lines 3 and 13 (test 1 and test 3)
     const { stdout, stderr, exitCode } = runTestWithOutput([`./multi-line.test.ts:3`, `./multi-line.test.ts:13`], cwd);
-    
+
     expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Test 1 ran");
     expect(stdout).toContain("✅ Test 3 ran");
@@ -413,7 +413,7 @@ test("file1 test1 - SHOULD run", () => {
 test("file1 test2 - should NOT run", () => {
   console.log("❌ File1 Test2 ran");
   expect(2).toBe(2);
-});`
+});`,
     );
 
     const testFile2 = createTestFile(
@@ -429,12 +429,12 @@ test("file2 test1 - should NOT run", () => {
 test("file2 test2 - SHOULD run", () => {
   console.log("✅ File2 Test2 ran");
   expect(2).toBe(2);
-});`
+});`,
     );
 
     // Target line 3 in file1 and line 8 in file2
     const { stdout, stderr, exitCode } = runTestWithOutput([`./file1.test.ts:3`, `./file2.test.ts:8`], cwd);
-    
+
     expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ File1 Test1 ran");
     expect(stdout).toContain("✅ File2 Test2 ran");
@@ -466,7 +466,7 @@ describe("group1", () => {
 test("outside test - should NOT run", () => {
   console.log("❌ Outside test ran");
   expect(3).toBe(3);
-});`
+});`,
     );
 
     const testFile2 = createTestFile(
@@ -489,12 +489,12 @@ describe("group2", () => {
     console.log("✅ Group2 Test2 ran");
     expect(2).toBe(2);
   });
-});`
+});`,
     );
 
     // Target line 3 in describe1 (describe block) and line 7 in describe2 (describe block)
     const { stdout, stderr, exitCode } = runTestWithOutput([`./describe1.test.ts:3`, `./describe2.test.ts:7`], cwd);
-    
+
     expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Group1 Test1 ran");
     expect(stdout).toContain("✅ Group1 Test2 ran");
@@ -515,7 +515,7 @@ describe("group2", () => {
 
 test("some test", () => {
   expect(1).toBe(1);
-});`
+});`,
     );
 
     const testFile2 = createTestFile(
@@ -525,12 +525,12 @@ test("some test", () => {
 
 test("another test", () => {
   expect(2).toBe(2);
-});`
+});`,
     );
 
     // Target non-existent lines
     const { stdout, stderr, exitCode } = runTestWithOutput([`./empty1.test.ts:99`, `./empty2.test.ts:88`], cwd);
-    
+
     expect(exitCode).toBe(1);
     expect(stderr).toContain("no tests found for file:line filters");
     expect(stderr).toContain("empty1.test.ts:99");

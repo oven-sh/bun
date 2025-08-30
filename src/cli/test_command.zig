@@ -1307,18 +1307,18 @@ pub const TestCommand = struct {
         // Parse file:line arguments early, before creating TestRunner
         for (ctx.positionals) |arg| {
             if (strings.indexOf(arg, ":")) |colon_index| {
-                const after_colon = arg[colon_index + 1..];
+                const after_colon = arg[colon_index + 1 ..];
                 if (after_colon.len > 0) {
                     if (std.fmt.parseInt(u32, after_colon, 10)) |line_num| {
                         const file_part = arg[0..colon_index];
                         const normalized_file = try ctx.allocator.dupe(u8, file_part);
-                        
+
                         // Get or create array of lines for this file
                         const result = try ctx.test_options.test_line_filters.getOrPut(ctx.allocator, normalized_file);
                         if (!result.found_existing) {
                             result.value_ptr.* = std.ArrayListUnmanaged(u32){};
                         }
-                        
+
                         // Add the line number to the array
                         try result.value_ptr.append(ctx.allocator, line_num);
                     } else |_| {}
@@ -1359,8 +1359,7 @@ pub const TestCommand = struct {
             },
             .callback = undefined,
         };
-        
-        
+
         reporter.callback = TestRunner.Callback{
             .onUpdateCount = CommandLineReporter.handleUpdateCount,
             .onTestStart = CommandLineReporter.handleTestStart,
@@ -1456,7 +1455,7 @@ pub const TestCommand = struct {
         const has_relative_path = for (ctx.positionals) |arg| {
             if (strings.indexOf(arg, ":")) |colon_index| {
                 // Check if this might be a file:line pattern
-                const after_colon = arg[colon_index + 1..];
+                const after_colon = arg[colon_index + 1 ..];
                 if (after_colon.len > 0) {
                     if (std.fmt.parseInt(u32, after_colon, 10)) |_| {
                         has_file_line_arg = true;
@@ -1464,7 +1463,7 @@ pub const TestCommand = struct {
                     } else |_| {}
                 }
             }
-            
+
             if (std.fs.path.isAbsolute(arg) or
                 strings.startsWith(arg, "./") or
                 strings.startsWith(arg, "../") or
@@ -1480,12 +1479,12 @@ pub const TestCommand = struct {
                     if (strings.indexOf(arg, ":")) |colon_index| {
                         // Parse file:line format
                         const file_part = arg[0..colon_index];
-                        const line_part = arg[colon_index + 1..];
-                        
+                        const line_part = arg[colon_index + 1 ..];
+
                         if (std.fmt.parseInt(u32, line_part, 10)) |line_num| {
                             // This file:line pattern was already processed earlier
                             _ = line_num;
-                            
+
                             // Only scan the file, not the file:line argument
                             scanner.scan(file_part) catch |err| switch (err) {
                                 error.OutOfMemory => bun.outOfMemory(),
@@ -1498,7 +1497,7 @@ pub const TestCommand = struct {
                         } else |_| {}
                     }
                 }
-                
+
                 // Regular file or directory
                 scanner.scan(arg) catch |err| switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
@@ -1762,7 +1761,7 @@ pub const TestCommand = struct {
                         summary.skipped_because_label,
                         if (summary.skipped_because_label == 1) "" else "s",
                     });
-                    
+
                     // Show the specific filters that were applied
                     var iter = ctx.test_options.test_line_filters.iterator();
                     while (iter.next()) |entry| {

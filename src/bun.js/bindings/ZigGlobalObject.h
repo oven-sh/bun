@@ -728,6 +728,10 @@ private:
 
     WTF::Vector<JSC::Strong<JSC::JSPromise>> m_aboutToBeNotifiedRejectedPromises;
     WTF::Vector<JSC::Strong<JSC::JSFunction>> m_ffiFunctions;
+    
+    // Guard against deep recursion in microtask draining
+    uint32_t m_microtaskDrainDepth = 0;
+    static const uint32_t maxMicrotaskDrainDepth = 50;
 };
 
 class EvalGlobalObject : public GlobalObject {

@@ -3446,7 +3446,7 @@ pub const BundleV2 = struct {
         return resolve_queue;
     }
 
-    fn generateServerHTMLModule(this: *BundleV2, path: *const Fs.Path, target: options.Target, import_record: *ImportRecord, path_text: []const u8) !void {
+    fn generateServerHTMLModule(this: *BundleV2, path: *const Fs.Path, target: options.Target, import_record: *ImportRecord, path_text: []const u8) bun.OOM!void {
         // 1. Create the ast right here
         // 2. Create a separate "virutal" module that becomes the manifest later on.
         // 3. Add it to the graph

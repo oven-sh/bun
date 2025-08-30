@@ -434,20 +434,7 @@ pub const LinkerContext = struct {
                 }
 
                 // Union the new async files with the existing set
-                switch (async_deps.*) {
-                    .static => {
-                        switch (new_async) {
-                            .static => async_deps.static.setUnion(&new_async.static),
-                            .dynamic => unreachable, // Should not happen with same capacity
-                        }
-                    },
-                    .dynamic => {
-                        switch (new_async) {
-                            .static => unreachable, // Should not happen with same capacity
-                            .dynamic => async_deps.dynamic.setUnion(new_async.dynamic),
-                        }
-                    },
-                }
+                async_deps.setUnion(&new_async);
             }
         }
 

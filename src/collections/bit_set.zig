@@ -1288,6 +1288,39 @@ pub const AutoBitSet = union(enum) {
         }
     }
 
+    /// Performs a union of two AutoBitSets, handling variant mismatches safely.
+    /// Sets are unioned even if they have different variants (static vs dynamic).
+    pub fn setUnion(this: *AutoBitSet, other: *const AutoBitSet) void {
+        switch (std.meta.activeTag(this.*)) {
+            .static => {
+                switch (std.meta.activeTag(other.*)) {
+                    .static => this.static.setUnion(&other.static),
+                    .dynamic => {
+                        // Union static with dynamic by iterating through dynamic's set bits
+                        var iter = other.dynamic.iterator(.{});
+                        while (iter.next()) |index| {
+                            if (index < Static.bit_length) {
+                                this.static.set(index);
+                            }
+                        }
+                    },
+                }
+            },
+            .dynamic => {
+                switch (std.meta.activeTag(other.*)) {
+                    .static => {
+                        // Union dynamic with static by iterating through static's set bits
+                        var iter = other.static.iterator(.{});
+                        while (iter.next()) |index| {
+                            this.dynamic.set(index);
+                        }
+                    },
+                    .dynamic => this.dynamic.setUnion(other.dynamic),
+                }
+            },
+        }
+    }
+
     pub fn deinit(this: *AutoBitSet, allocator: std.mem.Allocator) void {
         switch (std.meta.activeTag(this.*)) {
             .static => {},

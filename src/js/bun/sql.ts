@@ -745,8 +745,7 @@ const SQL: typeof Bun.SQL = function SQL(
         const save_point_name = `s${savepoints++}${name ? `_${name}` : ""}`;
         const promise = run_internal_savepoint(save_point_name, savepoint_callback);
         transactionSavepoints.add(promise);
-        promise.finally(onSavepointFinished.bind(null, promise));
-        return await promise;
+        return await promise.finally(onSavepointFinished.bind(null, promise));
       };
     }
     let needs_rollback = false;

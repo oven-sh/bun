@@ -25,7 +25,7 @@ const ObjectEntries = Object.entries;
 const PromiseWithResolvers = Promise.withResolvers.bind(Promise);
 const PromiseResolve = Promise.$resolve.bind(Promise);
 const PromisePrototypeThen = $Promise.prototype.$then;
-const SafePromisePrototypeFinally = $Promise.prototype.$finally;
+const SafePromisePrototypeFinally = $Promise.prototype.finally;
 
 const constants_zlib = $processBindingConstants.zlib;
 

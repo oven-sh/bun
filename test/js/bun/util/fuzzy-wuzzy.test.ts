@@ -19,7 +19,7 @@
 
 const ENABLE_LOGGING = process.env.FUZZY_WUZZY_LOGGING === "1";
 
-import { afterAll, describe, test } from "bun:test";
+import { afterAll, describe, test, expect } from "bun:test";
 import { EventEmitter } from "events";
 import { isWindows } from "harness";
 var calls = 0,
@@ -451,9 +451,17 @@ const modules = [
 
 for (const mod of modules) {
   describe(mod, () => {
-    test("call", () => callAllMethods(require(mod), `require("${mod}")`));
-    test("construct", () => constructAllConstructors(require(mod), `require("${mod}")`));
-    test("construct-subclass", () => constructAllConstructorsWithSubclassing(require(mod), `require("${mod}")`));
+    test("call", () => {
+      expect(async () => await callAllMethods(require(mod), `require("${mod}")`)).not.toThrow();
+    });
+    test("construct", () => {
+      expect(async () => await constructAllConstructors(require(mod), `require("${mod}")`)).not.toThrow();
+    });
+    test("construct-subclass", () => {
+      expect(
+        async () => await constructAllConstructorsWithSubclassing(require(mod), `require("${mod}")`),
+      ).not.toThrow();
+    });
   });
 }
 
@@ -504,18 +512,20 @@ for (const [Global, name] of globals) {
     // TODO: hangs in CI on Windows.
     test.skipIf(isWindows && Global === Bun)("call", async () => {
       await Bun.sleep(1);
-      callAllMethods(Global, Global === Bun ? "Bun" : "globalThis");
+      expect(async () => await callAllMethods(Global, Global === Bun ? "Bun" : "globalThis")).not.toThrow();
       await Bun.sleep(1);
     });
     // TODO: hangs in CI on Windows.
     test.skipIf(isWindows && Global === Bun)("construct", async () => {
       await Bun.sleep(1);
-      constructAllConstructors(Global, Global === Bun ? "Bun" : "globalThis");
+      expect(async () => await constructAllConstructors(Global, Global === Bun ? "Bun" : "globalThis")).not.toThrow();
       await Bun.sleep(1);
     });
     test.skipIf(isWindows && Global === Bun)("construct-subclass", async () => {
       await Bun.sleep(1);
-      constructAllConstructorsWithSubclassing(Global, Global === Bun ? "Bun" : "globalThis");
+      expect(
+        async () => await constructAllConstructorsWithSubclassing(Global, Global === Bun ? "Bun" : "globalThis"),
+      ).not.toThrow();
       await Bun.sleep(1);
     });
   });

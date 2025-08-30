@@ -282,7 +282,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
     this[_run](true);
 
-    return super.$finally.$apply(this, arguments);
+    return super.finally.$apply(this, arguments);
   }
 }
 

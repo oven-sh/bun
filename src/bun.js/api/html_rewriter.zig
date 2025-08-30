@@ -1174,7 +1174,7 @@ pub const TextChunk = struct {
     pub fn getText(
         this: *TextChunk,
         global: *JSGlobalObject,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         const text_chunk = this.text_chunk orelse return .js_undefined;
         return bun.String.createUTF8ForJS(global, text_chunk.getContent().slice());
     }

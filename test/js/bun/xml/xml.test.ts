@@ -152,9 +152,9 @@ test("Bun.XML.parse - duplicate tags become arrays", () => {
 });
 
 test("Bun.XML.parse - CDATA sections", () => {
-  const xml = "<message><![CDATA[Hello <world> & \"everyone\"]]></message>";
+  const xml = '<message><![CDATA[Hello <world> & "everyone"]]></message>';
   const result = Bun.XML.parse(xml);
-  expect(result).toBe("Hello <world> & \"everyone\"");
+  expect(result).toBe('Hello <world> & "everyone"');
 });
 
 test("Bun.XML.parse - top-level comments are ignored", () => {

@@ -25,12 +25,12 @@ pub fn parse(
     if (args.len < 1) {
         return global.throwInvalidArguments("XML.parse() requires 1 argument (xmlString)", .{});
     }
-    
+
     const input_value = args.ptr[0];
     if (!input_value.isString()) {
         return global.throwInvalidArguments("XML.parse() expects a string as first argument", .{});
     }
-    
+
     const input_str = try input_value.toBunString(global);
     const input = input_str.toSlice(arena.allocator());
     defer input.deinit();

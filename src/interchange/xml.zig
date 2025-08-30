@@ -41,9 +41,7 @@ const Parser = struct {
             self.skipWhitespace();
 
             // XML declaration
-            if (self.current + 5 < self.source.contents.len
-                and std.mem.startsWith(u8, self.source.contents[self.current..], "<?xml"))
-            {
+            if (self.current + 5 < self.source.contents.len and std.mem.startsWith(u8, self.source.contents[self.current..], "<?xml")) {
                 var found = false;
                 // Scan for the closing "?>"
                 while (self.current + 1 < self.source.contents.len) {
@@ -62,9 +60,7 @@ const Parser = struct {
             }
 
             // Top-level comments
-            if (self.current + 3 < self.source.contents.len
-                and std.mem.startsWith(u8, self.source.contents[self.current..], "<!--"))
-            {
+            if (self.current + 3 < self.source.contents.len and std.mem.startsWith(u8, self.source.contents[self.current..], "<!--")) {
                 self.skipComment();
                 continue;
             }
@@ -166,7 +162,7 @@ const Parser = struct {
                 const cdata_start = self.current;
                 // scan until "]]>"
                 while (self.current + 2 < self.source.contents.len and
-                       !std.mem.startsWith(u8, self.source.contents[self.current..], "]]>"))
+                    !std.mem.startsWith(u8, self.source.contents[self.current..], "]]>"))
                 {
                     self.advance();
                 }
@@ -356,7 +352,7 @@ const Parser = struct {
             const tag_name = child.tag_name;
             const total_count = child_counts.get(tag_name).?;
             const current_count = processed_tags.get(tag_name) orelse 0;
-            
+
             if (total_count == 1) {
                 // Single occurrence - add as property
                 const key_expr = try self.createRawStringExpr(tag_name);
@@ -377,7 +373,7 @@ const Parser = struct {
                     try properties.append(.{ .key = key_expr, .value = array_expr });
                 }
             }
-            
+
             try processed_tags.put(tag_name, current_count + 1);
         }
 

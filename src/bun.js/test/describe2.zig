@@ -49,17 +49,6 @@ pub const js_fns = struct {
         return try gpa.dupe(u8, slice.slice());
     }
 
-    const DescribeConfig = struct {
-        base: BaseScopeCfg,
-        signature: Signature,
-    };
-    pub fn genericDescribe(comptime cfg: DescribeConfig) type {
-        return struct {
-            pub fn describeFn(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-                return js_fns.describeFn(globalThis, callframe, cfg);
-            }
-        };
-    }
     const ParseArgumentsResult = struct {
         description: ?[]const u8,
         callback: ?jsc.JSValue,

@@ -297,6 +297,7 @@ Exited with code [1]
 - [ ] decide what to do about test() inside test()
 - [ ] make sure ScopeFunctions class can finalize (see napi_handle_scope NapiHandleScopeImpl as an example)
   - currently, it never calls its finalize method because it no longer extends from finalize
+- [ ] make sure DoneCallback class can finalize, same as above
 - [ ] see about caching ScopeFunctions by value maybe?
 - [ ] add back repeating failure/skip messages at the end of the test print
 - [ ] make sure failure exits with code 1

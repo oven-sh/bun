@@ -14,8 +14,7 @@ const result = childProcess.spawnSync(
   { encoding: 'utf8' }
 );
 
-assert.strictEqual(result.stderr, `${process.execPath
-}: either --use-openssl-ca or --use-bundled-ca can be used, not both${os.EOL}`
+assert.strictEqual(result.stderr, `error: either --use-openssl-ca or --use-bundled-ca can be used, not both${os.EOL}`
 );
 assert.strictEqual(result.status, 9);
 

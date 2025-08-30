@@ -20,6 +20,12 @@ interface SecurityScannerTestOptions {
   scannerSyncronouslyThrows: boolean;
 }
 
+async function globEverything(dir: string) {
+  return await Array.fromAsync(
+    new Bun.Glob("**/*").scan({ cwd: dir, dot: true, followSymlinks: false, onlyFiles: false }),
+  );
+}
+
 let registryUrl: string;
 
 async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
@@ -123,7 +129,7 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
   await Bun.write(
     join(dir, "bunfig.toml"),
     `[install]
-cache = false
+cache.disable = true
 linker = "${linker}"
 registry = "${registryUrl}/"`,
   );
@@ -151,7 +157,7 @@ registry = "${registryUrl}/"`,
   await Bun.write(
     join(dir, "bunfig.toml"),
     `[install]
-cache = false
+cache.disable = true
 linker = "${linker}"
 registry = "${registryUrl}/"
 
@@ -161,7 +167,6 @@ scanner = "${scannerPath}"`,
 
   const cmd = [bunExe(), command, ...args];
 
-  // Debug mode: if SCANNER_TEST_DEBUG env var is set, print the test dir and exit
   if (process.env.SCANNER_TEST_DEBUG) {
     console.log(`[DEBUG] Test directory: ${dir}`);
     console.log(`[DEBUG] Command: ${cmd.join(" ")}`);
@@ -171,7 +176,7 @@ scanner = "${scannerPath}"`,
     console.log(`[DEBUG] Linker: ${linker}`);
     console.log("");
     console.log("Files in test directory:");
-    const files = await Array.fromAsync(new Bun.Glob("**/*").scan(dir));
+    const files = await globEverything(dir);
     for (const file of files) {
       console.log(`  ${file}`);
     }
@@ -184,11 +189,10 @@ scanner = "${scannerPath}"`,
     console.log("");
     console.log("To run the command manually:");
     console.log(`cd ${dir} && ${cmd.join(" ")}`);
-    console.log("");
-    console.log("Registry URL:", registryUrl);
-    console.log("Registry should be running on this port (check with: lsof -i :PORT)");
-    console.log("");
-    console.log("Keeping test alive... Press Ctrl+C to exit");
+
+    if (process.env.SCANNER_TEST_DEBUG === "before") {
+      process.exit(1);
+    }
   }
 
   const proc = Bun.spawn({
@@ -235,12 +239,7 @@ scanner = "${scannerPath}"`,
     console.log("Command:", cmd.join(" "));
     console.log("Expected exit code:", expectedExitCode, "Got:", exitCode);
     console.log("Test directory:", dir);
-    console.log(
-      "Files in test dir:",
-      await Array.fromAsync(
-        new Bun.Glob("**/*").scan({ cwd: dir, dot: true, followSymlinks: false, onlyFiles: false }),
-      ),
-    );
+    console.log("Files in test dir:", await globEverything(dir));
     console.log("Registry:", registryUrl);
     console.log();
     console.log("bunfig:");
@@ -280,18 +279,14 @@ scanner = "${scannerPath}"`,
       case "warn": {
         // When there are fatal advisories OR warnings (with no TTY to prompt),
         // the installation is cancelled and packages should NOT be installed
-        const files = await Array.fromAsync(
-          new Bun.Glob("**/*").scan({ cwd: dir, dot: true, followSymlinks: false, onlyFiles: false }),
-        );
+        const files = await globEverything(dir);
         expect(files).not.toContain("node_modules/left-pad/package.json");
         break;
       }
 
       case "none": {
         // When there are no security issues, packages should be installed normally
-        const files = await Array.fromAsync(
-          new Bun.Glob("**/*").scan({ cwd: dir, dot: true, followSymlinks: true, onlyFiles: false }),
-        );
+        const files = await globEverything(dir);
 
         switch (command) {
           case "remove":
@@ -364,8 +359,6 @@ scanner = "${scannerPath}"`,
     expect(requestedPackages).toMatchSnapshot("requested-packages: unknown command");
     expect(requestedTarballs).toMatchSnapshot("requested-tarballs: unknown command");
   }
-
-  return { errAndOut, exitCode, dir };
 }
 
 beforeAll(async () => {

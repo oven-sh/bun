@@ -357,8 +357,8 @@ const PackageCollector = struct {
     pub fn init(manager: *PackageManager) PackageCollector {
         return .{
             .manager = manager,
-            .dedupe = std.AutoArrayHashMap(PackageID, void).init(manager.allocator),
-            .queue = std.fifo.LinearFifo(QueueItem, .Dynamic).init(manager.allocator),
+            .dedupe = std.AutoArrayHashMap(PackageID, void).init(bun.default_allocator),
+            .queue = std.fifo.LinearFifo(QueueItem, .Dynamic).init(bun.default_allocator),
             .package_paths = std.AutoArrayHashMap(PackageID, PackagePath).init(manager.allocator),
         };
     }
@@ -395,12 +395,10 @@ const PackageCollector = struct {
             if ((try this.dedupe.getOrPut(dep_pkg_id)).found_existing) continue;
 
             var pkg_path_buf = std.ArrayList(PackageID).init(this.manager.allocator);
-            errdefer pkg_path_buf.deinit();
             try pkg_path_buf.append(root_pkg_id);
             try pkg_path_buf.append(dep_pkg_id);
 
             var dep_path_buf = std.ArrayList(DependencyID).init(this.manager.allocator);
-            errdefer dep_path_buf.deinit();
             try dep_path_buf.append(dep_id);
 
             try this.queue.writeItem(.{
@@ -448,14 +446,12 @@ const PackageCollector = struct {
                 if ((try this.dedupe.getOrPut(update_pkg_id)).found_existing) continue;
 
                 var initial_pkg_path = std.ArrayList(PackageID).init(this.manager.allocator);
-                errdefer initial_pkg_path.deinit();
                 if (parent_pkg_id != invalid_package_id) {
                     try initial_pkg_path.append(parent_pkg_id);
                 }
                 try initial_pkg_path.append(update_pkg_id);
 
                 var initial_dep_path = std.ArrayList(DependencyID).init(this.manager.allocator);
-                errdefer initial_dep_path.deinit();
                 try initial_dep_path.append(update_dep_id);
 
                 try this.queue.writeItem(.{
@@ -504,12 +500,10 @@ const PackageCollector = struct {
                 if ((try this.dedupe.getOrPut(next_pkg_id)).found_existing) continue;
 
                 var extended_pkg_path = std.ArrayList(PackageID).init(this.manager.allocator);
-                errdefer extended_pkg_path.deinit();
                 try extended_pkg_path.appendSlice(item.pkg_path.items);
                 try extended_pkg_path.append(next_pkg_id);
 
                 var extended_dep_path = std.ArrayList(DependencyID).init(this.manager.allocator);
-                errdefer extended_dep_path.deinit();
                 try extended_dep_path.appendSlice(item.dep_path.items);
                 try extended_dep_path.append(next_dep_id);
 
@@ -530,7 +524,6 @@ const JSONBuilder = struct {
 
     pub fn buildPackageJSON(this: JSONBuilder) ![]const u8 {
         var json_buf = std.ArrayList(u8).init(this.manager.allocator);
-        errdefer json_buf.deinit();
         var writer = json_buf.writer();
 
         const pkgs = this.manager.lockfile.packages.slice();
@@ -649,7 +642,6 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
     const packages_placeholder = "__PACKAGES_JSON__";
     if (std.mem.indexOf(u8, temp_source, packages_placeholder)) |index| {
         var new_code = std.ArrayList(u8).init(manager.allocator);
-        errdefer new_code.deinit();
         try new_code.appendSlice(temp_source[0..index]);
         try new_code.appendSlice(json_data);
         try new_code.appendSlice(temp_source[index + packages_placeholder.len ..]);
@@ -661,7 +653,6 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
     const suppress_placeholder = "__SUPPRESS_ERROR__";
     if (std.mem.indexOf(u8, temp_source, suppress_placeholder)) |index| {
         var new_code = std.ArrayList(u8).init(manager.allocator);
-        errdefer new_code.deinit();
         try new_code.appendSlice(temp_source[0..index]);
         try new_code.appendSlice(if (suppress_error_output) "true" else "false");
         try new_code.appendSlice(temp_source[index + suppress_placeholder.len ..]);
@@ -716,9 +707,7 @@ pub const SecurityScanSubprocess = struct {
 
     pub fn spawn(this: *SecurityScanSubprocess) !void {
         this.ipc_data = std.ArrayList(u8).init(this.manager.allocator);
-        errdefer this.ipc_data.deinit();
         this.stderr_data = std.ArrayList(u8).init(this.manager.allocator);
-        errdefer this.stderr_data.deinit();
         this.ipc_reader.setParent(this);
 
         const pipe_result = bun.sys.pipe();
@@ -1050,15 +1039,7 @@ pub const SecurityScanSubprocess = struct {
 
 fn parseSecurityAdvisoriesFromExpr(manager: *PackageManager, advisories_expr: bun.js_parser.Expr, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath)) ![]SecurityAdvisory {
     var advisories_list = std.ArrayList(SecurityAdvisory).init(manager.allocator);
-    errdefer {
-        for (advisories_list.items) |advisory| {
-            manager.allocator.free(advisory.package);
-            if (advisory.description) |desc| manager.allocator.free(desc);
-            if (advisory.url) |url| manager.allocator.free(url);
-            if (advisory.pkg_path) |path| manager.allocator.free(path);
-        }
-        advisories_list.deinit();
-    }
+    defer advisories_list.deinit();
 
     if (advisories_expr.data != .e_array) {
         Output.errGeneric("Security scanner 'advisories' field must be an array, got: {s}", .{@tagName(advisories_expr.data)});
@@ -1086,33 +1067,28 @@ fn parseSecurityAdvisoriesFromExpr(manager: *PackageManager, advisories_expr: bu
             Output.errGeneric("Security advisory at index {d} 'package' field cannot be empty", .{i});
             return error.EmptyPackageField;
         }
-
+        // Duplicate the string since asString returns temporary memory
         const name_str = try manager.allocator.dupe(u8, name_str_temp);
-        errdefer manager.allocator.free(name_str);
 
         const desc_str: ?[]const u8 = if (item_obj.get("description")) |desc_expr| blk: {
             if (desc_expr.asString(manager.allocator)) |str| {
-                const duped = try manager.allocator.dupe(u8, str);
-                errdefer manager.allocator.free(duped);
-                break :blk duped;
+                // Duplicate the string since asString returns temporary memory
+                break :blk try manager.allocator.dupe(u8, str);
             }
             if (desc_expr.data == .e_null) break :blk null;
             Output.errGeneric("Security advisory at index {d} 'description' field must be a string or null", .{i});
             return error.InvalidDescriptionField;
         } else null;
-        errdefer if (desc_str) |desc| manager.allocator.free(desc);
 
         const url_str: ?[]const u8 = if (item_obj.get("url")) |url_expr| blk: {
             if (url_expr.asString(manager.allocator)) |str| {
-                const duped = try manager.allocator.dupe(u8, str);
-                errdefer manager.allocator.free(duped);
-                break :blk duped;
+                // Duplicate the string since asString returns temporary memory
+                break :blk try manager.allocator.dupe(u8, str);
             }
             if (url_expr.data == .e_null) break :blk null;
             Output.errGeneric("Security advisory at index {d} 'url' field must be a string or null", .{i});
             return error.InvalidUrlField;
         } else null;
-        errdefer if (url_str) |url| manager.allocator.free(url);
 
         const level_expr = item_obj.get("level") orelse {
             Output.errGeneric("Security advisory at index {d} missing required 'level' field", .{i});
@@ -1131,6 +1107,7 @@ fn parseSecurityAdvisoriesFromExpr(manager: *PackageManager, advisories_expr: bu
             return error.InvalidLevelValue;
         };
 
+        // Look up the package path for this advisory
         var pkg_path: ?[]const PackageID = null;
         const pkgs = manager.lockfile.packages.slice();
         const pkg_names = pkgs.items(.name);
@@ -1140,14 +1117,12 @@ fn parseSecurityAdvisoriesFromExpr(manager: *PackageManager, advisories_expr: bu
             if (std.mem.eql(u8, pkg_name.slice(string_buf), name_str)) {
                 const pkg_id: PackageID = @intCast(j);
                 if (package_paths.get(pkg_id)) |paths| {
-                    const duped_path = try manager.allocator.dupe(PackageID, paths.pkg_path);
-                    errdefer manager.allocator.free(duped_path);
-                    pkg_path = duped_path;
+                    // Duplicate the path so it outlives the package_paths HashMap
+                    pkg_path = try manager.allocator.dupe(PackageID, paths.pkg_path);
                 }
                 break;
             }
         }
-        errdefer if (pkg_path) |path| manager.allocator.free(path);
 
         const advisory = SecurityAdvisory{
             .level = level,

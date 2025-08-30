@@ -1200,7 +1200,8 @@ pub const JSValue = enum(i64) {
     extern fn JSC__JSValue__toStringOrNull(this: JSValue, globalThis: *JSGlobalObject) ?*JSString;
     // Calls JSValue::toStringOrNull. Returns error on exception.
     pub fn toJSString(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!*JSString {
-        var scope: ExceptionValidationScope = .init(globalThis, @src());
+        var scope: ExceptionValidationScope = undefined;
+        scope.init(globalThis, @src());
         defer scope.deinit();
         const maybe_string = JSC__JSValue__toStringOrNull(this, globalThis);
         scope.assertExceptionPresenceMatches(maybe_string == null);
@@ -1272,7 +1273,8 @@ pub const JSValue = enum(i64) {
 
     /// Unwraps Number, Boolean, String, and BigInt objects to their primitive forms.
     pub fn unwrapBoxedPrimitive(this: JSValue, global: *JSGlobalObject) JSError!JSValue {
-        var scope: CatchScope = .init(global, @src());
+        var scope: CatchScope = undefined;
+        scope.init(global, @src());
         defer scope.deinit();
         const result = JSC__JSValue__unwrapBoxedPrimitive(global, this);
         try scope.returnIfException();
@@ -1386,7 +1388,8 @@ pub const JSValue = enum(i64) {
     extern fn JSC__JSValue__getPropertyValue(target: JSValue, global: *JSGlobalObject, ptr: [*]const u8, len: u32) JSValue;
     extern fn JSC__JSValue__getIfPropertyExistsFromPath(this: JSValue, global: *JSGlobalObject, path: JSValue) JSValue;
     pub fn getIfPropertyExistsFromPath(this: JSValue, global: *JSGlobalObject, path: JSValue) JSError!JSValue {
-        var scope: CatchScope = .init(global, @src());
+        var scope: CatchScope = undefined;
+        scope.init(global, @src());
         defer scope.deinit();
         const result = JSC__JSValue__getIfPropertyExistsFromPath(this, global, path);
         try scope.returnIfException();
@@ -1414,14 +1417,16 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn _then2(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: *const jsc.JSHostFn, reject: *const jsc.JSHostFn) void {
-        var scope: CatchScope = .init(global, @src());
+        var scope: CatchScope = undefined;
+        scope.init(global, @src());
         defer scope.deinit();
         JSC__JSValue___then(this, global, ctx, resolve, reject);
         bun.debugAssert(!scope.hasException()); // TODO: properly propagate exception upwards
     }
 
     pub fn then(this: JSValue, global: *JSGlobalObject, ctx: ?*anyopaque, resolve: jsc.JSHostFnZig, reject: jsc.JSHostFnZig) void {
-        var scope: CatchScope = .init(global, @src());
+        var scope: CatchScope = undefined;
+        scope.init(global, @src());
         defer scope.deinit();
         this._then(global, JSValue.fromPtrAddress(@intFromPtr(ctx)), resolve, reject);
         bun.debugAssert(!scope.hasException()); // TODO: properly propagate exception upwards
@@ -1493,7 +1498,8 @@ pub const JSValue = enum(i64) {
     /// Get *own* property value (i.e. does not resolve property in the prototype chain)
     pub fn getOwn(this: JSValue, global: *JSGlobalObject, property_name: anytype) bun.JSError!?JSValue {
         var property_name_str = bun.String.init(property_name);
-        var scope: CatchScope = .init(global, @src());
+        var scope: CatchScope = undefined;
+        scope.init(global, @src());
         defer scope.deinit();
         const value = JSC__JSValue__getOwn(this, global, &property_name_str);
         try scope.returnIfException();
@@ -1595,7 +1601,8 @@ pub const JSValue = enum(i64) {
     /// - .js_undefined
     /// - an empty string
     pub fn getStringish(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?bun.String {
-        var scope: CatchScope = .init(global, @src());
+        var scope: CatchScope = undefined;
+        scope.init(global, @src());
         defer scope.deinit();
         const prop = try get(this, global, property) orelse return null;
         if (prop.isNull() or prop == .false) {

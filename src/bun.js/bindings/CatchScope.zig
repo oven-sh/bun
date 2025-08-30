@@ -8,7 +8,8 @@ const alignment = 8;
 ///
 /// ```zig
 /// // Declare a CatchScope surrounding the call that may throw an exception
-/// var scope: CatchScope = .init(global, @src());
+/// var scope: CatchScope = undefined;
+/// scope.init(global, @src());
 /// defer scope.deinit();
 ///
 /// const value: i32 = external_call(vm, foo, bar, baz);
@@ -23,10 +24,13 @@ pub const CatchScope = struct {
     /// Pointer to `bytes`, set by `init()`, used to assert that the location did not change
     location: if (Environment.ci_assert) *u8 else void,
 
-    pub inline fn init(global: *jsc.JSGlobalObject, src: std.builtin.SourceLocation) CatchScope {
-        var scope: CatchScope = undefined;
+    pub fn init(
+        self: *CatchScope,
+        global: *jsc.JSGlobalObject,
+        src: std.builtin.SourceLocation,
+    ) void {
         CatchScope__construct(
-            &scope.bytes,
+            &self.bytes,
             global,
             src.fn_name,
             src.file,
@@ -35,9 +39,9 @@ pub const CatchScope = struct {
             alignment,
         );
 
-        return .{
-            .bytes = scope.bytes,
-            .location = if (Environment.ci_assert) &scope.bytes[0],
+        self.* = .{
+            .bytes = self.bytes,
+            .location = if (Environment.ci_assert) &self.bytes[0],
         };
     }
 
@@ -122,8 +126,9 @@ pub const CatchScope = struct {
 /// Gated by `Environment.ci_assert`.
 ///
 /// ```zig
+/// var scope: ExceptionValidationScope = undefined;
 /// // these do nothing when ci_assert == false
-/// var scope: ExceptionValidationScope = .init(global, @src());
+/// scope.init(global, @src());
 /// defer scope.deinit();
 ///
 /// const maybe_empty: JSValue = externalFunction(global, foo, bar, baz);
@@ -136,13 +141,12 @@ pub const CatchScope = struct {
 pub const ExceptionValidationScope = struct {
     scope: if (Environment.ci_assert) CatchScope else void,
 
-    pub fn init(global: *jsc.JSGlobalObject, src: std.builtin.SourceLocation) ExceptionValidationScope {
-        if (!Environment.ci_assert) {
-            return .{ .scope = {} };
-        }
-
-        const catch_scope: CatchScope = .init(global, src);
-        return .{ .scope = catch_scope };
+    pub fn init(
+        self: *ExceptionValidationScope,
+        global: *jsc.JSGlobalObject,
+        src: std.builtin.SourceLocation,
+    ) void {
+        if (Environment.ci_assert) self.scope.init(global, src);
     }
 
     /// Asserts there has not been any exception thrown.

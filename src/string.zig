@@ -497,7 +497,8 @@ pub const String = extern struct {
     }
 
     pub fn fromJS(value: bun.jsc.JSValue, globalObject: *jsc.JSGlobalObject) bun.JSError!String {
-        var scope: jsc.ExceptionValidationScope = .init(globalObject, @src());
+        var scope: jsc.ExceptionValidationScope = undefined;
+        scope.init(globalObject, @src());
         defer scope.deinit();
         var out: String = String.dead;
         const ok = bun.cpp.BunString__fromJS(globalObject, value, &out);

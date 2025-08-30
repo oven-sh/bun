@@ -149,7 +149,8 @@ pub const VM = opaque {
 
     extern fn JSC__VM__throwError(*VM, *JSGlobalObject, JSValue) void;
     pub fn throwError(vm: *VM, global_object: *JSGlobalObject, value: JSValue) error{JSError} {
-        var scope: bun.jsc.ExceptionValidationScope = .init(global_object, @src());
+        var scope: bun.jsc.ExceptionValidationScope = undefined;
+        scope.init(global_object, @src());
         defer scope.deinit();
         scope.assertNoException();
         JSC__VM__throwError(vm, global_object, value);

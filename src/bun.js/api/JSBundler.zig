@@ -1089,7 +1089,8 @@ pub const JSBundler = struct {
         pub fn runOnEndCallbacks(this: *Plugin, globalThis: *jsc.JSGlobalObject, build_promise: *jsc.JSPromise, build_result: jsc.JSValue, rejection: jsc.JSValue) JSError!jsc.JSValue {
             jsc.markBinding(@src());
 
-            var scope: jsc.CatchScope = .init(globalThis, @src());
+            var scope: jsc.CatchScope = undefined;
+            scope.init(globalThis, @src());
             defer scope.deinit();
 
             const value = JSBundlerPlugin__runOnEndCallbacks(

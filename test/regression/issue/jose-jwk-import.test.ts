@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { importJWK } from "jose";
 
 test("RSA JWK import should work with valid private key", async () => {
   // This is a test key, not for production use
@@ -99,7 +100,6 @@ test("RSA JWK import should work with minimal private key (no CRT params)", asyn
 test("Jose library should work with RSA JWK import after fix", async () => {
   // This test requires the Jose library to be available
   // It should pass after the JWK import fix
-  const { importJWK } = await import("jose");
 
   const rsaJWK = {
     kty: "RSA",

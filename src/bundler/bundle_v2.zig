@@ -2431,6 +2431,9 @@ pub const BundleV2 = struct {
             on_parse_finalizers.deinit(bun.default_allocator);
         }
 
+        // Clean up LinkerContext which includes the AutoBitSet
+        this.linker.deinit();
+
         defer {
             this.graph.ast.deinit(this.allocator());
             this.graph.input_files.deinit(this.allocator());

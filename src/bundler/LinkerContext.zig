@@ -48,6 +48,10 @@ pub const LinkerContext = struct {
         return this.graph.allocator;
     }
 
+    pub fn deinit(this: *LinkerContext) void {
+        this.graph.deinit();
+    }
+
     pub fn pathWithPrettyInitialized(this: *LinkerContext, path: Fs.Path) !Fs.Path {
         return bundler.genericPathWithPrettyInitialized(path, this.options.target, this.resolver.fs.top_level_dir, this.allocator());
     }

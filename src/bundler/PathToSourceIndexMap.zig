@@ -19,7 +19,7 @@ pub fn putPath(this: *PathToSourceIndexMap, allocator: std.mem.Allocator, path: 
     try this.map.put(allocator, path.text, value);
 }
 
-pub fn put(this: *PathToSourceIndexMap, allocator: std.mem.Allocator, text: []const u8, value: Index.Int) !void {
+pub fn put(this: *PathToSourceIndexMap, allocator: std.mem.Allocator, text: []const u8, value: Index.Int) bun.OOM!void {
     try this.map.put(allocator, text, value);
 }
 

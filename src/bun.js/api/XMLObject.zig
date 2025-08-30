@@ -82,7 +82,7 @@ const ParserCtx = struct {
         if (!ctx.stack_check.isSafeToRecurse()) {
             return ctx.global.throwStackOverflow();
         }
-        
+
         switch (expr.data) {
             .e_null => return .null,
             .e_boolean => |boolean| return .jsBoolean(boolean.value),
@@ -145,9 +145,8 @@ const bun = @import("bun");
 const JSError = bun.JSError;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const XML = bun.interchange.xml.XML;
-
 const Expr = bun.ast.Expr;
+const XML = bun.interchange.xml.XML;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

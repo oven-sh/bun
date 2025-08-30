@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("Bun.XML.parse - simple text element", () => {
   const xml = "<message>Hello World</message>";
@@ -24,9 +24,9 @@ test("Bun.XML.parse - element with attributes", () => {
   expect(result).toEqual({
     __attrs: {
       id: "1",
-      type: "info"
+      type: "info",
     },
-    __text: "Hello"
+    __text: "Hello",
   });
 });
 
@@ -48,13 +48,13 @@ test("Bun.XML.parse - self-closing tag with attributes", () => {
   expect(result).toEqual({
     __attrs: {
       debug: "true",
-      version: "1.0"
-    }
+      version: "1.0",
+    },
   });
 });
 
 test("Bun.XML.parse - self-closing tag without attributes", () => {
-  const xml = '<br/>';
+  const xml = "<br/>";
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({});
 });
@@ -67,7 +67,7 @@ test("Bun.XML.parse - nested elements", () => {
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
     name: "John",
-    age: "30"
+    age: "30",
   });
 });
 
@@ -80,14 +80,14 @@ test("Bun.XML.parse - complex nested structure", () => {
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
     __attrs: {
-      name: "John"
+      name: "John",
     },
     address: {
       __attrs: {
-        type: "home"
+        type: "home",
       },
-      city: "New York"
-    }
+      city: "New York",
+    },
   });
 });
 
@@ -100,7 +100,7 @@ test("Bun.XML.parse - mixed content (text and children)", () => {
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
     child: "value",
-    __text: "Some text\n    \n    More text"
+    __text: "Some text\n    \n    More text",
   });
 });
 
@@ -121,9 +121,9 @@ test("Bun.XML.parse - entities in attributes", () => {
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
     __attrs: {
-      attr: "<value>"
+      attr: "<value>",
     },
-    __text: "content"
+    __text: "content",
   });
 });
 
@@ -135,6 +135,6 @@ test("Bun.XML.parse - XML comments are ignored", () => {
   </root>`;
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
-    message: "Hello"
+    message: "Hello",
   });
 });

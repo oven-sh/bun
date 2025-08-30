@@ -1,6 +1,8 @@
 #include "root.h"
 #include "JSYogaNode.h"
+#include "YogaNodeImpl.h"
 #include "JSYogaConfig.h"
+#include "JSYogaNodeOwner.h"
 #include "webcore/DOMIsoSubspaces.h"
 #include "webcore/DOMClientIsoSubspaces.h"
 #include "webcore/WebCoreJSClientData.h"
@@ -14,25 +16,20 @@ const JSC::ClassInfo JSYogaNode::s_info = { "Node"_s, &Base::s_info, nullptr, nu
 
 JSYogaNode::JSYogaNode(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure)
-    , m_node(nullptr)
+    , m_impl(YogaNodeImpl::create())
+{
+}
+
+JSYogaNode::JSYogaNode(JSC::VM& vm, JSC::Structure* structure, Ref<YogaNodeImpl>&& impl)
+    : Base(vm, structure)
+    , m_impl(WTFMove(impl))
 {
 }
 
 JSYogaNode::~JSYogaNode()
 {
-    if (m_node) {
-        // Clear the context pointer to avoid callbacks during cleanup
-        YGNodeSetContext(m_node, nullptr);
-
-        // Remove from parent to avoid use-after-free when parent tries to clear owner
-        YGNodeRef parent = YGNodeGetParent(m_node);
-        if (parent) {
-            YGNodeRemoveChild(parent, m_node);
-        }
-
-        YGNodeFree(m_node);
-        clearInternal();
-    }
+    // Clear the JS wrapper reference from the C++ impl
+    m_impl->clearJSWrapper();
 }
 
 JSYogaNode* JSYogaNode::create(JSC::VM& vm, JSC::Structure* structure, YGConfigRef config, JSYogaConfig* jsConfig)
@@ -42,20 +39,40 @@ JSYogaNode* JSYogaNode::create(JSC::VM& vm, JSC::Structure* structure, YGConfigR
     return node;
 }
 
+JSYogaNode* JSYogaNode::create(JSC::VM& vm, JSC::Structure* structure, Ref<YogaNodeImpl>&& impl)
+{
+    JSYogaNode* node = new (NotNull, JSC::allocateCell<JSYogaNode>(vm)) JSYogaNode(vm, structure, WTFMove(impl));
+    node->finishCreation(vm);
+    return node;
+}
+
 void JSYogaNode::finishCreation(JSC::VM& vm, YGConfigRef config, JSYogaConfig* jsConfig)
 {
     Base::finishCreation(vm);
-    if (config) {
-        m_node = YGNodeNewWithConfig(config);
-    } else {
-        m_node = YGNodeNew();
+    
+    // If we need to recreate with specific config, do so
+    if (config || jsConfig) {
+        m_impl = YogaNodeImpl::create(config, jsConfig);
     }
 
-    // Essential: store JS wrapper in Yoga node's context for callbacks and hierarchy traversal
-    YGNodeSetContext(m_node, this);
+    // Set this JS wrapper in the C++ impl
+    m_impl->setJSWrapper(this);
 
     // Store the JSYogaConfig if provided
     if (jsConfig) {
+        m_config.set(vm, this, jsConfig);
+    }
+}
+
+void JSYogaNode::finishCreation(JSC::VM& vm)
+{
+    Base::finishCreation(vm);
+    
+    // Set this JS wrapper in the C++ impl
+    m_impl->setJSWrapper(this);
+
+    // Store the JSYogaConfig if provided
+    if (auto* jsConfig = m_impl->jsConfig()) {
         m_config.set(vm, this, jsConfig);
     }
 }
@@ -73,7 +90,10 @@ void JSYogaNode::destroy(JSC::JSCell* cell)
 JSYogaNode* JSYogaNode::fromYGNode(YGNodeRef nodeRef)
 {
     if (!nodeRef) return nullptr;
-    return static_cast<JSYogaNode*>(YGNodeGetContext(nodeRef));
+    if (auto* impl = YogaNodeImpl::fromYGNode(nodeRef)) {
+        return impl->jsWrapper();
+    }
+    return nullptr;
 }
 
 JSC::JSGlobalObject* JSYogaNode::globalObject() const
@@ -105,6 +125,11 @@ void JSYogaNode::visitChildrenImpl(JSC::JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_dirtiedFunc);
     visitor.append(thisObject->m_baselineFunc);
     visitor.append(thisObject->m_config);
+    
+    // Add the root YogaNode as an opaque root
+    if (void* yogaRoot = root(&thisObject->m_impl.get())) {
+        visitor.addOpaqueRoot(yogaRoot);
+    }
 }
 
 } // namespace Bun

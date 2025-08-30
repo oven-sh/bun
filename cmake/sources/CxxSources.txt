@@ -100,6 +100,7 @@ src/bun.js/bindings/JSYogaConstructor.cpp
 src/bun.js/bindings/JSYogaExports.cpp
 src/bun.js/bindings/JSYogaModule.cpp
 src/bun.js/bindings/JSYogaNode.cpp
+src/bun.js/bindings/JSYogaNodeOwner.cpp
 src/bun.js/bindings/JSYogaPrototype.cpp
 src/bun.js/bindings/linux_perf_tracing.cpp
 src/bun.js/bindings/MarkedArgumentBufferBinding.cpp
@@ -499,6 +500,7 @@ src/bun.js/bindings/webcrypto/SerializedCryptoKeyWrapOpenSSL.cpp
 src/bun.js/bindings/webcrypto/SubtleCrypto.cpp
 src/bun.js/bindings/workaround-missing-symbols.cpp
 src/bun.js/bindings/wtf-bindings.cpp
+src/bun.js/bindings/YogaNodeImpl.cpp
 src/bun.js/bindings/ZigGeneratedCode.cpp
 src/bun.js/bindings/ZigGlobalObject.cpp
 src/bun.js/bindings/ZigSourceProvider.cpp

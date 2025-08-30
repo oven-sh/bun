@@ -3,6 +3,7 @@
 #include <memory>
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/WriteBarrier.h>
+#include <wtf/Ref.h>
 
 // Forward declarations
 typedef struct YGNode* YGNodeRef;
@@ -12,6 +13,7 @@ typedef const struct YGNode* YGNodeConstRef;
 namespace Bun {
 
 class JSYogaConfig;
+class YogaNodeImpl;
 
 class JSYogaNode final : public JSC::JSDestructibleObject {
 public:
@@ -20,6 +22,7 @@ public:
     static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
 
     static JSYogaNode* create(JSC::VM&, JSC::Structure*, YGConfigRef config = nullptr, JSYogaConfig* jsConfig = nullptr);
+    static JSYogaNode* create(JSC::VM&, JSC::Structure*, Ref<YogaNodeImpl>&&);
     static void destroy(JSC::JSCell*);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue);
     ~JSYogaNode();
@@ -30,9 +33,8 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    YGNodeRef internal() { return m_node; }
-    void clearInternal() { m_node = nullptr; }
-    void setInternal(YGNodeRef node) { m_node = node; }
+    YogaNodeImpl& impl() { return m_impl.get(); }
+    const YogaNodeImpl& impl() const { return m_impl.get(); }
 
     // Helper to get JS wrapper from Yoga node
     static JSYogaNode* fromYGNode(YGNodeRef);
@@ -48,9 +50,11 @@ public:
 
 private:
     JSYogaNode(JSC::VM&, JSC::Structure*);
+    JSYogaNode(JSC::VM&, JSC::Structure*, Ref<YogaNodeImpl>&&);
     void finishCreation(JSC::VM&, YGConfigRef config, JSYogaConfig* jsConfig);
+    void finishCreation(JSC::VM&);
 
-    YGNodeRef m_node;
+    Ref<YogaNodeImpl> m_impl;
 };
 
 } // namespace Bun

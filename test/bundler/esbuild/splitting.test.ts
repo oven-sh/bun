@@ -56,7 +56,6 @@ describe("bundler", () => {
     },
   });
   itBundled("splitting/DynamicES6IntoES6", {
-    todo: true,
     files: {
       "/entry.js": `import("./foo.js").then(({bar}) => console.log(bar))`,
       "/foo.js": `export let bar = 123`,

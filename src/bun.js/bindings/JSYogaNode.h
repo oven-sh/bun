@@ -31,7 +31,7 @@ public:
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM&);
 
     DECLARE_INFO;
-    
+
     template<typename Visitor> void visitAdditionalChildren(Visitor&);
     template<typename Visitor> static void visitOutputConstraints(JSC::JSCell*, Visitor&);
 

@@ -2374,8 +2374,7 @@ pub const BundleV2 = struct {
                     }
 
                     const existing = this.pathToSourceIndexMap(resolve.import_record.original_target)
-                    const existing = bun.handleOom(this.pathToSourceIndexMap(resolve.import_record.original_target)
-                        .getOrPutPath(this.allocator(), &path));
+                        .getOrPutPath(this.allocator(), &path) catch |err| bun.handleOom(err);
                     if (!existing.found_existing) {
                         this.free_list.appendSlice(&.{ result.namespace, result.path }) catch {};
                         path = bun.handleOom(this.pathWithPrettyInitialized(path, resolve.import_record.original_target));

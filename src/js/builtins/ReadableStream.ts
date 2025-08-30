@@ -323,7 +323,7 @@ export function readableStreamToJSON(stream: ReadableStream): unknown {
     try {
       return $createFulfilledPromise(globalThis.JSON.parse(peeked));
     } catch (e) {
-      return Promise.reject(e);
+      return Promise.$reject(e);
     }
   }
 
@@ -337,7 +337,7 @@ export function readableStreamToBlob(stream: ReadableStream): Promise<Blob> {
 
   return (
     $tryUseReadableStreamBufferedFastPath(stream, "blob") ||
-    Promise.resolve(Bun.readableStreamToArray(stream)).then(array => new Blob(array))
+    Promise.$resolve(Bun.readableStreamToArray(stream)).then(array => new Blob(array))
   );
 }
 

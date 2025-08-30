@@ -50,7 +50,7 @@ for (let i = 0; i < promiseKeys.length; i++) {
     if (new.target) {
       throw $ERR_ILLEGAL_CONSTRUCTOR();
     }
-    return Promise.resolve().then(() => op.$apply(this, args));
+    return Promise.$resolve().then(() => op.$apply(this, args));
   }
   ObjectDefineProperty(fn, "name", { __proto__: null, value: op.name });
   ObjectDefineProperty(fn, "length", { __proto__: null, value: op.length });

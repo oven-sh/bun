@@ -808,13 +808,11 @@ fn BaseWindowsPipeWriter(
         }
 
         fn onPipeClose(handle: *uv.Pipe) callconv(.C) void {
-            const this = bun.cast(*uv.Pipe, handle.data);
-            bun.default_allocator.destroy(this);
+            bun.default_allocator.destroy(handle);
         }
 
         fn onTTYClose(handle: *uv.uv_tty_t) callconv(.C) void {
-            const this = bun.cast(*uv.uv_tty_t, handle.data);
-            bun.default_allocator.destroy(this);
+            bun.default_allocator.destroy(handle);
         }
 
         pub fn close(this: *WindowsPipeWriter) void {
@@ -831,11 +829,9 @@ fn BaseWindowsPipeWriter(
                         }
                     },
                     .pipe => |pipe| {
-                        pipe.data = pipe;
                         pipe.close(onPipeClose);
                     },
                     .tty => |tty| {
-                        tty.data = tty;
                         tty.close(onTTYClose);
                     },
                 }

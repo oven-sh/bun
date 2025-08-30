@@ -36,11 +36,7 @@ test("AutoBitSet async dependency propagation should work correctly", async () =
     stdout: "pipe",
   });
 
-  const [stderr, stdout, exitCode] = await Promise.all([
-    result.stderr.text(),
-    result.stdout.text(),
-    result.exited,
-  ]);
+  const [stderr, stdout, exitCode] = await Promise.all([result.stderr.text(), result.stdout.text(), result.exited]);
 
   // Should build successfully since we're using import statements, not require()
   expect(exitCode).toBe(0);

@@ -646,6 +646,13 @@ declare module "bun" {
     export function parse(input: string): unknown;
   }
 
+  namespace XML {
+    /**
+     * Parse a XML string into a JavaScript value.
+     */
+    export function parse(input: string): unknown;
+  }
+
   /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
    *

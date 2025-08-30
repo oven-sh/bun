@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import fs from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
-import fs from "fs";
 
 describe("pnpm comprehensive migration tests", () => {
   test("large single package with many dependencies", async () => {
@@ -1204,16 +1204,12 @@ snapshots:
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
     expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
-    
+
     const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("v8-format");
   });
@@ -1248,11 +1244,7 @@ packages:
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Should fail with error message
     expect(exitCode).toBe(1);

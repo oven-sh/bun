@@ -1,7 +1,7 @@
-import { describe, test, expect } from "bun:test";
-import { tempDirWithFiles, bunExe, bunEnv } from "harness";
-import { join } from "path";
+import { describe, expect, test } from "bun:test";
 import fs from "fs";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { join } from "path";
 
 describe("PNPM Migration Complete Test Suite", () => {
   test("comprehensive PNPM migration with all edge cases", async () => {

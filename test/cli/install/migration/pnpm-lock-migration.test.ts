@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import fs from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
-import fs from "fs";
 
 describe("pnpm-lock.yaml migration", () => {
   test("simple pnpm lockfile migration produces correct bun.lock", async () => {

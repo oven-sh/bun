@@ -1,37 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-const strings = bun.strings;
-const Environment = bun.Environment;
-const Output = bun.Output;
-const Global = bun.Global;
-const logger = bun.logger;
-const FileSystem = bun.fs.FileSystem;
-const Allocator = std.mem.Allocator;
 const string = []const u8;
-const os = std.os;
-
-const Lockfile = @import("./lockfile.zig");
-const LoadResult = Lockfile.LoadResult;
-const Install = @import("./install.zig");
-const Dependency = @import("./dependency.zig");
-const Resolution = @import("./resolution.zig").Resolution;
-const Semver = bun.Semver;
-const String = Semver.String;
-const stringHash = String.Builder.stringHash;
-const Npm = @import("./npm.zig");
-const Bin = @import("./bin.zig").Bin;
-const Integrity = @import("./integrity.zig").Integrity;
-const ExternalString = Semver.ExternalString;
-const ExternalStringList = Install.ExternalStringList;
-const PackageNameAndVersionHash = Install.PackageNameAndVersionHash;
-const PatchedDep = Lockfile.PatchedDep;
-
-const JSAst = bun.ast;
-const E = JSAst.E;
-const Expr = JSAst.Expr;
-const JSPrinter = bun.js_printer;
-const JSON = bun.json;
-const YAML = bun.interchange.yaml.YAML;
 
 /// Represents a pnpm package path with optional peer dependency suffixes
 /// This parser handles both PNPM v6 and v9 formats correctly
@@ -3027,3 +2994,35 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, log: *logger.Log) !void
         }) catch return;
     }
 }
+
+const Dependency = @import("./dependency.zig");
+const Install = @import("./install.zig");
+const Npm = @import("./npm.zig");
+const Bin = @import("./bin.zig").Bin;
+const Integrity = @import("./integrity.zig").Integrity;
+const Resolution = @import("./resolution.zig").Resolution;
+
+const Lockfile = @import("./lockfile.zig");
+const LoadResult = Lockfile.LoadResult;
+const PatchedDep = Lockfile.PatchedDep;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSON = bun.json;
+const JSPrinter = bun.js_printer;
+const logger = bun.logger;
+const strings = bun.strings;
+const YAML = bun.interchange.yaml.YAML;
+
+const Semver = bun.Semver;
+const ExternalString = Semver.ExternalString;
+const String = Semver.String;
+const stringHash = String.Builder.stringHash;
+
+const JSAst = bun.ast;
+const E = JSAst.E;
+const Expr = JSAst.Expr;
+
+const std = @import("std");
+const os = std.os;
+const Allocator = std.mem.Allocator;

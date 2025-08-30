@@ -1,9 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import fs, { mkdtempSync } from "fs";
 import { bunEnv, bunExe } from "harness";
-import { join } from "path";
-import fs from "fs";
-import { mkdtempSync } from "fs";
 import { tmpdir } from "os";
+import { join } from "path";
 
 describe("pnpm real Next.js repo migration", () => {
   test("migrates real Next.js monorepo pnpm lockfile", async () => {

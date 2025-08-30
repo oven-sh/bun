@@ -41,7 +41,12 @@ pub const ScanCommand = struct {
             Global.exit(1);
         }
 
-        if (try security_scanner.performSecurityScanForAll(manager, ctx, original_cwd)) |results| {
+        const security_scan_results = security_scanner.performSecurityScanForAll(manager, ctx, original_cwd) catch |err| {
+            Output.errGeneric("Could not perform security scan (<d>{s}<r>)", .{@errorName(err)});
+            Global.exit(1);
+        };
+
+        if (security_scan_results) |results| {
             defer {
                 var results_mut = results;
                 results_mut.deinit();

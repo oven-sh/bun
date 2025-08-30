@@ -12,14 +12,15 @@ namespace Bun {
 static Lock s_freedNodesLock;
 static HashSet<void*> s_freedNodes;
 
-static void safeYGNodeFree(YGNodeRef node) {
+static void safeYGNodeFree(YGNodeRef node)
+{
     if (!node) return;
-    
+
     Locker locker { s_freedNodesLock };
     if (s_freedNodes.contains(node)) {
         return; // Already freed
     }
-    
+
     s_freedNodes.add(node);
     YGNodeFree(node);
 }

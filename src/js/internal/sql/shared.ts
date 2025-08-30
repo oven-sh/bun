@@ -334,8 +334,8 @@ function determineAdapter(
           }
         }
 
-        // If we found a URL with higher precedence, don't check lower precedence URLs
-        break;
+        //  No adapter inferred from this env var; continue to lower-precedence vars
+        continue;
       }
     }
   }

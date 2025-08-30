@@ -1325,6 +1325,7 @@ pub const TestCommand = struct {
                 .bail = ctx.test_options.bail,
                 .filter_regex = ctx.test_options.test_filter_regex,
                 .filter_buffer = bun.MutableString.init(ctx.allocator, 0) catch unreachable,
+                .full_name_filters = ctx.test_options.test_full_name_filter,
                 .snapshots = Snapshots{
                     .allocator = ctx.allocator,
                     .update_snapshots = ctx.test_options.update_snapshots,
@@ -1693,13 +1694,24 @@ pub const TestCommand = struct {
 
                 reporter.printSummary();
             } else {
-                Output.prettyError("<red>error<r><d>:<r> regex <b>{}<r> matched 0 tests. Searched {d} file{s} (skipping {d} test{s}) ", .{
-                    bun.fmt.quote(ctx.test_options.test_filter_pattern.?),
-                    summary.files,
-                    if (summary.files == 1) "" else "s",
-                    summary.skipped_because_label,
-                    if (summary.skipped_because_label == 1) "" else "s",
-                });
+                if (ctx.test_options.test_filter_pattern) |pattern| {
+                    Output.prettyError("<red>error<r><d>:<r> regex <b>{}<r> matched 0 tests. Searched {d} file{s} (skipping {d} test{s}) ", .{
+                        bun.fmt.quote(pattern),
+                        summary.files,
+                        if (summary.files == 1) "" else "s",
+                        summary.skipped_because_label,
+                        if (summary.skipped_because_label == 1) "" else "s",
+                    });
+                } else if (ctx.test_options.test_full_name_filter.len > 0) {
+                    const names_text = if (ctx.test_options.test_full_name_filter.len == 1) "test name" else "test names";
+                    Output.prettyError("<red>error<r><d>:<r> {s} matched 0 tests. Searched {d} file{s} (skipping {d} test{s}) ", .{
+                        names_text,
+                        summary.files,
+                        if (summary.files == 1) "" else "s",
+                        summary.skipped_because_label,
+                        if (summary.skipped_because_label == 1) "" else "s",
+                    });
+                }
                 Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
             }
         }

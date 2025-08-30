@@ -105,6 +105,9 @@ pub const TestRunner = struct {
     filter_regex: ?*RegularExpression,
     filter_buffer: MutableString,
 
+    // Used for --full-test-name filtering
+    full_name_filters: []const string,
+
     unhandled_errors_between_tests: u32 = 0,
     summary: Summary = Summary{},
 
@@ -136,7 +139,7 @@ pub const TestRunner = struct {
     }
 
     pub fn hasTestFilter(this: *const TestRunner) bool {
-        return this.filter_regex != null;
+        return this.filter_regex != null or this.full_name_filters.len > 0;
     }
 
     pub fn setTimeout(
@@ -1230,6 +1233,28 @@ pub const DescribeScope = struct {
     }
 
     pub fn runTests(this: *DescribeScope, globalObject: *JSGlobalObject) void {
+        // Early optimization: skip entire describe blocks that can't contain matching tests
+        if (Jest.runner.?.full_name_filters.len > 0) {
+            var could_match = false;
+            for (Jest.runner.?.full_name_filters) |full_name| {
+                // For trailing space case, disable optimization to let regular matching handle it
+                // This is simpler and more reliable than trying to predict nested hierarchies
+                if (bun.strings.endsWith(full_name, " ")) {
+                    could_match = true;
+                    break;
+                }
+                // Regular case: if any full test name could start with this describe block's label
+                if (bun.strings.startsWith(full_name, this.label)) {
+                    could_match = true;
+                    break;
+                }
+            }
+            if (!could_match) {
+                // Skip this entire describe block - no tests in it could possibly match
+                return;
+            }
+        }
+
         // Step 1. Initialize the test block
         globalObject.clearTerminationException();
 
@@ -2002,6 +2027,37 @@ inline fn createScope(
                     is_skip = true;
                     tag_to_use = .skipped_because_label;
                 }
+            } else if (runner.full_name_filters.len > 0) {
+                var buffer: bun.MutableString = runner.filter_buffer;
+                buffer.reset();
+                appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
+                buffer.append(label) catch unreachable;
+                const full_test_name = buffer.slice();
+
+                // Check if the test name matches any of the provided filters
+                var matches = false;
+                var expected_name_buffer: [1024]u8 = undefined;
+                for (runner.full_name_filters) |full_name| {
+                    // Handle trailing space case: "auth " means "all tests starting with 'auth '"
+                    if (bun.strings.endsWith(full_name, " ")) {
+                        const expected_prefix = std.fmt.bufPrint(&expected_name_buffer, " {s}", .{full_name}) catch continue;
+                        if (bun.strings.startsWith(full_test_name, expected_prefix)) {
+                            matches = true;
+                            break;
+                        }
+                    } else {
+                        // Regular exact match case
+                        const expected_name = std.fmt.bufPrint(&expected_name_buffer, " {s}", .{full_name}) catch continue;
+                        if (bun.strings.eql(full_test_name, expected_name)) {
+                            matches = true;
+                            break;
+                        }
+                    }
+                }
+                if (!matches) {
+                    is_skip = true;
+                    tag_to_use = .skipped_because_label;
+                }
             }
         }
 
@@ -2374,6 +2430,37 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                     buffer.append(formattedLabel) catch unreachable;
                     const str = bun.String.fromBytes(buffer.slice());
                     is_skip = !regex.matches(str);
+                    if (is_skip) {
+                        tag_to_use = .skipped_because_label;
+                    }
+                } else if (Jest.runner.?.full_name_filters.len > 0) {
+                    var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
+                    buffer.reset();
+                    appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
+                    buffer.append(formattedLabel) catch unreachable;
+                    const full_test_name = buffer.slice();
+
+                    // Check if the test name matches any of the provided filters
+                    var matches = false;
+                    var expected_name_buffer: [1024]u8 = undefined;
+                    for (Jest.runner.?.full_name_filters) |full_name| {
+                        // Handle trailing space case: "auth " means "all tests starting with 'auth '"
+                        if (bun.strings.endsWith(full_name, " ")) {
+                            const expected_prefix = std.fmt.bufPrint(&expected_name_buffer, " {s}", .{full_name}) catch continue;
+                            if (bun.strings.startsWith(full_test_name, expected_prefix)) {
+                                matches = true;
+                                break;
+                            }
+                        } else {
+                            // Regular exact match case
+                            const expected_name = std.fmt.bufPrint(&expected_name_buffer, " {s}", .{full_name}) catch continue;
+                            if (bun.strings.eql(full_test_name, expected_name)) {
+                                matches = true;
+                                break;
+                            }
+                        }
+                    }
+                    is_skip = !matches;
                     if (is_skip) {
                         tag_to_use = .skipped_because_label;
                     }

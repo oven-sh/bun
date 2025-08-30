@@ -133,10 +133,12 @@ process.exit(allPassed ? 0 : 1);
     expect(stdout).toContain("PASS");
   });
 
-  networkTest("should work with Bun.serve and fetch using system certificates", async () => {
-    const testDir = tempDirWithFiles("node-use-system-ca-serve", {});
+  networkTest(
+    "should work with Bun.serve and fetch using system certificates",
+    async () => {
+      const testDir = tempDirWithFiles("node-use-system-ca-serve", {});
 
-    const serverScript = `
+      const serverScript = `
 const server = Bun.serve({
   port: 0,
   fetch(req) {
@@ -150,7 +152,7 @@ console.log(\`Server listening on port \${server.port}\`);
 await new Promise(() => {}); // Never resolves
 `;
 
-    const clientScript = `
+      const clientScript = `
 const port = process.argv[2];
 
 async function testClient() {
@@ -174,78 +176,80 @@ async function testClient() {
 testClient();
 `;
 
-    await fs.writeFile(join(testDir, "server.js"), serverScript);
-    await fs.writeFile(join(testDir, "client.js"), clientScript);
+      await fs.writeFile(join(testDir, "server.js"), serverScript);
+      await fs.writeFile(join(testDir, "client.js"), clientScript);
 
-    // Start server
-    const serverProc = Bun.spawn({
-      cmd: [bunExe(), "server.js"],
-      env: {
-        ...bunEnv,
-        NODE_USE_SYSTEM_CA: "1",
-      },
-      cwd: testDir,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+      // Start server
+      const serverProc = Bun.spawn({
+        cmd: [bunExe(), "server.js"],
+        env: {
+          ...bunEnv,
+          NODE_USE_SYSTEM_CA: "1",
+        },
+        cwd: testDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-    // Wait for server to start and get port
-    let serverPort;
-    const serverOutput = [];
-    const reader = serverProc.stdout.getReader();
+      // Wait for server to start and get port
+      let serverPort;
+      const serverOutput = [];
+      const reader = serverProc.stdout.getReader();
 
-    const timeout = setTimeout(() => {
-      serverProc.kill();
-    }, 10000);
+      const timeout = setTimeout(() => {
+        serverProc.kill();
+      }, 10000);
 
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        const chunk = new TextDecoder().decode(value);
-        serverOutput.push(chunk);
+          const chunk = new TextDecoder().decode(value);
+          serverOutput.push(chunk);
 
-        const match = chunk.match(/Server listening on port (\d+)/);
-        if (match) {
-          serverPort = match[1];
-          break;
+          const match = chunk.match(/Server listening on port (\d+)/);
+          if (match) {
+            serverPort = match[1];
+            break;
+          }
         }
+      } finally {
+        reader.releaseLock();
       }
-    } finally {
-      reader.releaseLock();
-    }
 
-    expect(serverPort).toBeDefined();
-    console.log("Server started on port:", serverPort);
+      expect(serverPort).toBeDefined();
+      console.log("Server started on port:", serverPort);
 
-    // Test client
-    const clientProc = Bun.spawn({
-      cmd: [bunExe(), "client.js", serverPort],
-      env: {
-        ...bunEnv,
-        NODE_USE_SYSTEM_CA: "1",
-      },
-      cwd: testDir,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+      // Test client
+      const clientProc = Bun.spawn({
+        cmd: [bunExe(), "client.js", serverPort],
+        env: {
+          ...bunEnv,
+          NODE_USE_SYSTEM_CA: "1",
+        },
+        cwd: testDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-    const [clientStdout, clientStderr, clientExitCode] = await Promise.all([
-      clientProc.stdout.text(),
-      clientProc.stderr.text(),
-      clientProc.exited,
-    ]);
+      const [clientStdout, clientStderr, clientExitCode] = await Promise.all([
+        clientProc.stdout.text(),
+        clientProc.stderr.text(),
+        clientProc.exited,
+      ]);
 
-    // Clean up server
-    clearTimeout(timeout);
-    serverProc.kill();
+      // Clean up server
+      clearTimeout(timeout);
+      serverProc.kill();
 
-    console.log("Client output:", clientStdout);
-    console.log("Client errors:", clientStderr);
+      console.log("Client output:", clientStdout);
+      console.log("Client errors:", clientStderr);
 
-    expect(clientExitCode).toBe(0);
-    expect(clientStdout).toContain("Local HTTP request successful");
-    expect(clientStdout).toContain("External HTTPS request successful");
-  }, 30000); // 30 second timeout for this test
+      expect(clientExitCode).toBe(0);
+      expect(clientStdout).toContain("Local HTTP request successful");
+      expect(clientStdout).toContain("External HTTPS request successful");
+    },
+    30000,
+  ); // 30 second timeout for this test
 });

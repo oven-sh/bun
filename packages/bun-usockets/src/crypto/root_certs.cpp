@@ -38,7 +38,7 @@ static bool us_should_use_system_ca() {
   
   // Check environment variable
   const char *use_system_ca = getenv("NODE_USE_SYSTEM_CA");
-  return use_system_ca && (strcmp(use_system_ca, "1") == 0 || strcmp(use_system_ca, "true") == 0);
+  return use_system_ca && strcmp(use_system_ca, "1") == 0;
 }
 
 // Platform-specific system certificate loading implementations are separated:

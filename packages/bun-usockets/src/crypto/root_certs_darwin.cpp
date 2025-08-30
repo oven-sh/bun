@@ -46,6 +46,7 @@ public:
     CFStringRef kSecMatchLimit;
     CFStringRef kSecMatchLimitAll;
     CFStringRef kSecReturnRef;
+    CFStringRef kSecMatchTrustedOnly;
     CFBooleanRef kCFBooleanTrue;
     CFAllocatorRef kCFAllocatorDefault;
     CFArrayCallBacks* kCFTypeArrayCallBacks;
@@ -74,7 +75,7 @@ public:
     SecurityFramework() : handle(nullptr), cf_handle(nullptr),
                          kSecClass(nullptr), kSecClassCertificate(nullptr),
                          kSecMatchLimit(nullptr), kSecMatchLimitAll(nullptr),
-                         kSecReturnRef(nullptr), kCFBooleanTrue(nullptr),
+                         kSecReturnRef(nullptr), kSecMatchTrustedOnly(nullptr), kCFBooleanTrue(nullptr),
                          kCFAllocatorDefault(nullptr), kCFTypeArrayCallBacks(nullptr),
                          kCFTypeDictionaryKeyCallBacks(nullptr), kCFTypeDictionaryValueCallBacks(nullptr),
                          CFArrayCreateMutable(nullptr), CFArrayCreate(nullptr),
@@ -163,6 +164,10 @@ private:
         ptr = dlsym(handle, "kSecReturnRef");
         if (!ptr) { fprintf(stderr, "DEBUG: kSecReturnRef not found\n"); return false; }
         kSecReturnRef = *(CFStringRef*)ptr;
+        
+        ptr = dlsym(handle, "kSecMatchTrustedOnly");
+        if (!ptr) { fprintf(stderr, "DEBUG: kSecMatchTrustedOnly not found\n"); return false; }
+        kSecMatchTrustedOnly = *(CFStringRef*)ptr;
         
         // Load CoreFoundation constants
         ptr = dlsym(cf_handle, "kCFBooleanTrue");
@@ -255,7 +260,7 @@ static bool is_certificate_trust_valid(SecurityFramework* security, SecCertifica
     
     security->CFArraySetValueAtIndex(subj_certs, 0, cert_ref);
     
-    SecPolicyRef policy = security->SecPolicyCreateSSL(false, nullptr);
+    SecPolicyRef policy = security->SecPolicyCreateSSL(true, nullptr);
     if (!policy) {
         security->CFRelease(subj_certs);
         return false;
@@ -307,7 +312,7 @@ static bool is_certificate_trusted_for_policy(SecurityFramework* security, X509*
     bool trust_evaluated = false;
     
     // Check user trust domain, then admin domain
-    for (const auto& trust_domain : {kSecTrustSettingsDomainUser, kSecTrustSettingsDomainAdmin}) {
+    for (const auto& trust_domain : {kSecTrustSettingsDomainUser, kSecTrustSettingsDomainAdmin, kSecTrustSettingsDomainSystem}) {
         CFArrayRef trust_settings = nullptr;
         OSStatus err = security->SecTrustSettingsCopyTrustSettings(cert_ref, trust_domain, &trust_settings);
         
@@ -352,21 +357,23 @@ extern "C" void us_load_system_certificates_macos(STACK_OF(X509) **system_certs)
 
     // Create search dictionary for certificates
     CFTypeRef search_keys[] = {
-        security->kSecClass, 
-        security->kSecMatchLimit, 
-        security->kSecReturnRef
+        security->kSecClass,
+        security->kSecMatchLimit,
+        security->kSecReturnRef,
+        security->kSecMatchTrustedOnly,
     };
     CFTypeRef search_values[] = {
-        security->kSecClassCertificate, 
-        security->kSecMatchLimitAll, 
-        security->kCFBooleanTrue
+        security->kSecClassCertificate,
+        security->kSecMatchLimitAll,
+        security->kCFBooleanTrue,
+        security->kCFBooleanTrue,
     };
     
     CFDictionaryRef search = security->CFDictionaryCreate(
         security->kCFAllocatorDefault,
         search_keys,
         search_values,
-        3,
+        4,
         security->kCFTypeDictionaryKeyCallBacks,
         security->kCFTypeDictionaryValueCallBacks
     );
@@ -401,8 +408,9 @@ extern "C" void us_load_system_certificates_macos(STACK_OF(X509) **system_certs)
         
         if (!x509_cert) continue;
         
-        // Check if certificate is trusted for server authentication
-        if (is_certificate_trusted_for_policy(security, x509_cert, cert_ref)) {
+        // Only consider CA certificates
+        if (X509_check_ca(x509_cert) == 1 &&
+            is_certificate_trusted_for_policy(security, x509_cert, cert_ref)) {
             sk_X509_push(*system_certs, x509_cert);
         } else {
             X509_free(x509_cert);

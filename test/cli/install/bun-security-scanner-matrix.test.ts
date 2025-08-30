@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { getRegistry, SimpleRegistry, startRegistry, stopRegistry } from "./simple-dummy-registry";
 
@@ -159,12 +160,12 @@ registry = "${registryUrl}/"`,
 
   if (shouldDoInitialInstall && !hasExistingNodeModules) {
     console.log(redShellPrefix, `rm -rf ${dir}/node_modules`);
-    await $`rm -rf node_modules`.cwd(dir);
+    await rm(join(dir, "node_modules"), { recursive: true });
   }
 
   if (shouldDoInitialInstall && !hasLockfile) {
     console.log(redShellPrefix, `rm ${dir}/bun.lock`);
-    await $`rm bun.lock`.cwd(dir);
+    await rm(join(dir, "bun.lock"));
   }
 
   ////////////////////////// POST SETUP DONE //////////////////////////

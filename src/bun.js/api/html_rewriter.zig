@@ -1183,10 +1183,14 @@ pub const TextChunk = struct {
     }
 
     pub fn removed(this: *TextChunk, _: *JSGlobalObject) JSValue {
+        if (this.text_chunk == null)
+            return JSValue.jsBoolean(false);
         return JSValue.jsBoolean(this.text_chunk.?.isRemoved());
     }
 
     pub fn lastInTextNode(this: *TextChunk, _: *JSGlobalObject) JSValue {
+        if (this.text_chunk == null)
+            return JSValue.jsBoolean(false);
         return JSValue.jsBoolean(this.text_chunk.?.isLastInTextNode());
     }
 

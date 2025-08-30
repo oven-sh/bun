@@ -532,6 +532,21 @@ function handleSQLiteOptions(
   return parseSQLiteOptionsWithQueryParams(sqliteOptions, inputUrl);
 }
 
+function defaultProtocolForAdapter(adapter: Bun.SQL.__internal.Adapter) {
+  switch (adapter) {
+    case "mariadb":
+    case "mysql2":
+    case "mysql":
+      return "mysql://";
+    case "sqlite":
+      return "sqlite://";
+    case "postgres":
+    case "postgresql":
+    default:
+      return "postgres://";
+  }
+}
+
 function parseUrlForAdapter(urlString: string, adapter: Bun.SQL.__internal.Adapter): URL {
   if (urlString.startsWith("unix://")) {
     // Handle unix:// URLs specially
@@ -549,8 +564,12 @@ function parseUrlForAdapter(urlString: string, adapter: Bun.SQL.__internal.Adapt
   }
 
   // Add default protocol for the adapter
-  const defaultProtocol = adapter === "mysql" ? "mysql://" : "postgres://";
-  return new URL(defaultProtocol + urlString);
+  const defaultProtocol = defaultProtocolForAdapter(adapter);
+  try {
+    return new URL(defaultProtocol + urlString);
+  } catch (error) {
+    return new URL(encodeURI(defaultProtocol + urlString));
+  }
 }
 
 function validateAdapterProtocolMatch(

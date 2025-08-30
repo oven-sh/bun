@@ -39,13 +39,11 @@ pub fn parse(
     };
 
     var ctx: ParserCtx = .{
-        .seen_objects = .init(arena.allocator()),
         .stack_check = .init(),
         .global = global,
         .root = root,
         .result = .zero,
     };
-    defer ctx.deinit();
 
     MarkedArgumentBuffer.run(ParserCtx, &ctx, &ParserCtx.run);
 
@@ -53,17 +51,10 @@ pub fn parse(
 }
 
 const ParserCtx = struct {
-    seen_objects: std.AutoHashMap(*const anyopaque, JSValue),
     stack_check: bun.StackCheck,
-
     global: *JSGlobalObject,
     root: Expr,
-
     result: JSValue,
-
-    pub fn deinit(ctx: *ParserCtx) void {
-        ctx.seen_objects.deinit();
-    }
 
     pub fn run(ctx: *ParserCtx, args: *MarkedArgumentBuffer) callconv(.c) void {
         ctx.result = ctx.toJS(args, ctx.root) catch |err| switch (err) {
@@ -91,14 +82,8 @@ const ParserCtx = struct {
                 return str.toJS(bun.default_allocator, ctx.global);
             },
             .e_array => {
-                if (ctx.seen_objects.get(expr.data.e_array)) |arr| {
-                    return arr;
-                }
-
                 var arr = try JSValue.createEmptyArray(ctx.global, expr.data.e_array.items.len);
-
                 args.append(arr);
-                try ctx.seen_objects.put(expr.data.e_array, arr);
 
                 for (expr.data.e_array.slice(), 0..) |item, _i| {
                     const i: u32 = @intCast(_i);
@@ -109,14 +94,8 @@ const ParserCtx = struct {
                 return arr;
             },
             .e_object => {
-                if (ctx.seen_objects.get(expr.data.e_object)) |obj| {
-                    return obj;
-                }
-
                 var obj = JSValue.createEmptyObject(ctx.global, expr.data.e_object.properties.len);
-
                 args.append(obj);
-                try ctx.seen_objects.put(expr.data.e_object, obj);
 
                 for (expr.data.e_object.properties.slice()) |prop| {
                     const key_expr = prop.key.?;

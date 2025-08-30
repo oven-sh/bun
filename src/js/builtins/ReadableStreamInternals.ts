@@ -1053,7 +1053,7 @@ export function onPullDirectStream(controller: ReadableStreamDirectController) {
         controller._handleError = $handleDirectStreamErrorReject.bind(controller);
       }
 
-      result.$catch(controller._handleError);
+      result.catch(controller._handleError);
     }
   } catch (e) {
     return $handleDirectStreamErrorReject.$call(controller, e);

@@ -58,7 +58,7 @@ declare module "bun" {
      * // "bun"
      * ```
      */
-    function env(newEnv?: Record<string, string | undefined>): $;
+    function env(newEnv?: Record<string, string | undefined> | NodeJS.Dict<string> | undefined): $;
 
     /**
      *
@@ -106,7 +106,7 @@ declare module "bun" {
        * expect(stdout.toString()).toBe("LOL!");
        * ```
        */
-      env(newEnv: Record<string, string> | undefined): this;
+      env(newEnv: Record<string, string | undefined> | NodeJS.Dict<string> | undefined): this;
 
       /**
        * By default, the shell will write to the current process's stdout and stderr, as well as buffering that output.

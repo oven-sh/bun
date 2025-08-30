@@ -4,6 +4,7 @@ pub fn installHoistedPackages(
     workspace_filters: []const WorkspaceFilter,
     install_root_dependencies: bool,
     log_level: PackageManager.Options.LogLevel,
+    packages_to_install: ?[]const PackageID,
 ) !PackageInstall.Summary {
     bun.analytics.Features.hoisted_bun_install += 1;
 
@@ -189,6 +190,7 @@ pub fn installHoistedPackages(
                 },
                 .trusted_dependencies_from_update_requests = this.findTrustedDependenciesFromUpdateRequests(),
                 .seen_bin_links = bun.StringHashMap(void).init(this.allocator),
+                .force_install_skip_prefetch_check = packages_to_install != null,
             };
         };
 
@@ -215,7 +217,8 @@ pub fn installHoistedPackages(
             while (remaining.len > unroll_count) {
                 comptime var i: usize = 0;
                 inline while (i < unroll_count) : (i += 1) {
-                    installer.installPackage(remaining[i], log_level);
+                    const package_id = this.lockfile.buffers.resolutions.items[remaining[i]];
+                    doInstallPackageIfInPackagesToInstall(&installer, packages_to_install, remaining[i], package_id, log_level);
                 }
                 remaining = remaining[unroll_count..];
 
@@ -241,7 +244,8 @@ pub fn installHoistedPackages(
             }
 
             for (remaining) |dependency_id| {
-                installer.installPackage(dependency_id, log_level);
+                const pkg_id = this.lockfile.buffers.resolutions.items[dependency_id];
+                doInstallPackageIfInPackagesToInstall(&installer, packages_to_install, dependency_id, pkg_id, log_level);
             }
 
             try this.runTasks(
@@ -358,6 +362,82 @@ pub fn installHoistedPackages(
     return summary;
 }
 
+fn shouldInstallPackage(
+    manager: *const PackageManager,
+    packages_to_install: []const PackageID,
+    package_id: PackageID,
+) bool {
+    for (packages_to_install) |root_pkg| {
+        if (package_id == root_pkg) {
+            return true;
+        }
+    }
+
+    for (packages_to_install) |root_pkg| {
+        if (isPackageDependencyOf(manager, package_id, root_pkg)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+fn isPackageDependencyOf(
+    manager: *const PackageManager,
+    needle_pkg_id: PackageID,
+    root_pkg_id: PackageID,
+) bool {
+    var visited = std.AutoHashMap(PackageID, void).init(manager.allocator);
+    defer visited.deinit();
+
+    var queue = std.ArrayList(PackageID).init(manager.allocator);
+    defer queue.deinit();
+
+    queue.append(root_pkg_id) catch return false;
+    visited.put(root_pkg_id, {}) catch return false;
+
+    var i: usize = 0;
+    while (i < queue.items.len) : (i += 1) {
+        const pkg_id = queue.items[i];
+        const pkg_deps = manager.lockfile.packages.items(.dependencies)[pkg_id];
+
+        for (pkg_deps.begin()..pkg_deps.end()) |_dep_id| {
+            const dep_id: DependencyID = @intCast(_dep_id);
+            const dep_pkg_id = manager.lockfile.buffers.resolutions.items[dep_id];
+
+            if (dep_pkg_id == invalid_package_id) {
+                continue;
+            }
+
+            if (dep_pkg_id == needle_pkg_id) {
+                return true;
+            }
+
+            if (!(visited.getOrPut(dep_pkg_id) catch return false).found_existing) {
+                queue.append(dep_pkg_id) catch return false;
+            }
+        }
+    }
+
+    return false;
+}
+
+pub fn doInstallPackageIfInPackagesToInstall(
+    this: *PackageInstaller,
+    packages_to_install: ?[]const PackageID,
+    dependency_id: DependencyID,
+    package_id: PackageID,
+    log_level: PackageManager.Options.LogLevel,
+) void {
+    if (packages_to_install) |packages| {
+        if (shouldInstallPackage(this.manager, packages, package_id)) {
+            this.installPackage(dependency_id, package_id, log_level);
+        }
+    } else {
+        this.installPackage(dependency_id, package_id, log_level);
+    }
+}
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -372,9 +452,11 @@ const FileSystem = bun.fs.FileSystem;
 
 const install = bun.install;
 const Bin = install.Bin;
+const DependencyID = install.DependencyID;
 const Lockfile = install.Lockfile;
 const PackageID = install.PackageID;
 const PackageInstall = install.PackageInstall;
+const invalid_package_id = install.invalid_package_id;
 
 const PackageManager = install.PackageManager;
 const ProgressStrings = PackageManager.ProgressStrings;

@@ -702,6 +702,35 @@ pub fn printHelp(subcommand: Subcommand) void {
             Output.pretty(outro_text, .{});
             Output.flush();
         },
+        .scan => {
+            const intro_text =
+                \\
+                \\<b>Usage<r>: <b><green>bun pm scan<r> <cyan>[flags]<r>
+                \\
+                \\  Scan all packages in lockfile for security vulnerabilities.
+                \\
+                \\<b>Flags:<r>
+            ;
+
+            const outro_text =
+                \\
+                \\
+                \\<b>Examples:<r>
+                \\  <d>Scan all packages for vulnerabilities<r>
+                \\  <b><green>bun pm scan<r>
+                \\
+                \\  <d>Output results as JSON<r>
+                \\  <b><green>bun pm scan<r> <cyan>--json<r>
+                \\
+                \\Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
+                \\
+            ;
+
+            Output.pretty(intro_text, .{});
+            clap.simpleHelp(pm_params);
+            Output.pretty(outro_text, .{});
+            Output.flush();
+        },
     }
 }
 
@@ -727,6 +756,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         // are not included in the help text
         .audit => shared_params ++ audit_params,
         .info => info_params,
+        .scan => pm_params, // scan uses the same params as pm command
     };
 
     var diag = clap.Diagnostic{};

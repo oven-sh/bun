@@ -1,0 +1,11 @@
+[package]
+name = "rust-mysql"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+diesel = { version = "2", features = ["mysql", "chrono"] }
+diesel-async = { version = "0.6.1", features = ["mysql", "tokio", "bb8"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+futures = "0.3"
+chrono = { version = "0.4", features = ["serde"] } # remove `serde` if you don't need it

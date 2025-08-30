@@ -644,6 +644,38 @@ declare module "bun" {
      * ```
      */
     export function parse(input: string): unknown;
+
+    /**
+     * Convert a JavaScript value into a YAML string. Strings are double quoted if they contain keywords, non-printable or
+     * escaped characters, or if a YAML parser would parse them as numbers. Anchors and aliases are inferred from objects, allowing cycles.
+     *
+     * @category Utilities
+     *
+     * @param input The JavaScript value to stringify.
+     * @param replacer Currently not supported.
+     * @param space A number for how many spaces each level of indentation gets, or a string used as indentation. The number is clamped between 0 and 10, and the first 10 characters of the string are used.
+     * @returns A string containing the YAML document.
+     *
+     * @example
+     * ```ts
+     * import { YAML } from "bun";
+     *
+     * const input = {
+     *   abc: "def"
+     * };
+     * console.log(YAML.stringify(input));
+     * // # output
+     * // abc: def
+     *
+     * const cycle = {};
+     * cycle.obj = cycle;
+     * console.log(YAML.stringify(cycle));
+     * // # output
+     * // &root
+     * // obj:
+     * //   *root
+     */
+    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string;
   }
 
   /**

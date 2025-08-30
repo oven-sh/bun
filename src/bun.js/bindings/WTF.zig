@@ -36,6 +36,8 @@ pub const WTF = struct {
 
         return buffer[0..@intCast(res)];
     }
+
+    pub const StringBuilder = @import("./StringBuilder.zig");
 };
 
 const bun = @import("bun");

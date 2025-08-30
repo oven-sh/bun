@@ -2,6 +2,17 @@
 
 using JSC::CatchScope;
 
+#if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
+#define ExpectedCatchScopeSize 56
+#define ExpectedCatchScopeAlignment 8
+#else
+#define ExpectedCatchScopeSize 8
+#define ExpectedCatchScopeAlignment 8
+#endif
+
+static_assert(sizeof(CatchScope) == ExpectedCatchScopeSize, "CatchScope.zig assumes CatchScope is 56 bytes");
+static_assert(alignof(CatchScope) == ExpectedCatchScopeAlignment, "CatchScope.zig assumes CatchScope is 8-byte aligned");
+
 extern "C" void CatchScope__construct(
     void* ptr,
     JSC::JSGlobalObject* globalObject,

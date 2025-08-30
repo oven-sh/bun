@@ -198,6 +198,7 @@ src/bun.js/bindings/ServerRouteList.cpp
 src/bun.js/bindings/spawn.cpp
 src/bun.js/bindings/SQLClient.cpp
 src/bun.js/bindings/sqlite/JSSQLStatement.cpp
+src/bun.js/bindings/StringBuilderBinding.cpp
 src/bun.js/bindings/stripANSI.cpp
 src/bun.js/bindings/Strong.cpp
 src/bun.js/bindings/TextCodec.cpp

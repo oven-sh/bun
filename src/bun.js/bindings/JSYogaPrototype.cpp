@@ -523,28 +523,10 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaConfigProtoFuncFree, (JSC::JSGlobalObject * globa
     if (UNLIKELY(!thisObject)) {
         return WebCore::throwThisTypeError(*globalObject, scope, "Yoga.Config"_s, "free"_s);
     }
-<<<<<<< HEAD
-    CHECK_YOGA_CONFIG_FREED(thisObject);
-
-    // Mark the config as freed by setting internal pointer to nullptr
-    // The actual cleanup will happen in the destructor
-    if (thisObject->impl().yogaConfig()) {
-        YGConfigFree(thisObject->impl().yogaConfig());
-        // Lifecycle managed by RefCounted
-||||||| parent of 86b59da959 (Complete Yoga RefCounted migration - all tests passing)
-    CHECK_YOGA_CONFIG_FREED(thisObject);
-
-    // Mark the config as freed by setting internal pointer to nullptr
-    // The actual cleanup will happen in the destructor
-    if (thisObject->impl().yogaConfig()) {
-        YGConfigFree(thisObject->impl().yogaConfig());
-        // Lifecycle managed by RefCounted
-=======
     // Check if already freed before marking as freed
     if (UNLIKELY(thisObject->impl().isFreed())) {
         throwTypeError(globalObject, scope, "Cannot perform operation on freed Yoga.Config"_s);
         return {};
->>>>>>> 86b59da959 (Complete Yoga RefCounted migration - all tests passing)
     }
 
     // Mark as freed - this will make yogaConfig() return nullptr
@@ -869,19 +851,9 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncFree, (JSC::JSGlobalObject * globalO
     CHECK_YOGA_NODE_FREED(thisObject);
 
     // Clear the internal pointer - actual cleanup in destructor
-<<<<<<< HEAD
-    if (thisObject->impl().yogaConfig()) {
-        YGNodeFree(thisObject->impl().yogaConfig());
-        // Lifecycle managed by RefCounted
-||||||| parent of 86b59da959 (Complete Yoga RefCounted migration - all tests passing)
-    if (thisObject->impl().yogaConfig()) {
-        YGNodeFree(thisObject->impl().yogaConfig());
-        // Lifecycle managed by RefCounted
-=======
     if (thisObject->impl().yogaNode()) {
         YGNodeFree(thisObject->impl().yogaNode());
         // Lifecycle managed by RefCounted
->>>>>>> 86b59da959 (Complete Yoga RefCounted migration - all tests passing)
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());

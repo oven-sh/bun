@@ -249,6 +249,13 @@ Exited with code [1]
   });
   test("another test", async () => {});
   ```
+- [ ] Add timeouts back
+  - When we begin executing a test group, mark the end_before times of each item in the group
+  - Start a timer for the min of these times
+  - When a test group ends, cancel the timer
+  - When the timer triggers, find any tests which are past their end time. Mark them as timed out.
+    - should we advance the sequence in this case or end it completely? not sure. see what vitest/jest do when beforeAll/afterAll exceed the test timeout
+  - After this, start the next timer with the new first incomplete test timeout time
 - [ ] support having both a done callback and a promise result
 - [ ] support expect counter
 - [x] finalize describe call order. ideally `A[B, C], D[E, F[G]]` will run in normal order rather than `A, D, B, C, E, F, G`

@@ -40,11 +40,17 @@ You can filter the set of _test files_ to run by passing additional positional a
 $ bun test <filter> <filter> ...
 ```
 
-To filter by _test name_, use the `-t`/`--test-name-pattern` flag.
+To filter by _test name_, use the `-t`/`--test-name-pattern` flag. This accepts full regular expressions for powerful filtering:
 
 ```sh
 # run all tests or test suites with "addition" in the name
 $ bun test --test-name-pattern addition
+
+# run tests matching a regex pattern
+$ bun test --test-name-pattern "^should (add|subtract)"
+
+# run tests ending with specific text
+$ bun test --test-name-pattern "validation$"
 ```
 
 To run a specific file in the test runner, make sure the path starts with `./` or `/` to distinguish it from a filter name.
@@ -109,6 +115,17 @@ Use the `--timeout` flag to specify a _per-test_ timeout in milliseconds. If a t
 $ bun test --timeout 20
 ```
 
+Tests can also override the timeout individually using `jest.setTimeout()`:
+
+```ts
+import { test, expect, jest } from "bun:test";
+
+test("slow operation", async () => {
+  jest.setTimeout(10000); // 10 seconds for this test
+  await slowOperation();
+});
+```
+
 ## Rerun tests
 
 Use the `--rerun-each` flag to run each test multiple times. This is useful for detecting flaky or non-deterministic test failures.
@@ -127,6 +144,25 @@ $ bun test --bail
 
 # bail after 10 failure
 $ bun test --bail=10
+```
+
+## Run specific test types
+
+### Include todo tests
+
+Use the `--todo` flag to run tests marked with `test.todo()`. These tests are expected to fail - if they pass, the test run will exit with a non-zero code.
+
+```bash
+$ bun test --todo
+```
+
+```ts
+import { test } from "bun:test";
+
+test.todo("implement this feature", () => {
+  // This test runs with --todo flag and should fail
+  // If it passes, the test suite fails
+});
 ```
 
 ## Watch mode
@@ -205,6 +241,40 @@ $ bun test --update-snapshots
 
 See [Test > Snapshots](https://bun.com/docs/test/snapshots) for complete documentation.
 
+## Coverage reporting
+
+Generate coverage reports using the `--coverage` flag:
+
+```bash
+$ bun test --coverage
+```
+
+### Coverage output formats
+
+Use `--coverage-reporter` to specify output format(s). Multiple reporters can be used:
+
+```bash
+# Text output (default)
+$ bun test --coverage --coverage-reporter text
+
+# LCOV format for CI/CD tools
+$ bun test --coverage --coverage-reporter lcov
+
+# Both text and LCOV
+$ bun test --coverage --coverage-reporter text --coverage-reporter lcov
+```
+
+### Coverage output directory
+
+Specify where coverage files are saved using `--coverage-dir`:
+
+```bash
+# Save to custom directory (default: "coverage")
+$ bun test --coverage --coverage-reporter lcov --coverage-dir my-coverage
+```
+
+See [Test > Coverage](https://bun.com/docs/test/coverage) for complete documentation including threshold configuration.
+
 ## UI & DOM testing
 
 Bun is compatible with popular UI testing libraries:
@@ -276,5 +346,30 @@ $ CLAUDECODE=1 bun test
 ```
 
 This feature is particularly useful in AI-assisted development workflows where reduced output verbosity improves context efficiency while maintaining visibility into test failures.
+
+## Configuration in bunfig.toml
+
+Many test options can be configured in `bunfig.toml` for persistent settings:
+
+```toml
+[test]
+# Test execution
+timeout = 30000          # Default timeout in milliseconds
+todo = false             # Include .todo() tests
+
+# Coverage settings
+coverage = true          # Enable coverage by default
+coverageReporter = ["text", "lcov"]
+coverageDir = "coverage"
+
+# Filtering
+testNamePattern = "unit"  # Default test name filter
+
+# Advanced options
+bail = 1                 # Exit after N failures
+rerunEach = 0           # Repeat each test N times
+```
+
+See [Test > Coverage](https://bun.com/docs/test/coverage) for complete coverage configuration options.
 
 {% bunCLIUsage command="test" /%}

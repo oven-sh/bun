@@ -185,7 +185,7 @@ pub fn installIsolatedPackages(
                                         .dep_id = dep_id,
                                         .pkg_id = pkg_id,
                                     });
-                                    continue;
+                                    break;
                                 }
                             }
                         }
@@ -832,30 +832,30 @@ pub fn installIsolatedPackages(
                     const dep_id = node_dep_ids[node_id.get()];
                     const dep = lockfile.buffers.dependencies.items[dep_id];
 
-                    const should_install = should_install: {
-                        if (manager.options.do.prefetch_resolved_tarballs) break :should_install true;
+                    // const should_install = should_install: {
+                    //     if (manager.options.do.prefetch_resolved_tarballs) break :should_install true;
 
-                        // we only want to consider this package for download if it's in the packages_to_install array
-                        if (packages_to_install) |_pkgs| {
-                            for (_pkgs) |pkg_to_install| {
-                                if (pkg_to_install == pkg_id) {
-                                    break :should_install true;
-                                }
-                            }
-                        } else {
-                            // If packages_to_install is null, we're doing a full install (not partial)
-                            // This happens after security scan passes - we need to install everything
-                            break :should_install true;
-                        }
+                    //     // we only want to consider this package for download if it's in the packages_to_install array
+                    //     if (packages_to_install) |_pkgs| {
+                    //         for (_pkgs) |pkg_to_install| {
+                    //             if (pkg_to_install == pkg_id) {
+                    //                 break :should_install true;
+                    //             }
+                    //         }
+                    //     } else {
+                    //         // If packages_to_install is null, we're doing a full install (not partial)
+                    //         // This happens after security scan passes - we need to install everything
+                    //         break :should_install true;
+                    //     }
 
-                        break :should_install false;
-                    };
+                    //     break :should_install false;
+                    // };
 
-                    if (!should_install) {
-                        entry_steps[entry_id.get()].store(.done, .monotonic);
-                        installer.onTaskComplete(entry_id, .skipped);
-                        continue;
-                    }
+                    // if (!should_install) {
+                    //     entry_steps[entry_id.get()].store(.done, .monotonic);
+                    //     installer.onTaskComplete(entry_id, .skipped);
+                    //     continue;
+                    // }
 
                     switch (pkg_res_tag) {
                         .npm => {

@@ -196,49 +196,74 @@ scanner = "${scannerPath}"`,
     cwd: dir,
     stdout: "pipe",
     stderr: "pipe",
+    stdin: "pipe",
     env: bunEnv,
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  let text = "";
 
-  // Debug output for failures
+  const write = (chunk: Uint8Array, stream: NodeJS.WriteStream, decoder: TextDecoder) => {
+    const str = decoder.decode(chunk).trim();
+
+    text += str;
+
+    const redSubprocessPrefix = "\x1b[31m [SUBPROC] \x1b[0m";
+
+    if (str.length > 0) {
+      stream.write(redSubprocessPrefix);
+      stream.write(str);
+      stream.write("\n");
+    }
+  };
+
+  const outDecoder = new TextDecoder();
+  const stdoutWriter = new WritableStream({
+    write: chunk => write(chunk, process.stdout, outDecoder),
+    close: () => void process.stdout.write(outDecoder.decode()),
+  });
+
+  const errDecoder = new TextDecoder();
+  const stderrWriter = new WritableStream({
+    write: chunk => write(chunk, process.stderr, errDecoder),
+    close: () => void process.stderr.write(errDecoder.decode()),
+  });
+
+  await Promise.all([proc.stdout.pipeTo(stdoutWriter), proc.stderr.pipeTo(stderrWriter)]);
+
+  const exitCode = await proc.exited;
+
+  const errAndOut = text;
+
   if (exitCode !== expectedExitCode) {
     console.log("Command:", cmd.join(" "));
     console.log("Expected exit code:", expectedExitCode, "Got:", exitCode);
     console.log("Test directory:", dir);
-    console.log("Files in test dir:", await Array.fromAsync(new Bun.Glob("**/*").scan(dir)));
-    console.log("Stdout:", stdout);
-    console.log("Stderr:", stderr);
+    console.log(
+      "Files in test dir:",
+      await Array.fromAsync(
+        new Bun.Glob("**/*").scan({ cwd: dir, dot: true, followSymlinks: false, onlyFiles: false }),
+      ),
+    );
     console.log("Registry:", registryUrl);
     console.log();
     console.log("bunfig:");
     console.log(await Bun.file(join(dir, "bunfig.toml")).text());
     console.log();
-  } else {
-    console.log("Files in test dir:", await Array.fromAsync(new Bun.Glob("**/*").scan(dir)));
-    console.log("Stdout:", stdout);
-    console.log("Stderr:", stderr);
   }
 
   expect(exitCode).toBe(expectedExitCode);
 
   for (const expected of expectedOutput) {
-    expect(stdout + stderr).toContain(expected);
+    expect(errAndOut).toContain(expected);
   }
 
   for (const unexpected of unexpectedOutput) {
-    expect(stdout + stderr).not.toContain(unexpected);
+    expect(errAndOut).not.toContain(unexpected);
   }
 
   if (expectedError) {
-    expect(stderr).toContain(expectedError);
+    expect(errAndOut).toContain(expectedError);
   }
-
-  const errAndOut = stderr + stdout;
-
-  console.log(
-    `[TEST STATE] scannerType=${scannerType}, hasExistingNodeModules=${hasExistingNodeModules}, exitCode=${exitCode}, command='${cmd.join(" ")}'`,
-  );
 
   // If the scanner is from npm and there are no node modules when the test "starts"
   // then we should expect Bun to do the partial install first of all
@@ -249,7 +274,7 @@ scanner = "${scannerPath}"`,
   }
 
   if (scannerType === "bunfig-only") {
-    expect(stdout).toContain("");
+    expect(errAndOut).toContain("");
   }
 
   if (scannerType !== "bunfig-only" && !scannerError) {
@@ -266,18 +291,22 @@ scanner = "${scannerPath}"`,
 
   if (scannerType !== "bunfig-only" && !hasExistingNodeModules) {
     switch (scannerReturns) {
-      case "fatal": 
+      case "fatal":
       case "warn": {
         // When there are fatal advisories OR warnings (with no TTY to prompt),
         // the installation is cancelled and packages should NOT be installed
-        const files = await Array.fromAsync(new Bun.Glob("**/*").scan(dir));
+        const files = await Array.fromAsync(
+          new Bun.Glob("**/*").scan({ cwd: dir, dot: true, followSymlinks: false, onlyFiles: false }),
+        );
         expect(files).not.toContain("node_modules/left-pad/package.json");
         break;
       }
 
       case "clean": {
         // When there are no security issues, packages should be installed normally
-        const files = await Array.fromAsync(new Bun.Glob("**/*").scan(dir));
+        const files = await Array.fromAsync(
+          new Bun.Glob("**/*").scan({ cwd: dir, dot: true, followSymlinks: true, onlyFiles: false }),
+        );
         expect(files).toContain("node_modules/left-pad/package.json");
         break;
       }
@@ -338,7 +367,7 @@ scanner = "${scannerPath}"`,
     expect(requestedTarballs).toMatchSnapshot("requested-tarballs: unknown command");
   }
 
-  return { stdout, stderr, exitCode, dir };
+  return { errAndOut, exitCode, dir };
 }
 
 beforeAll(async () => {

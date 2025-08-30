@@ -175,7 +175,7 @@ Click the link in the right column to jump to the associated documentation.
 ---
 
 - Compression
-- [`Bun.gzipSync()`](https://bun.com/docs/api/utils#bun-gzipsync), [`Bun.gunzipSync()`](https://bun.com/docs/api/utils#bun-gunzipsync), [`Bun.deflateSync()`](https://bun.com/docs/api/utils#bun-deflatesync), [`Bun.inflateSync()`](https://bun.com/docs/api/utils#bun-inflatesync), `Bun.zstdCompressSync()`, `Bun.zstdDecompressSync()`, `Bun.zstdCompress()`, `Bun.zstdDecompress()`
+- [`Bun.gzipSync()`](https://bun.com/docs/api/utils#bun-gzipsync), [`Bun.gunzipSync()`](https://bun.com/docs/api/utils#bun-gunzipsync), [`Bun.deflateSync()`](https://bun.com/docs/api/utils#bun-deflatesync), [`Bun.inflateSync()`](https://bun.com/docs/api/utils#bun-inflatesync), [`Bun.zstdCompressSync()`](https://bun.com/docs/api/utils#bun-zstdcompresssync), [`Bun.zstdDecompressSync()`](https://bun.com/docs/api/utils#bun-zstddecompresssync), [`Bun.zstdCompress()`](https://bun.com/docs/api/utils#bun-zstdcompress), [`Bun.zstdDecompress()`](https://bun.com/docs/api/utils#bun-zstddecompress)
 
 ---
 

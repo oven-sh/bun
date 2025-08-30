@@ -269,7 +269,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
     this[_run](true);
 
-    const result = super.catch.$apply(this, arguments);
+    const result = super.$catch.$apply(this, arguments);
     $markPromiseAsHandled(result);
 
     return result;

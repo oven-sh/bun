@@ -232,8 +232,7 @@ number = 42
 
     const result = Bun.TOML.stringify(obj);
     expect(result).toMatchInlineSnapshot(`
-"
-[metadata]
+"[metadata]
 version = "1.0"
 tags = ["production", "web"]
 numbers = [

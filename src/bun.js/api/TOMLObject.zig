@@ -70,9 +70,22 @@ pub fn stringify(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!jsc.JSValue {
-    const value = callframe.argumentsAsArray(1)[0];
+    const arguments = callframe.arguments();
+    if (arguments.len == 0) {
+        return globalThis.throwInvalidArguments("Expected a value to stringify", .{});
+    }
 
-    if (value.isUndefined() or value.isSymbol() or value.isFunction()) {
+    const value = arguments.ptr[0];
+
+    if (value.isUndefined()) {
+        return globalThis.throwInvalidArguments("Cannot stringify undefined value to TOML", .{});
+    }
+    
+    if (value.isNull()) {
+        return globalThis.throwInvalidArguments("Cannot stringify null value to TOML", .{});
+    }
+    
+    if (value.isSymbol() or value.isFunction()) {
         return .js_undefined;
     }
 

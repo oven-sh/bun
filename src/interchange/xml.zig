@@ -349,7 +349,7 @@ const Parser = struct {
 
     fn createChildrenAsProperties(self: *Parser, children: []ChildElement) !Expr {
         var properties = std.ArrayList(G.Property).init(self.allocator);
-        var child_counts = std.StringHashMap(u32).init(self.allocator);
+        var child_counts = bun.StringHashMap(u32).init(self.allocator);
         defer child_counts.deinit();
 
         // First pass: count occurrences of each tag name to handle duplicates
@@ -360,7 +360,7 @@ const Parser = struct {
         }
 
         // Second pass: create properties
-        var processed_tags = std.StringHashMap(u32).init(self.allocator);
+        var processed_tags = bun.StringHashMap(u32).init(self.allocator);
         defer processed_tags.deinit();
 
         for (children) |child| {
@@ -396,7 +396,7 @@ const Parser = struct {
     }
 
     fn addChildrenAsProperties(self: *Parser, properties: *std.ArrayList(G.Property), children: []ChildElement) !void {
-        var child_counts = std.StringHashMap(u32).init(self.allocator);
+        var child_counts = bun.StringHashMap(u32).init(self.allocator);
         defer child_counts.deinit();
 
         // First pass: count occurrences of each tag name
@@ -407,7 +407,7 @@ const Parser = struct {
         }
 
         // Second pass: create properties
-        var processed_tags = std.StringHashMap(u32).init(self.allocator);
+        var processed_tags = bun.StringHashMap(u32).init(self.allocator);
         defer processed_tags.deinit();
 
         for (children) |child| {

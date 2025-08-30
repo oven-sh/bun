@@ -662,6 +662,10 @@ pub const Version = struct {
                                 if (isGitHubRepoPath(path)) return .github;
                             }
 
+                            if (isTarball(url)) {
+                                return .tarball;
+                            }
+
                             if (strings.indexOfChar(url, '.')) |dot| {
                                 if (Repository.Hosts.has(url[0..dot])) return .git;
                             }

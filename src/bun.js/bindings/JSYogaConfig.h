@@ -30,6 +30,7 @@ public:
     DECLARE_INFO;
     
     template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    template<typename Visitor> static void visitOutputConstraints(JSC::JSCell*, Visitor&);
 
     YogaConfigImpl& impl() { return m_impl.get(); }
     const YogaConfigImpl& impl() const { return m_impl.get(); }

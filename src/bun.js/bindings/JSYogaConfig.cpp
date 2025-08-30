@@ -85,4 +85,16 @@ void JSYogaConfig::visitAdditionalChildren(Visitor& visitor)
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSYogaConfig);
 
+template<typename Visitor>
+void JSYogaConfig::visitOutputConstraints(JSC::JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<JSYogaConfig*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitOutputConstraints(thisObject, visitor);
+    thisObject->visitAdditionalChildren(visitor);
+}
+
+template void JSYogaConfig::visitOutputConstraints(JSC::JSCell*, JSC::AbstractSlotVisitor&);
+template void JSYogaConfig::visitOutputConstraints(JSC::JSCell*, JSC::SlotVisitor&);
+
 } // namespace Bun

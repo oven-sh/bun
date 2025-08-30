@@ -107,6 +107,7 @@ pub const TestRunner = struct {
 
     // Used for file:line filtering
     line_filters: bun.StringHashMapUnmanaged(std.ArrayListUnmanaged(u32)) = .{},
+    line_filters_by_file_id: std.AutoHashMapUnmanaged(u32, std.ArrayListUnmanaged(u32)) = .{},
 
     unhandled_errors_between_tests: u32 = 0,
     summary: Summary = Summary{},
@@ -142,46 +143,72 @@ pub const TestRunner = struct {
         return this.filter_regex != null or this.line_filters.count() > 0;
     }
 
+    fn mapLineFiltersToFileId(this: *TestRunner, file_path: []const u8, file_id: File.ID) void {
+        // Convert file path to absolute path for comparison
+        var path_buf: bun.PathBuffer = undefined;
+        const absolute_file_path = if (std.fs.path.isAbsolute(file_path))
+            file_path
+        else blk: {
+            const cwd = bun.getcwd(&path_buf) catch return;
+            break :blk bun.path.joinAbsStringBuf(cwd, &path_buf, &.{file_path}, .auto);
+        };
+
+        // Check if we have line filters for this absolute path
+        if (this.line_filters.get(absolute_file_path)) |lines| {
+            // Copy the line filter to the file ID map
+            var lines_copy = std.ArrayListUnmanaged(u32){};
+            lines_copy.appendSlice(this.allocator, lines.items) catch return;
+            this.line_filters_by_file_id.put(this.allocator, file_id, lines_copy) catch return;
+        }
+    }
+
     pub fn matchesLineFilter(this: *const TestRunner, file_path: []const u8, line_number: u32, parent: ?*DescribeScope) bool {
         if (this.line_filters.count() == 0) return true;
 
-        // Iterate through all line filters to find matches
-        var iter = this.line_filters.iterator();
-        while (iter.next()) |entry| {
-            const filter_file = entry.key_ptr.*;
-            const lines = &entry.value_ptr.*;
+        // Use the file ID from the parent DescribeScope for O(1) lookup
+        const file_id = if (parent) |p| p.file_id else {
+            // Fallback to path-based lookup if no parent (shouldn't happen normally)
+            var path_buf: bun.PathBuffer = undefined;
+            const absolute_current_file = if (std.fs.path.isAbsolute(file_path))
+                file_path
+            else blk: {
+                const cwd = bun.getcwd(&path_buf) catch break :blk file_path;
+                break :blk bun.path.joinAbsStringBuf(cwd, &path_buf, &.{file_path}, .auto);
+            };
+            const lines = this.line_filters.get(absolute_current_file);
+            if (lines == null) return false;
+            return this.checkLineMatch(lines.?, line_number, parent);
+        };
 
-            // Normalize the filter file by removing ./ prefix if it exists
-            const normalized_filter = if (bun.strings.startsWith(filter_file, "./"))
-                filter_file[2..]
-            else
-                filter_file;
-
-            // Check if the file path ends with the normalized filter file
-            if (!bun.strings.endsWith(file_path, normalized_filter)) {
-                continue;
-            }
-
-            // Check if any of the specified lines match
-            for (lines.items) |filter_line| {
-                // If the test is directly on the specified line, it matches
-                if (line_number == filter_line) {
-                    return true;
-                }
-
-                // Check if the test is within a describe block that starts at the specified line
-                var current_parent = parent;
-                while (current_parent) |p| {
-                    // If the describe block starts exactly at the filter line,
-                    // then all tests within it should be included
-                    if (p.line_number > 0 and p.line_number == filter_line) {
-                        return true;
-                    }
-                    current_parent = p.parent;
-                }
-            }
+        // Fast O(1) lookup using file ID
+        const lines = this.line_filters_by_file_id.get(file_id);
+        if (lines == null) {
+            // No line filter for this file, so it should be skipped
+            return false;
         }
 
+        return this.checkLineMatch(lines.?, line_number, parent);
+    }
+
+    fn checkLineMatch(_: *const TestRunner, lines: std.ArrayListUnmanaged(u32), line_number: u32, parent: ?*DescribeScope) bool {
+        // Check if any of the specified lines match
+        for (lines.items) |filter_line| {
+            // If the test is directly on the specified line, it matches
+            if (line_number == filter_line) {
+                return true;
+            }
+
+            // Check if the test is within a describe block that starts at the specified line
+            var current_parent = parent;
+            while (current_parent) |p| {
+                // If the describe block starts exactly at the filter line,
+                // then all tests within it should be included
+                if (p.line_number > 0 and p.line_number == filter_line) {
+                    return true;
+                }
+                current_parent = p.parent;
+            }
+        }
         return false;
     }
 
@@ -322,6 +349,10 @@ pub const TestRunner = struct {
         };
         this.files.append(this.allocator, .{ .module_scope = scope, .source = logger.Source.initEmptyFile(file_path) }) catch unreachable;
         entry.value_ptr.* = file_id;
+        
+        // Map line filters from absolute path to file ID for performance
+        this.mapLineFiltersToFileId(file_path, file_id);
+        
         return scope;
     }
 
@@ -2051,14 +2082,20 @@ inline fn createScope(
             }
 
             // Apply line-based filtering
+            var test_line: u32 = 0;
             if (runner.line_filters.count() > 0) {
                 const current_file = runner.files.items(.source)[parent.file_id].path.text;
-                const test_line = captureTestLineNumber(callframe, globalThis);
+                test_line = captureTestLineNumber(callframe, globalThis);
                 if (!runner.matchesLineFilter(current_file, test_line, parent)) {
                     is_skip = true;
                     tag_to_use = .skipped_because_label;
                 }
             }
+        }
+
+        // Capture line number if not already captured during filtering
+        if (test_line == 0) {
+            test_line = captureTestLineNumber(callframe, globalThis);
         }
 
         if (is_skip) {
@@ -2085,7 +2122,7 @@ inline fn createScope(
             .func_arg = function_args,
             .func_has_callback = has_callback,
             .timeout_millis = timeout_ms,
-            .line_number = captureTestLineNumber(callframe, globalThis),
+            .line_number = test_line,
             .test_id_for_debugger = brk: {
                 const vm = globalThis.bunVM();
                 if (vm.debugger) |*debugger| {

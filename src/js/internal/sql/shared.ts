@@ -805,8 +805,6 @@ function normalizeOptionsForAdapter(
   if (sslMode !== SSLMode.disable && !tls?.serverName) {
     if (hostname) {
       tls = { ...tls, serverName: hostname };
-    } else if (tls) {
-      tls = true;
     }
   }
 

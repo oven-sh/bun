@@ -807,7 +807,6 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     redis                                          BunObject_lazyPropCb_wrap_valkey                                    DontDelete|PropertyCallback
     secrets                                        constructSecretsObject                                              DontDelete|PropertyCallback
     write                                          BunObject_callback_write                                            DontDelete|Function 1
-    YOGA                                           constructYogaObject                                                 DontDelete|ReadOnly|PropertyCallback
     zstdCompressSync                               BunObject_callback_zstdCompressSync                                DontDelete|Function 1
     zstdDecompressSync                             BunObject_callback_zstdDecompressSync                              DontDelete|Function 1
     zstdCompress                                 BunObject_callback_zstdCompress                                    DontDelete|Function 1

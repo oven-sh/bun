@@ -23,13 +23,13 @@ JSYogaNode::~JSYogaNode()
     if (m_node) {
         // Clear the context pointer to avoid callbacks during cleanup
         YGNodeSetContext(m_node, nullptr);
-        
+
         // Remove from parent to avoid use-after-free when parent tries to clear owner
         YGNodeRef parent = YGNodeGetParent(m_node);
         if (parent) {
             YGNodeRemoveChild(parent, m_node);
         }
-        
+
         YGNodeFree(m_node);
         clearInternal();
     }

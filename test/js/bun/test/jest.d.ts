@@ -3,7 +3,7 @@
 // Eventually move these to @types/bun somehow
 interface ReadableStream {
   text(): Promise<string>;
-  json(): Promise<any>;
-  arrayBuffer(): Promise<ArrayBuffer>;
+  json(): Promise<unknown>;
   blob(): Promise<Blob>;
+  bytes(): Promise<Uint8Array<ArrayBuffer>>;
 }

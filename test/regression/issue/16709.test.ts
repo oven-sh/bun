@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
 import path from "node:path";
 
@@ -11,10 +11,10 @@ describe("Bun.Glob absolute paths issue #16709", () => {
       "foo": "test content",
       "bar.txt": "bar content",
       "nested": {
-        "baz.js": "baz content"
-      }
+        "baz.js": "baz content",
+      },
     });
-    
+
     // Test 1: Simple absolute path (literal, no glob patterns)
     const absolutePath = path.join(tempdir, "foo");
     const glob1 = new Bun.Glob(absolutePath);

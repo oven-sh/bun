@@ -415,6 +415,7 @@ pub const BabyList = collections.BabyList;
 pub const OffsetList = collections.OffsetList;
 pub const bit_set = collections.bit_set;
 pub const HiveArray = collections.HiveArray;
+pub const BoundedArray = collections.BoundedArray;
 
 pub const ByteList = BabyList(u8);
 pub const OffsetByteList = OffsetList(u8);

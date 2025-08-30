@@ -240,7 +240,7 @@ static LibsecretFramework* libsecretFramework()
 // Define our simple schema for Bun secrets
 static const SecretSchema* get_bun_schema()
 {
-    static const SecretSchema schema = {
+    static SecretSchema schema = {
         "com.oven-sh.bun.Secret",
         SECRET_SCHEMA_NONE,
         { { "service", SECRET_SCHEMA_ATTRIBUTE_STRING },

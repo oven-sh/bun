@@ -2091,7 +2091,6 @@ describe("bundler", () => {
         }
       `,
     },
-    todo: true,
     minifyIdentifiers: true,
     bundling: false,
     format: "cjs",
@@ -4549,7 +4548,6 @@ describe("bundler", () => {
     },
   });
   itBundled("default/DefineInfiniteLoopESBuildIssue2407", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         a.b()
@@ -5313,7 +5311,6 @@ describe("bundler", () => {
     },
   });
   const RequireShimSubstitutionBrowser = itBundled("default/RequireShimSubstitutionBrowser", {
-    todo: isMacOS || isMusl,
     files: {
       "/entry.js": /* js */ `
         Promise.all([
@@ -5381,7 +5378,6 @@ describe("bundler", () => {
     },
   });
   itBundled("default/RequireShimSubstitutionNode", {
-    todo: isMacOS || isMusl,
     files: RequireShimSubstitutionBrowser.options.files,
     runtimeFiles: RequireShimSubstitutionBrowser.options.runtimeFiles,
     target: "node",

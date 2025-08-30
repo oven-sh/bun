@@ -175,6 +175,8 @@ registry = "${registryUrl}/"`,
   console.log("-------------------------------- THE REAL TEST IS ABOUT TO HAPPEN --------------------------------");
   console.log(redShellPrefix, cmd.join(" "));
 
+  registry.clearRequestLog();
+
   // write the full bunfig WITH scanner configuration
   await Bun.write(
     join(dir, "bunfig.toml"),
@@ -360,31 +362,43 @@ scanner = "${scannerPath}"`,
   const requestedPackages = registry.getRequestedPackages();
   const requestedTarballs = registry.getRequestedTarballs();
 
+  // if failure: we should ONLY see the scanner package requested, not other packages
+  if (scannerType === "npm" && !hasExistingNodeModules && (scannerReturns === "fatal" || scannerReturns === "warn")) {
+    // It should have already been resolved, just not yet tarball'd
+    expect(requestedPackages).not.toContain("test-security-scanner");
+    expect(requestedTarballs).toEqual(["/test-security-scanner-1.0.0.tgz"]);
+  }
+
+  // For snapshot testing, sort the arrays to ensure consistent ordering
+  // This avoids flaky tests due to non-deterministic ordering
+  const sortedPackages = [...requestedPackages].sort();
+  const sortedTarballs = [...requestedTarballs].sort();
+
   if (command === "install") {
-    expect(requestedPackages).toMatchSnapshot("requested-packages: install");
-    expect(requestedTarballs).toMatchSnapshot("requested-tarballs: install");
+    expect(sortedPackages).toMatchSnapshot("requested-packages: install");
+    expect(sortedTarballs).toMatchSnapshot("requested-tarballs: install");
   } else if (command === "add") {
-    expect(requestedPackages).toMatchSnapshot("requested-packages: add");
-    expect(requestedTarballs).toMatchSnapshot("requested-tarballs: add");
+    expect(sortedPackages).toMatchSnapshot("requested-packages: add");
+    expect(sortedTarballs).toMatchSnapshot("requested-tarballs: add");
   } else if (command === "update") {
     if (args.length > 0) {
-      expect(requestedPackages).toMatchSnapshot("requested-packages: update with args");
-      expect(requestedTarballs).toMatchSnapshot("requested-tarballs: update with args");
+      expect(sortedPackages).toMatchSnapshot("requested-packages: update with args");
+      expect(sortedTarballs).toMatchSnapshot("requested-tarballs: update with args");
     } else {
-      expect(requestedPackages).toMatchSnapshot("requested-packages: update without args");
-      expect(requestedTarballs).toMatchSnapshot("requested-tarballs: update without args");
+      expect(sortedPackages).toMatchSnapshot("requested-packages: update without args");
+      expect(sortedTarballs).toMatchSnapshot("requested-tarballs: update without args");
     }
   } else if (command === "remove" || command === "uninstall") {
     if (args.length > 0) {
-      expect(requestedPackages).toMatchSnapshot("requested-packages: remove with args");
-      expect(requestedTarballs).toMatchSnapshot("requested-tarballs: remove with args");
+      expect(sortedPackages).toMatchSnapshot("requested-packages: remove with args");
+      expect(sortedTarballs).toMatchSnapshot("requested-tarballs: remove with args");
     } else {
-      expect(requestedPackages).toMatchSnapshot("requested-packages: remove without args");
-      expect(requestedTarballs).toMatchSnapshot("requested-tarballs: remove without args");
+      expect(sortedPackages).toMatchSnapshot("requested-packages: remove without args");
+      expect(sortedTarballs).toMatchSnapshot("requested-tarballs: remove without args");
     }
   } else {
-    expect(requestedPackages).toMatchSnapshot("requested-packages: unknown command");
-    expect(requestedTarballs).toMatchSnapshot("requested-tarballs: unknown command");
+    expect(sortedPackages).toMatchSnapshot("requested-packages: unknown command");
+    expect(sortedTarballs).toMatchSnapshot("requested-tarballs: unknown command");
   }
 }
 

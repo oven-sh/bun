@@ -265,10 +265,10 @@ declare module "bun" {
     /**
      * Set multiple hash fields to multiple values
      * @param key The hash key
-     * @param fieldValues An array of alternating field names and values
+     * @param fieldValues An array of alternating field names and values, or an object with field-value pairs
      * @returns Promise that resolves with "OK" on success
      */
-    hmset(key: RedisClient.KeyLike, fieldValues: string[]): Promise<string>;
+    hmset(key: RedisClient.KeyLike, fieldValues: string[] | Record<string, string>): Promise<string>;
 
     /**
      * Get the values of all the given hash fields

@@ -194,12 +194,21 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
         .iife => {
             // Bun does not do arrow function lowering. So the wrapper can be an arrow.
             if (c.options.global_name.len > 0) {
-                const global_name_prefix = if (c.options.minify_whitespace)
-                    std.fmt.allocPrint(worker.allocator, "var {s}=(()=>{{", .{c.options.global_name}) catch bun.outOfMemory()
-                else
-                    std.fmt.allocPrint(worker.allocator, "var {s} = (() => {{\n", .{c.options.global_name}) catch bun.outOfMemory();
-                j.push(global_name_prefix, worker.allocator);
-                line_offset.advance(global_name_prefix);
+                if (c.options.minify_whitespace) {
+                    j.pushStatic("var ");
+                    j.pushStatic(c.options.global_name);
+                    j.pushStatic("=(()=>{");
+                    line_offset.advance("var ");
+                    line_offset.advance(c.options.global_name);
+                    line_offset.advance("=(()=>{");
+                } else {
+                    j.pushStatic("var ");
+                    j.pushStatic(c.options.global_name);
+                    j.pushStatic(" = (() => {\n");
+                    line_offset.advance("var ");
+                    line_offset.advance(c.options.global_name);
+                    line_offset.advance(" = (() => {\n");
+                }
             } else {
                 const start = if (c.options.minify_whitespace) "(()=>{" else "(() => {\n";
                 j.pushStatic(start);
@@ -346,21 +355,14 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
 
     switch (output_format) {
         .iife => {
-            if (c.options.global_name.len > 0) {
-                const without_newline = "})();";
-                const with_newline = if (newline_before_comment)
-                    without_newline ++ "\n"
-                else
-                    without_newline;
-                j.pushStatic(with_newline);
-            } else {
-                const without_newline = "})();";
-                const with_newline = if (newline_before_comment)
-                    without_newline ++ "\n"
-                else
-                    without_newline;
-                j.pushStatic(with_newline);
-            }
+            const without_newline = "})();";
+
+            const with_newline = if (newline_before_comment)
+                without_newline ++ "\n"
+            else
+                without_newline;
+
+            j.pushStatic(with_newline);
         },
         .internal_bake_dev => {
             {
@@ -770,12 +772,13 @@ pub fn generateEntryPointTailJS(
                     .cjs => {
                         // "return require_foo();"
                         stmts.append(
-                            Stmt.alloc(
+                            Stmt.allocate(
+                                allocator,
                                 S.Return,
-                                .{
+                                S.Return{
                                     .value = Expr.init(
                                         E.Call,
-                                        .{
+                                        E.Call{
                                             .target = Expr.initIdentifier(ast.wrapper_ref, Logger.Loc.Empty),
                                         },
                                         Logger.Loc.Empty,
@@ -789,12 +792,13 @@ pub fn generateEntryPointTailJS(
                         // "init_foo(); return exports_entry;"
                         if (ast.wrapper_ref.isValid()) {
                             stmts.append(
-                                Stmt.alloc(
+                                Stmt.allocate(
+                                    allocator,
                                     S.SExpr,
-                                    .{
+                                    S.SExpr{
                                         .value = Expr.init(
                                             E.Call,
-                                            .{
+                                            E.Call{
                                                 .target = Expr.initIdentifier(ast.wrapper_ref, Logger.Loc.Empty),
                                             },
                                             Logger.Loc.Empty,
@@ -808,9 +812,10 @@ pub fn generateEntryPointTailJS(
                         // Return the exports object if it has exports
                         if (ast.exports_ref.isValid()) {
                             stmts.append(
-                                Stmt.alloc(
+                                Stmt.allocate(
+                                    allocator,
                                     S.Return,
-                                    .{
+                                    S.Return{
                                         .value = Expr.initIdentifier(ast.exports_ref, Logger.Loc.Empty),
                                     },
                                     Logger.Loc.Empty,
@@ -822,9 +827,10 @@ pub fn generateEntryPointTailJS(
                         // For other cases, try to return the exports object if available
                         if (ast.exports_ref.isValid()) {
                             stmts.append(
-                                Stmt.alloc(
+                                Stmt.allocate(
+                                    allocator,
                                     S.Return,
-                                    .{
+                                    S.Return{
                                         .value = Expr.initIdentifier(ast.exports_ref, Logger.Loc.Empty),
                                     },
                                     Logger.Loc.Empty,

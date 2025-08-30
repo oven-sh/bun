@@ -1792,7 +1792,7 @@ pub const BundleV2 = struct {
             transpiler.options.css_chunking = config.css_chunking;
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
-            transpiler.options.global_name = config.global_name.slice();
+            transpiler.options.global_name = if (config.format == .iife) config.global_name.slice() else "";
 
             transpiler.configureLinker();
             try transpiler.configureDefines();

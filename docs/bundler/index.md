@@ -390,7 +390,62 @@ $ bun build ./index.tsx --outdir ./out --format cjs
 
 #### `format: "iife"` - IIFE
 
-TODO: document IIFE once we support globalNames.
+Wraps the bundle in an Immediately Invoked Function Expression (IIFE). This format is useful for creating bundles that can be directly included in HTML `<script>` tags without polluting the global namespace.
+
+{% codetabs group="a" %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  format: "iife",
+})
+```
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --format iife
+```
+
+{% /codetabs %}
+
+By default, the IIFE format creates a self-contained bundle:
+
+```js
+(() => {
+  // Your bundled code here
+  // No global variables are created
+})();
+```
+
+#### `globalName`
+
+To expose the bundle's exports as a global variable, use the `globalName` option:
+
+{% codetabs group="a" %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  format: "iife",
+  globalName: "MyLibrary",
+})
+```
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --format iife --global-name MyLibrary
+```
+
+{% /codetabs %}
+
+This creates a bundle that assigns the exports to a global variable:
+
+```js
+var MyLibrary = (() => {
+  // Your bundled code here
+  return exports; // The module's exports are returned
+})();
+```
+
+The `globalName` must be a valid JavaScript identifier. This feature is only available when `format` is set to `"iife"`.
 
 ### `splitting`
 

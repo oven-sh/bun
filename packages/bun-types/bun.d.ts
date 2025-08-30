@@ -1836,6 +1836,28 @@ declare module "bun" {
     footer?: string;
 
     /**
+     * Global variable name for IIFE format bundles.
+     * 
+     * When using `format: "iife"` with a `globalName`, the bundle will be
+     * wrapped in an IIFE and the exported values will be assigned to a global
+     * variable with the specified name.
+     * 
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ['./src/library.ts'],
+     *   format: 'iife',
+     *   globalName: 'MyLibrary',
+     *   outfile: './dist/library.js'
+     * });
+     * ```
+     * 
+     * The `globalName` must be a valid JavaScript identifier.
+     * This option is only meaningful when `format` is set to `"iife"`.
+     */
+    globalName?: string;
+
+    /**
      * Drop function calls to matching property accesses.
      */
     drop?: string[];

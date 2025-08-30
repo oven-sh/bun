@@ -175,7 +175,14 @@ pub const ResolveMessage = struct {
             .allocator = allocator,
             .referrer = bun.String.cloneUTF8(referrer),
         };
-        return resolve_error.toJS(globalThis);
+        
+        const js_value = resolve_error.toJS(globalThis);
+        
+        // Explicitly set the message property to override any empty message set by Error constructor
+        const message_str = ZigString.init(resolve_error.msg.data.text);
+        js_value.put(globalThis, ZigString.static("message"), message_str.toJS(globalThis));
+        
+        return js_value;
     }
 
     pub fn getPosition(

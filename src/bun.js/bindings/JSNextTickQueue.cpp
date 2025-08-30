@@ -80,7 +80,10 @@ void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     bool mustResetContext = false;
     if (isEmpty()) {
         RETURN_IF_EXCEPTION(throwScope, );
-        vm.drainMicrotasks();
+        // Prevent recursive microtask draining which can cause stack overflow
+        // Skip microtask draining in JSNextTickQueue::drain to reduce recursion depth
+        // The main drainMicrotasks in ZigGlobalObject will handle this
+        // vm.drainMicrotasks();
         RETURN_IF_EXCEPTION(throwScope, );
         mustResetContext = true;
     }

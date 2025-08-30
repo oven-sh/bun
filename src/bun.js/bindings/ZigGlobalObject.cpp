@@ -3879,27 +3879,47 @@ uint8_t GlobalObject::drainMicrotasks()
     }
     scope.assertNoExceptionExceptTermination();
 
+    // Guard against deep recursion in microtask draining to prevent stack overflow
+    if (m_microtaskDrainDepth >= maxMicrotaskDrainDepth) [[unlikely]] {
+        // Schedule microtask draining to happen later instead of recursing
+        // This prevents segfaults with large Promise.all operations
+        WTF::callOnMainThread([weakThis = JSC::Weak<GlobalObject> { this }]() {
+            if (auto* globalObject = weakThis.get()) {
+                if (globalObject->m_microtaskDrainDepth == 0) {
+                    globalObject->drainMicrotasks();
+                }
+            }
+        });
+        return 0;
+    }
+
+    m_microtaskDrainDepth++;
+
     if (auto nextTickQueue = this->m_nextTickQueue.get()) {
         Bun::JSNextTickQueue* queue = jsCast<Bun::JSNextTickQueue*>(nextTickQueue);
         queue->drain(vm, this);
         if (auto* exception = scope.exception()) {
             if (vm.isTerminationException(exception)) {
+                m_microtaskDrainDepth--;
                 return 1;
             }
             scope.clearException();
             this->reportUncaughtExceptionAtEventLoop(this, exception);
+            m_microtaskDrainDepth--;
             return 0;
         }
     }
     vm.drainMicrotasks();
     if (auto* exception = scope.exception()) {
         if (vm.isTerminationException(exception)) {
+            m_microtaskDrainDepth--;
             return 1;
         }
         scope.clearException();
         this->reportUncaughtExceptionAtEventLoop(this, exception);
     }
 
+    m_microtaskDrainDepth--;
     return 0;
 }
 

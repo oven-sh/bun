@@ -1029,13 +1029,13 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("--global-name can only be used with --format=iife", .{});
                 Global.exit(1);
             }
-            
+
             // Validate that the provided name is a valid JavaScript identifier
             if (!bun.js_lexer.isIdentifier(global_name)) {
                 Output.errGeneric("--global-name must be a valid JavaScript identifier, got: {s}", .{global_name});
                 Global.exit(1);
             }
-            
+
             ctx.bundler_options.global_name = global_name;
         }
 

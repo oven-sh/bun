@@ -22,7 +22,7 @@ on:
         default: false
       tag:
         type: string
-        description: What is the release tag? (e.g. "1.0.2", "canary")
+        description: What is the release tag? (e.g. "bun-v1.2.3", "canary")
         required: true
       use-docker:
         description: Should Docker images be released?
@@ -74,11 +74,20 @@ jobs:
       - name: Install Dependencies
         run: bun install
       - name: Sign Release
+        id: sign-release
         run: |
           echo "$GPG_PASSPHRASE" | bun upload-assets -- "${{ env.BUN_VERSION }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+      - name: Discord Error Notification
+        if: ${{ failure() && env.BUN_VERSION != 'canary' && env.BUN_LATEST == 'true' }}
+        uses: ./.github/actions/discord-error
+        with:
+          job-name: Sign Release
+          step-name: Sign Release
+          version: ${{ env.BUN_VERSION }}
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_ERRORS }}
   npm:
     name: Release to NPM
     runs-on: ubuntu-latest
@@ -102,14 +111,22 @@ jobs:
       - name: Install Dependencies
         run: bun install
       - name: Release
+        id: npm-release
         run: bun upload-npm -- "${{ env.BUN_VERSION }}" publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Discord Error Notification
+        if: ${{ failure() && env.BUN_VERSION != 'canary' && env.BUN_LATEST == 'true' }}
+        uses: ./.github/actions/discord-error
+        with:
+          job-name: Release to NPM
+          step-name: NPM Release
+          version: ${{ env.BUN_VERSION }}
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_ERRORS }}
   npm-types:
     name: Release types to NPM
     runs-on: ubuntu-latest
-    needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-types == 'true' }}
     permissions:
       contents: read
@@ -143,6 +160,7 @@ jobs:
           echo "Setup tag: ${TAG}"
           echo "TAG=${TAG}" >> ${GITHUB_ENV}
       - name: Build
+        id: build-types
         run: bun run build
         env:
           BUN_VERSION: ${{ env.TAG || env.BUN_VERSION }}
@@ -154,11 +172,20 @@ jobs:
           token: ${{ secrets.NPM_TOKEN }}
           tag: canary
       - name: Release (latest)
+        id: npm-types-latest
         if: ${{ env.BUN_LATEST == 'true' }}
         uses: JS-DevTools/npm-publish@v1
         with:
           package: packages/bun-types/package.json
           token: ${{ secrets.NPM_TOKEN }}
+      - name: Discord Error Notification
+        if: ${{ failure() && env.BUN_VERSION != 'canary' && env.BUN_LATEST == 'true' }}
+        uses: ./.github/actions/discord-error
+        with:
+          job-name: Release types to NPM
+          step-name: ${{ steps.build-types.outcome == 'failure' && 'Build Types' || 'NPM Publish Types' }}
+          version: ${{ env.TAG || env.BUN_VERSION }}
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_ERRORS }}
   definitelytyped:
     name: Make pr to DefinitelyTyped to update `bun-types` version
     runs-on: ubuntu-latest
@@ -182,6 +209,7 @@ jobs:
       - id: bun-version
         run: echo "BUN_VERSION=${BUN_VERSION#bun-v}" >> "$GITHUB_OUTPUT"
       - name: Update bun-types version in package.json
+        id: update-package
         run: |
           bun -e '
           const file = Bun.file("./types/bun/package.json");
@@ -192,6 +220,7 @@ jobs:
           await file.write(JSON.stringify(json, null, 4) + "\n");
           '
       - name: Create Pull Request
+        id: create-pr
         uses: peter-evans/create-pull-request@v7
         if: ${{ env.BUN_LATEST == 'true' && env.BUN_VERSION != 'canary'}}
         with:
@@ -205,6 +234,14 @@ jobs:
             https://bun.com/blog/${{ env.BUN_VERSION }}
           push-to-fork: oven-sh/DefinitelyTyped
           branch: ${{env.BUN_VERSION}}
+      - name: Discord Error Notification
+        if: ${{ failure() && env.BUN_VERSION != 'canary' && env.BUN_LATEST == 'true' }}
+        uses: ./.github/actions/discord-error
+        with:
+          job-name: DefinitelyTyped PR
+          step-name: ${{ steps.create-pr.outcome == 'failure' && 'Create PR' || steps.update-package.outcome == 'failure' && 'Update Package' || 'DefinitelyTyped Setup' }}
+          version: ${{ env.BUN_VERSION }}
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_ERRORS }}
   docker:
     name: Release to Dockerhub
     runs-on: ubuntu-latest
@@ -225,8 +262,9 @@ jobs:
             dir: debian-slim
           - variant: alpine
             suffix: -alpine
-          - variant: distroless
-            suffix: -distroless
+          # TODO: fix this and make it work without erroring
+          # - variant: distroless
+          #   suffix: -distroless
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -256,6 +294,7 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Push to Docker
+        id: docker-push
         uses: docker/build-push-action@v6
         with:
           context: ./dockerhub/${{ matrix.dir || matrix.variant }}
@@ -266,6 +305,14 @@ jobs:
           labels: ${{ steps.metadata.outputs.labels }}
           build-args: |
             BUN_VERSION=${{ env.BUN_VERSION }}
+      - name: Discord Error Notification
+        if: ${{ failure() && env.BUN_VERSION != 'canary' && env.BUN_LATEST == 'true' }}
+        uses: ./.github/actions/discord-error
+        with:
+          job-name: Release to Dockerhub (${{ matrix.variant }}${{ matrix.suffix }})
+          step-name: ${{ steps.docker-push.outcome == 'failure' && 'Docker Push' || 'Docker Setup' }}
+          version: ${{ env.BUN_VERSION }}
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_ERRORS }}
   homebrew:
     name: Release to Homebrew
     runs-on: ubuntu-latest
@@ -290,8 +337,10 @@ jobs:
         with:
           ruby-version: "2.6"
       - name: Update Tap
+        id: update-tap
         run: ruby scripts/release.rb "${{ env.BUN_VERSION }}"
       - name: Commit Tap
+        id: commit-tap
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
           commit_options: --gpg-sign=${{ steps.gpg.outputs.keyid }}
@@ -299,6 +348,14 @@ jobs:
           commit_user_name: robobun
           commit_user_email: robobun@oven.sh
           commit_author: robobun <robobun@oven.sh>
+      - name: Discord Error Notification
+        if: ${{ failure() && env.BUN_VERSION != 'canary' && env.BUN_LATEST == 'true' }}
+        uses: ./.github/actions/discord-error
+        with:
+          job-name: Release to Homebrew
+          step-name: ${{ steps.commit-tap.outcome == 'failure' && 'Commit Tap' || steps.update-tap.outcome == 'failure' && 'Update Tap' || 'Homebrew Setup' }}
+          version: ${{ env.BUN_VERSION }}
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_ERRORS }}
   s3:
     name: Upload to S3
     runs-on: ubuntu-latest
@@ -319,6 +376,7 @@ jobs:
       - name: Install Dependencies
         run: bun install
       - name: Release
+        id: s3-upload
         run: bun upload-s3 -- "${{ env.BUN_VERSION }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -326,11 +384,21 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY}}
           AWS_ENDPOINT: ${{ secrets.AWS_ENDPOINT }}
           AWS_BUCKET: bun
+      - name: Discord Error Notification
+        if: ${{ failure() && env.BUN_VERSION != 'canary' && env.BUN_LATEST == 'true' }}
+        uses: ./.github/actions/discord-error
+        with:
+          job-name: Upload to S3
+          step-name: ${{ steps.s3-upload.outcome == 'failure' && 'S3 Upload' || 'S3 Setup' }}
+          version: ${{ env.BUN_VERSION }}
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_ERRORS }}
 
   notify-sentry:
     name: Notify Sentry
     runs-on: ubuntu-latest
     needs: s3
+    # TODO: fix this and make it work without erroring
+    if: false
     steps:
       - name: Notify Sentry
         uses: getsentry/action-release@v1.7.0
@@ -354,15 +422,49 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        if: ${{ env.BUN_LATEST == 'true' }}
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
-        if: ${{ env.BUN_LATEST == 'true' }}
         with:
           bun-version: "1.2.0"
+      - id: version
+        run: echo "BUN_VERSION=${BUN_VERSION#bun-v}" >> "$GITHUB_OUTPUT"
       - name: Bump version
-        uses: ./.github/actions/bump
-        if: ${{ env.BUN_LATEST == 'true' }}
+        env:
+          BUN_VERSION: ${{ steps.version.outputs.BUN_VERSION }}
+        run: |
+          bun -e '
+            const file = Bun.file("./LATEST");
+            const version = "${{ steps.version.outputs.BUN_VERSION }}";
+            await file.write(version);
+
+            // plus 1 patch version
+            const [major, minor, patch] = version.split(".").map(Number);
+            const versionNext = [major, minor, patch + 1].join(".");
+
+            const packageJson = Bun.file("./package.json");
+            const json = await packageJson.json();
+            json.version = versionNext;
+            await packageJson.write(JSON.stringify(json, null, 2) + "\n");
+          '
+
+      - name: Create Pull Request
+        if: ${{ env.BUN_LATEST == 'true' && env.BUN_VERSION != 'canary' }}
+        uses: peter-evans/create-pull-request@v7
         with:
-          version: ${{ env.BUN_VERSION }}
-          token: ${{ github.token }}
+          title: "Bump version to ${{ steps.version.outputs.BUN_VERSION }}"
+          add-paths: |
+            ./LATEST
+            ./package.json
+          branch: bump-version-${{ steps.version.outputs.BUN_VERSION }}
+          delete-branch: true
+          labels: "automation"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "Bump version to ${{ steps.version.outputs.BUN_VERSION }}"
+          body: |
+            ## What does this PR do?
+
+            Bump version to ${{ steps.version.outputs.BUN_VERSION }}
+
+            https://bun.sh/blog/bun-v${{ steps.version.outputs.BUN_VERSION }}
+
+            Auto-bumped by [this workflow](https://github.com/oven-sh/bun/actions/workflows/release.yml)

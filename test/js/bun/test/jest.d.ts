@@ -1,4 +1,4 @@
-/// <reference path="../../../../packages/bun-types/test-globals.d.ts"" />
+/// <reference path="../../../../packages/bun-types/test-globals.d.ts" />
 
 // Eventually move these to @types/bun somehow
 interface ReadableStream {

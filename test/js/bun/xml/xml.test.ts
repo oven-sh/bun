@@ -49,7 +49,10 @@ test("Bun.XML.parse - with XML declaration", () => {
 });
 
 test("Bun.XML.parse - empty string", () => {
-  expect(() => Bun.XML.parse("")).toThrow();
+  expect(() => Bun.XML.parse("")).toThrow({
+    name: "Error",
+    message: "TypeError XML.parse: unsupported AST node type",
+  });
 });
 
 test("Bun.XML.parse - self-closing tag with attributes", () => {
@@ -215,25 +218,43 @@ test("Bun.XML.parse - top-level comments are ignored", () => {
 });
 
 test("Bun.XML.parse - mismatched closing tag throws error", () => {
-  expect(() => Bun.XML.parse("<root><a></b></root>")).toThrow();
+  expect(() => Bun.XML.parse("<root><a></b></root>")).toThrow({
+    name: "BuildMessage",
+    message: "Mismatched closing tag",
+  });
 });
 
 test("Bun.XML.parse - unclosed tag throws error", () => {
-  expect(() => Bun.XML.parse("<root><a>")).toThrow();
+  expect(() => Bun.XML.parse("<root><a>")).toThrow({
+    name: "BuildMessage",
+    message: "Expected closing tag",
+  });
 });
 
 test("Bun.XML.parse - unterminated XML declaration throws error", () => {
-  expect(() => Bun.XML.parse("<?xml version='1.0'")).toThrow();
+  expect(() => Bun.XML.parse("<?xml version='1.0'")).toThrow({
+    name: "BuildMessage",
+    message: "Unterminated XML declaration",
+  });
 });
 
 test("Bun.XML.parse - unterminated CDATA throws error", () => {
-  expect(() => Bun.XML.parse("<root><![CDATA[unclosed")).toThrow();
+  expect(() => Bun.XML.parse("<root><![CDATA[unclosed")).toThrow({
+    name: "BuildMessage",
+    message: "Unterminated CDATA section",
+  });
 });
 
 test("Bun.XML.parse - no arguments throws TypeError", () => {
-  expect(() => (Bun.XML.parse as any)()).toThrow();
+  expect(() => (Bun.XML.parse as any)()).toThrow({
+    name: "TypeError",
+    message: "XML.parse() requires 1 argument (xmlString)",
+  });
 });
 
 test("Bun.XML.parse - non-string argument throws TypeError", () => {
-  expect(() => (Bun.XML.parse as any)(123)).toThrow();
+  expect(() => (Bun.XML.parse as any)(123)).toThrow({
+    name: "TypeError",
+    message: "XML.parse() expects a string as first argument",
+  });
 });

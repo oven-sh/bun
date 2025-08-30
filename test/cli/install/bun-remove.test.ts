@@ -318,3 +318,4 @@ it("should remove peerDependencies", async () => {
     name: "foo",
   });
 });
+

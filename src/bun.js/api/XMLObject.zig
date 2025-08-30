@@ -83,24 +83,6 @@ const ParserCtx = struct {
         }
 
         switch (expr.data) {
-            .e_null => return .null,
-            .e_boolean => |boolean| return .jsBoolean(boolean.value),
-            .e_number => |number| return .jsNumber(number.value),
-            .e_string => |str| {
-                return str.toJS(bun.default_allocator, ctx.global);
-            },
-            .e_array => {
-                var arr = try JSValue.createEmptyArray(ctx.global, expr.data.e_array.items.len);
-                args.append(arr);
-
-                for (expr.data.e_array.slice(), 0..) |item, _i| {
-                    const i: u32 = @intCast(_i);
-                    const value = try ctx.toJS(args, item);
-                    try arr.putIndex(ctx.global, i, value);
-                }
-
-                return arr;
-            },
             .e_object => {
                 var obj = JSValue.createEmptyObject(ctx.global, expr.data.e_object.properties.len);
                 args.append(obj);

@@ -650,7 +650,14 @@ declare module "bun" {
     /**
      * Parse a XML string into a JavaScript value.
      */
-    export function parse(input: string): unknown;
+    export function parse(input: string): Element;
+
+    interface Element {
+      __name: string;
+      __attrs?: Record<string, string>;
+      __text?: string;
+      __children?: Element[];
+    }
   }
 
   /**

@@ -24,6 +24,18 @@ describeWithContainer(
       max: 1,
     };
     const sql = new SQL(options);
+    test("should return lastInsertRowid and affectedRows", async () => {
+      await using db = new SQL({ ...options, max: 1, idleTimeout: 5 });
+      using sql = await db.reserve();
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, name text)`;
+
+      const { lastInsertRowid } = await sql`INSERT INTO ${sql(random_name)} (name) VALUES (${"test"})`;
+      expect(lastInsertRowid).toBe(1);
+      const { affectedRows } = await sql`UPDATE ${sql(random_name)} SET name = "test2" WHERE id = ${lastInsertRowid}`;
+      expect(affectedRows).toBe(1);
+    });
     describe("should work with more than the max inline capacity", () => {
       for (let size of [50, 60, 62, 64, 70, 100]) {
         for (let duplicated of [true, false]) {
@@ -262,6 +274,16 @@ describeWithContainer(
 
     test("String", async () => {
       expect((await sql`select ${"hello"} as x`)[0].x).toBe("hello");
+    });
+
+    test("MediumInt/Int24", async () => {
+      let random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a mediumint unsigned)`;
+      await sql`INSERT INTO ${sql(random_name)} VALUES (${1})`;
+      const result = await sql`select * from ${sql(random_name)}`;
+      expect(result[0].a).toBe(1);
+      const result2 = await sql`select * from ${sql(random_name)}`.simple();
+      expect(result2[0].a).toBe(1);
     });
 
     test("Boolean/TinyInt/BIT", async () => {

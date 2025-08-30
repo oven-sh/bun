@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 test("Bun.XML.parse - simple text element", () => {
   const xml = "<message>Hello World</message>";
   const result = Bun.XML.parse(xml);
-  expect(result).toBe({
+  expect(result).toEqual({
     __name: "message",
     __text: "Hello World",
   });
@@ -12,7 +12,7 @@ test("Bun.XML.parse - simple text element", () => {
 test("Bun.XML.parse - element with whitespace", () => {
   const xml = "<test>  content  </test>";
   const result = Bun.XML.parse(xml);
-  expect(result).toBe({
+  expect(result).toEqual({
     __name: "test",
     __text: "  content  ",
   });
@@ -42,7 +42,7 @@ test("Bun.XML.parse - element with attributes", () => {
 test("Bun.XML.parse - with XML declaration", () => {
   const xml = '<?xml version="1.0" encoding="UTF-8"?><root>content</root>';
   const result = Bun.XML.parse(xml);
-  expect(result).toBe({
+  expect(result).toEqual({
     __name: "root",
     __text: "content",
   });
@@ -197,7 +197,7 @@ test("Bun.XML.parse - duplicate tags become arrays", () => {
 test("Bun.XML.parse - CDATA sections", () => {
   const xml = '<message><![CDATA[Hello <world> & "everyone"]]></message>';
   const result = Bun.XML.parse(xml);
-  expect(result).toBe({
+  expect(result).toEqual({
     __name: "message",
     __text: `Hello <world> & "everyone"`,
   });
@@ -208,18 +208,18 @@ test("Bun.XML.parse - top-level comments are ignored", () => {
   <root>content</root>
   <!-- Another top comment -->`;
   const result = Bun.XML.parse(xml);
-  expect(result).toBe({
+  expect(result).toEqual({
     __name: "root",
     __text: "content",
   });
 });
 
 test("Bun.XML.parse - mismatched closing tag throws error", () => {
-  expect(() => Bun.XML.parse("<root><a></b></root>")).toThrow({});
+  expect(() => Bun.XML.parse("<root><a></b></root>")).toThrow();
 });
 
 test("Bun.XML.parse - unclosed tag throws error", () => {
-  expect(() => Bun.XML.parse("<root><a>")).toThrow({});
+  expect(() => Bun.XML.parse("<root><a>")).toThrow();
 });
 
 test("Bun.XML.parse - unterminated XML declaration throws error", () => {

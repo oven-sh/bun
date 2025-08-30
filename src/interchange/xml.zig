@@ -127,9 +127,15 @@ const Parser = struct {
             }
             self.advance(); // consume '>'
 
-            // Create object with attributes only
+            // Create object with __name and optionally __attrs
             var properties = std.ArrayList(G.Property).init(self.allocator);
 
+            // Always add __name
+            const name_key = try self.createStringExpr("__name");
+            const name_value = try self.createStringExpr(tag_name_slice);
+            try properties.append(.{ .key = name_key, .value = name_value });
+
+            // Add __attrs if present
             if (attributes.items.len > 0) {
                 const attrs_obj = Expr.init(E.Object, .{ .properties = .fromList(attributes) }, .Empty);
                 const attrs_key = try self.createStringExpr("__attrs");
@@ -234,45 +240,37 @@ const Parser = struct {
         }
         self.advance(); // consume '>'
 
-        // Build result based on content
+        // Build result - always return object with __name and other properties
         const trimmed_text = std.mem.trim(u8, text_parts.items, " \t\n\r");
-
-        // If only text content and no attributes, return as string
-        if (children.items.len == 0 and attributes.items.len == 0 and trimmed_text.len > 0) {
-            const element = try self.createStringExpr(trimmed_text);
-            return ChildElement{
-                .tag_name = tag_name_slice,
-                .element = element,
-            };
-        }
-
-        // If only children and no attributes/text, return children directly as object properties
-        if (children.items.len > 0 and attributes.items.len == 0 and trimmed_text.len == 0) {
-            const element = try self.createChildrenAsProperties(children.items);
-            return ChildElement{
-                .tag_name = tag_name_slice,
-                .element = element,
-            };
-        }
-
-        // Otherwise create object with mixed content
         var properties = std.ArrayList(G.Property).init(self.allocator);
 
-        // Add attributes
+        // Always add __name
+        const name_key = try self.createStringExpr("__name");
+        const name_value = try self.createStringExpr(tag_name_slice);
+        try properties.append(.{ .key = name_key, .value = name_value });
+
+        // Add __attrs if present
         if (attributes.items.len > 0) {
             const attrs_obj = Expr.init(E.Object, .{ .properties = .fromList(attributes) }, .Empty);
             const attrs_key = try self.createStringExpr("__attrs");
             try properties.append(.{ .key = attrs_key, .value = attrs_obj });
         }
 
-        // Add children as properties if we have other properties
+        // Add __children if present
         if (children.items.len > 0) {
-            try self.addChildrenAsProperties(&properties, children.items);
+            var child_array = std.ArrayList(Expr).init(self.allocator);
+            for (children.items) |child| {
+                try child_array.append(child.element);
+            }
+            const children_array = Expr.init(E.Array, .{ .items = .fromList(child_array) }, .Empty);
+            const children_key = try self.createStringExpr("__children");
+            try properties.append(.{ .key = children_key, .value = children_array });
         }
 
-        // Add text content if present
-        if (trimmed_text.len > 0) {
-            const text_expr = try self.createStringExpr(trimmed_text);
+        // Add __text if present (preserve original text including whitespace)
+        // But only if we don't have children, or if the text contains non-whitespace content
+        if (text_parts.items.len > 0 and trimmed_text.len > 0 and children.items.len == 0) {
+            const text_expr = try self.createStringExpr(text_parts.items);
             const text_key = try self.createStringExpr("__text");
             try properties.append(.{ .key = text_key, .value = text_expr });
         }

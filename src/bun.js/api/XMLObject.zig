@@ -103,6 +103,22 @@ const ParserCtx = struct {
                 return obj;
             },
 
+            .e_string => {
+                return ZigString.init(expr.data.e_string.data).withEncoding().toJS(ctx.global);
+            },
+
+            .e_array => {
+                var array = try JSValue.createEmptyArray(ctx.global, @intCast(expr.data.e_array.items.len));
+                args.append(array);
+
+                for (expr.data.e_array.items.slice(), 0..) |item_expr, index| {
+                    const item_value = try ctx.toJS(args, item_expr);
+                    try array.putIndex(ctx.global, @intCast(index), item_value);
+                }
+
+                return array;
+            },
+
             else => return ctx.global.throwError(error.TypeError, "XML.parse: unsupported AST node type"),
         }
     }

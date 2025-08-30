@@ -364,7 +364,14 @@ scanner = "${scannerPath}"`,
 
   // if failure: we should ONLY see the scanner package requested, not other packages
   if (scannerType === "npm" && !hasExistingNodeModules && (scannerReturns === "fatal" || scannerReturns === "warn")) {
-    const doWeExpectToAlwaysTryToResolve = !hasLockfile || command === "update";
+    const doWeExpectToAlwaysTryToResolve =
+      // If there is no lockfile, we will resolve packages
+      !hasLockfile ||
+      // Unless we are updating
+      (command === "update" && args.length === 0) ||
+      // Unless there are arguments, but it's chill because one of the arguments is the security
+      // scanner, so we would expect to be resolving
+      args.includes("test-security-scanner");
 
     if (doWeExpectToAlwaysTryToResolve) {
       expect(requestedPackages).toContain("test-security-scanner");
@@ -372,7 +379,7 @@ scanner = "${scannerPath}"`,
       expect(requestedPackages).not.toContain("test-security-scanner");
     }
 
-    // but since clearing, we have downloaded it. so it shoudl be here
+    // we should have ONLY requested the security scanner at this point
     expect(requestedTarballs).toEqual(["/test-security-scanner-1.0.0.tgz"]);
   }
 

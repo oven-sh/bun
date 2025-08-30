@@ -127,9 +127,17 @@ pub fn hasPendingActivity(this: *MySQLConnection) bool {
 }
 
 fn updateHasPendingActivity(this: *MySQLConnection) void {
-    const a: u32 = if (this.requests.readableLength() > 0) 1 else 0;
-    const b: u32 = if (this.status != .disconnected) 1 else 0;
-    this.pending_activity_count.store(a + b, .release);
+    var counter: u32 = 0;
+    if (this.status.hasPendingActivity()) {
+        counter += 1;
+    }
+    if (this.hasDataToSend()) {
+        counter += 1;
+    }
+    if (this.read_buffer.len() > 0) {
+        counter += 1;
+    }
+    this.pending_activity_count.store(counter, .release);
 }
 
 fn hasDataToSend(this: *@This()) bool {
@@ -932,9 +940,8 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         }
     }
     ptr.setStatus(.connecting);
-    ptr.updateHasPendingActivity();
+    ptr.updateRef();
     ptr.resetConnectionTimeout();
-    ptr.poll_ref.ref(vm);
     const js_value = ptr.toJS(globalObject);
     js_value.ensureStillAlive();
     ptr.js_value = js_value;
@@ -978,8 +985,7 @@ pub fn onOpen(this: *MySQLConnection, socket: Socket) void {
     this.resetConnectionTimeout();
     this.socket = socket;
     this.setStatus(.handshaking);
-    this.poll_ref.ref(this.vm);
-    this.updateHasPendingActivity();
+    this.updateRef();
 }
 
 pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
@@ -1025,12 +1031,8 @@ pub fn onData(this: *MySQLConnection, data: []const u8) void {
     this.socket.setTimeout(0);
 
     defer {
-        if (this.status == .connected and this.requests.readableLength() == 0 and this.write_buffer.remaining().len == 0) {
-            // Don't keep the process alive when there's nothixng to do.
-            this.poll_ref.unref(vm);
-        } else if (this.status == .connected) {
-            // Keep the process alive if there's something to do.
-            this.poll_ref.ref(vm);
+        if (this.status == .connected) {
+            this.updateRef();
         }
         // reset the connection timeout after we're done processing the data
         this.flags.is_processing_data = false;
@@ -1226,7 +1228,7 @@ pub fn consumeOnCloseCallback(this: *const @This(), globalObject: *jsc.JSGlobalO
 
 pub fn setStatus(this: *@This(), status: ConnectionState) void {
     if (this.status == status) return;
-    defer this.updateHasPendingActivity();
+    defer this.updateRef();
 
     this.status = status;
     this.resetConnectionTimeout();
@@ -1238,7 +1240,6 @@ pub fn setStatus(this: *@This(), status: ConnectionState) void {
             const js_value = this.js_value;
             js_value.ensureStillAlive();
             this.globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
-            this.poll_ref.unref(this.vm);
         },
         else => {},
     }

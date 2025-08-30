@@ -246,14 +246,24 @@ pub fn hasPendingActivity(this: *PostgresSQLConnection) bool {
 }
 
 fn updateHasPendingActivity(this: *PostgresSQLConnection) void {
-    const a: u32 = if (this.requests.readableLength() > 0) 1 else 0;
-    const b: u32 = if (this.status != .disconnected) 1 else 0;
-    this.pending_activity_count.store(a + b, .release);
+    var counter: u32 = 0;
+    if (this.status.hasPendingActivity()) {
+        counter += 1;
+    }
+    if (this.hasQueryRunning()) {
+        counter += 1;
+    }
+    if (this.read_buffer.len() > 0 or this.write_buffer.len() > 0) {
+        counter += 1;
+    }
+    this.pending_activity_count.store(counter, .release);
 }
 
 pub fn setStatus(this: *PostgresSQLConnection, status: Status) void {
     if (this.status == status) return;
-    defer this.updateHasPendingActivity();
+    defer {
+        this.updateRef();
+    }
 
     this.status = status;
     this.resetConnectionTimeout();
@@ -265,7 +275,6 @@ pub fn setStatus(this: *PostgresSQLConnection, status: Status) void {
             const js_value = this.js_value;
             js_value.ensureStillAlive();
             this.globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
-            this.poll_ref.unref(this.vm);
         },
         else => {},
     }
@@ -409,8 +418,7 @@ fn startTLS(this: *PostgresSQLConnection, socket: uws.AnySocket) void {
 pub fn onOpen(this: *PostgresSQLConnection, socket: uws.AnySocket) void {
     this.socket = socket;
 
-    this.poll_ref.ref(this.vm);
-    this.updateHasPendingActivity();
+    this.updateRef();
 
     if (this.tls_status == .message_sent or this.tls_status == .pending) {
         this.startTLS(socket);
@@ -462,6 +470,9 @@ pub fn onTimeout(this: *PostgresSQLConnection) void {
 
 pub fn onDrain(this: *PostgresSQLConnection) void {
     debug("onDrain", .{});
+    this.ref();
+    defer this.deref();
+    defer this.updateRef();
     this.flags.has_backpressure = false;
     // Don't send any other messages while we're waiting for TLS.
     if (this.tls_status == .message_sent) {
@@ -499,13 +510,7 @@ pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
 
     this.disableConnectionTimeout();
     defer {
-        if (this.status == .connected and !this.hasQueryRunning() and this.write_buffer.remaining().len == 0) {
-            // Don't keep the process alive when there's nothing to do.
-            this.poll_ref.unref(vm);
-        } else if (this.status == .connected) {
-            // Keep the process alive if there's something to do.
-            this.poll_ref.ref(vm);
-        }
+        this.updateRef();
         this.flags.is_processing_data = false;
 
         // reset the connection timeout after we're done processing the data

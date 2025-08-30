@@ -364,8 +364,15 @@ scanner = "${scannerPath}"`,
 
   // if failure: we should ONLY see the scanner package requested, not other packages
   if (scannerType === "npm" && !hasExistingNodeModules && (scannerReturns === "fatal" || scannerReturns === "warn")) {
-    // It should have already been resolved, just not yet tarball'd
-    expect(requestedPackages).not.toContain("test-security-scanner");
+    const doWeExpectToAlwaysTryToResolve = !hasLockfile || command === "update";
+
+    if (doWeExpectToAlwaysTryToResolve) {
+      expect(requestedPackages).toContain("test-security-scanner");
+    } else {
+      expect(requestedPackages).not.toContain("test-security-scanner");
+    }
+
+    // but since clearing, we have downloaded it. so it shoudl be here
     expect(requestedTarballs).toEqual(["/test-security-scanner-1.0.0.tgz"]);
   }
 

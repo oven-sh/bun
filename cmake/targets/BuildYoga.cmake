@@ -1,18 +1,26 @@
-# Since we already have Yoga cloned, just build it directly
-set(YOGA_PATH ${VENDOR_PATH}/yoga)
+register_repository(
+  NAME
+    yoga
+  REPOSITORY
+    facebook/yoga
+  COMMIT
+    dc2581f229cb05c7d2af8dee37b2ee0b59fd5326
+)
 
-if(NOT EXISTS ${YOGA_PATH})
-  message(FATAL_ERROR "Yoga not found at ${YOGA_PATH}. Please clone it manually.")
-endif()
-
-# Build Yoga as a subdirectory
-add_subdirectory(${YOGA_PATH} ${BUILD_PATH}/yoga EXCLUDE_FROM_ALL)
-
-# Set the include directories
-if(TARGET ${bun})
-  target_include_directories(${bun} PRIVATE ${YOGA_PATH})
-  target_link_libraries(${bun} PRIVATE yogacore)
-endif()
-
-# Create a custom target for consistency with other dependencies
-add_custom_target(yoga DEPENDS yogacore)
+register_cmake_command(
+  TARGET
+    yoga
+  TARGETS
+    yogacore
+  ARGS
+    -DBUILD_SHARED_LIBS=OFF
+    -DYOGA_BUILD_TESTS=OFF
+    -DYOGA_BUILD_SAMPLES=OFF
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+  LIB_PATH
+    lib
+  LIBRARIES
+    yogacore
+  INCLUDES
+    .
+)

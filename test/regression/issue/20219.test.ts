@@ -1,6 +1,5 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
-import path from "path";
 
 describe("GitHub Package Registry authentication issue #20219", () => {
   test("bunfig.toml and .npmrc should handle scoped package authentication identically", async () => {
@@ -9,8 +8,8 @@ describe("GitHub Package Registry authentication issue #20219", () => {
         name: "test-gpr-auth",
         version: "1.0.0",
         dependencies: {
-          "@testorg/fake-private-package": "^1.0.0"
-        }
+          "@testorg/fake-private-package": "^1.0.0",
+        },
       }),
     });
 
@@ -20,8 +19,8 @@ describe("GitHub Package Registry authentication issue #20219", () => {
         name: "test-gpr-auth-bunfig",
         version: "1.0.0",
         dependencies: {
-          "@testorg/fake-private-package": "^1.0.0"
-        }
+          "@testorg/fake-private-package": "^1.0.0",
+        },
       }),
       "bunfig.toml": `
 [install.scopes]
@@ -32,11 +31,11 @@ describe("GitHub Package Registry authentication issue #20219", () => {
     // Test with .npmrc
     const npmrcDir = tempDirWithFiles("issue-20219-npmrc", {
       "package.json": JSON.stringify({
-        name: "test-gpr-auth-npmrc", 
+        name: "test-gpr-auth-npmrc",
         version: "1.0.0",
         dependencies: {
-          "@testorg/fake-private-package": "^1.0.0"
-        }
+          "@testorg/fake-private-package": "^1.0.0",
+        },
       }),
       ".npmrc": `
 @testorg:registry=https://npm.pkg.github.com
@@ -46,7 +45,7 @@ describe("GitHub Package Registry authentication issue #20219", () => {
 
     const testEnv = {
       ...bunEnv,
-      NODE_AUTH_TOKEN: "fake_test_token_for_testing_12345"
+      NODE_AUTH_TOKEN: "fake_test_token_for_testing_12345",
     };
 
     // Run bun install with bunfig.toml
@@ -58,12 +57,12 @@ describe("GitHub Package Registry authentication issue #20219", () => {
       stdout: "pipe",
     });
 
-    // Run bun install with .npmrc  
+    // Run bun install with .npmrc
     const npmrcResult = Bun.spawnSync({
       cmd: [bunExe(), "install"],
       cwd: npmrcDir,
       env: testEnv,
-      stderr: "pipe", 
+      stderr: "pipe",
       stdout: "pipe",
     });
 
@@ -72,22 +71,22 @@ describe("GitHub Package Registry authentication issue #20219", () => {
 
     // Both should exhibit the same behavior - either both succeed or both fail with the same error type
     // For non-existent packages, both should get 404 errors, not 401 (which would indicate auth failure)
-    
+
     // Check that both methods attempt to authenticate (no 401 errors)
     expect(bunfigStderr).not.toContain("401");
     expect(npmrcStderr).not.toContain("401");
-    
+
     // Both should get the same error (404 for non-existent package)
     if (bunfigStderr.includes("404") || npmrcStderr.includes("404")) {
       // If one gets 404, both should get 404 (consistent behavior)
       expect(bunfigStderr).toContain("404");
       expect(npmrcStderr).toContain("404");
     }
-    
+
     // Both should have the same exit code
     expect(bunfigResult.exitCode).toBe(npmrcResult.exitCode);
-    
-    // Both should make requests to the same URL format 
+
+    // Both should make requests to the same URL format
     if (bunfigStderr.includes("npm.pkg.github.com")) {
       expect(npmrcStderr).toContain("npm.pkg.github.com");
       // Both should use the same URL encoding
@@ -103,8 +102,8 @@ describe("GitHub Package Registry authentication issue #20219", () => {
         name: "env-test",
         version: "1.0.0",
         dependencies: {
-          "@testscope/test-pkg": "^1.0.0"
-        }
+          "@testscope/test-pkg": "^1.0.0",
+        },
       }),
       "bunfig.toml": `
 [install.scopes]
@@ -117,13 +116,13 @@ describe("GitHub Package Registry authentication issue #20219", () => {
       cwd: testDir,
       env: {
         ...bunEnv,
-        TEST_TOKEN_VAR: "expanded_token_value_123"
+        TEST_TOKEN_VAR: "expanded_token_value_123",
       },
       stderr: "pipe",
     });
 
     const stderr = result.stderr.toString();
-    
+
     // Should not get authentication errors if the token expansion worked
     // (404 is expected for fake package, 401 would indicate token expansion failed)
     expect(stderr).not.toContain("401");

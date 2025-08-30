@@ -4,7 +4,6 @@ test("Bun.XML.parse - simple text element", () => {
   const xml = "<message>Hello World</message>";
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
-    __name: "message",
     __text: "Hello World",
   });
 });
@@ -13,7 +12,6 @@ test("Bun.XML.parse - element with whitespace", () => {
   const xml = "<test>  content  </test>";
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
-    __name: "test",
     __text: "  content  ",
   });
 });
@@ -21,20 +19,15 @@ test("Bun.XML.parse - element with whitespace", () => {
 test("Bun.XML.parse - empty element", () => {
   const xml = "<empty></empty>";
   const result = Bun.XML.parse(xml);
-  expect(result).toEqual({
-    __name: "empty",
-  });
+  expect(result).toEqual({});
 });
 
 test("Bun.XML.parse - element with attributes", () => {
   const xml = '<message id="1" type="info">Hello</message>';
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
-    __name: "message",
-    __attrs: {
-      id: "1",
-      type: "info",
-    },
+    id: "1",
+    type: "info",
     __text: "Hello",
   });
 });
@@ -43,7 +36,6 @@ test("Bun.XML.parse - with XML declaration", () => {
   const xml = '<?xml version="1.0" encoding="UTF-8"?><root>content</root>';
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
-    __name: "root",
     __text: "content",
   });
 });
@@ -59,20 +51,15 @@ test("Bun.XML.parse - self-closing tag with attributes", () => {
   const xml = '<config debug="true" version="1.0"/>';
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
-    __name: "config",
-    __attrs: {
-      debug: "true",
-      version: "1.0",
-    },
+    debug: "true",
+    version: "1.0",
   });
 });
 
 test("Bun.XML.parse - self-closing tag without attributes", () => {
   const xml = "<br/>";
   const result = Bun.XML.parse(xml);
-  expect(result).toEqual({
-    __name: "br",
-  });
+  expect(result).toEqual({});
 });
 
 test("Bun.XML.parse - nested elements", () => {
@@ -82,11 +69,8 @@ test("Bun.XML.parse - nested elements", () => {
   </person>`;
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
-    __name: "person",
-    __children: [
-      { __name: "name", __text: "John" },
-      { __name: "age", __text: "30" },
-    ],
+    name: { __text: "John" },
+    age: { __text: "30" },
   });
 });
 
@@ -98,24 +82,11 @@ test("Bun.XML.parse - complex nested structure", () => {
   </person>`;
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
-    __name: "person",
-    __attrs: {
-      name: "John",
+    name: "John",
+    address: {
+      type: "home",
+      city: { __text: "New York" },
     },
-    __children: [
-      {
-        __name: "address",
-        __attrs: {
-          type: "home",
-        },
-        __children: [
-          {
-            __name: "city",
-            __text: "New York",
-          },
-        ],
-      },
-    ],
   });
 });
 
@@ -127,13 +98,7 @@ test("Bun.XML.parse - mixed content (text and children)", () => {
 </doc>`;
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
-    __name: "doc",
-    __children: [
-      {
-        __name: "child",
-        __text: "value",
-      },
-    ],
+    child: { __text: "value" },
   });
 });
 
@@ -141,7 +106,6 @@ test("Bun.XML.parse - XML entities", () => {
   const xml = "<message>Hello &lt;world&gt; &amp; &quot;everyone&quot; &#39;here&#39;</message>";
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
-    __name: "message",
     __text: `Hello <world> & "everyone" 'here'`,
   });
 });
@@ -150,7 +114,6 @@ test("Bun.XML.parse - numeric entities", () => {
   const xml = "<test>&#65;&#66;&#67;</test>";
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
-    __name: "test",
     __text: "ABC",
   });
 });
@@ -159,10 +122,7 @@ test("Bun.XML.parse - entities in attributes", () => {
   const xml = '<tag attr="&lt;value&gt;">content</tag>';
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
-    __name: "tag",
-    __attrs: {
-      attr: "<value>",
-    },
+    attr: "<value>",
     __text: "content",
   });
 });
@@ -175,13 +135,7 @@ test("Bun.XML.parse - XML comments are ignored", () => {
   </root>`;
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
-    __name: "root",
-    __children: [
-      {
-        __name: "message",
-        __text: "Hello",
-      },
-    ],
+    message: { __text: "Hello" },
   });
 });
 
@@ -189,11 +143,7 @@ test("Bun.XML.parse - duplicate tags become arrays", () => {
   const xml = "<root><item>1</item><item>2</item></root>";
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
-    __name: "root",
-    __children: [
-      { __name: "item", __text: "1" },
-      { __name: "item", __text: "2" },
-    ],
+    item: [{ __text: "1" }, { __text: "2" }],
   });
 });
 
@@ -201,7 +151,6 @@ test("Bun.XML.parse - CDATA sections", () => {
   const xml = '<message><![CDATA[Hello <world> & "everyone"]]></message>';
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
-    __name: "message",
     __text: `Hello <world> & "everyone"`,
   });
 });
@@ -212,7 +161,6 @@ test("Bun.XML.parse - top-level comments are ignored", () => {
   <!-- Another top comment -->`;
   const result = Bun.XML.parse(xml);
   expect(result).toEqual({
-    __name: "root",
     __text: "content",
   });
 });

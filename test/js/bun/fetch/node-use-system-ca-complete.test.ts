@@ -11,7 +11,7 @@ describe("NODE_USE_SYSTEM_CA Complete Implementation", () => {
     const testScript = `
 async function testHttpsRequest() {
   try {
-    const response = await fetch('https://www.github.com/');
+    const response = await fetch('https://httpbin.org/user-agent');
     console.log('SUCCESS: GitHub request completed with status', response.status);
     process.exit(0);
   } catch (error) {

@@ -748,25 +748,33 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.flag("--zero-fill-buffers")) {
             Bun__Node__ZeroFillBuffers = true;
         }
-        if (args.flag("--use-system-ca")) {
-            Bun__Node__UseSystemCA = true;
-        }
-
-        // Node.js compatibility: validate mutually exclusive CA flags
+        const use_system_ca = args.flag("--use-system-ca");
         const use_openssl_ca = args.flag("--use-openssl-ca");
         const use_bundled_ca = args.flag("--use-bundled-ca");
 
-        if (use_openssl_ca and use_bundled_ca) {
-            Output.prettyErrorln("<r><red>error<r>: either --use-openssl-ca or --use-bundled-ca can be used, not both", .{});
+        // Disallow any combination > 1
+        if (@as(u8, @intFromBool(use_system_ca)) + @as(u8, @intFromBool(use_openssl_ca)) + @as(u8, @intFromBool(use_bundled_ca)) > 1) {
+            Output.prettyErrorln("<r><red>error<r>: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca", .{});
             Global.exit(1);
         }
 
-        // For now, --use-openssl-ca behaves like --use-system-ca (use system CA store)
-        if (use_openssl_ca) {
-            Bun__Node__UseSystemCA = true;
+        // CLI overrides env var (NODE_USE_SYSTEM_CA)
+        if (use_bundled_ca) {
+            Bun__Node__CAStore = .bundled;
+        } else if (use_openssl_ca) {
+            Bun__Node__CAStore = .openssl;
+        } else if (use_system_ca) {
+            Bun__Node__CAStore = .system;
+        } else {
+            if (bun.getenvZ("NODE_USE_SYSTEM_CA")) |val| {
+                if (val.len > 0 and val[0] == '1') {
+                    Bun__Node__CAStore = .system;
+                }
+            }
         }
-        // --use-bundled-ca is the default behavior (only use bundled certs)
-        // So we don't need to set anything special for it
+
+        // Back-compat boolean used by native code until fully migrated
+        Bun__Node__UseSystemCA = (Bun__Node__CAStore == .system);
     }
 
     if (opts.port != null and opts.origin == null) {
@@ -1267,6 +1275,9 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 export var Bun__Node__ZeroFillBuffers = false;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
+
+pub const BunCAStore = enum(u8) { bundled, openssl, system };
+pub export var Bun__Node__CAStore: BunCAStore = .bundled;
 pub export var Bun__Node__UseSystemCA = false;
 
 const string = []const u8;

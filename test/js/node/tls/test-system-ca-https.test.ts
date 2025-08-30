@@ -3,6 +3,10 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
+// Gate network tests behind environment variable to avoid CI flakes
+// TODO: Replace with hermetic local TLS fixtures in a follow-up
+const networkTest = process.env.BUN_TEST_ALLOW_NET === "1" ? test : test.skip;
+
 describe("system CA with HTTPS", () => {
   // Skip test if no system certificates are available
   const skipIfNoSystemCerts = () => {
@@ -30,7 +34,7 @@ describe("system CA with HTTPS", () => {
     return null;
   };
 
-  test("HTTPS request with system CA", async () => {
+  networkTest("HTTPS request with system CA", async () => {
     const skipReason = skipIfNoSystemCerts();
     if (skipReason) {
       test.skip(skipReason);
@@ -84,7 +88,7 @@ describe("system CA with HTTPS", () => {
     expect(stdout2).toContain("STATUS:");
   });
 
-  test("HTTPS fails without system CA for custom root cert", async () => {
+  networkTest("HTTPS fails without system CA for custom root cert", async () => {
     // This test verifies that without system CA, connections to sites
     // with certificates not in the bundled list will fail
     const testCode = `

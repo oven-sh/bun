@@ -89,7 +89,7 @@ describe.concurrent("concurrent describe 1", () => {
   test("item 1", async () => {});
   test("item 2", async () => {});
   test("snapshot in concurrent group", async () => {
-    // this is a technical limitation of not using async context. in the future, we could allow this
+    // this is a technical limitation of not using async context. in the future, we could allow thisa
     try {
       expect("hello").toMatchSnapshot();
     } catch (e) {
@@ -97,5 +97,16 @@ describe.concurrent("concurrent describe 1", () => {
     }
   });
 });
+
+// == other stuff ==
+
+test("LINE 66", () => console.log("LINE 66"));
+test.skip("LINE 67", () => console.log("LINE 67"));
+test.failing("LINE 68", () => console.log("LINE 68"));
+test.todo("LINE 69", () => console.log("LINE 69"));
+test.each([1, 2, 3])("LINE 70", item => console.log("LINE 70", item));
+test.if(true)("LINE 71", () => console.log("LINE 71"));
+test.skipIf(true)("LINE 72", () => console.log("LINE 72"));
+test.concurrent("LINE 74", () => console.log("LINE 74"));
 
 console.log("exit");

@@ -36,12 +36,25 @@ test("describe/test", async () => {
     error: Snapshot matchers are not supported in concurrent tests
     Snapshot matchers are not supported in concurrent tests
     (fail) concurrent describe 1 > snapshot in concurrent group
+    (pass) LINE 66
+    (skip) LINE 67
+    (fail) LINE 68
+      ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
+    (todo) LINE 69
+    (pass) LINE 70
+    (pass) LINE 70
+    (pass) LINE 70
+    (pass) LINE 71
+    (skip) LINE 72
+    (pass) LINE 74
 
-     3 pass
-     2 fail
+     9 pass
+     2 skip
+     1 todo
+     3 fail
      1 error
      snapshots: 
-    Ran 5 tests across 1 file."
+    Ran 15 tests across 1 file."
     ,
       "stdout": 
     "bun test <version> (<revision>)
@@ -81,7 +94,14 @@ test("describe/test", async () => {
     async describe 3
     async describe 4
     async describe 5
-    async describe 6"
+    async describe 6
+    LINE 66
+    LINE 68
+    LINE 70 1
+    LINE 70 2
+    LINE 70 3
+    LINE 71
+    LINE 74"
     ,
     }
   `);

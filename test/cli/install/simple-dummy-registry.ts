@@ -16,8 +16,9 @@ export class SimpleRegistry {
     "test-security-scanner": ["1.0.0"],
   };
 
-  setScannerBehavior(behavior: "clean" | "warn" | "fatal") {
-    this.scannerBehavior = behavior;
+  setScannerBehavior(behavior: "none" | "warn" | "fatal") {
+    // ternary because it was originally called "clean" but I renamed it "none" and didnt want to update the .tgz files. easier this way
+    this.scannerBehavior = behavior === "none" ? "clean" : behavior;
   }
 
   async start(): Promise<number> {

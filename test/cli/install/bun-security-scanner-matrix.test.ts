@@ -362,7 +362,8 @@ scanner = "${scannerPath}"`,
   const requestedPackages = registry.getRequestedPackages();
   const requestedTarballs = registry.getRequestedTarballs();
 
-  // if failure: we should ONLY see the scanner package requested, not other packages
+  // when we have no node modules and the scanner comes from npm, we must first install the scanner
+  // but, if we expext the scanner to report failure then we should ONLY see the scanner tarball requested, no others
   if (scannerType === "npm" && !hasExistingNodeModules && (scannerReturns === "fatal" || scannerReturns === "warn")) {
     const doWeExpectToAlwaysTryToResolve =
       // If there is no lockfile, we will resolve packages
@@ -383,8 +384,6 @@ scanner = "${scannerPath}"`,
     expect(requestedTarballs).toEqual(["/test-security-scanner-1.0.0.tgz"]);
   }
 
-  // For snapshot testing, sort the arrays to ensure consistent ordering
-  // This avoids flaky tests due to non-deterministic ordering
   const sortedPackages = [...requestedPackages].sort();
   const sortedTarballs = [...requestedTarballs].sort();
 

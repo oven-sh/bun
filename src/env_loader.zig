@@ -21,6 +21,7 @@ pub const Loader = struct {
     custom_files_loaded: bun.StringArrayHashMap(logger.Source),
 
     quiet: bool = false,
+    auto_expand: bool = true,
 
     did_load_process: bool = false,
     reject_unauthorized: ?bool = null,
@@ -782,7 +783,7 @@ pub const Loader = struct {
             value_buffer,
             override,
             false,
-            true,
+            this.auto_expand,
         );
 
         @field(this, base) = source.*;
@@ -855,7 +856,7 @@ pub const Loader = struct {
             value_buffer,
             override,
             false,
-            true,
+            this.auto_expand,
         );
 
         try this.custom_files_loaded.put(file_path, source.*);
@@ -1066,7 +1067,7 @@ const Parser = struct {
         map: *Map,
         comptime override: bool,
         comptime is_process: bool,
-        comptime expand: bool,
+        expand: bool,
     ) OOM!void {
         var count = map.map.count();
         while (this.pos < this.src.len) {
@@ -1090,7 +1091,7 @@ const Parser = struct {
                 .conditional = false,
             };
         }
-        if (comptime !is_process and expand) {
+        if (!is_process and expand) {
             var it = map.iterator();
             while (it.next()) |entry| {
                 if (count > 0) {
@@ -1113,7 +1114,7 @@ const Parser = struct {
         value_buffer: *std.ArrayList(u8),
         comptime override: bool,
         comptime is_process: bool,
-        comptime expand: bool,
+        expand: bool,
     ) OOM!void {
         // Clear the buffer before each parse to ensure no leftover data
         value_buffer.clearRetainingCapacity();

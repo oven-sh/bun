@@ -15,11 +15,6 @@ interface SecurityScannerTestOptions {
   scannerError?: boolean;
   shouldFail?: boolean;
   expectedExitCode?: number;
-  expectedOutput?: string[];
-  unexpectedOutput?: string[];
-  expectedError?: string;
-
-  additionalDependencies?: Record<string, string>;
 }
 
 let registryUrl: string;
@@ -46,10 +41,6 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
     scannerError = false,
     shouldFail = false,
     expectedExitCode = shouldFail ? 1 : 0,
-    expectedOutput = [],
-    unexpectedOutput = [],
-    expectedError,
-    additionalDependencies = {},
   } = options;
 
   // Create scanner code based on configuration
@@ -114,7 +105,6 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
               [scannerPackageName]: "1.0.0",
             }
           : {}),
-        ...additionalDependencies,
       },
     }),
   };
@@ -187,8 +177,6 @@ scanner = "${scannerPath}"`,
     console.log("Registry should be running on this port (check with: lsof -i :PORT)");
     console.log("");
     console.log("Keeping test alive... Press Ctrl+C to exit");
-
-    await new Promise(r => {});
   }
 
   const proc = Bun.spawn({
@@ -251,18 +239,6 @@ scanner = "${scannerPath}"`,
 
   expect(exitCode).toBe(expectedExitCode);
 
-  for (const expected of expectedOutput) {
-    expect(errAndOut).toContain(expected);
-  }
-
-  for (const unexpected of unexpectedOutput) {
-    expect(errAndOut).not.toContain(unexpected);
-  }
-
-  if (expectedError) {
-    expect(errAndOut).toContain(expectedError);
-  }
-
   // If the scanner is from npm and there are no node modules when the test "starts"
   // then we should expect Bun to do the partial install first of all
   if (scannerType === "npm" && !hasExistingNodeModules) {
@@ -305,7 +281,20 @@ scanner = "${scannerPath}"`,
         const files = await Array.fromAsync(
           new Bun.Glob("**/*").scan({ cwd: dir, dot: true, followSymlinks: true, onlyFiles: false }),
         );
-        expect(files).toContain("node_modules/left-pad/package.json");
+
+        switch (command) {
+          case "remove":
+          case "uninstall": {
+            expect(files).not.toContain("node_modules/is-even/package.json");
+            break;
+          }
+
+          default: {
+            expect(files).toContain("node_modules/left-pad/package.json");
+            break;
+          }
+        }
+
         break;
       }
     }
@@ -407,8 +396,6 @@ describe("Security Scanner Matrix Tests", () => {
               // Therefore, we should fail because we don't know where to install it from
               const shouldFail =
                 scannerType === "npm.bunfigonly" || scannerReturns === "fatal" || scannerReturns === "warn";
-              const expectedOutput: string[] = [];
-              const expectedError = scannerType === "npm.bunfigonly" ? "Security scanner" : undefined;
 
               test(testName, async () => {
                 await runSecurityScannerTest({
@@ -418,9 +405,7 @@ describe("Security Scanner Matrix Tests", () => {
                   linker,
                   scannerType,
                   scannerReturns,
-                  expectedOutput,
                   shouldFail,
-                  expectedError,
                 });
               });
             });

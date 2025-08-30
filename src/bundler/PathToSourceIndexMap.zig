@@ -27,7 +27,7 @@ pub fn getOrPutPath(this: *PathToSourceIndexMap, allocator: std.mem.Allocator, p
     return this.getOrPut(allocator, path.text);
 }
 
-pub fn getOrPut(this: *PathToSourceIndexMap, allocator: std.mem.Allocator, text: []const u8) !Map.GetOrPutResult {
+pub fn getOrPut(this: *PathToSourceIndexMap, allocator: std.mem.Allocator, text: []const u8) bun.OOM!Map.GetOrPutResult {
     return try this.map.getOrPut(allocator, text);
 }
 

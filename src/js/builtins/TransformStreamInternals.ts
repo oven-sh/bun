@@ -158,7 +158,7 @@ export function transformStreamSetBackpressure(stream, backpressure) {
   $assert($getByIdDirectPrivate(stream, "backpressure") !== backpressure);
 
   const backpressureChangePromise = $getByIdDirectPrivate(stream, "backpressureChangePromise");
-  if (backpressureChangePromise !== undefined) backpressureChangePromise.$resolve.$call();
+  if (backpressureChangePromise !== undefined) backpressureChangePromise.resolve.$call();
 
   $putByIdDirectPrivate(stream, "backpressureChangePromise", $newPromiseCapability(Promise));
   $putByIdDirectPrivate(stream, "backpressure", backpressure);

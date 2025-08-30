@@ -263,6 +263,7 @@ pub const Run = struct {
     pub fn start(this: *Run) void {
         var vm = this.vm;
         vm.hot_reload = this.ctx.debug.hot_reload;
+        vm.watch_excludes = this.ctx.debug.watch_excludes;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
         this.addConditionalGlobals();

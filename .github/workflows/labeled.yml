@@ -51,18 +51,37 @@ jobs:
     permissions:
       issues: write
       pull-requests: write
+      contents: write
     steps:
-      - name: Update PR title and body for slop
+      - name: Update PR title and body for slop and close
         uses: actions/github-script@v7
         with:
           script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+
             await github.rest.pulls.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: context.issue.number,
               title: 'ai slop',
-              body: 'This PR has been marked as AI slop and the description has been updated to avoid confusion or misleading reviewers. Many AI PRs are fine, but sometimes they submit a PR too early or just don\'t test anything and come to a completely wrong assumption.'
+              body: 'This PR has been marked as AI slop and the description has been updated to avoid confusion or misleading reviewers.\n\nMany AI PRs are fine, but sometimes they submit a PR too early, fail to test if the problem is real, fail to reproduce the problem, or fail to test that the problem is fixed. If you think this PR is not AI slop, please leave a comment.',
+              state: 'closed'
             });
+
+            // Delete the branch if it's from a fork or if it's not a protected branch
+            try {
+              await github.rest.git.deleteRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `heads/${pr.data.head.ref}`
+              });
+            } catch (error) {
+              console.log('Could not delete branch:', error.message);
+            }
   on-labeled:
     runs-on: ubuntu-latest
     if: github.event.label.name == 'crash' || github.event.label.name == 'needs repro'

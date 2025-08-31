@@ -8,6 +8,7 @@
 
 import { test, expect } from "bun:test";
 import * as net from "net";
+import * as http from "http";
 
 test("issue #4459: server.getConnections should be implemented and work like Node.js", async () => {
   const server = net.createServer();
@@ -90,6 +91,62 @@ test("issue #4459: getConnections should support method chaining", () => {
 
 test("issue #4459: getConnections should work when server is not listening", () => {
   const server = net.createServer();
+  let callbackCalled = false;
+  let callbackErr: any = undefined;
+  let callbackCount: number = -1;
+  
+  const callback = (err: any, count: number) => {
+    callbackCalled = true;
+    callbackErr = err;
+    callbackCount = count;
+  };
+  
+  // Should call callback with 0 connections when not listening
+  server.getConnections(callback);
+  
+  expect(callbackCalled).toBe(true);
+  expect(callbackErr).toBeNull();
+  expect(callbackCount).toBe(0);
+});
+
+test("issue #4459: http.Server.getConnections should be implemented", () => {
+  const server = http.createServer();
+  
+  // Test that the method exists
+  expect(typeof server.getConnections).toBe("function");
+  
+  // Test basic functionality - should return 0 when not listening
+  let callbackCalled = false;
+  let callbackErr: any = undefined;
+  let callbackCount: number = -1;
+  
+  const callback = (err: any, count: number) => {
+    callbackCalled = true;
+    callbackErr = err;
+    callbackCount = count;
+  };
+  
+  server.getConnections(callback);
+  
+  expect(callbackCalled).toBe(true);
+  expect(callbackErr).toBeNull();
+  expect(callbackCount).toBe(0);
+  
+  server.close();
+});
+
+test("issue #4459: http.Server.getConnections should support method chaining", () => {
+  const server = http.createServer();
+  
+  // Method should return the server instance for chaining
+  const result = server.getConnections(() => {});
+  expect(result).toBe(server);
+  
+  server.close();
+});
+
+test("issue #4459: http.Server.getConnections should work when server is not listening", () => {
+  const server = http.createServer();
   let callbackCalled = false;
   let callbackErr: any = undefined;
   let callbackCount: number = -1;

@@ -204,6 +204,7 @@ function Server(options, callback): void {
   this[kInternalSocketData] = undefined;
   this[tlsSymbol] = null;
   this.noDelay = true;
+  this._connections = 0;
   if (typeof options === "function") {
     callback = options;
     options = {};
@@ -359,6 +360,17 @@ Server.prototype[Symbol.asyncDispose] = function () {
 Server.prototype.address = function () {
   if (!this[serverSymbol]) return null;
   return this[serverSymbol].address;
+};
+
+Server.prototype.getConnections = function (callback) {
+  if (typeof callback === "function") {
+    // In Bun case we will never error on getConnections
+    // Node only errors if in the middle of counting the server got disconnected, 
+    // which never happens in Bun
+    // If disconnected will only pass null as well and 0 connected
+    callback(null, this[serverSymbol] ? this._connections : 0);
+  }
+  return this;
 };
 
 Server.prototype.listen = function () {
@@ -552,6 +564,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         if (isSocketNew && !reachedRequestsLimit) {
+          server._connections++;
+          socket.on("close", () => {
+            server._connections--;
+          });
           server.emit("connection", socket);
         }
 

@@ -52,13 +52,13 @@ void JSYogaNode::finishCreation(JSC::VM& vm, YGConfigRef config, JSYogaConfig* j
 
     // If we need to recreate with specific config, do so
     if (config || jsConfig) {
-        m_impl = YogaNodeImpl::create(config, jsConfig);
+        m_impl = YogaNodeImpl::create(config);
     }
 
     // Set this JS wrapper in the C++ impl
     m_impl->setJSWrapper(this);
 
-    // Store the JSYogaConfig if provided
+    // Store the JSYogaConfig if provided  
     if (jsConfig) {
         m_config.set(vm, this, jsConfig);
     }
@@ -70,11 +70,8 @@ void JSYogaNode::finishCreation(JSC::VM& vm)
 
     // Set this JS wrapper in the C++ impl
     m_impl->setJSWrapper(this);
-
-    // Store the JSYogaConfig if provided
-    if (auto* jsConfig = m_impl->jsConfig()) {
-        m_config.set(vm, this, jsConfig);
-    }
+    
+    // No JSYogaConfig in this path - it's only set when explicitly provided
 }
 
 JSC::Structure* JSYogaNode::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -139,11 +136,6 @@ void JSYogaNode::visitOutputConstraints(JSC::JSCell* cell, Visitor& visitor)
     // Re-visit after mutator execution in case callbacks changed references
     // This is critical for objects whose reachability can change during runtime
     thisObject->visitAdditionalChildren(visitor);
-    
-    // Ensure we keep alive during active layout operations  
-    if (thisObject->m_impl->isInLayoutCalculation()) {
-        visitor.addOpaqueRoot(&thisObject->m_impl.get());
-    }
 }
 
 template void JSYogaNode::visitOutputConstraints(JSC::JSCell*, JSC::AbstractSlotVisitor&);

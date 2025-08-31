@@ -13,8 +13,6 @@ void JSYogaConfigOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context
     // The context contains our YogaConfigImpl
     auto* impl = static_cast<YogaConfigImpl*>(context);
 
-    fprintf(stderr, "[DEBUG] JSYogaConfigOwner::finalize called for YogaConfigImpl %p\n", impl);
-
     // Deref the YogaConfigImpl - this will decrease its reference count
     // and potentially destroy it if no other references exist
     impl->deref();

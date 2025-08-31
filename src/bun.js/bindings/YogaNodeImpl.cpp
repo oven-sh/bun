@@ -16,14 +16,12 @@ static void simpleYGNodeFree(YGNodeRef node)
     }
 }
 
-Ref<YogaNodeImpl> YogaNodeImpl::create(YGConfigRef config, JSYogaConfig* jsConfig)
+Ref<YogaNodeImpl> YogaNodeImpl::create(YGConfigRef config)
 {
-    return adoptRef(*new YogaNodeImpl(config, jsConfig));
+    return adoptRef(*new YogaNodeImpl(config));
 }
 
-YogaNodeImpl::YogaNodeImpl(YGConfigRef config, JSYogaConfig* jsConfig)
-    : m_jsConfig(jsConfig)
-    , m_inLayoutCalculation(false)
+YogaNodeImpl::YogaNodeImpl(YGConfigRef config)
 {
     if (config) {
         m_yogaNode = YGNodeNewWithConfig(config);
@@ -40,6 +38,12 @@ YogaNodeImpl::~YogaNodeImpl()
     if (m_yogaNode) {
         // Clear context immediately to prevent callbacks during cleanup
         YGNodeSetContext(m_yogaNode, nullptr);
+        
+        // CRITICAL: Clear all callback functions to prevent cross-test contamination  
+        // This prevents reused YGNode memory from calling old callbacks
+        YGNodeSetMeasureFunc(m_yogaNode, nullptr);
+        YGNodeSetDirtiedFunc(m_yogaNode, nullptr);
+        YGNodeSetBaselineFunc(m_yogaNode, nullptr);
         
         // Simplified pattern: only free root nodes (no parent)
         // Let Yoga handle child cleanup automatically
@@ -81,6 +85,15 @@ JSYogaNode* YogaNodeImpl::jsWrapper() const
     return m_wrapper.get();
 }
 
+JSYogaConfig* YogaNodeImpl::jsConfig() const
+{
+    // Access config through JS wrapper's WriteBarrier - this is GC-safe
+    if (auto* jsWrapper = m_wrapper.get()) {
+        return jsCast<JSYogaConfig*>(jsWrapper->m_config.get());
+    }
+    return nullptr;
+}
+
 YogaNodeImpl* YogaNodeImpl::fromYGNode(YGNodeRef nodeRef)
 {
     if (!nodeRef) return nullptr;
@@ -92,6 +105,11 @@ void YogaNodeImpl::replaceYogaNode(YGNodeRef newNode)
     if (m_yogaNode) {
         YGNodeSetContext(m_yogaNode, nullptr);
         
+        // Clear callback functions to prevent cross-test contamination
+        YGNodeSetMeasureFunc(m_yogaNode, nullptr);
+        YGNodeSetDirtiedFunc(m_yogaNode, nullptr);
+        YGNodeSetBaselineFunc(m_yogaNode, nullptr);
+        
         // Simplified pattern: only free if no parent (root node)
         YGNodeRef parent = YGNodeGetParent(m_yogaNode);
         if (!parent) {
@@ -102,31 +120,6 @@ void YogaNodeImpl::replaceYogaNode(YGNodeRef newNode)
     if (newNode) {
         YGNodeSetContext(newNode, this);
     }
-}
-
-void YogaNodeImpl::setInLayoutCalculation(bool inLayout)
-{
-    m_inLayoutCalculation.store(inLayout);
-}
-
-bool YogaNodeImpl::isInLayoutCalculation() const
-{
-    return m_inLayoutCalculation.load();
-}
-
-bool YogaNodeImpl::hasChildrenInLayout() const
-{
-    if (!m_yogaNode) return false;
-    
-    size_t childCount = YGNodeGetChildCount(m_yogaNode);
-    for (size_t i = 0; i < childCount; i++) {
-        YGNodeRef childNode = YGNodeGetChild(m_yogaNode, i);
-        YogaNodeImpl* childImpl = fromYGNode(childNode);
-        if (childImpl && childImpl->isInLayoutCalculation()) {
-            return true;
-        }
-    }
-    return false;
 }
 
 } // namespace Bun

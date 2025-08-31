@@ -811,6 +811,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncCalculateLayout, (JSC::JSGlobalObjec
         direction = static_cast<YGDirection>(dir);
     }
 
+    // Simple React Native pattern: direct Yoga layout calculation
     YGNodeCalculateLayout(thisObject->impl().yogaNode(), width, height, direction);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

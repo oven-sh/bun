@@ -46,9 +46,10 @@ pub fn CreateBinaryExpressionVisitor(
             if (typeof_expr.data.e_unary.value.data == .e_identifier) {
                 const identifier_name = p.loadNameFromRef(typeof_expr.data.e_unary.value.data.e_identifier.ref);
                 // Skip optimization for variables that look like they might be removed by DCE
-                if (strings.hasPrefixComptime(identifier_name, "REMOVE") or 
+                if (strings.hasPrefixComptime(identifier_name, "REMOVE") or
                     strings.hasPrefixComptime(identifier_name, "DROP") or
-                    strings.hasPrefixComptime(identifier_name, "FAIL")) {
+                    strings.hasPrefixComptime(identifier_name, "FAIL"))
+                {
                     return null;
                 }
             }

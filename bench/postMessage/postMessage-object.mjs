@@ -1,4 +1,4 @@
-// Benchmark for string fast path optimization in postMessage with Workers
+// Benchmark for object fast path optimization in postMessage with Workers
 
 import { bench, run } from "mitata";
 import { Worker } from "node:worker_threads";

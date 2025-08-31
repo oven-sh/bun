@@ -5,7 +5,7 @@ env:
 on:
   issues:
     types: [labeled]
-  pull_request:
+  pull_request_target:
     types: [labeled, opened, reopened, synchronize, unlabeled]
 
 jobs:
@@ -47,7 +47,7 @@ jobs:
   #         labels: ${{ steps.add-labels.outputs.labels }}
   on-slop:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'slop')
+    if: github.event_name == 'pull_request_target' && contains(github.event.pull_request.labels.*.name, 'slop')
     permissions:
       issues: write
       pull-requests: write
@@ -84,7 +84,7 @@ jobs:
             }
   on-labeled:
     runs-on: ubuntu-latest
-    if: github.event.label.name == 'crash' || github.event.label.name == 'needs repro'
+    if: github.event_name == 'issues' && (github.event.label.name == 'crash' || github.event.label.name == 'needs repro')
     permissions:
       issues: write
     steps:

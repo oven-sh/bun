@@ -1333,10 +1333,22 @@ pub const TestCommand = struct {
         var inline_snapshots_to_write = std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(Snapshots.InlineSnapshotToWrite)).init(ctx.allocator);
         jsc.VirtualMachine.isBunTest = true;
 
-        // Just store raw file:line args - parse them when needed
         for (ctx.positionals) |arg| {
-            if (parseFileLineArg(arg)) |_| {
-                try ctx.test_options.test_line_filter_args.append(ctx.allocator, try ctx.allocator.dupe(u8, arg));
+            if (parseFileLineArg(arg)) |parsed| {
+                var path_buf: bun.PathBuffer = undefined;
+                const abs_pattern = if (std.fs.path.isAbsolute(parsed.file_pattern)) 
+                    try ctx.allocator.dupe(u8, parsed.file_pattern)
+                else blk: {
+                    const cwd = bun.getcwd(&path_buf) catch break :blk try ctx.allocator.dupe(u8, parsed.file_pattern);
+                    const joined = bun.path.joinAbsStringBuf(cwd, &path_buf, &.{parsed.file_pattern}, .auto);
+                    break :blk try ctx.allocator.dupe(u8, joined);
+                };
+
+                const result = try ctx.test_options.test_line_filters.getOrPut(ctx.allocator, abs_pattern);
+                if (!result.found_existing) {
+                    result.value_ptr.* = std.ArrayListUnmanaged(u32){};
+                }
+                try result.value_ptr.append(ctx.allocator, parsed.line_num);
             }
         }
 
@@ -1463,7 +1475,7 @@ pub const TestCommand = struct {
 
         var scanner = bun.handleOom(Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len));
         defer scanner.deinit();
-        const has_file_line_arg = ctx.test_options.test_line_filter_args.items.len > 0;
+        const has_file_line_arg = ctx.test_options.test_line_filters.count() > 0;
         const has_relative_path = for (ctx.positionals) |arg| {
             // For file:line arguments, check the file part, not the whole arg
             const file_part = if (has_file_line_arg) blk: {
@@ -1486,10 +1498,8 @@ pub const TestCommand = struct {
             // One of the files is a filepath. Instead of treating the
             // arguments as filters, treat them as filepaths
             const file_or_dirnames = ctx.positionals[1..];
-            // Scan all files, extracting file part from file:line arguments
             for (file_or_dirnames) |arg| {
                 const file_to_scan = if (has_file_line_arg) blk: {
-                    // Extract file part from file:line if this is a file:line arg
                     if (std.mem.lastIndexOf(u8, arg, ":")) |colon_pos| {
                         if (std.fmt.parseInt(u32, arg[colon_pos + 1..], 10)) |_| {
                             break :blk arg[0..colon_pos];
@@ -1751,7 +1761,7 @@ pub const TestCommand = struct {
 
                 reporter.printSummary();
             } else {
-                if (ctx.test_options.test_line_filter_args.items.len > 0) {
+                if (ctx.test_options.test_line_filters.count() > 0) {
                     Output.prettyError("<red>error<r><d>:<r> no tests found for file:line filters. Searched {d} file{s} (skipping {d} test{s}) ", .{
                         summary.files,
                         if (summary.files == 1) "" else "s",
@@ -1759,9 +1769,11 @@ pub const TestCommand = struct {
                         if (summary.skipped_because_label == 1) "" else "s",
                     });
 
-                    // Show the specific filters that were applied
-                    for (ctx.test_options.test_line_filter_args.items) |arg| {
-                        Output.prettyError("\n  <b>{}<r>", .{bun.fmt.quote(arg)});
+                    var iter = ctx.test_options.test_line_filters.iterator();
+                    while (iter.next()) |entry| {
+                        for (entry.value_ptr.items) |line| {
+                            Output.prettyError("\n  <b>{}<r>:{d}", .{ bun.fmt.quote(entry.key_ptr.*), line });
+                        }
                     }
                     Output.prettyError("\n", .{});
                 } else {

@@ -327,7 +327,7 @@ pub const Command = struct {
         coverage: TestCommand.CodeCoverageOptions = .{},
         test_filter_pattern: ?[]const u8 = null,
         test_filter_regex: ?*RegularExpression = null,
-        test_line_filter_args: std.ArrayListUnmanaged([]const u8) = .{}, // Just store the raw "file.test.ts:42" args
+        test_line_filters: std.StringHashMapUnmanaged(std.ArrayListUnmanaged(u32)) = .{},
 
         file_reporter: ?TestCommand.FileReporter = null,
         reporter_outfile: ?[]const u8 = null,

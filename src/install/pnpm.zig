@@ -363,7 +363,6 @@ pub fn migratePnpmLockfile(
             var workspace_name: []const u8 = importer_path;
             var workspace_version: ?[]const u8 = null;
 
-            // Use openat to read the package.json relative to the dir file descriptor
             const package_json_path: [:0]const u8 = if (strings.eqlComptime(importer_path, "."))
                 "package.json"
             else brk: {
@@ -372,38 +371,31 @@ pub fn migratePnpmLockfile(
                 break :brk path;
             };
 
-            const package_json_file = bun.sys.File.openat(dir, package_json_path, bun.O.RDONLY, 0).unwrap() catch {
-                // If we can't open the package.json, continue with default name
-                // We can't add it here since we don't have workspace_map yet
-                continue;
-            };
-            defer package_json_file.close();
+            if (bun.sys.File.openat(dir, package_json_path, bun.O.RDONLY, 0).unwrap() catch null) |package_json_file| {
+                defer package_json_file.close();
 
-            if (package_json_file.readToEnd(allocator).unwrap() catch null) |package_json_content| {
-                defer allocator.free(package_json_content);
+                if (package_json_file.readToEnd(allocator).unwrap() catch null) |package_json_content| {
+                    defer allocator.free(package_json_content);
 
-                const pkg_source = logger.Source.initPathString(package_json_path, package_json_content);
-                if (bun.json.parseUTF8(&pkg_source, log, allocator) catch null) |pkg_json| {
-                    if (pkg_json.data == .e_object) {
-                        const pkg_obj = pkg_json.data.e_object;
+                    const pkg_source = logger.Source.initPathString(package_json_path, package_json_content);
+                    if (bun.json.parseUTF8(&pkg_source, log, allocator) catch null) |pkg_json| {
+                        if (pkg_json.data == .e_object) {
+                            const pkg_obj = pkg_json.data.e_object;
 
-                        if (pkg_obj.get("name")) |name_expr| {
-                            if (name_expr.data == .e_string) {
-                                workspace_name = try allocator.dupe(u8, name_expr.data.e_string.data);
+                            if (pkg_obj.get("name")) |name_expr| {
+                                if (name_expr.data == .e_string) {
+                                    workspace_name = try allocator.dupe(u8, name_expr.data.e_string.data);
+                                }
                             }
-                        }
 
-                        if (pkg_obj.get("version")) |version_expr| {
-                            if (version_expr.data == .e_string) {
-                                workspace_version = try allocator.dupe(u8, version_expr.data.e_string.data);
+                            if (pkg_obj.get("version")) |version_expr| {
+                                if (version_expr.data == .e_string) {
+                                    workspace_version = try allocator.dupe(u8, version_expr.data.e_string.data);
+                                }
                             }
                         }
                     }
-                } else {
-                    workspace_name = try allocator.dupe(u8, importer_path);
                 }
-            } else {
-                workspace_name = try allocator.dupe(u8, importer_path);
             }
 
             try workspace_map.?.map.put(importer_path, .{
@@ -1743,44 +1735,60 @@ pub fn migratePnpmLockfile(
 
         for (importers.properties.slice()) |importer_entry| {
             const importer_path = importer_entry.key.?.asString(allocator) orelse continue;
+
+            if (strings.eqlComptime(importer_path, ".")) continue;
+            if (package_id_map.contains(importer_path)) continue;
+            const actual_name = workspace_actual_names.get(importer_path) orelse blk: {
+                if (workspace_map) |wksp| {
+                    if (wksp.map.get(importer_path)) |info| {
+                        break :blk info.name;
+                    }
+                }
+                break :blk importer_path;
+            };
+            const workspace_name = try string_buf.append(actual_name);
+            const workspace_name_hash = stringHash(actual_name);
+
+            const workspace_pkg = try this.appendPackage(.{
+                .name = workspace_name,
+                .name_hash = workspace_name_hash,
+                .resolution = Resolution.init(.{
+                    .workspace = workspace_name,
+                }),
+                .meta = .{
+                    .id = package_id,
+                    .origin = .local,
+                    .arch = Npm.Architecture.all,
+                    .os = Npm.OperatingSystem.all,
+                    .integrity = Integrity{},
+                },
+                .dependencies = .{},
+                .resolutions = .{},
+                .bin = Bin.init(),
+            });
+
+            try this.getOrPutID(workspace_pkg.meta.id, workspace_name_hash);
+
+            const key = try allocator.dupe(u8, importer_path);
+            try package_id_map.put(key, workspace_pkg.meta.id);
+
+            if (!strings.eql(actual_name, importer_path)) {
+                const name_key = try allocator.dupe(u8, actual_name);
+                try package_id_map.put(name_key, workspace_pkg.meta.id);
+            }
+
+            package_id += 1;
+        }
+
+        for (importers.properties.slice()) |importer_entry| {
+            const importer_path = importer_entry.key.?.asString(allocator) orelse continue;
             if (importer_entry.value == null or importer_entry.value.?.data != .e_object) continue;
             const importer = importer_entry.value.?.data.e_object;
 
             const importer_pkg_id = if (strings.eqlComptime(importer_path, "."))
                 0 // Root package
-            else blk: {
-                if (package_id_map.get(importer_path)) |existing_id| {
-                    break :blk existing_id;
-                }
-
-                const workspace_name = try string_buf.append(importer_path);
-                const workspace_name_hash = stringHash(importer_path);
-
-                const workspace_pkg = try this.appendPackage(.{
-                    .name = workspace_name,
-                    .name_hash = workspace_name_hash,
-                    .resolution = Resolution.init(.{
-                        .workspace = workspace_name,
-                    }),
-                    .meta = .{
-                        .id = package_id,
-                        .origin = .local,
-                        .arch = Npm.Architecture.all,
-                        .os = Npm.OperatingSystem.all,
-                        .integrity = Integrity{},
-                    },
-                    .dependencies = .{},
-                    .resolutions = .{},
-                    .bin = Bin.init(),
-                });
-
-                try this.getOrPutID(workspace_pkg.meta.id, workspace_name_hash);
-                const key = try allocator.dupe(u8, importer_path);
-                try package_id_map.put(key, workspace_pkg.meta.id);
-                package_id += 1;
-
-                break :blk workspace_pkg.meta.id;
-            };
+            else
+                package_id_map.get(importer_path) orelse continue;
 
             var all_dependencies = std.ArrayList(Dependency).init(allocator);
             var all_resolutions = std.ArrayList(Install.PackageID).init(allocator);
@@ -1824,8 +1832,16 @@ pub fn migratePnpmLockfile(
                                 }
                             }
 
-                            const is_workspace_dep = package_id_map.contains(dep_name) or
-                                workspace_actual_names.contains(dep_name);
+                            var is_workspace_dep = package_id_map.contains(dep_name);
+                            if (!is_workspace_dep) {
+                                var ws_iter = workspace_actual_names.iterator();
+                                while (ws_iter.next()) |entry| {
+                                    if (strings.eql(entry.value_ptr.*, dep_name)) {
+                                        is_workspace_dep = true;
+                                        break;
+                                    }
+                                }
+                            }
 
                             var actual_specifier = specifier;
 
@@ -1836,7 +1852,23 @@ pub fn migratePnpmLockfile(
                                 actual_specifier = "workspace:*";
                             }
 
-                            if (!should_be_peer and (strings.hasPrefixComptime(specifier, "file:") or strings.hasPrefixComptime(specifier, "link:"))) {
+                            if (!should_be_peer and (strings.hasPrefixComptime(version, "link:") or strings.hasPrefixComptime(version, "file:"))) {
+                                const local_path = if (strings.hasPrefixComptime(version, "link:"))
+                                    version["link:".len..]
+                                else
+                                    version["file:".len..];
+
+                                const points_to_workspace = package_id_map.contains(local_path) or
+                                    workspace_actual_names.contains(local_path);
+
+                                if (points_to_workspace) {
+                                    if (strings.hasPrefixComptime(specifier, "workspace:")) {
+                                        actual_specifier = specifier;
+                                    } else {
+                                        actual_specifier = "workspace:*";
+                                    }
+                                }
+                            } else if (!should_be_peer and (strings.hasPrefixComptime(specifier, "file:") or strings.hasPrefixComptime(specifier, "link:"))) {
                                 const local_path = specifier["file:".len..];
 
                                 const points_to_workspace = package_id_map.contains(local_path) or
@@ -1873,17 +1905,11 @@ pub fn migratePnpmLockfile(
                             };
 
                             if (strings.hasPrefixComptime(actual_specifier, "workspace:")) {
+                                const workspace_range = actual_specifier["workspace:".len..];
                                 dependency.version = .{
                                     .tag = .workspace,
                                     .literal = try string_buf.append(actual_specifier),
-                                    .value = .{ .workspace = try string_buf.append("*") },
-                                };
-                                dependency.behavior.workspace = true;
-                            } else if (strings.hasPrefixComptime(version, "link:")) {
-                                dependency.version = .{
-                                    .tag = .workspace,
-                                    .literal = try string_buf.append("workspace:*"),
-                                    .value = .{ .workspace = try string_buf.append("*") },
+                                    .value = .{ .workspace = try string_buf.append(workspace_range) },
                                 };
                                 dependency.behavior.workspace = true;
                             } else {
@@ -1917,6 +1943,16 @@ pub fn migratePnpmLockfile(
 
                             if (resolved_pkg_id == null and dependency.behavior.workspace) {
                                 resolved_pkg_id = package_id_map.get(dep_name);
+
+                                if (resolved_pkg_id == null and strings.hasPrefixComptime(version, "link:")) {
+                                    const link_path = version["link:".len..];
+                                    resolved_pkg_id = package_id_map.get(link_path);
+
+                                    if (resolved_pkg_id == null and strings.hasPrefixComptime(link_path, "../")) {
+                                        const name_only = link_path["../".len..];
+                                        resolved_pkg_id = package_id_map.get(name_only);
+                                    }
+                                }
 
                                 if (resolved_pkg_id == null) {
                                     if (strings.indexOfChar(dep_name, '/')) |slash_pos| {

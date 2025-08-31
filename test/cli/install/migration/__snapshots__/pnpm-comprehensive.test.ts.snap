@@ -293,6 +293,7 @@ exports[`pnpm comprehensive migration tests pnpm with git and link dependencies:
         "my-git-https": "git+https://github.com/user/repo.git#feature-branch",
         "my-git-package": "github:user/repo#v1.0.0",
         "my-git-ssh": "git+ssh://git@github.com:user/private-repo.git",
+        "my-link": "link:../local-package",
       },
     },
   },
@@ -304,6 +305,8 @@ exports[`pnpm comprehensive migration tests pnpm with git and link dependencies:
     "my-git-package": ["my-git-package@github:user/repo#1234567", {}, "user-repo-1234567"],
 
     "my-git-ssh": ["my-git-ssh@github:user/private-repo#def456a", {}, "user-private-repo-def456a"],
+
+    "my-link": ["my-link@0.0.0", "", {}, ""],
   }
 }
 "

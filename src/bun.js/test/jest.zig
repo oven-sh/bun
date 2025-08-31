@@ -152,14 +152,13 @@ pub const TestRunner = struct {
             break :blk bun.path.joinAbsStringBuf(cwd, &path_buf, &.{file_path}, .auto);
         };
 
-
         // Check if we have line filters for this absolute path in test_options
         if (this.test_options.test_line_filters.get(absolute_file_path)) |lines| {
             // Copy the line filter to the file ID map
             var lines_copy = std.ArrayListUnmanaged(u32){};
             lines_copy.appendSlice(this.allocator, lines.items) catch return;
             this.line_filters_by_file_id.put(this.allocator, file_id, lines_copy) catch return;
-            
+
             // Debug: confirm mapping
             bun.Output.debug("MAPPED file_id {} -> {} lines for path '{s}'", .{ file_id, lines.items.len, absolute_file_path });
         } else {

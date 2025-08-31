@@ -8,13 +8,6 @@
 
 namespace Bun {
 
-// Simplified approach: trust Yoga's built-in parent-child management
-static void simpleYGNodeFree(YGNodeRef node)
-{
-    if (node) {
-        YGNodeFree(node);
-    }
-}
 
 Ref<YogaNodeImpl> YogaNodeImpl::create(YGConfigRef config)
 {
@@ -35,8 +28,8 @@ YogaNodeImpl::YogaNodeImpl(YGConfigRef config)
 
 YogaNodeImpl::~YogaNodeImpl()
 {
-    // React Native pattern: Don't access potentially freed YGNode memory
-    // Let Yoga handle all cleanup automatically - safer than checking parent/child status
+    // Don't call YGNodeFree here - let JS finalizer handle it to control timing
+    // This avoids double-free issues during GC when nodes may be freed in arbitrary order
     m_yogaNode = nullptr;
 }
 

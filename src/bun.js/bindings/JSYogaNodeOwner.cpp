@@ -34,6 +34,9 @@ void JSYogaNodeOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
     // The context contains our YogaNodeImpl
     auto* impl = static_cast<YogaNodeImpl*>(context);
 
+    // TEMP: Skip YGNodeFree during GC to debug double-free issue
+    // TODO: Find proper solution for safe Yoga node cleanup during GC
+
     // Deref the YogaNodeImpl - this will decrease its reference count
     // and potentially destroy it if no other references exist
     impl->deref();

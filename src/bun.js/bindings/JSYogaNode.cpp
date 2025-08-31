@@ -62,6 +62,11 @@ void JSYogaNode::finishCreation(JSC::VM& vm, YGConfigRef config, JSYogaConfig* j
     if (jsConfig) {
         m_config.set(vm, this, jsConfig);
     }
+    
+    // Initialize children array to maintain strong references
+    // This mirrors React Native's _reactSubviews NSMutableArray
+    JSC::JSGlobalObject* globalObject = this->globalObject();
+    m_children.set(vm, this, JSC::constructEmptyArray(globalObject, nullptr, 0));
 }
 
 void JSYogaNode::finishCreation(JSC::VM& vm)
@@ -72,6 +77,11 @@ void JSYogaNode::finishCreation(JSC::VM& vm)
     m_impl->setJSWrapper(this);
 
     // No JSYogaConfig in this path - it's only set when explicitly provided
+    
+    // Initialize children array to maintain strong references
+    // This mirrors React Native's _reactSubviews NSMutableArray
+    JSC::JSGlobalObject* globalObject = this->globalObject();
+    m_children.set(vm, this, JSC::constructEmptyArray(globalObject, nullptr, 0));
 }
 
 JSC::Structure* JSYogaNode::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -118,6 +128,7 @@ void JSYogaNode::visitAdditionalChildren(Visitor& visitor)
     visitor.append(m_dirtiedFunc);
     visitor.append(m_baselineFunc);
     visitor.append(m_config);
+    visitor.append(m_children);
 
     // Use the YogaNodeImpl pointer as opaque root instead of YGNodeRef
     // This avoids use-after-free when YGNode memory is freed but YogaNodeImpl still exists

@@ -388,6 +388,10 @@ class Worker extends EventEmitter {
   #onOpen() {
     this.emit("online");
   }
+
+  async [Symbol.asyncDispose]() {
+    await this.terminate();
+  }
 }
 
 class HeapSnapshotStream extends Readable {

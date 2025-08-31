@@ -22,8 +22,8 @@ const CurrentFile = struct {
     pub fn set(this: *CurrentFile, title: string, prefix: string, repeat_count: u32, repeat_index: u32) void {
         if (Output.isAIAgent()) {
             this.freeAndClear();
-            this.title = bun.default_allocator.dupe(u8, title) catch bun.outOfMemory();
-            this.prefix = bun.default_allocator.dupe(u8, prefix) catch bun.outOfMemory();
+            this.title = bun.handleOom(bun.default_allocator.dupe(u8, title));
+            this.prefix = bun.handleOom(bun.default_allocator.dupe(u8, prefix));
             this.repeat_info.count = repeat_count;
             this.repeat_info.index = repeat_index;
             this.has_printed_filename = false;
@@ -359,7 +359,7 @@ pub const Jest = struct {
         else
             .{ TestScope, DescribeScope };
 
-        const module = JSValue.createEmptyObject(globalObject, 14);
+        const module = JSValue.createEmptyObject(globalObject, 17);
 
         const test_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("test"), 2, ThisTestScope.call, false);
         module.put(
@@ -388,6 +388,21 @@ pub const Jest = struct {
             ZigString.static("it"),
             test_fn,
         );
+
+        const xit_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("xit"), 2, ThisTestScope.skip, false);
+        module.put(
+            globalObject,
+            ZigString.static("xit"),
+            xit_fn,
+        );
+
+        const xtest_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("xtest"), 2, ThisTestScope.skip, false);
+        module.put(
+            globalObject,
+            ZigString.static("xtest"),
+            xtest_fn,
+        );
+
         const describe = jsc.host_fn.NewFunction(globalObject, ZigString.static("describe"), 2, ThisDescribeScope.call, false);
         inline for (.{
             "only",
@@ -414,6 +429,14 @@ pub const Jest = struct {
             globalObject,
             ZigString.static("describe"),
             describe,
+        );
+
+        // Jest compatibility alias for skipped describe blocks
+        const xdescribe_fn = jsc.host_fn.NewFunction(globalObject, ZigString.static("xdescribe"), 2, ThisDescribeScope.skip, false);
+        module.put(
+            globalObject,
+            ZigString.static("xdescribe"),
+            xdescribe_fn,
         );
 
         inline for (.{ "beforeAll", "beforeEach", "afterAll", "afterEach" }) |name| {
@@ -953,7 +976,7 @@ pub const DescribeScope = struct {
 
                 cb.protect();
                 @field(DescribeScope.active.?, @tagName(hook) ++ "s").append(bun.default_allocator, cb) catch unreachable;
-                return JSValue.jsBoolean(true);
+                return .true;
             }
         }.run;
     }
@@ -1348,6 +1371,9 @@ pub const WrappedTestScope = struct {
     pub const each = wrapTestFunction("test", TestScope.each);
 };
 
+pub const xit = wrapTestFunction("xit", TestScope.skip);
+pub const xtest = wrapTestFunction("xtest", TestScope.skip);
+
 pub const WrappedDescribeScope = struct {
     pub const call = wrapTestFunction("describe", DescribeScope.call);
     pub const only = wrapTestFunction("describe", DescribeScope.only);
@@ -1358,6 +1384,8 @@ pub const WrappedDescribeScope = struct {
     pub const todoIf = wrapTestFunction("describe", DescribeScope.todoIf);
     pub const each = wrapTestFunction("describe", DescribeScope.each);
 };
+
+pub const xdescribe = wrapTestFunction("xdescribe", DescribeScope.skip);
 
 pub const TestRunnerTask = struct {
     test_id: TestRunner.Test.ID,
@@ -1499,7 +1527,7 @@ pub const TestRunnerTask = struct {
 
         if (this.needs_before_each) {
             this.needs_before_each = false;
-            const label = bun.default_allocator.dupe(u8, test_.label) catch bun.outOfMemory();
+            const label = bun.handleOom(bun.default_allocator.dupe(u8, test_.label));
             defer bun.default_allocator.free(label);
 
             if (this.describe.runCallback(globalThis, .beforeEach)) |err| {
@@ -2094,9 +2122,9 @@ fn consumeArg(
     if (should_write) {
         const owned_slice = try arg.toSliceOrNull(globalThis);
         defer owned_slice.deinit();
-        array_list.appendSlice(allocator, owned_slice.slice()) catch bun.outOfMemory();
+        bun.handleOom(array_list.appendSlice(allocator, owned_slice.slice()));
     } else {
-        array_list.appendSlice(allocator, fallback) catch bun.outOfMemory();
+        bun.handleOom(array_list.appendSlice(allocator, fallback));
     }
     str_idx.* += 1;
     args_idx.* += 1;
@@ -2107,7 +2135,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
     const allocator = bun.default_allocator;
     var idx: usize = 0;
     var args_idx: usize = 0;
-    var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, label.len) catch bun.outOfMemory();
+    var list = bun.handleOom(std.ArrayListUnmanaged(u8).initCapacity(allocator, label.len));
 
     while (idx < label.len) {
         const char = label[idx];
@@ -2139,9 +2167,9 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                 if (!value.isEmptyOrUndefinedOrNull()) {
                     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                     defer formatter.deinit();
-                    const value_str = std.fmt.allocPrint(allocator, "{}", .{value.toFmt(&formatter)}) catch bun.outOfMemory();
+                    const value_str = bun.handleOom(std.fmt.allocPrint(allocator, "{}", .{value.toFmt(&formatter)}));
                     defer allocator.free(value_str);
-                    list.appendSlice(allocator, value_str) catch bun.outOfMemory();
+                    bun.handleOom(list.appendSlice(allocator, value_str));
                     idx = var_end;
                     continue;
                 }
@@ -2151,8 +2179,8 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                 }
             }
 
-            list.append(allocator, '$') catch bun.outOfMemory();
-            list.appendSlice(allocator, label[var_start..var_end]) catch bun.outOfMemory();
+            bun.handleOom(list.append(allocator, '$'));
+            bun.handleOom(list.appendSlice(allocator, label[var_start..var_end]));
             idx = var_end;
         } else if (char == '%' and (idx + 1 < label.len) and !(args_idx >= function_args.len)) {
             const current_arg = function_args[args_idx];
@@ -2174,9 +2202,9 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                     var str = bun.String.empty;
                     defer str.deref();
                     try current_arg.jsonStringify(globalThis, 0, &str);
-                    const owned_slice = str.toOwnedSlice(allocator) catch bun.outOfMemory();
+                    const owned_slice = bun.handleOom(str.toOwnedSlice(allocator));
                     defer allocator.free(owned_slice);
-                    list.appendSlice(allocator, owned_slice) catch bun.outOfMemory();
+                    bun.handleOom(list.appendSlice(allocator, owned_slice));
                     idx += 1;
                     args_idx += 1;
                 },
@@ -2184,27 +2212,27 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                     defer formatter.deinit();
                     const value_fmt = current_arg.toFmt(&formatter);
-                    const test_index_str = std.fmt.allocPrint(allocator, "{}", .{value_fmt}) catch bun.outOfMemory();
+                    const test_index_str = bun.handleOom(std.fmt.allocPrint(allocator, "{}", .{value_fmt}));
                     defer allocator.free(test_index_str);
-                    list.appendSlice(allocator, test_index_str) catch bun.outOfMemory();
+                    bun.handleOom(list.appendSlice(allocator, test_index_str));
                     idx += 1;
                     args_idx += 1;
                 },
                 '#' => {
-                    const test_index_str = std.fmt.allocPrint(allocator, "{d}", .{test_idx}) catch bun.outOfMemory();
+                    const test_index_str = bun.handleOom(std.fmt.allocPrint(allocator, "{d}", .{test_idx}));
                     defer allocator.free(test_index_str);
-                    list.appendSlice(allocator, test_index_str) catch bun.outOfMemory();
+                    bun.handleOom(list.appendSlice(allocator, test_index_str));
                     idx += 1;
                 },
                 '%' => {
-                    list.append(allocator, '%') catch bun.outOfMemory();
+                    bun.handleOom(list.append(allocator, '%'));
                     idx += 1;
                 },
                 else => {
                     // ignore unrecognized fmt
                 },
             }
-        } else list.append(allocator, char) catch bun.outOfMemory();
+        } else bun.handleOom(list.append(allocator, char));
         idx += 1;
     }
 

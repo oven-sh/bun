@@ -62,6 +62,7 @@ pub const BunObject = struct {
     pub const SHA512 = toJSLazyPropertyCallback(Crypto.SHA512.getter);
     pub const SHA512_256 = toJSLazyPropertyCallback(Crypto.SHA512_256.getter);
     pub const TOML = toJSLazyPropertyCallback(Bun.getTOMLObject);
+    pub const YAML = toJSLazyPropertyCallback(Bun.getYAMLObject);
     pub const Transpiler = toJSLazyPropertyCallback(Bun.getTranspilerConstructor);
     pub const argv = toJSLazyPropertyCallback(Bun.getArgv);
     pub const cwd = toJSLazyPropertyCallback(Bun.getCWD);
@@ -129,6 +130,7 @@ pub const BunObject = struct {
         @export(&BunObject.SHA512_256, .{ .name = lazyPropertyCallbackName("SHA512_256") });
 
         @export(&BunObject.TOML, .{ .name = lazyPropertyCallbackName("TOML") });
+        @export(&BunObject.YAML, .{ .name = lazyPropertyCallbackName("YAML") });
         @export(&BunObject.Glob, .{ .name = lazyPropertyCallbackName("Glob") });
         @export(&BunObject.Transpiler, .{ .name = lazyPropertyCallbackName("Transpiler") });
         @export(&BunObject.argv, .{ .name = lazyPropertyCallbackName("argv") });
@@ -392,7 +394,7 @@ pub fn inspectTable(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
     }
 
     // very stable memory address
-    var array = MutableString.init(bun.default_allocator, 0) catch bun.outOfMemory();
+    var array = bun.handleOom(MutableString.init(bun.default_allocator, 0));
     defer array.deinit();
     var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
     var buffered_writer = &buffered_writer_;
@@ -1067,22 +1069,22 @@ pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
                     @field(@TypeOf(entry.tag()), @typeName(jsc.API.HTTPServer)) => {
                         var server: *jsc.API.HTTPServer = entry.as(jsc.API.HTTPServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.js_value.get() orelse .js_undefined;
+                        return server.js_value.tryGet() orelse .js_undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(jsc.API.DebugHTTPServer)) => {
                         var server: *jsc.API.DebugHTTPServer = entry.as(jsc.API.DebugHTTPServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.js_value.get() orelse .js_undefined;
+                        return server.js_value.tryGet() orelse .js_undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(jsc.API.DebugHTTPSServer)) => {
                         var server: *jsc.API.DebugHTTPSServer = entry.as(jsc.API.DebugHTTPSServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.js_value.get() orelse .js_undefined;
+                        return server.js_value.tryGet() orelse .js_undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(jsc.API.HTTPSServer)) => {
                         var server: *jsc.API.HTTPSServer = entry.as(jsc.API.HTTPSServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.js_value.get() orelse .js_undefined;
+                        return server.js_value.tryGet() orelse .js_undefined;
                     },
                     else => {},
                 }
@@ -1117,7 +1119,7 @@ pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
                     if (route_list_object != .zero) {
                         ServerType.js.routeListSetCached(obj, globalObject, route_list_object);
                     }
-                    server.js_value.set(globalObject, obj);
+                    server.js_value.setStrong(obj, globalObject);
 
                     if (config.allow_hot) {
                         if (globalObject.bunVM().hotMap()) |hot| {
@@ -1131,7 +1133,7 @@ pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
                         );
                         debugger.http_server_agent.notifyServerRoutesUpdated(
                             jsc.API.AnyServer.from(server),
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     }
 
                     return obj;
@@ -1246,13 +1248,13 @@ pub fn mmapFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
     var map_size: ?usize = null;
 
     if (args.nextEat()) |opts| {
-        flags.TYPE = if ((try opts.get(globalThis, "shared") orelse JSValue.true).toBoolean())
+        flags.TYPE = if ((try opts.getBooleanLoose(globalThis, "shared")) orelse true)
             .SHARED
         else
             .PRIVATE;
 
         if (@hasField(std.c.MAP, "SYNC")) {
-            if ((try opts.get(globalThis, "sync") orelse JSValue.false).toBoolean()) {
+            if ((try opts.getBooleanLoose(globalThis, "sync")) orelse false) {
                 flags.TYPE = .SHARED_VALIDATE;
                 flags.SYNC = true;
             }
@@ -1300,6 +1302,10 @@ pub fn getTOMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVa
     return TOMLObject.create(globalThis);
 }
 
+pub fn getYAMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return YAMLObject.create(globalThis);
+}
+
 pub fn getGlobConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.API.Glob.js.getConstructor(globalThis);
 }
@@ -1341,7 +1347,7 @@ pub fn getEmbeddedFiles(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) bun.J
     const graph = vm.standalone_module_graph orelse return try jsc.JSValue.createEmptyArray(globalThis, 0);
 
     const unsorted_files = graph.files.values();
-    var sort_indices = std.ArrayList(u32).initCapacity(bun.default_allocator, unsorted_files.len) catch bun.outOfMemory();
+    var sort_indices = bun.handleOom(std.ArrayList(u32).initCapacity(bun.default_allocator, unsorted_files.len));
     defer sort_indices.deinit();
     for (0..unsorted_files.len) |index| {
         // Some % of people using `bun build --compile` want to obscure the source code
@@ -1714,7 +1720,7 @@ pub const JSZlib = struct {
                     defer reader.deinit();
                     return globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
                 };
-                reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch bun.outOfMemory() };
+                reader.list = .{ .items = bun.handleOom(reader.list.toOwnedSlice(allocator)) };
                 reader.list.capacity = reader.list.items.len;
                 reader.list_ptr = &reader.list;
 
@@ -2087,6 +2093,7 @@ const FFIObject = bun.api.FFIObject;
 const HashObject = bun.api.HashObject;
 const TOMLObject = bun.api.TOMLObject;
 const UnsafeObject = bun.api.UnsafeObject;
+const YAMLObject = bun.api.YAMLObject;
 const node = bun.api.node;
 
 const jsc = bun.jsc;

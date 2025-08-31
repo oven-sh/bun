@@ -938,6 +938,9 @@ pub const Jest = struct {
     beforeAll: Ref = Ref.None,
     afterAll: Ref = Ref.None,
     jest: Ref = Ref.None,
+    xit: Ref = Ref.None,
+    xtest: Ref = Ref.None,
+    xdescribe: Ref = Ref.None,
 };
 
 // Doing this seems to yield a 1% performance improvement parsing larger files

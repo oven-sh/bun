@@ -1189,7 +1189,7 @@ pub fn subscribe(
     }
 
     if (this.isClosed()) {
-        return JSValue.jsBoolean(true);
+        return .true;
     }
 
     if (!args.ptr[0].isString()) {
@@ -1212,7 +1212,7 @@ pub fn unsubscribe(this: *ServerWebSocket, globalThis: *jsc.JSGlobalObject, call
     }
 
     if (this.isClosed()) {
-        return JSValue.jsBoolean(true);
+        return .true;
     }
 
     if (!args.ptr[0].isString()) {
@@ -1239,7 +1239,7 @@ pub fn isSubscribed(
     }
 
     if (this.isClosed()) {
-        return JSValue.jsBoolean(false);
+        return .false;
     }
 
     if (!args.ptr[0].isString()) {

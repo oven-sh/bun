@@ -89,10 +89,10 @@ template<typename Visitor>
 void JSYogaConfig::visitOutputConstraints(JSC::JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = jsCast<JSYogaConfig*>(cell);
-    
+
     // Lock for concurrent GC thread safety
     WTF::Locker locker { thisObject->cellLock() };
-    
+
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
     thisObject->visitAdditionalChildren(visitor);

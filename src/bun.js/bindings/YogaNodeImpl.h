@@ -23,10 +23,9 @@ public:
     void clearJSWrapper();
     void clearJSWrapperWithoutDeref(); // Clear weak ref without deref (for JS destructor)
     JSYogaNode* jsWrapper() const;
-    
+
     // Config access through JS wrapper's WriteBarrier
     JSYogaConfig* jsConfig() const;
-
 
     // Helper to get YogaNodeImpl from YGNodeRef
     static YogaNodeImpl* fromYGNode(YGNodeRef);

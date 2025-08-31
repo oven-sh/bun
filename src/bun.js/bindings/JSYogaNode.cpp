@@ -58,7 +58,7 @@ void JSYogaNode::finishCreation(JSC::VM& vm, YGConfigRef config, JSYogaConfig* j
     // Set this JS wrapper in the C++ impl
     m_impl->setJSWrapper(this);
 
-    // Store the JSYogaConfig if provided  
+    // Store the JSYogaConfig if provided
     if (jsConfig) {
         m_config.set(vm, this, jsConfig);
     }
@@ -70,7 +70,7 @@ void JSYogaNode::finishCreation(JSC::VM& vm)
 
     // Set this JS wrapper in the C++ impl
     m_impl->setJSWrapper(this);
-    
+
     // No JSYogaConfig in this path - it's only set when explicitly provided
 }
 
@@ -132,7 +132,7 @@ void JSYogaNode::visitOutputConstraints(JSC::JSCell* cell, Visitor& visitor)
     auto* thisObject = jsCast<JSYogaNode*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
-    
+
     // Re-visit after mutator execution in case callbacks changed references
     // This is critical for objects whose reachability can change during runtime
     thisObject->visitAdditionalChildren(visitor);

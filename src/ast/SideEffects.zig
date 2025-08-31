@@ -199,6 +199,10 @@ pub const SideEffects = enum(u1) {
                     // "toString" and/or "valueOf" to be called.
                     .bin_loose_eq,
                     .bin_loose_ne,
+                    .bin_lt,
+                    .bin_gt,
+                    .bin_le,
+                    .bin_ge,
                     => {
                         if (isPrimitiveWithSideEffects(bin.left.data) and isPrimitiveWithSideEffects(bin.right.data)) {
                             return Expr.joinWithComma(

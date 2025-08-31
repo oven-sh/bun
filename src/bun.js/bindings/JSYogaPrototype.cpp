@@ -1179,7 +1179,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncRemoveChild, (JSC::JSGlobalObject * 
 
     // Remove from Yoga tree
     YGNodeRemoveChild(thisObject->impl().yogaNode(), childNode->impl().yogaNode());
-    
+
     // Remove strong reference from children array to allow GC
     // This mirrors React Native's [_reactSubviews removeObject:subview] pattern
     JSC::JSArray* childrenArray = jsCast<JSC::JSArray*>(thisObject->m_children.get());
@@ -1198,7 +1198,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncRemoveChild, (JSC::JSGlobalObject * 
             }
         }
     }
-    
+
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -2356,7 +2356,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncInsertChild, (JSC::JSGlobalObject * 
 
     // Insert into Yoga tree
     YGNodeInsertChild(thisObject->impl().yogaNode(), child->impl().yogaNode(), index);
-    
+
     // Add strong reference to children array to prevent GC
     // This mirrors React Native's [_reactSubviews insertObject:subview atIndex:atIndex] pattern
     JSC::JSArray* childrenArray = jsCast<JSC::JSArray*>(thisObject->m_children.get());
@@ -2364,20 +2364,20 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncInsertChild, (JSC::JSGlobalObject * 
         // Insert at the specified index by shifting existing elements
         uint32_t length = childrenArray->length();
         uint32_t insertIndex = std::min(static_cast<uint32_t>(index), length);
-        
+
         // Grow array by 1
         childrenArray->setLength(globalObject, length + 1);
-        
+
         // Shift elements to make room
         for (uint32_t i = length; i > insertIndex; i--) {
             JSC::JSValue element = childrenArray->getIndex(globalObject, i - 1);
             childrenArray->putDirectIndex(globalObject, i, element);
         }
-        
+
         // Insert the new child
         childrenArray->putDirectIndex(globalObject, insertIndex, child);
     }
-    
+
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -3122,7 +3122,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncClone, (JSC::JSGlobalObject * global
     // Create YogaNodeImpl directly with the cloned node to avoid double creation
     auto clonedImpl = YogaNodeImpl::create(nullptr);
     clonedImpl->replaceYogaNode(clonedNode);
-    
+
     // Create JSYogaNode wrapper with the impl
     JSYogaNode* jsClonedNode = JSYogaNode::create(vm, structure, WTFMove(clonedImpl));
 
@@ -3155,7 +3155,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncClone, (JSC::JSGlobalObject * global
                 // Create YogaNodeImpl directly with cloned child to avoid double creation
                 auto clonedChildImpl = YogaNodeImpl::create(nullptr);
                 clonedChildImpl->replaceYogaNode(clonedChild);
-                
+
                 // Create JS wrapper for cloned child
                 JSYogaNode* jsClonedChild = JSYogaNode::create(vm, structure, WTFMove(clonedChildImpl));
 

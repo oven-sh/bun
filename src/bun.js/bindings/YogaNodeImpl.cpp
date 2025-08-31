@@ -8,7 +8,6 @@
 
 namespace Bun {
 
-
 Ref<YogaNodeImpl> YogaNodeImpl::create(YGConfigRef config)
 {
     return adoptRef(*new YogaNodeImpl(config));

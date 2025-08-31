@@ -62,7 +62,7 @@ void JSYogaNode::finishCreation(JSC::VM& vm, YGConfigRef config, JSYogaConfig* j
     if (jsConfig) {
         m_config.set(vm, this, jsConfig);
     }
-    
+
     // Initialize children array to maintain strong references
     // This mirrors React Native's _reactSubviews NSMutableArray
     JSC::JSGlobalObject* globalObject = this->globalObject();
@@ -77,7 +77,7 @@ void JSYogaNode::finishCreation(JSC::VM& vm)
     m_impl->setJSWrapper(this);
 
     // No JSYogaConfig in this path - it's only set when explicitly provided
-    
+
     // Initialize children array to maintain strong references
     // This mirrors React Native's _reactSubviews NSMutableArray
     JSC::JSGlobalObject* globalObject = this->globalObject();

@@ -49,7 +49,7 @@ public:
 
     // Store the JSYogaConfig that was used to create this node
     JSC::WriteBarrier<JSC::JSObject> m_config;
-    
+
     // Store children to prevent GC while still part of Yoga tree
     // This mirrors React Native's _reactSubviews NSMutableArray pattern
     JSC::WriteBarrier<JSC::JSArray> m_children;

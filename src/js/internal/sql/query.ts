@@ -293,6 +293,10 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   catch() {
+    if (this[_flags] & SQLQueryFlags.notTagged) {
+      throw this[_adapter].notTaggedCallError();
+    }
+
     const runPromise = this.#runAsync();
 
     // Always handle the run promise to prevent dangling rejections
@@ -310,6 +314,10 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   finally(_onfinally?: (() => void) | undefined | null) {
+    if (this[_flags] & SQLQueryFlags.notTagged) {
+      throw this[_adapter].notTaggedCallError();
+    }
+
     this.#runAsync();
 
     return super.finally.$apply(this, arguments);

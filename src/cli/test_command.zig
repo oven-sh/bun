@@ -1333,13 +1333,10 @@ pub const TestCommand = struct {
         var inline_snapshots_to_write = std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(Snapshots.InlineSnapshotToWrite)).init(ctx.allocator);
         jsc.VirtualMachine.isBunTest = true;
 
-        // Parse file:line arguments - dead simple
+        // Just store raw file:line args - parse them when needed
         for (ctx.positionals) |arg| {
-            if (parseFileLineArg(arg)) |parsed| {
-                try ctx.test_options.test_line_filters.append(ctx.allocator, .{
-                    .pattern = try ctx.allocator.dupe(u8, parsed.file_pattern),
-                    .line = parsed.line_num,
-                });
+            if (parseFileLineArg(arg)) |_| {
+                try ctx.test_options.test_line_filter_args.append(ctx.allocator, try ctx.allocator.dupe(u8, arg));
             }
         }
 
@@ -1754,7 +1751,7 @@ pub const TestCommand = struct {
 
                 reporter.printSummary();
             } else {
-                if (ctx.test_options.test_line_filters.items.len > 0) {
+                if (ctx.test_options.test_line_filter_args.items.len > 0) {
                     Output.prettyError("<red>error<r><d>:<r> no tests found for file:line filters. Searched {d} file{s} (skipping {d} test{s}) ", .{
                         summary.files,
                         if (summary.files == 1) "" else "s",
@@ -1763,8 +1760,8 @@ pub const TestCommand = struct {
                     });
 
                     // Show the specific filters that were applied
-                    for (ctx.test_options.test_line_filters.items) |filter| {
-                        Output.prettyError("\n  <b>{}<r>:{d}", .{ bun.fmt.quote(filter.pattern), filter.line });
+                    for (ctx.test_options.test_line_filter_args.items) |arg| {
+                        Output.prettyError("\n  <b>{}<r>", .{bun.fmt.quote(arg)});
                     }
                     Output.prettyError("\n", .{});
                 } else {

@@ -139,12 +139,10 @@ pub const TestRunner = struct {
     }
 
     pub fn hasTestFilter(this: *const TestRunner) bool {
-        return this.filter_regex != null or this.test_options.test_line_filters.items.len > 0;
+        return this.filter_regex != null or this.test_options.test_line_filter_args.items.len > 0;
     }
 
-    fn mapLineFiltersToFileId(this: *TestRunner, file_path: []const u8, file_id: File.ID) void {
-        if (this.test_options.test_line_filters.items.len == 0) return;
-        
+    fn parseAndMapLineFilters(this: *TestRunner, file_path: []const u8, file_id: File.ID) void {
         var path_buf: bun.PathBuffer = undefined;
         const abs_path = if (std.fs.path.isAbsolute(file_path)) file_path else blk: {
             const cwd = bun.getcwd(&path_buf) catch return;
@@ -152,14 +150,21 @@ pub const TestRunner = struct {
         };
 
         var lines = std.ArrayListUnmanaged(u32){};
-        for (this.test_options.test_line_filters.items) |filter| {
-            const abs_pattern = if (std.fs.path.isAbsolute(filter.pattern)) filter.pattern else blk: {
-                const cwd = bun.getcwd(&path_buf) catch continue;
-                break :blk bun.path.joinAbsStringBuf(cwd, &path_buf, &.{filter.pattern}, .auto);
-            };
-            
-            if (bun.strings.eql(abs_pattern, abs_path)) {
-                lines.append(this.allocator, filter.line) catch return;
+        
+        // Parse raw args and check if they match this file
+        for (this.test_options.test_line_filter_args.items) |arg| {
+            if (std.mem.lastIndexOf(u8, arg, ":")) |colon_pos| {
+                const file_pattern = arg[0..colon_pos];
+                if (std.fmt.parseInt(u32, arg[colon_pos + 1..], 10)) |line_num| {
+                    const abs_pattern = if (std.fs.path.isAbsolute(file_pattern)) file_pattern else blk: {
+                        const cwd = bun.getcwd(&path_buf) catch continue;
+                        break :blk bun.path.joinAbsStringBuf(cwd, &path_buf, &.{file_pattern}, .auto);
+                    };
+                    
+                    if (bun.strings.eql(abs_pattern, abs_path)) {
+                        lines.append(this.allocator, line_num) catch return;
+                    }
+                } else |_| {}
             }
         }
         
@@ -170,7 +175,7 @@ pub const TestRunner = struct {
     }
 
     pub fn matchesLineFilter(this: *const TestRunner, file_path: []const u8, line_number: u32, parent: ?*DescribeScope) bool {
-        if (this.test_options.test_line_filters.items.len == 0) return true;
+        if (this.test_options.test_line_filter_args.items.len == 0) return true;
 
         // Get the file_id from the parent scope - much more efficient than path lookup!
         const file_id = if (parent) |p| p.file_id else blk: {
@@ -344,8 +349,10 @@ pub const TestRunner = struct {
         this.files.append(this.allocator, .{ .module_scope = scope, .source = logger.Source.initEmptyFile(file_path) }) catch unreachable;
         entry.value_ptr.* = file_id;
 
-        // Map line filters from absolute path to file ID for performance
-        this.mapLineFiltersToFileId(file_path, file_id);
+        // Only do line filtering work if actually needed - zero perf impact otherwise
+        if (this.test_options.test_line_filter_args.items.len > 0) {
+            this.parseAndMapLineFilters(file_path, file_id);
+        }
 
         return scope;
     }
@@ -2076,7 +2083,7 @@ inline fn createScope(
             }
 
             // Apply line-based filtering
-            if (runner.test_options.test_line_filters.items.len > 0) {
+            if (runner.test_options.test_line_filter_args.items.len > 0) {
                 const current_file = runner.files.items(.source)[parent.file_id].path.text;
                 const test_line = captureTestLineNumber(callframe, globalThis);
                 if (!runner.matchesLineFilter(current_file, test_line, parent)) {
@@ -2461,7 +2468,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                 }
 
                 // Apply line-based filtering
-                if (Jest.runner.?.test_options.test_line_filters.items.len > 0) {
+                if (Jest.runner.?.test_options.test_line_filter_args.items.len > 0) {
                     const current_file = Jest.runner.?.files.items(.source)[parent.file_id].path.text;
                     const test_line = each_data.line_number;
                     if (!Jest.runner.?.matchesLineFilter(current_file, test_line, parent)) {
@@ -2593,7 +2600,7 @@ extern fn Bun__CallFrame__getLineNumber(callframe: *jsc.CallFrame, globalObject:
 
 fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObject) u32 {
     if (Jest.runner) |runner| {
-        if (runner.test_options.file_reporter == .junit or runner.test_options.test_line_filters.items.len > 0) {
+        if (runner.test_options.file_reporter == .junit or runner.test_options.test_line_filter_args.items.len > 0) {
             return Bun__CallFrame__getLineNumber(callframe, globalThis);
         }
     }

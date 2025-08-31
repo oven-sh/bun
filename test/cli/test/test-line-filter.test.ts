@@ -162,7 +162,7 @@ test("only test", () => {
     const { stdout, stderr, exitCode } = runTestWithOutput([`./empty-line.test.ts:10`], cwd);
 
     expect(exitCode).toBe(1);
-    expect(stderr).toContain("no tests found at line 10");
+    expect(stderr).toContain("no tests found for file:line filters");
     expect(stderr).toContain("skipping 1 test");
   });
 
@@ -323,7 +323,7 @@ test("test", () => {
 
     // Target line 0 (invalid)
     const result1 = runTestWithOutput([`./valid-file.test.ts:0`], cwd);
-    expect(result1.stderr).toContain("no tests found at line 0");
+    expect(result1.stderr).toContain("no tests found for file:line filters");
 
     // Target negative line (this should be treated as a filename, not file:line)
     const result2 = runTestWithOutput([`./valid-file.test.ts:-5`], cwd);
@@ -492,8 +492,8 @@ describe("group2", () => {
 });`,
     );
 
-    // Target line 3 in describe1 (describe block) and line 7 in describe2 (describe block)
-    const { stdout, stderr, exitCode } = runTestWithOutput([`./describe1.test.ts:3`, `./describe2.test.ts:7`], cwd);
+    // Target line 3 in describe1 (describe block) and line 8 in describe2 (describe block)
+    const { stdout, stderr, exitCode } = runTestWithOutput([`./describe1.test.ts:3`, `./describe2.test.ts:8`], cwd);
 
     expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Group1 Test1 ran");
@@ -533,7 +533,7 @@ test("another test", () => {
 
     expect(exitCode).toBe(1);
     expect(stderr).toContain("no tests found for file:line filters");
-    expect(stderr).toContain("empty1.test.ts:99");
-    expect(stderr).toContain("empty2.test.ts:88");
+    expect(stderr).toContain("empty1.test.ts\":99");
+    expect(stderr).toContain("empty2.test.ts\":88");
   });
 });

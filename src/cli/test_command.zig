@@ -1327,7 +1327,8 @@ pub const TestCommand = struct {
                         else blk: {
                             var cwd_buf: bun.PathBuffer = undefined;
                             const cwd = bun.getcwd(&cwd_buf) catch break :blk try ctx.allocator.dupe(u8, file_part);
-                            break :blk bun.path.joinAbsString(cwd, &.{file_part}, .auto);
+                            const joined_path = bun.path.joinAbsString(cwd, &.{file_part}, .auto);
+                            break :blk try ctx.allocator.dupe(u8, joined_path);
                         };
 
                         // Get or create array of lines for this file
@@ -1837,6 +1838,7 @@ pub const TestCommand = struct {
             vm.runWithAPILock(jsc.VirtualMachine, vm, runEventLoopForWatch);
         }
         const summary = reporter.summary();
+
 
         if (failed_to_find_any_tests or summary.didLabelFilterOutAllTests() or summary.fail > 0 or (coverage_options.enabled and coverage_options.fractions.failing and coverage_options.fail_on_low_coverage) or !write_snapshots_success) {
             Global.exit(1);

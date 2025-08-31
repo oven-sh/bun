@@ -7,6 +7,12 @@ describe("Structured Clone Fast Path", () => {
     expect(cloned).toStrictEqual({});
   });
 
+  test("structuredClone should work with empty string", () => {
+    const string = "";
+    const cloned = structuredClone(string);
+    expect(cloned).toStrictEqual("");
+  });
+
   test("structuredClone should use a constant amount of memory for string inputs", () => {
     const clones: Array<string> = [];
     // Create a 512KB string to test fast path

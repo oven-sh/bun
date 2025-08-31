@@ -17,7 +17,7 @@ pub fn CreateBinaryExpressionVisitor(
             // Try left side as typeof, right side as string
             if (e_.left.data == .e_unary and e_.left.data.e_unary.op == .un_typeof) {
                 if (e_.right.data == .e_string and
-                    std.mem.eql(u8, e_.right.data.e_string.data, "undefined"))
+                    e_.right.data.e_string.eqlComptime("undefined"))
                 {
                     typeof_expr = e_.left;
                     string_expr = e_.right;
@@ -28,7 +28,7 @@ pub fn CreateBinaryExpressionVisitor(
             // Try right side as typeof, left side as string
             else if (e_.right.data == .e_unary and e_.right.data.e_unary.op == .un_typeof) {
                 if (e_.left.data == .e_string and
-                    std.mem.eql(u8, e_.left.data.e_string.data, "undefined"))
+                    e_.left.data.e_string.eqlComptime("undefined"))
                 {
                     typeof_expr = e_.right;
                     string_expr = e_.left;

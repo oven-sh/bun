@@ -4286,20 +4286,21 @@ pub fn NewParser_(
                     // Pattern match for "typeof x < <string>"
                     var typeof: Expr.Data = binary.left.data;
                     var str: Expr.Data = binary.right.data;
-                    
+
                     // Check if order is flipped: 'u' >= typeof x
                     if (typeof == .e_string) {
                         typeof = binary.right.data;
                         str = binary.left.data;
                         is_yes_branch = !is_yes_branch;
                     }
-                    
+
                     if (typeof == .e_unary and str == .e_string) {
                         const unary = typeof.e_unary.*;
-                        if (unary.op == .un_typeof and 
-                            unary.value.data == .e_identifier and 
+                        if (unary.op == .un_typeof and
+                            unary.value.data == .e_identifier and
                             unary.flags.was_originally_typeof_identifier and
-                            str.e_string.eqlComptime("u")) {
+                            str.e_string.eqlComptime("u"))
+                        {
                             // In "typeof x < 'u' ? x : null", the reference to "x" is side-effect free
                             // In "typeof x > 'u' ? x : null", the reference to "x" is side-effect free
                             if (is_yes_branch == (binary.op == .bin_lt or binary.op == .bin_le)) {
@@ -4311,7 +4312,7 @@ pub fn NewParser_(
                             }
                         }
                     }
-                    
+
                     return false;
                 },
                 else => return false,

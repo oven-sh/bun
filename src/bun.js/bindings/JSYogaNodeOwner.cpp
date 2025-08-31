@@ -34,8 +34,20 @@ void JSYogaNodeOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
     // The context contains our YogaNodeImpl
     auto* impl = static_cast<YogaNodeImpl*>(context);
 
-    // TEMP: Skip YGNodeFree during GC to debug double-free issue
-    // TODO: Find proper solution for safe Yoga node cleanup during GC
+    // TODO: YGNodeFree during concurrent GC causes heap-use-after-free crashes
+    // because YGNodeFree assumes parent/child nodes are still valid, but GC can
+    // free them in arbitrary order. We need a solution that either:
+    // 1. Defers YGNodeFree to run outside GC (e.g., via a cleanup queue)
+    // 2. Implements reference counting at the Yoga level
+    // 3. Uses a different lifecycle that mirrors React Native's manual memory management
+    //
+    // For now, skip YGNodeFree during GC to prevent crashes at the cost of memory leaks.
+    // This matches what React Native would do if their dealloc was never called.
+
+    // YGNodeRef node = impl->yogaNode();
+    // if (node) {
+    //     YGNodeFree(node);
+    // }
 
     // Deref the YogaNodeImpl - this will decrease its reference count
     // and potentially destroy it if no other references exist

@@ -187,11 +187,18 @@ pub const TestRunner = struct {
         // Direct lookup in the test_options line filters
         const lines = this.test_options.test_line_filters.get(absolute_current_file);
         if (lines == null) {
-            // No line filter for this file, so it should be skipped
+            // Debug: show why lookup failed
+            bun.Output.debug("NO MATCH for '{s}' in line filters:", .{absolute_current_file});
+            var iter = this.test_options.test_line_filters.iterator();
+            while (iter.next()) |entry| {
+                bun.Output.debug("  Available: '{s}'", .{entry.key_ptr.*});
+            }
             return false;
         }
 
-        return this.checkLineMatch(lines.?, line_number, parent);
+        const result = this.checkLineMatch(lines.?, line_number, parent);
+        bun.Output.debug("PATH MATCH: '{s}' line {} -> {}", .{ absolute_current_file, line_number, result });
+        return result;
     }
 
     fn checkLineMatch(_: *const TestRunner, lines: std.ArrayListUnmanaged(u32), line_number: u32, parent: ?*DescribeScope) bool {

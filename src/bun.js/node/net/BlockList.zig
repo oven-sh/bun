@@ -214,10 +214,10 @@ pub fn onStructuredCloneDeserialize(globalThis: *jsc.JSGlobalObject, ptr: *[*]u8
     const reader = buffer_stream.reader();
 
     const int = reader.readInt(usize, .little) catch return globalThis.throw("BlockList.onStructuredCloneDeserialize failed", .{});
-    
+
     // Advance the pointer by the number of bytes consumed
     ptr.* = ptr.* + buffer_stream.pos;
-    
+
     const this: *@This() = @ptrFromInt(int);
     return this.toJS(globalThis);
 }

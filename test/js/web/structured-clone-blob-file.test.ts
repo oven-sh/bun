@@ -1,5 +1,4 @@
-import { describe, test, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
 
 describe("structuredClone with Blob and File", () => {
   describe("Blob structured clone", () => {
@@ -17,7 +16,7 @@ describe("structuredClone with Blob and File", () => {
       expect(cloned).toBeInstanceOf(Blob);
       expect(cloned.size).toBe(11);
       expect(cloned.type).toBe("text/plain;charset=utf-8");
-      
+
       const originalText = await blob.text();
       const clonedText = await cloned.text();
       expect(clonedText).toBe(originalText);
@@ -30,7 +29,7 @@ describe("structuredClone with Blob and File", () => {
       expect(cloned).toBeInstanceOf(Blob);
       expect(cloned.size).toBe(5);
       expect(cloned.type).toBe("application/octet-stream");
-      
+
       const originalBuffer = await blob.arrayBuffer();
       const clonedBuffer = await cloned.arrayBuffer();
       expect(new Uint8Array(clonedBuffer)).toEqual(new Uint8Array(originalBuffer));
@@ -61,11 +60,11 @@ describe("structuredClone with Blob and File", () => {
       const blob2 = new Blob(["world"], { type: "text/html" });
       const obj = { first: blob1, second: blob2 };
       const cloned = structuredClone(obj);
-      
+
       expect(cloned.first).toBeInstanceOf(Blob);
       expect(cloned.first.size).toBe(5);
       expect(cloned.first.type).toBe("text/plain;charset=utf-8");
-      
+
       expect(cloned.second).toBeInstanceOf(Blob);
       expect(cloned.second.size).toBe(5);
       expect(cloned.second.type).toBe("text/html;charset=utf-8");
@@ -75,7 +74,7 @@ describe("structuredClone with Blob and File", () => {
       const blob = new Blob(["deep"], { type: "text/plain" });
       const obj = { level1: { level2: { level3: { blob: blob } } } };
       const cloned = structuredClone(obj);
-      
+
       expect(cloned.level1.level2.level3.blob).toBeInstanceOf(Blob);
       expect(cloned.level1.level2.level3.blob.size).toBe(blob.size);
       expect(cloned.level1.level2.level3.blob.type).toBe(blob.type);
@@ -84,12 +83,12 @@ describe("structuredClone with Blob and File", () => {
 
   describe("File structured clone", () => {
     test("File with basic properties", () => {
-      const file = new File(["content"], "test.txt", { 
-        type: "text/plain", 
-        lastModified: 1234567890000 
+      const file = new File(["content"], "test.txt", {
+        type: "text/plain",
+        lastModified: 1234567890000,
       });
       const cloned = structuredClone(file);
-      
+
       expect(cloned).toBeInstanceOf(File);
       expect(cloned.name).toBe("test.txt");
       expect(cloned.size).toBe(7);
@@ -100,7 +99,7 @@ describe("structuredClone with Blob and File", () => {
     test("File without lastModified", () => {
       const file = new File(["content"], "test.txt", { type: "text/plain" });
       const cloned = structuredClone(file);
-      
+
       expect(cloned).toBeInstanceOf(File);
       expect(cloned.name).toBe("test.txt");
       expect(cloned.size).toBe(7);
@@ -111,7 +110,7 @@ describe("structuredClone with Blob and File", () => {
     test("empty File", () => {
       const file = new File([], "empty.txt");
       const cloned = structuredClone(file);
-      
+
       expect(cloned).toBeInstanceOf(File);
       expect(cloned.name).toBe("empty.txt");
       expect(cloned.size).toBe(0);
@@ -122,7 +121,7 @@ describe("structuredClone with Blob and File", () => {
       const file = new File(["test"], "test.txt", { type: "text/plain" });
       const obj = { file: file };
       const cloned = structuredClone(obj);
-      
+
       expect(cloned.file).toBeInstanceOf(File);
       expect(cloned.file.name).toBe("test.txt");
       expect(cloned.file.size).toBe(4);
@@ -134,11 +133,11 @@ describe("structuredClone with Blob and File", () => {
       const file2 = new File(["world"], "world.html", { type: "text/html" });
       const obj = { txt: file1, html: file2 };
       const cloned = structuredClone(obj);
-      
+
       expect(cloned.txt).toBeInstanceOf(File);
       expect(cloned.txt.name).toBe("hello.txt");
       expect(cloned.txt.type).toBe("text/plain;charset=utf-8");
-      
+
       expect(cloned.html).toBeInstanceOf(File);
       expect(cloned.html.name).toBe("world.html");
       expect(cloned.html.type).toBe("text/html;charset=utf-8");
@@ -151,11 +150,11 @@ describe("structuredClone with Blob and File", () => {
       const file = new File(["file content"], "test.txt", { type: "text/plain" });
       const obj = { blob: blob, file: file };
       const cloned = structuredClone(obj);
-      
+
       expect(cloned.blob).toBeInstanceOf(Blob);
       expect(cloned.blob.size).toBe(12);
       expect(cloned.blob.type).toBe("text/plain;charset=utf-8");
-      
+
       expect(cloned.file).toBeInstanceOf(File);
       expect(cloned.file.name).toBe("test.txt");
       expect(cloned.file.size).toBe(12);
@@ -167,13 +166,13 @@ describe("structuredClone with Blob and File", () => {
       const file = new File(["file"], "test.txt", { type: "text/plain" });
       const arr = [blob, file];
       const cloned = structuredClone(arr);
-      
+
       expect(cloned).toBeInstanceOf(Array);
       expect(cloned.length).toBe(2);
-      
+
       expect(cloned[0]).toBeInstanceOf(Blob);
       expect(cloned[0].size).toBe(4);
-      
+
       expect(cloned[1]).toBeInstanceOf(File);
       expect(cloned[1].name).toBe("test.txt");
       expect(cloned[1].size).toBe(4);
@@ -186,11 +185,11 @@ describe("structuredClone with Blob and File", () => {
         metadata: { timestamp: Date.now() },
         content: {
           blob: blob,
-          files: [file, new File(["another"], "other.txt")]
-        }
+          files: [file, new File(["another"], "other.txt")],
+        },
       };
       const cloned = structuredClone(complex);
-      
+
       expect(cloned.metadata.timestamp).toBe(complex.metadata.timestamp);
       expect(cloned.content.blob).toBeInstanceOf(Blob);
       expect(cloned.content.blob.size).toBe(9);
@@ -205,7 +204,7 @@ describe("structuredClone with Blob and File", () => {
     test("Blob with empty data", () => {
       const blob = new Blob([]);
       const cloned = structuredClone(blob);
-      
+
       expect(cloned).toBeInstanceOf(Blob);
       expect(cloned.size).toBe(0);
       expect(cloned.type).toBe("");
@@ -215,7 +214,7 @@ describe("structuredClone with Blob and File", () => {
       const blob = new Blob([]);
       const obj = { emptyBlob: blob };
       const cloned = structuredClone(obj);
-      
+
       expect(cloned.emptyBlob).toBeInstanceOf(Blob);
       expect(cloned.emptyBlob.size).toBe(0);
       expect(cloned.emptyBlob.type).toBe("");
@@ -224,7 +223,7 @@ describe("structuredClone with Blob and File", () => {
     test("File with empty data", () => {
       const file = new File([], "empty.txt");
       const cloned = structuredClone(file);
-      
+
       expect(cloned).toBeInstanceOf(File);
       expect(cloned.name).toBe("empty.txt");
       expect(cloned.size).toBe(0);
@@ -235,7 +234,7 @@ describe("structuredClone with Blob and File", () => {
       const file = new File([], "empty.txt");
       const obj = { emptyFile: file };
       const cloned = structuredClone(obj);
-      
+
       expect(cloned.emptyFile).toBeInstanceOf(File);
       expect(cloned.emptyFile.name).toBe("empty.txt");
       expect(cloned.emptyFile.size).toBe(0);
@@ -245,7 +244,7 @@ describe("structuredClone with Blob and File", () => {
     test("File with empty data and empty name", () => {
       const file = new File([], "");
       const cloned = structuredClone(file);
-      
+
       expect(cloned).toBeInstanceOf(File);
       expect(cloned.name).toBe("");
       expect(cloned.size).toBe(0);
@@ -256,7 +255,7 @@ describe("structuredClone with Blob and File", () => {
       const file = new File([], "");
       const obj = { emptyFile: file };
       const cloned = structuredClone(obj);
-      
+
       expect(cloned.emptyFile).toBeInstanceOf(File);
       expect(cloned.emptyFile.name).toBe("");
       expect(cloned.emptyFile.size).toBe(0);
@@ -267,10 +266,10 @@ describe("structuredClone with Blob and File", () => {
   describe("Regression tests for issue 20596", () => {
     test("original issue case - object with File and Blob", () => {
       const clone = structuredClone({
-        file: new File([], 'example.txt'),
+        file: new File([], "example.txt"),
         blob: new Blob([]),
       });
-      
+
       expect(clone).toHaveProperty("file");
       expect(clone).toHaveProperty("blob");
       expect(clone.file).toBeInstanceOf(File);
@@ -281,7 +280,7 @@ describe("structuredClone with Blob and File", () => {
     test("single nested Blob should not throw", () => {
       const blob = new Blob(["test"]);
       const obj = { blob: blob };
-      
+
       expect(() => structuredClone(obj)).not.toThrow();
       const cloned = structuredClone(obj);
       expect(cloned.blob).toBeInstanceOf(Blob);
@@ -290,7 +289,7 @@ describe("structuredClone with Blob and File", () => {
     test("single nested File should not throw", () => {
       const file = new File(["test"], "test.txt");
       const obj = { file: file };
-      
+
       expect(() => structuredClone(obj)).not.toThrow();
       const cloned = structuredClone(obj);
       expect(cloned.file).toBeInstanceOf(File);

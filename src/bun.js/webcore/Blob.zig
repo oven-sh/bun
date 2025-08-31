@@ -318,7 +318,7 @@ fn _onStructuredCloneSerialize(
 
     try writer.writeInt(u8, @intFromBool(this.is_jsdom_file), .little);
     try writeFloat(f64, this.last_modified, Writer, writer);
-    
+
     // Serialize File name if this is a File object
     if (this.is_jsdom_file) {
         if (this.getNameString()) |name_string| {
@@ -485,14 +485,14 @@ fn _onStructuredCloneDeserialize(
         blob.last_modified = try readFloat(f64, Reader, reader);
 
         if (version == 2) break :versions;
-        
+
         // Version 3: Read File name if this is a File object
         if (blob.is_jsdom_file) {
             const name_len = try reader.readInt(u32, .little);
             const name_bytes = try readSlice(reader, name_len, allocator);
             blob.name = bun.String.cloneUTF8(name_bytes);
         }
-        
+
         if (version == 3) break :versions;
     }
 
@@ -523,7 +523,7 @@ pub fn onStructuredCloneDeserialize(globalThis: *jsc.JSGlobalObject, ptr: *[*]u8
 
     // Advance the pointer by the number of bytes consumed
     ptr.* = ptr.* + buffer_stream.pos;
-    
+
     return result;
 }
 

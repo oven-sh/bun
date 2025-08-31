@@ -114,6 +114,8 @@
 #include "JSPrivateKeyObject.h"
 #include "CryptoKeyType.h"
 #include "JSNodePerformanceHooksHistogram.h"
+#include <limits>
+#include <algorithm>
 
 #if USE(CG)
 #include <CoreGraphics/CoreGraphics.h>

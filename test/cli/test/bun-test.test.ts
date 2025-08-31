@@ -10,10 +10,14 @@ describe("bun test", () => {
       cmd: [bunExe(), "test", join(import.meta.dirname, "non-existent.test.ts")],
       env: bunEnv,
       stdin: "ignore",
-      stdout: "inherit",
-      stderr: "inherit",
+      stdout: "pipe",
+      stderr: "pipe",
     });
     expect(spawn.exitCode).toBe(1);
+    const stderr = spawn.stderr.toString();
+    expect(stderr).toContain("Test filter");
+    expect(stderr).toContain("had no matches");
+    expect(stderr).toContain("--cwd=");
   });
   test("can provide no arguments", () => {
     const stderr = runTest({

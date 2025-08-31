@@ -5728,6 +5728,38 @@ static Exception exceptionForSerializationFailure(SerializationReturnCode code)
     return Exception { TypeError };
 }
 
+// This is based on `checkStrucureForClone`
+static bool isObjectFastPathCandidate(Structure* structure)
+{
+    static constexpr bool verbose = false;
+
+    if (structure->typeInfo().type() != FinalObjectType) {
+        dataLogLnIf(verbose, "target is not final object");
+        return false;
+    }
+
+    if (!structure->canAccessPropertiesQuicklyForEnumeration()) {
+        dataLogLnIf(verbose, "target cannot access properties quickly for enumeration");
+        return false;
+    }
+
+    if (hasIndexedProperties(structure->indexingType())) {
+        dataLogLnIf(verbose, "target has indexing mode");
+        return false;
+    }
+
+    if (structure->isBrandedStructure()) {
+        dataLogLnIf(verbose, "target has isBrandedStructure");
+        return false;
+    }
+
+    if (structure->hasAnyKindOfGetterSetterProperties()) {
+        dataLogLnIf(verbose, "target has any kind of getter setter properties");
+        return false;
+    }
+
+    return true;
+}
 // static bool containsDuplicates(const Vector<RefPtr<ImageBitmap>>& imageBitmaps)
 // {
 //     HashSet<ImageBitmap*> visited;
@@ -5811,19 +5843,11 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             if (cell->isString()) {
                 canUseStringFastPath = true;
             } else if (cell->isObject()) {
-                switch (cell->type()) {
-                case ObjectType:
-                case FinalObjectType: {
-                    object = cell->getObject();
-                    structure = object->structure();
-                    if (!object->hasNonReifiedStaticProperties() && !JSC::hasIndexedProperties(structure->indexingType()) && structure->canAccessPropertiesQuicklyForEnumeration()) {
-                        canUseObjectFastPath = true;
-                    }
-                    break;
-                }
-                default: {
-                    break;
-                }
+                object = cell->getObject();
+                structure = object->structure();
+
+                if (isObjectFastPathCandidate(structure)) {
+                    canUseObjectFastPath = true;
                 }
             }
         }

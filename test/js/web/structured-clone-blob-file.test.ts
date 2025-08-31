@@ -201,6 +201,69 @@ describe("structuredClone with Blob and File", () => {
     });
   });
 
+  describe("Edge cases with empty data", () => {
+    test("Blob with empty data", () => {
+      const blob = new Blob([]);
+      const cloned = structuredClone(blob);
+      
+      expect(cloned).toBeInstanceOf(Blob);
+      expect(cloned.size).toBe(0);
+      expect(cloned.type).toBe("");
+    });
+
+    test("nested Blob with empty data in object", () => {
+      const blob = new Blob([]);
+      const obj = { emptyBlob: blob };
+      const cloned = structuredClone(obj);
+      
+      expect(cloned.emptyBlob).toBeInstanceOf(Blob);
+      expect(cloned.emptyBlob.size).toBe(0);
+      expect(cloned.emptyBlob.type).toBe("");
+    });
+
+    test("File with empty data", () => {
+      const file = new File([], "empty.txt");
+      const cloned = structuredClone(file);
+      
+      expect(cloned).toBeInstanceOf(File);
+      expect(cloned.name).toBe("empty.txt");
+      expect(cloned.size).toBe(0);
+      expect(cloned.type).toBe("");
+    });
+
+    test("nested File with empty data in object", () => {
+      const file = new File([], "empty.txt");
+      const obj = { emptyFile: file };
+      const cloned = structuredClone(obj);
+      
+      expect(cloned.emptyFile).toBeInstanceOf(File);
+      expect(cloned.emptyFile.name).toBe("empty.txt");
+      expect(cloned.emptyFile.size).toBe(0);
+      expect(cloned.emptyFile.type).toBe("");
+    });
+
+    test("File with empty data and empty name", () => {
+      const file = new File([], "");
+      const cloned = structuredClone(file);
+      
+      expect(cloned).toBeInstanceOf(File);
+      expect(cloned.name).toBe("");
+      expect(cloned.size).toBe(0);
+      expect(cloned.type).toBe("");
+    });
+
+    test("nested File with empty data and empty name in object", () => {
+      const file = new File([], "");
+      const obj = { emptyFile: file };
+      const cloned = structuredClone(obj);
+      
+      expect(cloned.emptyFile).toBeInstanceOf(File);
+      expect(cloned.emptyFile.name).toBe("");
+      expect(cloned.emptyFile.size).toBe(0);
+      expect(cloned.emptyFile.type).toBe("");
+    });
+  });
+
   describe("Regression tests for issue 20596", () => {
     test("original issue case - object with File and Blob", () => {
       const clone = structuredClone({

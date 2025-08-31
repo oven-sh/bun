@@ -40,19 +40,6 @@ pub fn CreateBinaryExpressionVisitor(
                 return null;
             }
 
-            // Be conservative: don't optimize if the variable in the typeof is an identifier
-            // that might be eliminated by DCE. This is a simple heuristic to avoid interfering
-            // with dead code elimination.
-            if (typeof_expr.data.e_unary.value.data == .e_identifier) {
-                const identifier_name = p.loadNameFromRef(typeof_expr.data.e_unary.value.data.e_identifier.ref);
-                // Skip optimization for variables that look like they might be removed by DCE
-                if (strings.hasPrefixComptime(identifier_name, "REMOVE") or
-                    strings.hasPrefixComptime(identifier_name, "DROP") or
-                    strings.hasPrefixComptime(identifier_name, "FAIL"))
-                {
-                    return null;
-                }
-            }
 
             // Create new string with "u"
             const u_string = p.newExpr(E.String{ .data = "u" }, string_expr.loc);

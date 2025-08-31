@@ -121,8 +121,14 @@ pub fn exit(code: u32) noreturn {
             std.os.windows.kernel32.ExitProcess(code);
         },
         else => {
-            bun.c.quick_exit(@bitCast(code));
-            std.c.abort(); // quick_exit should be noreturn
+            // Use std.c.exit when ASAN is enabled to allow LeakSanitizer to run
+            // Check both compile-time flag and debug builds (which have ASAN via compiler flags)
+            if (comptime bun.asan.enabled or Environment.isDebug) {
+                std.c.exit(@bitCast(code));
+            } else {
+                bun.c.quick_exit(@bitCast(code));
+                std.c.abort(); // quick_exit should be noreturn
+            }
         },
     }
 }

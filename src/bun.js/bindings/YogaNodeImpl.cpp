@@ -35,24 +35,9 @@ YogaNodeImpl::YogaNodeImpl(YGConfigRef config)
 
 YogaNodeImpl::~YogaNodeImpl()
 {
-    if (m_yogaNode) {
-        // Clear context immediately to prevent callbacks during cleanup
-        YGNodeSetContext(m_yogaNode, nullptr);
-        
-        // CRITICAL: Clear all callback functions to prevent cross-test contamination  
-        // This prevents reused YGNode memory from calling old callbacks
-        YGNodeSetMeasureFunc(m_yogaNode, nullptr);
-        YGNodeSetDirtiedFunc(m_yogaNode, nullptr);
-        YGNodeSetBaselineFunc(m_yogaNode, nullptr);
-        
-        // Simplified pattern: only free root nodes (no parent)
-        // Let Yoga handle child cleanup automatically
-        YGNodeRef parent = YGNodeGetParent(m_yogaNode);
-        if (!parent) {
-            simpleYGNodeFree(m_yogaNode);
-        }
-        m_yogaNode = nullptr;
-    }
+    // React Native pattern: Don't access potentially freed YGNode memory
+    // Let Yoga handle all cleanup automatically - safer than checking parent/child status
+    m_yogaNode = nullptr;
 }
 
 void YogaNodeImpl::setJSWrapper(JSYogaNode* wrapper)
@@ -102,20 +87,8 @@ YogaNodeImpl* YogaNodeImpl::fromYGNode(YGNodeRef nodeRef)
 
 void YogaNodeImpl::replaceYogaNode(YGNodeRef newNode)
 {
-    if (m_yogaNode) {
-        YGNodeSetContext(m_yogaNode, nullptr);
-        
-        // Clear callback functions to prevent cross-test contamination
-        YGNodeSetMeasureFunc(m_yogaNode, nullptr);
-        YGNodeSetDirtiedFunc(m_yogaNode, nullptr);
-        YGNodeSetBaselineFunc(m_yogaNode, nullptr);
-        
-        // Simplified pattern: only free if no parent (root node)
-        YGNodeRef parent = YGNodeGetParent(m_yogaNode);
-        if (!parent) {
-            simpleYGNodeFree(m_yogaNode);
-        }
-    }
+    // Don't access old YGNode - it might be freed already
+    // Let Yoga handle cleanup of the old node
     m_yogaNode = newNode;
     if (newNode) {
         YGNodeSetContext(newNode, this);

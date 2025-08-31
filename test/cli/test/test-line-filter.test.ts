@@ -533,7 +533,7 @@ test("another test", () => {
 
     expect(exitCode).toBe(1);
     expect(stderr).toContain("no tests found for file:line filters");
-    expect(stderr).toContain("empty1.test.ts\":99");
-    expect(stderr).toContain("empty2.test.ts\":88");
+    expect(stderr).toContain('empty1.test.ts":99');
+    expect(stderr).toContain('empty2.test.ts":88');
   });
 });

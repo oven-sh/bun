@@ -1352,7 +1352,7 @@ pub const TestCommand = struct {
                     var lines = std.ArrayListUnmanaged(u32){};
                     try lines.append(ctx.allocator, parsed.line_num);
                     
-                    try ctx.test_options.test_line_filters.append(ctx.allocator, Command.TestLineFilter{
+                    try ctx.test_options.test_line_filters.append(ctx.allocator, Command.TestOptions.LineFilter{
                         .file_pattern = file_pattern,
                         .lines = lines,
                     });

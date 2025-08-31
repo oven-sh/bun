@@ -317,11 +317,6 @@ pub const Command = struct {
         watch,
     };
 
-    pub const TestLineFilter = struct {
-        file_pattern: []const u8,    // Original file pattern from command line
-        lines: std.ArrayListUnmanaged(u32),
-    };
-
     pub const TestOptions = struct {
         default_timeout_ms: u32 = 5 * std.time.ms_per_s,
         update_snapshots: bool = false,
@@ -332,7 +327,12 @@ pub const Command = struct {
         coverage: TestCommand.CodeCoverageOptions = .{},
         test_filter_pattern: ?[]const u8 = null,
         test_filter_regex: ?*RegularExpression = null,
-        test_line_filters: std.ArrayListUnmanaged(TestLineFilter) = .{},
+        test_line_filters: std.ArrayListUnmanaged(LineFilter) = .{},
+        
+        const LineFilter = struct {
+            file_pattern: []const u8,    // Original file pattern from command line
+            lines: std.ArrayListUnmanaged(u32),
+        };
 
         file_reporter: ?TestCommand.FileReporter = null,
         reporter_outfile: ?[]const u8 = null,

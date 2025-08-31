@@ -303,14 +303,12 @@ scanner = "${scannerPath}"`,
       case "warn": {
         // When there are fatal advisories OR warnings (with no TTY to prompt),
         // the installation is cancelled and packages should NOT be installed
-        const files = await globEverything(dir);
-        expect(files).not.toContain("node_modules/left-pad/package.json");
+        expect(await Bun.file(join(dir, "node_modules", "left-pad", "package.json")).exists()).toBe(false);
         break;
       }
 
       case "none": {
         // When there are no security issues, packages should be installed normally
-        const files = await globEverything(dir);
 
         switch (command) {
           case "remove":
@@ -318,15 +316,22 @@ scanner = "${scannerPath}"`,
             for (const arg of args) {
               switch (linker) {
                 case "hoisted": {
-                  expect(files).not.toContain(join("node_modules", arg, "package.json"));
+                  expect(await Bun.file(join(dir, "node_modules", arg, "package.json")).exists()).toBe(false);
                   break;
                 }
 
                 case "isolated": {
                   const versionInRegistry = SimpleRegistry.packages[arg][0];
-                  expect(files).not.toContain(
-                    join("node_modules", ".bun", `${arg}@${versionInRegistry}`, "node_modules", arg, "package.json"),
+                  const path = join(
+                    dir,
+                    "node_modules",
+                    ".bun",
+                    `${arg}@${versionInRegistry}`,
+                    "node_modules",
+                    arg,
+                    "package.json",
                   );
+                  expect(await Bun.file(path).exists()).toBe(false);
                   break;
                 }
               }
@@ -338,15 +343,22 @@ scanner = "${scannerPath}"`,
             for (const arg of args) {
               switch (linker) {
                 case "hoisted": {
-                  expect(files).toContain(join("node_modules", arg, "package.json"));
+                  expect(await Bun.file(join(dir, "node_modules", arg, "package.json")).exists()).toBe(true);
                   break;
                 }
 
                 case "isolated": {
                   const versionInRegistry = SimpleRegistry.packages[arg][0];
-                  expect(files).toContain(
-                    join("node_modules", ".bun", `${arg}@${versionInRegistry}`, "node_modules", arg, "package.json"),
+                  const path = join(
+                    dir,
+                    "node_modules",
+                    ".bun",
+                    `${arg}@${versionInRegistry}`,
+                    "node_modules",
+                    arg,
+                    "package.json",
                   );
+                  expect(await Bun.file(path).exists()).toBe(true);
                   break;
                 }
               }
@@ -451,6 +463,12 @@ describe("Security Scanner Matrix Tests", () => {
                 if (TESTS_TO_SKIP.has(testName)) {
                   return test.skip(testName, async () => {
                     // TODO
+                  });
+                }
+
+                if (command === "uninstall") {
+                  return test.skip(testName, async () => {
+                    // Same as `remove`, optimising for CI time here
                   });
                 }
 

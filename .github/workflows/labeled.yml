@@ -5,6 +5,8 @@ env:
 on:
   issues:
     types: [labeled]
+  pull_request:
+    types: [labeled]
 
 jobs:
   # on-bug:

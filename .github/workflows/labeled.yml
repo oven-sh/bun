@@ -43,6 +43,24 @@ jobs:
   #         token: ${{ secrets.GITHUB_TOKEN }}
   #         issue-number: ${{ github.event.issue.number }}
   #         labels: ${{ steps.add-labels.outputs.labels }}
+  on-slop:
+    runs-on: ubuntu-latest
+    if: github.event.label.name == 'slop' && github.event.issue.pull_request
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Update PR title and body for slop
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              title: 'ai slop',
+              body: 'This PR has been marked as AI slop and the description has been updated to avoid confusion or misleading reviewers. Many AI PRs are fine, but sometimes they submit a PR too early or just don't test anything and come to a completely wrong assumption.'
+            });
   on-labeled:
     runs-on: ubuntu-latest
     if: github.event.label.name == 'crash' || github.event.label.name == 'needs repro'

@@ -44,9 +44,11 @@ void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
 }
 
 void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
-    loop->data.sweep_timer_count--;
-    if (loop->data.sweep_timer_count == 0) {
-        us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_cb, 0, 0);
+    if (loop->data.sweep_timer_count > 0) {
+        loop->data.sweep_timer_count--;
+        if (loop->data.sweep_timer_count == 0) {
+            us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_cb, 0, 0);
+        }
     }
 }
 

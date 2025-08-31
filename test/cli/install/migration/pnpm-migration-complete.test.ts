@@ -230,7 +230,7 @@ snapshots:
 
     console.log("Migration stderr:", monorepoStderr);
     console.log("Migration exit code:", monorepoExitCode);
-    
+
     expect(monorepoExitCode).toBe(0);
     const monorepoLockfile = fs.readFileSync(join(monorepoTest, "bun.lock"), "utf8");
 

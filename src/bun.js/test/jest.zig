@@ -298,8 +298,8 @@ pub const TestRunner = struct {
         entry.value_ptr.* = file_id;
 
         if (this.test_options.test_line_filters.count() > 0) brk: {
-            var path_buf: bun.PathBuffer = undefined;
             const abs_path = if (std.fs.path.isAbsolute(file_path)) file_path else blk2: {
+                var path_buf: bun.PathBuffer = undefined;
                 const cwd = bun.getcwd(&path_buf) catch break :brk;
                 break :blk2 bun.path.joinAbsStringBuf(cwd, &path_buf, &.{file_path}, .auto);
             };

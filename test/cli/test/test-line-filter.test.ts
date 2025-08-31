@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -325,10 +325,17 @@ test("test", () => {
     // Target line 0 (invalid)
     const result1 = runTestWithOutput([`./valid-file.test.ts:0`], cwd);
     expect(result1.stderr).toContain("no tests found for file:line filters");
+    expect(result1.exitCode).toBe(1);
 
     // Target negative line (this should be treated as a filename, not file:line)
     const result2 = runTestWithOutput([`./valid-file.test.ts:-5`], cwd);
-    expect(result2.stderr).toContain("had no matches"); // Treated as filename
+    if (isWindows) {
+      // windows somehow passes through further to the file filter engine
+      expect(result2.stderr).toContain("The following filters did not match any test files");
+    } else {
+      expect(result2.stderr).toContain("had no matches"); // Treated as filename
+    }
+    expect(result2.exitCode).toBe(1);
   });
 
   test("should work with comment lines and empty lines by finding nearest test/describe", () => {

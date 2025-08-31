@@ -1335,12 +1335,12 @@ pub const TestCommand = struct {
 
         for (ctx.positionals) |arg| {
             if (parseFileLineArg(arg)) |parsed| {
-                var path_buf: bun.PathBuffer = undefined;
+                var local_path_buf: bun.PathBuffer = undefined;
                 const abs_pattern = if (std.fs.path.isAbsolute(parsed.file_pattern)) 
                     try ctx.allocator.dupe(u8, parsed.file_pattern)
                 else blk: {
-                    const cwd = bun.getcwd(&path_buf) catch break :blk try ctx.allocator.dupe(u8, parsed.file_pattern);
-                    const joined = bun.path.joinAbsStringBuf(cwd, &path_buf, &.{parsed.file_pattern}, .auto);
+                    const cwd = bun.getcwd(&local_path_buf) catch break :blk try ctx.allocator.dupe(u8, parsed.file_pattern);
+                    const joined = bun.path.joinAbsStringBuf(cwd, &local_path_buf, &.{parsed.file_pattern}, .auto);
                     break :blk try ctx.allocator.dupe(u8, joined);
                 };
 
@@ -1475,43 +1475,35 @@ pub const TestCommand = struct {
 
         var scanner = bun.handleOom(Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len));
         defer scanner.deinit();
-        const has_file_line_arg = ctx.test_options.test_line_filters.count() > 0;
         const has_relative_path = for (ctx.positionals) |arg| {
-            // For file:line arguments, check the file part, not the whole arg
-            const file_part = if (has_file_line_arg) blk: {
-                // Find the colon and extract file part
-                if (std.mem.lastIndexOf(u8, arg, ":")) |colon_pos| {
-                    if (std.fmt.parseInt(u32, arg[colon_pos + 1..], 10)) |_| {
-                        break :blk arg[0..colon_pos];
-                    } else |_| {}
-                }
-                break :blk arg;
-            } else arg;
-
-            if (std.fs.path.isAbsolute(file_part) or
-                strings.startsWith(file_part, "./") or
-                strings.startsWith(file_part, "../") or
-                (Environment.isWindows and (strings.startsWith(file_part, ".\\") or
-                    strings.startsWith(file_part, "..\\")))) break true;
+            // If it's a valid file:line pattern, check the file part
+            if (parseFileLineArg(arg)) |parsed| {
+                if (std.fs.path.isAbsolute(parsed.file_pattern) or
+                    strings.startsWith(parsed.file_pattern, "./") or
+                    strings.startsWith(parsed.file_pattern, "../") or
+                    (Environment.isWindows and (strings.startsWith(parsed.file_pattern, ".\\") or
+                        strings.startsWith(parsed.file_pattern, "..\\"))))
+                    break true;
+            } else {
+                // If it's not a file:line pattern, use original logic
+                if (std.fs.path.isAbsolute(arg) or
+                    strings.startsWith(arg, "./") or
+                    strings.startsWith(arg, "../") or
+                    (Environment.isWindows and (strings.startsWith(arg, ".\\") or
+                        strings.startsWith(arg, "..\\"))))
+                    break true;
+            }
         } else false;
         if (has_relative_path) {
             // One of the files is a filepath. Instead of treating the
             // arguments as filters, treat them as filepaths
             const file_or_dirnames = ctx.positionals[1..];
             for (file_or_dirnames) |arg| {
-                const file_to_scan = if (has_file_line_arg) blk: {
-                    if (std.mem.lastIndexOf(u8, arg, ":")) |colon_pos| {
-                        if (std.fmt.parseInt(u32, arg[colon_pos + 1..], 10)) |_| {
-                            break :blk arg[0..colon_pos];
-                        } else |_| {}
-                    }
-                    break :blk arg;
-                } else arg;
-                
+                const file_to_scan = if (parseFileLineArg(arg)) |parsed| parsed.file_pattern else arg;
                 scanner.scan(file_to_scan) catch |err| switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
                     error.DoesNotExist => if (file_or_dirnames.len == 1) {
-                        Output.prettyErrorln("Test file <b>{}<r> not found", .{bun.fmt.quote(file_to_scan)});
+                        Output.prettyErrorln("Test filter <b>{}<r> had no matches", .{bun.fmt.quote(arg)});
                         Global.exit(1);
                     },
                 };

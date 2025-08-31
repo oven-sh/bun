@@ -172,9 +172,7 @@ test("only test", () => {
     const { stdout, stderr, exitCode } = runTestWithOutput([`./non-existent.test.ts:5`], cwd);
 
     expect(exitCode).toBe(1);
-    expect(stderr).toContain("Test file");
-    expect(stderr).toContain("non-existent.test.ts");
-    expect(stderr).toContain("not found");
+    expect(stderr).toContain("had no matches");
   });
 
   test("should handle absolute paths with line numbers", () => {

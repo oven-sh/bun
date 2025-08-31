@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test";
-import { itBundled } from "./expectBundled";
 import { normalizeBunSnapshot } from "harness";
+import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("minify/TemplateStringFolding", {
@@ -718,7 +718,9 @@ describe("bundler", () => {
     minifyIdentifiers: false,
     onAfterBundle(api) {
       const file = api.readFile("out.js");
-      expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`"console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x==="string");console.log(x==="undefined");console.log(y==="undefined");console.log(typeof x==="undefinedx");"`);
+      expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(
+        `"console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x==="string");console.log(x==="undefined");console.log(y==="undefined");console.log(typeof x==="undefinedx");"`,
+      );
     },
   });
 });

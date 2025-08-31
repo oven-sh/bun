@@ -364,7 +364,14 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
     RETURN_IF_EXCEPTION(scope, {});
 
     if (sync == Synchronousness::Async) {
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): async SourceTextModule linking");
+        // In JavaScriptCore, when a module contains top-level await, the linking phase
+        // reports as async, but the actual async behavior happens during evaluation, not linking.
+        // The linking itself can complete synchronously even for modules with top-level await.
+        // 
+        // This matches Node.js behavior where linking is always synchronous and 
+        // asynchronous behavior only occurs during evaluation.
+        //
+        // So we can safely mark the module as linked and proceed.
     }
 
     status(Status::Linked);

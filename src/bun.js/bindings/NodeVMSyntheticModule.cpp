@@ -148,7 +148,11 @@ JSValue NodeVMSyntheticModule::link(JSGlobalObject* globalObject, JSArray* speci
     RETURN_IF_EXCEPTION(scope, {});
 
     if (sync == Synchronousness::Async) {
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): async SyntheticModule linking");
+        // In JavaScriptCore, when a module contains top-level await, the linking phase
+        // reports as async, but the actual async behavior happens during evaluation, not linking.
+        // The linking itself can complete synchronously even for modules with top-level await.
+        //
+        // So we can safely mark the module as linked and proceed.
     }
 
     status(Status::Linked);

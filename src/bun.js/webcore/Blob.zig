@@ -56,7 +56,8 @@ pub const max_size = std.math.maxInt(SizeType);
 /// 2: Added byte for whether it's a dom file, length and bytes for `stored_name`,
 ///    and f64 for `last_modified`. Removed reserved bytes, it's handled by version
 ///    number.
-const serialization_version: u8 = 2;
+/// 3: Added File name serialization for File objects (when is_jsdom_file is true)
+const serialization_version: u8 = 3;
 
 comptime {
     _ = Bun__Blob__getSizeForBindings;
@@ -317,6 +318,19 @@ fn _onStructuredCloneSerialize(
 
     try writer.writeInt(u8, @intFromBool(this.is_jsdom_file), .little);
     try writeFloat(f64, this.last_modified, Writer, writer);
+    
+    // Serialize File name if this is a File object
+    if (this.is_jsdom_file) {
+        if (this.getNameString()) |name_string| {
+            const name_slice = name_string.toUTF8(bun.default_allocator);
+            defer name_slice.deinit();
+            try writer.writeInt(u32, @truncate(name_slice.slice().len), .little);
+            try writer.writeAll(name_slice.slice());
+        } else {
+            // No name available, write empty string
+            try writer.writeInt(u32, 0, .little);
+        }
+    }
 }
 
 pub fn onStructuredCloneSerialize(
@@ -471,6 +485,15 @@ fn _onStructuredCloneDeserialize(
         blob.last_modified = try readFloat(f64, Reader, reader);
 
         if (version == 2) break :versions;
+        
+        // Version 3: Read File name if this is a File object
+        if (blob.is_jsdom_file) {
+            const name_len = try reader.readInt(u32, .little);
+            const name_bytes = try readSlice(reader, name_len, allocator);
+            blob.name = bun.String.cloneUTF8(name_bytes);
+        }
+        
+        if (version == 3) break :versions;
     }
 
     blob.allocator = allocator;

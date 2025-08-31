@@ -3975,7 +3975,7 @@ pub fn NewParser_(
                         // checks are not yet handled correctly by bun or esbuild, so this possibility is
                         // currently ignored.
                         .un_typeof => {
-                            if (ex.value.data == .e_identifier) {
+                            if (ex.value.data == .e_identifier and ex.flags.was_originally_typeof_identifier) {
                                 return true;
                             }
 
@@ -4014,6 +4014,18 @@ pub fn NewParser_(
                             ex.right.data,
                         ) and
                             p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.left) and p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.right),
+
+                        // Special-case "<" and ">" with string, number, or bigint arguments
+                        .bin_lt, .bin_gt, .bin_le, .bin_ge => {
+                            const left = ex.left.knownPrimitive();
+                            const right = ex.right.knownPrimitive();
+                            switch (left) {
+                                .string, .number, .bigint => {
+                                    return right == left and p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.left) and p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.right);
+                                },
+                                else => {},
+                            }
+                        },
                         else => {},
                     }
                 },

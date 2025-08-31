@@ -153,7 +153,7 @@ pub const SideEffects = enum(u1) {
                         // "typeof x" must not be transformed into if "x" since doing so could
                         // cause an exception to be thrown. Instead we can just remove it since
                         // "typeof x" is special-cased in the standard to never throw.
-                        if (std.meta.activeTag(un.value.data) == .e_identifier) {
+                        if (un.value.data == .e_identifier and un.flags.was_originally_typeof_identifier) {
                             return null;
                         }
 

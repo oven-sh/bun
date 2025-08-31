@@ -434,6 +434,70 @@ pub fn CreateBinaryExpressionVisitor(
                             }
                         }
                     },
+
+                    .bin_lt => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValuesInSafeRange(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Boolean{
+                                    .value = vals[0] < vals[1],
+                                }, v.loc);
+                            }
+                            if (Expr.extractStringValues(e_.left.data, e_.right.data, p.allocator)) |vals| {
+                                return p.newExpr(E.Boolean{
+                                    .value = vals[0].order(vals[1]) == .lt,
+                                }, v.loc);
+                            }
+                        }
+                    },
+                    .bin_gt => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValuesInSafeRange(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Boolean{
+                                    .value = vals[0] > vals[1],
+                                }, v.loc);
+                            }
+                            if (Expr.extractStringValues(e_.left.data, e_.right.data, p.allocator)) |vals| {
+                                return p.newExpr(E.Boolean{
+                                    .value = vals[0].order(vals[1]) == .gt,
+                                }, v.loc);
+                            }
+                        }
+                    },
+                    .bin_le => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValuesInSafeRange(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Boolean{
+                                    .value = vals[0] <= vals[1],
+                                }, v.loc);
+                            }
+                            if (Expr.extractStringValues(e_.left.data, e_.right.data, p.allocator)) |vals| {
+                                return p.newExpr(E.Boolean{
+                                    .value = switch (vals[0].order(vals[1])) {
+                                        .eq, .lt => true,
+                                        .gt => false,
+                                    },
+                                }, v.loc);
+                            }
+                        }
+                    },
+                    .bin_ge => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValuesInSafeRange(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Boolean{
+                                    .value = vals[0] >= vals[1],
+                                }, v.loc);
+                            }
+                            if (Expr.extractStringValues(e_.left.data, e_.right.data, p.allocator)) |vals| {
+                                return p.newExpr(E.Boolean{
+                                    .value = switch (vals[0].order(vals[1])) {
+                                        .eq, .gt => true,
+                                        .lt => false,
+                                    },
+                                }, v.loc);
+                            }
+                        }
+                    },
+
                     // ---------------------------------------------------------------------------------------------------
                     .bin_assign => {
                         // Optionally preserve the name

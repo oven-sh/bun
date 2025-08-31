@@ -647,10 +647,41 @@ pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
     return try writer.write(Serializable{ .type = std.meta.activeTag(self.data), .object = "expr", .value = self.data, .loc = self.loc });
 }
 
+pub fn extractNumericValuesInSafeRange(left: Expr.Data, right: Expr.Data) ?[2]f64 {
+    const l_value = left.extractNumericValue() orelse return null;
+    const r_value = right.extractNumericValue() orelse return null;
+    if (std.math.isInf(l_value) or std.math.isInf(r_value)) {
+        return .{ l_value, r_value };
+    }
+
+    if (l_value > bun.jsc.MAX_SAFE_INTEGER or r_value > bun.jsc.MAX_SAFE_INTEGER) {
+        return null;
+    }
+    if (l_value < bun.jsc.MIN_SAFE_INTEGER or r_value < bun.jsc.MIN_SAFE_INTEGER) {
+        return null;
+    }
+
+    return .{ l_value, r_value };
+}
+
 pub fn extractNumericValues(left: Expr.Data, right: Expr.Data) ?[2]f64 {
     return .{
         left.extractNumericValue() orelse return null,
         right.extractNumericValue() orelse return null,
+    };
+}
+
+pub fn extractStringValues(left: Expr.Data, right: Expr.Data, allocator: std.mem.Allocator) ?[2]*E.String {
+    const l_string = left.extractStringValue() orelse return null;
+    const r_string = right.extractStringValue() orelse return null;
+    l_string.resolveRopeIfNeeded(allocator);
+    r_string.resolveRopeIfNeeded(allocator);
+
+    if (l_string.isUTF8() != r_string.isUTF8()) return null;
+
+    return .{
+        l_string,
+        r_string,
     };
 }
 
@@ -1405,6 +1436,15 @@ pub fn init(comptime Type: type, st: Type, loc: logger.Loc) Expr {
             @compileError("Invalid type passed to Expr.init: " ++ @typeName(Type));
         },
     }
+}
+
+/// If this returns true, then calling this expression captures the target of
+/// the property access as "this" when calling the function in the property.
+pub fn isPropertyAccess(this: *const Expr) bool {
+    return switch (this.data) {
+        .e_dot, .e_index => true,
+        else => false,
+    };
 }
 
 pub fn isPrimitiveLiteral(this: Expr) bool {
@@ -2854,6 +2894,17 @@ pub const Data = union(Tag) {
             .e_number => data.e_number.value,
             .e_inlined_enum => |inlined| switch (inlined.value.data) {
                 .e_number => |num| num.value,
+                else => null,
+            },
+            else => null,
+        };
+    }
+
+    pub fn extractStringValue(data: Expr.Data) ?*E.String {
+        return switch (data) {
+            .e_string => data.e_string,
+            .e_inlined_enum => |inlined| switch (inlined.value.data) {
+                .e_string => |str| str,
                 else => null,
             },
             else => null,

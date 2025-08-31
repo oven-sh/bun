@@ -328,6 +328,9 @@ function formatHttpEventV1(event: HttpEventV1): Request {
       url.searchParams.append(name, value);
     }
   }
+
+  headers.set("x-amzn-authorizer", JSON.stringify(event.requestContext.authorizer));
+
   return new Request(url.toString(), {
     method: request.httpMethod,
     headers,
@@ -373,6 +376,9 @@ function formatHttpEventV2(event: HttpEventV2): Request {
   for (const [name, values] of Object.entries(event.queryStringParameters ?? {})) {
     url.searchParams.append(name, values);
   }
+
+  headers.set("x-amzn-authorizer", JSON.stringify(event.requestContext.authorizer));
+
   return new Request(url.toString(), {
     method: request.http.method,
     headers,

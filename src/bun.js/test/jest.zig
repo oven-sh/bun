@@ -2082,20 +2082,14 @@ inline fn createScope(
             }
 
             // Apply line-based filtering
-            var test_line: u32 = 0;
             if (runner.line_filters.count() > 0) {
                 const current_file = runner.files.items(.source)[parent.file_id].path.text;
-                test_line = captureTestLineNumber(callframe, globalThis);
+                const test_line = captureTestLineNumber(callframe, globalThis);
                 if (!runner.matchesLineFilter(current_file, test_line, parent)) {
                     is_skip = true;
                     tag_to_use = .skipped_because_label;
                 }
             }
-        }
-
-        // Capture line number if not already captured during filtering
-        if (test_line == 0) {
-            test_line = captureTestLineNumber(callframe, globalThis);
         }
 
         if (is_skip) {
@@ -2122,7 +2116,7 @@ inline fn createScope(
             .func_arg = function_args,
             .func_has_callback = has_callback,
             .timeout_millis = timeout_ms,
-            .line_number = test_line,
+            .line_number = captureTestLineNumber(callframe, globalThis),
             .test_id_for_debugger = brk: {
                 const vm = globalThis.bunVM();
                 if (vm.debugger) |*debugger| {

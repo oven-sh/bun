@@ -6,7 +6,7 @@ on:
   issues:
     types: [labeled]
   pull_request:
-    types: [labeled]
+    types: [labeled, opened, reopened, synchronize, unlabeled]
 
 jobs:
   # on-bug:
@@ -47,7 +47,7 @@ jobs:
   #         labels: ${{ steps.add-labels.outputs.labels }}
   on-slop:
     runs-on: ubuntu-latest
-    if: github.event.label.name == 'slop' && github.event.issue.pull_request
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'slop')
     permissions:
       issues: write
       pull-requests: write

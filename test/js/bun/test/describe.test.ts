@@ -223,3 +223,94 @@ describe("passing arrow function as args", () => {
     expect(fullOutput).toInclude("1 fail");
   });
 });
+
+describe("test structure nesting restrictions", () => {
+  test("describe blocks cannot be nested inside test blocks", async () => {
+    const test_dir = tempDirWithFiles(".", {
+      "nested-describe-test.test.js": `
+        import { describe, test, expect } from "bun:test";
+
+        test("should fail when describe is nested inside", () => {
+          describe("nested describe", () => {
+            test("should not run", () => {
+              expect(true).toBe(true);
+            });
+          });
+        });
+      `,
+    });
+
+    const { stdout, stderr } = spawnSync({
+      cmd: [bunExe(), "test", "nested-describe-test.test.js"],
+      cwd: test_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const fullOutput = stdout.toString() + stderr.toString();
+
+    expect(fullOutput).toInclude("describe() cannot be called inside a test()");
+    expect(fullOutput).toInclude("0 pass");
+    expect(fullOutput).toInclude("1 fail");
+  });
+
+  test("lifecycle hooks cannot be called inside test blocks", async () => {
+    const test_dir = tempDirWithFiles(".", {
+      "hook-in-test.test.js": `
+        import { test, expect, beforeEach } from "bun:test";
+
+        test("should fail when beforeEach is called inside", () => {
+          beforeEach(() => {
+            console.log("This should not work");
+          });
+          expect(true).toBe(true);
+        });
+      `,
+    });
+
+    const { stdout, stderr } = spawnSync({
+      cmd: [bunExe(), "test", "hook-in-test.test.js"],
+      cwd: test_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const fullOutput = stdout.toString() + stderr.toString();
+
+    expect(fullOutput).toInclude("beforeEach() cannot be called inside a test()");
+    expect(fullOutput).toInclude("0 pass");
+    expect(fullOutput).toInclude("1 fail");
+  });
+
+  test("describe blocks can still be nested inside other describe blocks", async () => {
+    const test_dir = tempDirWithFiles(".", {
+      "nested-describe-valid.test.js": `
+        import { describe, test, expect } from "bun:test";
+
+        describe("outer describe", () => {
+          describe("inner describe", () => {
+            test("should pass", () => {
+              expect(true).toBe(true);
+            });
+          });
+        });
+      `,
+    });
+
+    const { stdout, stderr } = spawnSync({
+      cmd: [bunExe(), "test", "nested-describe-valid.test.js"],
+      cwd: test_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const fullOutput = stdout.toString() + stderr.toString();
+
+    expect(fullOutput).toInclude("should pass");
+    expect(fullOutput).toInclude("1 pass");
+    expect(fullOutput).toInclude("0 fail");
+  });
+});

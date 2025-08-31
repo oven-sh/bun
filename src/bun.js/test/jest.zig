@@ -974,6 +974,11 @@ pub const DescribeScope = struct {
                     return globalThis.throwInvalidArgumentType(@tagName(hook), "callback", "function");
                 }
 
+                // Prevent hooks from being called inside test blocks
+                if (DescribeScope.active.?.current_test_id != TestRunner.Test.null_id) {
+                    return globalThis.throwPretty(@tagName(hook) ++ "() cannot be called inside a test(). Lifecycle hooks must be called at the top level.", .{});
+                }
+
                 cb.protect();
                 @field(DescribeScope.active.?, @tagName(hook) ++ "s").append(bun.default_allocator, cb) catch unreachable;
                 return .true;
@@ -1927,6 +1932,12 @@ inline fn createScope(
 
     const allocator = bun.default_allocator;
     const parent = DescribeScope.active.?;
+    
+    // Prevent describe blocks from being nested inside test blocks
+    if (!is_test and parent.current_test_id != TestRunner.Test.null_id) {
+        return globalThis.throwPretty("describe() cannot be called inside a test(). Test structure functions must be called at the top level.", .{});
+    }
+    
     const label = brk: {
         if (description == .zero) {
             break :brk "";

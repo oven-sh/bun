@@ -5583,6 +5583,18 @@ size_t SerializedScriptValue::computeMemoryCost() const
     size_t cost = m_data.size();
     cost += m_simpleInMemoryPropertyTable.byteSize();
 
+    // Add the memory cost of strings in the simple property table
+    for (const auto& entry : m_simpleInMemoryPropertyTable) {
+        // Add property name string cost
+        cost += entry.propertyName.sizeInBytes();
+
+        // Add value string cost if it's a string
+        if (std::holds_alternative<WTF::String>(entry.value)) {
+            const auto& str = std::get<WTF::String>(entry.value);
+            cost += str.sizeInBytes();
+        }
+    }
+
     if (m_arrayBufferContentsArray) {
         for (auto& content : *m_arrayBufferContentsArray)
             cost += content.sizeInBytes();

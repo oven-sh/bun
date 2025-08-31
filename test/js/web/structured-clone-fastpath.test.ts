@@ -2,30 +2,36 @@ import { describe, expect, test } from "bun:test";
 
 describe("Structured Clone Fast Path", () => {
   test("structuredClone should use a constant amount of memory for string inputs", () => {
-    // Create a 100KB string to test fast path
-    const largeString = Buffer.alloc(512 * 1024).toString();
+    const clones: Array<string> = [];
+    // Create a 512KB string to test fast path
+    const largeString = Buffer.alloc(512 * 1024, "a").toString();
     for (let i = 0; i < 100; i++) {
-      structuredClone(largeString);
+      clones.push(structuredClone(largeString));
     }
+    Bun.gc(true);
     const rss = process.memoryUsage.rss();
     for (let i = 0; i < 10000; i++) {
-      structuredClone(largeString);
+      clones.push(structuredClone(largeString));
     }
+    Bun.gc(true);
     const rss2 = process.memoryUsage.rss();
     const delta = rss2 - rss;
-    expect(delta).toBeLessThan(1024 * 1024);
+    expect(delta).toBeLessThan(1024 * 1024 * 8);
+    expect(clones.length).toBe(10000 + 100);
   });
 
   test("structuredClone should use a constant amount of memory for simple object inputs", () => {
-    // Create a 100KB string to test fast path
-    const largeValue = { property: Buffer.alloc(512 * 1024).toString() };
+    // Create a 512KB string to test fast path
+    const largeValue = { property: Buffer.alloc(512 * 1024, "a").toString() };
     for (let i = 0; i < 100; i++) {
       structuredClone(largeValue);
     }
+    Bun.gc(true);
     const rss = process.memoryUsage.rss();
     for (let i = 0; i < 10000; i++) {
       structuredClone(largeValue);
     }
+    Bun.gc(true);
     const rss2 = process.memoryUsage.rss();
     const delta = rss2 - rss;
     expect(delta).toBeLessThan(1024 * 1024);

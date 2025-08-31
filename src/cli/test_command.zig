@@ -1271,13 +1271,13 @@ fn parseFileLineArg(arg: []const u8) ?ParsedFileLineArg {
             break;
         }
     }
-    
+
     const colon_pos = colon_index orelse return null;
     const after_colon = arg[colon_pos + 1 ..];
     if (after_colon.len == 0) return null;
-    
+
     const line_num = std.fmt.parseInt(u32, after_colon, 10) catch return null;
-    
+
     return ParsedFileLineArg{
         .file_pattern = arg[0..colon_pos],
         .line_num = line_num,
@@ -1336,7 +1336,7 @@ pub const TestCommand = struct {
         for (ctx.positionals) |arg| {
             if (parseFileLineArg(arg)) |parsed| {
                 var local_path_buf: bun.PathBuffer = undefined;
-                const abs_pattern = if (std.fs.path.isAbsolute(parsed.file_pattern)) 
+                const abs_pattern = if (std.fs.path.isAbsolute(parsed.file_pattern))
                     try ctx.allocator.dupe(u8, parsed.file_pattern)
                 else blk: {
                     const cwd = bun.getcwd(&local_path_buf) catch break :blk try ctx.allocator.dupe(u8, parsed.file_pattern);

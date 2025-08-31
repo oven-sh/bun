@@ -142,47 +142,30 @@ pub const TestRunner = struct {
         return this.filter_regex != null or this.test_options.test_line_filters.items.len > 0;
     }
 
-    fn matchesFilePattern(pattern: []const u8, absolute_path: []const u8) bool {
-        // Convert pattern to absolute path if needed
-        var path_buf: bun.PathBuffer = undefined;
-        const absolute_pattern = if (std.fs.path.isAbsolute(pattern))
-            pattern
-        else blk: {
-            const cwd = bun.getcwd(&path_buf) catch return false;
-            break :blk bun.path.joinAbsStringBuf(cwd, &path_buf, &.{pattern}, .auto);
-        };
-        
-        return bun.strings.eql(absolute_pattern, absolute_path);
-    }
-
     fn mapLineFiltersToFileId(this: *TestRunner, file_path: []const u8, file_id: File.ID) void {
         if (this.test_options.test_line_filters.items.len == 0) return;
         
-        // Convert file path to absolute path for comparison
         var path_buf: bun.PathBuffer = undefined;
-        const absolute_file_path = if (std.fs.path.isAbsolute(file_path))
-            file_path
-        else blk: {
+        const abs_path = if (std.fs.path.isAbsolute(file_path)) file_path else blk: {
             const cwd = bun.getcwd(&path_buf) catch return;
             break :blk bun.path.joinAbsStringBuf(cwd, &path_buf, &.{file_path}, .auto);
         };
 
-        // Check each filter pattern to see if it matches this file
-        var matched_lines = std.ArrayListUnmanaged(u32){};
+        var lines = std.ArrayListUnmanaged(u32){};
         for (this.test_options.test_line_filters.items) |filter| {
-            if (matchesFilePattern(filter.file_pattern, absolute_file_path)) {
-                matched_lines.appendSlice(this.allocator, filter.lines.items) catch return;
+            const abs_pattern = if (std.fs.path.isAbsolute(filter.pattern)) filter.pattern else blk: {
+                const cwd = bun.getcwd(&path_buf) catch continue;
+                break :blk bun.path.joinAbsStringBuf(cwd, &path_buf, &.{filter.pattern}, .auto);
+            };
+            
+            if (bun.strings.eql(abs_pattern, abs_path)) {
+                lines.append(this.allocator, filter.line) catch return;
             }
         }
         
-        if (matched_lines.items.len > 0) {
-            this.line_filters_by_file_id.put(this.allocator, file_id, matched_lines) catch return;
-            bun.Output.debug("MAPPED file_id {} - {} lines for path '{s}'", .{ file_id, matched_lines.items.len, absolute_file_path });
-        } else {
-            bun.Output.debug("NO MATCH for path '{s}', available filters:", .{absolute_file_path});
-            for (this.test_options.test_line_filters.items) |filter| {
-                bun.Output.debug("  '{s}'", .{filter.file_pattern});
-            }
+        if (lines.items.len > 0) {
+            this.line_filters_by_file_id.put(this.allocator, file_id, lines) catch return;
+            bun.Output.debug("MAPPED file_id {} - {} lines for path '{s}'", .{ file_id, lines.items.len, abs_path });
         }
     }
 

@@ -1333,30 +1333,13 @@ pub const TestCommand = struct {
         var inline_snapshots_to_write = std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(Snapshots.InlineSnapshotToWrite)).init(ctx.allocator);
         jsc.VirtualMachine.isBunTest = true;
 
-        // Parse file:line arguments once, efficiently  
+        // Parse file:line arguments - dead simple
         for (ctx.positionals) |arg| {
             if (parseFileLineArg(arg)) |parsed| {
-                // Find existing filter for this file pattern or create new one
-                var found = false;
-                for (ctx.test_options.test_line_filters.items) |*existing_filter| {
-                    if (bun.strings.eql(existing_filter.file_pattern, parsed.file_pattern)) {
-                        // Add line to existing filter
-                        try existing_filter.lines.append(ctx.allocator, parsed.line_num);
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    // Create new filter
-                    const file_pattern = try ctx.allocator.dupe(u8, parsed.file_pattern);
-                    var lines = std.ArrayListUnmanaged(u32){};
-                    try lines.append(ctx.allocator, parsed.line_num);
-                    
-                    try ctx.test_options.test_line_filters.append(ctx.allocator, Command.TestOptions.LineFilter{
-                        .file_pattern = file_pattern,
-                        .lines = lines,
-                    });
-                }
+                try ctx.test_options.test_line_filters.append(ctx.allocator, .{
+                    .pattern = try ctx.allocator.dupe(u8, parsed.file_pattern),
+                    .line = parsed.line_num,
+                });
             }
         }
 
@@ -1781,9 +1764,7 @@ pub const TestCommand = struct {
 
                     // Show the specific filters that were applied
                     for (ctx.test_options.test_line_filters.items) |filter| {
-                        for (filter.lines.items) |line| {
-                            Output.prettyError("\n  <b>{}<r>:{d}", .{ bun.fmt.quote(filter.file_pattern), line });
-                        }
+                        Output.prettyError("\n  <b>{}<r>:{d}", .{ bun.fmt.quote(filter.pattern), filter.line });
                     }
                     Output.prettyError("\n", .{});
                 } else {

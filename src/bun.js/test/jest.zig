@@ -139,10 +139,25 @@ pub const TestRunner = struct {
     }
 
     pub fn hasTestFilter(this: *const TestRunner) bool {
-        return this.filter_regex != null or this.test_options.test_line_filters.count() > 0;
+        return this.filter_regex != null or this.test_options.test_line_filters.items.len > 0;
+    }
+
+    fn matchesFilePattern(pattern: []const u8, absolute_path: []const u8) bool {
+        // Convert pattern to absolute path if needed
+        var path_buf: bun.PathBuffer = undefined;
+        const absolute_pattern = if (std.fs.path.isAbsolute(pattern))
+            pattern
+        else blk: {
+            const cwd = bun.getcwd(&path_buf) catch return false;
+            break :blk bun.path.joinAbsStringBuf(cwd, &path_buf, &.{pattern}, .auto);
+        };
+        
+        return bun.strings.eql(absolute_pattern, absolute_path);
     }
 
     fn mapLineFiltersToFileId(this: *TestRunner, file_path: []const u8, file_id: File.ID) void {
+        if (this.test_options.test_line_filters.items.len == 0) return;
+        
         // Convert file path to absolute path for comparison
         var path_buf: bun.PathBuffer = undefined;
         const absolute_file_path = if (std.fs.path.isAbsolute(file_path))
@@ -152,44 +167,38 @@ pub const TestRunner = struct {
             break :blk bun.path.joinAbsStringBuf(cwd, &path_buf, &.{file_path}, .auto);
         };
 
-        // Check if we have line filters for this absolute path in test_options
-        if (this.test_options.test_line_filters.get(absolute_file_path)) |lines| {
-            // Copy the line filter to the file ID map
-            var lines_copy = std.ArrayListUnmanaged(u32){};
-            lines_copy.appendSlice(this.allocator, lines.items) catch return;
-            this.line_filters_by_file_id.put(this.allocator, file_id, lines_copy) catch return;
-
-            // Debug: confirm mapping
-            bun.Output.debug("MAPPED file_id {} -> {} lines for path '{s}'", .{ file_id, lines.items.len, absolute_file_path });
+        // Check each filter pattern to see if it matches this file
+        var matched_lines = std.ArrayListUnmanaged(u32){};
+        for (this.test_options.test_line_filters.items) |filter| {
+            if (matchesFilePattern(filter.file_pattern, absolute_file_path)) {
+                matched_lines.appendSlice(this.allocator, filter.lines.items) catch return;
+            }
+        }
+        
+        if (matched_lines.items.len > 0) {
+            this.line_filters_by_file_id.put(this.allocator, file_id, matched_lines) catch return;
+            bun.Output.debug("MAPPED file_id {} - {} lines for path '{s}'", .{ file_id, matched_lines.items.len, absolute_file_path });
         } else {
-            // Debug: no match found
             bun.Output.debug("NO MATCH for path '{s}', available filters:", .{absolute_file_path});
-            var iter = this.test_options.test_line_filters.iterator();
-            while (iter.next()) |entry| {
-                bun.Output.debug("  '{s}'", .{entry.key_ptr.*});
+            for (this.test_options.test_line_filters.items) |filter| {
+                bun.Output.debug("  '{s}'", .{filter.file_pattern});
             }
         }
     }
 
     pub fn matchesLineFilter(this: *const TestRunner, file_path: []const u8, line_number: u32, parent: ?*DescribeScope) bool {
-        if (this.test_options.test_line_filters.count() == 0) return true;
+        if (this.test_options.test_line_filters.items.len == 0) return true;
 
-        // Convert file path to absolute path for exact comparison
-        var path_buf: bun.PathBuffer = undefined;
-        const absolute_current_file = if (std.fs.path.isAbsolute(file_path))
-            file_path
-        else blk: {
-            const cwd = bun.getcwd(&path_buf) catch break :blk file_path;
-            break :blk bun.path.joinAbsStringBuf(cwd, &path_buf, &.{file_path}, .auto);
+        // Get the file_id from the parent scope - much more efficient than path lookup!
+        const file_id = if (parent) |p| p.file_id else blk: {
+            // Fallback: look up by file path (shouldn't happen in normal flow)
+            const hash = @as(u32, @truncate(bun.hash(file_path)));
+            break :blk this.index.get(hash) orelse return false;
         };
 
-        // Direct lookup in the test_options line filters
-        if (this.test_options.test_line_filters.get(absolute_current_file)) |lines| {
-            return this.checkLineMatch(lines, line_number, parent);
-        }
-
-        // No line filter for this file, so it should be skipped
-        return false;
+        // Fast O(1) lookup by file_id
+        const lines = this.line_filters_by_file_id.get(file_id) orelse return false;
+        return this.checkLineMatch(lines, line_number, parent);
     }
 
     fn checkLineMatch(_: *const TestRunner, lines: std.ArrayListUnmanaged(u32), line_number: u32, parent: ?*DescribeScope) bool {
@@ -2084,7 +2093,7 @@ inline fn createScope(
             }
 
             // Apply line-based filtering
-            if (runner.test_options.test_line_filters.count() > 0) {
+            if (runner.test_options.test_line_filters.items.len > 0) {
                 const current_file = runner.files.items(.source)[parent.file_id].path.text;
                 const test_line = captureTestLineNumber(callframe, globalThis);
                 if (!runner.matchesLineFilter(current_file, test_line, parent)) {
@@ -2469,7 +2478,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                 }
 
                 // Apply line-based filtering
-                if (Jest.runner.?.test_options.test_line_filters.count() > 0) {
+                if (Jest.runner.?.test_options.test_line_filters.items.len > 0) {
                     const current_file = Jest.runner.?.files.items(.source)[parent.file_id].path.text;
                     const test_line = each_data.line_number;
                     if (!Jest.runner.?.matchesLineFilter(current_file, test_line, parent)) {
@@ -2601,7 +2610,7 @@ extern fn Bun__CallFrame__getLineNumber(callframe: *jsc.CallFrame, globalObject:
 
 fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObject) u32 {
     if (Jest.runner) |runner| {
-        if (runner.test_options.file_reporter == .junit or runner.test_options.test_line_filters.count() > 0) {
+        if (runner.test_options.file_reporter == .junit or runner.test_options.test_line_filters.items.len > 0) {
             return Bun__CallFrame__getLineNumber(callframe, globalThis);
         }
     }

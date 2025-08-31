@@ -1255,6 +1255,35 @@ export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callcon
     return true;
 }
 
+const ParsedFileLineArg = struct {
+    file_pattern: []const u8,
+    line_num: u32,
+};
+
+fn parseFileLineArg(arg: []const u8) ?ParsedFileLineArg {
+    // Find the last ':' to avoid Windows drive letters like C:\
+    var colon_index: ?usize = null;
+    var k = arg.len;
+    while (k > 0) {
+        k -= 1;
+        if (arg[k] == ':') {
+            colon_index = k;
+            break;
+        }
+    }
+    
+    const colon_pos = colon_index orelse return null;
+    const after_colon = arg[colon_pos + 1 ..];
+    if (after_colon.len == 0) return null;
+    
+    const line_num = std.fmt.parseInt(u32, after_colon, 10) catch return null;
+    
+    return ParsedFileLineArg{
+        .file_pattern = arg[0..colon_pos],
+        .line_num = line_num,
+    };
+}
+
 pub const TestCommand = struct {
     pub const name = "test";
     pub const CodeCoverageOptions = struct {
@@ -1304,42 +1333,29 @@ pub const TestCommand = struct {
         var inline_snapshots_to_write = std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(Snapshots.InlineSnapshotToWrite)).init(ctx.allocator);
         jsc.VirtualMachine.isBunTest = true;
 
-        // Parse file:line arguments early, before creating TestRunner
+        // Parse file:line arguments once, efficiently  
         for (ctx.positionals) |arg| {
-            // Find the last ':' to avoid Windows drive letters like C:\
-            var colon_index_opt: ?usize = null;
-            var k: usize = arg.len;
-            while (k > 0) : (k -= 1) {
-                if (arg[k - 1] == ':') {
-                    colon_index_opt = k - 1;
-                    break;
+            if (parseFileLineArg(arg)) |parsed| {
+                // Find existing filter for this file pattern or create new one
+                var found = false;
+                for (ctx.test_options.test_line_filters.items) |*existing_filter| {
+                    if (bun.strings.eql(existing_filter.file_pattern, parsed.file_pattern)) {
+                        // Add line to existing filter
+                        try existing_filter.lines.append(ctx.allocator, parsed.line_num);
+                        found = true;
+                        break;
+                    }
                 }
-            }
-            if (colon_index_opt) |colon_index| {
-                const after_colon = arg[colon_index + 1 ..];
-                if (after_colon.len > 0) {
-                    if (std.fmt.parseInt(u32, after_colon, 10)) |line_num| {
-                        const file_part = arg[0..colon_index];
-
-                        // Convert to absolute path for exact matching
-                        const absolute_file = if (std.fs.path.isAbsolute(file_part))
-                            try ctx.allocator.dupe(u8, file_part)
-                        else blk: {
-                            var cwd_buf: bun.PathBuffer = undefined;
-                            const cwd = bun.getcwd(&cwd_buf) catch break :blk try ctx.allocator.dupe(u8, file_part);
-                            const joined_path = bun.path.joinAbsString(cwd, &.{file_part}, .auto);
-                            break :blk try ctx.allocator.dupe(u8, joined_path);
-                        };
-
-                        // Get or create array of lines for this file
-                        const result = try ctx.test_options.test_line_filters.getOrPut(ctx.allocator, absolute_file);
-                        if (!result.found_existing) {
-                            result.value_ptr.* = std.ArrayListUnmanaged(u32){};
-                        }
-
-                        // Add the line number to the array
-                        try result.value_ptr.append(ctx.allocator, line_num);
-                    } else |_| {}
+                if (!found) {
+                    // Create new filter
+                    const file_pattern = try ctx.allocator.dupe(u8, parsed.file_pattern);
+                    var lines = std.ArrayListUnmanaged(u32){};
+                    try lines.append(ctx.allocator, parsed.line_num);
+                    
+                    try ctx.test_options.test_line_filters.append(ctx.allocator, Command.TestLineFilter{
+                        .file_pattern = file_pattern,
+                        .lines = lines,
+                    });
                 }
             }
         }
@@ -1467,79 +1483,45 @@ pub const TestCommand = struct {
 
         var scanner = bun.handleOom(Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len));
         defer scanner.deinit();
-        // Check if any argument is a file path or file:line pattern
-        var has_file_line_arg: bool = false;
+        const has_file_line_arg = ctx.test_options.test_line_filters.items.len > 0;
         const has_relative_path = for (ctx.positionals) |arg| {
-            // Find the last ':' to avoid Windows drive letters like C:\
-            var colon_index_opt: ?usize = null;
-            var k: usize = arg.len;
-            while (k > 0) : (k -= 1) {
-                if (arg[k - 1] == ':') {
-                    colon_index_opt = k - 1;
-                    break;
-                }
-            }
-            if (colon_index_opt) |colon_index| {
-                // Check if this might be a file:line pattern
-                const after_colon = arg[colon_index + 1 ..];
-                if (after_colon.len > 0) {
-                    if (std.fmt.parseInt(u32, after_colon, 10)) |_| {
-                        has_file_line_arg = true;
-                        break true;
+            // For file:line arguments, check the file part, not the whole arg
+            const file_part = if (has_file_line_arg) blk: {
+                // Find the colon and extract file part
+                if (std.mem.lastIndexOf(u8, arg, ":")) |colon_pos| {
+                    if (std.fmt.parseInt(u32, arg[colon_pos + 1..], 10)) |_| {
+                        break :blk arg[0..colon_pos];
                     } else |_| {}
                 }
-            }
+                break :blk arg;
+            } else arg;
 
-            if (std.fs.path.isAbsolute(arg) or
-                strings.startsWith(arg, "./") or
-                strings.startsWith(arg, "../") or
-                (Environment.isWindows and (strings.startsWith(arg, ".\\") or
-                    strings.startsWith(arg, "..\\")))) break true;
+            if (std.fs.path.isAbsolute(file_part) or
+                strings.startsWith(file_part, "./") or
+                strings.startsWith(file_part, "../") or
+                (Environment.isWindows and (strings.startsWith(file_part, ".\\") or
+                    strings.startsWith(file_part, "..\\")))) break true;
         } else false;
         if (has_relative_path) {
             // One of the files is a filepath. Instead of treating the
             // arguments as filters, treat them as filepaths
             const file_or_dirnames = ctx.positionals[1..];
+            // Scan all files, extracting file part from file:line arguments
             for (file_or_dirnames) |arg| {
-                if (has_file_line_arg) {
-                    // Find the last ':' to avoid Windows drive letters like C:\
-                    var colon_index_opt: ?usize = null;
-                    var k: usize = arg.len;
-                    while (k > 0) : (k -= 1) {
-                        if (arg[k - 1] == ':') {
-                            colon_index_opt = k - 1;
-                            break;
-                        }
-                    }
-                    if (colon_index_opt) |colon_index| {
-                        // Parse file:line format
-                        const file_part = arg[0..colon_index];
-                        const line_part = arg[colon_index + 1 ..];
-
-                        if (std.fmt.parseInt(u32, line_part, 10)) |line_num| {
-                            // This file:line pattern was already processed earlier
-                            _ = line_num;
-
-                            // Only scan the file, not the file:line argument
-                            scanner.scan(file_part) catch |err| switch (err) {
-                                error.OutOfMemory => bun.outOfMemory(),
-                                error.DoesNotExist => if (file_or_dirnames.len == 1) {
-                                    Output.prettyErrorln("Test file <b>{}<r> not found", .{bun.fmt.quote(file_part)});
-                                    Global.exit(1);
-                                },
-                            };
-                            continue;
+                const file_to_scan = if (has_file_line_arg) blk: {
+                    // Extract file part from file:line if this is a file:line arg
+                    if (std.mem.lastIndexOf(u8, arg, ":")) |colon_pos| {
+                        if (std.fmt.parseInt(u32, arg[colon_pos + 1..], 10)) |_| {
+                            break :blk arg[0..colon_pos];
                         } else |_| {}
                     }
-                }
-
-                // Regular file or directory
-                scanner.scan(arg) catch |err| switch (err) {
+                    break :blk arg;
+                } else arg;
+                
+                scanner.scan(file_to_scan) catch |err| switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
-                    // don't error if multiple are passed; one might fail
-                    // but the others may not
                     error.DoesNotExist => if (file_or_dirnames.len == 1) {
-                        Output.prettyErrorln("Test filter <b>{}<r> had no matches", .{bun.fmt.quote(arg)});
+                        Output.prettyErrorln("Test file <b>{}<r> not found", .{bun.fmt.quote(file_to_scan)});
                         Global.exit(1);
                     },
                 };
@@ -1789,7 +1771,7 @@ pub const TestCommand = struct {
 
                 reporter.printSummary();
             } else {
-                if (ctx.test_options.test_line_filters.count() > 0) {
+                if (ctx.test_options.test_line_filters.items.len > 0) {
                     Output.prettyError("<red>error<r><d>:<r> no tests found for file:line filters. Searched {d} file{s} (skipping {d} test{s}) ", .{
                         summary.files,
                         if (summary.files == 1) "" else "s",
@@ -1798,12 +1780,9 @@ pub const TestCommand = struct {
                     });
 
                     // Show the specific filters that were applied
-                    var iter = ctx.test_options.test_line_filters.iterator();
-                    while (iter.next()) |entry| {
-                        const file_path = entry.key_ptr.*;
-                        const lines = entry.value_ptr.*;
-                        for (lines.items) |line| {
-                            Output.prettyError("\n  <b>{}<r>:{d}", .{ bun.fmt.quote(file_path), line });
+                    for (ctx.test_options.test_line_filters.items) |filter| {
+                        for (filter.lines.items) |line| {
+                            Output.prettyError("\n  <b>{}<r>:{d}", .{ bun.fmt.quote(filter.file_pattern), line });
                         }
                     }
                     Output.prettyError("\n", .{});

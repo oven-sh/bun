@@ -407,7 +407,11 @@ pub const FontFormat = union(enum) {
             .embedded_opentype => try dest.writeStr("embedded-opentype"),
             .collection => try dest.writeStr("collection"),
             .svg => try dest.writeStr("svg"),
-            .string => try dest.writeStr(this.string),
+            .string => {
+                try dest.writeChar('"');
+                try dest.writeStr(this.string);
+                try dest.writeChar('"');
+            },
         }
     }
 

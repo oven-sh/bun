@@ -335,33 +335,21 @@ pub const FontFamily = union(enum) {
                 // Generic family names such as sans-serif must be quoted if parsed as a string.
                 // CSS wide keywords, as well as "default", must also be quoted.
                 // https://www.w3.org/TR/css-fonts-4/#family-name-syntax
-
-                if (val.len > 0 and
-                    !css.parse_utility.parseString(
-                        dest.allocator,
-                        GenericFontFamily,
-                        val,
-                        GenericFontFamily.parse,
-                    ).isOk())
-                {
-                    var id = ArrayList(u8){};
-                    defer id.deinit(dest.allocator);
-                    var first = true;
-                    var split_iter = std.mem.splitScalar(u8, val, ' ');
-                    while (split_iter.next()) |slice| {
-                        if (first) {
-                            first = false;
-                        } else {
-                            id.append(dest.allocator, ' ') catch bun.outOfMemory();
-                        }
-                        const dest_id = id.writer(dest.allocator);
-                        css.serializer.serializeIdentifier(slice, dest_id) catch return dest.addFmtError();
-                    }
-                    if (id.items.len < val.len + 2) {
-                        return dest.writeStr(id.items);
+                var needs_quotes = false;
+                for (val) |c| {
+                    if (c == ' ' or c == '"' or c == '\'') {
+                        needs_quotes = true;
+                        break;
                     }
                 }
-                return css.serializer.serializeString(val, dest) catch return dest.addFmtError();
+
+                if (needs_quotes) {
+                    try dest.writeChar('"');
+                    try dest.writeStr(val);
+                    try dest.writeChar('"');
+                } else {
+                    try dest.writeStr(val);
+                }
             },
         }
     }

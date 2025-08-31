@@ -13,59 +13,38 @@ test("issue #4459: server.getConnections should be implemented and work like Nod
   const server = net.createServer();
   const { promise, resolve, reject } = Promise.withResolvers<void>();
 
-  let connectionCount = 0;
-  const expectedCounts: number[] = [];
-
-  server.on("connection", (socket) => {
-    connectionCount++;
-    socket.on("close", () => {
-      connectionCount--;
-    });
-  });
+  const results: Array<{ err: any; count: number }> = [];
 
   server.listen(0, () => {
     const port = server.address()!.port;
     
     // Test 1: No connections initially
     server.getConnections((err, count) => {
-      expect(err).toBeNull();
-      expect(count).toBe(0);
-      expectedCounts.push(count);
+      results.push({ err, count });
 
       // Test 2: Create connection and verify count increases
       const client1 = net.createConnection(port, () => {
         setTimeout(() => {
           server.getConnections((err, count) => {
-            expect(err).toBeNull();
-            expect(count).toBe(1);
-            expectedCounts.push(count);
+            results.push({ err, count });
 
             // Test 3: Create second connection
             const client2 = net.createConnection(port, () => {
               setTimeout(() => {
                 server.getConnections((err, count) => {
-                  expect(err).toBeNull();
-                  expect(count).toBe(2);
-                  expectedCounts.push(count);
+                  results.push({ err, count });
 
                   // Test 4: Close one connection
                   client1.end();
                   setTimeout(() => {
                     server.getConnections((err, count) => {
-                      expect(err).toBeNull();
-                      expect(count).toBe(1);
-                      expectedCounts.push(count);
+                      results.push({ err, count });
 
                       // Test 5: Close second connection
                       client2.end();
                       setTimeout(() => {
                         server.getConnections((err, count) => {
-                          expect(err).toBeNull();
-                          expect(count).toBe(0);
-                          expectedCounts.push(count);
-
-                          // Verify the progression was correct
-                          expect(expectedCounts).toEqual([0, 1, 2, 1, 0]);
+                          results.push({ err, count });
                           
                           server.close();
                           resolve();
@@ -89,6 +68,14 @@ test("issue #4459: server.getConnections should be implemented and work like Nod
   server.on("error", reject);
 
   await promise;
+
+  // Now we can safely use expect() outside the callbacks
+  expect(results).toHaveLength(5);
+  expect(results[0]).toEqual({ err: null, count: 0 }); // No connections initially
+  expect(results[1]).toEqual({ err: null, count: 1 }); // After client1 connects
+  expect(results[2]).toEqual({ err: null, count: 2 }); // After client2 connects
+  expect(results[3]).toEqual({ err: null, count: 1 }); // After client1 disconnects
+  expect(results[4]).toEqual({ err: null, count: 0 }); // After client2 disconnects
 });
 
 test("issue #4459: getConnections should support method chaining", () => {

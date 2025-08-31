@@ -141,39 +141,14 @@ pub const TestRunner = struct {
         return this.filter_regex != null or this.test_options.test_line_filters.count() > 0;
     }
 
-    fn mapLineFiltersToFileId(this: *TestRunner, file_path: []const u8, file_id: File.ID) void {
-        var path_buf: bun.PathBuffer = undefined;
-        const abs_path = if (std.fs.path.isAbsolute(file_path)) file_path else blk: {
-            const cwd = bun.getcwd(&path_buf) catch return;
-            break :blk bun.path.joinAbsStringBuf(cwd, &path_buf, &.{file_path}, .auto);
-        };
-
-        if (this.test_options.test_line_filters.get(abs_path)) |lines| {
-            var lines_copy = std.ArrayListUnmanaged(u32){};
-            lines_copy.appendSlice(this.allocator, lines.items) catch return;
-            this.line_filters_by_file_id.put(this.allocator, file_id, lines_copy) catch return;
-        }
-    }
-
-    pub fn matchesLineFilter(this: *const TestRunner, file_path: []const u8, line_number: u32, parent: ?*DescribeScope) bool {
+    pub fn matchesLineFilter(this: *const TestRunner, line_number: u32, parent: *DescribeScope) bool {
         if (this.test_options.test_line_filters.count() == 0) return true;
 
-        const file_id = if (parent) |p| p.file_id else blk: {
-            const hash = @as(u32, @truncate(bun.hash(file_path)));
-            break :blk this.index.get(hash) orelse return false;
-        };
-
-        const lines = this.line_filters_by_file_id.get(file_id) orelse return false;
-        return this.checkLineMatch(lines, line_number, parent);
-    }
-
-    fn checkLineMatch(_: *const TestRunner, lines: std.ArrayListUnmanaged(u32), line_number: u32, parent: ?*DescribeScope) bool {
+        const lines = this.line_filters_by_file_id.get(parent.file_id) orelse return true;
         for (lines.items) |filter_line| {
-            if (line_number == filter_line) {
-                return true;
-            }
+            if (line_number == filter_line) return true;
 
-            var current_parent = parent;
+            var current_parent: ?*DescribeScope = parent;
             while (current_parent) |p| {
                 if (p.line_number > 0 and p.line_number == filter_line) {
                     return true;
@@ -322,8 +297,18 @@ pub const TestRunner = struct {
         this.files.append(this.allocator, .{ .module_scope = scope, .source = logger.Source.initEmptyFile(file_path) }) catch unreachable;
         entry.value_ptr.* = file_id;
 
-        if (this.test_options.test_line_filters.count() > 0) {
-            this.mapLineFiltersToFileId(file_path, file_id);
+        if (this.test_options.test_line_filters.count() > 0) brk: {
+            var path_buf: bun.PathBuffer = undefined;
+            const abs_path = if (std.fs.path.isAbsolute(file_path)) file_path else blk2: {
+                const cwd = bun.getcwd(&path_buf) catch break :brk;
+                break :blk2 bun.path.joinAbsStringBuf(cwd, &path_buf, &.{file_path}, .auto);
+            };
+
+            if (this.test_options.test_line_filters.get(abs_path)) |lines| {
+                var lines_copy = std.ArrayListUnmanaged(u32){};
+                lines_copy.appendSlice(this.allocator, lines.items) catch break :brk;
+                this.line_filters_by_file_id.put(this.allocator, file_id, lines_copy) catch break :brk;
+            }
         }
 
         return scope;
@@ -2038,6 +2023,8 @@ inline fn createScope(
         (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
         (tag != .only and Jest.runner.?.only and parent.tag != .only);
 
+    const line_number = captureTestLineNumber(callframe, globalThis);
+
     if (is_test) {
         // Apply filter to all tests, including skipped and todo tests
         if (Jest.runner) |runner| {
@@ -2054,11 +2041,8 @@ inline fn createScope(
                 }
             }
 
-            // Apply line-based filtering
             if (runner.test_options.test_line_filters.count() > 0) {
-                const current_file = runner.files.items(.source)[parent.file_id].path.text;
-                const test_line = captureTestLineNumber(callframe, globalThis);
-                if (!runner.matchesLineFilter(current_file, test_line, parent)) {
+                if (!runner.matchesLineFilter(line_number, parent)) {
                     is_skip = true;
                     tag_to_use = .skipped_because_label;
                 }
@@ -2089,7 +2073,7 @@ inline fn createScope(
             .func_arg = function_args,
             .func_has_callback = has_callback,
             .timeout_millis = timeout_ms,
-            .line_number = captureTestLineNumber(callframe, globalThis),
+            .line_number = line_number,
             .test_id_for_debugger = brk: {
                 const vm = globalThis.bunVM();
                 if (vm.debugger) |*debugger| {
@@ -2116,7 +2100,7 @@ inline fn createScope(
             .parent = parent,
             .file_id = parent.file_id,
             .tag = tag_to_use,
-            .line_number = captureTestLineNumber(callframe, globalThis),
+            .line_number = line_number,
             .test_id_for_debugger = brk: {
                 const vm = globalThis.bunVM();
                 if (vm.debugger) |*debugger| {
@@ -2439,11 +2423,8 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                     }
                 }
 
-                // Apply line-based filtering
                 if (Jest.runner.?.test_options.test_line_filters.count() > 0) {
-                    const current_file = Jest.runner.?.files.items(.source)[parent.file_id].path.text;
-                    const test_line = each_data.line_number;
-                    if (!Jest.runner.?.matchesLineFilter(current_file, test_line, parent)) {
+                    if (!Jest.runner.?.matchesLineFilter(each_data.line_number, parent)) {
                         is_skip = true;
                         tag_to_use = .skipped_because_label;
                     }

@@ -1255,31 +1255,15 @@ export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callcon
     return true;
 }
 
-const ParsedFileLineArg = struct {
-    file_pattern: []const u8,
-    line_num: u32,
-};
-
-fn parseFileLineArg(arg: []const u8) ?ParsedFileLineArg {
-    // Find the last ':' to avoid Windows drive letters like C:\
-    var colon_index: ?usize = null;
-    var k = arg.len;
-    while (k > 0) {
-        k -= 1;
-        if (arg[k] == ':') {
-            colon_index = k;
-            break;
-        }
-    }
-
-    const colon_pos = colon_index orelse return null;
-    const after_colon = arg[colon_pos + 1 ..];
+fn parseFileLineArg(arg: []const u8) ?struct { file_pattern: []const u8, line_num: u32 } {
+    const colon_index = strings.lastIndexOfChar(arg, ':') orelse return null;
+    const after_colon = arg[colon_index + 1 ..];
     if (after_colon.len == 0) return null;
 
     const line_num = std.fmt.parseInt(u32, after_colon, 10) catch return null;
 
-    return ParsedFileLineArg{
-        .file_pattern = arg[0..colon_pos],
+    return .{
+        .file_pattern = arg[0..colon_index],
         .line_num = line_num,
     };
 }
@@ -1332,25 +1316,6 @@ pub const TestCommand = struct {
         var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
         var inline_snapshots_to_write = std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(Snapshots.InlineSnapshotToWrite)).init(ctx.allocator);
         jsc.VirtualMachine.isBunTest = true;
-
-        for (ctx.positionals) |arg| {
-            if (parseFileLineArg(arg)) |parsed| {
-                var local_path_buf: bun.PathBuffer = undefined;
-                const abs_pattern = if (std.fs.path.isAbsolute(parsed.file_pattern))
-                    try ctx.allocator.dupe(u8, parsed.file_pattern)
-                else blk: {
-                    const cwd = bun.getcwd(&local_path_buf) catch break :blk try ctx.allocator.dupe(u8, parsed.file_pattern);
-                    const joined = bun.path.joinAbsStringBuf(cwd, &local_path_buf, &.{parsed.file_pattern}, .auto);
-                    break :blk try ctx.allocator.dupe(u8, joined);
-                };
-
-                const result = try ctx.test_options.test_line_filters.getOrPut(ctx.allocator, abs_pattern);
-                if (!result.found_existing) {
-                    result.value_ptr.* = std.ArrayListUnmanaged(u32){};
-                }
-                try result.value_ptr.append(ctx.allocator, parsed.line_num);
-            }
-        }
 
         var reporter = try ctx.allocator.create(CommandLineReporter);
         defer {
@@ -1476,32 +1441,40 @@ pub const TestCommand = struct {
         var scanner = bun.handleOom(Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len));
         defer scanner.deinit();
         const has_relative_path = for (ctx.positionals) |arg| {
-            // If it's a valid file:line pattern, check the file part
-            if (parseFileLineArg(arg)) |parsed| {
-                if (std.fs.path.isAbsolute(parsed.file_pattern) or
-                    strings.startsWith(parsed.file_pattern, "./") or
-                    strings.startsWith(parsed.file_pattern, "../") or
-                    (Environment.isWindows and (strings.startsWith(parsed.file_pattern, ".\\") or
-                        strings.startsWith(parsed.file_pattern, "..\\"))))
-                    break true;
-            } else {
-                // If it's not a file:line pattern, use original logic
-                if (std.fs.path.isAbsolute(arg) or
-                    strings.startsWith(arg, "./") or
-                    strings.startsWith(arg, "../") or
-                    (Environment.isWindows and (strings.startsWith(arg, ".\\") or
-                        strings.startsWith(arg, "..\\"))))
-                    break true;
-            }
+            if (std.fs.path.isAbsolute(arg) or
+                strings.startsWith(arg, "./") or
+                strings.startsWith(arg, "../") or
+                (Environment.isWindows and (strings.startsWith(arg, ".\\") or
+                    strings.startsWith(arg, "..\\")))) break true;
         } else false;
         if (has_relative_path) {
             // One of the files is a filepath. Instead of treating the
             // arguments as filters, treat them as filepaths
             const file_or_dirnames = ctx.positionals[1..];
             for (file_or_dirnames) |arg| {
-                const file_to_scan = if (parseFileLineArg(arg)) |parsed| parsed.file_pattern else arg;
+                const file_line = parseFileLineArg(arg);
+                if (file_line) |parsed| {
+                    const abs_pattern = if (std.fs.path.isAbsolute(parsed.file_pattern))
+                        try ctx.allocator.dupe(u8, parsed.file_pattern)
+                    else blk: {
+                        var local_path_buf: bun.PathBuffer = undefined;
+                        const cwd = bun.getcwd(&local_path_buf) catch break :blk try ctx.allocator.dupe(u8, parsed.file_pattern);
+                        const joined = bun.path.joinAbsStringBuf(cwd, &local_path_buf, &.{parsed.file_pattern}, .auto);
+                        break :blk try ctx.allocator.dupe(u8, joined);
+                    };
+
+                    const result = try ctx.test_options.test_line_filters.getOrPut(ctx.allocator, abs_pattern);
+                    if (!result.found_existing) {
+                        result.value_ptr.* = std.ArrayListUnmanaged(u32){};
+                    }
+                    try result.value_ptr.append(ctx.allocator, parsed.line_num);
+                }
+
+                const file_to_scan = if (file_line) |parsed| parsed.file_pattern else arg;
                 scanner.scan(file_to_scan) catch |err| switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
+                    // don't error if multiple are passed; one might fail
+                    // but the others may not
                     error.DoesNotExist => if (file_or_dirnames.len == 1) {
                         Output.prettyErrorln("Test filter <b>{}<r> had no matches", .{bun.fmt.quote(arg)});
                         Global.exit(1);
@@ -1764,7 +1737,7 @@ pub const TestCommand = struct {
                     var iter = ctx.test_options.test_line_filters.iterator();
                     while (iter.next()) |entry| {
                         for (entry.value_ptr.items) |line| {
-                            Output.prettyError("\n  <b>{}<r>:{d}", .{ bun.fmt.quote(entry.key_ptr.*), line });
+                            Output.prettyError("\n  <b>{s}<r>:{d}", .{ entry.key_ptr.*, line });
                         }
                     }
                     Output.prettyError("\n", .{});

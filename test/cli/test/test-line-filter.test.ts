@@ -16,11 +16,14 @@ describe("bun test file:line filtering", () => {
       cmd: [bunExe(), "test", ...args],
       env: bunEnv,
       cwd,
+      stderr: "pipe",
+      stdout: "pipe",
+      stdin: "ignore",
     });
     return {
       stdout: result.stdout?.toString() || "",
       stderr: result.stderr?.toString() || "",
-      exitCode: result.exitCode || 0,
+      exitCode: result.exitCode,
     };
   }
 
@@ -50,12 +53,12 @@ test("test 3 - should NOT run", () => {
     // Target line 8 which contains "test 2"
     const { stdout, stderr, exitCode } = runTestWithOutput([`./single-test.test.ts:8`], cwd);
 
-    expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Test 2 ran");
     expect(stdout).not.toContain("❌ Test 1 ran");
     expect(stdout).not.toContain("❌ Test 3 ran");
     expect(stderr).toContain("1 pass");
     expect(stderr).toContain("2 filtered out");
+    expect(exitCode).toBe(0);
   });
 
   test("should run all tests in a describe block when targeting the describe line", () => {
@@ -93,13 +96,13 @@ describe("other block", () => {
     // Target line 8 which contains the describe "target block"
     const { stdout, stderr, exitCode } = runTestWithOutput([`./describe-block.test.ts:8`], cwd);
 
-    expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Test A ran");
     expect(stdout).toContain("✅ Test B ran");
     expect(stdout).not.toContain("❌ Standalone test ran");
     expect(stdout).not.toContain("❌ Test C ran");
     expect(stderr).toContain("2 pass");
     expect(stderr).toContain("2 filtered out");
+    expect(exitCode).toBe(0);
   });
 
   test("should handle nested describe blocks correctly", () => {
@@ -137,13 +140,13 @@ describe("outer", () => {
     // Target line 9 which contains the inner describe "inner target"
     const { stdout, stderr, exitCode } = runTestWithOutput([`./nested-describe.test.ts:9`], cwd);
 
-    expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Inner test A ran");
     expect(stdout).toContain("✅ Inner test B ran");
     expect(stdout).not.toContain("❌ Outer test ran");
     expect(stdout).not.toContain("❌ Another outer test ran");
     expect(stderr).toContain("2 pass");
     expect(stderr).toContain("2 filtered out");
+    expect(exitCode).toBe(0);
   });
 
   test("should show error when no tests found at specified line", () => {
@@ -161,9 +164,9 @@ test("only test", () => {
     // Target line 10 which is beyond the file content
     const { stdout, stderr, exitCode } = runTestWithOutput([`./empty-line.test.ts:10`], cwd);
 
-    expect(exitCode).toBe(1);
     expect(stderr).toContain("no tests found for file:line filters");
     expect(stderr).toContain("skipping 1 test");
+    expect(exitCode).toBe(1);
   });
 
   test("should show error when targeting non-existent file", () => {
@@ -171,8 +174,8 @@ test("only test", () => {
 
     const { stdout, stderr, exitCode } = runTestWithOutput([`./non-existent.test.ts:5`], cwd);
 
-    expect(exitCode).toBe(1);
     expect(stderr).toContain("had no matches");
+    expect(exitCode).toBe(1);
   });
 
   test("should handle absolute paths with line numbers", () => {
@@ -195,10 +198,10 @@ test("target test", () => {
     // Use absolute path with line number (target the test on line 7)
     const { stdout, stderr, exitCode } = runTestWithOutput([`${testFile}:7`], cwd);
 
-    expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Target test ran");
     expect(stderr).toContain("1 pass");
     expect(stderr).toContain("1 filtered out");
+    expect(exitCode).toBe(0);
   });
 
   test("should handle relative paths with ./ prefix", () => {
@@ -221,10 +224,10 @@ test("target test", () => {
     // Use ./relative path with line number (target the test on line 7)
     const { stdout, stderr, exitCode } = runTestWithOutput([`./relative-path.test.ts:7`], cwd);
 
-    expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Target test ran");
     expect(stderr).toContain("1 pass");
     expect(stderr).toContain("1 filtered out");
+    expect(exitCode).toBe(0);
   });
 
   test("should handle multiple describe blocks at different levels", () => {
@@ -264,13 +267,13 @@ describe("third block", () => {
     // Target line 10 which contains "describe second block"
     const { stdout, stderr, exitCode } = runTestWithOutput([`./multi-describe.test.ts:10`], cwd);
 
-    expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Second test A ran");
     expect(stdout).toContain("✅ Second test B ran");
     expect(stdout).not.toContain("❌ First test ran");
     expect(stdout).not.toContain("❌ Third test ran");
     expect(stderr).toContain("2 pass");
     expect(stderr).toContain("2 filtered out");
+    expect(exitCode).toBe(0);
   });
 
   test("should work with test.each when targeting individual test line", () => {
@@ -299,12 +302,12 @@ test("another test - should NOT run", () => {
     // Target line 8 which contains the test.each
     const { stdout, stderr, exitCode } = runTestWithOutput([`./test-each.test.ts:8`], cwd);
 
-    expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Each test 1 ran");
     expect(stdout).toContain("✅ Each test 2 ran");
     expect(stdout).toContain("✅ Each test 3 ran");
     expect(stdout).not.toContain("❌ Regular test ran");
     expect(stdout).not.toContain("❌ Another test ran");
+    expect(exitCode).toBe(0);
   });
 
   test("should reject invalid line numbers", () => {
@@ -334,13 +337,14 @@ test("test", () => {
       cwd,
       "comment-lines.test.ts",
       `import { test, expect, describe } from "bun:test";
+import type { it } from "bun";
 
 // This is a comment line
 // Another comment
 describe("comment test block", () => {
   // Comment inside describe
   
-  test("test inside - SHOULD run", () => {
+  (test as it)("test inside - SHOULD run", () => {
     console.log("✅ Test inside ran");
     expect(1).toBe(1);
   });
@@ -353,13 +357,13 @@ test("outside test - should NOT run", () => {
     );
 
     // Target line 5 which is the describe line
-    const { stdout, stderr, exitCode } = runTestWithOutput([`./comment-lines.test.ts:5`], cwd);
+    const { stdout, stderr, exitCode } = runTestWithOutput([`./comment-lines.test.ts:6`], cwd);
 
-    expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Test inside ran");
     expect(stdout).not.toContain("❌ Outside test ran");
     expect(stderr).toContain("1 pass");
     expect(stderr).toContain("1 filtered out");
+    expect(exitCode).toBe(0);
   });
 
   test("should handle multiple file:line arguments for same file", () => {
@@ -388,12 +392,12 @@ test("test 3 - SHOULD run", () => {
     // Target lines 3 and 13 (test 1 and test 3)
     const { stdout, stderr, exitCode } = runTestWithOutput([`./multi-line.test.ts:3`, `./multi-line.test.ts:13`], cwd);
 
-    expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Test 1 ran");
     expect(stdout).toContain("✅ Test 3 ran");
     expect(stdout).not.toContain("❌ Test 2 ran");
     expect(stderr).toContain("2 pass");
     expect(stderr).toContain("1 filtered out");
+    expect(exitCode).toBe(0);
   });
 
   test("should handle multiple file:line arguments for different files", () => {
@@ -433,13 +437,13 @@ test("file2 test2 - SHOULD run", () => {
     // Target line 3 in file1 and line 8 in file2
     const { stdout, stderr, exitCode } = runTestWithOutput([`./file1.test.ts:3`, `./file2.test.ts:8`], cwd);
 
-    expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ File1 Test1 ran");
     expect(stdout).toContain("✅ File2 Test2 ran");
     expect(stdout).not.toContain("❌ File1 Test2 ran");
     expect(stdout).not.toContain("❌ File2 Test1 ran");
     expect(stderr).toContain("2 pass");
     expect(stderr).toContain("2 filtered out");
+    expect(exitCode).toBe(0);
   });
 
   test("should handle describe blocks in multiple files", () => {
@@ -493,7 +497,6 @@ describe("group2", () => {
     // Target line 3 in describe1 (describe block) and line 8 in describe2 (describe block)
     const { stdout, stderr, exitCode } = runTestWithOutput([`./describe1.test.ts:3`, `./describe2.test.ts:8`], cwd);
 
-    expect(exitCode).toBe(0);
     expect(stdout).toContain("✅ Group1 Test1 ran");
     expect(stdout).toContain("✅ Group1 Test2 ran");
     expect(stdout).toContain("✅ Group2 Test1 ran");
@@ -502,6 +505,7 @@ describe("group2", () => {
     expect(stdout).not.toContain("❌ Standalone test ran");
     expect(stderr).toContain("4 pass");
     expect(stderr).toContain("2 filtered out");
+    expect(exitCode).toBe(0);
   });
 
   test("should show error message for multiple file:line filters with no matches", () => {
@@ -529,9 +533,9 @@ test("another test", () => {
     // Target non-existent lines
     const { stdout, stderr, exitCode } = runTestWithOutput([`./empty1.test.ts:99`, `./empty2.test.ts:88`], cwd);
 
-    expect(exitCode).toBe(1);
     expect(stderr).toContain("no tests found for file:line filters");
-    expect(stderr).toContain('empty1.test.ts":99');
-    expect(stderr).toContain('empty2.test.ts":88');
+    expect(stderr).toContain("empty1.test.ts:99");
+    expect(stderr).toContain("empty2.test.ts:88");
+    expect(exitCode).toBe(1);
   });
 });

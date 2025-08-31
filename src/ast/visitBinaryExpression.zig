@@ -40,7 +40,6 @@ pub fn CreateBinaryExpressionVisitor(
                 return null;
             }
 
-
             // Create new string with "u"
             const u_string = p.newExpr(E.String{ .data = "u" }, string_expr.loc);
 

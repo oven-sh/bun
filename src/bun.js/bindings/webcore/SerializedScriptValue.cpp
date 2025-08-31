@@ -5873,13 +5873,13 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 
             structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                 // Only enumerable, data properties
-                if (entry.attributes() & PropertyAttribute::DontEnum) {
+                if (entry.attributes() & PropertyAttribute::DontEnum) [[unlikely]] {
                     ASSERT_NOT_REACHED_WITH_MESSAGE("isObjectFastPathCandidate should not allow non-enumerable, data properties");
                     canUseObjectFastPath = false;
                     return false;
                 }
 
-                if (entry.attributes() & PropertyAttribute::Accessor) {
+                if (entry.attributes() & PropertyAttribute::Accessor) [[unlikely]] {
                     ASSERT_NOT_REACHED_WITH_MESSAGE("isObjectFastPathCandidate should not allow accessor properties");
                     canUseObjectFastPath = false;
                     return false;

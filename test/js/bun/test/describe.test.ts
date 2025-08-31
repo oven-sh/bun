@@ -240,7 +240,7 @@ describe("test structure nesting restrictions", () => {
       `,
     });
 
-    const { stdout, stderr } = spawnSync({
+    const proc = spawnSync({
       cmd: [bunExe(), "test", "nested-describe-test.test.js"],
       cwd: test_dir,
       stdout: "pipe",
@@ -248,11 +248,12 @@ describe("test structure nesting restrictions", () => {
       env: bunEnv,
     });
 
-    const fullOutput = stdout.toString() + stderr.toString();
+    const fullOutput = proc.stdout.toString() + proc.stderr.toString();
 
     expect(fullOutput).toInclude("describe() cannot be called inside a test()");
     expect(fullOutput).toInclude("0 pass");
     expect(fullOutput).toInclude("1 fail");
+    expect(proc.exitCode).not.toBe(0);
   });
 
   test("lifecycle hooks cannot be called inside test blocks", async () => {
@@ -269,7 +270,7 @@ describe("test structure nesting restrictions", () => {
       `,
     });
 
-    const { stdout, stderr } = spawnSync({
+    const proc = spawnSync({
       cmd: [bunExe(), "test", "hook-in-test.test.js"],
       cwd: test_dir,
       stdout: "pipe",
@@ -277,11 +278,12 @@ describe("test structure nesting restrictions", () => {
       env: bunEnv,
     });
 
-    const fullOutput = stdout.toString() + stderr.toString();
+    const fullOutput = proc.stdout.toString() + proc.stderr.toString();
 
     expect(fullOutput).toInclude("beforeEach() cannot be called inside a test()");
     expect(fullOutput).toInclude("0 pass");
     expect(fullOutput).toInclude("1 fail");
+    expect(proc.exitCode).not.toBe(0);
   });
 
   test("describe blocks can still be nested inside other describe blocks", async () => {
@@ -299,7 +301,7 @@ describe("test structure nesting restrictions", () => {
       `,
     });
 
-    const { stdout, stderr } = spawnSync({
+    const proc = spawnSync({
       cmd: [bunExe(), "test", "nested-describe-valid.test.js"],
       cwd: test_dir,
       stdout: "pipe",
@@ -307,10 +309,113 @@ describe("test structure nesting restrictions", () => {
       env: bunEnv,
     });
 
-    const fullOutput = stdout.toString() + stderr.toString();
+    const fullOutput = proc.stdout.toString() + proc.stderr.toString();
 
     expect(fullOutput).toInclude("should pass");
     expect(fullOutput).toInclude("1 pass");
     expect(fullOutput).toInclude("0 fail");
+    expect(proc.exitCode).toBe(0);
+  });
+
+  test("describe cannot be called after await inside async test", async () => {
+    const test_dir = tempDirWithFiles(".", {
+      "async-describe-test.test.js": `
+        import { describe, test, expect } from "bun:test";
+
+        test("async test with describe after await", async () => {
+          await Promise.resolve();
+          describe("should not be allowed", () => {
+            test("nested test", () => {});
+          });
+        });
+      `,
+    });
+
+    const proc = spawnSync({
+      cmd: [bunExe(), "test", "async-describe-test.test.js"],
+      cwd: test_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const fullOutput = proc.stdout.toString() + proc.stderr.toString();
+
+    expect(fullOutput).toInclude("describe() cannot be called inside a test()");
+    expect(fullOutput).toInclude("0 pass");
+    expect(fullOutput).toInclude("1 fail");
+    expect(proc.exitCode).not.toBe(0);
+  });
+
+  test("describe.each cannot be called inside test blocks", async () => {
+    const test_dir = tempDirWithFiles(".", {
+      "describe-each-test.test.js": `
+        import { describe, test, expect } from "bun:test";
+
+        test("should fail when describe.each is nested inside", () => {
+          describe.each([
+            [1, 2, 3],
+            [4, 5, 9]
+          ])("add %i + %i equals %i", (a, b, expected) => {
+            test("adds correctly", () => {
+              expect(a + b).toBe(expected);
+            });
+          });
+        });
+      `,
+    });
+
+    const proc = spawnSync({
+      cmd: [bunExe(), "test", "describe-each-test.test.js"],
+      cwd: test_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const fullOutput = proc.stdout.toString() + proc.stderr.toString();
+
+    expect(fullOutput).toInclude("describe() cannot be called inside a test()");
+    expect(fullOutput).toInclude("0 pass");
+    expect(fullOutput).toInclude("1 fail");
+    expect(proc.exitCode).not.toBe(0);
+  });
+
+  test("all lifecycle hooks are blocked inside test blocks", async () => {
+    const test_dir = tempDirWithFiles(".", {
+      "all-hooks-test.test.js": `
+        import { test, beforeEach, afterEach, beforeAll, afterAll } from "bun:test";
+
+        test("should fail with beforeAll", () => {
+          beforeAll(() => {});
+        });
+
+        test("should fail with afterEach", () => {
+          afterEach(() => {});
+        });
+
+        test("should fail with afterAll", () => {
+          afterAll(() => {});
+        });
+      `,
+    });
+
+    const proc = spawnSync({
+      cmd: [bunExe(), "test", "all-hooks-test.test.js"],
+      cwd: test_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const fullOutput = proc.stdout.toString() + proc.stderr.toString();
+
+    // Should show errors for all different hooks
+    expect(fullOutput).toInclude("beforeAll() cannot be called inside a test()");
+    expect(fullOutput).toInclude("afterEach() cannot be called inside a test()");
+    expect(fullOutput).toInclude("afterAll() cannot be called inside a test()");
+    expect(fullOutput).toInclude("0 pass");
+    expect(fullOutput).toInclude("3 fail");
+    expect(proc.exitCode).not.toBe(0);
   });
 });

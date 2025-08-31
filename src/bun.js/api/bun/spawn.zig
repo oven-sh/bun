@@ -92,6 +92,8 @@ pub const BunSpawn = struct {
 
     pub const Attr = struct {
         detached: bool = false,
+        uid: ?u32 = null,
+        gid: ?u32 = null,
 
         pub fn init() !Attr {
             return Attr{};
@@ -262,10 +264,14 @@ pub const PosixSpawn = struct {
     pub const Actions = if (Environment.isLinux) BunSpawn.Actions else PosixSpawnActions;
     pub const Attr = if (Environment.isLinux) BunSpawn.Attr else PosixSpawnAttr;
 
-    const BunSpawnRequest = extern struct {
+    pub const BunSpawnRequest = extern struct {
         chdir_buf: ?[*:0]u8 = null,
         detached: bool = false,
         actions: ActionsList = .{},
+        uid: u32 = 0,
+        gid: u32 = 0,
+        has_uid: bool = false,
+        has_gid: bool = false,
 
         const ActionsList = extern struct {
             ptr: ?[*]const BunSpawn.Action = null,
@@ -273,9 +279,8 @@ pub const PosixSpawn = struct {
         };
 
         extern fn posix_spawn_bun(
-            pid: *c_int,
-            path: [*:0]const u8,
             request: *const BunSpawnRequest,
+            path: [*:0]const u8,
             argv: [*:null]?[*:0]const u8,
             envp: [*:null]?[*:0]const u8,
         ) isize;
@@ -287,23 +292,21 @@ pub const PosixSpawn = struct {
             envp: [*:null]?[*:0]const u8,
         ) Maybe(pid_t) {
             var req = req_;
-            var pid: c_int = 0;
 
-            const rc = posix_spawn_bun(&pid, path, &req, argv, envp);
+            const rc = posix_spawn_bun(&req, path, argv, envp);
             if (comptime bun.Environment.allow_assert)
-                bun.sys.syslog("posix_spawn_bun({s}) = {d} ({d})", .{
+                bun.sys.syslog("posix_spawn_bun({s}) = {d}", .{
                     bun.span(argv[0] orelse ""),
                     rc,
-                    pid,
                 });
 
-            if (rc == 0) {
-                return Maybe(pid_t){ .result = @intCast(pid) };
+            if (rc > 0) {
+                return Maybe(pid_t){ .result = @intCast(rc) };
             }
 
             return Maybe(pid_t){
                 .err = .{
-                    .errno = @as(bun.sys.Error.Int, @truncate(@intFromEnum(@as(std.c.E, @enumFromInt(rc))))),
+                    .errno = @as(bun.sys.Error.Int, @truncate(@intFromEnum(@as(std.c.E, @enumFromInt(-rc))))),
                     .syscall = .posix_spawn,
                     .path = bun.span(argv[0] orelse ""),
                 },
@@ -331,6 +334,10 @@ pub const PosixSpawn = struct {
                     },
                     .chdir_buf = if (actions) |a| a.chdir_buf else null,
                     .detached = if (attr) |a| a.detached else false,
+                    .uid = if (attr) |a| a.uid orelse 0 else 0,
+                    .gid = if (attr) |a| a.gid orelse 0 else 0,
+                    .has_uid = if (attr) |a| a.uid != null else false,
+                    .has_gid = if (attr) |a| a.gid != null else false,
                 },
                 argv,
                 envp,

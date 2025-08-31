@@ -133,7 +133,6 @@ template<typename Visitor>
 void JSYogaNode::visitOutputConstraints(JSC::JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = jsCast<JSYogaNode*>(cell);
-    fprintf(stderr, "[DEBUG] JSYogaNode::visitOutputConstraints called for %p\n", thisObject);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
     thisObject->visitAdditionalChildren(visitor);

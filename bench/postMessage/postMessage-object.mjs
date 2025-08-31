@@ -1,7 +1,7 @@
 // Benchmark for string fast path optimization in postMessage with Workers
 
 import { bench, run } from "mitata";
-import { Worker, isMainThread, parentPort } from "node:worker_threads";
+import { Worker } from "node:worker_threads";
 
 const extraProperties = {
   a: "a!",

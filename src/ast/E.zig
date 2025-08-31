@@ -989,10 +989,6 @@ pub const String = struct {
         return std.math.order(a.len, b.len);
     }
 
-    fn stringCompareUTF8(a: []const u8, b: []const u8) std.math.Order {
-        return strings.order(a, b);
-    }
-
     pub fn order(this: *const String, other: *const String) std.math.Order {
         bun.debugAssert(this.isUTF8() == other.isUTF8());
 

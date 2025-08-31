@@ -491,6 +491,7 @@ fn _onStructuredCloneDeserialize(
             const name_len = try reader.readInt(u32, .little);
             const name_bytes = try readSlice(reader, name_len, allocator);
             blob.name = bun.String.cloneUTF8(name_bytes);
+            allocator.free(name_bytes);
         }
 
         if (version == 3) break :versions;

@@ -280,8 +280,7 @@ describe("structuredClone with Blob and File", () => {
     test("single nested Blob should not throw", () => {
       const blob = new Blob(["test"]);
       const obj = { blob: blob };
-
-      expect(() => structuredClone(obj)).not.toThrow();
+      
       const cloned = structuredClone(obj);
       expect(cloned.blob).toBeInstanceOf(Blob);
     });
@@ -289,8 +288,7 @@ describe("structuredClone with Blob and File", () => {
     test("single nested File should not throw", () => {
       const file = new File(["test"], "test.txt");
       const obj = { file: file };
-
-      expect(() => structuredClone(obj)).not.toThrow();
+      
       const cloned = structuredClone(obj);
       expect(cloned.file).toBeInstanceOf(File);
     });

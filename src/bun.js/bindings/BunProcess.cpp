@@ -3467,7 +3467,7 @@ extern "C" void Bun__Process__queueNextTick1(GlobalObject* globalObject, Encoded
 {
     auto process = globalObject->processObject();
     JSValue function = JSValue::decode(func);
-    
+
     // Validate that the function is callable before queuing
     if (function && function.isCallable()) {
         process->queueNextTick(globalObject, function, JSValue::decode(arg1));
@@ -3477,7 +3477,7 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
 {
     auto process = globalObject->processObject();
     JSValue function = JSValue::decode(func);
-    
+
     // Validate that the function is callable before queuing
     if (function && function.isCallable()) {
         process->queueNextTick<2>(globalObject, function, { JSValue::decode(arg1), JSValue::decode(arg2) });

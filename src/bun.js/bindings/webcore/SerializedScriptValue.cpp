@@ -5760,6 +5760,11 @@ static bool isObjectFastPathCandidate(Structure* structure)
         return false;
     }
 
+    if (structure->hasNonConfigurableProperties() || structure->hasNonEnumerableProperties()) {
+        dataLogLnIf(verbose, "target has non-configurable or non-enumerable properties");
+        return false;
+    }
+
     return true;
 }
 // static bool containsDuplicates(const Vector<RefPtr<ImageBitmap>>& imageBitmaps)
@@ -5867,6 +5872,19 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             WTF::Vector<SimpleInMemoryPropertyTableEntry> properties;
 
             structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+                // Only enumerable, data properties
+                if (entry.attributes() & PropertyAttribute::DontEnum) {
+                    ASSERT_NOT_REACHED_WITH_MESSAGE("isObjectFastPathCandidate should not allow non-enumerable, data properties");
+                    canUseObjectFastPath = false;
+                    return false;
+                }
+
+                if (entry.attributes() & PropertyAttribute::Accessor) {
+                    ASSERT_NOT_REACHED_WITH_MESSAGE("isObjectFastPathCandidate should not allow accessor properties");
+                    canUseObjectFastPath = false;
+                    return false;
+                }
+
                 JSValue value = object->getDirect(entry.offset());
 
                 if (value.isCell()) {

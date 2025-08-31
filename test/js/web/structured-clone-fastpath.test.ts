@@ -13,6 +13,47 @@ describe("Structured Clone Fast Path", () => {
     expect(cloned).toStrictEqual("");
   });
 
+  const deOptimizations = [
+    {
+      get accessor() {
+        return 1;
+      },
+    },
+    Object.create(Object.prototype, {
+      data: {
+        value: 1,
+        writable: false,
+        configurable: false,
+      },
+    }),
+    Object.create(Object.prototype, {
+      data: {
+        value: 1,
+        writable: true,
+        configurable: false,
+      },
+    }),
+    Object.create(Object.prototype, {
+      data: {
+        get: () => 1,
+        configurable: true,
+      },
+    }),
+    Object.create(Object.prototype, {
+      data: {
+        set: () => {},
+        enumerable: true,
+        configurable: true,
+      },
+    }),
+  ];
+
+  for (const deOptimization of deOptimizations) {
+    test("structuredCloneDeOptimization", () => {
+      structuredClone(deOptimization);
+    });
+  }
+
   test("structuredClone should use a constant amount of memory for string inputs", () => {
     const clones: Array<string> = [];
     // Create a 512KB string to test fast path

@@ -74,6 +74,12 @@ public:
     Value value;
 };
 
+enum class FastPath : uint8_t {
+    None,
+    String,
+    SimpleObject,
+};
+
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
 class DetachedOffscreenCanvas;
 #endif
@@ -250,7 +256,7 @@ private:
 
     // Fast path for postMessage with pure strings - avoids serialization overhead
     String m_fastPathString;
-    bool m_isStringFastPath { false };
+    FastPath m_fastPath { FastPath::None };
     size_t m_memoryCost { 0 };
 
     FixedVector<SimpleInMemoryPropertyTableEntry> m_simpleInMemoryPropertyTable {};

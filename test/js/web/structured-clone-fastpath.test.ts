@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 describe("Structured Clone Fast Path", () => {
+  test("structuredClone should work with empty object", () => {
+    const object = {};
+    const cloned = structuredClone(object);
+    expect(cloned).toStrictEqual({});
+  });
+
   test("structuredClone should use a constant amount of memory for string inputs", () => {
     const clones: Array<string> = [];
     // Create a 512KB string to test fast path

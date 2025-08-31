@@ -94,12 +94,12 @@ bench("postMessage({ prop: " + fmt(objects.small.property.length) + " string, ..
   worker.postMessage(objects.small);
 });
 
-bench("postMessage({ prop: " + fmt(objects.medium.property.length) + " string, ...9 more props })", async () => {
+bench("postMessage({ prop: " + fmt(objects.medium.property.length) + " string,    ...9 more props })", async () => {
   sentCount++;
   worker.postMessage(objects.medium);
 });
 
-bench("postMessage({ prop: " + fmt(objects.large.property.length) + " string, ...9 more props })", async () => {
+bench("postMessage({ prop: " + fmt(objects.large.property.length) + " string,     ...9 more props })", async () => {
   sentCount++;
   worker.postMessage(objects.large);
 });

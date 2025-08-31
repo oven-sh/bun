@@ -5567,13 +5567,14 @@ SerializedScriptValue::SerializedScriptValue(Vector<uint8_t>&& buffer, std::uniq
 
 SerializedScriptValue::SerializedScriptValue(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>&& object)
     : m_simpleInMemoryPropertyTable(WTFMove(object))
+    , m_fastPath(FastPath::SimpleObject)
 {
     m_memoryCost = computeMemoryCost();
 }
 
 SerializedScriptValue::SerializedScriptValue(const String& fastPathString)
     : m_fastPathString(fastPathString)
-    , m_isStringFastPath(true)
+    , m_fastPath(FastPath::String)
 {
     m_memoryCost = computeMemoryCost();
 }
@@ -5581,19 +5582,6 @@ SerializedScriptValue::SerializedScriptValue(const String& fastPathString)
 size_t SerializedScriptValue::computeMemoryCost() const
 {
     size_t cost = m_data.size();
-    cost += m_simpleInMemoryPropertyTable.byteSize();
-
-    // Add the memory cost of strings in the simple property table
-    for (const auto& entry : m_simpleInMemoryPropertyTable) {
-        // Add property name string cost
-        cost += entry.propertyName.sizeInBytes();
-
-        // Add value string cost if it's a string
-        if (std::holds_alternative<WTF::String>(entry.value)) {
-            const auto& str = std::get<WTF::String>(entry.value);
-            cost += str.sizeInBytes();
-        }
-    }
 
     if (m_arrayBufferContentsArray) {
         for (auto& content : *m_arrayBufferContentsArray)
@@ -5642,8 +5630,30 @@ size_t SerializedScriptValue::computeMemoryCost() const
     //     cost += handle.url().string().sizeInBytes();
 
     // Account for fast path string memory usage
-    if (m_isStringFastPath)
+    switch (m_fastPath) {
+    case FastPath::String:
+        ASSERT(m_simpleInMemoryPropertyTable.isEmpty());
         cost += m_fastPathString.sizeInBytes();
+        break;
+    case FastPath::SimpleObject:
+        ASSERT(m_fastPathString.isEmpty());
+        cost += m_simpleInMemoryPropertyTable.byteSize();
+        // Add the memory cost of strings in the simple property table
+        for (const auto& entry : m_simpleInMemoryPropertyTable) {
+            // Add property name string cost
+            cost += entry.propertyName.sizeInBytes();
+
+            // Add value string cost if it's a string
+            if (std::holds_alternative<WTF::String>(entry.value)) {
+                const auto& str = std::get<WTF::String>(entry.value);
+                cost += str.sizeInBytes();
+            }
+        }
+
+        break;
+    case FastPath::None:
+        break;
+    }
 
     return cost;
 }
@@ -6205,14 +6215,12 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
 {
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // Fast path for string-only values - avoid deserialization overhead
-    if (m_isStringFastPath) {
+    switch (m_fastPath) {
+    case FastPath::String:
         if (didFail)
             *didFail = false;
         return jsString(vm, m_fastPathString);
-    }
-
-    if (m_simpleInMemoryPropertyTable.size()) {
+    case FastPath::SimpleObject: {
         JSObject* object = constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned>(m_simpleInMemoryPropertyTable.size()), JSFinalObject::maxInlineCapacity));
         if (scope.exception()) [[unlikely]] {
             if (didFail)
@@ -6233,6 +6241,10 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
             *didFail = false;
 
         return object;
+    }
+    case FastPath::None: {
+        break;
+    }
     }
 
     DeserializationResult result = CloneDeserializer::deserialize(&lexicalGlobalObject, globalObject, messagePorts

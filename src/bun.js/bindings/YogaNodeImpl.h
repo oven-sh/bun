@@ -5,6 +5,7 @@
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/JSObject.h>
 #include <yoga/Yoga.h>
+#include <atomic>
 
 namespace Bun {
 
@@ -33,6 +34,11 @@ public:
 
     // Replace the internal YGNodeRef (used for cloning)
     void replaceYogaNode(YGNodeRef newNode);
+    
+    // Layout state management for GC protection
+    void setInLayoutCalculation(bool inLayout);
+    bool isInLayoutCalculation() const;
+    bool hasChildrenInLayout() const;
 
 private:
     explicit YogaNodeImpl(YGConfigRef config, JSYogaConfig* jsConfig);
@@ -40,7 +46,7 @@ private:
     YGNodeRef m_yogaNode;
     JSC::Weak<JSYogaNode> m_wrapper;
     JSYogaConfig* m_jsConfig;
-    bool m_ownsYogaNode; // Track if we should free the YGNode in destructor
+    std::atomic<bool> m_inLayoutCalculation; // Track layout state for GC protection
 };
 
 } // namespace Bun

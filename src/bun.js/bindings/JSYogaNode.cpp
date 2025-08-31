@@ -135,7 +135,15 @@ void JSYogaNode::visitOutputConstraints(JSC::JSCell* cell, Visitor& visitor)
     auto* thisObject = jsCast<JSYogaNode*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
+    
+    // Re-visit after mutator execution in case callbacks changed references
+    // This is critical for objects whose reachability can change during runtime
     thisObject->visitAdditionalChildren(visitor);
+    
+    // Ensure we keep alive during active layout operations  
+    if (thisObject->m_impl->isInLayoutCalculation()) {
+        visitor.addOpaqueRoot(&thisObject->m_impl.get());
+    }
 }
 
 template void JSYogaNode::visitOutputConstraints(JSC::JSCell*, JSC::AbstractSlotVisitor&);

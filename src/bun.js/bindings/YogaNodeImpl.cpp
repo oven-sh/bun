@@ -8,21 +8,12 @@
 
 namespace Bun {
 
-// Global set to track freed YGNodes to prevent double-freeing
-static Lock s_freedNodesLock;
-static HashSet<void*> s_freedNodes;
-
-static void safeYGNodeFree(YGNodeRef node)
+// Simplified approach: trust Yoga's built-in parent-child management
+static void simpleYGNodeFree(YGNodeRef node)
 {
-    if (!node) return;
-
-    Locker locker { s_freedNodesLock };
-    if (s_freedNodes.contains(node)) {
-        return; // Already freed
+    if (node) {
+        YGNodeFree(node);
     }
-
-    s_freedNodes.add(node);
-    YGNodeFree(node);
 }
 
 Ref<YogaNodeImpl> YogaNodeImpl::create(YGConfigRef config, JSYogaConfig* jsConfig)
@@ -32,7 +23,7 @@ Ref<YogaNodeImpl> YogaNodeImpl::create(YGConfigRef config, JSYogaConfig* jsConfi
 
 YogaNodeImpl::YogaNodeImpl(YGConfigRef config, JSYogaConfig* jsConfig)
     : m_jsConfig(jsConfig)
-    , m_ownsYogaNode(true)
+    , m_inLayoutCalculation(false)
 {
     if (config) {
         m_yogaNode = YGNodeNewWithConfig(config);
@@ -47,16 +38,14 @@ YogaNodeImpl::YogaNodeImpl(YGConfigRef config, JSYogaConfig* jsConfig)
 YogaNodeImpl::~YogaNodeImpl()
 {
     if (m_yogaNode) {
-        // Clear the context pointer to avoid callbacks during cleanup
+        // Clear context immediately to prevent callbacks during cleanup
         YGNodeSetContext(m_yogaNode, nullptr);
-
-        // Only free the node if we own it and it has no parent
-        // Nodes with parents should be freed when the parent is freed
-        if (m_ownsYogaNode) {
-            YGNodeRef parent = YGNodeGetParent(m_yogaNode);
-            if (!parent) {
-                safeYGNodeFree(m_yogaNode);
-            }
+        
+        // Simplified pattern: only free root nodes (no parent)
+        // Let Yoga handle child cleanup automatically
+        YGNodeRef parent = YGNodeGetParent(m_yogaNode);
+        if (!parent) {
+            simpleYGNodeFree(m_yogaNode);
         }
         m_yogaNode = nullptr;
     }
@@ -102,17 +91,42 @@ void YogaNodeImpl::replaceYogaNode(YGNodeRef newNode)
 {
     if (m_yogaNode) {
         YGNodeSetContext(m_yogaNode, nullptr);
-        // Only free the old node if we owned it
-        if (m_ownsYogaNode) {
-            safeYGNodeFree(m_yogaNode);
+        
+        // Simplified pattern: only free if no parent (root node)
+        YGNodeRef parent = YGNodeGetParent(m_yogaNode);
+        if (!parent) {
+            simpleYGNodeFree(m_yogaNode);
         }
     }
     m_yogaNode = newNode;
     if (newNode) {
         YGNodeSetContext(newNode, this);
-        // Cloned nodes are owned by us - YGNodeClone creates a new node we must free
-        m_ownsYogaNode = true;
     }
+}
+
+void YogaNodeImpl::setInLayoutCalculation(bool inLayout)
+{
+    m_inLayoutCalculation.store(inLayout);
+}
+
+bool YogaNodeImpl::isInLayoutCalculation() const
+{
+    return m_inLayoutCalculation.load();
+}
+
+bool YogaNodeImpl::hasChildrenInLayout() const
+{
+    if (!m_yogaNode) return false;
+    
+    size_t childCount = YGNodeGetChildCount(m_yogaNode);
+    for (size_t i = 0; i < childCount; i++) {
+        YGNodeRef childNode = YGNodeGetChild(m_yogaNode, i);
+        YogaNodeImpl* childImpl = fromYGNode(childNode);
+        if (childImpl && childImpl->isInLayoutCalculation()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace Bun

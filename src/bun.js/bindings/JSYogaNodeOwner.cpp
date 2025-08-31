@@ -44,11 +44,25 @@ bool JSYogaNodeOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handl
     UNUSED_PARAM(handle);
 
     auto* impl = static_cast<YogaNodeImpl*>(context);
+    
+    // Enhanced reachability based on layout state and React Native patterns
+    
+    // Keep alive during active layout calculations (similar to EventTarget firing events)
+    if (impl->isInLayoutCalculation()) {
+        if (reason) *reason = "YogaNode active in layout calculation"_s;
+        return true;
+    }
+    
+    // Keep alive if this is a root node with children being laid out
+    if (impl->hasChildrenInLayout()) {
+        if (reason) *reason = "YogaNode has children in active layout"_s; 
+        return true;
+    }
 
     // Check if the YogaNodeImpl itself is reachable as opaque root
     bool reachable = visitor.containsOpaqueRoot(impl);
-    if (reason)
-        *reason = "YogaNode reachable from root"_s;
+    if (reachable && reason)
+        *reason = "YogaNode reachable from opaque root"_s;
 
     return reachable;
 }

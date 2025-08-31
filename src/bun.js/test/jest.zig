@@ -139,7 +139,7 @@ pub const TestRunner = struct {
     }
 
     pub fn hasTestFilter(this: *const TestRunner) bool {
-        return this.filter_regex != null or this.line_filters_by_file_id.count() > 0;
+        return this.filter_regex != null or this.test_options.test_line_filters.count() > 0;
     }
 
     fn mapLineFiltersToFileId(this: *TestRunner, file_path: []const u8, file_id: File.ID) void {
@@ -159,21 +159,33 @@ pub const TestRunner = struct {
             var lines_copy = std.ArrayListUnmanaged(u32){};
             lines_copy.appendSlice(this.allocator, lines.items) catch return;
             this.line_filters_by_file_id.put(this.allocator, file_id, lines_copy) catch return;
+            
+            // Debug: confirm mapping
+            bun.Output.debug("MAPPED file_id {} -> {} lines for path '{s}'", .{ file_id, lines.items.len, absolute_file_path });
+        } else {
+            // Debug: no match found
+            bun.Output.debug("NO MATCH for path '{s}', available filters:", .{absolute_file_path});
+            var iter = this.test_options.test_line_filters.iterator();
+            while (iter.next()) |entry| {
+                bun.Output.debug("  '{s}'", .{entry.key_ptr.*});
+            }
         }
     }
 
     pub fn matchesLineFilter(this: *const TestRunner, file_path: []const u8, line_number: u32, parent: ?*DescribeScope) bool {
-        _ = file_path; // Unused - we only use file_id now
-        if (this.line_filters_by_file_id.count() == 0) return true;
+        if (this.test_options.test_line_filters.count() == 0) return true;
 
-        // Use the file ID from the parent DescribeScope for O(1) lookup
-        const file_id = if (parent) |p| p.file_id else {
-            // This shouldn't happen normally - all tests should have a parent
-            return false;
+        // Convert file path to absolute path for exact comparison
+        var path_buf: bun.PathBuffer = undefined;
+        const absolute_current_file = if (std.fs.path.isAbsolute(file_path))
+            file_path
+        else blk: {
+            const cwd = bun.getcwd(&path_buf) catch break :blk file_path;
+            break :blk bun.path.joinAbsStringBuf(cwd, &path_buf, &.{file_path}, .auto);
         };
 
-        // Fast O(1) lookup using file ID  
-        const lines = this.line_filters_by_file_id.get(file_id);
+        // Direct lookup in the test_options line filters
+        const lines = this.test_options.test_line_filters.get(absolute_current_file);
         if (lines == null) {
             // No line filter for this file, so it should be skipped
             return false;
@@ -2074,7 +2086,7 @@ inline fn createScope(
             }
 
             // Apply line-based filtering
-            if (runner.line_filters_by_file_id.count() > 0) {
+            if (runner.test_options.test_line_filters.count() > 0) {
                 const current_file = runner.files.items(.source)[parent.file_id].path.text;
                 const test_line = captureTestLineNumber(callframe, globalThis);
                 if (!runner.matchesLineFilter(current_file, test_line, parent)) {
@@ -2459,7 +2471,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                 }
 
                 // Apply line-based filtering
-                if (Jest.runner.?.line_filters_by_file_id.count() > 0) {
+                if (Jest.runner.?.test_options.test_line_filters.count() > 0) {
                     const current_file = Jest.runner.?.files.items(.source)[parent.file_id].path.text;
                     const test_line = each_data.line_number;
                     if (!Jest.runner.?.matchesLineFilter(current_file, test_line, parent)) {

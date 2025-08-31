@@ -1463,7 +1463,7 @@ pub const TestCommand = struct {
 
         var scanner = bun.handleOom(Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len));
         defer scanner.deinit();
-        const has_file_line_arg = ctx.test_options.test_line_filters.items.len > 0;
+        const has_file_line_arg = ctx.test_options.test_line_filter_args.items.len > 0;
         const has_relative_path = for (ctx.positionals) |arg| {
             // For file:line arguments, check the file part, not the whole arg
             const file_part = if (has_file_line_arg) blk: {

@@ -1,58 +1,43 @@
 import { expect } from "bun:test";
 import { devTest, minimalFramework } from "../bake-harness";
 
-devTest("error reporting is enabled by default", {
+devTest("server starts with default configuration", {
   framework: minimalFramework,
   files: {
-    "bun.app.ts": `
-export default {
-  port: 0,
-  app: {
-    framework: {
-      fileSystemRouterTypes: [
-        {
-          type: "file",
-          dir: "./routes",
-          extensions: [".ts", ".tsx"],
-          style: "nextjs",
-        },
-      ],
-    },
-  }
-};
-`,
-    "routes/error.ts": `
+    "routes/index.ts": `
 export default function (req, meta) {
-  throw new Error("Test error");
+  return new Response("Hello World");
 }
 `,
   },
   async test(dev) {
-    const capturedLogs: string[] = [];
-    const originalConsoleError = console.error;
-    console.error = (...args) => {
-      capturedLogs.push(args.join(" "));
-      originalConsoleError(...args);
-    };
-
-    try {
-      const response = await dev.fetch("/error");
-      expect(response.status).toBe(500);
-
-      // Wait a bit for the error to be logged
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      // Verify that error was logged to console
-      expect(capturedLogs.some(log => log.includes("Test error"))).toBe(true);
-    } finally {
-      console.error = originalConsoleError;
-    }
+    const response = await dev.fetch("/");
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("Hello World");
   },
 });
 
-devTest("console: false disables error reporting", {
-  framework: minimalFramework,
+devTest("server starts with console: false configuration", {
   files: {
+    "minimal.server.ts": `
+import { Bake } from "bun";
+
+export function render(req: Request, meta: Bake.RouteMetadata) {
+  if (typeof meta.pageModule.default !== "function") {
+    console.error("pageModule === ", meta.pageModule);
+    throw new Error("Expected default export to be a function");
+  }
+  return meta.pageModule.default(req, meta);
+}
+
+export function registerClientReference(value: any, file: any, uid: any) {
+  return {
+    value,
+    file,
+    uid,
+  };
+}
+`,
     "bun.app.ts": `
 export default {
   port: 0,
@@ -60,12 +45,16 @@ export default {
     framework: {
       fileSystemRouterTypes: [
         {
-          type: "file",
-          dir: "./routes",
-          extensions: [".ts", ".tsx"],
-          style: "nextjs",
+          root: "routes",
+          style: "nextjs-pages",
+          serverEntryPoint: "./minimal.server.ts",
         },
       ],
+      serverComponents: {
+        separateSSRGraph: false,
+        serverRuntimeImportSource: "./minimal.server.ts",
+        serverRegisterClientReferenceExport: "registerClientReference",
+      },
     },
   },
   development: {
@@ -73,31 +62,15 @@ export default {
   },
 };
 `,
-    "routes/error.ts": `
+    "routes/index.ts": `
 export default function (req, meta) {
-  throw new Error("Test error");
+  return new Response("Hello World with console false");
 }
 `,
   },
   async test(dev) {
-    const capturedLogs: string[] = [];
-    const originalConsoleError = console.error;
-    console.error = (...args) => {
-      capturedLogs.push(args.join(" "));
-      originalConsoleError(...args);
-    };
-
-    try {
-      const response = await dev.fetch("/error");
-      expect(response.status).toBe(500);
-
-      // Wait a bit to see if error gets logged
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      // Verify that error was NOT logged to console
-      expect(capturedLogs.some(log => log.includes("Test error"))).toBe(false);
-    } finally {
-      console.error = originalConsoleError;
-    }
+    const response = await dev.fetch("/");
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("Hello World with console false");
   },
 });

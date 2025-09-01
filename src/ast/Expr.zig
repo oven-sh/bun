@@ -1401,6 +1401,10 @@ pub fn init(comptime Type: type, st: Type, loc: logger.Loc) Expr {
             .e_inlined_enum = Data.Store.append(@TypeOf(st), st),
         } },
 
+        E.NewWorker => return .{ .loc = loc, .data = .{
+            .e_new_worker = Data.Store.append(@TypeOf(st), st),
+        } },
+
         else => {
             @compileError("Invalid type passed to Expr.init: " ++ @typeName(Type));
         },
@@ -1463,6 +1467,7 @@ pub const Tag = enum {
     e_special,
     e_inlined_enum,
     e_name_of_symbol,
+    e_new_worker,
 
     // object, regex and array may have had side effects
     pub fn isPrimitiveLiteral(tag: Tag) bool {
@@ -2151,6 +2156,8 @@ pub const Data = union(Tag) {
     e_inlined_enum: *E.InlinedEnum,
 
     e_name_of_symbol: *E.NameOfSymbol,
+    
+    e_new_worker: *E.NewWorker,
 
     comptime {
         bun.assert_eql(@sizeOf(Data), 24); // Do not increase the size of Expr
@@ -2271,6 +2278,16 @@ pub const Data = union(Tag) {
                 const item = try allocator.create(std.meta.Child(@TypeOf(this.e_inlined_enum)));
                 item.* = el.*;
                 return .{ .e_inlined_enum = item };
+            },
+            .e_name_of_symbol => |el| {
+                const item = try allocator.create(std.meta.Child(@TypeOf(this.e_name_of_symbol)));
+                item.* = el.*;
+                return .{ .e_name_of_symbol = item };
+            },
+            .e_new_worker => |el| {
+                const item = try allocator.create(std.meta.Child(@TypeOf(this.e_new_worker)));
+                item.* = el.*;
+                return .{ .e_new_worker = item };
             },
             else => this,
         };
@@ -2481,6 +2498,21 @@ pub const Data = union(Tag) {
                 });
                 return .{ .e_inlined_enum = item };
             },
+            .e_name_of_symbol => |el| {
+                const item = bun.create(allocator, E.NameOfSymbol, .{
+                    .ref = el.ref,
+                    .has_property_key_comment = el.has_property_key_comment,
+                });
+                return .{ .e_name_of_symbol = item };
+            },
+            .e_new_worker => |el| {
+                const item = bun.create(allocator, E.NewWorker, .{
+                    .import_record_index = el.import_record_index,
+                    .options = try el.options.deepClone(allocator),
+                    .close_parens_loc = el.close_parens_loc,
+                });
+                return .{ .e_new_worker = item };
+            },
             else => this,
         };
     }
@@ -2493,6 +2525,10 @@ pub const Data = union(Tag) {
             .e_name_of_symbol => |e| {
                 const symbol = e.ref.getSymbol(symbol_table);
                 hasher.update(symbol.original_name);
+            },
+            .e_new_worker => |e| {
+                writeAnyToHasher(hasher, e.import_record_index);
+                e.options.data.writeToHasher(hasher, symbol_table);
             },
             .e_array => |e| {
                 writeAnyToHasher(hasher, .{
@@ -3116,6 +3152,7 @@ pub const Data = union(Tag) {
             E.InlinedEnum,
             E.JSXElement,
             E.New,
+            E.NewWorker,
             E.Number,
             E.Object,
             E.PrivateIdentifier,

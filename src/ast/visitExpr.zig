@@ -1490,8 +1490,46 @@ pub fn VisitExpr(
                     arg.* = p.visitExpr(arg.*);
                 }
 
+                // Check if this is a new Worker() call and transform it
+                if (e_.target.data == .e_identifier) {
+                    const target_ref = e_.target.data.e_identifier.ref;
+                    if (target_ref.innerIndex() < p.symbols.items.len) {
+                        const target_symbol = &p.symbols.items[target_ref.innerIndex()];
+                        
+                        // Check if the identifier is "Worker" and it's unbound (global)
+                        if (bun.strings.eqlComptime(target_symbol.original_name, "Worker") and
+                            target_symbol.namespace_alias == null and 
+                            target_symbol.import_item_status == .none) {
+                            
+                            const args = e_.args.slice();
+                            // Check if first argument is a string literal  
+                            if (args.len > 0 and args[0].data == .e_string) {
+                                // Convert to e_new_worker
+                                const worker_string = args[0].data.e_string.slice(p.allocator);
+                                const import_record_index = p.addImportRecord(.worker, args[0].loc, worker_string);
+                                
+                                // Create e_new_worker expression - NOTE: we intentionally do NOT add to import_records_for_current_part
+                                // to prevent the bundler from emitting an import statement as per requirements
+                                return Expr.init(E.NewWorker, E.NewWorker{
+                                    .import_record_index = @intCast(import_record_index),
+                                    .options = if (args.len > 1) args[1] else Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = args[0].loc },
+                                    .close_parens_loc = e_.close_parens_loc,
+                                }, expr.loc);
+                            }
+                        }
+                    }
+                }
+
                 if (p.options.features.minify_syntax) {
                     KnownGlobal.maybeMarkConstructorAsPure(e_, p.symbols.items);
+                }
+                return expr;
+            }
+            pub fn e_new_worker(p: *P, expr: Expr, _: ExprIn) Expr {
+                const e_ = expr.data.e_new_worker;
+                // Visit the options expression if it's not missing
+                if (e_.options.data != .e_missing) {
+                    e_.options = p.visitExpr(e_.options);
                 }
                 return expr;
             }

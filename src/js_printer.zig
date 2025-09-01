@@ -2180,6 +2180,37 @@ fn NewPrinter(
                         p.print(")");
                     }
                 },
+                .e_new_worker => |e| {
+                    const wrap = level.gte(.call);
+
+                    if (wrap) {
+                        p.print("(");
+                    }
+
+                    p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
+                    p.print("new Worker(");
+                    
+                    // Print the worker script path from the import record
+                    p.printStringLiteralUTF8(p.importRecord(e.import_record_index).path.text, true);
+                    
+                    // Print options if present and not missing
+                    if (e.options.data != .e_missing) {
+                        p.print(",");
+                        p.printSpace();
+                        p.printExpr(e.options, .comma, ExprFlag.None());
+                    }
+
+                    if (e.close_parens_loc.start > expr.loc.start) {
+                        p.addSourceMapping(e.close_parens_loc);
+                    }
+
+                    p.print(")");
+
+                    if (wrap) {
+                        p.print(")");
+                    }
+                },
                 .e_call => |e| {
                     var wrap = level.gte(.new) or flags.contains(.forbid_call);
                     var target_flags = ExprFlag.None();

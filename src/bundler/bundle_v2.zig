@@ -340,7 +340,7 @@ pub const BundleV2 = struct {
                             v.additional_files_imported_by_css_and_inlined.set(import_record.source_index.get());
                         }
 
-                        v.visit(import_record.source_index, check_dynamic_imports and import_record.kind == .dynamic, check_dynamic_imports);
+                        v.visit(import_record.source_index, check_dynamic_imports and (import_record.kind == .dynamic or import_record.kind == .worker), check_dynamic_imports);
                     }
                 }
 

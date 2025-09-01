@@ -126,6 +126,13 @@ pub const New = struct {
 
     close_parens_loc: logger.Loc,
 };
+
+pub const NewWorker = struct {
+    import_record_index: u32,
+    options: Expr,
+    close_parens_loc: logger.Loc,
+};
+
 pub const NewTarget = struct {
     range: logger.Range,
 };

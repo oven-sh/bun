@@ -313,7 +313,7 @@ pub const TestRunner = struct {
             };
 
             if (this.test_options.test_line_filters.get(abs_path)) |lines| {
-                this.line_filters_by_file_id.put(this.allocator, file_id, lines.clone(this.allocator) catch break :brk) catch break :brk;
+                this.line_filters_by_file_id.put(this.allocator, file_id, lines) catch break :brk;
             }
         }
 

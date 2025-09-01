@@ -1275,6 +1275,17 @@ fn parseFileLineArg(arg: []const u8) ?struct { file_pattern: []const u8, line_nu
     };
 }
 
+fn makeAbsolutePath(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
+    if (std.fs.path.isAbsolute(path)) {
+        return try allocator.dupe(u8, path);
+    } else {
+        var local_buf: bun.PathBuffer = undefined;
+        const cwd = bun.fs.FileSystem.instance.top_level_dir;
+        const joined = bun.path.joinAbsStringBuf(cwd, &local_buf, &.{path}, .auto);
+        return try allocator.dupe(u8, joined);
+    }
+}
+
 pub const TestCommand = struct {
     pub const name = "test";
     pub const CodeCoverageOptions = struct {
@@ -1461,14 +1472,7 @@ pub const TestCommand = struct {
             for (file_or_dirnames) |arg| {
                 const file_line = parseFileLineArg(arg);
                 if (file_line) |parsed| {
-                    const abs_pattern = if (std.fs.path.isAbsolute(parsed.file_pattern))
-                        try ctx.allocator.dupe(u8, parsed.file_pattern)
-                    else blk: {
-                        var local_path_buf: bun.PathBuffer = undefined;
-                        const cwd = bun.fs.FileSystem.instance.top_level_dir;
-                        const joined = bun.path.joinAbsStringBuf(cwd, &local_path_buf, &.{parsed.file_pattern}, .auto);
-                        break :blk try ctx.allocator.dupe(u8, joined);
-                    };
+                    const abs_pattern = try makeAbsolutePath(ctx.allocator, parsed.file_pattern);
 
                     const result = try ctx.test_options.test_line_filters.getOrPut(ctx.allocator, abs_pattern);
                     if (!result.found_existing) {

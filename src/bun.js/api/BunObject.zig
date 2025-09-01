@@ -559,7 +559,6 @@ pub fn getOrigin(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue 
     return ZigString.init(VirtualMachine.get().origin.origin).toJS(globalThis);
 }
 
-
 pub fn enableANSIColors(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     _ = globalThis;
     return JSValue.jsBoolean(Output.enable_ansi_colors);
@@ -2036,21 +2035,6 @@ comptime {
 
 const string = []const u8;
 
-const Braces = @import("../../shell/braces.zig");
-const Which = @import("../../which.zig");
-const options = @import("../../options.zig");
-const std = @import("std");
-const zlib = @import("../../zlib.zig");
-const Editor = @import("../../open.zig").Editor;
-const URL = @import("../../url.zig").URL;
-const conv = std.builtin.CallingConvention.Unspecified;
-
-const bun = @import("bun");
-const Async = bun.Async;
-const Environment = bun.Environment;
-const MutableString = bun.MutableString;
-const Output = bun.Output;
-const assert = bun.assert;
 // LazyProperty initializers for stdin/stderr/stdout
 pub fn createBunStdin(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
     var rare_data = globalThis.bunVM().rareData();
@@ -2085,6 +2069,21 @@ pub fn createBunStdout(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue
     return blob.toJS(globalThis);
 }
 
+const Braces = @import("../../shell/braces.zig");
+const Which = @import("../../which.zig");
+const options = @import("../../options.zig");
+const std = @import("std");
+const zlib = @import("../../zlib.zig");
+const Editor = @import("../../open.zig").Editor;
+const URL = @import("../../url.zig").URL;
+const conv = std.builtin.CallingConvention.Unspecified;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const strings = bun.strings;
 const SemverObject = bun.Semver.SemverObject;

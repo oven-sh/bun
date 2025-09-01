@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("Bun.stdin, stderr, stdout are LazyProperty instances (same object on multiple access)", () => {
   // Test that multiple accesses return the same object instance
@@ -19,12 +19,12 @@ test("Bun.stdin, stderr, stdout are valid Blob instances", () => {
   expect(Bun.stdin).toBeInstanceOf(Blob);
   expect(Bun.stderr).toBeInstanceOf(Blob);
   expect(Bun.stdout).toBeInstanceOf(Blob);
-  
+
   // Test they have expected properties
   expect(typeof Bun.stdin.size).toBe("number");
   expect(typeof Bun.stderr.size).toBe("number");
   expect(typeof Bun.stdout.size).toBe("number");
-  
+
   expect(typeof Bun.stdin.type).toBe("string");
   expect(typeof Bun.stderr.type).toBe("string");
   expect(typeof Bun.stdout.type).toBe("string");

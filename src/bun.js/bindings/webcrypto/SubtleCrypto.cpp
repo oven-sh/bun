@@ -820,10 +820,10 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
                 rejectWithException(promise.releaseNonNull(), TypeError, "Invalid global object"_s);
                 return;
             }
-            
+
             auto& vm = JSC::getVM(globalObject);
             auto scope = DECLARE_THROW_SCOPE(vm);
-            
+
             WTF::switchOn(
                 keyOrKeyPair,
                 [&promise, globalObject, &scope](RefPtr<CryptoKey>& key) {

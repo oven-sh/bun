@@ -42,6 +42,7 @@ const {
   callCloseCallback,
   emitCloseNTAndComplete,
   ConnResetException,
+  fakeSocketSymbol,
 } = require("internal/http");
 
 const { Agent, NODE_HTTP_WARNING } = require("node:_http_agent");
@@ -234,7 +235,11 @@ function ClientRequest(input, options, cb) {
         this._closed = true;
         callCloseCallback(this);
         this.emit("close");
-        this.socket?.emit?.("close");
+        // Only emit close on socket if it already exists to avoid creating
+        // circular references during cleanup
+        if (this[fakeSocketSymbol]) {
+          this[fakeSocketSymbol].emit("close");
+        }
       }
       if (!res.aborted && res.readable) {
         res.push(null);
@@ -243,7 +248,11 @@ function ClientRequest(input, options, cb) {
       this._closed = true;
       callCloseCallback(this);
       this.emit("close");
-      this.socket?.emit?.("close");
+      // Only emit close on socket if it already exists to avoid creating
+      // circular references during cleanup
+      if (this[fakeSocketSymbol]) {
+        this[fakeSocketSymbol].emit("close");
+      }
     }
   };
 

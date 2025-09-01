@@ -755,7 +755,7 @@ export class PostgresAdapter
       const pollSize = this.connections.length;
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
-        if (connection.state !== PooledConnectionState.closed) {
+        if (connection && connection.state !== PooledConnectionState.closed) {
           // some connection is connecting or connected
           return true;
         }

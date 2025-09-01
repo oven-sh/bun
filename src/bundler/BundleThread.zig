@@ -119,13 +119,12 @@ pub fn BundleThread(CompletionStruct: type) type {
 
             // Create BakeOptions from app configuration if present
             const bake_options = if (completion.config.app) |*app_config| blk: {
-                // For now, create a minimal BakeOptions structure
-                // This is a simplified implementation - a full implementation would
-                // need to set up client and SSR transpilers properly
+                // For now, use the same transpiler for both client and SSR to avoid thread safety issues
+                // TODO: Once thread safety is resolved, create separate transpilers
                 break :blk BundleV2.BakeOptions{
                     .framework = app_config.framework,
                     .client_transpiler = transpiler,
-                    .ssr_transpiler = transpiler,  // TODO: Create separate SSR transpiler
+                    .ssr_transpiler = transpiler,
                     .plugins = completion.plugins,
                 };
             } else null;
@@ -203,3 +202,4 @@ const ThreadLocalArena = bun.allocators.MimallocArena;
 
 const bundler = bun.bundle_v2;
 const BundleV2 = bundler.BundleV2;
+const api = bun.schema.api;

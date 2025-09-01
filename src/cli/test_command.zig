@@ -1260,12 +1260,12 @@ fn parseFileLineArg(arg: []const u8) ?struct { file_pattern: []const u8, line_nu
     var colon_index_opt: ?usize = null;
     var i: usize = arg.len;
     while (i > 0) : (i -= 1) {
-        if (arg[i - 1] == ':') { 
-            colon_index_opt = i - 1; 
-            break; 
+        if (arg[i - 1] == ':') {
+            colon_index_opt = i - 1;
+            break;
         }
     }
-    
+
     const colon_index = colon_index_opt orelse return null;
     const after_colon = arg[colon_index + 1 ..];
     if (after_colon.len == 0) return null;

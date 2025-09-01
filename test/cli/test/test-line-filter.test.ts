@@ -1,4 +1,3 @@
-import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import { writeFileSync } from "node:fs";
@@ -395,7 +394,10 @@ test("test 3 - SHOULD run", () => {
     );
 
     // Target lines 3 and 13 (test 1 and test 3)
-    const { stdout, stderr, exitCode } = await runTestWithOutput([`./multi-line.test.ts:3`, `./multi-line.test.ts:13`], cwd);
+    const { stdout, stderr, exitCode } = await runTestWithOutput(
+      [`./multi-line.test.ts:3`, `./multi-line.test.ts:13`],
+      cwd,
+    );
 
     expect(stdout).toContain("✅ Test 1 ran");
     expect(stdout).toContain("✅ Test 3 ran");
@@ -500,7 +502,10 @@ describe("group2", () => {
     );
 
     // Target line 3 in describe1 (describe block) and line 8 in describe2 (describe block)
-    const { stdout, stderr, exitCode } = await runTestWithOutput([`./describe1.test.ts:3`, `./describe2.test.ts:8`], cwd);
+    const { stdout, stderr, exitCode } = await runTestWithOutput(
+      [`./describe1.test.ts:3`, `./describe2.test.ts:8`],
+      cwd,
+    );
 
     expect(stdout).toContain("✅ Group1 Test1 ran");
     expect(stdout).toContain("✅ Group1 Test2 ran");

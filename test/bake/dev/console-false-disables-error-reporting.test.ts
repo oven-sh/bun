@@ -27,9 +27,13 @@ export default function (req, meta) {
     // The error reporting endpoint should process the request
     expect(reportResponse.status).toBe(200);
     
+    // Await the response data to ensure the error processing is complete
+    // The response contains remapped stack trace data
+    const responseData = await reportResponse.arrayBuffer();
+    expect(responseData.byteLength).toBeGreaterThan(0);
+    
     // With default configuration, the error should be printed to terminal
     // (visible in test output as "frontend TestError: Test client-side error - should be printed")
-    await new Promise(resolve => setTimeout(resolve, 100));
   },
 });
 
@@ -100,9 +104,13 @@ export default function (req, meta) {
     // The error reporting endpoint should still process the request
     expect(reportResponse.status).toBe(200);
     
+    // Await the response data to ensure the error processing is complete
+    // The response contains remapped stack trace data
+    const responseData = await reportResponse.arrayBuffer();
+    expect(responseData.byteLength).toBeGreaterThan(0);
+    
     // With console: false, the error should NOT be printed to terminal
     // (no "frontend TestError" output should appear in test output)
-    await new Promise(resolve => setTimeout(resolve, 100));
   },
 });
 

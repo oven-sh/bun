@@ -1257,16 +1257,7 @@ export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callcon
 
 fn parseFileLineArg(arg: []const u8) ?struct { file_pattern: []const u8, line_num: u32 } {
     // Find the last ':' to handle Windows drive letters like C:\foo\bar.test.ts:7
-    var colon_index_opt: ?usize = null;
-    var i: usize = arg.len;
-    while (i > 0) : (i -= 1) {
-        if (arg[i - 1] == ':') {
-            colon_index_opt = i - 1;
-            break;
-        }
-    }
-
-    const colon_index = colon_index_opt orelse return null;
+    const colon_index = strings.lastIndexOfChar(arg, ':') orelse return null;
     const after_colon = arg[colon_index + 1 ..];
     if (after_colon.len == 0) return null;
 

@@ -1,4 +1,4 @@
-import { test, expect, beforeAll } from "bun:test";
+import { beforeAll, expect, test } from "bun:test";
 import { importJWK } from "jose";
 
 let fullPrivateJWK: JsonWebKey;
@@ -9,23 +9,28 @@ beforeAll(async () => {
   const keyPair = await crypto.subtle.generateKey(
     { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
     true,
-    ["sign", "verify"]
+    ["sign", "verify"],
   );
   fullPrivateJWK = await crypto.subtle.exportKey("jwk", keyPair.privateKey);
   publicJWK = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
-  minimalPrivateJWK = { kty: fullPrivateJWK.kty, n: fullPrivateJWK.n, e: fullPrivateJWK.e, d: fullPrivateJWK.d } as JsonWebKey;
+  minimalPrivateJWK = {
+    kty: fullPrivateJWK.kty,
+    n: fullPrivateJWK.n,
+    e: fullPrivateJWK.e,
+    d: fullPrivateJWK.d,
+  } as JsonWebKey;
 });
 
 test("RSA JWK import should work with valid private key", async () => {
   const importedKey = await crypto.subtle.importKey(
-    'jwk',
+    "jwk",
     fullPrivateJWK,
     {
       name: "RSASSA-PKCS1-v1_5",
-      hash: "SHA-256"
+      hash: "SHA-256",
     },
     false,
-    ['sign']
+    ["sign"],
   );
 
   expect(importedKey.type).toBe("private");
@@ -36,7 +41,6 @@ test("RSA JWK import should work with valid private key", async () => {
 });
 
 test("RSA JWK import should work with public key", async () => {
-
   const importedKey = await crypto.subtle.importKey(
     "jwk",
     publicJWK,
@@ -84,13 +88,9 @@ test("RSA JWK import should reject partial CRT params", async () => {
   const partial = { ...fullPrivateJWK };
   // @ts-expect-error deleting for test
   delete (partial as any).dq;
-  await expect(crypto.subtle.importKey(
-    "jwk",
-    partial,
-    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-    false,
-    ["sign"]
-  )).rejects.toThrow();
+  await expect(
+    crypto.subtle.importKey("jwk", partial, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]),
+  ).rejects.toThrow();
 });
 
 test("Jose library should work with RSA JWK import after fix", async () => {

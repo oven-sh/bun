@@ -24,6 +24,8 @@ To update all dependencies to the latest versions (including breaking changes):
   bun update --latest
 ```
 
+## Options
+
 ### `--json`
 
 Use the `--json` flag to print the raw JSON response from the registry instead of the formatted report:
@@ -32,6 +34,47 @@ Use the `--json` flag to print the raw JSON response from the registry instead o
 $ bun audit --json
 ```
 
-### Exit code
+### `--audit-level`
+
+Set the minimum severity level for reporting vulnerabilities. Vulnerabilities below this level will be ignored:
+
+```bash
+# Only report high and critical vulnerabilities
+$ bun audit --audit-level high
+
+# Report moderate and above (default)
+$ bun audit --audit-level moderate
+
+# Report all vulnerabilities including low severity
+$ bun audit --audit-level low
+```
+
+Available levels: `low`, `moderate`, `high`, `critical`
+
+### `--prod`
+
+Only audit production dependencies, excluding devDependencies:
+
+```bash
+$ bun audit --prod
+```
+
+This is useful for checking only the dependencies that will be included in production builds.
+
+### `--ignore`
+
+Ignore specific vulnerabilities by their advisory ID:
+
+```bash
+# Ignore a single vulnerability
+$ bun audit --ignore 1002548
+
+# Ignore multiple vulnerabilities
+$ bun audit --ignore 1002548,1003456,1004789
+```
+
+Use this flag to suppress known vulnerabilities that have been assessed as acceptable risks for your project.
+
+## Exit code
 
 `bun audit` will exit with code `0` if no vulnerabilities are found and `1` if the report lists any vulnerabilities. This will still happen even if `--json` is passed.

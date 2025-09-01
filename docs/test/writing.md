@@ -445,30 +445,13 @@ To test your types:
 1. Write your type assertions using `expectTypeOf`
 2. Run `bunx tsc --noEmit` to check that your types are correct
 
-#### Basic Type Assertions
-
-```ts
-import { expectTypeOf } from "bun:test";
-
-// Primitive types
-expectTypeOf("hello").toBeString();
-expectTypeOf(123).toBeNumber();
-expectTypeOf(true).toBeBoolean();
-expectTypeOf(Symbol("test")).toBeSymbol();
-expectTypeOf(undefined).toBeUndefined();
-expectTypeOf(null).toBeNull();
-expectTypeOf(() => {}).toBeFunction();
-
-// Complex types
-expectTypeOf([1, 2, 3]).toBeArray();
-expectTypeOf({ a: 1 }).toBeObject();
-```
-
 #### Type Equality
 
 Use `toEqualTypeOf` for strict type equality checks:
 
 ```ts
+import { expectTypeOf } from "bun:test";
+
 // Generic syntax
 expectTypeOf<string>().toEqualTypeOf<string>();
 expectTypeOf<{ name: string; age: number }>().toEqualTypeOf<{

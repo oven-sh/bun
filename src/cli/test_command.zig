@@ -1464,7 +1464,7 @@ pub const TestCommand = struct {
         const has_relative_path = for (ctx.positionals) |arg| {
             // Check if it's a file:line format, extract just the file part
             const path_to_check = if (parseFileLineArg(arg)) |parsed| parsed.file_pattern else arg;
-            
+
             // Check if it looks like a file path
             if (std.fs.path.isAbsolute(path_to_check) or
                 strings.startsWith(path_to_check, "./") or

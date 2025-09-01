@@ -172,10 +172,10 @@ pub const TestRunner = struct {
         while (iter.next()) |entry| {
             const file_path = entry.key_ptr.*;
             const line_numbers = entry.value_ptr;
-            
+
             // Compute hash for the file path
             const file_hash = @as(u32, @truncate(bun.hash(file_path)));
-            
+
             // Check if file is already loaded
             if (this.index.get(file_hash)) |existing_file_id| {
                 // File exists, add to actual file_id

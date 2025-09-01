@@ -658,6 +658,11 @@ public:
 
     JSObject* nodeErrorCache() const { return m_nodeErrorCache.getInitializedOnMainThread(this); }
 
+    // LazyProperty accessors for stdin/stderr/stdout
+    JSC::JSObject* bunStdin() const { return m_bunStdin.getInitializedOnMainThread(this); }
+    JSC::JSObject* bunStderr() const { return m_bunStderr.getInitializedOnMainThread(this); }
+    JSC::JSObject* bunStdout() const { return m_bunStdout.getInitializedOnMainThread(this); }
+
     Structure* memoryFootprintStructure()
     {
         return m_memoryFootprintStructure.getInitializedOnMainThread(this);

@@ -39,6 +39,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             .target = c.options.target,
             .print_dce_annotations = c.options.emit_dce_annotations,
             .mangled_props = &c.mangled_props,
+            .unique_key_prefix = c.unique_key_prefix,
             // .const_values = c.graph.const_values,
         };
 
@@ -835,6 +836,7 @@ pub fn generateEntryPointTailJS(
         .print_dce_annotations = c.options.emit_dce_annotations,
         .minify_syntax = c.options.minify_syntax,
         .mangled_props = &c.mangled_props,
+        .unique_key_prefix = c.unique_key_prefix,
         // .const_values = c.graph.const_values,
     };
 

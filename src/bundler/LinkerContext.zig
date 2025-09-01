@@ -1262,6 +1262,7 @@ pub const LinkerContext = struct {
             else
                 null,
             .mangled_props = &c.mangled_props,
+            .unique_key_prefix = c.unique_key_prefix,
         };
 
         writer.buffer.reset();
@@ -2450,6 +2451,7 @@ pub const LinkerContext = struct {
                 'C' => .chunk,
                 'S' => .scb,
                 'H' => .html_import,
+                'W' => .worker,
                 else => {
                     if (bun.Environment.isDebug)
                         bun.Output.debugWarn("Invalid output piece boundary", .{});
@@ -2476,6 +2478,11 @@ pub const LinkerContext = struct {
                     break;
                 },
                 .chunk => if (index >= count) {
+                    if (bun.Environment.isDebug)
+                        bun.Output.debugWarn("Invalid output piece boundary", .{});
+                    break;
+                },
+                .worker => if (index >= count) {
                     if (bun.Environment.isDebug)
                         bun.Output.debugWarn("Invalid output piece boundary", .{});
                     break;

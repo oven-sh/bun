@@ -386,6 +386,7 @@ pub const Options = struct {
     indent: Indentation = .{},
     runtime_imports: runtime.Runtime.Imports = runtime.Runtime.Imports{},
     module_hash: u32 = 0,
+    unique_key_prefix: []const u8 = "",
     source_path: ?fs.Path = null,
     allocator: std.mem.Allocator = default_allocator,
     source_map_allocator: ?std.mem.Allocator = null,
@@ -2191,8 +2192,16 @@ fn NewPrinter(
                     p.addSourceMapping(expr.loc);
                     p.print("new Worker(");
                     
-                    // Print the worker script path from the import record
-                    p.printStringLiteralUTF8(p.importRecord(e.import_record_index).path.text, true);
+                    // Generate a unique key for the worker instead of the direct path
+                    // This will be resolved to the actual worker chunk path later
+                    if (p.options.unique_key_prefix.len > 0) {
+                        const unique_key = std.fmt.allocPrint(p.options.allocator, "{s}W{d:0>8}", .{ p.options.unique_key_prefix, e.import_record_index }) catch unreachable;
+                        defer p.options.allocator.free(unique_key);
+                        p.printStringLiteralUTF8(unique_key, true);
+                    } else {
+                        // Fallback to direct path if unique_key_prefix is not available
+                        p.printStringLiteralUTF8(p.importRecord(e.import_record_index).path.text, true);
+                    }
                     
                     // Print options if present and not missing
                     if (e.options.data != .e_missing) {

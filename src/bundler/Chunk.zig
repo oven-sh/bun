@@ -195,7 +195,7 @@ pub const Chunk = struct {
                         count += piece.data_len;
 
                         switch (piece.query.kind) {
-                            .chunk, .asset, .scb, .html_import => {
+                            .chunk, .asset, .scb, .html_import, .worker => {
                                 const index = piece.query.index;
                                 const file_path = switch (piece.query.kind) {
                                     .asset => brk: {
@@ -210,6 +210,7 @@ pub const Chunk = struct {
                                     },
                                     .chunk => chunks[index].final_rel_path,
                                     .scb => chunks[entry_point_chunks_for_scb[index]].final_rel_path,
+                                    .worker => chunks[index].final_rel_path,
                                     .html_import => {
                                         count += std.fmt.count("{}", .{HTMLImportManifest.formatEscapedJSON(.{
                                             .index = index,
@@ -263,7 +264,7 @@ pub const Chunk = struct {
                         remain = remain[data.len..];
 
                         switch (piece.query.kind) {
-                            .asset, .chunk, .scb, .html_import => {
+                            .asset, .chunk, .scb, .html_import, .worker => {
                                 const index = piece.query.index;
                                 const file_path = switch (piece.query.kind) {
                                     .asset => brk: {
@@ -289,6 +290,15 @@ pub const Chunk = struct {
                                     },
                                     .scb => brk: {
                                         const piece_chunk = chunks[entry_point_chunks_for_scb[index]];
+
+                                        if (enable_source_map_shifts) {
+                                            shift.before.advance(piece_chunk.unique_key);
+                                        }
+
+                                        break :brk piece_chunk.final_rel_path;
+                                    },
+                                    .worker => brk: {
+                                        const piece_chunk = chunks[index];
 
                                         if (enable_source_map_shifts) {
                                             shift.before.advance(piece_chunk.unique_key);
@@ -441,6 +451,8 @@ pub const Chunk = struct {
                 scb,
                 /// Given an HTML import index, print the manifest
                 html_import,
+                /// Given a worker chunk index, print the worker's output path
+                worker,
             };
 
             pub const none: Query = .{ .index = 0, .kind = .none };

@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 
 test.skipIf(isWindows)("logLevel error should hide workspace warnings (Linux test)", async () => {
-  // This test validates the fix for issue #22302 
+  // This test validates the fix for issue #22302
   // where watcher warnings about files outside the project directory
   // should be hidden when logLevel="error" is set in bunfig.toml
   // Note: On Linux, the watcher may not trigger the same warnings as Windows,
@@ -13,11 +13,11 @@ test.skipIf(isWindows)("logLevel error should hide workspace warnings (Linux tes
     "package.json": JSON.stringify({
       name: "test-app",
       scripts: {
-        dev: "bun --hot src/app.ts"
+        dev: "bun --hot src/app.ts",
       },
       dependencies: {
-        "workspace-pkg": "workspace:*"
-      }
+        "workspace-pkg": "workspace:*",
+      },
     }),
     "src/app.ts": `
 import { hello } from "workspace-pkg";
@@ -30,8 +30,8 @@ export function hello() {
 `,
     "workspace-pkg/package.json": JSON.stringify({
       name: "workspace-pkg",
-      main: "index.ts"
-    })
+      main: "index.ts",
+    }),
   });
 
   // Run bun --hot with a file that imports from a workspace package outside the project directory
@@ -46,13 +46,13 @@ export function hello() {
 
   // Give it a moment to start and potentially show warnings
   await Bun.sleep(1000);
-  
+
   proc.kill();
   await proc.exited;
 
   const stderr = await new Response(proc.stderr).text();
   const stdout = await new Response(proc.stdout).text();
-  
+
   // With logLevel="error", warnings should be suppressed
   // The specific warning message should not appear
   expect(stderr).not.toContain("is not in the project directory and will not be watched");
@@ -61,17 +61,17 @@ export function hello() {
 
 test.skipIf(isWindows)("logLevel warn should show workspace warnings (Linux test)", async () => {
   // Verify that warnings are still shown with logLevel="warn" (default behavior)
-  
+
   const files = tempDirWithFiles("watcher-log-level-warn", {
     "bunfig.toml": `logLevel = "warn"`,
     "package.json": JSON.stringify({
       name: "test-app",
       scripts: {
-        dev: "bun --hot src/app.ts"
+        dev: "bun --hot src/app.ts",
       },
       dependencies: {
-        "workspace-pkg": "workspace:*"
-      }
+        "workspace-pkg": "workspace:*",
+      },
     }),
     "src/app.ts": `
 import { hello } from "workspace-pkg";
@@ -84,8 +84,8 @@ export function hello() {
 `,
     "workspace-pkg/package.json": JSON.stringify({
       name: "workspace-pkg",
-      main: "index.ts"
-    })
+      main: "index.ts",
+    }),
   });
 
   await using proc = Bun.spawn({
@@ -98,12 +98,12 @@ export function hello() {
 
   // Give it a moment to start and show warnings
   await Bun.sleep(1000);
-  
+
   proc.kill();
   await proc.exited;
 
   const stderr = await new Response(proc.stderr).text();
-  
+
   // With logLevel="warn", warnings should appear
   expect(stderr).toContain("is not in the project directory and will not be watched");
 });

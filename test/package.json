@@ -57,7 +57,6 @@
     "isbot": "5.1.13",
     "jest-extended": "4.0.0",
     "jimp": "1.6.0",
-    "jose": "5.10.0",
     "jsdom": "25.0.1",
     "jsonwebtoken": "9.0.2",
     "jws": "4.0.0",

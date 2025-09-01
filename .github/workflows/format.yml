@@ -8,10 +8,8 @@ on:
   workflow_dispatch:
   pull_request:
   merge_group:
-  push:
-    branches: ["main"]
 env:
-  BUN_VERSION: "1.2.11"
+  BUN_VERSION: "1.2.20"
   LLVM_VERSION: "19.1.7"
   LLVM_VERSION_MAJOR: "19"
 
@@ -37,6 +35,7 @@ jobs:
       - name: Setup Dependencies
         run: |
           bun install
+          bun scripts/glob-sources.mjs
       - name: Format Code
         run: |
           # Start prettier in background with prefixed output

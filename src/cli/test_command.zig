@@ -1256,20 +1256,30 @@ export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callcon
 }
 
 fn parseFileLineArg(arg: []const u8) ?struct { file_pattern: []const u8, line_num: u32 } {
-    const first_colon_index = strings.indexOf(arg, ":") orelse return null;
-    const after_first_colon = arg[first_colon_index + 1 ..];
-    if (after_first_colon.len == 0) return null;
+    // Find the last ':' to handle Windows drive letters like C:\foo\bar.test.ts:7
+    var colon_index_opt: ?usize = null;
+    var i: usize = arg.len;
+    while (i > 0) : (i -= 1) {
+        if (arg[i - 1] == ':') { 
+            colon_index_opt = i - 1; 
+            break; 
+        }
+    }
+    
+    const colon_index = colon_index_opt orelse return null;
+    const after_colon = arg[colon_index + 1 ..];
+    if (after_colon.len == 0) return null;
 
     // Check if there's a second colon (for file:line:column format)
-    const line_part = if (strings.indexOf(after_first_colon, ":")) |second_colon_index|
-        after_first_colon[0..second_colon_index]
+    const line_part = if (strings.indexOf(after_colon, ":")) |second_colon_index|
+        after_colon[0..second_colon_index]
     else
-        after_first_colon;
+        after_colon;
 
     const line_num = std.fmt.parseInt(u32, line_part, 10) catch return null;
 
     return .{
-        .file_pattern = arg[0..first_colon_index],
+        .file_pattern = arg[0..colon_index],
         .line_num = line_num,
     };
 }

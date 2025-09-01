@@ -184,72 +184,6 @@ New in Bun v1.2.17
 
 {% /note %}
 
-Bun's `--compile` flag can create standalone executables that contain both server and client code, making it ideal for full-stack applications. When you import an HTML file in your server code, Bun automatically bundles all frontend assets (JavaScript, CSS, etc.) and embeds them into the executable. When Bun sees the HTML import on the server, it kicks off a frontend build process to bundle JavaScript, CSS, and other assets.
-
-{% codetabs %}
-
-```ts#server.ts
-import { serve } from "bun";
-import index from "./index.html";
-
-const server = serve({
-  routes: {
-    "/": index,
-    "/api/hello": { GET: () => Response.json({ message: "Hello from API" }) },
-  },
-});
-
-console.log(`Server running at http://localhost:${server.port}`);
-```
-
-```html#index.html
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>My App</title>
-    <link rel="stylesheet" href="./styles.css">
-  </head>
-  <body>
-    <h1>Hello World</h1>
-    <script src="./app.js"></script>
-  </body>
-</html>
-```
-
-```js#app.js
-console.log("Hello from the client!");
-```
-
-```css#styles.css
-body {
-  background-color: #f0f0f0;
-}
-```
-
-{% /codetabs %}
-
-To build this into a single executable:
-
-```sh
-bun build --compile ./server.ts --outfile myapp
-```
-
-This creates a self-contained binary that includes:
-
-- Your server code
-- The Bun runtime
-- All frontend assets (HTML, CSS, JavaScript)
-- Any npm packages used by your server
-
-The result is a single file that can be deployed anywhere without needing Node.js, Bun, or any dependencies installed. Just run:
-
-```sh
-./myapp
-```
-
-Bun automatically handles serving the frontend assets with proper MIME types and cache headers. The HTML import is replaced with a manifest object that `Bun.serve` uses to efficiently serve pre-bundled assets.
-
-For more details on building full-stack applications with Bun, see the [full-stack guide](/docs/bundler/fullstack).
 
 ## Worker
 
@@ -479,73 +413,29 @@ for (const platform of platforms) {
 }
 ```
 
-### Advanced Windows executable configuration
+### Windows executable configuration
 
-When targeting Windows, you have extensive control over executable metadata and appearance:
+When targeting Windows, you can configure executable metadata (Windows only):
 
 ```js
 await Bun.build({
   entrypoints: ["./src/main.ts"],
-  outdir: "./dist",
-  minify: true,
   compile: {
     target: "bun-windows-x64",
     outfile: "MyApplication.exe",
     windows: {
-      // Visual customization
-      title: "My Enterprise Application",
-      icon: "./assets/app-icon.ico",
       hideConsole: false, // Set to true for GUI apps without console
-
-      // Company and product information
-      publisher: "ACME Corporation",
-      description: "Advanced business automation tool",
-      copyright: "© 2024 ACME Corporation. All rights reserved.",
-
-      // Version information (must be in X.Y.Z.W format)
-      version: "2.1.0.0",
-
-      // Additional metadata for enterprise environments
-      trademark: "ACME™",
-      internalName: "acme-automation-tool",
-    },
-  },
+      icon: "./assets/app-icon.ico",
+      title: "My Application",
+      publisher: "ACME Corporation", 
+      version: "1.0.0.0",
+      description: "My application description",
+      copyright: "© 2024 ACME Corporation"
+    }
+  }
 });
 ```
 
-### Error handling and build validation
-
-```js
-try {
-  const result = await Bun.build({
-    entrypoints: ["./app.ts"],
-    compile: {
-      target: "bun-linux-x64",
-      outfile: "myapp",
-    },
-    // Don't throw on build errors - handle them manually
-    throw: false,
-  });
-
-  if (!result.success) {
-    console.error("Build failed with errors:");
-    for (const message of result.logs) {
-      if (message.level === "error") {
-        console.error(
-          `${message.message} at ${message.position?.file}:${message.position?.line}`,
-        );
-      }
-    }
-    process.exit(1);
-  }
-
-  console.log("✅ Executable built successfully!");
-  console.log(`Size: ${result.outputs[0].size} bytes`);
-} catch (error) {
-  console.error("Unexpected build error:", error);
-  process.exit(1);
-}
-```
 
 ### Build with embedded assets
 

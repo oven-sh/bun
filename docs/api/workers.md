@@ -131,6 +131,7 @@ Bun includes optimized fast paths for `postMessage` to dramatically improve perf
 **Simple object fast path** - For plain objects containing only primitive values (strings, numbers, booleans, null, undefined), Bun uses an optimized serialization path that stores properties directly without full structured cloning.
 
 The simple object fast path activates when the object:
+
 - Is a plain object with no prototype chain modifications
 - Contains only enumerable, configurable data properties
 - Has no indexed properties or getter/setter methods
@@ -142,19 +143,19 @@ These optimizations provide 2-241x performance improvements over the standard st
 // String fast path - optimized
 postMessage("Hello, worker!");
 
-// Simple object fast path - optimized 
-postMessage({ 
-  message: "Hello", 
-  count: 42, 
+// Simple object fast path - optimized
+postMessage({
+  message: "Hello",
+  count: 42,
   enabled: true,
-  data: null 
+  data: null,
 });
 
 // Complex objects still work but use standard structured clone
-postMessage({ 
+postMessage({
   nested: { deep: { object: true } },
   date: new Date(),
-  buffer: new ArrayBuffer(8)
+  buffer: new ArrayBuffer(8),
 });
 ```
 

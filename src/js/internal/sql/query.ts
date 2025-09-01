@@ -149,7 +149,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       return this;
     }
 
-    (await 1) as never as Promise<void>;
+    await Promise.$resolve();
 
     try {
       return handler(this, handle);

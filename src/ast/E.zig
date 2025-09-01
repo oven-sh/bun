@@ -991,7 +991,6 @@ pub const String = struct {
 
     /// Compares two strings lexicographically for JavaScript semantics.
     /// Both strings must share the same encoding (UTF-8 vs UTF-16).
-    /// If encodings differ in release builds, falls back to comparing lengths.
     pub inline fn order(this: *const String, other: *const String) std.math.Order {
         bun.debugAssert(this.isUTF8() == other.isUTF8());
 

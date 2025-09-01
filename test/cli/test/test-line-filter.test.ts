@@ -545,4 +545,50 @@ test("another test", () => {
     expect(stderr).toContain("empty2.test.ts:88");
     expect(exitCode).toBe(1);
   });
+
+  test("should handle mixed file:line and normal file arguments", () => {
+    const cwd = tmpdirSync();
+    const testFile1 = createTestFile(
+      cwd,
+      "mixed1.test.ts",
+      `import { test, expect } from "bun:test";
+
+test("mixed1 test1 - SHOULD run", () => {
+  console.log("✅ Mixed1 Test1 ran");
+  expect(1).toBe(1);
+});
+
+test("mixed1 test2 - should NOT run", () => {
+  console.log("❌ Mixed1 Test2 ran");
+  expect(2).toBe(2);
+});`,
+    );
+
+    const testFile2 = createTestFile(
+      cwd,
+      "mixed2.test.ts",
+      `import { test, expect } from "bun:test";
+
+test("mixed2 test1 - SHOULD run", () => {
+  console.log("✅ Mixed2 Test1 ran");
+  expect(1).toBe(1);
+});
+
+test("mixed2 test2 - SHOULD run", () => {
+  console.log("✅ Mixed2 Test2 ran");
+  expect(2).toBe(2);
+});`,
+    );
+
+    // Target line 3 in mixed1 (specific test) and entire mixed2 file
+    const { stdout, stderr, exitCode } = runTestWithOutput([`./mixed1.test.ts:3`, `./mixed2.test.ts`], cwd);
+
+    expect(stdout).toContain("✅ Mixed1 Test1 ran");
+    expect(stdout).toContain("✅ Mixed2 Test1 ran");
+    expect(stdout).toContain("✅ Mixed2 Test2 ran");
+    expect(stdout).not.toContain("❌ Mixed1 Test2 ran");
+    expect(stderr).toContain("3 pass");
+    expect(stderr).toContain("1 filtered out");
+    expect(exitCode).toBe(0);
+  });
 });

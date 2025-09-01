@@ -167,6 +167,38 @@ pub const TestRunner = struct {
         return false;
     }
 
+    pub fn addLineFilters(this: *TestRunner, line_filters: anytype) void {
+        var iter = line_filters.iterator();
+        while (iter.next()) |entry| {
+            const file_path = entry.key_ptr.*;
+            const line_numbers = entry.value_ptr;
+            
+            // Compute hash for the file path
+            const file_hash = @as(u32, @truncate(bun.hash(file_path)));
+            
+            // Check if file is already loaded
+            if (this.index.get(file_hash)) |existing_file_id| {
+                // File exists, add to actual file_id
+                const result = this.line_filters_by_file_id.getOrPut(this.allocator, existing_file_id) catch continue;
+                if (!result.found_existing) {
+                    result.value_ptr.* = std.ArrayListUnmanaged(u32){};
+                }
+                for (line_numbers.items) |line_num| {
+                    result.value_ptr.append(this.allocator, line_num) catch continue;
+                }
+            } else {
+                // File not loaded yet, store with hash as temporary key
+                const result = this.line_filters_by_file_id.getOrPut(this.allocator, file_hash) catch continue;
+                if (!result.found_existing) {
+                    result.value_ptr.* = std.ArrayListUnmanaged(u32){};
+                }
+                for (line_numbers.items) |line_num| {
+                    result.value_ptr.append(this.allocator, line_num) catch continue;
+                }
+            }
+        }
+    }
+
     pub fn setTimeout(
         this: *TestRunner,
         milliseconds: u32,
@@ -305,24 +337,11 @@ pub const TestRunner = struct {
         this.files.append(this.allocator, .{ .module_scope = scope, .source = logger.Source.initEmptyFile(file_path) }) catch unreachable;
         entry.value_ptr.* = file_id;
 
-        // Check if there are line filters for this file path
-        if (this.test_options.line_filter_files.items.len > 0) {
-            const abs_path = if (std.fs.path.isAbsolute(file_path)) file_path else blk2: {
-                var path_buf: bun.PathBuffer = undefined;
-                const cwd = bun.fs.FileSystem.instance.top_level_dir;
-                break :blk2 bun.path.joinAbsStringBuf(cwd, &path_buf, &.{file_path}, .auto);
-            };
-
-            var line_list: std.ArrayListUnmanaged(u32) = .{};
-            for (this.test_options.line_filter_files.items, this.test_options.line_filter_lines.items) |filter_file, line_number| {
-                if (bun.strings.eql(abs_path, filter_file)) {
-                    line_list.append(this.allocator, line_number) catch break;
-                }
-            }
-
-            if (line_list.items.len > 0) {
-                this.line_filters_by_file_id.put(this.allocator, file_id, line_list) catch {};
-            }
+        // Check if there are line filters stored using the hash as a temporary key
+        const file_hash = @as(u32, @truncate(bun.hash(file_path)));
+        if (this.line_filters_by_file_id.fetchRemove(file_hash)) |kv| {
+            // Move the line filters from the hash key to the actual file_id key
+            this.line_filters_by_file_id.put(this.allocator, file_id, kv.value) catch {};
         }
 
         return scope;

@@ -319,9 +319,9 @@ test("test", () => {
 });`,
     );
 
-    // Target line 0 (invalid)
+    // Target line 0 (invalid - should be treated as filename, not line filter)
     const result1 = await runTestWithOutput([`./valid-file.test.ts:0`], cwd);
-    expect(result1.stderr).toContain("no tests found for file:line filters");
+    expect(result1.stderr).toContain("had no matches");
     expect(result1.exitCode).toBe(1);
 
     // Target negative line (this should be treated as a filename, not file:line)

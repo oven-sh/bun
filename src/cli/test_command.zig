@@ -1267,7 +1267,9 @@ fn parseFileLineArg(arg: []const u8) ?struct { file_pattern: []const u8, line_nu
     else
         after_colon;
 
+    // Only accept positive line numbers
     const line_num = std.fmt.parseInt(u32, line_part, 10) catch return null;
+    if (line_num == 0) return null; // Line numbers start at 1
 
     return .{
         .file_pattern = arg[0..colon_index],
@@ -1460,12 +1462,29 @@ pub const TestCommand = struct {
         var scanner = bun.handleOom(Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len));
         defer scanner.deinit();
         const has_relative_path = for (ctx.positionals) |arg| {
-            if (std.fs.path.isAbsolute(arg) or
-                strings.startsWith(arg, "./") or
-                strings.startsWith(arg, "../") or
-                (Environment.isWindows and (strings.startsWith(arg, ".\\") or
-                    strings.startsWith(arg, "..\\")))) break true;
+            // Check if it's a file:line format, extract just the file part
+            const path_to_check = if (parseFileLineArg(arg)) |parsed| parsed.file_pattern else arg;
+            
+            // Check if it looks like a file path
+            if (std.fs.path.isAbsolute(path_to_check) or
+                strings.startsWith(path_to_check, "./") or
+                strings.startsWith(path_to_check, "../") or
+                (Environment.isWindows and (strings.startsWith(path_to_check, ".\\") or
+                    strings.startsWith(path_to_check, "..\\") or
+                    strings.indexOf(path_to_check, ":\\") != null)) or
+                // Also treat paths containing slashes as file paths (e.g., "test/foo.test.ts")
+                strings.indexOf(path_to_check, if (Environment.isWindows) "\\" else "/") != null) break true;
         } else false;
+        // Collect line filters during argument parsing
+        var line_filters = bun.StringHashMap(std.ArrayList(u32)).init(ctx.allocator);
+        defer {
+            var iter = line_filters.iterator();
+            while (iter.next()) |entry| {
+                entry.value_ptr.deinit();
+            }
+            line_filters.deinit();
+        }
+
         if (has_relative_path) {
             // One of the files is a filepath. Instead of treating the
             // arguments as filters, treat them as filepaths
@@ -1474,8 +1493,11 @@ pub const TestCommand = struct {
                 const file_line = parseFileLineArg(arg);
                 if (file_line) |parsed| {
                     const abs_pattern = try makeAbsolutePath(ctx.allocator, parsed.file_pattern);
-                    try ctx.test_options.line_filter_files.append(ctx.allocator, abs_pattern);
-                    try ctx.test_options.line_filter_lines.append(ctx.allocator, parsed.line_num);
+                    const result = try line_filters.getOrPut(abs_pattern);
+                    if (!result.found_existing) {
+                        result.value_ptr.* = std.ArrayList(u32).init(ctx.allocator);
+                    }
+                    try result.value_ptr.append(parsed.line_num);
                 }
 
                 const file_to_scan = if (file_line) |parsed| parsed.file_pattern else arg;
@@ -1527,6 +1549,9 @@ pub const TestCommand = struct {
                 },
             };
         }
+
+        // Pass line filters directly to TestRunner
+        reporter.jest.addLineFilters(line_filters);
 
         const test_files = bun.handleOom(scanner.takeFoundTestFiles());
         defer ctx.allocator.free(test_files);
@@ -1734,7 +1759,7 @@ pub const TestCommand = struct {
 
                 reporter.printSummary();
             } else {
-                if (ctx.test_options.line_filter_files.items.len > 0) {
+                if (line_filters.count() > 0) {
                     Output.prettyError("<red>error<r><d>:<r> no tests found for file:line filters. Searched {d} file{s} (skipping {d} test{s}) ", .{
                         summary.files,
                         if (summary.files == 1) "" else "s",
@@ -1742,8 +1767,11 @@ pub const TestCommand = struct {
                         if (summary.skipped_because_label == 1) "" else "s",
                     });
 
-                    for (ctx.test_options.line_filter_files.items, ctx.test_options.line_filter_lines.items) |file_path, line_number| {
-                        Output.prettyError("\n  <b>{s}<r>:{d}", .{ file_path, line_number });
+                    var iter = line_filters.iterator();
+                    while (iter.next()) |entry| {
+                        for (entry.value_ptr.items) |line_number| {
+                            Output.prettyError("\n  <b>{s}<r>:{d}", .{ entry.key_ptr.*, line_number });
+                        }
                     }
                     Output.prettyError("\n", .{});
                 } else {

@@ -84,10 +84,10 @@ delete ReadableStreamDefaultReader.prototype["closed"];
 delete ReadableStreamBYOBReader.prototype["closed"];
 delete WritableStreamDefaultWriter.prototype["ready"];
 delete WritableStreamDefaultWriter.prototype["closed"];
-Object.defineProperty(ReadableStreamDefaultReader.prototype, "closed", { value: undefined });
-Object.defineProperty(ReadableStreamBYOBReader.prototype, "closed", { value: undefined });
-Object.defineProperty(WritableStreamDefaultWriter.prototype, "ready", { value: undefined });
-Object.defineProperty(WritableStreamDefaultWriter.prototype, "closed", { value: undefined });
+Object.defineProperty(ReadableStreamDefaultReader.prototype, "closed", { value: false });
+Object.defineProperty(ReadableStreamBYOBReader.prototype, "closed", { value: false });
+Object.defineProperty(WritableStreamDefaultWriter.prototype, "ready", { value: Promise.resolve() });
+Object.defineProperty(WritableStreamDefaultWriter.prototype, "closed", { value: false });
 WebAssembly.compile = () => {};
 WebAssembly.instantiate = () => {};
 // ** Uncatchable errors in tests **

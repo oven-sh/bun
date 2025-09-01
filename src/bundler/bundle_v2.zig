@@ -145,7 +145,7 @@ pub const BundleV2 = struct {
     asynchronous: bool = false,
     thread_lock: bun.safety.ThreadLock,
 
-    const BakeOptions = struct {
+    pub const BakeOptions = struct {
         framework: bake.Framework,
         client_transpiler: *Transpiler,
         ssr_transpiler: *Transpiler,
@@ -1853,6 +1853,14 @@ pub const BundleV2 = struct {
             transpiler.options.css_chunking = config.css_chunking;
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
+
+            // Configure bake/app options if present
+            if (config.app) |*app_config| {
+                // Enable server components if the app config has server component settings
+                if (app_config.framework.server_components) |_| {
+                    transpiler.options.server_components = true;
+                }
+            }
 
             transpiler.configureLinker();
             try transpiler.configureDefines();

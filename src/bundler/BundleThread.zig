@@ -117,9 +117,22 @@ pub fn BundleThread(CompletionStruct: type) type {
 
             transpiler.resolver.generation = generation;
 
+            // Create BakeOptions from app configuration if present
+            const bake_options = if (completion.config.app) |*app_config| blk: {
+                // For now, create a minimal BakeOptions structure
+                // This is a simplified implementation - a full implementation would
+                // need to set up client and SSR transpilers properly
+                break :blk BundleV2.BakeOptions{
+                    .framework = app_config.framework,
+                    .client_transpiler = transpiler,
+                    .ssr_transpiler = transpiler,  // TODO: Create separate SSR transpiler
+                    .plugins = completion.plugins,
+                };
+            } else null;
+
             const this = try BundleV2.init(
                 transpiler,
-                null, // TODO: Kit
+                bake_options,
                 allocator,
                 jsc.AnyEventLoop.init(allocator),
                 false,

@@ -38,6 +38,7 @@ pub const JSBundler = struct {
         env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         tsconfig_override: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         compile: ?CompileOptions = null,
+        app: ?bun.bake.UserOptions = null,
 
         pub const CompileOptions = struct {
             compile_target: CompileTarget = .{},
@@ -665,6 +666,13 @@ pub const JSBundler = struct {
                 }
             }
 
+            if (try config.getTruthy(globalThis, "app")) |app_js| {
+                if (!bun.FeatureFlags.bake()) {
+                    return globalThis.throwInvalidArguments("app option requires Bake feature flag to be enabled", .{});
+                }
+                this.app = try bun.bake.UserOptions.fromJS(app_js, globalThis);
+            }
+
             return this;
         }
 
@@ -727,6 +735,9 @@ pub const JSBundler = struct {
             self.env_prefix.deinit();
             self.footer.deinit();
             self.tsconfig_override.deinit();
+            if (self.app) |*app| {
+                app.deinit();
+            }
         }
     };
 

@@ -1369,7 +1369,6 @@ pub const TestCommand = struct {
             .callback = undefined,
         };
 
-
         reporter.callback = TestRunner.Callback{
             .onUpdateCount = CommandLineReporter.handleUpdateCount,
             .onTestStart = CommandLineReporter.handleTestStart,

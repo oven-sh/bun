@@ -349,19 +349,19 @@ import aboutHtml from "./about.html";
 export default {
   fetch(req) {
     const url = new URL(req.url);
-    
+
     if (url.pathname === "/") {
       return new Response(indexHtml, {
         headers: { "Content-Type": "text/html" },
       });
     }
-    
+
     if (url.pathname === "/about") {
       return new Response(aboutHtml, {
         headers: { "Content-Type": "text/html" },
       });
     }
-    
+
     return new Response("Not found", { status: 404 });
   },
 };
@@ -382,6 +382,7 @@ await Bun.build({
 ```
 
 This creates a single optimized server bundle where:
+
 - HTML files are inlined as strings with optimized asset references
 - CSS and JavaScript dependencies are bundled and minified
 - Static assets are copied with content hashes
@@ -396,12 +397,12 @@ You can bundle both your server and client code in a single build command:
 ```ts
 await Bun.build({
   entrypoints: [
-    "./server.ts",    // Server code with HTML imports
-    "./src/app.tsx",  // Client-side React app
+    "./server.ts", // Server code with HTML imports
+    "./src/app.tsx", // Client-side React app
   ],
   outdir: "./dist",
   target: "bun",
-  splitting: true,   // Share common dependencies
+  splitting: true, // Share common dependencies
 });
 ```
 

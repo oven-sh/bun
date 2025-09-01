@@ -434,32 +434,32 @@ Build for multiple platforms programmatically with enhanced target support:
 ```js
 // Enhanced cross-platform build configuration
 const platforms = [
-  { 
-    target: "bun-windows-x64-modern", 
+  {
+    target: "bun-windows-x64-modern",
     outfile: "app-windows-x64.exe",
     windows: {
       title: "My Application",
       version: "1.0.0.0",
-      icon: "./assets/icon.ico"
-    }
-  },
-  { 
-    target: "bun-linux-x64-baseline", 
-    outfile: "app-linux-x64" 
-  },
-  { 
-    target: "bun-darwin-arm64", 
-    outfile: "app-macos-arm64" 
+      icon: "./assets/icon.ico",
+    },
   },
   {
-    target: "bun-linux-arm64-musl", 
-    outfile: "app-linux-arm64-alpine" 
-  }
+    target: "bun-linux-x64-baseline",
+    outfile: "app-linux-x64",
+  },
+  {
+    target: "bun-darwin-arm64",
+    outfile: "app-macos-arm64",
+  },
+  {
+    target: "bun-linux-arm64-musl",
+    outfile: "app-linux-arm64-alpine",
+  },
 ];
 
 for (const platform of platforms) {
   console.log(`Building for ${platform.target}...`);
-  
+
   const result = await Bun.build({
     entrypoints: ["./src/app.ts"],
     outdir: "./dist",
@@ -467,7 +467,7 @@ for (const platform of platforms) {
     sourcemap: "external",
     compile: platform,
   });
-  
+
   if (result.success) {
     console.log(`✅ Built: ${result.outputs[0].path}`);
   } else {
@@ -496,18 +496,18 @@ await Bun.build({
       title: "My Enterprise Application",
       icon: "./assets/app-icon.ico",
       hideConsole: false, // Set to true for GUI apps without console
-      
+
       // Company and product information
       publisher: "ACME Corporation",
       description: "Advanced business automation tool",
       copyright: "© 2024 ACME Corporation. All rights reserved.",
-      
+
       // Version information (must be in X.Y.Z.W format)
       version: "2.1.0.0",
-      
+
       // Additional metadata for enterprise environments
       trademark: "ACME™",
-      internalName: "acme-automation-tool"
+      internalName: "acme-automation-tool",
     },
   },
 });
@@ -526,20 +526,21 @@ try {
     // Don't throw on build errors - handle them manually
     throw: false,
   });
-  
+
   if (!result.success) {
     console.error("Build failed with errors:");
     for (const message of result.logs) {
       if (message.level === "error") {
-        console.error(`${message.message} at ${message.position?.file}:${message.position?.line}`);
+        console.error(
+          `${message.message} at ${message.position?.file}:${message.position?.line}`,
+        );
       }
     }
     process.exit(1);
   }
-  
+
   console.log("✅ Executable built successfully!");
   console.log(`Size: ${result.outputs[0].size} bytes`);
-  
 } catch (error) {
   console.error("Unexpected build error:", error);
   process.exit(1);
@@ -553,9 +554,9 @@ Combine executable compilation with asset embedding for fully self-contained app
 ```js
 await Bun.build({
   entrypoints: [
-    "./src/server.ts",      // Main server code
-    "./static/**/*",        // All static assets
-    "./config.json",        // Configuration files
+    "./src/server.ts", // Main server code
+    "./static/**/*", // All static assets
+    "./config.json", // Configuration files
   ],
   outdir: "./dist",
   compile: {
@@ -565,7 +566,7 @@ await Bun.build({
   minify: true,
   sourcemap: "linked",
   naming: {
-    asset: "[name]-[hash].[ext]",  // Content-based asset hashing
+    asset: "[name]-[hash].[ext]", // Content-based asset hashing
   },
 });
 ```
@@ -578,16 +579,12 @@ Example GitHub Actions workflow for cross-platform builds:
 
 ```js
 // build-script.js
-const targets = [
-  "bun-windows-x64",
-  "bun-linux-x64", 
-  "bun-darwin-arm64"
-];
+const targets = ["bun-windows-x64", "bun-linux-x64", "bun-darwin-arm64"];
 
 for (const target of targets) {
-  const [os, arch] = target.split('-').slice(1);
-  const ext = os === 'windows' ? '.exe' : '';
-  
+  const [os, arch] = target.split("-").slice(1);
+  const ext = os === "windows" ? ".exe" : "";
+
   await Bun.build({
     entrypoints: ["./src/cli.ts"],
     outdir: "./dist",
@@ -598,7 +595,9 @@ for (const target of targets) {
     minify: true,
     define: {
       "process.env.BUILD_TIME": JSON.stringify(new Date().toISOString()),
-      "process.env.VERSION": JSON.stringify(process.env.GITHUB_REF_NAME || "dev"),
+      "process.env.VERSION": JSON.stringify(
+        process.env.GITHUB_REF_NAME || "dev",
+      ),
     },
   });
 }

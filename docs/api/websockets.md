@@ -323,6 +323,7 @@ const socket = new WebSocket("ws://localhost:3000");
 When connecting to servers that support compression, messages will be automatically compressed and decompressed transparently. This can significantly reduce bandwidth usage, especially for text-heavy applications like chat systems or real-time data feeds.
 
 The client will automatically negotiate the best compression parameters with the server, including:
+
 - Window size optimization
 - Context takeover settings
 - Compression threshold handling

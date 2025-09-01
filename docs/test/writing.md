@@ -459,7 +459,7 @@ expectTypeOf(undefined).toBeUndefined();
 expectTypeOf(null).toBeNull();
 expectTypeOf(() => {}).toBeFunction();
 
-// Complex types  
+// Complex types
 expectTypeOf([1, 2, 3]).toBeArray();
 expectTypeOf({ a: 1 }).toBeObject();
 ```
@@ -471,11 +471,17 @@ Use `toEqualTypeOf` for strict type equality checks:
 ```ts
 // Generic syntax
 expectTypeOf<string>().toEqualTypeOf<string>();
-expectTypeOf<{ name: string; age: number }>().toEqualTypeOf<{ name: string; age: number }>();
+expectTypeOf<{ name: string; age: number }>().toEqualTypeOf<{
+  name: string;
+  age: number;
+}>();
 
 // Inferred syntax
 expectTypeOf("hello").toEqualTypeOf<string>();
-expectTypeOf({ name: "Alice", age: 30 }).toEqualTypeOf<{ name: string; age: number }>();
+expectTypeOf({ name: "Alice", age: 30 }).toEqualTypeOf<{
+  name: string;
+  age: number;
+}>();
 
 // Using with values for inference
 const user = { name: "Alice", age: 30 };
@@ -537,7 +543,10 @@ expectTypeOf(Promise.resolve(42)).resolves.toBeNumber();
 expectTypeOf(Promise.resolve("hello")).resolves.toBeString();
 
 // Array of promises
-expectTypeOf([Promise.resolve(1), Promise.resolve(2)]).items.resolves.toBeNumber();
+expectTypeOf([
+  Promise.resolve(1),
+  Promise.resolve(2),
+]).items.resolves.toBeNumber();
 ```
 
 #### Negation with `.not`
@@ -878,8 +887,8 @@ test("mock return value testing", () => {
 
   // Verify the mock returned 5 at least once
   expect(mockCalculate).toHaveReturnedWith(5);
-  
-  // Verify the mock returned 15 at least once  
+
+  // Verify the mock returned 15 at least once
   expect(mockCalculate).toHaveReturnedWith(15);
 });
 ```
@@ -913,16 +922,16 @@ import { expect, test, mock } from "bun:test";
 test("nth return value testing", () => {
   const mockMultiply = mock((a: number, b: number) => a * b);
 
-  mockMultiply(2, 3);    // 1st call returns 6
-  mockMultiply(4, 5);    // 2nd call returns 20
-  mockMultiply(10, 2);   // 3rd call returns 20
+  mockMultiply(2, 3); // 1st call returns 6
+  mockMultiply(4, 5); // 2nd call returns 20
+  mockMultiply(10, 2); // 3rd call returns 20
 
   // Verify the 1st call returned 6
   expect(mockMultiply).toHaveNthReturnedWith(1, 6);
-  
+
   // Verify the 2nd call returned 20
   expect(mockMultiply).toHaveNthReturnedWith(2, 20);
-  
+
   // Verify the 3rd call returned 20
   expect(mockMultiply).toHaveNthReturnedWith(3, 20);
 });
@@ -936,10 +945,10 @@ These matchers work with complex return values like objects and arrays:
 import { expect, test, mock } from "bun:test";
 
 test("complex return values", () => {
-  const mockCreateUser = mock((name: string, age: number) => ({ 
-    name, 
-    age, 
-    id: Math.floor(Math.random() * 1000) 
+  const mockCreateUser = mock((name: string, age: number) => ({
+    name,
+    age,
+    id: Math.floor(Math.random() * 1000),
   }));
 
   const user1 = mockCreateUser("Alice", 25);
@@ -947,17 +956,18 @@ test("complex return values", () => {
 
   // Test with objects using partial matching
   expect(mockCreateUser).toHaveReturnedWith(
-    expect.objectContaining({ name: "Alice", age: 25 })
+    expect.objectContaining({ name: "Alice", age: 25 }),
   );
-  
+
   // Test the last returned value
   expect(mockCreateUser).toHaveLastReturnedWith(
-    expect.objectContaining({ name: "Bob", age: 30 })
+    expect.objectContaining({ name: "Bob", age: 30 }),
   );
-  
+
   // Test specific call's return value
-  expect(mockCreateUser).toHaveNthReturnedWith(1, 
-    expect.objectContaining({ name: "Alice", age: 25 })
+  expect(mockCreateUser).toHaveNthReturnedWith(
+    1,
+    expect.objectContaining({ name: "Alice", age: 25 }),
   );
 });
 ```
@@ -970,10 +980,10 @@ These matchers also work with async functions and promises:
 import { expect, test, mock } from "bun:test";
 
 test("async mock return values", async () => {
-  const mockFetchUser = mock(async (id: number) => ({ 
-    id, 
+  const mockFetchUser = mock(async (id: number) => ({
+    id,
     name: `User ${id}`,
-    email: `user${id}@example.com`
+    email: `user${id}@example.com`,
   }));
 
   await mockFetchUser(1);
@@ -981,11 +991,11 @@ test("async mock return values", async () => {
 
   // Test resolved values
   await expect(mockFetchUser).toHaveReturnedWith(
-    Promise.resolve(expect.objectContaining({ id: 1, name: "User 1" }))
+    Promise.resolve(expect.objectContaining({ id: 1, name: "User 1" })),
   );
-  
+
   await expect(mockFetchUser).toHaveLastReturnedWith(
-    Promise.resolve(expect.objectContaining({ id: 2, name: "User 2" }))
+    Promise.resolve(expect.objectContaining({ id: 2, name: "User 2" })),
   );
 });
 ```

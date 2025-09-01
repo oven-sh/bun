@@ -852,7 +852,7 @@ This is particularly useful for financial calculations, scientific computing, or
 
 ```ts
 // Financial calculation example
-const transactions = [199.99, -50.00, 25.50, -10.25, 5.76];
+const transactions = [199.99, -50.0, 25.5, -10.25, 5.76];
 const balance = Math.sumPrecise(transactions);
 console.log(balance); // => 171.00
 

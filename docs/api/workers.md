@@ -145,9 +145,9 @@ Performance comparison for objects with 10 properties (1 large string + 9 primit
 
 **Bun (with fast paths):**
 ```
-postMessage({ prop: 11 chars string, ...9 more props }) - 648ns (was 1.36µs)
-postMessage({ prop: 14 KB string, ...9 more props })    - 719ns (was 2.09µs)  
-postMessage({ prop: 3 MB string, ...9 more props })     - 1.26µs (was 168µs)
+postMessage({ prop: 11 chars string, ...9 more props }) - 648ns
+postMessage({ prop: 14 KB string, ...9 more props })    - 719ns
+postMessage({ prop: 3 MB string, ...9 more props })     - 1.26µs
 ```
 
 **Node.js v24.6.0 (for comparison):**
@@ -157,7 +157,7 @@ postMessage({ prop: 14 KB string, ...9 more props })    - 2.69µs
 postMessage({ prop: 3 MB string, ...9 more props })     - 304µs
 ```
 
-The fast paths show dramatic improvements, especially for larger strings where performance goes from 168µs to 1.26µs (133x faster).
+Bun significantly outperforms Node.js across all test cases, with particularly dramatic improvements for larger payloads.
 
 ```js
 // String fast path - optimized

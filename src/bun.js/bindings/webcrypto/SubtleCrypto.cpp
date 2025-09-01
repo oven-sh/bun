@@ -125,10 +125,10 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
 
     auto identifier = CryptoAlgorithmRegistry::singleton().identifier(params.name);
     if (!identifier) [[unlikely]]
-        return Exception { NotSupportedError };
+        RELEASE_AND_RETURN(scope, Exception { NotSupportedError });
 
     if (*identifier == CryptoAlgorithmIdentifier::Ed25519 && !isSafeCurvesEnabled(state))
-        return Exception { NotSupportedError };
+        RELEASE_AND_RETURN(scope, Exception { NotSupportedError });
 
     std::unique_ptr<CryptoAlgorithmParameters> result;
     switch (operation) {
@@ -137,7 +137,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         switch (*identifier) {
         case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
             if (isRSAESPKCSWebCryptoDeprecated(state))
-                return Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
+                RELEASE_AND_RETURN(scope, (Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s }));
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         case CryptoAlgorithmIdentifier::RSA_OAEP: {
@@ -166,7 +166,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             break;
         }
         default:
-            return Exception { NotSupportedError };
+            RELEASE_AND_RETURN(scope, Exception { NotSupportedError });
         }
         break;
     case Operations::Sign:
@@ -182,7 +182,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-            if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
+            if (hashIdentifier.hasException()) RELEASE_AND_RETURN(scope, hashIdentifier.releaseException());
             params.hashIdentifier = hashIdentifier.releaseReturnValue();
             result = makeUnique<CryptoAlgorithmEcdsaParams>(params);
             break;
@@ -194,7 +194,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             break;
         }
         default:
-            return Exception { NotSupportedError };
+            RELEASE_AND_RETURN(scope, Exception { NotSupportedError });
         }
         break;
     case Operations::Digest:
@@ -207,14 +207,14 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         default:
-            return Exception { NotSupportedError };
+            RELEASE_AND_RETURN(scope, Exception { NotSupportedError });
         }
         break;
     case Operations::GenerateKey:
         switch (*identifier) {
         case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5: {
             if (isRSAESPKCSWebCryptoDeprecated(state))
-                return Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
+                RELEASE_AND_RETURN(scope, (Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s }));
             auto params = convertDictionary<CryptoAlgorithmRsaKeyGenParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             result = makeUnique<CryptoAlgorithmRsaKeyGenParams>(params);
@@ -227,7 +227,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-            if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
+            if (hashIdentifier.hasException()) RELEASE_AND_RETURN(scope, hashIdentifier.releaseException());
             params.hashIdentifier = hashIdentifier.releaseReturnValue();
             result = makeUnique<CryptoAlgorithmRsaHashedKeyGenParams>(params);
             break;
@@ -247,7 +247,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-            if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
+            if (hashIdentifier.hasException()) RELEASE_AND_RETURN(scope, hashIdentifier.releaseException());
             params.hashIdentifier = hashIdentifier.releaseReturnValue();
             result = makeUnique<CryptoAlgorithmHmacKeyParams>(params);
             break;
@@ -266,7 +266,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         default:
-            return Exception { NotSupportedError };
+            RELEASE_AND_RETURN(scope, Exception { NotSupportedError });
         }
         break;
     case Operations::DeriveBits:
@@ -302,7 +302,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-            if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
+            if (hashIdentifier.hasException()) RELEASE_AND_RETURN(scope, hashIdentifier.releaseException());
             params.hashIdentifier = hashIdentifier.releaseReturnValue();
             result = makeUnique<CryptoAlgorithmHkdfParams>(params);
             break;
@@ -312,20 +312,20 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-            if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
+            if (hashIdentifier.hasException()) RELEASE_AND_RETURN(scope, hashIdentifier.releaseException());
             params.hashIdentifier = hashIdentifier.releaseReturnValue();
             result = makeUnique<CryptoAlgorithmPbkdf2Params>(params);
             break;
         }
         default:
-            return Exception { NotSupportedError };
+            RELEASE_AND_RETURN(scope, Exception { NotSupportedError });
         }
         break;
     case Operations::ImportKey:
         switch (*identifier) {
         case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
             if (isRSAESPKCSWebCryptoDeprecated(state))
-                return Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
+                RELEASE_AND_RETURN(scope, (Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s }));
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
@@ -335,7 +335,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-            if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
+            if (hashIdentifier.hasException()) RELEASE_AND_RETURN(scope, hashIdentifier.releaseException());
             params.hashIdentifier = hashIdentifier.releaseReturnValue();
             result = makeUnique<CryptoAlgorithmRsaHashedImportParams>(params);
             break;
@@ -354,7 +354,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-            if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
+            if (hashIdentifier.hasException()) RELEASE_AND_RETURN(scope, hashIdentifier.releaseException());
             params.hashIdentifier = hashIdentifier.releaseReturnValue();
             result = makeUnique<CryptoAlgorithmHmacKeyParams>(params);
             break;
@@ -375,9 +375,9 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::SHA_256:
         case CryptoAlgorithmIdentifier::SHA_384:
         case CryptoAlgorithmIdentifier::SHA_512:
-            return Exception { NotSupportedError };
+            RELEASE_AND_RETURN(scope, Exception { NotSupportedError });
         case CryptoAlgorithmIdentifier::None:
-            return Exception { NotSupportedError };
+            RELEASE_AND_RETURN(scope, Exception { NotSupportedError });
         }
 
         break;
@@ -388,7 +388,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         default:
-            return Exception { NotSupportedError };
+            RELEASE_AND_RETURN(scope, Exception { NotSupportedError });
         }
         break;
     case Operations::GetKeyLength:
@@ -408,7 +408,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-            if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
+            if (hashIdentifier.hasException()) RELEASE_AND_RETURN(scope, hashIdentifier.releaseException());
             params.hashIdentifier = hashIdentifier.releaseReturnValue();
             result = makeUnique<CryptoAlgorithmHmacKeyParams>(params);
             break;
@@ -418,13 +418,13 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         default:
-            return Exception { NotSupportedError };
+            RELEASE_AND_RETURN(scope, Exception { NotSupportedError });
         }
         break;
     }
 
     result->identifier = *identifier;
-    return result;
+    RELEASE_AND_RETURN(scope, result);
 }
 
 static CryptoKeyUsageBitmap toCryptoKeyUsageBitmap(CryptoKeyUsage usage)
@@ -801,7 +801,9 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTFMove(algorithmIdentifier), Operations::GenerateKey);
     if (paramsOrException.hasException()) {
-        promise->reject(paramsOrException.releaseException());
+        auto exception = paramsOrException.releaseException();
+        scope.release();
+        promise->reject(exception);
         return;
     }
     auto params = paramsOrException.releaseReturnValue();

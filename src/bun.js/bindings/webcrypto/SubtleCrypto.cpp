@@ -815,21 +815,39 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis](KeyOrKeyPair&& keyOrKeyPair) mutable {
         if (auto promise = getPromise(index, weakThis)) {
+            auto* globalObject = promise->globalObject();
+            if (!globalObject) {
+                rejectWithException(promise.releaseNonNull(), TypeError, "Invalid global object"_s);
+                return;
+            }
+            
+            JSC::JSLockHolder locker(globalObject);
+            auto& vm = JSC::getVM(globalObject);
+            auto scope = DECLARE_CATCH_SCOPE(vm);
+            
             WTF::switchOn(
                 keyOrKeyPair,
-                [&promise](RefPtr<CryptoKey>& key) {
+                [&promise, &scope](RefPtr<CryptoKey>& key) {
                     if ((key->type() == CryptoKeyType::Private || key->type() == CryptoKeyType::Secret) && !key->usagesBitmap()) {
                         rejectWithException(promise.releaseNonNull(), SyntaxError, ""_s);
                         return;
                     }
                     promise->resolve<IDLInterface<CryptoKey>>(*key);
+                    if (scope.exception()) {
+                        scope.clearException();
+                        rejectWithException(promise.releaseNonNull(), TypeError, "Failed to resolve promise with key"_s);
+                    }
                 },
-                [&promise](CryptoKeyPair& keyPair) {
+                [&promise, &scope](CryptoKeyPair& keyPair) {
                     if (!keyPair.privateKey->usagesBitmap()) {
                         rejectWithException(promise.releaseNonNull(), SyntaxError, ""_s);
                         return;
                     }
                     promise->resolve<IDLDictionary<CryptoKeyPair>>(keyPair);
+                    if (scope.exception()) {
+                        scope.clearException();
+                        rejectWithException(promise.releaseNonNull(), TypeError, "Failed to resolve promise with key pair"_s);
+                    }
                 });
         }
     };

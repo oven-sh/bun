@@ -138,11 +138,11 @@ pub const TestRunner = struct {
     }
 
     pub fn hasTestFilter(this: *const TestRunner) bool {
-        return this.filter_regex != null or this.test_options.test_line_filters.count() > 0;
+        return this.filter_regex != null or this.line_filters_by_file_id.count() > 0;
     }
 
     pub fn needsTestLineNumber(this: *const TestRunner) bool {
-        return this.test_options.test_line_filters.count() > 0;
+        return this.line_filters_by_file_id.count() > 0;
     }
 
     pub fn shouldSkipBasedOnLineFilter(this: *const TestRunner, line_number: u32, parent: *DescribeScope) bool {
@@ -150,7 +150,7 @@ pub const TestRunner = struct {
     }
 
     pub fn matchesLineFilter(this: *const TestRunner, line_number: u32, parent: *DescribeScope) bool {
-        if (this.test_options.test_line_filters.count() == 0) return true;
+        if (this.line_filters_by_file_id.count() == 0) return true;
 
         const lines = this.line_filters_by_file_id.get(parent.file_id) orelse return true;
         for (lines.items) |filter_line| {

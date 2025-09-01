@@ -11,23 +11,21 @@ describe("bun test file:line filtering", () => {
     return path;
   }
 
-  function runTestWithOutput(args: string[], cwd?: string): { stdout: string; stderr: string; exitCode: number } {
-    const result = spawnSync({
+  async function runTestWithOutput(args: string[], cwd?: string) {
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "test", ...args],
       env: bunEnv,
       cwd,
-      stderr: "pipe",
       stdout: "pipe",
-      stdin: "ignore",
+      stderr: "pipe",
     });
-    return {
-      stdout: result.stdout?.toString() || "",
-      stderr: result.stderr?.toString() || "",
-      exitCode: result.exitCode,
-    };
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+    return { stdout, stderr, exitCode };
   }
 
-  test("should run only the test on the specified line", () => {
+  test("should run only the test on the specified line", async () => {
     const cwd = tmpdirSync();
     const testFile = createTestFile(
       cwd,
@@ -51,7 +49,7 @@ test("test 3 - should NOT run", () => {
     );
 
     // Target line 8 which contains "test 2"
-    const { stdout, stderr, exitCode } = runTestWithOutput([`./single-test.test.ts:8`], cwd);
+    const { stdout, stderr, exitCode } = await runTestWithOutput([`./single-test.test.ts:8`], cwd);
 
     expect(stdout).toContain("✅ Test 2 ran");
     expect(stdout).not.toContain("❌ Test 1 ran");
@@ -61,7 +59,7 @@ test("test 3 - should NOT run", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("should run all tests in a describe block when targeting the describe line", () => {
+  test("should run all tests in a describe block when targeting the describe line", async () => {
     const cwd = tmpdirSync();
     const testFile = createTestFile(
       cwd,
@@ -94,7 +92,7 @@ describe("other block", () => {
     );
 
     // Target line 8 which contains the describe "target block"
-    const { stdout, stderr, exitCode } = runTestWithOutput([`./describe-block.test.ts:8`], cwd);
+    const { stdout, stderr, exitCode } = await runTestWithOutput([`./describe-block.test.ts:8`], cwd);
 
     expect(stdout).toContain("✅ Test A ran");
     expect(stdout).toContain("✅ Test B ran");
@@ -105,7 +103,7 @@ describe("other block", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("should handle nested describe blocks correctly", () => {
+  test("should handle nested describe blocks correctly", async () => {
     const cwd = tmpdirSync();
     const testFile = createTestFile(
       cwd,
@@ -138,7 +136,7 @@ describe("outer", () => {
     );
 
     // Target line 9 which contains the inner describe "inner target"
-    const { stdout, stderr, exitCode } = runTestWithOutput([`./nested-describe.test.ts:9`], cwd);
+    const { stdout, stderr, exitCode } = await runTestWithOutput([`./nested-describe.test.ts:9`], cwd);
 
     expect(stdout).toContain("✅ Inner test A ran");
     expect(stdout).toContain("✅ Inner test B ran");
@@ -149,7 +147,7 @@ describe("outer", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("should show error when no tests found at specified line", () => {
+  test("should show error when no tests found at specified line", async () => {
     const cwd = tmpdirSync();
     const testFile = createTestFile(
       cwd,
@@ -162,23 +160,23 @@ test("only test", () => {
     );
 
     // Target line 10 which is beyond the file content
-    const { stdout, stderr, exitCode } = runTestWithOutput([`./empty-line.test.ts:10`], cwd);
+    const { stdout, stderr, exitCode } = await runTestWithOutput([`./empty-line.test.ts:10`], cwd);
 
     expect(stderr).toContain("no tests found for file:line filters");
     expect(stderr).toContain("skipping 1 test");
     expect(exitCode).toBe(1);
   });
 
-  test("should show error when targeting non-existent file", () => {
+  test("should show error when targeting non-existent file", async () => {
     const cwd = tmpdirSync();
 
-    const { stdout, stderr, exitCode } = runTestWithOutput([`./non-existent.test.ts:5`], cwd);
+    const { stdout, stderr, exitCode } = await runTestWithOutput([`./non-existent.test.ts:5`], cwd);
 
     expect(stderr).toContain("had no matches");
     expect(exitCode).toBe(1);
   });
 
-  test("should handle absolute paths with line numbers", () => {
+  test("should handle absolute paths with line numbers", async () => {
     const cwd = tmpdirSync();
     const testFile = createTestFile(
       cwd,
@@ -196,7 +194,7 @@ test("target test", () => {
     );
 
     // Use absolute path with line number (target the test on line 7)
-    const { stdout, stderr, exitCode } = runTestWithOutput([`${testFile}:7`], cwd);
+    const { stdout, stderr, exitCode } = await runTestWithOutput([`${testFile}:7`], cwd);
 
     expect(stdout).toContain("✅ Target test ran");
     expect(stderr).toContain("1 pass");
@@ -204,7 +202,7 @@ test("target test", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("should handle relative paths with ./ prefix", () => {
+  test("should handle relative paths with ./ prefix", async () => {
     const cwd = tmpdirSync();
     const testFile = createTestFile(
       cwd,
@@ -222,7 +220,7 @@ test("target test", () => {
     );
 
     // Use ./relative path with line number (target the test on line 7)
-    const { stdout, stderr, exitCode } = runTestWithOutput([`./relative-path.test.ts:7`], cwd);
+    const { stdout, stderr, exitCode } = await runTestWithOutput([`./relative-path.test.ts:7`], cwd);
 
     expect(stdout).toContain("✅ Target test ran");
     expect(stderr).toContain("1 pass");
@@ -230,7 +228,7 @@ test("target test", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("should handle multiple describe blocks at different levels", () => {
+  test("should handle multiple describe blocks at different levels", async () => {
     const cwd = tmpdirSync();
     const testFile = createTestFile(
       cwd,
@@ -265,7 +263,7 @@ describe("third block", () => {
     );
 
     // Target line 10 which contains "describe second block"
-    const { stdout, stderr, exitCode } = runTestWithOutput([`./multi-describe.test.ts:10`], cwd);
+    const { stdout, stderr, exitCode } = await runTestWithOutput([`./multi-describe.test.ts:10`], cwd);
 
     expect(stdout).toContain("✅ Second test A ran");
     expect(stdout).toContain("✅ Second test B ran");
@@ -276,7 +274,7 @@ describe("third block", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("should work with test.each when targeting individual test line", () => {
+  test("should work with test.each when targeting individual test line", async () => {
     const cwd = tmpdirSync();
     const testFile = createTestFile(
       cwd,
@@ -300,7 +298,7 @@ test("another test - should NOT run", () => {
     );
 
     // Target line 8 which contains the test.each
-    const { stdout, stderr, exitCode } = runTestWithOutput([`./test-each.test.ts:8`], cwd);
+    const { stdout, stderr, exitCode } = await runTestWithOutput([`./test-each.test.ts:8`], cwd);
 
     expect(stdout).toContain("✅ Each test 1 ran");
     expect(stdout).toContain("✅ Each test 2 ran");
@@ -310,7 +308,7 @@ test("another test - should NOT run", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("should reject invalid line numbers", () => {
+  test("should reject invalid line numbers", async () => {
     const cwd = tmpdirSync();
     const testFile = createTestFile(
       cwd,
@@ -323,12 +321,12 @@ test("test", () => {
     );
 
     // Target line 0 (invalid)
-    const result1 = runTestWithOutput([`./valid-file.test.ts:0`], cwd);
+    const result1 = await runTestWithOutput([`./valid-file.test.ts:0`], cwd);
     expect(result1.stderr).toContain("no tests found for file:line filters");
     expect(result1.exitCode).toBe(1);
 
     // Target negative line (this should be treated as a filename, not file:line)
-    const result2 = runTestWithOutput([`./valid-file.test.ts:-5`], cwd);
+    const result2 = await runTestWithOutput([`./valid-file.test.ts:-5`], cwd);
     if (isWindows) {
       // windows somehow passes through further to the file filter engine
       expect(result2.stderr).toContain("The following filters did not match any test files");
@@ -338,7 +336,7 @@ test("test", () => {
     expect(result2.exitCode).toBe(1);
   });
 
-  test("should work with comment lines and empty lines by finding nearest test/describe", () => {
+  test("should work with comment lines and empty lines by finding nearest test/describe", async () => {
     const cwd = tmpdirSync();
     const testFile = createTestFile(
       cwd,
@@ -364,7 +362,7 @@ test("outside test - should NOT run", () => {
     );
 
     // Target line 5 which is the describe line
-    const { stdout, stderr, exitCode } = runTestWithOutput([`./comment-lines.test.ts:6`], cwd);
+    const { stdout, stderr, exitCode } = await runTestWithOutput([`./comment-lines.test.ts:6`], cwd);
 
     expect(stdout).toContain("✅ Test inside ran");
     expect(stdout).not.toContain("❌ Outside test ran");
@@ -373,7 +371,7 @@ test("outside test - should NOT run", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("should handle multiple file:line arguments for same file", () => {
+  test("should handle multiple file:line arguments for same file", async () => {
     const cwd = tmpdirSync();
     const testFile = createTestFile(
       cwd,
@@ -397,7 +395,7 @@ test("test 3 - SHOULD run", () => {
     );
 
     // Target lines 3 and 13 (test 1 and test 3)
-    const { stdout, stderr, exitCode } = runTestWithOutput([`./multi-line.test.ts:3`, `./multi-line.test.ts:13`], cwd);
+    const { stdout, stderr, exitCode } = await runTestWithOutput([`./multi-line.test.ts:3`, `./multi-line.test.ts:13`], cwd);
 
     expect(stdout).toContain("✅ Test 1 ran");
     expect(stdout).toContain("✅ Test 3 ran");
@@ -407,7 +405,7 @@ test("test 3 - SHOULD run", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("should handle multiple file:line arguments for different files", () => {
+  test("should handle multiple file:line arguments for different files", async () => {
     const cwd = tmpdirSync();
     const testFile1 = createTestFile(
       cwd,
@@ -442,7 +440,7 @@ test("file2 test2 - SHOULD run", () => {
     );
 
     // Target line 3 in file1 and line 8 in file2
-    const { stdout, stderr, exitCode } = runTestWithOutput([`./file1.test.ts:3`, `./file2.test.ts:8`], cwd);
+    const { stdout, stderr, exitCode } = await runTestWithOutput([`./file1.test.ts:3`, `./file2.test.ts:8`], cwd);
 
     expect(stdout).toContain("✅ File1 Test1 ran");
     expect(stdout).toContain("✅ File2 Test2 ran");
@@ -453,7 +451,7 @@ test("file2 test2 - SHOULD run", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("should handle describe blocks in multiple files", () => {
+  test("should handle describe blocks in multiple files", async () => {
     const cwd = tmpdirSync();
     const testFile1 = createTestFile(
       cwd,
@@ -502,7 +500,7 @@ describe("group2", () => {
     );
 
     // Target line 3 in describe1 (describe block) and line 8 in describe2 (describe block)
-    const { stdout, stderr, exitCode } = runTestWithOutput([`./describe1.test.ts:3`, `./describe2.test.ts:8`], cwd);
+    const { stdout, stderr, exitCode } = await runTestWithOutput([`./describe1.test.ts:3`, `./describe2.test.ts:8`], cwd);
 
     expect(stdout).toContain("✅ Group1 Test1 ran");
     expect(stdout).toContain("✅ Group1 Test2 ran");
@@ -515,7 +513,7 @@ describe("group2", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("should show error message for multiple file:line filters with no matches", () => {
+  test("should show error message for multiple file:line filters with no matches", async () => {
     const cwd = tmpdirSync();
     const testFile1 = createTestFile(
       cwd,
@@ -538,7 +536,7 @@ test("another test", () => {
     );
 
     // Target non-existent lines
-    const { stdout, stderr, exitCode } = runTestWithOutput([`./empty1.test.ts:99`, `./empty2.test.ts:88`], cwd);
+    const { stdout, stderr, exitCode } = await runTestWithOutput([`./empty1.test.ts:99`, `./empty2.test.ts:88`], cwd);
 
     expect(stderr).toContain("no tests found for file:line filters");
     expect(stderr).toContain("empty1.test.ts:99");
@@ -546,7 +544,7 @@ test("another test", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("should handle mixed file:line and normal file arguments", () => {
+  test("should handle mixed file:line and normal file arguments", async () => {
     const cwd = tmpdirSync();
     const testFile1 = createTestFile(
       cwd,
@@ -581,7 +579,7 @@ test("mixed2 test2 - SHOULD run", () => {
     );
 
     // Target line 3 in mixed1 (specific test) and entire mixed2 file
-    const { stdout, stderr, exitCode } = runTestWithOutput([`./mixed1.test.ts:3`, `./mixed2.test.ts`], cwd);
+    const { stdout, stderr, exitCode } = await runTestWithOutput([`./mixed1.test.ts:3`, `./mixed2.test.ts`], cwd);
 
     expect(stdout).toContain("✅ Mixed1 Test1 ran");
     expect(stdout).toContain("✅ Mixed2 Test1 ran");

@@ -318,7 +318,15 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       throw this[_adapter].notTaggedCallError();
     }
 
-    this.#runAsync();
+    const runPromise = this.#runAsync();
+
+    // Always handle the run promise to prevent dangling rejections
+    if ($isPromise(runPromise) && runPromise !== this) {
+      runPromise.catch(() => {
+        // Error is already handled via this.reject() in #runAsync
+        // This catch is just to prevent unhandled rejection warnings
+      });
+    }
 
     return super.finally.$apply(this, arguments);
   }

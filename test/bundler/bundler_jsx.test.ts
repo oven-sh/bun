@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test";
-import { BundlerTestInput, itBundled } from "./expectBundled";
 import { normalizeBunSnapshot } from "harness";
+import { BundlerTestInput, itBundled } from "./expectBundled";
 
 const helpers = {
   "/node_modules/bun-test-helpers/index.js": /* js */ `

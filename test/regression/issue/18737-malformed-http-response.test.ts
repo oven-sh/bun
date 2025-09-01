@@ -1,10 +1,9 @@
-import { test, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { expect, test } from "bun:test";
 import { createServer } from "net";
 
 test("issue #18737 - malformed HTTP response handling", async () => {
   // Create a TCP server that sends malformed HTTP responses
-  const server = createServer((socket) => {
+  const server = createServer(socket => {
     socket.on("data", () => {
       // Send a malformed HTTP response that will trigger picohttp to return -1
       socket.write("INVALID_HTTP_RESPONSE_LINE\r\n\r\n");
@@ -12,7 +11,7 @@ test("issue #18737 - malformed HTTP response handling", async () => {
     });
   });
 
-  await new Promise<void>((resolve) => {
+  await new Promise<void>(resolve => {
     server.listen(0, () => resolve());
   });
 
@@ -28,10 +27,10 @@ test("issue #18737 - malformed HTTP response handling", async () => {
     expect(typeof error.message).toBe("string");
     // The error should indicate connection/parsing failure
     expect(
-      error.message.includes("ECONNRESET") || 
-      error.message.includes("connection") || 
-      error.message.includes("network") ||
-      error.code === "Malformed_HTTP_Response"
+      error.message.includes("ECONNRESET") ||
+        error.message.includes("connection") ||
+        error.message.includes("network") ||
+        error.code === "Malformed_HTTP_Response",
     ).toBe(true);
   } finally {
     server.close();
@@ -40,8 +39,8 @@ test("issue #18737 - malformed HTTP response handling", async () => {
 
 test("issue #18737 - malformed HTTP response in WebSocket upgrade", async () => {
   // Create a server that sends malformed HTTP upgrade responses
-  const server = createServer((socket) => {
-    socket.on("data", (data) => {
+  const server = createServer(socket => {
+    socket.on("data", data => {
       const request = data.toString();
       if (request.includes("Upgrade: websocket")) {
         // Send malformed HTTP response for WebSocket upgrade
@@ -53,7 +52,7 @@ test("issue #18737 - malformed HTTP response in WebSocket upgrade", async () => 
     });
   });
 
-  await new Promise<void>((resolve) => {
+  await new Promise<void>(resolve => {
     server.listen(0, () => resolve());
   });
 
@@ -61,7 +60,7 @@ test("issue #18737 - malformed HTTP response in WebSocket upgrade", async () => 
 
   try {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/test`);
-    
+
     // Should get a proper error, not crash
     await new Promise((resolve, reject) => {
       ws.onerror = (event: any) => {
@@ -69,11 +68,11 @@ test("issue #18737 - malformed HTTP response in WebSocket upgrade", async () => 
         expect(event).toBeDefined();
         resolve(event);
       };
-      
+
       ws.onopen = () => {
         reject(new Error("Expected WebSocket connection to fail"));
       };
-      
+
       // Timeout after 2 seconds
       setTimeout(() => {
         reject(new Error("WebSocket connection timeout"));
@@ -89,7 +88,7 @@ test("issue #18737 - malformed HTTP response in WebSocket upgrade", async () => 
 
 test("issue #18737 - partial HTTP response handling", async () => {
   // Test the ShortRead case to ensure it's properly distinguished from malformed
-  const server = createServer((socket) => {
+  const server = createServer(socket => {
     socket.on("data", () => {
       // Send incomplete HTTP response
       socket.write("HTTP/1.1 200 OK\r\n");
@@ -101,7 +100,7 @@ test("issue #18737 - partial HTTP response handling", async () => {
     });
   });
 
-  await new Promise<void>((resolve) => {
+  await new Promise<void>(resolve => {
     server.listen(0, () => resolve());
   });
 
@@ -109,20 +108,20 @@ test("issue #18737 - partial HTTP response handling", async () => {
 
   try {
     const response = await fetch(`http://127.0.0.1:${port}/test`, {
-      signal: AbortSignal.timeout(500) // Timeout quickly
+      signal: AbortSignal.timeout(500), // Timeout quickly
     });
-    
+
     // Should be able to read partial data
     const text = await response.text();
     expect(text).toBe("partial");
   } catch (error: any) {
     // Either timeout or connection error is acceptable
     expect(
-      error.name === "AbortError" || 
-      error.name === "TimeoutError" ||
-      error.message.includes("ECONNRESET") ||
-      error.message.includes("connection") ||
-      error.message.includes("timed out")
+      error.name === "AbortError" ||
+        error.name === "TimeoutError" ||
+        error.message.includes("ECONNRESET") ||
+        error.message.includes("connection") ||
+        error.message.includes("timed out"),
     ).toBe(true);
   } finally {
     server.close();

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test } from "bun:test";
 
 test("issue #18737 - WebSocket protocol validation fix", async () => {
   // Test the specific bug: client without protocol should accept server with protocol
@@ -17,30 +17,30 @@ test("issue #18737 - WebSocket protocol validation fix", async () => {
       message(ws, message) {
         ws.send("echo: " + message);
         ws.close();
-      }
-    }
+      },
+    },
   });
 
   try {
     // Client doesn't specify a protocol - this should work even if server sends one
     const ws = new WebSocket(`ws://localhost:${server.port}/test`);
-    
+
     await new Promise<void>((resolve, reject) => {
       let connected = false;
-      
+
       ws.onopen = () => {
         connected = true;
         ws.send("test");
       };
-      
-      ws.onmessage = (event) => {
+
+      ws.onmessage = event => {
         if (event.data === "connected") {
           // Good, connection established
         } else if (event.data === "echo: test") {
           // Echo received, connection working
         }
       };
-      
+
       ws.onclose = () => {
         if (connected) {
           resolve(); // Success - connection worked without protocol mismatch error
@@ -48,11 +48,11 @@ test("issue #18737 - WebSocket protocol validation fix", async () => {
           reject(new Error("WebSocket closed before connecting"));
         }
       };
-      
-      ws.onerror = (error) => {
+
+      ws.onerror = error => {
         reject(new Error(`WebSocket error: ${error}`));
       };
-      
+
       setTimeout(() => {
         reject(new Error("WebSocket test timeout"));
       }, 3000);
@@ -83,30 +83,30 @@ test("issue #18737 - WebSocket with specific protocol", async () => {
       message(ws, message) {
         ws.send("protocol-echo: " + message);
         ws.close();
-      }
-    }
+      },
+    },
   });
 
   try {
     // Client specifies a protocol - this should also work
     const ws = new WebSocket(`ws://localhost:${server.port}/test`, ["echo-protocol"]);
-    
+
     await new Promise<void>((resolve, reject) => {
       let connected = false;
-      
+
       ws.onopen = () => {
         connected = true;
         ws.send("test");
       };
-      
-      ws.onmessage = (event) => {
+
+      ws.onmessage = event => {
         if (event.data === "protocol-connected") {
           // Good, connection established
         } else if (event.data === "protocol-echo: test") {
           // Echo received, connection working
         }
       };
-      
+
       ws.onclose = () => {
         if (connected) {
           resolve(); // Success
@@ -114,11 +114,11 @@ test("issue #18737 - WebSocket with specific protocol", async () => {
           reject(new Error("WebSocket closed before connecting"));
         }
       };
-      
-      ws.onerror = (error) => {
+
+      ws.onerror = error => {
         reject(new Error(`WebSocket with protocol error: ${error}`));
       };
-      
+
       setTimeout(() => {
         reject(new Error("WebSocket protocol test timeout"));
       }, 3000);

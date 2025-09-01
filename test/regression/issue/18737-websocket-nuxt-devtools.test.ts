@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunExe, tempDirWithFiles } from "harness";
 
 test("issue #18737 - WebSocket connection and malformed HTTP response with Nuxt DevTools", async () => {
@@ -120,7 +120,7 @@ console.log("All tests passed");
   const serverDir = tempDirWithFiles("websocket-test-server", {
     "server.js": serverCode,
   });
-  
+
   const clientDir = tempDirWithFiles("websocket-test-client", {
     "client.js": clientCode,
   });
@@ -136,7 +136,7 @@ console.log("All tests passed");
   let serverInfo: { port: number; url: string };
   try {
     const serverOutput = await serverProc.stdout.text();
-    const lines = serverOutput.trim().split('\n');
+    const lines = serverOutput.trim().split("\n");
     serverInfo = JSON.parse(lines[0]);
   } catch (error) {
     const stderr = await serverProc.stderr.text();
@@ -361,7 +361,7 @@ setTimeout(() => {
   const devServerDir = tempDirWithFiles("nuxt-dev-server", {
     "server.js": devServerCode,
   });
-  
+
   const devClientDir = tempDirWithFiles("nuxt-dev-client", {
     "client.js": devClientCode,
   });
@@ -377,7 +377,7 @@ setTimeout(() => {
   let devServerInfo: { port: number; url: string };
   try {
     const serverOutput = await devServerProc.stdout.text();
-    const lines = serverOutput.trim().split('\n');
+    const lines = serverOutput.trim().split("\n");
     devServerInfo = JSON.parse(lines[0]);
   } catch (error) {
     const stderr = await devServerProc.stderr.text();

@@ -1854,6 +1854,11 @@ pub const BundleV2 = struct {
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
 
+            if (transpiler.options.compile) {
+                // Emitting DCE annotations is nonsensical in --compile.
+                transpiler.options.emit_dce_annotations = false;
+            }
+
             transpiler.configureLinker();
             try transpiler.configureDefines();
 

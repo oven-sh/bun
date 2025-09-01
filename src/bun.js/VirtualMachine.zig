@@ -1011,6 +1011,9 @@ pub fn initWithModuleGraph(
         .onDependencyError = ModuleLoader.AsyncModule.Queue.onDependencyError,
     };
 
+    // Emitting "@__PURE__" comments at runtime is a waste of memory and time.
+    vm.transpiler.options.emit_dce_annotations = false;
+
     vm.transpiler.resolver.standalone_module_graph = opts.graph.?;
 
     // Avoid reading from tsconfig.json & package.json when we're in standalone mode
@@ -1123,6 +1126,9 @@ pub fn init(opts: Options) !*VirtualMachine {
     vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
     vm.regular_event_loop.concurrent_tasks = .{};
     vm.event_loop = &vm.regular_event_loop;
+
+    // Emitting "@__PURE__" comments at runtime is a waste of memory and time.
+    vm.transpiler.options.emit_dce_annotations = false;
 
     vm.transpiler.macro_context = null;
     vm.transpiler.resolver.store_fd = opts.store_fd;
@@ -1278,6 +1284,9 @@ pub fn initWorker(
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
         default_allocator,
     );
+
+    // Emitting "@__PURE__" comments at runtime is a waste of memory and time.
+    vm.transpiler.options.emit_dce_annotations = false;
 
     vm.regular_event_loop.virtual_machine = vm;
     vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;

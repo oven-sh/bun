@@ -365,7 +365,7 @@ Server.prototype.address = function () {
 Server.prototype.getConnections = function (callback) {
   if (typeof callback === "function") {
     // In Bun case we will never error on getConnections
-    // Node only errors if in the middle of counting the server got disconnected, 
+    // Node only errors if in the middle of counting the server got disconnected,
     // which never happens in Bun
     // If disconnected will only pass null as well and 0 connected
     const count = this[serverSymbol] ? this._connections : 0;
@@ -834,12 +834,12 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
   #onClose() {
     this[kHandle] = null;
-    
+
     // Decrement connection count when socket closes
     if (this.server && this.server._connections > 0) {
       this.server._connections--;
     }
-    
+
     const message = this._httpMessage;
     const req = message?.req;
     if (req && !req.complete && !req[kHandle]?.upgraded) {

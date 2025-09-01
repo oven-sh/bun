@@ -1,14 +1,14 @@
 /**
  * Regression test for GitHub issue #4459
  * https://github.com/oven-sh/bun/issues/4459
- * 
+ *
  * Issue: "server.getConnections is not implemented"
  * Expected: getConnections should work exactly like Node.js
  */
 
-import { test, expect } from "bun:test";
-import * as net from "net";
+import { expect, test } from "bun:test";
 import * as http from "http";
+import * as net from "net";
 
 test("issue #4459: server.getConnections should be implemented and work like Node.js", async () => {
   const server = net.createServer();
@@ -18,7 +18,7 @@ test("issue #4459: server.getConnections should be implemented and work like Nod
 
   server.listen(0, () => {
     const port = server.address()!.port;
-    
+
     // Test 1: No connections initially
     server.getConnections((err, count) => {
       results.push({ err, count });
@@ -46,7 +46,7 @@ test("issue #4459: server.getConnections should be implemented and work like Nod
                       setTimeout(() => {
                         server.getConnections((err, count) => {
                           results.push({ err, count });
-                          
+
                           server.close();
                           resolve();
                         });
@@ -81,11 +81,11 @@ test("issue #4459: server.getConnections should be implemented and work like Nod
 
 test("issue #4459: getConnections should support method chaining", () => {
   const server = net.createServer();
-  
+
   // Method should return the server instance for chaining
   const result = server.getConnections(() => {});
   expect(result).toBe(server);
-  
+
   server.close();
 });
 
@@ -94,16 +94,16 @@ test("issue #4459: getConnections should work when server is not listening", () 
   let callbackCalled = false;
   let callbackErr: any = undefined;
   let callbackCount: number = -1;
-  
+
   const callback = (err: any, count: number) => {
     callbackCalled = true;
     callbackErr = err;
     callbackCount = count;
   };
-  
+
   // Should call callback with 0 connections when not listening
   server.getConnections(callback);
-  
+
   expect(callbackCalled).toBe(true);
   expect(callbackErr).toBeNull();
   expect(callbackCount).toBe(0);
@@ -111,48 +111,48 @@ test("issue #4459: getConnections should work when server is not listening", () 
 
 test("issue #4459: http.Server.getConnections should be implemented", async () => {
   const server = http.createServer();
-  
+
   // Test that the method exists
   expect(typeof server.getConnections).toBe("function");
-  
+
   // Test basic functionality - should return 0 when not listening (async)
   const { promise, resolve } = Promise.withResolvers<{ err: any; count: number }>();
-  
+
   const callback = (err: any, count: number) => {
     resolve({ err, count });
   };
-  
+
   server.getConnections(callback);
-  
+
   const result = await promise;
   expect(result.err).toBeNull();
   expect(result.count).toBe(0);
-  
+
   server.close();
 });
 
 test("issue #4459: http.Server.getConnections should support method chaining", () => {
   const server = http.createServer();
-  
+
   // Method should return the server instance for chaining
   const result = server.getConnections(() => {});
   expect(result).toBe(server);
-  
+
   server.close();
 });
 
 test("issue #4459: http.Server.getConnections should work when server is not listening", async () => {
   const server = http.createServer();
-  
+
   // Should call callback with 0 connections when not listening (async)
   const { promise, resolve } = Promise.withResolvers<{ err: any; count: number }>();
-  
+
   const callback = (err: any, count: number) => {
     resolve({ err, count });
   };
-  
+
   server.getConnections(callback);
-  
+
   const result = await promise;
   expect(result.err).toBeNull();
   expect(result.count).toBe(0);

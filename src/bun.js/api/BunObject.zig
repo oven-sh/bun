@@ -72,9 +72,6 @@ pub const BunObject = struct {
     pub const inspect = toJSLazyPropertyCallback(Bun.getInspect);
     pub const origin = toJSLazyPropertyCallback(Bun.getOrigin);
     pub const semver = toJSLazyPropertyCallback(Bun.getSemver);
-    pub const stderr = toJSLazyPropertyCallback(Bun.getStderr);
-    pub const stdin = toJSLazyPropertyCallback(Bun.getStdin);
-    pub const stdout = toJSLazyPropertyCallback(Bun.getStdout);
     pub const unsafe = toJSLazyPropertyCallback(Bun.getUnsafe);
     pub const S3Client = toJSLazyPropertyCallback(Bun.getS3ClientConstructor);
     pub const s3 = toJSLazyPropertyCallback(Bun.getS3DefaultClient);
@@ -139,9 +136,6 @@ pub const BunObject = struct {
         @export(&BunObject.hash, .{ .name = lazyPropertyCallbackName("hash") });
         @export(&BunObject.inspect, .{ .name = lazyPropertyCallbackName("inspect") });
         @export(&BunObject.origin, .{ .name = lazyPropertyCallbackName("origin") });
-        @export(&BunObject.stderr, .{ .name = lazyPropertyCallbackName("stderr") });
-        @export(&BunObject.stdin, .{ .name = lazyPropertyCallbackName("stdin") });
-        @export(&BunObject.stdout, .{ .name = lazyPropertyCallbackName("stdout") });
         @export(&BunObject.unsafe, .{ .name = lazyPropertyCallbackName("unsafe") });
         @export(&BunObject.semver, .{ .name = lazyPropertyCallbackName("semver") });
         @export(&BunObject.embeddedFiles, .{ .name = lazyPropertyCallbackName("embeddedFiles") });
@@ -565,38 +559,6 @@ pub fn getOrigin(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue 
     return ZigString.init(VirtualMachine.get().origin.origin).toJS(globalThis);
 }
 
-pub fn getStdin(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    var rare_data = globalThis.bunVM().rareData();
-    var store = rare_data.stdin();
-    store.ref();
-    var blob = jsc.WebCore.Blob.new(
-        jsc.WebCore.Blob.initWithStore(store, globalThis),
-    );
-    blob.allocator = bun.default_allocator;
-    return blob.toJS(globalThis);
-}
-
-pub fn getStderr(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    var rare_data = globalThis.bunVM().rareData();
-    var store = rare_data.stderr();
-    store.ref();
-    var blob = jsc.WebCore.Blob.new(
-        jsc.WebCore.Blob.initWithStore(store, globalThis),
-    );
-    blob.allocator = bun.default_allocator;
-    return blob.toJS(globalThis);
-}
-
-pub fn getStdout(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    var rare_data = globalThis.bunVM().rareData();
-    var store = rare_data.stdout();
-    store.ref();
-    var blob = jsc.WebCore.Blob.new(
-        jsc.WebCore.Blob.initWithStore(store, globalThis),
-    );
-    blob.allocator = bun.default_allocator;
-    return blob.toJS(globalThis);
-}
 
 pub fn enableANSIColors(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     _ = globalThis;

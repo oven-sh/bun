@@ -270,16 +270,19 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     return this;
   }
 
-  then() {
+  #runAsyncAndCatch() {
     const runPromise = this.#runAsync();
 
-    // Always handle the run promise to prevent dangling rejections
     if ($isPromise(runPromise) && runPromise !== this) {
       runPromise.catch(() => {
         // Error is already handled via this.reject() in #runAsync
         // This catch is just to prevent unhandled rejection warnings
       });
     }
+  }
+
+  then() {
+    this.#runAsyncAndCatch();
 
     const result = super.$then.$apply(this, arguments);
 
@@ -297,15 +300,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       throw this[_adapter].notTaggedCallError();
     }
 
-    const runPromise = this.#runAsync();
-
-    // Always handle the run promise to prevent dangling rejections
-    if ($isPromise(runPromise) && runPromise !== this) {
-      runPromise.catch(() => {
-        // Error is already handled via this.reject() in #runAsync
-        // This catch is just to prevent unhandled rejection warnings
-      });
-    }
+    this.#runAsyncAndCatch();
 
     const result = super.catch.$apply(this, arguments);
     $markPromiseAsHandled(result);
@@ -318,15 +313,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       throw this[_adapter].notTaggedCallError();
     }
 
-    const runPromise = this.#runAsync();
-
-    // Always handle the run promise to prevent dangling rejections
-    if ($isPromise(runPromise) && runPromise !== this) {
-      runPromise.catch(() => {
-        // Error is already handled via this.reject() in #runAsync
-        // This catch is just to prevent unhandled rejection warnings
-      });
-    }
+    this.#runAsyncAndCatch();
 
     return super.finally.$apply(this, arguments);
   }

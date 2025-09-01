@@ -218,7 +218,7 @@ scanner = "${scannerPath}"`,
     }
   }
 
-  const proc = Bun.spawn({
+  await using proc = Bun.spawn({
     cmd,
     cwd: dir,
     stdout: "pipe",

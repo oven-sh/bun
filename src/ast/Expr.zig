@@ -650,12 +650,12 @@ pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
 pub fn extractNumericValuesInSafeRange(left: Expr.Data, right: Expr.Data) ?[2]f64 {
     const l_value = left.extractNumericValue() orelse return null;
     const r_value = right.extractNumericValue() orelse return null;
-    
+
     // Check for NaN and return null if either value is NaN
     if (std.math.isNan(l_value) or std.math.isNan(r_value)) {
         return null;
     }
-    
+
     if (std.math.isInf(l_value) or std.math.isInf(r_value)) {
         return .{ l_value, r_value };
     }

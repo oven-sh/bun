@@ -382,7 +382,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     },
                     "Sec-WebSocket-Protocol".len => {
                         if (strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Protocol", false)) {
-                            if (this.websocket_protocol == 0 or bun.hash(header.value) != this.websocket_protocol) {
+                            if (this.websocket_protocol != 0 and bun.hash(header.value) != this.websocket_protocol) {
                                 this.terminate(ErrorCode.mismatch_client_protocol);
                                 return;
                             }

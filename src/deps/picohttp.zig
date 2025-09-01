@@ -299,10 +299,12 @@ pub const Response = struct {
         );
 
         return switch (rc) {
-            -1 => if (comptime Environment.allow_assert) brk: {
-                Output.debug("Malformed HTTP response:\n{s}", .{buf});
+            -1 => brk: {
+                if (comptime Environment.allow_assert) {
+                    Output.debug("Malformed HTTP response:\n{s}", .{buf});
+                }
                 break :brk error.Malformed_HTTP_Response;
-            } else error.Malformed_HTTP_Response,
+            },
             -2 => brk: {
                 offset.?.* += buf.len;
 

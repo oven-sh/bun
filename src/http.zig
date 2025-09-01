@@ -1353,7 +1353,8 @@ pub fn handleOnDataHeaders(
             error.ShortRead => {
                 this.handleShortRead(is_ssl, incoming_data, socket, needs_move);
             },
-            else => {
+            error.Malformed_HTTP_Response => {
+                log("Received malformed HTTP response", .{});
                 this.closeAndFail(err, is_ssl, socket);
             },
         }

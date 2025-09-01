@@ -1,4 +1,4 @@
-import { test, describe, expect, jest } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 
 describe("Jest mock functions from issue #1825", () => {
   test("jest.mock should be available and work with factory function", () => {
@@ -12,7 +12,7 @@ describe("Jest mock functions from issue #1825", () => {
     const mockFn = jest.fn();
     mockFn();
     expect(mockFn).toHaveBeenCalledTimes(1);
-    
+
     // Should not throw - jest.resetAllMocks should be available
     expect(() => {
       jest.resetAllMocks();
@@ -22,7 +22,7 @@ describe("Jest mock functions from issue #1825", () => {
   test("mockReturnThis should return the mock function itself", () => {
     const mockFn = jest.fn();
     const result = mockFn.mockReturnThis();
-    
+
     // mockReturnThis should return the mock function itself
     expect(result).toBe(mockFn);
   });

@@ -2334,6 +2334,7 @@ pub const Data = union(Tag) {
                 const item = bun.create(allocator, E.Unary, .{
                     .op = el.op,
                     .value = try el.value.deepClone(allocator),
+                    .flags = el.flags,
                 });
                 return .{ .e_unary = item };
             },

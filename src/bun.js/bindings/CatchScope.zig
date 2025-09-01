@@ -1,5 +1,5 @@
 // TODO determine size and alignment automatically
-const size = 56;
+const size = if (Environment.allow_assert or Environment.enable_asan) 56 else 8;
 const alignment = 8;
 
 /// Binding for JSC::CatchScope. This should be used rarely, only at translation boundaries between

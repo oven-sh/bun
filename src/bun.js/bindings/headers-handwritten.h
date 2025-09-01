@@ -81,6 +81,8 @@ typedef struct BunString {
 
     bool isEmpty() const;
 
+    void appendToBuilder(WTF::StringBuilder& builder) const;
+
 } BunString;
 
 typedef struct ZigErrorType {

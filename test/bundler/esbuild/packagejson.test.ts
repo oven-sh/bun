@@ -793,7 +793,7 @@ describe("bundler", () => {
       stdout: "main",
     },
   });
-  itBundled.skip("packagejson/DualPackageHazardImportAndRequireSameFile", {
+  itBundled("packagejson/DualPackageHazardImportAndRequireSameFile", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import value from 'demo-pkg'
@@ -812,7 +812,7 @@ describe("bundler", () => {
       stdout: "main main",
     },
   });
-  itBundled.skip("packagejson/DualPackageHazardImportAndRequireSeparateFiles", {
+  itBundled("packagejson/DualPackageHazardImportAndRequireSeparateFiles", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-main'
@@ -861,7 +861,7 @@ describe("bundler", () => {
       stdout: "module\nmodule",
     },
   });
-  itBundled.skip("packagejson/DualPackageHazardImportAndRequireImplicitMain", {
+  itBundled("packagejson/DualPackageHazardImportAndRequireImplicitMain", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-index'

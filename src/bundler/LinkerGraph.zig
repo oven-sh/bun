@@ -319,13 +319,12 @@ pub fn load(
             for (this.reachable_files) |source_id| {
                 for (import_records_list[source_id.get()].slice()) |*import_record| {
                     if (import_record.source_index.isValid() and this.is_scb_bitset.isSet(import_record.source_index.get())) {
-                        import_record.source_index = Index.init(
-                            scb.getReferenceSourceIndex(import_record.source_index.get()) orelse
-                                // If this gets hit, might be fine to switch this to `orelse continue`
-                                // not confident in this assertion
-                                Output.panic("Missing SCB boundary for file #{d}", .{import_record.source_index.get()}),
-                        );
-                        bun.assert(import_record.source_index.isValid()); // did not generate
+                        // Only rewrite if this is an original SCB file, not a reference file
+                        if (scb.getReferenceSourceIndex(import_record.source_index.get())) |ref_index| {
+                            import_record.source_index = Index.init(ref_index);
+                            bun.assert(import_record.source_index.isValid()); // did not generate
+                        }
+                        // If it's already a reference file, leave it as-is
                     }
                 }
             }

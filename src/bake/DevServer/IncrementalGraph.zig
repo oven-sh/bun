@@ -269,9 +269,8 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
         /// All part contents
         current_chunk_parts: ArrayListUnmanaged(switch (side) {
             .client => FileIndex,
-            // These slices do not outlive the bundler, and must
-            // be joined before its arena is deinitialized.
-            .server => []const u8,
+            // This memory is allocated by the dev server allocator
+            .server => bun.ptr.ScopedOwned([]const u8),
         }),
 
         /// Asset IDs, which can be printed as hex in '/_bun/asset/{hash}.css'
@@ -385,7 +384,12 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                 .edges = g.edges.deinit(alloc),
                 .edges_free_list = g.edges_free_list.deinit(alloc),
                 .current_chunk_len = {},
-                .current_chunk_parts = g.current_chunk_parts.deinit(alloc),
+                .current_chunk_parts = {
+                    if (comptime side == .server) {
+                        for (g.current_chunk_parts.items) |part| part.deinit();
+                    }
+                    g.current_chunk_parts.deinit(alloc);
+                },
                 .current_css_files = if (comptime side == .client) g.current_css_files.deinit(alloc),
                 .current_chunk_source_maps = if (side == .server) {
                     for (g.current_chunk_source_maps.items) |source_map| {
@@ -567,7 +571,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                                     var escaped_source = source_map.escaped_source;
                                     if (chunk.buffer.len() > 0) {
                                         break :blk .{ .some = PackedMap.newNonEmpty(
-                                            chunk,
+                                            &chunk,
                                             escaped_source.take().?,
                                         ) };
                                     }
@@ -653,7 +657,13 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                         }
                     }
                     if (content == .js) {
-                        try g.current_chunk_parts.append(dev.allocator(), content.js.code);
+                        try g.current_chunk_parts.append(
+                            dev.allocator(),
+                            bun.ptr.ScopedOwned([]const u8).fromRawOwned(
+                                content.js.code,
+                                if (comptime bun.Environment.enableAllocScopes) dev.allocation_scope else null,
+                            ),
+                        );
                         g.current_chunk_len += content.js.code.len;
 
                         // Track the file index for this chunk
@@ -663,17 +673,16 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                         //       server chunks, but not 100% sure
                         const should_immediately_free_sourcemap = false;
                         if (should_immediately_free_sourcemap) {
-                            if (content.js.source_map) |source_map| {
-                                var take = source_map.chunk.buffer;
-                                take.deinit();
-                                if (source_map.escaped_source) |escaped_source| {
-                                    bun.default_allocator.free(escaped_source);
-                                }
-                            }
+                            @compileError("Not implemented the codepath to free the sourcemap");
                         } else {
                             if (content.js.source_map) |*source_map| append_empty: {
+                                defer source_map.chunk.deinit();
+                                defer source_map.escaped_source.deinit();
                                 const escaped_source = source_map.escaped_source.take() orelse break :append_empty;
-                                const packed_map = PackedMap.newNonEmpty(source_map.chunk, escaped_source);
+                                const packed_map = PackedMap.newNonEmpty(
+                                    &source_map.chunk,
+                                    escaped_source,
+                                );
                                 try g.current_chunk_source_maps.append(dev.allocator(), .{
                                     .some = packed_map,
                                 });
@@ -1648,14 +1657,18 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
         pub fn reset(g: *Self) void {
             g.owner().graph_safety_lock.assertLocked();
             g.current_chunk_len = 0;
-            g.current_chunk_parts.clearRetainingCapacity();
 
             if (comptime side == .client) {
                 g.current_css_files.clearRetainingCapacity();
             } else if (comptime side == .server) {
+                for (g.current_chunk_parts.items) |part| part.deinit();
+
+                for (g.current_chunk_source_maps.items) |sourcemap| sourcemap.deinit();
                 g.current_chunk_source_maps.clearRetainingCapacity();
                 g.current_chunk_file_indices.clearRetainingCapacity();
             }
+
+            g.current_chunk_parts.clearRetainingCapacity();
         }
 
         const TakeJSBundleOptions = switch (side) {
@@ -1784,7 +1797,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                     // entry is an index into files
                     .client => files[entry.get()].unpack().jsCode().?,
                     // entry is the '[]const u8' itself
-                    .server => entry,
+                    .server => entry.get(),
                 });
             }
             list.appendSliceAssumeCapacity(end);

@@ -28,8 +28,8 @@ fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCon
     const trace = bun.perf.trace("Bundler.generateCodeForFileInChunkJS");
     defer trace.end();
 
-    // Client bundles for Bake must be globally allocated,
-    // as it must outlive the bundle task.
+    // Client and server bundles for Bake must be globally allocated, as they
+    // must outlive the bundle task.
     const allocator = blk: {
         const dev = c.dev_server orelse break :blk default_allocator;
         break :blk dev.allocator();

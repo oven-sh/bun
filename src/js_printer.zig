@@ -6007,11 +6007,11 @@ pub fn printWithWriterAndPlatform(
         break :brk chunk;
     } else null;
 
-    var buffer = printer.writer.takeBuffer();
+    var buffer: MutableString = printer.writer.takeBuffer();
 
     return .{
         .result = .{
-            .code = buffer.toOwnedSlice(),
+            .code = buffer.takeSlice(),
             .source_map = source_map,
         },
     };

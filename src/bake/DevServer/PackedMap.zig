@@ -19,8 +19,8 @@ end_state: struct {
     original_column: i32,
 },
 
-pub fn newNonEmpty(chunk: SourceMap.Chunk, escaped_source: Owned([]u8)) bun.ptr.Shared(*Self) {
-    var buffer = chunk.buffer;
+pub fn newNonEmpty(chunk: *SourceMap.Chunk, escaped_source: Owned([]u8)) bun.ptr.Shared(*Self) {
+    var buffer = &chunk.buffer;
     assert(!buffer.isEmpty());
     return .new(.{
         .vlq_ = .fromDynamic(buffer.toDynamicOwned()),

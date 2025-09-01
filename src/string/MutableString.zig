@@ -240,6 +240,12 @@ pub inline fn lenI(self: *MutableString) i32 {
     return @as(i32, @intCast(self.list.items.len));
 }
 
+pub fn takeSlice(self: *MutableString) []u8 {
+    const out = self.list.items;
+    self.list = .{};
+    return out;
+}
+
 pub fn toOwnedSlice(self: *MutableString) []u8 {
     return bun.handleOom(self.list.toOwnedSlice(self.allocator));
 }

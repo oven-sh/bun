@@ -5,7 +5,7 @@ data: Data = .{ .empty = {} },
 pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
     const length = try reader.length();
 
-    const data = try reader.read(@intCast(length -| 5));
+    const data = try reader.read(@as(usize, length -| 5));
     this.* = .{
         .data = data,
     };

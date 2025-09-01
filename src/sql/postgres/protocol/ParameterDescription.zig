@@ -7,9 +7,9 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
     remaining_bytes -|= 4;
 
     const count = try reader.short();
-    const parameters = try bun.default_allocator.alloc(int4, @intCast(@max(count, 0)));
+    const parameters = try bun.default_allocator.alloc(int4, @as(usize, @max(count, 0)));
 
-    var data = try reader.read(@as(usize, @intCast(@max(count, 0))) * @sizeOf((int4)));
+    var data = try reader.read(@as(usize, @max(count, 0)) * @sizeOf((int4)));
     defer data.deinit();
     const input_params: []align(1) const int4 = toInt32Slice(int4, data.slice());
     for (input_params, parameters) |src, *dest| {

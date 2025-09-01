@@ -13,7 +13,7 @@ pub const SSLRequest = toBytes(Int32(8)) ++ toBytes(Int32(80877103));
 pub const NoData = [_]u8{'n'} ++ toBytes(Int32(4));
 
 pub fn writeQuery(query: []const u8, comptime Context: type, writer: NewWriter(Context)) !void {
-    const count: u32 = @sizeOf((u32)) + @as(u32, @intCast(query.len)) + 1;
+    const count: u32 = @sizeOf((u32)) + @as(u32, @truncate(query.len)) + 1;
     const header = [_]u8{
         'Q',
     } ++ toBytes(Int32(count));

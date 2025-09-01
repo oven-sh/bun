@@ -14,7 +14,7 @@ pub fn decodeInternal(
         .version = version,
     };
 
-    const unrecognized_options_count: u32 = @intCast(@max(try reader.int4(), 0));
+    const unrecognized_options_count: u32 = @max(try reader.int4(), 0);
     try this.unrecognized_options.ensureTotalCapacity(bun.default_allocator, unrecognized_options_count);
     errdefer {
         for (this.unrecognized_options.items) |*option| {

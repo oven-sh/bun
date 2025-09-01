@@ -210,7 +210,7 @@ pub const Tag = enum(short) {
 
                 var head = @as([*]T, @ptrCast(&this.first_value));
                 var current = head;
-                const len: usize = @intCast(this.len);
+                const len: usize = @as(usize, @max(this.len, 0));
                 for (0..len) |i| {
                     // Skip every other value as it contains the size of the element
                     current = current[1..];

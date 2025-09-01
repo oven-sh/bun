@@ -135,7 +135,7 @@ pub fn resetConnectionTimeout(this: *PostgresSQLConnection) void {
         return;
     }
 
-    this.timer.next = bun.timespec.msFromNow(@intCast(interval));
+    this.timer.next = bun.timespec.msFromNow(@as(i64, interval));
     this.vm.timer.insert(&this.timer);
 }
 
@@ -194,7 +194,7 @@ fn setupMaxLifetimeTimerIfNecessary(this: *PostgresSQLConnection) void {
     if (this.max_lifetime_interval_ms == 0) return;
     if (this.max_lifetime_timer.state == .ACTIVE) return;
 
-    this.max_lifetime_timer.next = bun.timespec.msFromNow(@intCast(this.max_lifetime_interval_ms));
+    this.max_lifetime_timer.next = bun.timespec.msFromNow(@as(i64, this.max_lifetime_interval_ms));
     this.vm.timer.insert(&this.max_lifetime_timer);
 }
 
@@ -301,8 +301,8 @@ pub fn flushData(this: *PostgresSQLConnection) void {
     this.flags.has_backpressure = wrote < chunk.len;
     debug("flushData: wrote {d}/{d} bytes", .{ wrote, chunk.len });
     if (wrote > 0) {
-        SocketMonitor.write(chunk[0..@intCast(wrote)]);
-        this.write_buffer.consume(@intCast(wrote));
+        SocketMonitor.write(chunk[0..@as(usize, @max(wrote, 0))]);
+        this.write_buffer.consume(@as(u32, @max(wrote, 0)));
     }
 }
 
@@ -397,7 +397,7 @@ fn startTLS(this: *PostgresSQLConnection, socket: uws.AnySocket) void {
     const written = socket.write(ssl_request[offset..]);
     if (written > 0) {
         this.tls_status = .{
-            .message_sent = offset + @as(u8, @intCast(written)),
+            .message_sent = offset + @as(u8, @truncate(@as(u32, @max(written, 0)))),
         };
     } else {
         this.tls_status = .{
@@ -714,9 +714,9 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         .tls_ctx = tls_ctx,
         .ssl_mode = ssl_mode,
         .tls_status = if (ssl_mode != .disable) .pending else .none,
-        .idle_timeout_interval_ms = @intCast(idle_timeout),
-        .connection_timeout_ms = @intCast(connection_timeout),
-        .max_lifetime_interval_ms = @intCast(max_lifetime),
+        .idle_timeout_interval_ms = @as(u32, @max(idle_timeout, 0)),
+        .connection_timeout_ms = @as(u32, @max(connection_timeout, 0)),
+        .max_lifetime_interval_ms = @as(u32, @max(max_lifetime, 0)),
         .flags = .{
             .use_unnamed_prepared_statements = use_unnamed_prepared_statements,
         },
@@ -1031,7 +1031,8 @@ pub const Reader = struct {
         return this.connection.read_buffer.remaining();
     }
     pub fn skip(this: Reader, count: usize) void {
-        this.connection.read_buffer.head = @min(this.connection.read_buffer.head + @as(u32, @truncate(count)), this.connection.read_buffer.byte_list.len);
+        const new_head = @as(usize, this.connection.read_buffer.head) + count;
+        this.connection.read_buffer.head = @truncate(@min(new_head, @as(usize, this.connection.read_buffer.byte_list.len)));
     }
     pub fn ensureCapacity(this: Reader, count: usize) bool {
         return @as(usize, this.connection.read_buffer.head) + count <= @as(usize, this.connection.read_buffer.byte_list.len);

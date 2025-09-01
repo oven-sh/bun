@@ -368,7 +368,8 @@ Server.prototype.getConnections = function (callback) {
     // Node only errors if in the middle of counting the server got disconnected, 
     // which never happens in Bun
     // If disconnected will only pass null as well and 0 connected
-    callback(null, this[serverSymbol] ? this._connections : 0);
+    const count = this[serverSymbol] ? this._connections : 0;
+    process.nextTick(callback, null, count);
   }
   return this;
 };
@@ -565,9 +566,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         if (isSocketNew && !reachedRequestsLimit) {
           server._connections++;
-          socket.on("close", () => {
-            server._connections--;
-          });
           server.emit("connection", socket);
         }
 
@@ -836,6 +834,12 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
   #onClose() {
     this[kHandle] = null;
+    
+    // Decrement connection count when socket closes
+    if (this.server && this.server._connections > 0) {
+      this.server._connections--;
+    }
+    
     const message = this._httpMessage;
     const req = message?.req;
     if (req && !req.complete && !req[kHandle]?.upgraded) {

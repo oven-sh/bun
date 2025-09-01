@@ -144,6 +144,7 @@ These optimizations provide 2-241x performance improvements over the standard st
 Performance comparison for objects with 10 properties (1 large string + 9 primitive values):
 
 **Bun (with fast paths):**
+
 ```
 postMessage({ prop: 11 chars string, ...9 more props }) - 648ns
 postMessage({ prop: 14 KB string, ...9 more props })    - 719ns
@@ -151,6 +152,7 @@ postMessage({ prop: 3 MB string, ...9 more props })     - 1.26µs
 ```
 
 **Node.js v24.6.0 (for comparison):**
+
 ```
 postMessage({ prop: 11 chars string, ...9 more props }) - 1.19µs
 postMessage({ prop: 14 KB string, ...9 more props })    - 2.69µs

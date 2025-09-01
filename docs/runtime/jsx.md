@@ -274,7 +274,7 @@ By default, Bun marks JSX expressions as `/* @__PURE__ */` so they can be remove
 - ```jsonc
   {
     "jsx": "react",
-    "jsxSideEffects": true
+    "jsxSideEffects": true,
   }
   ```
 
@@ -288,7 +288,7 @@ By default, Bun marks JSX expressions as `/* @__PURE__ */` so they can be remove
 - ```jsonc
   {
     "jsx": "react-jsx",
-    "jsxSideEffects": true
+    "jsxSideEffects": true,
   }
   ```
 

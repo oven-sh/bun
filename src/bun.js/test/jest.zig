@@ -141,6 +141,14 @@ pub const TestRunner = struct {
         return this.filter_regex != null or this.test_options.test_line_filters.count() > 0;
     }
 
+    pub fn needsTestLineNumber(this: *const TestRunner) bool {
+        return this.test_options.test_line_filters.count() > 0;
+    }
+
+    pub fn shouldSkipBasedOnLineFilter(this: *const TestRunner, line_number: u32, parent: *DescribeScope) bool {
+        return this.needsTestLineNumber() and !this.matchesLineFilter(line_number, parent);
+    }
+
     pub fn matchesLineFilter(this: *const TestRunner, line_number: u32, parent: *DescribeScope) bool {
         if (this.test_options.test_line_filters.count() == 0) return true;
 
@@ -300,14 +308,12 @@ pub const TestRunner = struct {
         if (this.test_options.test_line_filters.count() > 0) brk: {
             const abs_path = if (std.fs.path.isAbsolute(file_path)) file_path else blk2: {
                 var path_buf: bun.PathBuffer = undefined;
-                const cwd = bun.getcwd(&path_buf) catch break :brk;
+                const cwd = bun.fs.FileSystem.instance.top_level_dir;
                 break :blk2 bun.path.joinAbsStringBuf(cwd, &path_buf, &.{file_path}, .auto);
             };
 
             if (this.test_options.test_line_filters.get(abs_path)) |lines| {
-                var lines_copy = std.ArrayListUnmanaged(u32){};
-                lines_copy.appendSlice(this.allocator, lines.items) catch break :brk;
-                this.line_filters_by_file_id.put(this.allocator, file_id, lines_copy) catch break :brk;
+                this.line_filters_by_file_id.put(this.allocator, file_id, lines.clone(this.allocator) catch break :brk) catch break :brk;
             }
         }
 
@@ -2041,11 +2047,9 @@ inline fn createScope(
                 }
             }
 
-            if (runner.test_options.test_line_filters.count() > 0) {
-                if (!runner.matchesLineFilter(line_number, parent)) {
-                    is_skip = true;
-                    tag_to_use = .skipped_because_label;
-                }
+            if (runner.shouldSkipBasedOnLineFilter(line_number, parent)) {
+                is_skip = true;
+                tag_to_use = .skipped_because_label;
             }
         }
 
@@ -2423,11 +2427,9 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                     }
                 }
 
-                if (Jest.runner.?.test_options.test_line_filters.count() > 0) {
-                    if (!Jest.runner.?.matchesLineFilter(each_data.line_number, parent)) {
-                        is_skip = true;
-                        tag_to_use = .skipped_because_label;
-                    }
+                if (Jest.runner.?.shouldSkipBasedOnLineFilter(each_data.line_number, parent)) {
+                    is_skip = true;
+                    tag_to_use = .skipped_because_label;
                 }
             }
 
@@ -2553,7 +2555,7 @@ extern fn Bun__CallFrame__getLineNumber(callframe: *jsc.CallFrame, globalObject:
 
 fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObject) u32 {
     if (Jest.runner) |runner| {
-        if (runner.test_options.file_reporter == .junit or runner.test_options.test_line_filters.count() > 0) {
+        if (runner.test_options.file_reporter == .junit or runner.needsTestLineNumber()) {
             return Bun__CallFrame__getLineNumber(callframe, globalThis);
         }
     }

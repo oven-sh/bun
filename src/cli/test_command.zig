@@ -1256,14 +1256,20 @@ export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callcon
 }
 
 fn parseFileLineArg(arg: []const u8) ?struct { file_pattern: []const u8, line_num: u32 } {
-    const colon_index = strings.lastIndexOfChar(arg, ':') orelse return null;
-    const after_colon = arg[colon_index + 1 ..];
-    if (after_colon.len == 0) return null;
+    const first_colon_index = strings.indexOf(arg, ":") orelse return null;
+    const after_first_colon = arg[first_colon_index + 1 ..];
+    if (after_first_colon.len == 0) return null;
 
-    const line_num = std.fmt.parseInt(u32, after_colon, 10) catch return null;
+    // Check if there's a second colon (for file:line:column format)
+    const line_part = if (strings.indexOf(after_first_colon, ":")) |second_colon_index|
+        after_first_colon[0..second_colon_index]
+    else
+        after_first_colon;
+
+    const line_num = std.fmt.parseInt(u32, line_part, 10) catch return null;
 
     return .{
-        .file_pattern = arg[0..colon_index],
+        .file_pattern = arg[0..first_colon_index],
         .line_num = line_num,
     };
 }
@@ -1458,7 +1464,7 @@ pub const TestCommand = struct {
                         try ctx.allocator.dupe(u8, parsed.file_pattern)
                     else blk: {
                         var local_path_buf: bun.PathBuffer = undefined;
-                        const cwd = bun.getcwd(&local_path_buf) catch break :blk try ctx.allocator.dupe(u8, parsed.file_pattern);
+                        const cwd = bun.fs.FileSystem.instance.top_level_dir;
                         const joined = bun.path.joinAbsStringBuf(cwd, &local_path_buf, &.{parsed.file_pattern}, .auto);
                         break :blk try ctx.allocator.dupe(u8, joined);
                     };

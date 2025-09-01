@@ -211,15 +211,23 @@ pub const SideEffects = enum(u1) {
                                 p.allocator,
                             );
                         }
-                        // If one side is a number and the other side is a known primitive with side effects,
-                        // the number can be printed as `0` since the result being unused doesn't matter,
-                        // we only care to invoke the coercion.
-                        // We only do this optimization if the other side is a known primitive with side effects
-                        // to avoid corrupting shared nodes when the other side is an undefined identifier
-                        if (bin.left.data == .e_number and isPrimitiveWithSideEffects(bin.right.data)) {
-                            bin.left.data = .{ .e_number = .{ .value = 0.0 } };
-                        } else if (bin.right.data == .e_number and isPrimitiveWithSideEffects(bin.left.data)) {
-                            bin.right.data = .{ .e_number = .{ .value = 0.0 } };
+
+                        switch (bin.op) {
+                            .bin_loose_eq,
+                            .bin_loose_ne,
+                            => {
+                                // If one side is a number and the other side is a known primitive with side effects,
+                                // the number can be printed as `0` since the result being unused doesn't matter,
+                                // we only care to invoke the coercion.
+                                // We only do this optimization if the other side is a known primitive with side effects
+                                // to avoid corrupting shared nodes when the other side is an undefined identifier
+                                if (bin.left.data == .e_number) {
+                                    bin.left.data = .{ .e_number = .{ .value = 0.0 } };
+                                } else if (bin.right.data == .e_number) {
+                                    bin.right.data = .{ .e_number = .{ .value = 0.0 } };
+                                }
+                            },
+                            else => {},
                         }
                     },
 

@@ -221,9 +221,6 @@ Increment:
   minor      1.0.0 → 1.1.0
   major      1.0.0 → 2.0.0
   prerelease 1.0.0 → 1.0.1-0
-  prepatch   1.0.0 → 1.0.1-0
-  preminor   1.0.0 → 1.1.0-0
-  premajor   1.0.0 → 2.0.0-0
   from-git   Use version from latest git tag
   1.2.3      Set specific version
 
@@ -251,9 +248,11 @@ Supports `patch`, `minor`, `major`, `premajor`, `preminor`, `prepatch`, `prerele
 
 ## pkg
 
-Manage `package.json` data with get, set, delete, and fix operations.
+Manage `package.json` data with get, set, delete, and fix operations. These commands provide programmatic access to your `package.json` file for automation and scripting.
 
-All commands support dot and bracket notation:
+### Supported Notation
+
+All commands support dot and bracket notation for accessing nested properties:
 
 ```bash
 scripts.build              # dot notation
@@ -262,24 +261,75 @@ workspaces.0               # dot with numeric index
 scripts[test:watch]        # bracket for special chars
 ```
 
-Examples:
+### get
+
+Retrieve property values from `package.json`:
 
 ```bash
-# set
-$ bun pm pkg get name                               # single property
-$ bun pm pkg get name version                       # multiple properties
-$ bun pm pkg get                                    # entire package.json
-$ bun pm pkg get scripts.build                      # nested property
+# Single property
+$ bun pm pkg get name
+my-package
 
-# set
-$ bun pm pkg set name="my-package"                  # simple property
-$ bun pm pkg set scripts.test="jest" version=2.0.0  # multiple properties
-$ bun pm pkg set {"private":"true"} --json          # JSON values with --json flag
+# Multiple properties
+$ bun pm pkg get name version
+my-package 1.0.0
 
-# delete
-$ bun pm pkg delete description                     # single property
-$ bun pm pkg delete scripts.test contributors[0]    # multiple/nested
+# Entire package.json
+$ bun pm pkg get
 
-# fix
-$ bun pm pkg fix                                    # auto-fix common issues
+# Nested property
+$ bun pm pkg get scripts.build
+webpack --mode=production
 ```
+
+### set
+
+Update property values in `package.json`:
+
+```bash
+# Simple property
+$ bun pm pkg set name="my-new-package"
+
+# Multiple properties
+$ bun pm pkg set scripts.test="jest" version=2.0.0
+
+# JSON values with --json flag
+$ bun pm pkg set {"private":"true","type":"module"} --json
+
+# Nested properties
+$ bun pm pkg set scripts.build="vite build" scripts.dev="vite"
+
+# Arrays
+$ bun pm pkg set keywords[0]="javascript" keywords[1]="bun"
+```
+
+### delete
+
+Remove properties from `package.json`:
+
+```bash
+# Single property
+$ bun pm pkg delete description
+
+# Multiple properties
+$ bun pm pkg delete scripts.test contributors[0]
+
+# Nested properties
+$ bun pm pkg delete devDependencies.eslint
+```
+
+### fix
+
+Automatically fix common issues in `package.json`:
+
+```bash
+$ bun pm pkg fix
+```
+
+This command will:
+
+- Fix incorrect property types
+- Sort dependencies alphabetically
+- Remove duplicate entries
+- Validate required fields
+- Fix common formatting issues

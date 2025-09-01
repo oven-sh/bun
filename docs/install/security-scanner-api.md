@@ -1,4 +1,4 @@
-Bun's package manager can scan packages for security vulnerabilities before installation, helping protect your applications from supply chain attacks and known vulnerabilities.
+Bun's package manager includes a Security Scanner API that allows scanning packages for security vulnerabilities before installation, helping protect your applications from supply chain attacks and known vulnerabilities.
 
 ## Quick Start
 
@@ -23,7 +23,18 @@ Security scanners analyze packages during `bun install`, `bun add`, and other pa
 - Known security vulnerabilities (CVEs)
 - Malicious packages
 - License compliance issues
-- ...and more!
+- Supply chain attacks
+- Suspicious package behaviors
+- Outdated dependencies with known issues
+
+### Integration with Package Installation
+
+The Security Scanner API integrates seamlessly with Bun's package installation process:
+
+1. **Pre-installation scanning**: Packages are scanned before being added to your project
+2. **Dependency tree analysis**: Entire dependency chains are evaluated for security issues
+3. **Real-time vulnerability database**: Scanners can query up-to-date vulnerability databases
+4. **Policy enforcement**: Custom security policies can be enforced across installations
 
 ### Security Levels
 

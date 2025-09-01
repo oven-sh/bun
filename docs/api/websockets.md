@@ -309,6 +309,26 @@ socket.addEventListener("close", event => {});
 socket.addEventListener("error", event => {});
 ```
 
+### Client compression
+
+Bun's WebSocket client supports `permessage-deflate` compression extension for efficient message transmission. Compression is automatically negotiated with the server during the handshake:
+
+```ts
+const socket = new WebSocket("ws://localhost:3000");
+
+// Compression is automatically enabled if the server supports it
+// No additional configuration needed
+```
+
+When connecting to servers that support compression, messages will be automatically compressed and decompressed transparently. This can significantly reduce bandwidth usage, especially for text-heavy applications like chat systems or real-time data feeds.
+
+The client will automatically negotiate the best compression parameters with the server, including:
+- Window size optimization
+- Context takeover settings
+- Compression threshold handling
+
+For servers built with `Bun.serve`, ensure `perMessageDeflate: true` is set in the server configuration to enable compression support.
+
 ## Reference
 
 ```ts

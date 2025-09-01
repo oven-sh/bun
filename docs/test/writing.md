@@ -428,7 +428,7 @@ This helps ensure all your assertions run, especially in complex async code with
 
 ## Type Testing
 
-Bun includes `expectTypeOf` for testing typescript types, compatible with Vitest.
+Bun includes `expectTypeOf` for testing TypeScript types, providing full compatibility with Vitest's type testing API.
 
 ### expectTypeOf
 
@@ -445,31 +445,133 @@ To test your types:
 1. Write your type assertions using `expectTypeOf`
 2. Run `bunx tsc --noEmit` to check that your types are correct
 
+#### Basic Type Assertions
+
 ```ts
 import { expectTypeOf } from "bun:test";
 
-// Basic type assertions
-expectTypeOf<string>().toEqualTypeOf<string>();
-expectTypeOf(123).toBeNumber();
+// Primitive types
 expectTypeOf("hello").toBeString();
+expectTypeOf(123).toBeNumber();
+expectTypeOf(true).toBeBoolean();
+expectTypeOf(Symbol("test")).toBeSymbol();
+expectTypeOf(undefined).toBeUndefined();
+expectTypeOf(null).toBeNull();
+expectTypeOf(() => {}).toBeFunction();
 
-// Object type matching
-expectTypeOf({ a: 1, b: "hello" }).toMatchObjectType<{ a: number }>();
+// Complex types  
+expectTypeOf([1, 2, 3]).toBeArray();
+expectTypeOf({ a: 1 }).toBeObject();
+```
 
-// Function types
+#### Type Equality
+
+Use `toEqualTypeOf` for strict type equality checks:
+
+```ts
+// Generic syntax
+expectTypeOf<string>().toEqualTypeOf<string>();
+expectTypeOf<{ name: string; age: number }>().toEqualTypeOf<{ name: string; age: number }>();
+
+// Inferred syntax
+expectTypeOf("hello").toEqualTypeOf<string>();
+expectTypeOf({ name: "Alice", age: 30 }).toEqualTypeOf<{ name: string; age: number }>();
+
+// Using with values for inference
+const user = { name: "Alice", age: 30 };
+expectTypeOf(user).toEqualTypeOf<{ name: string; age: number }>();
+```
+
+#### Object Type Matching
+
+For testing object shapes without requiring exact matches, use `toMatchObjectType`:
+
+```ts
+interface User {
+  name: string;
+  age: number;
+  email?: string;
+}
+
+const user = { name: "Alice", age: 30, isActive: true };
+
+// This passes - user has at least the required properties
+expectTypeOf(user).toMatchObjectType<{ name: string; age: number }>();
+
+// This would fail - user doesn't have email property
+// expectTypeOf(user).toMatchObjectType<{ name: string; email: string }>();
+```
+
+#### Function Types
+
+Test function signatures, parameters, and return types:
+
+```ts
 function greet(name: string): string {
   return `Hello ${name}`;
 }
 
+async function fetchUser(id: number): Promise<User> {
+  // implementation
+}
+
+// Function type checks
 expectTypeOf(greet).toBeFunction();
 expectTypeOf(greet).parameters.toEqualTypeOf<[string]>();
 expectTypeOf(greet).returns.toEqualTypeOf<string>();
 
-// Array types
-expectTypeOf([1, 2, 3]).items.toBeNumber();
+// Async function checks
+expectTypeOf(fetchUser).parameters.toEqualTypeOf<[number]>();
+expectTypeOf(fetchUser).returns.resolves.toMatchObjectType<User>();
+```
 
-// Promise types
+#### Array and Promise Types
+
+```ts
+// Array item types
+expectTypeOf([1, 2, 3]).items.toBeNumber();
+expectTypeOf(["a", "b", "c"]).items.toBeString();
+
+// Promise resolution types
 expectTypeOf(Promise.resolve(42)).resolves.toBeNumber();
+expectTypeOf(Promise.resolve("hello")).resolves.toBeString();
+
+// Array of promises
+expectTypeOf([Promise.resolve(1), Promise.resolve(2)]).items.resolves.toBeNumber();
+```
+
+#### Negation with `.not`
+
+Use `.not` to assert that types do NOT match:
+
+```ts
+expectTypeOf("hello").not.toBeNumber();
+expectTypeOf(123).not.toBeString();
+expectTypeOf({ a: 1 }).not.toEqualTypeOf<{ a: string }>();
+```
+
+#### Advanced Examples
+
+```ts
+// Generic type testing
+function identity<T>(value: T): T {
+  return value;
+}
+
+expectTypeOf(identity).toBeCallableWith("hello");
+expectTypeOf(identity<string>).parameters.toEqualTypeOf<[string]>();
+expectTypeOf(identity<number>).returns.toEqualTypeOf<number>();
+
+// Union types
+type Status = "loading" | "success" | "error";
+const status: Status = "loading";
+expectTypeOf(status).toMatchTypeOf<Status>();
+
+// Branded types
+type UserId = string & { readonly brand: unique symbol };
+declare const userId: UserId;
+expectTypeOf(userId).toBeString();
+expectTypeOf(userId).not.toEqualTypeOf<string>();
 ```
 
 For full documentation on expectTypeOf matchers, see the [API Reference](/reference/bun/test/expectTypeOf)
@@ -756,3 +858,180 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 - [`.toThrowErrorMatchingInlineSnapshot()`](https://jestjs.io/docs/expect#tothrowerrormatchinginlinesnapshotinlinesnapshot)
 
 {% /table %}
+
+## Mock Return Value Matchers
+
+Bun provides several matchers specifically for testing mock function return values. These matchers are particularly useful when you need to verify that mocked functions returned specific values during execution.
+
+### `.toHaveReturnedWith()`
+
+Use `toHaveReturnedWith` to verify that a mock function returned a specific value at least once:
+
+```ts
+import { expect, test, mock } from "bun:test";
+
+test("mock return value testing", () => {
+  const mockCalculate = mock((a: number, b: number) => a + b);
+
+  mockCalculate(2, 3);
+  mockCalculate(10, 5);
+
+  // Verify the mock returned 5 at least once
+  expect(mockCalculate).toHaveReturnedWith(5);
+  
+  // Verify the mock returned 15 at least once  
+  expect(mockCalculate).toHaveReturnedWith(15);
+});
+```
+
+### `.toHaveLastReturnedWith()`
+
+Use `toHaveLastReturnedWith` to verify that a mock function's most recent call returned a specific value:
+
+```ts
+import { expect, test, mock } from "bun:test";
+
+test("last return value testing", () => {
+  const mockGreet = mock((name: string) => `Hello, ${name}!`);
+
+  mockGreet("Alice");
+  mockGreet("Bob");
+  mockGreet("Charlie");
+
+  // Verify the most recent call returned "Hello, Charlie!"
+  expect(mockGreet).toHaveLastReturnedWith("Hello, Charlie!");
+});
+```
+
+### `.toHaveNthReturnedWith()`
+
+Use `toHaveNthReturnedWith` to verify that a mock function returned a specific value on the nth call (1-indexed):
+
+```ts
+import { expect, test, mock } from "bun:test";
+
+test("nth return value testing", () => {
+  const mockMultiply = mock((a: number, b: number) => a * b);
+
+  mockMultiply(2, 3);    // 1st call returns 6
+  mockMultiply(4, 5);    // 2nd call returns 20
+  mockMultiply(10, 2);   // 3rd call returns 20
+
+  // Verify the 1st call returned 6
+  expect(mockMultiply).toHaveNthReturnedWith(1, 6);
+  
+  // Verify the 2nd call returned 20
+  expect(mockMultiply).toHaveNthReturnedWith(2, 20);
+  
+  // Verify the 3rd call returned 20
+  expect(mockMultiply).toHaveNthReturnedWith(3, 20);
+});
+```
+
+### Complex Return Value Testing
+
+These matchers work with complex return values like objects and arrays:
+
+```ts
+import { expect, test, mock } from "bun:test";
+
+test("complex return values", () => {
+  const mockCreateUser = mock((name: string, age: number) => ({ 
+    name, 
+    age, 
+    id: Math.floor(Math.random() * 1000) 
+  }));
+
+  const user1 = mockCreateUser("Alice", 25);
+  const user2 = mockCreateUser("Bob", 30);
+
+  // Test with objects using partial matching
+  expect(mockCreateUser).toHaveReturnedWith(
+    expect.objectContaining({ name: "Alice", age: 25 })
+  );
+  
+  // Test the last returned value
+  expect(mockCreateUser).toHaveLastReturnedWith(
+    expect.objectContaining({ name: "Bob", age: 30 })
+  );
+  
+  // Test specific call's return value
+  expect(mockCreateUser).toHaveNthReturnedWith(1, 
+    expect.objectContaining({ name: "Alice", age: 25 })
+  );
+});
+```
+
+### Working with Async Functions
+
+These matchers also work with async functions and promises:
+
+```ts
+import { expect, test, mock } from "bun:test";
+
+test("async mock return values", async () => {
+  const mockFetchUser = mock(async (id: number) => ({ 
+    id, 
+    name: `User ${id}`,
+    email: `user${id}@example.com`
+  }));
+
+  await mockFetchUser(1);
+  await mockFetchUser(2);
+
+  // Test resolved values
+  await expect(mockFetchUser).toHaveReturnedWith(
+    Promise.resolve(expect.objectContaining({ id: 1, name: "User 1" }))
+  );
+  
+  await expect(mockFetchUser).toHaveLastReturnedWith(
+    Promise.resolve(expect.objectContaining({ id: 2, name: "User 2" }))
+  );
+});
+```
+
+## Global Mock Management
+
+Bun provides utilities for managing all your mocks at once, which is particularly useful in test setup and teardown.
+
+### `mock.clearAllMocks()`
+
+Reset all mock function state (calls, results, etc.) without restoring their original implementations:
+
+```ts
+import { expect, mock, test } from "bun:test";
+
+test("clearing all mocks", () => {
+  const mockFn1 = mock(() => "result1");
+  const mockFn2 = mock(() => "result2");
+
+  // Use the mocks
+  mockFn1();
+  mockFn2();
+
+  expect(mockFn1).toHaveBeenCalledTimes(1);
+  expect(mockFn2).toHaveBeenCalledTimes(1);
+
+  // Clear all mock history
+  mock.clearAllMocks();
+
+  // Call counts are reset
+  expect(mockFn1).toHaveBeenCalledTimes(0);
+  expect(mockFn2).toHaveBeenCalledTimes(0);
+
+  // But implementations are preserved
+  expect(mockFn1()).toBe("result1");
+  expect(mockFn2()).toBe("result2");
+});
+```
+
+This is useful in test setup to ensure a clean state:
+
+```ts
+import { mock, beforeEach } from "bun:test";
+
+beforeEach(() => {
+  // Reset all mock state before each test
+  mock.clearAllMocks();
+});
+```

@@ -831,6 +831,37 @@ npm/strip-ansi 212,992 chars long-ansi      1.36 ms/iter   1.38 ms
 
 ```
 
+## `Math.sumPrecise`
+
+`Math.sumPrecise(values: number[]): number`
+
+Calculates the sum of an array of numbers with high precision using the Kahan summation algorithm. This is a TC39 Stage 3 proposal that provides more accurate summation by compensating for floating-point rounding errors.
+
+```ts
+// Standard addition can accumulate rounding errors
+const numbers = [0.1, 0.2, 0.3];
+const standardSum = numbers.reduce((a, b) => a + b, 0);
+console.log(standardSum); // => 0.6000000000000001
+
+// Math.sumPrecise provides more accurate results
+const preciseSum = Math.sumPrecise(numbers);
+console.log(preciseSum); // => 0.6
+```
+
+This is particularly useful for financial calculations, scientific computing, or any scenario where precision in floating-point arithmetic is critical:
+
+```ts
+// Financial calculation example
+const transactions = [199.99, -50.00, 25.50, -10.25, 5.76];
+const balance = Math.sumPrecise(transactions);
+console.log(balance); // => 171.00
+
+// Large array of small numbers
+const smallNumbers = Array(1000).fill(0.1);
+const preciseTotal = Math.sumPrecise(smallNumbers);
+console.log(preciseTotal); // => 100 (exact)
+```
+
 ## `estimateShallowMemoryUsageOf` in `bun:jsc`
 
 The `estimateShallowMemoryUsageOf` function returns a best-effort estimate of the memory usage of an object in bytes, excluding the memory usage of properties or other objects it references. For accurate per-object memory usage, use `Bun.generateHeapSnapshot`.

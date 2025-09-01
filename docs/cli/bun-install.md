@@ -240,6 +240,29 @@ $ node --preserve-symlinks ./my-file.js # https://nodejs.org/api/cli.html#--pres
 
 Bun's runtime does not currently expose an equivalent of `--preserve-symlinks`, though the code for it does exist.
 
+## Isolated linker
+
+Use the `--linker=isolated` flag to create isolated installs similar to pnpm's approach. This creates a node_modules layout where each package gets its own isolated directory, preventing dependency conflicts.
+
+```bash
+$ bun install --linker=isolated
+```
+
+With isolated linker:
+
+- Each package is installed in its own isolated directory
+- Dependencies are linked only where explicitly declared
+- Prevents phantom dependencies (accessing undeclared dependencies)
+- Creates a more predictable dependency resolution
+- Similar to pnpm's node_modules structure
+
+This is particularly useful for:
+
+- Large monorepos with complex dependency trees
+- Projects that need strict dependency isolation
+- Preventing dependency version conflicts
+- Ensuring reproducible builds across environments
+
 ## npm registry metadata
 
 bun uses a binary format for caching NPM registry responses. This loads much faster than JSON and tends to be smaller on disk.

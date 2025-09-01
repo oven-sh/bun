@@ -49,9 +49,9 @@ Limit the dependency tree depth:
 ```bash
 $ bun why express --depth 2
 express@4.18.2
-  └─ express-pollyfill@1.20.1 (requires ^4.18.2)
-     └─ body-parser@1.20.1 (requires ^1.20.1)
-     └─ accepts@1.3.8 (requires ^1.3.8)
+  └─ my-app@1.0.0 (requires ^4.18.2)
+     └─ body-parser@1.20.2 (requires ^1.20.1)
+     └─ accepts@1.3.8 (requires ^1.3.5)
         └─ (deeper dependencies hidden)
 ```
 

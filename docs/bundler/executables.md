@@ -410,12 +410,12 @@ To trim down the size of the executable a little, pass `--minify` to `bun build 
 
 ## Using Bun.build() API
 
-You can also generate standalone executables using the `Bun.build()` JavaScript API. This is useful when you need programmatic control over the build process.
+You can also generate standalone executables using the `Bun.build()` JavaScript API. This is useful when you need programmatic control over the build process, CI/CD pipelines, or complex build configurations.
 
 ### Basic usage
 
 ```js
-await Bun.build({
+const result = await Bun.build({
   entrypoints: ["./app.ts"],
   outdir: "./dist",
   compile: {
@@ -423,49 +423,183 @@ await Bun.build({
     outfile: "myapp.exe",
   },
 });
+
+console.log(`Built executable: ${result.outputs[0].path}`);
 ```
 
-### Windows metadata with Bun.build()
+### Cross-platform compilation
 
-When targeting Windows, you can specify metadata through the `windows` object:
+Build for multiple platforms programmatically with enhanced target support:
+
+```js
+// Enhanced cross-platform build configuration
+const platforms = [
+  { 
+    target: "bun-windows-x64-modern", 
+    outfile: "app-windows-x64.exe",
+    windows: {
+      title: "My Application",
+      version: "1.0.0.0",
+      icon: "./assets/icon.ico"
+    }
+  },
+  { 
+    target: "bun-linux-x64-baseline", 
+    outfile: "app-linux-x64" 
+  },
+  { 
+    target: "bun-darwin-arm64", 
+    outfile: "app-macos-arm64" 
+  },
+  {
+    target: "bun-linux-arm64-musl", 
+    outfile: "app-linux-arm64-alpine" 
+  }
+];
+
+for (const platform of platforms) {
+  console.log(`Building for ${platform.target}...`);
+  
+  const result = await Bun.build({
+    entrypoints: ["./src/app.ts"],
+    outdir: "./dist",
+    minify: true,
+    sourcemap: "external",
+    compile: platform,
+  });
+  
+  if (result.success) {
+    console.log(`✅ Built: ${result.outputs[0].path}`);
+  } else {
+    console.error(`❌ Failed to build for ${platform.target}`);
+    for (const log of result.logs) {
+      console.error(log.message);
+    }
+  }
+}
+```
+
+### Advanced Windows executable configuration
+
+When targeting Windows, you have extensive control over executable metadata and appearance:
 
 ```js
 await Bun.build({
-  entrypoints: ["./app.ts"],
+  entrypoints: ["./src/main.ts"],
   outdir: "./dist",
+  minify: true,
   compile: {
     target: "bun-windows-x64",
-    outfile: "myapp.exe",
+    outfile: "MyApplication.exe",
     windows: {
-      title: "My Application",
-      publisher: "My Company Inc",
-      version: "1.2.3.4",
-      description: "A powerful application built with Bun",
-      copyright: "© 2024 My Company Inc",
-      hideConsole: false, // Set to true for GUI applications
-      icon: "./icon.ico", // Path to icon file
+      // Visual customization
+      title: "My Enterprise Application",
+      icon: "./assets/app-icon.ico",
+      hideConsole: false, // Set to true for GUI apps without console
+      
+      // Company and product information
+      publisher: "ACME Corporation",
+      description: "Advanced business automation tool",
+      copyright: "© 2024 ACME Corporation. All rights reserved.",
+      
+      // Version information (must be in X.Y.Z.W format)
+      version: "2.1.0.0",
+      
+      // Additional metadata for enterprise environments
+      trademark: "ACME™",
+      internalName: "acme-automation-tool"
     },
   },
 });
 ```
 
-### Cross-compilation with Bun.build()
-
-You can cross-compile for different platforms:
+### Error handling and build validation
 
 ```js
-// Build for multiple platforms
-const platforms = [
-  { target: "bun-windows-x64", outfile: "app-windows.exe" },
-  { target: "bun-linux-x64", outfile: "app-linux" },
-  { target: "bun-darwin-arm64", outfile: "app-macos" },
+try {
+  const result = await Bun.build({
+    entrypoints: ["./app.ts"],
+    compile: {
+      target: "bun-linux-x64",
+      outfile: "myapp",
+    },
+    // Don't throw on build errors - handle them manually
+    throw: false,
+  });
+  
+  if (!result.success) {
+    console.error("Build failed with errors:");
+    for (const message of result.logs) {
+      if (message.level === "error") {
+        console.error(`${message.message} at ${message.position?.file}:${message.position?.line}`);
+      }
+    }
+    process.exit(1);
+  }
+  
+  console.log("✅ Executable built successfully!");
+  console.log(`Size: ${result.outputs[0].size} bytes`);
+  
+} catch (error) {
+  console.error("Unexpected build error:", error);
+  process.exit(1);
+}
+```
+
+### Build with embedded assets
+
+Combine executable compilation with asset embedding for fully self-contained applications:
+
+```js
+await Bun.build({
+  entrypoints: [
+    "./src/server.ts",      // Main server code
+    "./static/**/*",        // All static assets
+    "./config.json",        // Configuration files
+  ],
+  outdir: "./dist",
+  compile: {
+    target: "bun-linux-x64",
+    outfile: "server",
+  },
+  minify: true,
+  sourcemap: "linked",
+  naming: {
+    asset: "[name]-[hash].[ext]",  // Content-based asset hashing
+  },
+});
+```
+
+This creates a single executable that includes your server code, all static assets, and configuration files - perfect for containerized deployments or edge computing scenarios.
+
+### Integration with CI/CD
+
+Example GitHub Actions workflow for cross-platform builds:
+
+```js
+// build-script.js
+const targets = [
+  "bun-windows-x64",
+  "bun-linux-x64", 
+  "bun-darwin-arm64"
 ];
 
-for (const platform of platforms) {
+for (const target of targets) {
+  const [os, arch] = target.split('-').slice(1);
+  const ext = os === 'windows' ? '.exe' : '';
+  
   await Bun.build({
-    entrypoints: ["./app.ts"],
+    entrypoints: ["./src/cli.ts"],
     outdir: "./dist",
-    compile: platform,
+    compile: {
+      target,
+      outfile: `myapp-${os}-${arch}${ext}`,
+    },
+    minify: true,
+    define: {
+      "process.env.BUILD_TIME": JSON.stringify(new Date().toISOString()),
+      "process.env.VERSION": JSON.stringify(process.env.GITHUB_REF_NAME || "dev"),
+    },
   });
 }
 ```

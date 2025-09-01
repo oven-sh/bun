@@ -28,6 +28,49 @@ for await (const chunk of stream) {
 }
 ```
 
+### Convenience methods
+
+Bun extends `ReadableStream` with convenience methods for consuming the entire stream as different data types. These methods allow you to consume streams directly without wrapping them in a `Response`:
+
+```ts
+const stream = new ReadableStream({
+  start(controller) {
+    controller.enqueue("hello ");
+    controller.enqueue("world");
+    controller.close();
+  },
+});
+
+// Consume as text
+const text = await stream.text();
+console.log(text); // => "hello world"
+
+// Consume as JSON
+const jsonStream = new ReadableStream({
+  start(controller) {
+    controller.enqueue('{"message": "hello"}');
+    controller.close();
+  },
+});
+const data = await jsonStream.json();
+console.log(data); // => { message: "hello" }
+
+// Consume as bytes
+const bytes = await stream.bytes();
+console.log(bytes); // => Uint8Array
+
+// Consume as blob
+const blob = await stream.blob();
+console.log(blob); // => Blob
+```
+
+These methods are particularly useful when working with streams from `fetch()` or other APIs:
+
+```ts
+const response = await fetch("https://api.example.com/data.json");
+const data = await response.body.json(); // Direct JSON parsing from stream
+```
+
 ## Direct `ReadableStream`
 
 Bun implements an optimized version of `ReadableStream` that avoid unnecessary data copying & queue management logic. With a traditional `ReadableStream`, chunks of data are _enqueued_. Each chunk is copied into a queue, where it sits until the stream is ready to send more data.

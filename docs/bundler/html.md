@@ -338,6 +338,75 @@ All paths are resolved relative to your HTML file, making it easy to organize yo
 
 If you want to submit a PR, most of the [code is here](https://github.com/oven-sh/bun/blob/main/src/js/internal/html.ts). You could even copy paste that file into your project and use it as a starting point.
 
+## HTML imports in server-side code
+
+Bun supports importing HTML files directly in JavaScript and TypeScript, both at runtime and during build time. This enables powerful patterns for full-stack applications.
+
+```ts#server.ts
+import indexHtml from "./index.html";
+import aboutHtml from "./about.html";
+
+export default {
+  fetch(req) {
+    const url = new URL(req.url);
+    
+    if (url.pathname === "/") {
+      return new Response(indexHtml, {
+        headers: { "Content-Type": "text/html" },
+      });
+    }
+    
+    if (url.pathname === "/about") {
+      return new Response(aboutHtml, {
+        headers: { "Content-Type": "text/html" },
+      });
+    }
+    
+    return new Response("Not found", { status: 404 });
+  },
+};
+```
+
+### Ahead-of-time bundling with `target: "bun"`
+
+When building for production with `target: "bun"`, HTML imports are processed at build time. All assets referenced in your HTML files (scripts, stylesheets, images) are automatically bundled and optimized:
+
+```ts
+// Build script
+await Bun.build({
+  entrypoints: ["./server.ts"],
+  outdir: "./dist",
+  target: "bun",
+  minify: true,
+});
+```
+
+This creates a single optimized server bundle where:
+- HTML files are inlined as strings with optimized asset references
+- CSS and JavaScript dependencies are bundled and minified
+- Static assets are copied with content hashes
+- All file paths are rewritten to point to the bundled assets
+
+The result is a deployable server that serves pre-optimized static assets without requiring a separate build step for frontend code.
+
+### Full-stack bundling
+
+You can bundle both your server and client code in a single build command:
+
+```ts
+await Bun.build({
+  entrypoints: [
+    "./server.ts",    // Server code with HTML imports
+    "./src/app.tsx",  // Client-side React app
+  ],
+  outdir: "./dist",
+  target: "bun",
+  splitting: true,   // Share common dependencies
+});
+```
+
+This pattern is ideal for server-side rendering, static site generation, or any scenario where you want to co-locate your frontend assets with your backend logic.
+
 ## How this works
 
 This is a small wrapper around Bun's support for HTML imports in JavaScript.

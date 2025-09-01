@@ -327,7 +327,8 @@ pub const Command = struct {
         coverage: TestCommand.CodeCoverageOptions = .{},
         test_filter_pattern: ?[]const u8 = null,
         test_filter_regex: ?*RegularExpression = null,
-        test_line_filters: bun.StringHashMapUnmanaged(std.ArrayListUnmanaged(u32)) = .{},
+        line_filter_files: std.ArrayListUnmanaged([]const u8) = .{},
+        line_filter_lines: std.ArrayListUnmanaged(u32) = .{},
 
         file_reporter: ?TestCommand.FileReporter = null,
         reporter_outfile: ?[]const u8 = null,

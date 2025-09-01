@@ -1350,6 +1350,7 @@ pub const TestCommand = struct {
                 .allocator = ctx.allocator,
                 .log = ctx.log,
                 .callback = undefined,
+                .test_options = &ctx.test_options,
                 .default_timeout_ms = ctx.test_options.default_timeout_ms,
                 .run_todo = ctx.test_options.run_todo,
                 .only = ctx.test_options.only,
@@ -1367,6 +1368,7 @@ pub const TestCommand = struct {
             },
             .callback = undefined,
         };
+
 
         reporter.callback = TestRunner.Callback{
             .onUpdateCount = CommandLineReporter.handleUpdateCount,
@@ -1473,12 +1475,8 @@ pub const TestCommand = struct {
                 const file_line = parseFileLineArg(arg);
                 if (file_line) |parsed| {
                     const abs_pattern = try makeAbsolutePath(ctx.allocator, parsed.file_pattern);
-
-                    const result = try ctx.test_options.test_line_filters.getOrPut(ctx.allocator, abs_pattern);
-                    if (!result.found_existing) {
-                        result.value_ptr.* = std.ArrayListUnmanaged(u32){};
-                    }
-                    try result.value_ptr.append(ctx.allocator, parsed.line_num);
+                    try ctx.test_options.line_filter_files.append(ctx.allocator, abs_pattern);
+                    try ctx.test_options.line_filter_lines.append(ctx.allocator, parsed.line_num);
                 }
 
                 const file_to_scan = if (file_line) |parsed| parsed.file_pattern else arg;
@@ -1737,7 +1735,7 @@ pub const TestCommand = struct {
 
                 reporter.printSummary();
             } else {
-                if (ctx.test_options.test_line_filters.count() > 0) {
+                if (ctx.test_options.line_filter_files.items.len > 0) {
                     Output.prettyError("<red>error<r><d>:<r> no tests found for file:line filters. Searched {d} file{s} (skipping {d} test{s}) ", .{
                         summary.files,
                         if (summary.files == 1) "" else "s",
@@ -1745,11 +1743,8 @@ pub const TestCommand = struct {
                         if (summary.skipped_because_label == 1) "" else "s",
                     });
 
-                    var iter = ctx.test_options.test_line_filters.iterator();
-                    while (iter.next()) |entry| {
-                        for (entry.value_ptr.items) |line| {
-                            Output.prettyError("\n  <b>{s}<r>:{d}", .{ entry.key_ptr.*, line });
-                        }
+                    for (ctx.test_options.line_filter_files.items, ctx.test_options.line_filter_lines.items) |file_path, line_number| {
+                        Output.prettyError("\n  <b>{s}<r>:{d}", .{ file_path, line_number });
                     }
                     Output.prettyError("\n", .{});
                 } else {

@@ -305,15 +305,23 @@ pub const TestRunner = struct {
         this.files.append(this.allocator, .{ .module_scope = scope, .source = logger.Source.initEmptyFile(file_path) }) catch unreachable;
         entry.value_ptr.* = file_id;
 
-        if (this.test_options.test_line_filters.count() > 0) brk: {
+        // Check if there are line filters for this file path
+        if (this.test_options.line_filter_files.items.len > 0) {
             const abs_path = if (std.fs.path.isAbsolute(file_path)) file_path else blk2: {
                 var path_buf: bun.PathBuffer = undefined;
                 const cwd = bun.fs.FileSystem.instance.top_level_dir;
                 break :blk2 bun.path.joinAbsStringBuf(cwd, &path_buf, &.{file_path}, .auto);
             };
 
-            if (this.test_options.test_line_filters.get(abs_path)) |lines| {
-                this.line_filters_by_file_id.put(this.allocator, file_id, lines) catch break :brk;
+            var line_list: std.ArrayListUnmanaged(u32) = .{};
+            for (this.test_options.line_filter_files.items, this.test_options.line_filter_lines.items) |filter_file, line_number| {
+                if (bun.strings.eql(abs_path, filter_file)) {
+                    line_list.append(this.allocator, line_number) catch break;
+                }
+            }
+
+            if (line_list.items.len > 0) {
+                this.line_filters_by_file_id.put(this.allocator, file_id, line_list) catch {};
             }
         }
 

@@ -122,6 +122,42 @@ Messages are automatically enqueued until the worker is ready, so there is no ne
 
 To send messages, use [`worker.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Worker/postMessage) and [`self.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage). This leverages the [HTML Structured Clone Algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm).
 
+### Performance optimizations
+
+Bun includes optimized fast paths for `postMessage` to dramatically improve performance for common data types:
+
+**String fast path** - When posting pure string values, Bun bypasses the structured clone algorithm entirely, achieving significant performance gains with no serialization overhead.
+
+**Simple object fast path** - For plain objects containing only primitive values (strings, numbers, booleans, null, undefined), Bun uses an optimized serialization path that stores properties directly without full structured cloning.
+
+The simple object fast path activates when the object:
+- Is a plain object with no prototype chain modifications
+- Contains only enumerable, configurable data properties
+- Has no indexed properties or getter/setter methods
+- All property values are primitives or strings
+
+These optimizations provide 2-241x performance improvements over the standard structured clone algorithm while maintaining full compatibility with existing code.
+
+```js
+// String fast path - optimized
+postMessage("Hello, worker!");
+
+// Simple object fast path - optimized 
+postMessage({ 
+  message: "Hello", 
+  count: 42, 
+  enabled: true,
+  data: null 
+});
+
+// Complex objects still work but use standard structured clone
+postMessage({ 
+  nested: { deep: { object: true } },
+  date: new Date(),
+  buffer: new ArrayBuffer(8)
+});
+```
+
 ```js
 // On the worker thread, `postMessage` is automatically "routed" to the parent thread.
 postMessage({ hello: "world" });

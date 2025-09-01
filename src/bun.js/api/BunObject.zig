@@ -188,6 +188,12 @@ pub const BunObject = struct {
         @export(&BunObject.zstdDecompress, .{ .name = callbackName("zstdDecompress") });
         // --- Callbacks ---
 
+        // --- LazyProperty initializers ---
+        @export(&createBunStdin, .{ .name = "BunObject__createBunStdin" });
+        @export(&createBunStderr, .{ .name = "BunObject__createBunStderr" });
+        @export(&createBunStdout, .{ .name = "BunObject__createBunStdout" });
+        // --- LazyProperty initializers ---
+
         // --- Getters ---
         @export(&BunObject.main, .{ .name = "BunObject_getter_main" });
         // --- Getters ---
@@ -2083,6 +2089,40 @@ const Environment = bun.Environment;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
 const assert = bun.assert;
+// LazyProperty initializers for stdin/stderr/stdout
+pub fn createBunStdin(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+    var rare_data = globalThis.bunVM().rareData();
+    var store = rare_data.stdin();
+    store.ref();
+    var blob = jsc.WebCore.Blob.new(
+        jsc.WebCore.Blob.initWithStore(store, globalThis),
+    );
+    blob.allocator = bun.default_allocator;
+    return blob.toJS(globalThis);
+}
+
+pub fn createBunStderr(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+    var rare_data = globalThis.bunVM().rareData();
+    var store = rare_data.stderr();
+    store.ref();
+    var blob = jsc.WebCore.Blob.new(
+        jsc.WebCore.Blob.initWithStore(store, globalThis),
+    );
+    blob.allocator = bun.default_allocator;
+    return blob.toJS(globalThis);
+}
+
+pub fn createBunStdout(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+    var rare_data = globalThis.bunVM().rareData();
+    var store = rare_data.stdout();
+    store.ref();
+    var blob = jsc.WebCore.Blob.new(
+        jsc.WebCore.Blob.initWithStore(store, globalThis),
+    );
+    blob.allocator = bun.default_allocator;
+    return blob.toJS(globalThis);
+}
+
 const default_allocator = bun.default_allocator;
 const strings = bun.strings;
 const SemverObject = bun.Semver.SemverObject;

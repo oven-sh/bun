@@ -212,7 +212,8 @@ function ClientRequest(input, options, cb) {
 
     // If request is destroyed we abort the current response
     this[kAbortController]?.abort?.();
-    this.socket.destroy(err);
+    // Avoid lazy-creating a FakeSocket during destroy
+    this[fakeSocketSymbol]?.destroy?.(err);
 
     return this;
   };
@@ -235,11 +236,8 @@ function ClientRequest(input, options, cb) {
         this._closed = true;
         callCloseCallback(this);
         this.emit("close");
-        // Only emit close on socket if it already exists to avoid creating
-        // circular references during cleanup
-        if (this[fakeSocketSymbol]) {
-          this[fakeSocketSymbol].emit("close");
-        }
+        // Emit on existing fake socket only; don't create one during cleanup
+        this[fakeSocketSymbol]?.emit?.("close");
       }
       if (!res.aborted && res.readable) {
         res.push(null);
@@ -248,11 +246,8 @@ function ClientRequest(input, options, cb) {
       this._closed = true;
       callCloseCallback(this);
       this.emit("close");
-      // Only emit close on socket if it already exists to avoid creating
-      // circular references during cleanup
-      if (this[fakeSocketSymbol]) {
-        this[fakeSocketSymbol].emit("close");
-      }
+      // Emit on existing fake socket only; don't create one during cleanup
+      this[fakeSocketSymbol]?.emit?.("close");
     }
   };
 

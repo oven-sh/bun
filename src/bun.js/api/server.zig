@@ -1640,6 +1640,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     .bundler_options = bake_options.bundler_options,
                     .vm = global.bunVM(),
                     .broadcast_console_log_from_browser_to_server = config.broadcast_console_log_from_browser_to_server_for_bake,
+                    .enable_uncaught_exception_reporting_from_browser_to_terminal = config.enable_uncaught_exception_reporting_from_browser_to_terminal_for_bake,
                 })
             else
                 null;

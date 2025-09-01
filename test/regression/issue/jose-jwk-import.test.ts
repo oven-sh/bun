@@ -60,16 +60,18 @@ test("RSA JWK import should work with public key", async () => {
 test("RSA JWK import should reject minimal private key (no CRT params)", async () => {
   // Note: WebCrypto spec requires CRT parameters for RSA private keys
   // This test verifies that minimal private keys without CRT parameters are properly rejected
-  await expect(crypto.subtle.importKey(
-    "jwk",
-    minimalPrivateJWK,
-    {
-      name: "RSASSA-PKCS1-v1_5",
-      hash: "SHA-256",
-    },
-    false,
-    ["sign"],
-  )).rejects.toThrow();
+  await expect(
+    crypto.subtle.importKey(
+      "jwk",
+      minimalPrivateJWK,
+      {
+        name: "RSASSA-PKCS1-v1_5",
+        hash: "SHA-256",
+      },
+      false,
+      ["sign"],
+    ),
+  ).rejects.toThrow();
 });
 
 test("RSA JWK import should reject partial CRT params", async () => {

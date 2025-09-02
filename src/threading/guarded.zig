@@ -27,7 +27,7 @@ pub fn GuardedBy(comptime Value: type, comptime Mutex: type) type {
             };
         }
 
-        /// Locks the mutex and return a pointer to the value. Remember to call `unlock`!
+        /// Locks the mutex and returns a pointer to the value. Remember to call `unlock`!
         pub fn lock(self: *Self) *Value {
             self.#mutex.lock();
             return &self.unsynchronized_value;

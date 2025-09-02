@@ -44,6 +44,7 @@ pub fn GuardedBy(comptime Value: type, comptime Mutex: type) type {
         /// invalidates `self`, so you must ensure `self` is not used on any thread after calling
         /// this method.
         pub fn intoUnprotected(self: *Self) Value {
+            defer self.* = undefined;
             bun.memory.deinit(&self.#mutex);
             return self.unsynchronized_value;
         }

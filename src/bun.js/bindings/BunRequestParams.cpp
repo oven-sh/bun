@@ -131,7 +131,7 @@ static void parseRailsStyleParams(JSC::JSGlobalObject* globalObject, JSC::JSObje
         return; // Malformed
 
     String innerKey = remainder.substring(1, closeBracket - 1);
-    
+
     // Determine if this should be an array (numeric index) or object (string key)
     unsigned index = 0;
     bool isIndex = isArrayIndex(innerKey, index);
@@ -187,7 +187,7 @@ static void parseRailsStyleParams(JSC::JSGlobalObject* globalObject, JSC::JSObje
             // Skip __proto__ for security
             if (innerKey == "__proto__"_s)
                 return;
-            
+
             JSValue existingNested = container->getDirect(vm, Identifier::fromString(vm, innerKey));
 
             if (!existingNested.isEmpty() && existingNested.isObject()) {

@@ -347,6 +347,10 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
     }
   }
 
+  if (protocol.endsWith(":")) {
+    protocol = protocol.slice(0, -1);
+  }
+
   switch (protocol) {
     case "http":
     case "https":

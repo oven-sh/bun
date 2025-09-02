@@ -407,7 +407,7 @@ class PooledPostgresConnection {
     this.storedError = err;
 
     // remove from ready connections if its there
-    this.adapter.readyConnections.delete(this);
+    this.adapter.readyConnections?.delete(this);
     const queries = new Set(this.queries);
     this.queries.clear();
     this.queryCount = 0;
@@ -672,7 +672,7 @@ export class PostgresAdapter
     }
 
     while (true) {
-      const nonReservedConnections = Array.from(this.readyConnections).filter(
+      const nonReservedConnections = Array.from(this.readyConnections || []).filter(
         c => !(c.flags & PooledConnectionFlags.preReserved) && c.queryCount < maxDistribution,
       );
       if (nonReservedConnections.length === 0) {
@@ -750,12 +750,12 @@ export class PostgresAdapter
   }
 
   hasConnectionsAvailable() {
-    if (this.readyConnections.size > 0) return true;
+    if (this.readyConnections?.size > 0) return true;
     if (this.poolStarted) {
       const pollSize = this.connections.length;
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
-        if (connection.state !== PooledConnectionState.closed) {
+        if (connection && connection.state !== PooledConnectionState.closed) {
           // some connection is connecting or connected
           return true;
         }
@@ -772,7 +772,7 @@ export class PostgresAdapter
     return false;
   }
   isConnected() {
-    if (this.readyConnections.size > 0) {
+    if (this.readyConnections?.size > 0) {
       return true;
     }
     if (this.poolStarted) {
@@ -912,7 +912,7 @@ export class PostgresAdapter
       return onConnected(this.connectionClosedError(), null);
     }
 
-    if (this.readyConnections.size === 0) {
+    if (!this.readyConnections || this.readyConnections.size === 0) {
       // no connection ready lets make some
       let retry_in_progress = false;
       let all_closed = true;
@@ -984,7 +984,7 @@ export class PostgresAdapter
     if (reserved) {
       let connectionWithLeastQueries: PooledPostgresConnection | null = null;
       let leastQueries = Infinity;
-      for (const connection of this.readyConnections) {
+      for (const connection of this.readyConnections || []) {
         if (connection.flags & PooledConnectionFlags.preReserved || connection.flags & PooledConnectionFlags.reserved)
           continue;
         const queryCount = connection.queryCount;
@@ -998,7 +998,7 @@ export class PostgresAdapter
         connection.flags |= PooledConnectionFlags.reserved;
         connection.queryCount++;
         this.totalQueries++;
-        this.readyConnections.delete(connection);
+        this.readyConnections?.delete(connection);
         onConnected(null, connection);
         return;
       }

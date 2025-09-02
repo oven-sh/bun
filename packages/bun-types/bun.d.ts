@@ -678,6 +678,20 @@ declare module "bun" {
     export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string;
   }
 
+  namespace XML {
+    /**
+     * Parse a XML string into a JavaScript value.
+     */
+    export function parse(input: string): Element;
+
+    interface Element {
+      __name: string;
+      __attrs?: Record<string, string>;
+      __text?: string;
+      __children?: Element[];
+    }
+  }
+
   /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
    *

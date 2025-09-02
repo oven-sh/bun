@@ -300,7 +300,7 @@ Exited with code [1]
 - [ ] when a timeout triggers on a funciton with a done callback because the done callback was never called, note in the error that the function must call the done callback
   - [ ] there should be an issue that this can close
 - [ ] add retry/run-multiple-times back
-- [ ] report expect counts per-test
+- [x] report expect counts per-test
 - [x] make --bail work again
 - [x] update types for `test.concurrent.skip.only()`
 - [x] make test filtering work again

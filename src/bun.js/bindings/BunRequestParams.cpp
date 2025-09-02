@@ -9,6 +9,34 @@ namespace Bun {
 
 using namespace JSC;
 
+// Helper to check if a string represents a valid array index (non-negative integer)
+static bool isArrayIndex(const String& key, unsigned& index)
+{
+    if (key.isEmpty())
+        return false;
+    
+    // Check if all characters are digits
+    for (auto c : StringView(key).codeUnits()) {
+        if (!isASCIIDigit(c))
+            return false;
+    }
+    
+    // Parse the integer
+    auto parseResult = parseInteger<unsigned>(StringView(key));
+    if (!parseResult.has_value())
+        return false;
+    
+    index = parseResult.value();
+    
+    // Prevent creating huge sparse arrays - limit to reasonable size
+    // Rails typically limits array indices to prevent DoS
+    // We'll use a high limit that prevents obvious abuse
+    if (index > 10000)
+        return false;
+    
+    return true;
+}
+
 // Helper function to parse Rails-style query parameters into nested objects
 static void parseRailsStyleParams(JSC::JSGlobalObject* globalObject, JSC::JSObject* result, const String& key, const String& value)
 {
@@ -19,187 +47,183 @@ static void parseRailsStyleParams(JSC::JSGlobalObject* globalObject, JSC::JSObje
     
     // No brackets - simple key-value pair
     if (bracketPos == notFound) {
-        // Check if key could be a number and handle it properly
-        bool isNumeric = !key.isEmpty();
-        for (auto c : StringView(key).codeUnits()) {
-            if (!isASCIIDigit(c)) {
-                isNumeric = false;
-                break;
-            }
-        }
-        
-        if (isNumeric) {
-            // Use putDirectMayBeIndex for numeric keys
-            result->putDirectMayBeIndex(globalObject, Identifier::fromString(vm, key), jsString(vm, value));
-        } else if (key == "__proto__"_s) {
-            // Ignore __proto__ for security
+        // Ignore __proto__ for security
+        if (key == "__proto__"_s)
             return;
-        } else {
-            result->putDirect(vm, Identifier::fromString(vm, key), jsString(vm, value));
-        }
+        
+        // Simple key-value assignment - last value wins
+        result->putDirect(vm, Identifier::fromString(vm, key), jsString(vm, value));
         return;
     }
     
     // Extract the base key
     String baseKey = key.substring(0, bracketPos);
-    if (baseKey == "__proto__"_s) {
-        // Ignore __proto__ for security
+    if (baseKey == "__proto__"_s)
         return;
-    }
-    
-    // Get or create the nested object/array
-    JSValue existing = result->getDirect(vm, Identifier::fromString(vm, baseKey));
-    JSObject* nested = nullptr;
     
     // Parse the rest of the key to determine structure
     String remainder = key.substring(bracketPos);
     
-    // Check if it's an array notation []
+    // Get existing value at baseKey
+    JSValue existing = result->getDirect(vm, Identifier::fromString(vm, baseKey));
+    
+    // Handle [] notation (array append)
     if (remainder.startsWith("[]"_s)) {
-        // Array notation
-        if (!existing.isEmpty() && existing.isObject()) {
-            nested = asObject(existing);
-            // Check if it's already an array
-            if (!nested->inherits<JSArray>()) {
-                // Type conflict - was object, now needs to be array
-                // For now, skip this to avoid type errors
-                return;
-            }
+        JSArray* array = nullptr;
+        
+        // Check if we already have a value at this key
+        if (!existing.isEmpty()) {
+            if (!existing.isObject())
+                return; // Can't convert primitive to array
+            
+            JSObject* obj = asObject(existing);
+            if (!obj->inherits<JSArray>())
+                return; // Type conflict - it's an object, not an array
+            
+            array = jsCast<JSArray*>(obj);
         } else {
             // Create new array
-            nested = JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0);
-            result->putDirect(vm, Identifier::fromString(vm, baseKey), nested);
+            array = JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0);
+            result->putDirect(vm, Identifier::fromString(vm, baseKey), array);
         }
         
-        // Add value to array
-        JSArray* array = jsCast<JSArray*>(nested);
-        array->putDirectIndex(globalObject, array->length(), jsString(vm, value));
-        
-        // Handle nested properties after []
-        size_t nextBracket = remainder.find('[', 2);
-        if (nextBracket != notFound) {
-            // Has more nesting after [] - not commonly supported in Rails
-            // Skip for now
-            return;
-        }
-    } else {
-        // Object notation [key] or indexed array [0]
-        size_t closeBracket = remainder.find(']');
-        if (closeBracket == notFound) {
-            // Malformed - skip
-            return;
-        }
-        
-        String innerKey = remainder.substring(1, closeBracket - 1);
-        
-        // Check if inner key is numeric (indexed array)
-        bool isIndex = !innerKey.isEmpty();
-        unsigned index = 0;
-        if (isIndex) {
-            for (auto c : StringView(innerKey).codeUnits()) {
-                if (!isASCIIDigit(c)) {
-                    isIndex = false;
-                    break;
-                }
-            }
-            if (isIndex) {
-                // Parse as integer using StringView
-                auto innerKeyView = StringView(innerKey);
-                auto parseResult = parseInteger<unsigned>(innerKeyView);
-                if (parseResult.has_value()) {
-                    index = parseResult.value();
-                } else {
-                    isIndex = false;
-                }
-            }
-        }
-        
-        if (isIndex) {
-            // Indexed array notation [0], [1], etc.
-            if (!existing.isEmpty() && existing.isObject()) {
-                nested = asObject(existing);
-                if (!nested->inherits<JSArray>()) {
-                    // Type conflict
-                    return;
-                }
-            } else {
-                // Create new array
-                nested = JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0);
-                result->putDirect(vm, Identifier::fromString(vm, baseKey), nested);
-            }
+        // Check if there's more nesting after []
+        if (remainder.length() > 2 && remainder[2] == '[') {
+            // Handle cases like users[][name] - create object and recursively parse
+            String nestedRemainder = remainder.substring(2);
             
-            JSArray* array = jsCast<JSArray*>(nested);
+            // Create a new object for this array element
+            JSObject* nestedObj = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+            array->putDirectIndex(globalObject, array->length(), nestedObj);
             
-            // Check if there's more nesting
-            size_t nextBracket = remainder.find('[', closeBracket + 1);
-            if (nextBracket != notFound) {
-                // More nesting - need to recursively parse
-                String nestedKey = remainder.substring(closeBracket + 1);
+            // Recursively parse the nested structure
+            // Remove the leading [ and find the closing ]
+            size_t closeBracket = nestedRemainder.find(']');
+            if (closeBracket != notFound) {
+                String nestedKey = nestedRemainder.substring(1, closeBracket - 1);
+                String afterBracket = closeBracket + 1 < nestedRemainder.length() 
+                    ? nestedRemainder.substring(closeBracket + 1) 
+                    : String();
                 
-                // Get or create object at index
-                JSValue existingAtIndex = index < array->length() ? array->getIndexQuickly(index) : JSValue();
-                JSObject* nestedObj = nullptr;
-                
-                if (!existingAtIndex.isEmpty() && existingAtIndex.isObject()) {
-                    nestedObj = asObject(existingAtIndex);
-                } else {
-                    // Create object with null prototype for security
-                    nestedObj = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-                    array->putDirectIndex(globalObject, index, nestedObj);
-                }
-                
-                // Recursively parse the nested structure
-                // Remove the leading bracket from nestedKey since it starts with [
-                if (nestedKey.startsWith("["_s) && nestedKey.length() > 1) {
-                    size_t endBracket = nestedKey.find(']');
-                    if (endBracket != notFound) {
-                        String propertyName = nestedKey.substring(1, endBracket - 1);
-                        
-                        // Check for more nesting after this property
-                        String afterProperty = endBracket + 1 < nestedKey.length() ? nestedKey.substring(endBracket + 1) : String();
-                        
-                        if (afterProperty.isEmpty()) {
-                            // Simple property assignment
-                            if (propertyName != "__proto__"_s) {
-                                nestedObj->putDirect(vm, Identifier::fromString(vm, propertyName), jsString(vm, value));
-                            }
-                        } else {
-                            // More complex nesting
-                            String fullNestedKey = makeString(propertyName, afterProperty);
-                            parseRailsStyleParams(globalObject, nestedObj, fullNestedKey, value);
-                        }
+                if (afterBracket.isEmpty()) {
+                    // Simple nested property like users[][name]
+                    if (nestedKey != "__proto__"_s) {
+                        // Use putDirectMayBeIndex since nestedKey could be empty or numeric
+                        nestedObj->putDirectMayBeIndex(globalObject, Identifier::fromString(vm, nestedKey), jsString(vm, value));
                     }
+                } else {
+                    // More complex nesting like users[][address][street]
+                    String fullNestedKey = makeString(nestedKey, afterBracket);
+                    parseRailsStyleParams(globalObject, nestedObj, fullNestedKey, value);
                 }
-            } else {
-                // Simple indexed array value
-                array->putDirectIndex(globalObject, index, jsString(vm, value));
             }
         } else {
-            // Object key notation [key]
-            if (!existing.isEmpty() && existing.isObject()) {
-                nested = asObject(existing);
-                if (nested->inherits<JSArray>()) {
-                    // Type conflict - was array, now needs to be object
-                    return;
-                }
-            } else {
-                // Create object with null prototype for security
-                nested = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-                result->putDirect(vm, Identifier::fromString(vm, baseKey), nested);
-            }
+            // Simple array append - users[]=value
+            array->putDirectIndex(globalObject, array->length(), jsString(vm, value));
+        }
+        return;
+    }
+    
+    // Handle [key] notation (could be array index or object property)
+    size_t closeBracket = remainder.find(']');
+    if (closeBracket == notFound)
+        return; // Malformed
+    
+    String innerKey = remainder.substring(1, closeBracket - 1);
+    if (innerKey == "__proto__"_s)
+        return;
+    
+    // Determine if this should be an array (numeric index) or object (string key)
+    unsigned index = 0;
+    bool isIndex = isArrayIndex(innerKey, index);
+    
+    // Get or create the container (array or object)
+    JSObject* container = nullptr;
+    bool isArray = false;
+    
+    if (!existing.isEmpty()) {
+        if (!existing.isObject())
+            return; // Can't index into primitive
+        
+        container = asObject(existing);
+        isArray = container->inherits<JSArray>();
+        
+        // Type consistency check
+        if (isIndex && !isArray)
+            return; // Trying to use array index on object
+        if (!isIndex && isArray)
+            return; // Trying to use string key on array
+    } else {
+        // Create new container based on the key type
+        if (isIndex) {
+            container = JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0);
+            isArray = true;
+        } else {
+            container = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+            isArray = false;
+        }
+        result->putDirect(vm, Identifier::fromString(vm, baseKey), container);
+    }
+    
+    // Check if there's more nesting
+    size_t nextBracket = remainder.find('[', closeBracket + 1);
+    if (nextBracket != notFound) {
+        // More nesting - recursively parse
+        String nestedRemainder = remainder.substring(closeBracket + 1);
+        
+        // Get or create nested object
+        JSObject* nestedObj = nullptr;
+        
+        if (isArray) {
+            JSArray* array = jsCast<JSArray*>(container);
+            JSValue existingAtIndex = index < array->length() ? array->getIndexQuickly(index) : JSValue();
             
-            // Check if there's more nesting
-            size_t nextBracket = remainder.find('[', closeBracket + 1);
-            if (nextBracket != notFound) {
-                // More nesting - recursively parse
-                String nestedKey = makeString(innerKey, remainder.substring(closeBracket + 1));
-                parseRailsStyleParams(globalObject, nested, nestedKey, value);
+            if (!existingAtIndex.isEmpty() && existingAtIndex.isObject()) {
+                nestedObj = asObject(existingAtIndex);
             } else {
-                // Simple nested object value
-                if (innerKey != "__proto__"_s) {
-                    nested->putDirect(vm, Identifier::fromString(vm, innerKey), jsString(vm, value));
+                nestedObj = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+                array->putDirectIndex(globalObject, index, nestedObj);
+            }
+        } else {
+            JSValue existingNested = container->getDirect(vm, Identifier::fromString(vm, innerKey));
+            
+            if (!existingNested.isEmpty() && existingNested.isObject()) {
+                nestedObj = asObject(existingNested);
+            } else {
+                nestedObj = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+                container->putDirect(vm, Identifier::fromString(vm, innerKey), nestedObj);
+            }
+        }
+        
+        // Parse the nested structure
+        if (nestedRemainder.startsWith("["_s) && nestedRemainder.length() > 1) {
+            size_t endBracket = nestedRemainder.find(']');
+            if (endBracket != notFound) {
+                String propertyName = nestedRemainder.substring(1, endBracket - 1);
+                String afterProperty = endBracket + 1 < nestedRemainder.length() 
+                    ? nestedRemainder.substring(endBracket + 1) 
+                    : String();
+                
+                if (afterProperty.isEmpty()) {
+                    // Simple property assignment
+                    if (propertyName != "__proto__"_s) {
+                        // Use putDirectMayBeIndex since propertyName could be empty or numeric
+                        nestedObj->putDirectMayBeIndex(globalObject, Identifier::fromString(vm, propertyName), jsString(vm, value));
+                    }
+                } else {
+                    // More complex nesting
+                    String fullNestedKey = makeString(propertyName, afterProperty);
+                    parseRailsStyleParams(globalObject, nestedObj, fullNestedKey, value);
                 }
             }
+        }
+    } else {
+        // No more nesting - assign the value
+        if (isArray) {
+            JSArray* array = jsCast<JSArray*>(container);
+            array->putDirectIndex(globalObject, index, jsString(vm, value));
+        } else {
+            container->putDirect(vm, Identifier::fromString(vm, innerKey), jsString(vm, value));
         }
     }
 }

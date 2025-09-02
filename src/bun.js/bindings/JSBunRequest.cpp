@@ -250,26 +250,25 @@ JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetCookies, (JSC::JSGlobalObject * global
     return JSValue::encode(cookies);
 }
 
-
 JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetQuery, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     auto& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    
+
     JSBunRequest* request = jsDynamicCast<JSBunRequest*>(JSValue::decode(thisValue));
     if (!request)
         return JSValue::encode(jsUndefined());
-    
+
     // Get the URL from the request
     JSValue urlValue = request->get(globalObject, Identifier::fromString(vm, "url"_s));
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    
+
     if (!urlValue.isString())
         return JSValue::encode(jsUndefined());
-    
+
     String urlString = urlValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    
+
     // Use the extracted parsing function
     JSObject* queryObject = parseURLQueryParams(globalObject, urlString);
     return JSValue::encode(queryObject);

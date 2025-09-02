@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
 import { parseQueryParams } from "bun:internal-for-testing";
+import { expect, test } from "bun:test";
 
 test("parseQueryParams - simple parameters", () => {
   const result = parseQueryParams("name=john&age=30&active=true");
@@ -108,7 +108,7 @@ test("parseQueryParams - __proto__ is ignored for security", () => {
   expect(result).toEqual({
     normal: "ok",
   });
-  
+
   // Verify prototype wasn't polluted
   expect(Object.prototype.hasOwnProperty("evil")).toBe(false);
 });

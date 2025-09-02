@@ -1,7 +1,6 @@
 import { describe, expect, it, mock } from "bun:test";
-import { normalizeBunSnapshot } from "harness";
-import net from "node:net";
 import crypto from "node:crypto";
+import net from "node:net";
 
 describe("WebSocket strict RFC 6455 subprotocol handling", () => {
   async function createTestServer(

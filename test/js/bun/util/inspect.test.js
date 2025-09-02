@@ -1,8 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { normalizeBunSnapshot, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
-import { normalizeBunSnapshot } from "harness";
 it("prototype", () => {
   const prototypes = [
     Request.prototype,

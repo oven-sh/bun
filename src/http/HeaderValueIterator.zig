@@ -16,4 +16,3 @@ pub fn next(self: *HeaderValueIterator) ?[]const u8 {
 }
 
 const std = @import("std");
-const bun = @import("bun");

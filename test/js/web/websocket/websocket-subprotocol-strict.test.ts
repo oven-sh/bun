@@ -4,7 +4,9 @@ import net from "node:net";
 import crypto from "node:crypto";
 
 describe("WebSocket strict RFC 6455 subprotocol handling", () => {
-  async function createTestServer(responseHeaders: string[]): Promise<{ port: number; [Symbol.asyncDispose]: () => Promise<void> }> {
+  async function createTestServer(
+    responseHeaders: string[],
+  ): Promise<{ port: number; [Symbol.asyncDispose]: () => Promise<void> }> {
     const server = net.createServer();
     let port: number;
 
@@ -55,13 +57,13 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
       port: port!,
       [Symbol.asyncDispose]: async () => {
         server.close();
-      }
+      },
     };
   }
 
   async function expectConnectionFailure(port: number, protocols: string[], expectedCode = 1002) {
     const { promise: closePromise, resolve: resolveClose } = Promise.withResolvers();
-    
+
     const ws = new WebSocket(`ws://localhost:${port}`, protocols);
     const onopenMock = mock(() => {});
     ws.onopen = onopenMock;
@@ -77,14 +79,16 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
   }
 
   async function expectConnectionSuccess(port: number, protocols: string[], expectedProtocol: string) {
-    const { promise: openPromise, resolve: resolveOpen } = Promise.withResolvers();
-    
+    const { promise: openPromise, resolve: resolveOpen, reject } = Promise.withResolvers();
     const ws = new WebSocket(`ws://localhost:${port}`, protocols);
-    ws.onopen = () => resolveOpen();
-
-    await openPromise;
-    expect(ws.protocol).toBe(expectedProtocol);
-    ws.terminate();
+    try {
+      ws.onopen = () => resolveOpen();
+      ws.onerror = reject;
+      await openPromise;
+      expect(ws.protocol).toBe(expectedProtocol);
+    } finally {
+      ws.terminate();
+    }
   }
   // Multiple protocols in single header (comma-separated) - should fail
   it("should reject multiple comma-separated protocols", async () => {
@@ -104,26 +108,20 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
 
   // Multiple headers - should fail
   it("should reject duplicate Sec-WebSocket-Protocol headers (same value)", async () => {
-    await using server = await createTestServer([
-      "Sec-WebSocket-Protocol: chat",
-      "Sec-WebSocket-Protocol: chat"
-    ]);
+    await using server = await createTestServer(["Sec-WebSocket-Protocol: chat", "Sec-WebSocket-Protocol: chat"]);
     await expectConnectionFailure(server.port, ["chat", "echo"]);
   });
 
   it("should reject duplicate Sec-WebSocket-Protocol headers (different values)", async () => {
-    await using server = await createTestServer([
-      "Sec-WebSocket-Protocol: chat", 
-      "Sec-WebSocket-Protocol: echo"
-    ]);
+    await using server = await createTestServer(["Sec-WebSocket-Protocol: chat", "Sec-WebSocket-Protocol: echo"]);
     await expectConnectionFailure(server.port, ["chat", "echo"]);
   });
 
   it("should reject three Sec-WebSocket-Protocol headers", async () => {
     await using server = await createTestServer([
       "Sec-WebSocket-Protocol: a",
-      "Sec-WebSocket-Protocol: b", 
-      "Sec-WebSocket-Protocol: c"
+      "Sec-WebSocket-Protocol: b",
+      "Sec-WebSocket-Protocol: c",
     ]);
     await expectConnectionFailure(server.port, ["a", "b", "c"]);
   });
@@ -155,7 +153,7 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
     await expectConnectionFailure(server.port, ["chat", "echo"]);
   });
 
-  // Valid cases - should succeed  
+  // Valid cases - should succeed
   it("should accept single valid protocol (first in client list)", async () => {
     await using server = await createTestServer(["Sec-WebSocket-Protocol: chat"]);
     await expectConnectionSuccess(server.port, ["chat", "echo", "binary"], "chat");

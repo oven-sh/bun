@@ -271,7 +271,7 @@ Exited with code [1]
 - [x] finalize describe call order. ideally `A[B, C], D[E, F[G]]` will run in normal order rather than `A, D, B, C, E, F, G`
 - [x] sometimes error messages aren't printing!
 - [x] make sure it exits with code 1 on failure
-- [ ] decide on preload behaviour: before first/after last?
+- [x] decide on preload behaviour: before first/after last?
   - vitest/jest both do them seperately for each file, which makes sense because of isolation
   - bun does them before the first file and after the last file
 - [ ] add back debugger.test_reporter_agent reporting

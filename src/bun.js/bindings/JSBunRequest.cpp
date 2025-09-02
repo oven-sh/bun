@@ -271,6 +271,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetQuery, (JSC::JSGlobalObject * globalOb
 
     // Use the extracted parsing function
     JSObject* queryObject = parseURLQueryParams(globalObject, urlString);
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    
+    // parseURLQueryParams might return nullptr if an exception occurred
+    if (!queryObject)
+        return JSValue::encode(jsUndefined());
+    
     return JSValue::encode(queryObject);
 }
 

@@ -38,9 +38,11 @@ static bool isArrayIndex(const String& key, unsigned& index)
 }
 
 // Helper function to parse Rails-style query parameters into nested objects
-static void parseRailsStyleParams(JSC::JSGlobalObject* globalObject, JSC::JSObject* result, const String& key, const String& value)
+// Returns false if an exception was thrown
+static bool parseRailsStyleParams(JSC::JSGlobalObject* globalObject, JSC::JSObject* result, const String& key, const String& value)
 {
     auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     // Find the first bracket
     size_t bracketPos = key.find('[');
@@ -49,18 +51,19 @@ static void parseRailsStyleParams(JSC::JSGlobalObject* globalObject, JSC::JSObje
     if (bracketPos == notFound) {
         // Ignore __proto__ for security
         if (key == "__proto__"_s)
-            return;
+            return true;
 
         // Simple key-value assignment - last value wins
         // Use putDirectMayBeIndex since key could be numeric
         result->putDirectMayBeIndex(globalObject, Identifier::fromString(vm, key), jsString(vm, value));
-        return;
+        RETURN_IF_EXCEPTION(throwScope, false);
+        return true;
     }
 
     // Extract the base key
     String baseKey = key.substring(0, bracketPos);
     if (baseKey == "__proto__"_s)
-        return;
+        return true;
 
     // Parse the rest of the key to determine structure
     String remainder = key.substring(bracketPos);
@@ -75,17 +78,18 @@ static void parseRailsStyleParams(JSC::JSGlobalObject* globalObject, JSC::JSObje
         // Check if we already have a value at this key
         if (!existing.isEmpty()) {
             if (!existing.isObject())
-                return; // Can't convert primitive to array
+                return true; // Can't convert primitive to array
 
             JSObject* obj = asObject(existing);
             if (!obj->inherits<JSArray>())
-                return; // Type conflict - it's an object, not an array
+                return true; // Type conflict - it's an object, not an array
 
             array = jsCast<JSArray*>(obj);
         } else {
             // Create new array
             array = JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0);
             result->putDirect(vm, Identifier::fromString(vm, baseKey), array);
+            RETURN_IF_EXCEPTION(throwScope, false);
         }
 
         // Check if there's more nesting after []
@@ -96,6 +100,7 @@ static void parseRailsStyleParams(JSC::JSGlobalObject* globalObject, JSC::JSObje
             // Create a new object for this array element
             JSObject* nestedObj = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
             array->putDirectIndex(globalObject, array->length(), nestedObj);
+            RETURN_IF_EXCEPTION(throwScope, false);
 
             // Recursively parse the nested structure
             // Remove the leading [ and find the closing ]
@@ -111,24 +116,27 @@ static void parseRailsStyleParams(JSC::JSGlobalObject* globalObject, JSC::JSObje
                     if (nestedKey != "__proto__"_s) {
                         // Use putDirectMayBeIndex since nestedKey could be empty or numeric
                         nestedObj->putDirectMayBeIndex(globalObject, Identifier::fromString(vm, nestedKey), jsString(vm, value));
+                        RETURN_IF_EXCEPTION(throwScope, false);
                     }
                 } else {
                     // More complex nesting like users[][address][street]
                     String fullNestedKey = makeString(nestedKey, afterBracket);
-                    parseRailsStyleParams(globalObject, nestedObj, fullNestedKey, value);
+                    if (!parseRailsStyleParams(globalObject, nestedObj, fullNestedKey, value))
+                        return false;
                 }
             }
         } else {
             // Simple array append - users[]=value
             array->putDirectIndex(globalObject, array->length(), jsString(vm, value));
+            RETURN_IF_EXCEPTION(throwScope, false);
         }
-        return;
+        return true;
     }
 
     // Handle [key] notation (could be array index or object property)
     size_t closeBracket = remainder.find(']');
     if (closeBracket == notFound)
-        return; // Malformed
+        return true; // Malformed
 
     String innerKey = remainder.substring(1, closeBracket - 1);
 
@@ -142,16 +150,16 @@ static void parseRailsStyleParams(JSC::JSGlobalObject* globalObject, JSC::JSObje
 
     if (!existing.isEmpty()) {
         if (!existing.isObject())
-            return; // Can't index into primitive
+            return true; // Can't index into primitive
 
         container = asObject(existing);
         isArray = container->inherits<JSArray>();
 
         // Type consistency check
         if (isIndex && !isArray)
-            return; // Trying to use array index on object
+            return true; // Trying to use array index on object
         if (!isIndex && isArray)
-            return; // Trying to use string key on array
+            return true; // Trying to use string key on array
     } else {
         // Create new container based on the key type
         if (isIndex) {
@@ -162,6 +170,7 @@ static void parseRailsStyleParams(JSC::JSGlobalObject* globalObject, JSC::JSObje
             isArray = false;
         }
         result->putDirect(vm, Identifier::fromString(vm, baseKey), container);
+        RETURN_IF_EXCEPTION(throwScope, false);
     }
 
     // Check if there's more nesting
@@ -182,11 +191,12 @@ static void parseRailsStyleParams(JSC::JSGlobalObject* globalObject, JSC::JSObje
             } else {
                 nestedObj = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
                 array->putDirectIndex(globalObject, index, nestedObj);
+                RETURN_IF_EXCEPTION(throwScope, false);
             }
         } else {
             // Skip __proto__ for security
             if (innerKey == "__proto__"_s)
-                return;
+                return true;
 
             JSValue existingNested = container->getDirect(vm, Identifier::fromString(vm, innerKey));
 
@@ -196,6 +206,7 @@ static void parseRailsStyleParams(JSC::JSGlobalObject* globalObject, JSC::JSObje
                 nestedObj = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
                 // Use putDirectMayBeIndex since innerKey could be numeric
                 container->putDirectMayBeIndex(globalObject, Identifier::fromString(vm, innerKey), nestedObj);
+                RETURN_IF_EXCEPTION(throwScope, false);
             }
         }
 
@@ -213,11 +224,13 @@ static void parseRailsStyleParams(JSC::JSGlobalObject* globalObject, JSC::JSObje
                     if (propertyName != "__proto__"_s) {
                         // Use putDirectMayBeIndex since propertyName could be empty or numeric
                         nestedObj->putDirectMayBeIndex(globalObject, Identifier::fromString(vm, propertyName), jsString(vm, value));
+                        RETURN_IF_EXCEPTION(throwScope, false);
                     }
                 } else {
                     // More complex nesting
                     String fullNestedKey = makeString(propertyName, afterProperty);
-                    parseRailsStyleParams(globalObject, nestedObj, fullNestedKey, value);
+                    if (!parseRailsStyleParams(globalObject, nestedObj, fullNestedKey, value))
+                        return false;
                 }
             }
         }
@@ -226,19 +239,23 @@ static void parseRailsStyleParams(JSC::JSGlobalObject* globalObject, JSC::JSObje
         if (isArray) {
             JSArray* array = jsCast<JSArray*>(container);
             array->putDirectIndex(globalObject, index, jsString(vm, value));
+            RETURN_IF_EXCEPTION(throwScope, false);
         } else {
             // Skip __proto__ for security
             if (innerKey != "__proto__"_s) {
                 // Use putDirectMayBeIndex since innerKey could be numeric
                 container->putDirectMayBeIndex(globalObject, Identifier::fromString(vm, innerKey), jsString(vm, value));
+                RETURN_IF_EXCEPTION(throwScope, false);
             }
         }
     }
+    return true;
 }
 
 JSObject* parseQueryParams(JSGlobalObject* globalObject, const String& queryString)
 {
     auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     // Create result object with null prototype for security
     JSObject* queryObject = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
@@ -252,7 +269,9 @@ JSObject* parseQueryParams(JSGlobalObject* globalObject, const String& queryStri
 
     // Process each parameter with Rails-style parsing
     for (const auto& param : params) {
-        parseRailsStyleParams(globalObject, queryObject, param.key, param.value);
+        if (!parseRailsStyleParams(globalObject, queryObject, param.key, param.value)) {
+            RETURN_IF_EXCEPTION(throwScope, nullptr);
+        }
     }
 
     return queryObject;
@@ -260,12 +279,17 @@ JSObject* parseQueryParams(JSGlobalObject* globalObject, const String& queryStri
 
 JSObject* parseURLQueryParams(JSGlobalObject* globalObject, const String& urlString)
 {
+    auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
     // Parse the URL to extract query string
     URL url(urlString);
     StringView queryView = url.query();
     String queryString = queryView.toString();
 
-    return parseQueryParams(globalObject, queryString);
+    JSObject* result = parseQueryParams(globalObject, queryString);
+    RETURN_IF_EXCEPTION(throwScope, nullptr);
+    return result;
 }
 
 // Export for testing
@@ -287,6 +311,13 @@ JSC_DEFINE_HOST_FUNCTION(jsBunParseQueryParams, (JSC::JSGlobalObject * globalObj
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
     JSObject* result = parseQueryParams(globalObject, queryString);
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    
+    // parseQueryParams might return nullptr if an exception occurred
+    if (!result) {
+        return JSValue::encode(jsUndefined());
+    }
+    
     return JSValue::encode(result);
 }
 

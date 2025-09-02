@@ -304,7 +304,6 @@ Exited with code [1]
 - [x] make --bail work again
 - [x] update types for `test.concurrent.skip.only()`
 - [x] make test filtering work again
-- [ ] decide what to do about test() inside test()
 - [ ] make sure ScopeFunctions class can finalize (see napi_handle_scope NapiHandleScopeImpl as an example)
   - currently, it never calls its finalize method because it no longer extends from finalize
 - [ ] make sure DoneCallback class can finalize, same as above
@@ -381,6 +380,7 @@ Exited with code [1]
 - [] `test.failing.if(false)` errors because it can't replace mode 'failing' with mode 'skip' (maybe failing should be a bool?)
 - [ ] if we hold a weak reference to the done param, we can gc(true) (if a done param is provided) and then when it is finalized, count that as the function finishing (assuming it's not a promise). that way it fixes the done discard problem without solving waitForPromise.
 - [ ] m_terminationException in timeouts
+- [ ] support test() inside test()
 
 If this doesn't land:
 

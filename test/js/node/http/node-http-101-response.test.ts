@@ -1,18 +1,22 @@
 import { describe, expect, test } from "bun:test";
-import * as net from "node:net";
 import * as http from "node:http";
+import * as net from "node:net";
 
 describe("node:http 101 response handling", () => {
   test("handles 101 Switching Protocols response with slow data", async () => {
     const { promise, resolve } = Promise.withResolvers<void>();
     let gotError = false;
 
-    const server = net.createServer((socket) => {
+    const server = net.createServer(socket => {
       let closed = false;
-      socket.on("close", () => { closed = true; });
-      socket.on("error", () => { closed = true; });
-      
-      socket.on("data", async (data) => {
+      socket.on("close", () => {
+        closed = true;
+      });
+      socket.on("error", () => {
+        closed = true;
+      });
+
+      socket.on("data", async data => {
         if (data.toString().includes("\r\n\r\n")) {
           try {
             // Send 101 response headers slowly
@@ -44,7 +48,7 @@ describe("node:http 101 response handling", () => {
     });
 
     await using _server = server;
-    await new Promise<void>((resolve) => server.listen(0, resolve));
+    await new Promise<void>(resolve => server.listen(0, resolve));
     const port = (server.address() as net.AddressInfo).port;
 
     const req = http.request(
@@ -57,7 +61,7 @@ describe("node:http 101 response handling", () => {
           "Sec-WebSocket-Version": "13",
         },
       },
-      (res) => {
+      res => {
         // We don't expect a successful response for WebSocket upgrade via http.request
         res.on("data", () => {});
         res.on("end", () => {
@@ -66,7 +70,7 @@ describe("node:http 101 response handling", () => {
       },
     );
 
-    req.on("error", (err) => {
+    req.on("error", err => {
       // An error is expected since http.request doesn't support protocol upgrades
       // The important thing is that we don't crash with memory issues
       gotError = true;
@@ -76,7 +80,7 @@ describe("node:http 101 response handling", () => {
     req.end();
 
     await promise;
-    
+
     // We expect an error since the HTTP client doesn't support protocol upgrades
     expect(gotError).toBe(true);
   });
@@ -85,20 +89,17 @@ describe("node:http 101 response handling", () => {
     const { promise, resolve } = Promise.withResolvers<void>();
     let gotError = false;
 
-    const server = net.createServer((socket) => {
-      socket.on("data", (data) => {
+    const server = net.createServer(socket => {
+      socket.on("data", data => {
         if (data.toString().includes("\r\n\r\n")) {
           // Send complete 101 response at once
           socket.write(
-            `HTTP/1.1 101 Switching Protocols\r\n` +
-            `Upgrade: websocket\r\n` +
-            `Connection: Upgrade\r\n` +
-            `\r\n`,
+            `HTTP/1.1 101 Switching Protocols\r\n` + `Upgrade: websocket\r\n` + `Connection: Upgrade\r\n` + `\r\n`,
           );
 
           // Send some WebSocket frames immediately
           socket.write(Buffer.from([0x81, 0x01, 0x41, 0x81, 0x01, 0x42]));
-          
+
           // Close after a short delay
           setTimeout(() => {
             socket.destroy();
@@ -108,7 +109,7 @@ describe("node:http 101 response handling", () => {
     });
 
     await using _server = server;
-    await new Promise<void>((resolve) => server.listen(0, resolve));
+    await new Promise<void>(resolve => server.listen(0, resolve));
     const port = (server.address() as net.AddressInfo).port;
 
     const req = http.request(
@@ -121,7 +122,7 @@ describe("node:http 101 response handling", () => {
           "Sec-WebSocket-Version": "13",
         },
       },
-      (res) => {
+      res => {
         res.on("data", () => {});
         res.on("end", () => {
           resolve();
@@ -129,7 +130,7 @@ describe("node:http 101 response handling", () => {
       },
     );
 
-    req.on("error", (err) => {
+    req.on("error", err => {
       // Error is expected, just ensure no crash
       gotError = true;
       resolve();
@@ -138,7 +139,7 @@ describe("node:http 101 response handling", () => {
     req.end();
 
     await promise;
-    
+
     // We expect an error for protocol upgrades
     expect(gotError).toBe(true);
   });

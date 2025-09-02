@@ -558,6 +558,11 @@ export function runOnLoadPlugins(
           }
         }
 
+        // Allow plugins to return an object without contents to continue to the next plugin
+        if (contents === undefined) {
+          continue;
+        }
+
         if (!(typeof contents === "string") && !$isTypedArrayView(contents)) {
           throw new TypeError('onLoad plugins must return an object with "contents" as a string or Uint8Array');
         }

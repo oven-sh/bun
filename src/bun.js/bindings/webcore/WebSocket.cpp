@@ -1596,3 +1596,13 @@ WebCore::ExceptionOr<void> WebCore::WebSocket::pong(WebCore::JSBlob* blob)
 
     return {};
 }
+
+void WebCore::WebSocket::setProtocol(const String& protocol)
+{
+    m_subprotocol = protocol;
+}
+
+extern "C" void WebSocket__setProtocol(WebCore::WebSocket* webSocket, BunString* protocol)
+{
+    webSocket->setProtocol(protocol->transferToWTFString());
+}

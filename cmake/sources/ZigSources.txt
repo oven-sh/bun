@@ -667,6 +667,7 @@ src/http/ETag.zig
 src/http/FetchRedirect.zig
 src/http/HeaderBuilder.zig
 src/http/Headers.zig
+src/http/HeaderValueIterator.zig
 src/http/HTTPCertError.zig
 src/http/HTTPContext.zig
 src/http/HTTPRequestBody.zig

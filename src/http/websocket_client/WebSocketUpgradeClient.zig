@@ -34,15 +34,14 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         tcp: Socket,
         outgoing_websocket: ?*CppWebSocket,
         input_body_buf: []u8 = &[_]u8{},
-        client_protocol: []const u8 = "",
         to_send: []const u8 = "",
         read_length: usize = 0,
         headers_buf: [128]PicoHTTP.Header = undefined,
         body: std.ArrayListUnmanaged(u8) = .{},
-        websocket_protocol: u64 = 0,
         hostname: [:0]const u8 = "",
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         state: State = .initializing,
+        subprotocols: bun.StringSet,
 
         const State = enum { initializing, reading, failed };
 
@@ -90,7 +89,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             bun.assert(vm.event_loop_handle != null);
 
-            var client_protocol_hash: u64 = 0;
             const body = buildRequestBody(
                 vm,
                 pathname,
@@ -98,7 +96,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 host,
                 port,
                 client_protocol,
-                &client_protocol_hash,
                 NonUTF8Headers.init(header_names, header_values, header_count),
             ) catch return null;
 
@@ -107,8 +104,15 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 .tcp = .{ .socket = .{ .detached = {} } },
                 .outgoing_websocket = websocket,
                 .input_body_buf = body,
-                .websocket_protocol = client_protocol_hash,
                 .state = .initializing,
+                .subprotocols = brk: {
+                    var subprotocols = bun.StringSet.init(bun.default_allocator);
+                    var it = bun.http.HeaderValueIterator.init(client_protocol.slice());
+                    while (it.next()) |protocol| {
+                        subprotocols.insert(protocol) catch |e| bun.handleOom(e);
+                    }
+                    break :brk subprotocols;
+                },
             });
 
             var host_ = host.toSlice(bun.default_allocator);
@@ -162,6 +166,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         pub fn clearData(this: *HTTPClient) void {
             this.poll_ref.unref(jsc.VirtualMachine.get());
 
+            this.subprotocols.clearAndFree();
             this.clearInput();
             this.body.clearAndFree(bun.default_allocator);
         }
@@ -346,7 +351,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var upgrade_header = PicoHTTP.Header{ .name = "", .value = "" };
             var connection_header = PicoHTTP.Header{ .name = "", .value = "" };
             var websocket_accept_header = PicoHTTP.Header{ .name = "", .value = "" };
-            var visited_protocol = this.websocket_protocol == 0;
+            var found_matching_protocol = false;
+
             // var visited_version = false;
             var deflate_result = DeflateNegotiationResult{};
 
@@ -382,11 +388,49 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     },
                     "Sec-WebSocket-Protocol".len => {
                         if (strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Protocol", false)) {
-                            if (this.websocket_protocol == 0 or bun.hash(header.value) != this.websocket_protocol) {
+                            var iterator = bun.http.HeaderValueIterator.init(header.value);
+                            while (iterator.next()) |protocol| {
+                                if (this.subprotocols.contains(protocol)) {
+                                    found_matching_protocol = true;
+                                    if (this.outgoing_websocket) |ws| {
+                                        var protocol_str = bun.String.init(protocol);
+                                        defer protocol_str.deref();
+                                        // From the WHATWG Living Standard:
+                                        //
+                                        // “The protocol attribute must
+                                        // initially be the empty string. When
+                                        // the user agent validates the server’s
+                                        // response, if it included a
+                                        // subprotocol, and the subprotocol was
+                                        // one of the subprotocols originally
+                                        // requested by the client, then set
+                                        // protocol to that value. Otherwise,
+                                        // leave it as the empty string.”
+                                        ws.setProtocol(&protocol_str);
+                                    }
+                                    break;
+                                }
+                            }
+
+                            // This handles both:
+                            // - Empty value (such as `,`)
+                            // - No matching value
+                            if (!found_matching_protocol) {
+                                // RFC 6455:
+                                // “If the response includes a
+                                // Sec-WebSocket-Protocol header field and
+                                // this header field indicates the use of a
+                                // subprotocol that was not present in the
+                                // client’s handshake, the client MUST Fail
+                                // the WebSocket Connection.” ￼
+                                //
+                                // Notice the requirement is only about
+                                // rejecting unknown protocols. There is no
+                                // requirement that the server must echo one
+                                // back.
                                 this.terminate(ErrorCode.mismatch_client_protocol);
                                 return;
                             }
-                            visited_protocol = true;
                         }
                     },
                     "Sec-WebSocket-Extensions".len => {
@@ -466,11 +510,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             if (@min(websocket_accept_header.name.len, websocket_accept_header.value.len) == 0) {
                 this.terminate(ErrorCode.missing_websocket_accept_header);
-                return;
-            }
-
-            if (!visited_protocol) {
-                this.terminate(ErrorCode.mismatch_client_protocol);
                 return;
             }
 
@@ -622,7 +661,6 @@ fn buildRequestBody(
     host: *const jsc.ZigString,
     port: u16,
     client_protocol: *const jsc.ZigString,
-    client_protocol_hash: *u64,
     extra_headers: NonUTF8Headers,
 ) std.mem.Allocator.Error![]u8 {
     const allocator = vm.allocator;
@@ -641,9 +679,6 @@ fn buildRequestBody(
             .value = client_protocol.slice(),
         },
     };
-
-    if (client_protocol.len > 0)
-        client_protocol_hash.* = bun.hash(static_headers[1].value);
 
     const pathname_ = pathname.toSlice(allocator);
     const host_ = host.toSlice(allocator);

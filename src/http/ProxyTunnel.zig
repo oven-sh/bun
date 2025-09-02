@@ -201,7 +201,7 @@ pub fn write(this: *HTTPClient, encoded_data: []const u8) void {
         const pending = encoded_data[@intCast(written)..];
         if (pending.len > 0) {
             // lets flush when we are truly writable
-            proxy.write_buffer.write(pending) catch bun.outOfMemory();
+            bun.handleOom(proxy.write_buffer.write(pending));
         }
     }
 }
@@ -334,7 +334,7 @@ fn deinit(this: *ProxyTunnel) void {
     bun.destroy(this);
 }
 
-const log = bun.Output.scoped(.http_proxy_tunnel, false);
+const log = bun.Output.scoped(.http_proxy_tunnel, .visible);
 
 const HTTPCertError = @import("./HTTPCertError.zig");
 const SSLWrapper = @import("../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;

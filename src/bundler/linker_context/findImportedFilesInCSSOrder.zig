@@ -66,7 +66,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
             visitor.visited.push(
                 visitor.temp_allocator,
                 source_index,
-            ) catch bun.outOfMemory();
+            ) catch |err| bun.handleOom(err);
 
             const repr: *const bun.css.BundlerStyleSheet = visitor.css_asts[source_index.get()] orelse return; // Sanity check
             const top_level_rules = &repr.rules;
@@ -99,11 +99,11 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
                         // imported stylesheet subtree is wrapped in all of the conditions
                         if (rule.import.hasConditions()) {
                             // Fork our state
-                            var nested_conditions = wrapping_conditions.deepClone2(visitor.allocator);
-                            var nested_import_records = wrapping_import_records.clone(visitor.allocator) catch bun.outOfMemory();
+                            var nested_conditions = wrapping_conditions.deepCloneInfallible(visitor.allocator);
+                            var nested_import_records = bun.handleOom(wrapping_import_records.clone(visitor.allocator));
 
                             // Clone these import conditions and append them to the state
-                            nested_conditions.push(visitor.allocator, rule.import.conditionsWithImportRecords(visitor.allocator, &nested_import_records)) catch bun.outOfMemory();
+                            bun.handleOom(nested_conditions.push(visitor.allocator, rule.import.conditionsWithImportRecords(visitor.allocator, &nested_import_records)));
                             visitor.visit(record.source_index, &nested_conditions, wrapping_import_records);
                             continue;
                         }
@@ -113,15 +113,15 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
 
                     // Record external depednencies
                     if (!record.is_internal) {
-                        var all_conditions = wrapping_conditions.deepClone2(visitor.allocator);
-                        var all_import_records = wrapping_import_records.clone(visitor.allocator) catch bun.outOfMemory();
+                        var all_conditions = wrapping_conditions.deepCloneInfallible(visitor.allocator);
+                        var all_import_records = bun.handleOom(wrapping_import_records.clone(visitor.allocator));
                         // If this import has conditions, append it to the list of overall
                         // conditions for this external import. Note that an external import
                         // may actually have multiple sets of conditions that can't be
                         // merged. When this happens we need to generate a nested imported
                         // CSS file using a data URL.
                         if (rule.import.hasConditions()) {
-                            all_conditions.push(visitor.allocator, rule.import.conditionsWithImportRecords(visitor.allocator, &all_import_records)) catch bun.outOfMemory();
+                            bun.handleOom(all_conditions.push(visitor.allocator, rule.import.conditionsWithImportRecords(visitor.allocator, &all_import_records)));
                             visitor.order.push(
                                 visitor.allocator,
                                 Chunk.CssImportOrder{
@@ -131,7 +131,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
                                     .conditions = all_conditions,
                                     .condition_import_records = all_import_records,
                                 },
-                            ) catch bun.outOfMemory();
+                            ) catch |err| bun.handleOom(err);
                         } else {
                             visitor.order.push(
                                 visitor.allocator,
@@ -142,7 +142,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
                                     .conditions = wrapping_conditions.*,
                                     .condition_import_records = wrapping_import_records.*,
                                 },
-                            ) catch bun.outOfMemory();
+                            ) catch |err| bun.handleOom(err);
                         }
                         debug(
                             "Push external: {d}={s}",
@@ -172,16 +172,16 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
             visitor.order.push(visitor.allocator, Chunk.CssImportOrder{
                 .kind = .{ .source_index = source_index },
                 .conditions = wrapping_conditions.*,
-            }) catch bun.outOfMemory();
+            }) catch |err| bun.handleOom(err);
         }
     };
 
     var visitor = Visitor{
-        .allocator = this.allocator,
+        .allocator = this.allocator(),
         .temp_allocator = temp_allocator,
         .graph = &this.graph,
         .parse_graph = this.parse_graph,
-        .visited = BabyList(Index).initCapacity(temp_allocator, 16) catch bun.outOfMemory(),
+        .visited = bun.handleOom(BabyList(Index).initCapacity(temp_allocator, 16)),
         .css_asts = this.graph.ast.items(.css),
         .all_import_records = this.graph.ast.items(.import_records),
     };
@@ -193,7 +193,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
     }
 
     var order = visitor.order;
-    var wip_order = BabyList(Chunk.CssImportOrder).initCapacity(temp_allocator, order.len) catch bun.outOfMemory();
+    var wip_order = bun.handleOom(BabyList(Chunk.CssImportOrder).initCapacity(temp_allocator, order.len));
 
     const css_asts: []const ?*bun.css.BundlerStyleSheet = this.graph.ast.items(.css);
 
@@ -208,7 +208,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
         var is_at_layer_prefix = true;
         for (order.slice()) |*entry| {
             if ((entry.kind == .layers and is_at_layer_prefix) or entry.kind == .external_path) {
-                wip_order.push(temp_allocator, entry.*) catch bun.outOfMemory();
+                bun.handleOom(wip_order.push(temp_allocator, entry.*));
             }
             if (entry.kind != .layers) {
                 is_at_layer_prefix = false;
@@ -219,7 +219,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
         is_at_layer_prefix = true;
         for (order.slice()) |*entry| {
             if ((entry.kind != .layers or !is_at_layer_prefix) and entry.kind != .external_path) {
-                wip_order.push(temp_allocator, entry.*) catch bun.outOfMemory();
+                bun.handleOom(wip_order.push(temp_allocator, entry.*));
             }
             if (entry.kind != .layers) {
                 is_at_layer_prefix = false;
@@ -246,7 +246,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
             const entry = visitor.order.at(i);
             switch (entry.kind) {
                 .source_index => |idx| {
-                    const gop = source_index_duplicates.getOrPut(idx.get()) catch bun.outOfMemory();
+                    const gop = bun.handleOom(source_index_duplicates.getOrPut(idx.get()));
                     if (!gop.found_existing) {
                         gop.value_ptr.* = BabyList(u32){};
                     }
@@ -261,10 +261,10 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
                             continue :next_backward;
                         }
                     }
-                    gop.value_ptr.push(temp_allocator, i) catch bun.outOfMemory();
+                    bun.handleOom(gop.value_ptr.push(temp_allocator, i));
                 },
                 .external_path => |p| {
-                    const gop = external_path_duplicates.getOrPut(p.text) catch bun.outOfMemory();
+                    const gop = bun.handleOom(external_path_duplicates.getOrPut(p.text));
                     if (!gop.found_existing) {
                         gop.value_ptr.* = BabyList(u32){};
                     }
@@ -279,7 +279,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
                             continue :next_backward;
                         }
                     }
-                    gop.value_ptr.push(temp_allocator, i) catch bun.outOfMemory();
+                    bun.handleOom(gop.value_ptr.push(temp_allocator, i));
                 },
                 .layers => {},
             }
@@ -407,7 +407,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
                 // Allocate a new set of duplicate indices to track this combination.
                 layer_duplicates.push(temp_allocator, DuplicateEntry{
                     .layers = layers_key,
-                }) catch bun.outOfMemory();
+                }) catch |err| bun.handleOom(err);
             }
             var duplicates = layer_duplicates.at(index).indices.slice();
             var j = duplicates.len;
@@ -449,7 +449,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
 
                         // Non-layer entries still need to be present because they have
                         // other side effects beside inserting things in the layer order
-                        wip_order.push(temp_allocator, entry.*) catch bun.outOfMemory();
+                        bun.handleOom(wip_order.push(temp_allocator, entry.*));
                     }
 
                     // Don't add this to the duplicate list below because it's redundant
@@ -460,8 +460,8 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
             layer_duplicates.mut(index).indices.push(
                 temp_allocator,
                 wip_order.len,
-            ) catch bun.outOfMemory();
-            wip_order.push(temp_allocator, entry.*) catch bun.outOfMemory();
+            ) catch |err| bun.handleOom(err);
+            bun.handleOom(wip_order.push(temp_allocator, entry.*));
         }
 
         debugCssOrder(this, &wip_order, .WHILE_OPTIMIZING_REDUNDANT_LAYER_RULES);
@@ -487,7 +487,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
                     wip_order.mut(prev_index).kind.layers.toOwned(temp_allocator).append(
                         temp_allocator,
                         entry.kind.layers.inner().sliceConst(),
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                 }
             }
         }

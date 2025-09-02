@@ -305,7 +305,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             var body = data;
             if (this.body.items.len > 0) {
-                this.body.appendSlice(bun.default_allocator, data) catch bun.outOfMemory();
+                bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
                 body = this.body.items;
             }
 
@@ -327,7 +327,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     },
                     error.ShortRead => {
                         if (this.body.items.len == 0) {
-                            this.body.appendSlice(bun.default_allocator, data) catch bun.outOfMemory();
+                            bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
                         }
                         return;
                     },
@@ -675,7 +675,7 @@ fn buildRequestBody(
     );
 }
 
-const log = Output.scoped(.WebSocketUpgradeClient, false);
+const log = Output.scoped(.WebSocketUpgradeClient, .visible);
 
 const WebSocketDeflate = @import("./WebSocketDeflate.zig");
 const std = @import("std");

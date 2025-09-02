@@ -1,6 +1,5 @@
 // Hardcoded module "node:zlib"
 
-const assert = require("node:assert");
 const BufferModule = require("node:buffer");
 
 const crc32 = $newZigFunction("node_zlib_binding.zig", "crc32", 1);
@@ -147,8 +146,8 @@ function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
   let chunkSize = Z_DEFAULT_CHUNK;
   let maxOutputLength = kMaxLength;
   // The ZlibBase class is not exported to user land, the mode should only be passed in by us.
-  assert(typeof mode === "number");
-  assert(mode >= DEFLATE && mode <= ZSTD_DECOMPRESS);
+  $assert(typeof mode === "number");
+  $assert(mode >= DEFLATE && mode <= ZSTD_DECOMPRESS);
 
   let flushBoundIdx;
   if (mode === BROTLI_ENCODE || mode === BROTLI_DECODE) {
@@ -224,7 +223,7 @@ ObjectDefineProperty(ZlibBase.prototype, "bytesRead", {
 });
 
 ZlibBase.prototype.reset = function () {
-  assert(this._handle, "zlib binding closed");
+  $assert(this._handle, "zlib binding closed");
   return this._handle.reset();
 };
 
@@ -366,7 +365,7 @@ function processChunkSync(self, chunk, flushFlag) {
         throw $ERR_BUFFER_TOO_LARGE(self._maxOutputLength);
       }
     } else {
-      assert(have === 0, "have should not go down");
+      $assert(have === 0, "have should not go down");
     }
 
     // Exhausted the output buffer, or used all the input create a new one.
@@ -445,7 +444,7 @@ function processCallback() {
     self._outOffset += have;
     streamBufferIsFull = !self.push(out);
   } else {
-    assert(have === 0, "have should not go down");
+    $assert(have === 0, "have should not go down");
   }
 
   if (self.destroyed) {
@@ -580,7 +579,7 @@ $toClass(Zlib, "Zlib", ZlibBase);
 // This callback is used by `.params()` to wait until a full flush happened before adjusting the parameters.
 // In particular, the call to the native `params()` function should not happen while a write is currently in progress on the threadpool.
 function paramsAfterFlushCallback(level, strategy, callback) {
-  assert(this._handle, "zlib binding closed");
+  $assert(this._handle, "zlib binding closed");
   this._handle.params(level, strategy);
   if (!this.destroyed) {
     this._level = level;
@@ -673,7 +672,7 @@ const brotliDefaultOpts = {
   fullFlush: BROTLI_OPERATION_FLUSH,
 };
 function Brotli(opts, mode) {
-  assert(mode === BROTLI_DECODE || mode === BROTLI_ENCODE);
+  $assert(mode === BROTLI_DECODE || mode === BROTLI_ENCODE);
 
   TypedArrayPrototypeFill.$call(brotliInitParamsArray, -1);
   if (opts?.params) {
@@ -722,7 +721,7 @@ const zstdDefaultOpts = {
 
 class Zstd extends ZlibBase {
   constructor(opts, mode, initParamsArray, maxParam) {
-    assert(mode === ZSTD_COMPRESS || mode === ZSTD_DECOMPRESS);
+    $assert(mode === ZSTD_COMPRESS || mode === ZSTD_DECOMPRESS);
 
     initParamsArray.fill(-1);
     if (opts?.params) {

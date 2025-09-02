@@ -200,6 +200,7 @@ test/cli/install/isolated-install.test.ts
 test/cli/install/bun-publish.test.ts
 test/cli/install/bun-lock.test.ts
 test/cli/install/bun-install-lifecycle-scripts.test.ts
+test/cli/update_interactive_formatting.test.ts
 # ProgramExecutable::initializeGlobalProperties
 # missing RELEASE_AND_RETURN
 test/js/node/test/parallel/test-repl-syntax-error-handling.js
@@ -235,11 +236,6 @@ test/js/bun/util/inspect-error.test.js
 # missing RETURN_IF_EXCEPTION
 test/bundler/transpiler/bun-pragma.test.ts
 
-# llhttp
-test/js/node/test/parallel/test-http-parser-bad-ref.js
-test/js/node/test/parallel/test-http-parser.js
-test/js/node/http/node-http-parser.test.ts
-
 # try again later
 test/js/node/test/parallel/test-worker-nested-uncaught.js
 
@@ -254,27 +250,53 @@ test/js/third_party/resvg/bbox.test.js
 test/js/third_party/rollup-v4/rollup-v4.test.ts
 test/napi/uv.test.ts
 test/napi/uv_stub.test.ts
-test/napi/node-napi-tests/test/node-api/test_fatal_exception/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_typedarray/do.test.ts
-test/napi/node-napi-tests/test/node-api/test_async/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_symbol/do.test.ts
-test/napi/node-napi-tests/test/node-api/1_hello_world/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_instance_data/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_object/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_number/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_new_target/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_constructor/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_handle_scope/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_conversions/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_dataview/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_array/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_date/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_bigint/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_cannot_run_js/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/2_function_arguments/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/3_callbacks/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/4_object_factory/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/5_function_factory/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/2_function_arguments/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/6_object_wrap/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/7_factory_wrap/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/8_passing_wrapped/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_array/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_bigint/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_cannot_run_js/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_constructor/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_conversions/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_dataview/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_date/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_error/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_exception/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_finalizer/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_function/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_general/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_handle_scope/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_instance_data/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_new_target/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_number/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_object/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_promise/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_properties/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_reference/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_reference_double_free/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_string/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_symbol/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_typedarray/do.test.ts
+test/napi/node-napi-tests/test/node-api/1_hello_world/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_async/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_buffer/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_callback_scope/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_cleanup_hook/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_exception/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_fatal/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_fatal_exception/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_general/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_init_order/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_instance_data/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_make_callback/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_make_callback_recurse/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_threadsafe_function/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_worker_terminate_finalization/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_reference_by_node_api_version/do.test.ts
 
 # normalizeCryptoAlgorithmParameters
 test/js/node/test/parallel/test-webcrypto-derivekey.js
@@ -294,3 +316,14 @@ test/js/node/crypto/node-crypto.test.js
 test/js/third_party/pg/pg.test.ts
 test/regression/issue/01466.test.ts
 test/regression/issue/21311.test.ts
+
+
+test/regression/issue/ctrl-c.test.ts
+test/cli/install/bun-run.test.ts
+test/js/node/http2/node-http2.test.js
+test/js/third_party/astro/astro-post.test.js
+test/cli/hot/hot.test.ts
+test/cli/install/bun-repl.test.ts
+test/bundler/esbuild/default.test.ts
+test/integration/vite-build/vite-build.test.ts
+test/cli/inspect/HTTPServerAgent.test.ts 

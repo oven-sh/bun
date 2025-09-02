@@ -349,7 +349,12 @@ pub const Chunk = struct {
                             remain,
                             "\n//# debugId={}\n",
                             .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
-                        ) catch bun.outOfMemory()).len..];
+                        ) catch |err| switch (err) {
+                            error.NoSpaceLeft => std.debug.panic(
+                                "unexpected NoSpaceLeft error from bufPrint",
+                                .{},
+                            ),
+                        }).len..];
                     }
 
                     bun.assert(remain.len == 0);
@@ -374,10 +379,10 @@ pub const Chunk = struct {
                         if (enable_source_map_shifts and FeatureFlags.source_map_debug_id) {
                             // This comment must go before the //# sourceMappingURL comment
                             const debug_id_fmt = std.fmt.allocPrint(
-                                graph.allocator,
+                                graph.heap.allocator(),
                                 "\n//# debugId={}\n",
                                 .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
-                            ) catch bun.outOfMemory();
+                            ) catch |err| bun.handleOom(err);
 
                             break :brk try joiner.doneWithEnd(allocator, debug_id_fmt);
                         }
@@ -517,7 +522,7 @@ pub const Chunk = struct {
         pub const Layers = bun.ptr.Cow(bun.BabyList(bun.css.LayerName), struct {
             const Self = bun.BabyList(bun.css.LayerName);
             pub fn copy(self: *const Self, allocator: std.mem.Allocator) Self {
-                return self.deepClone2(allocator);
+                return self.deepCloneInfallible(allocator);
             }
 
             pub fn deinit(self: *Self, a: std.mem.Allocator) void {

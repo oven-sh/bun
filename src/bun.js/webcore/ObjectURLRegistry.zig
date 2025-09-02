@@ -25,7 +25,7 @@ pub fn register(this: *ObjectURLRegistry, vm: *jsc.VirtualMachine, blob: *const 
 
     this.lock.lock();
     defer this.lock.unlock();
-    this.map.put(uuid, entry) catch bun.outOfMemory();
+    bun.handleOom(this.map.put(uuid, entry));
     return uuid;
 }
 
@@ -98,7 +98,7 @@ fn Bun__createObjectURL_(globalObject: *jsc.JSGlobalObject, callframe: *jsc.Call
     };
     const registry = ObjectURLRegistry.singleton();
     const uuid = registry.register(globalObject.bunVM(), blob);
-    var str = bun.String.createFormat("blob:{}", .{uuid}) catch bun.outOfMemory();
+    var str = bun.handleOom(bun.String.createFormat("blob:{}", .{uuid}));
     return str.transferToJS(globalObject);
 }
 

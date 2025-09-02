@@ -26,7 +26,7 @@ pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *ZigString) callconv(.C
     title_mutex.lock();
     defer title_mutex.unlock();
     if (bun.cli.Bun__Node__ProcessTitle) |_| bun.default_allocator.free(bun.cli.Bun__Node__ProcessTitle.?);
-    bun.cli.Bun__Node__ProcessTitle = newvalue.dupe(bun.default_allocator) catch bun.outOfMemory();
+    bun.cli.Bun__Node__ProcessTitle = bun.handleOom(newvalue.dupe(bun.default_allocator));
     return newvalue.toJS(globalObject);
 }
 
@@ -59,8 +59,25 @@ fn createExecArgv(globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         }
     }
 
-    // For compiled/standalone executables, execArgv should be empty
-    if (vm.standalone_module_graph != null) {
+    // For compiled/standalone executables, execArgv should contain compile_exec_argv
+    if (vm.standalone_module_graph) |graph| {
+        if (graph.compile_exec_argv.len > 0) {
+            // Use tokenize to split the compile_exec_argv string by whitespace
+            var args = std.ArrayList(bun.String).init(temp_alloc);
+            defer args.deinit();
+            defer for (args.items) |*arg| arg.deref();
+
+            var tokenizer = std.mem.tokenizeAny(u8, graph.compile_exec_argv, " \t\n\r");
+            while (tokenizer.next()) |token| {
+                try args.append(bun.String.cloneUTF8(token));
+            }
+
+            const array = try jsc.JSValue.createEmptyArray(globalObject, args.items.len);
+            for (0..args.items.len) |idx| {
+                try array.putIndex(globalObject, @intCast(idx), args.items[idx].toJS(globalObject));
+            }
+            return array;
+        }
         return try jsc.JSValue.createEmptyArray(globalObject, 0);
     }
 
@@ -143,7 +160,7 @@ fn createArgv(globalObject: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
         // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
         // argv also omits the script name
         args_count + 2,
-    ) catch bun.outOfMemory();
+    ) catch |err| bun.handleOom(err);
     defer allocator.free(args);
 
     var args_list: std.ArrayListUnmanaged(bun.String) = .initBuffer(args);
@@ -283,9 +300,9 @@ pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.C
     const wtf1 = k.value.WTFStringImpl;
     var fixed_stack_allocator = std.heap.stackFallback(1025, bun.default_allocator);
     const allocator = fixed_stack_allocator.get();
-    var buf1 = allocator.alloc(u16, k.utf16ByteLength() + 1) catch bun.outOfMemory();
+    var buf1 = bun.handleOom(allocator.alloc(u16, k.utf16ByteLength() + 1));
     defer allocator.free(buf1);
-    var buf2 = allocator.alloc(u16, v.utf16ByteLength() + 1) catch bun.outOfMemory();
+    var buf2 = bun.handleOom(allocator.alloc(u16, v.utf16ByteLength() + 1));
     defer allocator.free(buf2);
     const len1: usize = switch (wtf1.is8Bit()) {
         true => bun.strings.copyLatin1IntoUTF16([]u16, buf1, []const u8, wtf1.latin1Slice()).written,

@@ -6,7 +6,7 @@
 
 const Blob = @This();
 
-const debug = Output.scoped(.Blob, false);
+const debug = Output.scoped(.Blob, .visible);
 
 pub const Store = @import("./blob/Store.zig");
 pub const read_file = @import("./blob/read_file.zig");
@@ -56,7 +56,8 @@ pub const max_size = std.math.maxInt(SizeType);
 /// 2: Added byte for whether it's a dom file, length and bytes for `stored_name`,
 ///    and f64 for `last_modified`. Removed reserved bytes, it's handled by version
 ///    number.
-const serialization_version: u8 = 2;
+/// 3: Added File name serialization for File objects (when is_jsdom_file is true)
+const serialization_version: u8 = 3;
 
 comptime {
     _ = Bun__Blob__getSizeForBindings;
@@ -71,7 +72,7 @@ pub fn getFormDataEncoding(this: *Blob) ?*bun.FormData.AsyncFormData {
     var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
     defer content_type_slice.deinit();
     const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
-    return bun.FormData.AsyncFormData.init(this.allocator orelse bun.default_allocator, encoding) catch bun.outOfMemory();
+    return bun.handleOom(bun.FormData.AsyncFormData.init(this.allocator orelse bun.default_allocator, encoding));
 }
 
 pub fn hasContentTypeFromUser(this: *const Blob) bool {
@@ -141,8 +142,8 @@ pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObje
         *Handler,
         handler,
         Handler.run,
-    ) catch bun.outOfMemory();
-    var read_file_task = read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
+    ) catch |err| bun.handleOom(err);
+    var read_file_task = bun.handleOom(read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read));
 
     // Create the Promise only after the store has been ref()'d.
     // The garbage collector runs on memory allocations
@@ -179,8 +180,8 @@ pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, com
         NewInternalReadFileHandler(Handler, Function).run,
         this.offset,
         this.size,
-    ) catch bun.outOfMemory();
-    var read_file_task = read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
+    ) catch |err| bun.handleOom(err);
+    var read_file_task = bun.handleOom(read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read));
     read_file_task.schedule();
 }
 
@@ -317,6 +318,19 @@ fn _onStructuredCloneSerialize(
 
     try writer.writeInt(u8, @intFromBool(this.is_jsdom_file), .little);
     try writeFloat(f64, this.last_modified, Writer, writer);
+
+    // Serialize File name if this is a File object
+    if (this.is_jsdom_file) {
+        if (this.getNameString()) |name_string| {
+            const name_slice = name_string.toUTF8(bun.default_allocator);
+            defer name_slice.deinit();
+            try writer.writeInt(u32, @truncate(name_slice.slice().len), .little);
+            try writer.writeAll(name_slice.slice());
+        } else {
+            // No name available, write empty string
+            try writer.writeInt(u32, 0, .little);
+        }
+    }
 }
 
 pub fn onStructuredCloneSerialize(
@@ -471,6 +485,16 @@ fn _onStructuredCloneDeserialize(
         blob.last_modified = try readFloat(f64, Reader, reader);
 
         if (version == 2) break :versions;
+
+        // Version 3: Read File name if this is a File object
+        if (blob.is_jsdom_file) {
+            const name_len = try reader.readInt(u32, .little);
+            const name_bytes = try readSlice(reader, name_len, allocator);
+            blob.name = bun.String.cloneUTF8(name_bytes);
+            allocator.free(name_bytes);
+        }
+
+        if (version == 3) break :versions;
     }
 
     blob.allocator = allocator;
@@ -484,12 +508,12 @@ fn _onStructuredCloneDeserialize(
     return blob.toJS(globalThis);
 }
 
-pub fn onStructuredCloneDeserialize(globalThis: *jsc.JSGlobalObject, ptr: [*]u8, end: [*]u8) bun.JSError!JSValue {
-    const total_length: usize = @intFromPtr(end) - @intFromPtr(ptr);
-    var buffer_stream = std.io.fixedBufferStream(ptr[0..total_length]);
+pub fn onStructuredCloneDeserialize(globalThis: *jsc.JSGlobalObject, ptr: *[*]u8, end: [*]u8) bun.JSError!JSValue {
+    const total_length: usize = @intFromPtr(end) - @intFromPtr(ptr.*);
+    var buffer_stream = std.io.fixedBufferStream(ptr.*[0..total_length]);
     const reader = buffer_stream.reader();
 
-    return _onStructuredCloneDeserialize(globalThis, @TypeOf(reader), reader) catch |err| switch (err) {
+    const result = _onStructuredCloneDeserialize(globalThis, @TypeOf(reader), reader) catch |err| switch (err) {
         error.EndOfStream, error.TooSmall, error.InvalidValue => {
             return globalThis.throw("Blob.onStructuredCloneDeserialize failed", .{});
         },
@@ -497,6 +521,11 @@ pub fn onStructuredCloneDeserialize(globalThis: *jsc.JSGlobalObject, ptr: [*]u8,
             return globalThis.throwOutOfMemory();
         },
     };
+
+    // Advance the pointer by the number of bytes consumed
+    ptr.* = ptr.* + buffer_stream.pos;
+
+    return result;
 }
 
 const URLSearchParamsConverter = struct {
@@ -504,7 +533,7 @@ const URLSearchParamsConverter = struct {
     buf: []u8 = "",
     globalThis: *jsc.JSGlobalObject,
     pub fn convert(this: *URLSearchParamsConverter, str: ZigString) void {
-        var out = str.toSlice(this.allocator).cloneIfNeeded(this.allocator) catch bun.outOfMemory();
+        var out = bun.handleOom(str.toSlice(this.allocator).cloneIfNeeded(this.allocator));
         this.buf = @constCast(out.slice());
     }
 };
@@ -561,9 +590,9 @@ pub fn fromDOMFormData(
     context.joiner.pushStatic(boundary);
     context.joiner.pushStatic("--\r\n");
 
-    const store = Blob.Store.init(context.joiner.done(allocator) catch bun.outOfMemory(), allocator);
+    const store = Blob.Store.init(bun.handleOom(context.joiner.done(allocator)), allocator);
     var blob = Blob.initWithStore(store, globalThis);
-    blob.content_type = std.fmt.allocPrint(allocator, "multipart/form-data; boundary={s}", .{boundary}) catch bun.outOfMemory();
+    blob.content_type = std.fmt.allocPrint(allocator, "multipart/form-data; boundary={s}", .{boundary}) catch |err| bun.handleOom(err);
     blob.content_type_allocated = true;
     blob.content_type_was_set = true;
 
@@ -1000,7 +1029,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             WriteFilePromise.run,
             options.mkdirp_if_not_exists orelse true,
         ) catch unreachable;
-        var task = write_file.WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier) catch bun.outOfMemory();
+        var task = bun.handleOom(write_file.WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier));
         // Defer promise creation until we're just about to schedule the task
         var promise = jsc.JSPromise.create(ctx);
         const promise_value = promise.asValue(ctx);
@@ -1464,6 +1493,15 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
     return writeFileWithSourceDestination(globalThis, &source_blob, &destination_blob, options);
 }
 
+fn validateWritableBlob(globalThis: *jsc.JSGlobalObject, blob: *Blob) bun.JSError!void {
+    const store = blob.store orelse {
+        return globalThis.throw("Cannot write to a detached Blob", .{});
+    };
+    if (store.data == .bytes) {
+        return globalThis.throwInvalidArguments("Cannot write to a Blob backed by bytes, which are always read-only", .{});
+    }
+}
+
 /// `Bun.write(destination, input, options?)`
 pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.arguments();
@@ -1479,12 +1517,7 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
     }
     // "Blob" must actually be a BunFile, not a webcore blob.
     if (path_or_blob == .blob) {
-        const store = path_or_blob.blob.store orelse {
-            return globalThis.throw("Cannot write to a detached Blob", .{});
-        };
-        if (store.data == .bytes) {
-            return globalThis.throwInvalidArguments("Cannot write to a Blob backed by bytes, which are always read-only", .{});
-        }
+        try validateWritableBlob(globalThis, &path_or_blob.blob);
     }
 
     const data = args.nextEat() orelse {
@@ -1713,7 +1746,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
             switch (store_.data) {
                 .bytes => |*bytes| {
                     bytes.stored_name = bun.PathString.init(
-                        (name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(),
+                        bun.handleOom(name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator)).slice(),
                     );
                 },
                 .s3, .file => {
@@ -1726,7 +1759,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
                 .data = .{
                     .bytes = Blob.Store.Bytes.initEmptyWithName(
                         bun.PathString.init(
-                            (name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(),
+                            bun.handleOom(name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator)).slice(),
                         ),
                         allocator,
                     ),
@@ -1761,7 +1794,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
                             blob.content_type = mime.value;
                             break :inner;
                         }
-                        const content_type_buf = allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                        const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
                         blob.content_type = strings.copyLowercase(slice, content_type_buf);
                         blob.content_type_allocated = true;
                     }
@@ -1862,7 +1895,7 @@ pub fn constructBunFile(
                             blob.content_type = entry.value;
                             break :inner;
                         }
-                        const content_type_buf = allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                        const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
                         blob.content_type = strings.copyLowercase(slice, content_type_buf);
                         blob.content_type_allocated = true;
                     }
@@ -1888,7 +1921,7 @@ pub fn findOrCreateFileFromPath(path_or_fd: *jsc.Node.PathOrFileDescriptor, glob
                 const credentials = globalThis.bunVM().transpiler.env.getS3Credentials();
                 const copy = path_or_fd.*;
                 path_or_fd.* = .{ .path = .{ .string = bun.PathString.empty } };
-                return Blob.initWithStore(Blob.Store.initS3(copy.path, null, credentials, allocator) catch bun.outOfMemory(), globalThis);
+                return Blob.initWithStore(bun.handleOom(Blob.Store.initS3(copy.path, null, credentials, allocator)), globalThis);
             }
         }
     }
@@ -1903,7 +1936,7 @@ pub fn findOrCreateFileFromPath(path_or_fd: *jsc.Node.PathOrFileDescriptor, glob
                     path_or_fd.* = .{
                         .path = .{
                             // this memory is freed with this allocator in `Blob.Store.deinit`
-                            .string = bun.PathString.init(allocator.dupe(u8, "\\\\.\\NUL") catch bun.outOfMemory()),
+                            .string = bun.PathString.init(bun.handleOom(allocator.dupe(u8, "\\\\.\\NUL"))),
                         },
                     };
                     slice = path_or_fd.path.slice();
@@ -1942,7 +1975,7 @@ pub fn findOrCreateFileFromPath(path_or_fd: *jsc.Node.PathOrFileDescriptor, glob
         }
     };
 
-    return Blob.initWithStore(Blob.Store.initFile(path, null, allocator) catch bun.outOfMemory(), globalThis);
+    return Blob.initWithStore(bun.handleOom(Blob.Store.initFile(path, null, allocator)), globalThis);
 }
 
 pub fn getStream(
@@ -2132,11 +2165,11 @@ fn getExistsSync(this: *Blob) jsc.JSValue {
 
     // If there's no store that means it's empty and we just return true
     // it will not error to return an empty Blob
-    const store = this.store orelse return JSValue.jsBoolean(true);
+    const store = this.store orelse return .true;
 
     if (store.data == .bytes) {
         // Bytes will never error
-        return JSValue.jsBoolean(true);
+        return .true;
     }
 
     // We say regular files and pipes exist.
@@ -2224,6 +2257,8 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
 
+    try validateWritableBlob(globalThis, this);
+
     const data = args.nextEat() orelse {
         return globalThis.throwInvalidArguments("blob.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
     };
@@ -2257,7 +2292,7 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
                     if (globalThis.bunVM().mimeType(slice)) |mime| {
                         this.content_type = mime.value;
                     } else {
-                        const content_type_buf = bun.default_allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                        const content_type_buf = bun.handleOom(bun.default_allocator.alloc(u8, slice.len));
                         this.content_type = strings.copyLowercase(slice, content_type_buf);
                         this.content_type_allocated = true;
                     }
@@ -2275,13 +2310,14 @@ pub fn doUnlink(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
     const arguments = callframe.arguments_old(1).slice();
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
-    const store = this.store orelse {
-        return jsc.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Blob is detached", .{}));
-    };
+
+    try validateWritableBlob(globalThis, this);
+
+    const store = this.store.?;
     return switch (store.data) {
         .s3 => |*s3| try s3.unlink(store, globalThis, args.nextEat()),
         .file => |file| file.unlink(globalThis),
-        else => jsc.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Blob is read-only", .{})),
+        else => unreachable, // validateWritableBlob should have caught this
     };
 }
 
@@ -2461,7 +2497,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                         store.data.file.pathlike.path.slice(),
                     ).cloneIfNeeded(
                         bun.default_allocator,
-                    ) catch bun.outOfMemory(),
+                    ) catch |err| bun.handleOom(err),
                 };
             }
         };
@@ -2569,9 +2605,9 @@ pub fn getWriter(
         return globalThis.throwInvalidArguments("options must be an object or undefined", .{});
     }
 
-    var store = this.store orelse {
-        return globalThis.throwInvalidArguments("Blob is detached", .{});
-    };
+    try validateWritableBlob(globalThis, this);
+
+    var store = this.store.?;
     if (this.isS3()) {
         const s3 = &this.store.?.data.s3;
         const path = s3.path();
@@ -2597,7 +2633,7 @@ pub fn getWriter(
                         if (globalThis.bunVM().mimeType(slice)) |mime| {
                             this.content_type = mime.value;
                         } else {
-                            const content_type_buf = bun.default_allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                            const content_type_buf = bun.handleOom(bun.default_allocator.alloc(u8, slice.len));
                             this.content_type = strings.copyLowercase(slice, content_type_buf);
                             this.content_type_allocated = true;
                         }
@@ -2624,9 +2660,6 @@ pub fn getWriter(
             proxy_url,
             null,
         );
-    }
-    if (store.data != .file) {
-        return globalThis.throwInvalidArguments("Blob is read-only", .{});
     }
 
     if (Environment.isWindows) {
@@ -2703,8 +2736,8 @@ pub fn getWriter(
                 .path = ZigString.Slice.fromUTF8NeverFree(
                     store.data.file.pathlike.path.slice(),
                 ).cloneIfNeeded(
-                    globalThis.allocator(),
-                ) catch bun.outOfMemory(),
+                    bun.default_allocator,
+                ) catch |err| bun.handleOom(err),
             };
         }
     };
@@ -2841,7 +2874,7 @@ pub fn getSlice(
                 }
 
                 content_type_was_allocated = slice.len > 0;
-                const content_type_buf = allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
                 content_type = strings.copyLowercase(slice, content_type_buf);
             }
         }
@@ -3010,6 +3043,33 @@ export fn Bun__Blob__getSizeForBindings(this: *Blob) callconv(.C) u64 {
     return this.getSizeForBindings();
 }
 
+export fn Blob__getDataPtr(value: jsc.JSValue) callconv(.C) ?*anyopaque {
+    const blob = Blob.fromJS(value) orelse return null;
+    const data = blob.sharedView();
+    if (data.len == 0) return null;
+    return @constCast(data.ptr);
+}
+
+export fn Blob__getSize(value: jsc.JSValue) callconv(.C) usize {
+    const blob = Blob.fromJS(value) orelse return 0;
+    const data = blob.sharedView();
+    return data.len;
+}
+
+export fn Blob__fromBytes(globalThis: *jsc.JSGlobalObject, ptr: ?[*]const u8, len: usize) callconv(.C) *Blob {
+    if (ptr == null or len == 0) {
+        const blob = new(initEmpty(globalThis));
+        blob.allocator = bun.default_allocator;
+        return blob;
+    }
+
+    const bytes = bun.handleOom(bun.default_allocator.dupe(u8, ptr.?[0..len]));
+    const store = Store.init(bytes, bun.default_allocator);
+    var blob = initWithStore(store, globalThis);
+    blob.allocator = bun.default_allocator;
+    return new(blob);
+}
+
 pub fn getStat(this: *Blob, globalThis: *jsc.JSGlobalObject, callback: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const store = this.store orelse return .js_undefined;
     // TODO: make this async for files
@@ -3160,7 +3220,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
                                     blob.content_type = mime.value;
                                     break :inner;
                                 }
-                                const content_type_buf = allocator.alloc(u8, slice.len) catch bun.outOfMemory();
+                                const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
                                 blob.content_type = strings.copyLowercase(slice, content_type_buf);
                                 blob.content_type_allocated = true;
                             }
@@ -3276,7 +3336,7 @@ pub fn create(
     globalThis: *JSGlobalObject,
     was_string: bool,
 ) Blob {
-    return tryCreate(bytes_, allocator_, globalThis, was_string) catch bun.outOfMemory();
+    return bun.handleOom(tryCreate(bytes_, allocator_, globalThis, was_string));
 }
 
 pub fn initWithStore(store: *Blob.Store, globalThis: *JSGlobalObject) Blob {
@@ -3341,7 +3401,7 @@ pub fn dupeWithContentType(this: *const Blob, include_content_type: bool) Blob {
             duped.content_type_was_set = duped.content_type.len > 0;
         }
     } else if (duped.content_type_allocated and duped.allocator != null and include_content_type) {
-        duped.content_type = bun.default_allocator.dupe(u8, this.content_type) catch bun.outOfMemory();
+        duped.content_type = bun.handleOom(bun.default_allocator.dupe(u8, this.content_type));
     }
     duped.name = duped.name.dupeRef();
 
@@ -4359,7 +4419,7 @@ pub const Internal = struct {
 
     pub fn toStringOwned(this: *@This(), globalThis: *jsc.JSGlobalObject) JSValue {
         const bytes_without_bom = strings.withoutUTF8BOM(this.bytes.items);
-        if (strings.toUTF16Alloc(globalThis.allocator(), bytes_without_bom, false, false) catch &[_]u16{}) |out| {
+        if (strings.toUTF16Alloc(bun.default_allocator, bytes_without_bom, false, false) catch &[_]u16{}) |out| {
             const return_value = ZigString.toExternalU16(out.ptr, out.len, globalThis);
             return_value.ensureStillAlive();
             this.deinit();

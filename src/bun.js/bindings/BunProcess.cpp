@@ -194,6 +194,8 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     // https://github.com/oven-sh/bun/issues/7921
     // BoringSSL is a fork of OpenSSL 1.1.0, so we can report OpenSSL 1.1.0
     object->putDirect(vm, JSC::Identifier::fromString(vm, "openssl"_s), JSC::jsOwnedString(vm, String("1.1.0"_s)));
+    // keep in sync with src/bun.js/bindings/node/http/llhttp/README.md
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "llhttp"_s), JSC::jsOwnedString(vm, String("9.3.0"_s)));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "libarchive"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(Bun__versions_libarchive)), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "mimalloc"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(Bun__versions_mimalloc)), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "picohttpparser"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(Bun__versions_picohttpparser)), 0);
@@ -618,6 +620,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     env->filename = filename_cstr;
 
     auto encoded = reinterpret_cast<EncodedJSValue>(napi_register_module_v1(env, reinterpret_cast<napi_value>(exportsValue)));
+    if (env->throwPendingException()) {
+        return {};
+    }
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue resultValue = encoded == 0 ? exports : JSValue::decode(encoded);
 
@@ -1109,9 +1114,10 @@ extern "C" bool Bun__promises__isErrorLike(JSC::JSGlobalObject* globalObject, JS
     //      ObjectPrototypeHasOwnProperty(obj, 'stack');
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!obj.isObject()) return false;
+    auto object = obj.getObject();
+    if (!object)
+        return false;
 
-    auto* object = JSC::jsCast<JSC::JSObject*>(obj);
     RELEASE_AND_RETURN(scope, JSC::objectPrototypeHasOwnProperty(globalObject, object, vm.propertyNames->stack));
 }
 
@@ -1120,7 +1126,11 @@ extern "C" JSC::EncodedJSValue Bun__noSideEffectsToString(JSC::VM& vm, JSC::JSGl
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto decodedReason = JSValue::decode(reason);
     if (decodedReason.isSymbol()) {
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsNontrivialString(globalObject->vm(), asSymbol(decodedReason)->descriptiveString())));
+        auto result = asSymbol(decodedReason)->tryGetDescriptiveString();
+        if (result.has_value()) {
+            RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsNontrivialString(globalObject->vm(), result.value())));
+        }
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(vm.smallStrings.symbolString()));
     }
 
     if (decodedReason.isInt32())
@@ -1151,7 +1161,7 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
                                                   "or by rejecting a promise which was not handled with .catch(). "
                                                   "To terminate the bun process on unhandled promise "
                                                   "rejection, use the CLI flag `--unhandled-rejections=strict`."_s);
-    warning->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, "UnhandledPromiseRejectionWarning"_str), JSC::PropertyAttribute::DontEnum | 0);
+    warning->putDirect(vm, vm.propertyNames->name, jsString(vm, "UnhandledPromiseRejectionWarning"_str), JSC::PropertyAttribute::DontEnum | 0);
 
     JSValue reasonStack {};
     auto is_errorlike = Bun__promises__isErrorLike(globalObject, JSValue::decode(reason));
@@ -3456,12 +3466,16 @@ void Process::emitOnNextTick(Zig::GlobalObject* globalObject, ASCIILiteral event
 extern "C" void Bun__Process__queueNextTick1(GlobalObject* globalObject, EncodedJSValue func, EncodedJSValue arg1)
 {
     auto process = globalObject->processObject();
-    process->queueNextTick(globalObject, JSValue::decode(func), JSValue::decode(arg1));
+    JSValue function = JSValue::decode(func);
+
+    process->queueNextTick(globalObject, function, JSValue::decode(arg1));
 }
 extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, EncodedJSValue func, EncodedJSValue arg1, EncodedJSValue arg2)
 {
     auto process = globalObject->processObject();
-    process->queueNextTick<2>(globalObject, JSValue::decode(func), { JSValue::decode(arg1), JSValue::decode(arg2) });
+    JSValue function = JSValue::decode(func);
+
+    process->queueNextTick<2>(globalObject, function, { JSValue::decode(arg1), JSValue::decode(arg2) });
 }
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)

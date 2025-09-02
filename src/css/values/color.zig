@@ -144,7 +144,7 @@ pub const CssColor = union(enum) {
 
                             // Try first with two decimal places, then with three.
                             var rounded_alpha = @round(color.alphaF32() * 100.0) / 100.0;
-                            const clamped: u8 = @intFromFloat(@min(
+                            const clamped: u8 = bun.intFromFloat(u8, @min(
                                 @max(
                                     @round(rounded_alpha * 255.0),
                                     0.0,
@@ -1150,9 +1150,9 @@ fn parseRgb(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
                 if (is_legacy) return .{
                     .result = .{
                         .rgba = RGBA.new(
-                            @intFromFloat(r),
-                            @intFromFloat(g),
-                            @intFromFloat(b),
+                            bun.intFromFloat(u8, r),
+                            bun.intFromFloat(u8, g),
+                            bun.intFromFloat(u8, b),
                             alpha,
                         ),
                     },
@@ -1428,7 +1428,7 @@ fn clamp_unit_f32(val: f32) u8 {
 }
 
 fn clamp_floor_256_f32(val: f32) u8 {
-    return @intFromFloat(@min(255.0, @max(0.0, @round(val))));
+    return bun.intFromFloat(u8, @min(255.0, @max(0.0, @round(val))));
     //   val.round().max(0.).min(255.) as u8
 }
 

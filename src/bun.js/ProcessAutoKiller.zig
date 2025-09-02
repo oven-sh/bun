@@ -1,6 +1,6 @@
 const ProcessAutoKiller = @This();
 
-const log = bun.Output.scoped(.AutoKiller, true);
+const log = bun.Output.scoped(.AutoKiller, .hidden);
 
 processes: std.AutoArrayHashMapUnmanaged(*bun.spawn.Process, void) = .{},
 enabled: bool = false,

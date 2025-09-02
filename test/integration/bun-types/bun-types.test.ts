@@ -1,7 +1,8 @@
 import { fileURLToPath, $ as Shell } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
-import { cp, mkdtemp, rm } from "node:fs/promises";
+import { makeTree } from "harness";
+import { readFileSync } from "node:fs";
+import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
@@ -13,7 +14,7 @@ const FIXTURE_SOURCE_DIR = fileURLToPath(import.meta.resolve("./fixture"));
 const TSCONFIG_SOURCE_PATH = join(BUN_REPO_ROOT, "src/cli/init/tsconfig.default.json");
 const BUN_TYPES_PACKAGE_JSON_PATH = join(BUN_TYPES_PACKAGE_ROOT, "package.json");
 const BUN_VERSION = (process.env.BUN_VERSION ?? Bun.version ?? process.versions.bun).replace(/^.*v/, "");
-const BUN_TYPES_TARBALL_NAME = `types-bun-${BUN_VERSION}.tgz`;
+const BUN_TYPES_TARBALL_NAME = `bun-types-${BUN_VERSION}.tgz`;
 
 const { config: sourceTsconfig } = ts.readConfigFile(TSCONFIG_SOURCE_PATH, ts.sys.readFile);
 
@@ -26,44 +27,55 @@ const DEFAULT_COMPILER_OPTIONS = ts.parseJsonConfigFileContent(
 const $ = Shell.cwd(BUN_REPO_ROOT);
 
 let TEMP_DIR: string;
-let FIXTURE_DIR: string;
+let TEMP_FIXTURE_DIR: string;
 
 beforeAll(async () => {
   TEMP_DIR = await mkdtemp(join(tmpdir(), "bun-types-test-"));
-  FIXTURE_DIR = join(TEMP_DIR, "fixture");
+  TEMP_FIXTURE_DIR = join(TEMP_DIR, "fixture");
 
   try {
-    await $`mkdir -p ${FIXTURE_DIR}`;
+    await $`mkdir -p ${TEMP_FIXTURE_DIR}`;
 
-    await cp(FIXTURE_SOURCE_DIR, FIXTURE_DIR, { recursive: true });
+    await cp(FIXTURE_SOURCE_DIR, TEMP_FIXTURE_DIR, { recursive: true });
 
     await $`
       cd ${BUN_TYPES_PACKAGE_ROOT}
       bun install
-
-      # temp package.json with @types/bun name and version
       cp package.json package.json.backup
     `;
 
     const pkg = await Bun.file(BUN_TYPES_PACKAGE_JSON_PATH).json();
 
-    await Bun.write(
-      BUN_TYPES_PACKAGE_JSON_PATH,
-      JSON.stringify({ ...pkg, name: "@types/bun", version: BUN_VERSION }, null, 2),
-    );
+    await Bun.write(BUN_TYPES_PACKAGE_JSON_PATH, JSON.stringify({ ...pkg, version: BUN_VERSION }, null, 2));
 
     await $`
       cd ${BUN_TYPES_PACKAGE_ROOT}
       bun run build
-      bun pm pack --destination ${FIXTURE_DIR}
-      exit 0
+      bun pm pack --destination ${TEMP_FIXTURE_DIR}
+      rm CLAUDE.md
       mv package.json.backup package.json
 
-      cd ${FIXTURE_DIR}
-      bun uninstall @types/bun || true
-      bun add @types/bun@${BUN_TYPES_TARBALL_NAME}
+      cd ${TEMP_FIXTURE_DIR}
+      bun add bun-types@${BUN_TYPES_TARBALL_NAME}
       rm ${BUN_TYPES_TARBALL_NAME}
     `;
+
+    const atTypesBunDir = join(TEMP_FIXTURE_DIR, "node_modules", "@types", "bun");
+    console.log("Making tree", atTypesBunDir);
+
+    await mkdir(atTypesBunDir, { recursive: true });
+    await makeTree(atTypesBunDir, {
+      "index.d.ts": '/// <reference types="bun-types" />',
+      "package.json": JSON.stringify({
+        "private": true,
+        "name": "@types/bun",
+        "version": BUN_VERSION,
+        "projects": ["https://bun.sh"],
+        "dependencies": {
+          "bun-types": BUN_VERSION,
+        },
+      }),
+    });
   } catch (e) {
     if (e instanceof Bun.$.ShellError) {
       console.log(e.stderr.toString());
@@ -85,7 +97,7 @@ async function diagnose(
   const tsconfig = config.options ?? {};
   const extraFiles = config.files;
 
-  const glob = new Bun.Glob("**/*.{ts,tsx}").scan({
+  const glob = new Bun.Glob("./*.{ts,tsx}").scan({
     cwd: fixtureDir,
     absolute: true,
   });
@@ -113,23 +125,22 @@ async function diagnose(
   const host: ts.LanguageServiceHost = {
     getScriptFileNames: () => files,
     getScriptVersion: () => "0",
-    getScriptSnapshot: fileName => {
+    getScriptSnapshot: absolutePath => {
       if (extraFiles) {
-        const relativePath = relative(fixtureDir, fileName);
+        const relativePath = relative(fixtureDir, absolutePath);
         if (relativePath in extraFiles) {
           return ts.ScriptSnapshot.fromString(extraFiles[relativePath]);
         }
       }
 
-      if (!existsSync(fileName)) {
-        return undefined;
-      }
-
-      return ts.ScriptSnapshot.fromString(readFileSync(fileName).toString());
+      return ts.ScriptSnapshot.fromString(readFileSync(absolutePath).toString());
     },
     getCurrentDirectory: () => fixtureDir,
     getCompilationSettings: () => options,
-    getDefaultLibFileName: options => ts.getDefaultLibFilePath(options),
+    getDefaultLibFileName: options => {
+      const defaultLibFileName = ts.getDefaultLibFileName(options);
+      return join(fixtureDir, "node_modules", "typescript", "lib", defaultLibFileName);
+    },
     fileExists: ts.sys.fileExists,
     readFile: ts.sys.readFile,
     readDirectory: ts.sys.readDirectory,
@@ -140,6 +151,14 @@ async function diagnose(
   const program = service.getProgram();
   if (!program) throw new Error("Failed to create program");
 
+  function getLine(diagnostic: ts.Diagnostic) {
+    if (!diagnostic.file) return null;
+    if (diagnostic.start === undefined) return null;
+
+    const lineAndCharacter = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
+    return `${relative(fixtureDir, diagnostic.file.fileName)}:${lineAndCharacter.line + 1}:${lineAndCharacter.character + 1}`;
+  }
+
   const diagnostics = ts
     .getPreEmitDiagnostics(program)
     .concat(program.getOptionsDiagnostics())
@@ -148,19 +167,18 @@ async function diagnose(
     .concat(program.getDeclarationDiagnostics())
     .concat(program.emit().diagnostics)
     .map(diagnostic => ({
-      category: ts.DiagnosticCategory[diagnostic.category],
-      file: diagnostic.file?.fileName ? relative(fixtureDir, diagnostic.file?.fileName) : null,
+      line: getLine(diagnostic),
       message: typeof diagnostic.messageText === "string" ? diagnostic.messageText : diagnostic.messageText.messageText,
       code: diagnostic.code,
     }));
 
   return {
     diagnostics,
-    emptyInterfaces: checkForEmptyInterfaces(program, fixtureDir),
+    emptyInterfaces: checkForEmptyInterfaces(program),
   };
 }
 
-function checkForEmptyInterfaces(program: ts.Program, fixtureDir: string) {
+function checkForEmptyInterfaces(program: ts.Program) {
   const empties = new Set<string>();
 
   const checker = program.getTypeChecker();
@@ -174,12 +192,11 @@ function checkForEmptyInterfaces(program: ts.Program, fixtureDir: string) {
 
   for (const symbol of globalSymbols) {
     // find only globals
-    const declarations = symbol.declarations || [];
+    const declarations = symbol.declarations ?? [];
 
     const concernsBun = declarations.some(decl => decl.getSourceFile().fileName.includes("node_modules/@types/bun"));
 
     if (!concernsBun) {
-      // the lion is not concerned by symbols outside of bun
       continue;
     }
 
@@ -225,7 +242,8 @@ afterAll(async () => {
     console.log(TEMP_DIR);
 
     if (Bun.env.TYPES_INTEGRATION_TEST_KEEP_TEMP_DIR === "true") {
-      console.log(`Keeping temp dir ${TEMP_DIR} for debugging`);
+      console.log(`Keeping temp dir ${TEMP_DIR}/fixture for debugging`);
+      await cp(TSCONFIG_SOURCE_PATH, join(TEMP_DIR, "fixture", "tsconfig.json"));
     } else {
       await rm(TEMP_DIR, { recursive: true, force: true });
     }
@@ -234,7 +252,7 @@ afterAll(async () => {
 
 describe("@types/bun integration test", () => {
   test("checks without lib.dom.d.ts", async () => {
-    const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR);
+    const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR);
 
     expect(emptyInterfaces).toEqual(new Set());
     expect(diagnostics).toEqual([]);
@@ -257,9 +275,9 @@ describe("@types/bun integration test", () => {
     `;
 
     test("checks without lib.dom.d.ts and test-globals references", async () => {
-      const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
+      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
         files: {
-          "reference-the-globals.ts": `/// <reference types="bun/test-globals" />`,
+          "reference-the-globals.ts": `/// <reference types="bun-types/test-globals" />`,
           "my-test.test.ts": code,
         },
       });
@@ -269,17 +287,113 @@ describe("@types/bun integration test", () => {
     });
 
     test("test-globals FAILS when the test-globals.d.ts is not referenced", async () => {
-      const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
-        files: { "my-test.test.ts": code }, // no reference to bun/test-globals
+      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
+        files: { "my-test.test.ts": code }, // no reference to bun-types/test-globals
       });
 
       expect(emptyInterfaces).toEqual(new Set()); // should still have no empty interfaces
-      expect(diagnostics).not.toEqual([]);
+      expect(diagnostics).toEqual([
+        {
+          "code": 2582,
+          "line": "my-test.test.ts:2:48",
+          "message":
+            "Cannot find name 'test'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
+        },
+        {
+          "code": 2582,
+          "line": "my-test.test.ts:3:46",
+          "message":
+            "Cannot find name 'it'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
+        },
+        {
+          "code": 2582,
+          "line": "my-test.test.ts:4:52",
+          "message":
+            "Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:5:50",
+          "message": "Cannot find name 'expect'.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:6:53",
+          "message": "Cannot find name 'beforeAll'.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:7:54",
+          "message": "Cannot find name 'beforeEach'.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:8:53",
+          "message": "Cannot find name 'afterEach'.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:9:52",
+          "message": "Cannot find name 'afterAll'.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:10:61",
+          "message": "Cannot find name 'setDefaultTimeout'.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:11:48",
+          "message": "Cannot find name 'mock'.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:12:49",
+          "message": "Cannot find name 'spyOn'.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:13:44",
+          "message": "Cannot find name 'jest'.",
+        },
+      ]);
     });
   });
 
+  test("checks with no lib at all", async () => {
+    const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
+      options: {
+        lib: [],
+      },
+    });
+
+    expect(emptyInterfaces).toEqual(new Set());
+    expect(diagnostics).toEqual([]);
+  });
+
+  test("fails with types: [] and no jsx", async () => {
+    const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
+      options: {
+        lib: [],
+        types: [],
+        jsx: ts.JsxEmit.None,
+      },
+    });
+
+    expect(emptyInterfaces).toEqual(new Set());
+    expect(diagnostics).toEqual([
+      // This is expected because we, of course, can't check that our tsx file is passing
+      // when tsx is turned off...
+      {
+        "code": 17004,
+        "line": "[slug].tsx:17:10",
+        "message": "Cannot use JSX unless the '--jsx' flag is provided.",
+      },
+    ]);
+  });
+
   test("checks with lib.dom.d.ts", async () => {
-    const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
+    const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
       options: {
         lib: ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"].map(name => `lib.${name.toLowerCase()}.d.ts`),
       },
@@ -288,204 +402,186 @@ describe("@types/bun integration test", () => {
     expect(emptyInterfaces).toEqual(new Set());
     expect(diagnostics).toEqual([
       {
-        category: "Error",
-        file: "globals.ts",
+        code: 2769,
+        line: "fetch.ts:25:32",
+        message: "No overload matches this call.",
+      },
+      {
+        code: 2769,
+        line: "fetch.ts:33:32",
+        message: "No overload matches this call.",
+      },
+      {
+        code: 2769,
+        line: "fetch.ts:168:34",
+        message: "No overload matches this call.",
+      },
+      {
+        line: "globals.ts:307:5",
         message: "Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
         code: 2353,
       },
       {
-        category: "Error",
-        file: "http.ts",
+        line: "http.ts:43:24",
         message:
           "Argument of type '() => AsyncGenerator<Uint8Array<ArrayBuffer> | \"hey\", void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
         code: 2345,
       },
       {
-        category: "Error",
-        file: "http.ts",
+        line: "http.ts:55:24",
         message:
           "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer> | \"it works!\", void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
         code: 2345,
       },
       {
-        category: "Error",
-        file: "index.ts",
+        line: "index.ts:193:14",
         message:
           "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
         code: 2345,
       },
       {
-        category: "Error",
-        file: "index.ts",
+        line: "index.ts:323:29",
         message:
           "Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
         code: 2345,
       },
       {
-        category: "Error",
-        file: "spawn.ts",
-        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+        line: "spawn.ts:62:38",
+        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",
         code: 2339,
       },
       {
-        category: "Error",
-        file: "spawn.ts",
-        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+        line: "spawn.ts:107:38",
+        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",
         code: 2339,
       },
       {
-        category: "Error",
-        file: "streams.ts",
+        line: "streams.ts:18:3",
         message: "No overload matches this call.",
         code: 2769,
       },
       {
-        category: "Error",
-        file: "streams.ts",
+        line: "streams.ts:20:16",
         message: "Property 'write' does not exist on type 'ReadableByteStreamController'.",
         code: 2339,
       },
       {
-        category: "Error",
-        file: "streams.ts",
+        line: "streams.ts:46:19",
         message: "Property 'json' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
         code: 2339,
       },
       {
-        category: "Error",
-        file: "streams.ts",
+        line: "streams.ts:47:19",
         message: "Property 'bytes' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
         code: 2339,
       },
       {
-        category: "Error",
-        file: "streams.ts",
+        line: "streams.ts:48:19",
         message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
         code: 2339,
       },
       {
-        category: "Error",
-        file: "streams.ts",
+        line: "streams.ts:49:19",
         message: "Property 'blob' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
         code: 2339,
       },
       {
-        category: "Error",
-        file: "websocket.ts",
+        line: "websocket.ts:25:5",
         message: "Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.",
         code: 2353,
       },
       {
-        category: "Error",
-        file: "websocket.ts",
+        line: "websocket.ts:30:5",
         message: "Object literal may only specify known properties, and 'protocol' does not exist in type 'string[]'.",
         code: 2353,
       },
       {
-        category: "Error",
-        file: "websocket.ts",
+        line: "websocket.ts:35:5",
         message: "Object literal may only specify known properties, and 'protocol' does not exist in type 'string[]'.",
         code: 2353,
       },
       {
-        category: "Error",
-        file: "websocket.ts",
+        line: "websocket.ts:43:5",
         message: "Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
         code: 2353,
       },
       {
-        category: "Error",
-        file: "websocket.ts",
+        line: "websocket.ts:51:5",
         message: "Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.",
         code: 2353,
       },
       {
-        category: "Error",
-        file: "websocket.ts",
+        line: "websocket.ts:185:29",
         message: "Expected 2 arguments, but got 0.",
         code: 2554,
       },
       {
-        category: "Error",
-        file: "websocket.ts",
+        line: "websocket.ts:192:17",
         message: "Property 'URL' does not exist on type 'WebSocket'. Did you mean 'url'?",
         code: 2551,
       },
       {
-        category: "Error",
-        file: "websocket.ts",
+        line: "websocket.ts:196:3",
         message: "Type '\"nodebuffer\"' is not assignable to type 'BinaryType'.",
         code: 2322,
       },
       {
-        category: "Error",
-        file: "websocket.ts",
+        line: "websocket.ts:242:6",
         message: "Property 'ping' does not exist on type 'WebSocket'.",
         code: 2339,
       },
       {
-        category: "Error",
-        file: "websocket.ts",
+        line: "websocket.ts:245:6",
         message: "Property 'ping' does not exist on type 'WebSocket'.",
         code: 2339,
       },
       {
-        category: "Error",
-        file: "websocket.ts",
+        line: "websocket.ts:249:6",
         message: "Property 'ping' does not exist on type 'WebSocket'.",
         code: 2339,
       },
       {
-        category: "Error",
-        file: "websocket.ts",
+        line: "websocket.ts:253:6",
         message: "Property 'ping' does not exist on type 'WebSocket'.",
         code: 2339,
       },
       {
-        category: "Error",
-        file: "websocket.ts",
+        line: "websocket.ts:256:6",
         message: "Property 'pong' does not exist on type 'WebSocket'.",
         code: 2339,
       },
       {
-        category: "Error",
-        file: "websocket.ts",
+        line: "websocket.ts:259:6",
         message: "Property 'pong' does not exist on type 'WebSocket'.",
         code: 2339,
       },
       {
-        category: "Error",
-        file: "websocket.ts",
+        line: "websocket.ts:263:6",
         message: "Property 'pong' does not exist on type 'WebSocket'.",
         code: 2339,
       },
       {
-        category: "Error",
-        file: "websocket.ts",
+        line: "websocket.ts:267:6",
         message: "Property 'pong' does not exist on type 'WebSocket'.",
         code: 2339,
       },
       {
-        category: "Error",
-        file: "websocket.ts",
+        line: "websocket.ts:270:6",
         message: "Property 'terminate' does not exist on type 'WebSocket'.",
         code: 2339,
       },
       {
-        category: "Error",
-        file: "worker.ts",
+        line: "worker.ts:23:11",
         message: "Property 'ref' does not exist on type 'Worker'.",
         code: 2339,
       },
       {
-        category: "Error",
-        file: "worker.ts",
+        line: "worker.ts:24:11",
         message: "Property 'unref' does not exist on type 'Worker'.",
         code: 2339,
       },
       {
-        category: "Error",
-        file: "worker.ts",
+        line: "worker.ts:25:11",
         message: "Property 'threadId' does not exist on type 'Worker'.",
         code: 2339,
       },

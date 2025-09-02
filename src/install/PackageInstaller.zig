@@ -45,7 +45,7 @@ pub const PackageInstaller = struct {
 
     seen_bin_links: bun.StringHashMap(void),
 
-    const debug = Output.scoped(.PackageInstaller, true);
+    const debug = Output.scoped(.PackageInstaller, .hidden);
 
     pub const NodeModulesFolder = struct {
         tree_id: Lockfile.Tree.Id = 0,
@@ -310,7 +310,7 @@ pub const PackageInstaller = struct {
                         "Failed to link <b>{s}<r>: {s}",
                         .{ alias, @errorName(err) },
                         .{},
-                    ) catch bun.outOfMemory();
+                    ) catch |e| bun.handleOom(e);
                 }
 
                 if (this.options.enable.fail_early) {
@@ -342,7 +342,7 @@ pub const PackageInstaller = struct {
                     .node_modules,
                 );
 
-                this.node_modules.path.appendSlice(rel_path) catch bun.outOfMemory();
+                bun.handleOom(this.node_modules.path.appendSlice(rel_path));
 
                 this.linkTreeBins(tree, @intCast(tree_id), &link_target_buf, &link_dest_buf, &link_rel_buf, log_level);
             }
@@ -536,7 +536,7 @@ pub const PackageInstaller = struct {
         // fixes an assertion failure where a transitive dependency is a git dependency newly added to the lockfile after the list of dependencies has been resized
         // this assertion failure would also only happen after the lockfile has been written to disk and the summary is being printed.
         if (this.successfully_installed.bit_length < this.lockfile.packages.len) {
-            const new = Bitset.initEmpty(bun.default_allocator, this.lockfile.packages.len) catch bun.outOfMemory();
+            const new = bun.handleOom(Bitset.initEmpty(bun.default_allocator, this.lockfile.packages.len));
             var old = this.successfully_installed;
             defer old.deinit(bun.default_allocator);
             old.copyInto(new);
@@ -773,7 +773,7 @@ pub const PackageInstaller = struct {
         };
 
         var installer = PackageInstall{
-            .progress = this.progress,
+            .progress = if (this.manager.options.log_level.showProgress()) this.progress else null,
             .cache_dir = undefined,
             .destination_dir_subpath = destination_dir_subpath,
             .destination_dir_subpath_buf = &this.destination_dir_subpath_buf,
@@ -908,7 +908,7 @@ pub const PackageInstaller = struct {
                 const context: TaskCallbackContext = .{
                     .dependency_install_context = .{
                         .tree_id = this.current_tree_id,
-                        .path = this.node_modules.path.clone() catch bun.outOfMemory(),
+                        .path = bun.handleOom(this.node_modules.path.clone()),
                         .dependency_id = dependency_id,
                     },
                 };
@@ -1015,7 +1015,7 @@ pub const PackageInstaller = struct {
                     task.callback.apply.install_context = .{
                         .dependency_id = dependency_id,
                         .tree_id = this.current_tree_id,
-                        .path = this.node_modules.path.clone() catch bun.outOfMemory(),
+                        .path = bun.handleOom(this.node_modules.path.clone()),
                     };
                     this.manager.enqueuePatchTask(task);
                     return;
@@ -1026,8 +1026,8 @@ pub const PackageInstaller = struct {
                 this.trees[this.current_tree_id].pending_installs.append(this.manager.allocator, .{
                     .dependency_id = dependency_id,
                     .tree_id = this.current_tree_id,
-                    .path = this.node_modules.path.clone() catch bun.outOfMemory(),
-                }) catch bun.outOfMemory();
+                    .path = bun.handleOom(this.node_modules.path.clone()),
+                }) catch |err| bun.handleOom(err);
                 return;
             }
 
@@ -1087,7 +1087,7 @@ pub const PackageInstaller = struct {
                     }
 
                     if (this.bins[package_id].tag != .none) {
-                        this.trees[this.current_tree_id].binaries.add(dependency_id) catch bun.outOfMemory();
+                        bun.handleOom(this.trees[this.current_tree_id].binaries.add(dependency_id));
                     }
 
                     const dep = this.lockfile.buffers.dependencies.items[dependency_id];
@@ -1114,11 +1114,11 @@ pub const PackageInstaller = struct {
                             if (is_trusted_through_update_request) {
                                 this.manager.trusted_deps_to_add_to_package_json.append(
                                     this.manager.allocator,
-                                    this.manager.allocator.dupe(u8, alias.slice(this.lockfile.buffers.string_bytes.items)) catch bun.outOfMemory(),
-                                ) catch bun.outOfMemory();
+                                    bun.handleOom(this.manager.allocator.dupe(u8, alias.slice(this.lockfile.buffers.string_bytes.items))),
+                                ) catch |err| bun.handleOom(err);
 
                                 if (this.lockfile.trusted_dependencies == null) this.lockfile.trusted_dependencies = .{};
-                                this.lockfile.trusted_dependencies.?.put(this.manager.allocator, truncated_dep_name_hash, {}) catch bun.outOfMemory();
+                                this.lockfile.trusted_dependencies.?.put(this.manager.allocator, truncated_dep_name_hash, {}) catch |err| bun.handleOom(err);
                             }
                         }
                     }
@@ -1149,7 +1149,7 @@ pub const PackageInstaller = struct {
                                         resolution.fmt(this.lockfile.buffers.string_bytes.items, .posix),
                                     });
                                 }
-                                const entry = this.summary.packages_with_blocked_scripts.getOrPut(this.manager.allocator, truncated_dep_name_hash) catch bun.outOfMemory();
+                                const entry = bun.handleOom(this.summary.packages_with_blocked_scripts.getOrPut(this.manager.allocator, truncated_dep_name_hash));
                                 if (!entry.found_existing) entry.value_ptr.* = 0;
                                 entry.value_ptr.* += count;
                             }
@@ -1241,7 +1241,7 @@ pub const PackageInstaller = struct {
             }
         } else {
             if (this.bins[package_id].tag != .none) {
-                this.trees[this.current_tree_id].binaries.add(dependency_id) catch bun.outOfMemory();
+                bun.handleOom(this.trees[this.current_tree_id].binaries.add(dependency_id));
             }
 
             var destination_dir: LazyPackageDestinationDir = .{
@@ -1286,13 +1286,13 @@ pub const PackageInstaller = struct {
                     if (is_trusted_through_update_request) {
                         this.manager.trusted_deps_to_add_to_package_json.append(
                             this.manager.allocator,
-                            this.manager.allocator.dupe(u8, alias.slice(this.lockfile.buffers.string_bytes.items)) catch bun.outOfMemory(),
-                        ) catch bun.outOfMemory();
+                            bun.handleOom(this.manager.allocator.dupe(u8, alias.slice(this.lockfile.buffers.string_bytes.items))),
+                        ) catch |err| bun.handleOom(err);
                     }
 
                     if (add_to_lockfile) {
                         if (this.lockfile.trusted_dependencies == null) this.lockfile.trusted_dependencies = .{};
-                        this.lockfile.trusted_dependencies.?.put(this.manager.allocator, truncated_dep_name_hash, {}) catch bun.outOfMemory();
+                        this.lockfile.trusted_dependencies.?.put(this.manager.allocator, truncated_dep_name_hash, {}) catch |err| bun.handleOom(err);
                     }
                 }
             }
@@ -1367,7 +1367,7 @@ pub const PackageInstaller = struct {
                 .list = scripts_list.?,
                 .tree_id = this.current_tree_id,
                 .optional = optional,
-            }) catch bun.outOfMemory();
+            }) catch |err| bun.handleOom(err);
 
             return true;
         }

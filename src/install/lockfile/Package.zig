@@ -70,7 +70,7 @@ pub const Package = extern struct {
         }
     };
 
-    const debug = Output.scoped(.Lockfile, true);
+    const debug = Output.scoped(.Lockfile, .hidden);
 
     pub fn clone(
         this: *const Package,
@@ -1575,6 +1575,10 @@ pub const Package = extern struct {
             if (json.get("workspaces")) |workspaces_expr| {
                 lockfile.catalogs.parseCount(lockfile, workspaces_expr, &string_builder);
             }
+
+            // Count catalog strings in top-level package.json as well, since parseAppend
+            // might process them later if no catalogs were found in workspaces
+            lockfile.catalogs.parseCount(lockfile, json, &string_builder);
         }
 
         try string_builder.allocate();
@@ -1786,7 +1790,7 @@ pub const Package = extern struct {
                             for (workspace_names.values(), workspace_names.keys()) |value, note_path| {
                                 if (note_path.ptr == path.ptr) continue;
                                 if (strings.eqlLong(value.name, entry.name, true)) {
-                                    const note_abs_path = allocator.dupeZ(u8, Path.joinAbsStringZ(cwd, &.{ note_path, "package.json" }, .auto)) catch bun.outOfMemory();
+                                    const note_abs_path = bun.handleOom(allocator.dupeZ(u8, Path.joinAbsStringZ(cwd, &.{ note_path, "package.json" }, .auto)));
 
                                     const note_src = bun.sys.File.toSource(note_abs_path, allocator, .{}).unwrap() catch logger.Source.initEmptyFile(note_abs_path);
 
@@ -1934,6 +1938,7 @@ pub const Package = extern struct {
         // This function depends on package.dependencies being set, so it is done at the very end.
         if (comptime features.is_main) {
             try lockfile.overrides.parseAppend(pm, lockfile, package, log, source, json, &string_builder);
+
             var found_any_catalog_or_catalog_object = false;
             var has_workspaces = false;
             if (json.get("workspaces")) |workspaces_expr| {

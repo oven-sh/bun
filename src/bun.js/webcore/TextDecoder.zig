@@ -190,6 +190,8 @@ pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *jsc.JSGlobalObje
 }
 
 fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice: []const u8, comptime flush: bool) bun.JSError!JSValue {
+    const TextCodec = @import("../bindings/TextCodec.zig").TextCodec;
+
     switch (this.encoding) {
         EncodingLabel.latin1 => {
             if (strings.isAllASCII(buffer_slice)) {
@@ -199,11 +201,11 @@ fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice
             // It's unintuitive that we encode Latin1 as UTF16 even though the engine natively supports Latin1 strings...
             // However, this is also what WebKit seems to do.
             //
-            // It's not clear why we couldn't jusst use Latin1 here, but tests failures proved it necessary.
-            const out_length = strings.elementLengthLatin1IntoUTF16([]const u8, buffer_slice);
-            const bytes = try globalThis.allocator().alloc(u16, out_length);
+            // => The reason we need to encode it is because TextDecoder "latin1" is actually CP1252, while WebKit latin1 is 8-bit utf-16
+            const out_length = strings.elementLengthCP1252IntoUTF16([]const u8, buffer_slice);
+            const bytes = try bun.default_allocator.alloc(u16, out_length);
 
-            const out = strings.copyLatin1IntoUTF16([]u16, bytes, []const u8, buffer_slice);
+            const out = strings.copyCP1252IntoUTF16([]u16, bytes, []const u8, buffer_slice);
             return ZigString.toExternalU16(bytes.ptr, out.written, globalThis);
         },
         EncodingLabel.@"UTF-8" => {
@@ -273,6 +275,36 @@ fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice
 
             var output = bun.String.borrowUTF16(decoded.items);
             return output.toJS(globalThis);
+        },
+
+        // Handle all other encodings using WebKit's TextCodec
+        else => {
+            const encoding_name = EncodingLabel.getLabel(this.encoding);
+
+            // Create codec if we don't have one cached
+            // Note: In production, we might want to cache these per-encoding
+            const codec = TextCodec.create(encoding_name) orelse {
+                // Fallback to empty string if codec creation fails
+                return ZigString.init("").toJS(globalThis);
+            };
+            defer codec.deinit();
+
+            // Handle BOM stripping if needed
+            if (!this.ignore_bom) {
+                codec.stripBOM();
+            }
+
+            // Decode the data
+            const result = codec.decode(buffer_slice, flush, this.fatal);
+            defer result.result.deref();
+
+            // Check for errors if fatal mode is enabled
+            if (result.sawError and this.fatal) {
+                return globalThis.ERR(.ENCODING_INVALID_ENCODED_DATA, "The encoded data was not valid {s} data", .{encoding_name}).throw();
+            }
+
+            // Return the decoded string
+            return result.result.toJS(globalThis);
         },
     }
 }

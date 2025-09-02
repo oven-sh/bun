@@ -29,7 +29,7 @@ pub const Source = webcore.ReadableStream.NewSource(
     toBufferedValue,
 );
 
-const log = Output.scoped(.ByteStream, false);
+const log = Output.scoped(.ByteStream, .visible);
 
 pub const tag = webcore.ReadableStream.Tag.Bytes;
 
@@ -145,13 +145,13 @@ pub fn onData(
             }
             log("ByteStream.onData appendSlice and action.fulfill()", .{});
 
-            this.buffer.appendSlice(chunk) catch bun.outOfMemory();
+            bun.handleOom(this.buffer.appendSlice(chunk));
             var blob = this.toAnyBlob().?;
             action.fulfill(this.parent().globalThis, &blob);
 
             return;
         } else {
-            this.buffer.appendSlice(chunk) catch bun.outOfMemory();
+            bun.handleOom(this.buffer.appendSlice(chunk));
 
             if (stream == .owned_and_done or stream == .owned) {
                 allocator.free(stream.slice());

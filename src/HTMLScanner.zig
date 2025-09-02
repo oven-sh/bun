@@ -47,7 +47,7 @@ fn createImportRecord(this: *HTMLScanner, input_path: []const u8, kind: ImportKi
     try this.import_records.push(this.allocator, record);
 }
 
-const debug = bun.Output.scoped(.HTMLScanner, true);
+const debug = bun.Output.scoped(.HTMLScanner, .hidden);
 
 pub fn onWriteHTML(_: *HTMLScanner, bytes: []const u8) void {
     _ = bytes; // bytes are not written in scan phase
@@ -58,7 +58,7 @@ pub fn onHTMLParseError(this: *HTMLScanner, message: []const u8) void {
         this.source,
         logger.Loc.Empty,
         message,
-    ) catch bun.outOfMemory();
+    ) catch |err| bun.handleOom(err);
 }
 
 pub fn onTag(this: *HTMLScanner, _: *lol.Element, path: []const u8, url_attribute: []const u8, kind: ImportKind) void {
@@ -222,7 +222,7 @@ pub fn HTMLProcessor(
             var builder = lol.HTMLRewriter.Builder.init();
             defer builder.deinit();
 
-            var selectors: std.BoundedArray(*lol.HTMLSelector, tag_handlers.len + if (visit_document_tags) 3 else 0) = .{};
+            var selectors: bun.BoundedArray(*lol.HTMLSelector, tag_handlers.len + if (visit_document_tags) 3 else 0) = .{};
             defer for (selectors.slice()) |selector| {
                 selector.deinit();
             };

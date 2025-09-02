@@ -178,6 +178,7 @@ pub const Subcommand = enum {
         return switch (this) {
             .outdated => true,
             .install => true,
+            .update => true,
             // .pack => true,
             // .add => true,
             else => false,
@@ -355,7 +356,7 @@ pub var configureEnvForScriptsOnce = bun.once(struct {
         {
             var node_path: bun.PathBuffer = undefined;
             if (this.env.getNodePath(this_transpiler.fs, &node_path)) |node_pathZ| {
-                _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.default_allocator.dupe(u8, node_pathZ) catch bun.outOfMemory());
+                _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.handleOom(bun.default_allocator.dupe(u8, node_pathZ)));
             } else brk: {
                 const current_path = this.env.get("PATH") orelse "";
                 var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, current_path.len);
@@ -363,7 +364,7 @@ pub var configureEnvForScriptsOnce = bun.once(struct {
                 var bun_path: string = "";
                 RunCommand.createFakeTemporaryNodeExecutable(&PATH, &bun_path) catch break :brk;
                 try this.env.map.put("PATH", PATH.items);
-                _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.default_allocator.dupe(u8, bun_path) catch bun.outOfMemory());
+                _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.handleOom(bun.default_allocator.dupe(u8, bun_path)));
             }
         }
 
@@ -434,7 +435,7 @@ const Holder = struct {
 };
 
 pub fn allocatePackageManager() void {
-    Holder.ptr = bun.default_allocator.create(PackageManager) catch bun.outOfMemory();
+    Holder.ptr = bun.handleOom(bun.default_allocator.create(PackageManager));
 }
 
 pub fn get() *PackageManager {
@@ -444,7 +445,7 @@ pub fn get() *PackageManager {
 pub const SuccessFn = *const fn (*PackageManager, DependencyID, PackageID) void;
 pub const FailFn = *const fn (*PackageManager, *const Dependency, PackageID, anyerror) void;
 
-pub const debug = Output.scoped(.PackageManager, true);
+pub const debug = Output.scoped(.PackageManager, .hidden);
 
 pub fn ensureTempNodeGypScript(this: *PackageManager) !void {
     return ensureTempNodeGypScriptOnce.call(.{this});
@@ -582,14 +583,14 @@ pub fn init(
         @memcpy(cwd_buf[0..top_level_dir_no_trailing_slash.len], top_level_dir_no_trailing_slash);
     }
 
-    var original_package_json_path_buf = std.ArrayListUnmanaged(u8).initCapacity(ctx.allocator, top_level_dir_no_trailing_slash.len + "/package.json".len + 1) catch bun.outOfMemory();
+    var original_package_json_path_buf = bun.handleOom(std.ArrayListUnmanaged(u8).initCapacity(ctx.allocator, top_level_dir_no_trailing_slash.len + "/package.json".len + 1));
     original_package_json_path_buf.appendSliceAssumeCapacity(top_level_dir_no_trailing_slash);
     original_package_json_path_buf.appendSliceAssumeCapacity(std.fs.path.sep_str ++ "package.json");
     original_package_json_path_buf.appendAssumeCapacity(0);
 
     var original_package_json_path: stringZ = original_package_json_path_buf.items[0 .. top_level_dir_no_trailing_slash.len + "/package.json".len :0];
     const original_cwd = strings.withoutSuffixComptime(original_package_json_path, std.fs.path.sep_str ++ "package.json");
-    const original_cwd_clone = ctx.allocator.dupe(u8, original_cwd) catch bun.outOfMemory();
+    const original_cwd_clone = bun.handleOom(ctx.allocator.dupe(u8, original_cwd));
 
     var workspace_names = Package.WorkspaceMap.init(ctx.allocator);
     var workspace_package_json_cache: WorkspacePackageJSONCache = .{
@@ -794,7 +795,7 @@ pub fn init(
         };
 
         bun.ini.loadNpmrcConfig(ctx.allocator, ctx.install orelse brk: {
-            const install_ = ctx.allocator.create(Api.BunInstall) catch bun.outOfMemory();
+            const install_ = bun.handleOom(ctx.allocator.create(Api.BunInstall));
             install_.* = std.mem.zeroes(Api.BunInstall);
             ctx.install = install_;
             break :brk install_;
@@ -806,7 +807,7 @@ pub fn init(
         ), ".npmrc" });
     } else {
         bun.ini.loadNpmrcConfig(ctx.allocator, ctx.install orelse brk: {
-            const install_ = ctx.allocator.create(Api.BunInstall) catch bun.outOfMemory();
+            const install_ = bun.handleOom(ctx.allocator.create(Api.BunInstall));
             install_.* = std.mem.zeroes(Api.BunInstall);
             ctx.install = install_;
             break :brk install_;
@@ -1008,7 +1009,7 @@ pub fn initWithRuntimeOnce(
     // var progress = Progress{};
     // var node = progress.start(name: []const u8, estimated_total_items: usize)
     const top_level_dir_no_trailing_slash = strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir);
-    var original_package_json_path = allocator.allocSentinel(u8, top_level_dir_no_trailing_slash.len + "/package.json".len, 0) catch bun.outOfMemory();
+    var original_package_json_path = bun.handleOom(allocator.allocSentinel(u8, top_level_dir_no_trailing_slash.len + "/package.json".len, 0));
     @memcpy(original_package_json_path[0..top_level_dir_no_trailing_slash.len], top_level_dir_no_trailing_slash);
     @memcpy(original_package_json_path[top_level_dir_no_trailing_slash.len..][0.."/package.json".len], "/package.json");
 
@@ -1038,7 +1039,7 @@ pub fn initWithRuntimeOnce(
         .original_package_json_path = original_package_json_path[0..original_package_json_path.len :0],
         .subcommand = .install,
     };
-    manager.lockfile = allocator.create(Lockfile) catch bun.outOfMemory();
+    manager.lockfile = bun.handleOom(allocator.create(Lockfile));
 
     if (Output.enable_ansi_colors_stderr) {
         manager.progress = Progress{};

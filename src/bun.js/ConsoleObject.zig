@@ -1371,7 +1371,7 @@ pub const Formatter = struct {
                     .UnlinkedEvalCodeBlock,
                     .UnlinkedFunctionCodeBlock,
                     .CodeBlock,
-                    .JSImmutableButterfly,
+                    .JSCellButterfly,
                     .JSSourceCode,
                     .JSScriptFetcher,
                     .JSScriptFetchParameters,
@@ -2060,7 +2060,7 @@ pub const Formatter = struct {
             if (!this.stack_check.isSafeToRecurse()) {
                 this.failed = true;
                 if (this.can_throw_stack_overflow) {
-                    this.globalThis.throwStackOverflow();
+                    return this.globalThis.throwStackOverflow();
                 }
                 return;
             }

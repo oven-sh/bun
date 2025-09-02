@@ -5,6 +5,17 @@ const dependency_groups = &.{
     .{ "peerDependencies", .{ .peer = true } },
 };
 
+fn resolveCatalogDependency(manager: *PackageManager, dep: Dependency) ?Dependency.Version {
+    return if (dep.version.tag == .catalog) blk: {
+        const catalog_dep = manager.lockfile.catalogs.get(
+            manager.lockfile,
+            dep.version.value.catalog,
+            dep.name,
+        ) orelse return null;
+        break :blk catalog_dep.version;
+    } else dep.version;
+}
+
 pub const EditOptions = struct {
     exact_versions: bool = false,
     add_trusted_dependencies: bool = false,
@@ -217,8 +228,8 @@ pub fn editUpdateNoArgs(
                         const version_literal = try value.asStringCloned(allocator) orelse bun.outOfMemory();
                         var tag = Dependency.Version.Tag.infer(version_literal);
 
-                        // only updating dependencies with npm versions, and dist-tags if `--latest`.
-                        if (tag != .npm and (tag != .dist_tag or !manager.options.do.update_to_latest)) continue;
+                        // only updating dependencies with npm versions, dist-tags if `--latest`, and catalog versions.
+                        if (tag != .npm and (tag != .dist_tag or !manager.options.do.update_to_latest) and tag != .catalog) continue;
 
                         var alias_at_index: ?usize = null;
                         if (strings.hasPrefixComptime(strings.trim(version_literal, &strings.whitespace_chars), "npm:")) {
@@ -226,13 +237,13 @@ pub fn editUpdateNoArgs(
                             // e.g. "dep": "npm:@foo/bar@1.2.3"
                             if (strings.lastIndexOfChar(version_literal, '@')) |at_index| {
                                 tag = Dependency.Version.Tag.infer(version_literal[at_index + 1 ..]);
-                                if (tag != .npm and (tag != .dist_tag or !manager.options.do.update_to_latest)) continue;
+                                if (tag != .npm and (tag != .dist_tag or !manager.options.do.update_to_latest) and tag != .catalog) continue;
                                 alias_at_index = at_index;
                             }
                         }
 
                         const key_str = try key.asStringCloned(allocator) orelse unreachable;
-                        const entry = manager.updating_packages.getOrPut(allocator, key_str) catch bun.outOfMemory();
+                        const entry = bun.handleOom(manager.updating_packages.getOrPut(allocator, key_str));
 
                         // If a dependency is present in more than one dependency group, only one of it's versions
                         // will be updated. The group is determined by the order of `dependency_groups`, the same
@@ -248,9 +259,9 @@ pub fn editUpdateNoArgs(
                         if (manager.options.do.update_to_latest) {
                             // is it an aliased package
                             const temp_version = if (alias_at_index) |at_index|
-                                std.fmt.allocPrint(allocator, "{s}@latest", .{version_literal[0..at_index]}) catch bun.outOfMemory()
+                                bun.handleOom(std.fmt.allocPrint(allocator, "{s}@latest", .{version_literal[0..at_index]}))
                             else
-                                allocator.dupe(u8, "latest") catch bun.outOfMemory();
+                                bun.handleOom(allocator.dupe(u8, "latest"));
 
                             dep.value = Expr.allocate(allocator, E.String, .{
                                 .data = temp_version,
@@ -291,7 +302,8 @@ pub fn editUpdateNoArgs(
                                     const workspace_dep_name = workspace_dep.name.slice(string_buf);
                                     if (!strings.eqlLong(workspace_dep_name, dep_name, true)) continue;
 
-                                    if (workspace_dep.version.npm()) |npm_version| {
+                                    const resolved_version = resolveCatalogDependency(manager, workspace_dep) orelse workspace_dep.version;
+                                    if (resolved_version.npm()) |npm_version| {
                                         // It's possible we inserted a dependency that won't update (version is an exact version).
                                         // If we find one, skip to keep the original version literal.
                                         if (!manager.options.do.update_to_latest and npm_version.version.isExact()) break :updated;
@@ -420,7 +432,7 @@ pub fn edit(
 
                                             if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
 
-                                            const entry = manager.updating_packages.getOrPut(allocator, name) catch bun.outOfMemory();
+                                            const entry = bun.handleOom(manager.updating_packages.getOrPut(allocator, name));
 
                                             // first come, first serve
                                             if (entry.found_existing) break :add_packages_to_update;

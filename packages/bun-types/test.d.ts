@@ -56,6 +56,11 @@ declare module "bun:test" {
      * Restore the previous value of mocks.
      */
     restore(): void;
+
+    /**
+     * Reset all mock function state (calls, results, etc.) without restoring their original implementation.
+     */
+    clearAllMocks(): void;
   };
 
   /**
@@ -257,6 +262,15 @@ declare module "bun:test" {
    * @param fn the function that defines the tests
    */
   export const describe: Describe;
+  /**
+   * Skips a group of related tests.
+   *
+   * This is equivalent to calling `describe.skip()`.
+   *
+   * @param label the label for the tests
+   * @param fn the function that defines the tests
+   */
+  export const xdescribe: Describe;
   /**
    * Runs a function, once, before all the tests.
    *
@@ -510,7 +524,17 @@ declare module "bun:test" {
    * @param fn the test function
    */
   export const test: Test;
-  export { test as it };
+  export { test as it, xtest as xit };
+
+  /**
+   * Skips a test.
+   *
+   * This is equivalent to calling `test.skip()`.
+   *
+   * @param label the label for the test
+   * @param fn the test function
+   */
+  export const xtest: Test;
 
   /**
    * Asserts that a value matches some criteria.
@@ -1643,6 +1667,26 @@ declare module "bun:test" {
     toHaveReturnedTimes(times: number): void;
 
     /**
+     * Ensures that a mock function has returned a specific value.
+     * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
+     */
+    toHaveReturnedWith(expected: unknown): void;
+
+    /**
+     * Ensures that a mock function has returned a specific value on its last invocation.
+     * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
+     */
+    toHaveLastReturnedWith(expected: unknown): void;
+
+    /**
+     * Ensures that a mock function has returned a specific value on the nth invocation.
+     * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
+     * @param n The 1-based index of the function call
+     * @param expected The expected return value
+     */
+    toHaveNthReturnedWith(n: number, expected: unknown): void;
+
+    /**
      * Ensures that a mock function is called.
      */
     toHaveBeenCalled(): void;
@@ -2182,4 +2226,6 @@ declare module "bun:test" {
 
     export type UnknownFunction = (...args: unknown[]) => unknown;
   }
+
+  export const expectTypeOf: typeof import("./vendor/expect-type").expectTypeOf;
 }

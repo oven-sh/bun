@@ -78,12 +78,6 @@ pub export fn Bun__queueTask(global: *JSGlobalObject, task: *jsc.CppTask) void {
     global.bunVM().eventLoop().enqueueTask(jsc.Task.init(task));
 }
 
-pub export fn Bun__queueTaskWithTimeout(global: *JSGlobalObject, task: *jsc.CppTask, milliseconds: i32) void {
-    jsc.markBinding(@src());
-
-    global.bunVM().eventLoop().enqueueTaskWithTimeout(jsc.Task.init(task), milliseconds);
-}
-
 pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.C) JSValue {
     jsc.markBinding(@src());
 
@@ -131,7 +125,7 @@ pub export fn Bun__handleHandledPromise(global: *JSGlobalObject, promise: *jsc.J
     jsc.markBinding(@src());
     const promise_js = promise.toJS();
     promise_js.protect();
-    const context = bun.default_allocator.create(Context) catch bun.outOfMemory();
+    const context = bun.handleOom(bun.default_allocator.create(Context));
     context.* = .{ .globalThis = global, .promise = promise_js };
     global.bunVM().eventLoop().enqueueTask(jsc.ManagedTask.New(Context, Context.callback).init(context));
 }

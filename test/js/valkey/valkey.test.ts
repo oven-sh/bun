@@ -176,4 +176,24 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       }).toThrowErrorMatchingInlineSnapshot(`"WRONGPASS invalid username-password pair or user is disabled."`);
     });
   });
+
+  describe("Reconnections", () => {
+    test("should automatically reconnect after connection drop", async () => {
+      const TEST_KEY = "test-key";
+      const TEST_VALUE = "test-value";
+
+      const valueBeforeStart = await ctx.redis.get(TEST_KEY);
+      expect(valueBeforeStart).toBeNull();
+
+      // Set some value
+      await ctx.redis.set(TEST_KEY, TEST_VALUE);
+      const valueAfterSet = await ctx.redis.get(TEST_KEY);
+      expect(valueAfterSet).toBe(TEST_VALUE);
+
+      await ctx.restartServer();
+
+      const valueAfterStop = await ctx.redis.get(TEST_KEY);
+      expect(valueAfterStop).toBe(TEST_VALUE);
+    });
+  });
 });

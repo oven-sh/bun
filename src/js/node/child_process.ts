@@ -1130,17 +1130,39 @@ class ChildProcess extends EventEmitter {
           case "pipe": {
             const stdin = handle?.stdin;
 
-            if (!stdin)
+            if (!stdin) {
               // This can happen if the process was already killed.
-              return new ShimmedStdin();
+              const Writable = require("internal/streams/writable");
+              const stream = new Writable({
+                write(chunk, encoding, callback) {
+                  // Gracefully handle writes - stream acts as if it's ended
+                  if (callback) callback();
+                  return false;
+                },
+              });
+              // Mark as destroyed to indicate it's not usable
+              stream.destroy();
+              return stream;
+            }
             const result = require("internal/fs/streams").writableFromFileSink(stdin);
             result.readable = false;
             return result;
           }
           case "inherit":
             return null;
-          case "destroyed":
-            return new ShimmedStdin();
+          case "destroyed": {
+            const Writable = require("internal/streams/writable");
+            const stream = new Writable({
+              write(chunk, encoding, callback) {
+                // Gracefully handle writes - stream acts as if it's ended
+                if (callback) callback();
+                return false;
+              },
+            });
+            // Mark as destroyed to indicate it's not usable
+            stream.destroy();
+            return stream;
+          }
           case "undefined":
             return undefined;
           default:
@@ -1153,7 +1175,13 @@ class ChildProcess extends EventEmitter {
           case "pipe": {
             const value = handle?.[fdToStdioName(i as 1 | 2)!];
             // This can happen if the process was already killed.
-            if (!value) return new ShimmedStdioOutStream();
+            if (!value) {
+              const Readable = require("internal/streams/readable");
+              const stream = new Readable({ read() {} });
+              // Mark as destroyed to indicate it's not usable
+              stream.destroy();
+              return stream;
+            }
 
             const pipe = require("internal/streams/native-readable").constructNativeReadable(value, { encoding });
             this.#closesNeeded++;
@@ -1161,8 +1189,13 @@ class ChildProcess extends EventEmitter {
             if (autoResume) pipe.resume();
             return pipe;
           }
-          case "destroyed":
-            return new ShimmedStdioOutStream();
+          case "destroyed": {
+            const Readable = require("internal/streams/readable");
+            const stream = new Readable({ read() {} });
+            // Mark as destroyed to indicate it's not usable
+            stream.destroy();
+            return stream;
+          }
           case "undefined":
             return undefined;
           default:
@@ -1628,44 +1661,6 @@ function abortChildProcess(child, killSignal, reason) {
 class Control extends EventEmitter {
   constructor() {
     super();
-  }
-}
-
-class ShimmedStdin extends EventEmitter {
-  constructor() {
-    super();
-  }
-  write() {
-    return false;
-  }
-  destroy() {}
-  end() {
-    return this;
-  }
-  pipe() {
-    return this;
-  }
-  resume() {
-    return this;
-  }
-}
-
-class ShimmedStdioOutStream extends EventEmitter {
-  pipe() {}
-  get destroyed() {
-    return true;
-  }
-
-  resume() {
-    return this;
-  }
-
-  destroy() {
-    return this;
-  }
-
-  setEncoding() {
-    return this;
   }
 }
 

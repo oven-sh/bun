@@ -53,7 +53,7 @@ test("describe/test", async () => {
      1 todo
      3 fail
      1 error
-     snapshots: 
+     1 snapshots, 2 expect() calls
     Ran 15 tests across 1 file."
     ,
       "stdout": 

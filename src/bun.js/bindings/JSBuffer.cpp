@@ -908,7 +908,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
 
         ASSERT_WITH_MESSAGE(length > 0, "length should be greater than 0. This should be checked before appending to the MarkedArgumentBuffer.");
 
-        memcpy(output.data(), source.data(), length);
+        WTF::memcpySpan(output.first(length), source.first(length));
         output = output.subspan(length);
     }
 

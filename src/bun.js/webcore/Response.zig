@@ -529,7 +529,7 @@ pub fn constructRedirect(
         // Transform the Response to act as a React element with special redirect handling
         // Pass "redirect" as the third parameter to indicate this is a redirect
         const redirect_flag = ZigString.init("redirect").toJS(globalThis);
-        try checkStreamingDisabled(globalThis, async_local_storage, "Response.redirect");
+        try assertStreamingDisabled(globalThis, async_local_storage, "Response.redirect");
         try JSValue.transformToReactElementWithOptions(response_js, redirect_marker, redirect_flag, globalThis);
     }
 
@@ -548,7 +548,7 @@ pub fn constructRender(
         return globalThis.throwInvalidArguments("Response.render() is only available in the Bun dev server", .{});
     };
 
-    try checkStreamingDisabled(globalThis, async_local_storage, "Response.render");
+    try assertStreamingDisabled(globalThis, async_local_storage, "Response.render");
 
     // Validate arguments
     if (arguments.len < 1) {
@@ -668,6 +668,11 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, t
             const arg = arguments[0];
             // Check if it's a JSX element (object with $$typeof)
             if (try arg.isJSXElement(globalThis)) {
+                const vm = globalThis.bunVM();
+                if (vm.dev_server_async_local_storage.get()) |async_local_storage| {
+                    try assertStreamingDisabled(globalThis, async_local_storage, "new Response(<jsx />, { ... })");
+                }
+
                 // Pass the response options (arguments[1]) to transformToReactElement
                 // so it can store them for later use when the component is rendered
                 const responseOptions = if (arguments[1].isObject()) arguments[1] else .js_undefined;
@@ -858,13 +863,13 @@ inline fn emptyWithStatus(_: *jsc.JSGlobalObject, status: u16) Response {
     });
 }
 
-fn checkStreamingDisabled(globalThis: *jsc.JSGlobalObject, async_local_storage: JSValue, desired_function: []const u8) bun.JSError!void {
+fn assertStreamingDisabled(globalThis: *jsc.JSGlobalObject, async_local_storage: JSValue, display_function: []const u8) bun.JSError!void {
     if (async_local_storage.isEmptyOrUndefinedOrNull() or !async_local_storage.isObject()) return globalThis.throwInvalidArguments("store value must be an object", .{});
     const getStoreFn = (try async_local_storage.getPropertyValue(globalThis, "getStore")) orelse return globalThis.throwInvalidArguments("store value must have a \"getStore\" field", .{});
     const store_value = try getStoreFn.call(globalThis, async_local_storage, &.{});
     const streaming_val = (try store_value.getPropertyValue(globalThis, "streaming")) orelse return globalThis.throwInvalidArguments("store value must have a \"streaming\" field", .{});
     if (!streaming_val.isBoolean()) return globalThis.throwInvalidArguments("\"streaming\" fied must be a boolean", .{});
-    if (streaming_val.asBoolean()) return globalThis.throwInvalidArguments("\"{s}\" is not available when `export const streaming = true`", .{desired_function});
+    if (streaming_val.asBoolean()) return globalThis.throwInvalidArguments("\"{s}\" is not available when `export const streaming = true`", .{display_function});
 }
 
 /// https://developer.mozilla.org/en-US/docs/Web/API/Headers

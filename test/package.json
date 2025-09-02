@@ -68,6 +68,7 @@
     "node-gyp": "10.0.1",
     "nodemailer": "6.9.3",
     "p-queue": "8.1.0",
+    "peechy": "^0.4.310",
     "pg": "8.11.1",
     "pg-connection-string": "2.6.1",
     "pg-gateway": "0.3.0-beta.4",

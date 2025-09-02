@@ -198,10 +198,13 @@ export async function render(
     const opts = als?.getStore()?.responseOptions ?? { headers: {} };
     const { headers, ...response_options } = opts;
 
+    const cookies = meta.pageModule.mode === "ssr" ? { "Set-Cookie": request.cookies.toSetCookieHeaders() } : {};
+
     return new Response(result, {
       headers: {
         "Content-Type": "text/html; charset=utf8",
-        "Set-Cookie": request.cookies.toSetCookieHeaders(),
+        // TODO: merge cookies and cookies inside of headers
+        ...cookies,
         ...headers,
       },
       ...response_options,

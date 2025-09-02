@@ -100,10 +100,17 @@ server_exports = {
 
     const [pageModule, ...layouts] = await Promise.all(routeModules.map(loadExports));
 
+    const mode = pageModule.mode;
     // Add cookies to request when mode is 'ssr'
     let requestWithCookies = req;
-    if (pageModule.mode === "ssr") {
+    if (mode === "ssr") {
       requestWithCookies.cookies = req.cookies || new Bun.CookieMap(req.headers.get("Cookie") || "");
+    } else {
+      Object.defineProperty(requestWithCookies, "cookies", {
+        get: () => {
+          throw new Error('"request.cookies" is only available when "export const mode = \'ssr\'"');
+        },
+      });
     }
 
     let storeValue: RequestContext = {

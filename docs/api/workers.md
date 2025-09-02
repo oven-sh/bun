@@ -137,11 +137,7 @@ The simple object fast path activates when the object:
 - Has no indexed properties or getter/setter methods
 - All property values are primitives or strings
 
-These optimizations provide 2-241x performance improvements over the standard structured clone algorithm while maintaining full compatibility with existing code.
-
-#### Benchmark results
-
-Performance comparison for objects with 10 properties (1 large string + 9 primitive values):
+With these fast paths, Bun's `postMessage` performs **2-241x faster** because the message length no longer has a meaningful impact on performance.
 
 **Bun (with fast paths):**
 
@@ -158,8 +154,6 @@ postMessage({ prop: 11 chars string, ...9 more props }) - 1.19µs
 postMessage({ prop: 14 KB string, ...9 more props })    - 2.69µs
 postMessage({ prop: 3 MB string, ...9 more props })     - 304µs
 ```
-
-Bun significantly outperforms Node.js across all test cases, with particularly dramatic improvements for larger payloads.
 
 ```js
 // String fast path - optimized

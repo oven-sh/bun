@@ -61,4 +61,3 @@ test("tinyspawn-like library usage should work", () => {
   expect(typeof subprocess.stdout.pipe).toBe("function");
   expect(typeof subprocess.stdout.on).toBe("function");
 });
-

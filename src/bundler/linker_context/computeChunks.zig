@@ -203,12 +203,12 @@ pub noinline fn computeChunks(
         // Fixes GitHub issue #22317: prevents index out of bounds panic
         var entry_point_to_chunk_index = try this.allocator().alloc(?u32, this.graph.entry_points.len);
         defer this.allocator().free(entry_point_to_chunk_index);
-        
+
         // Initialize all mappings to null
         for (entry_point_to_chunk_index) |*mapping| {
             mapping.* = null;
         }
-        
+
         // Populate the mapping by iterating through js_chunks and finding their entry points
         const chunk_values = js_chunks.values();
         for (chunk_values, 0..) |chunk, chunk_idx| {
@@ -219,7 +219,7 @@ pub noinline fn computeChunks(
                 }
             }
         }
-        
+
         for (this.graph.reachable_files) |source_index| {
             if (this.graph.files_live.isSet(source_index.get())) {
                 if (this.graph.ast.items(.css)[source_index.get()] == null) {

@@ -120,7 +120,7 @@ pub const BuildCommand = struct {
                 @memcpy(normalized_entry_point_buf[0..first_entry_point.len], first_entry_point);
                 bun.path.platformToPosixInPlace(u8, normalized_entry_point_buf[0..first_entry_point.len]);
                 const normalized_entry_point = normalized_entry_point_buf[0..first_entry_point.len];
-                
+
                 outfile = std.fs.path.basename(normalized_entry_point);
                 const ext = std.fs.path.extension(outfile);
                 if (ext.len > 0) {

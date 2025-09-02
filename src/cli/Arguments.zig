@@ -1118,7 +1118,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     }
 
     // Normalize Windows-style backslashes to forward slashes in entry points (Windows only)
-    // Fixes GitHub issue #22317 - handles both positionals and pre-populated entry points  
+    // Fixes GitHub issue #22317 - handles both positionals and pre-populated entry points
     if (comptime bun.Environment.isWindows) {
         if (opts.entry_points.len > 0) {
             var needs_normalization = false;
@@ -1128,7 +1128,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     break;
                 }
             }
-            
+
             if (needs_normalization) {
                 var normalized_entry_points = try ctx.allocator.alloc([]const u8, opts.entry_points.len);
                 for (opts.entry_points, 0..) |entry_point, i| {

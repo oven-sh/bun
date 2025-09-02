@@ -1,8 +1,8 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles, isWindows } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
-// Test for GitHub issue #22317: Directory entry points with --compile cause panic  
+// Test for GitHub issue #22317: Directory entry points with --compile cause panic
 test("--compile should handle directory entry points without panic", async () => {
   const dir = tempDirWithFiles("directory-resolve-test", {
     "src/index.ts": `console.log("Main entry point");`,
@@ -15,13 +15,17 @@ test("--compile should handle directory entry points without panic", async () =>
   // This combination with a directory entry point previously caused:
   // "panic(main thread): index out of bounds: index 4, len 4"
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", 
+    cmd: [
+      bunExe(),
+      "build",
+      "--compile",
       "./src/index.ts",
       "./public/assets", // Directory should resolve to ./public/assets/index.js
       "./public/index.html",
       "./public/assets/style.css",
       "./src/server.worker.ts",
-      "--outfile", "build/app"
+      "--outfile",
+      "build/app",
     ],
     env: bunEnv,
     cwd: dir,
@@ -29,11 +33,7 @@ test("--compile should handle directory entry points without panic", async () =>
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Should not panic and should handle directory resolution properly
   if (exitCode !== 0) {
@@ -53,4 +53,3 @@ test("--compile should handle directory entry points without panic", async () =>
     // Ignore cleanup errors
   }
 });
-

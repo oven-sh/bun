@@ -210,7 +210,7 @@ describe.skipIf(isBroken && isIntelMacOS)("files transpiled and loaded don't lea
     expect(exitCode).toBe(0);
   }, 60000);
 
-  test.only("via require() with a lot of function calls", async () => {
+  test("via require() with a lot of function calls", async () => {
     let text = "function i() { return 1; }\n";
     for (let i = 0; i < 20000; i++) {
       text += `i();\n`;

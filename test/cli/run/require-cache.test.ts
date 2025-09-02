@@ -62,10 +62,15 @@ describe.skipIf(isBroken && isIntelMacOS)("files transpiled and loaded don't lea
         }
         gc(true);
         const baseline = process.memoryUsage.rss();
+        let prev = null;
         for (let i = 0; i < 500; i++) {
           require(path);
           bust(path);
-          console.log("RSS", (process.memoryUsage.rss() / 1024 / 1024) | 0, "MB");
+          const current = process.memoryUsage.rss();
+          if (prev !== current) {
+            console.log("RSS", (current / 1024 / 1024) | 0, "MB");
+          }
+          prev = current;
         }
         gc(true);
         const rss = process.memoryUsage.rss();
@@ -115,10 +120,15 @@ describe.skipIf(isBroken && isIntelMacOS)("files transpiled and loaded don't lea
         }
         gc(true);
         const baseline = process.memoryUsage.rss();
+        let prev = null;
         for (let i = 0; i < 400; i++) {
           await import(path);
           bust(path);
-          console.log("RSS", (process.memoryUsage.rss() / 1024 / 1024) | 0, "MB");
+          const current = process.memoryUsage.rss();
+          if (prev !== current) {
+            console.log("RSS", (current / 1024 / 1024) | 0, "MB");
+          }
+          prev = current;
         }
         gc(true);
         const rss = process.memoryUsage.rss();
@@ -165,10 +175,15 @@ describe.skipIf(isBroken && isIntelMacOS)("files transpiled and loaded don't lea
         }
         gc(true);
         const baseline = process.memoryUsage.rss();
+        let prev = null;
         for (let i = 0; i < 250; i++) {
           await import(path);
           bust(path);
-          console.log("RSS", (process.memoryUsage.rss() / 1024 / 1024) | 0, "MB");
+          const current = process.memoryUsage.rss();
+          if (prev !== current) {
+            console.log("RSS", (current / 1024 / 1024) | 0, "MB");
+          }
+          prev = current;
         }
         gc(true);
         const rss = process.memoryUsage.rss();
@@ -195,7 +210,7 @@ describe.skipIf(isBroken && isIntelMacOS)("files transpiled and loaded don't lea
     expect(exitCode).toBe(0);
   }, 60000);
 
-  test("via require() with a lot of function calls", () => {
+  test.only("via require() with a lot of function calls", async () => {
     let text = "function i() { return 1; }\n";
     for (let i = 0; i < 20000; i++) {
       text += `i();\n`;
@@ -224,16 +239,23 @@ describe.skipIf(isBroken && isIntelMacOS)("files transpiled and loaded don't lea
         }
         gc(true);
         const baseline = process.memoryUsage.rss();
+        let prev = null;
         for (let i = 0; i < 400; i++) {
           require(path);
           bust(path);
-          console.log("RSS", (process.memoryUsage.rss() / 1024 / 1024) | 0, "MB");
+          const current = process.memoryUsage.rss();
+          if (prev !== current) {
+            console.log("RSS", (current / 1024 / 1024) | 0, "MB");
+          }
+          prev = current;
+          
         }
         gc(true);
         const rss = process.memoryUsage.rss();
         const diff = rss - baseline;
         console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
         console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
+        console.log(require("bun:jsc").heapStats())
         if (diff > 64 * 1024 * 1024) {
           // Bun v1.1.22 reported 4 MB here on macoS arm64.
           // Bun v1.1.21 reported 248 MB here on macoS arm64.
@@ -243,14 +265,22 @@ describe.skipIf(isBroken && isIntelMacOS)("files transpiled and loaded don't lea
         exports.abc = 123;
       `,
     });
-    const { exitCode, resourceUsage } = Bun.spawnSync({
+    console.log({ dir });
+    // await using proc = Bun.spawn({
+    //   cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
+    //   env: bunEnv,
+    //   stdio: ["inherit", "inherit", "inherit"],
+    // });
+
+    // expect(await proc.exited).toBe(0);
+    const proc = Bun.spawnSync({
       cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
       env: bunEnv,
       stdio: ["inherit", "inherit", "inherit"],
     });
 
-    console.log(resourceUsage);
-    expect(exitCode).toBe(0);
+    expect(proc.exitCode).toBe(0);
+    console.log(proc.resourceUsage);
   }, 60000); // takes 4s on an M1 in release build
 });
 

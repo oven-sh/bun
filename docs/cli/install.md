@@ -16,7 +16,6 @@ For more details, see [Package manager > Global cache](https://bun.com/docs/inst
 
 {% /callout %}
 
-
 {% details summary="For Linux users" %}
 The recommended minimum Linux Kernel version is 5.6. If you're on Linux kernel 5.1 - 5.5, `bun install` will work, but HTTP requests will be slow due to a lack of support for io_uring's `connect()` operation.
 
@@ -218,7 +217,7 @@ For complete documentation on isolated installs, refer to [Package manager > Iso
 
 ## Disk efficiency
 
-Bun uses a global cache at `~/.bun/install/cache/` to minimize disk usage. Packages are stored once and linked to `node_modules` using hardlinks (Linux/Windows) or copy-on-write (macOS), so duplicate packages across projects don't consume additional disk space. 
+Bun uses a global cache at `~/.bun/install/cache/` to minimize disk usage. Packages are stored once and linked to `node_modules` using hardlinks (Linux/Windows) or copy-on-write (macOS), so duplicate packages across projects don't consume additional disk space.
 
 For complete documentation refer to [Package manager > Global cache](https://bun.com/docs/install/cache).
 

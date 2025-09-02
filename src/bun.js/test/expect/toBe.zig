@@ -13,7 +13,7 @@ pub fn toBe(
         return globalThis.throwInvalidArguments("toBe() takes 1 argument", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
     const right = arguments[0];
     right.ensureStillAlive();
     const left = try this.getValue(globalThis, thisValue, "toBe", "<green>expected<r>");
@@ -69,7 +69,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

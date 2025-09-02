@@ -4,7 +4,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
     const thisValue = callFrame.this();
     const arguments = callFrame.argumentsAsArray(1);
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const expected_value: JSValue = brk: {
         if (callFrame.argumentsCount() == 0) {
@@ -313,9 +313,7 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-
 const ExpectAny = bun.jsc.Expect.ExpectAny;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

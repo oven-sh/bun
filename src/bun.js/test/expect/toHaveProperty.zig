@@ -9,7 +9,7 @@ pub fn toHaveProperty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Ca
         return globalThis.throwInvalidArguments("toHaveProperty() requires at least 1 argument", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const expected_property_path = arguments[0];
     expected_property_path.ensureStillAlive();
@@ -96,7 +96,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

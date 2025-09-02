@@ -5,7 +5,7 @@ pub fn toMatchObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Cal
     const thisValue = callFrame.this();
     const args = callFrame.arguments_old(1).slice();
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const not = this.flags.not;
 
@@ -63,7 +63,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

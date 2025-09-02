@@ -39,6 +39,10 @@ pub const Expect = struct {
         return runner.describe2Root.active_file orelse return null;
     }
 
+    pub fn incrementExpectCallCounter(_: *Expect) void {
+        active_test_expectation_counter.actual += 1;
+    }
+
     pub const Flags = packed struct(u8) {
         // note: keep this struct in sync with C++ implementation (at bindings.cpp)
 
@@ -389,7 +393,7 @@ pub const Expect = struct {
             _msg = ZigString.fromBytes("passes by .pass() assertion");
         }
 
-        incrementExpectCallCounter();
+        this.incrementExpectCallCounter();
 
         const not = this.flags.not;
         var pass = true;
@@ -434,7 +438,7 @@ pub const Expect = struct {
             _msg = ZigString.fromBytes("fails by .fail() assertion");
         }
 
-        incrementExpectCallCounter();
+        this.incrementExpectCallCounter();
 
         const not = this.flags.not;
         var pass = false;
@@ -1107,7 +1111,7 @@ pub const Expect = struct {
         value = try processPromise(expect.custom_label, expect.flags, globalThis, value, matcher_name, matcher_params, false);
         value.ensureStillAlive();
 
-        incrementExpectCallCounter();
+        expect.incrementExpectCallCounter();
 
         // prepare the args array
         const args = callFrame.arguments();
@@ -2071,10 +2075,6 @@ comptime {
     @export(&ExpectMatcherUtils.createSingleton, .{ .name = "ExpectMatcherUtils_createSigleton" });
     @export(&Expect.readFlagsAndProcessPromise, .{ .name = "Expect_readFlagsAndProcessPromise" });
     @export(&ExpectCustomAsymmetricMatcher.execute, .{ .name = "ExpectCustomAsymmetricMatcher__execute" });
-}
-
-pub fn incrementExpectCallCounter() void {
-    active_test_expectation_counter.actual += 1;
 }
 
 fn testTrimLeadingWhitespaceForSnapshot(src: []const u8, expected: []const u8) !void {

@@ -18,7 +18,7 @@ pub fn toStartWith(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallF
 
     const value: JSValue = try this.getValue(globalThis, thisValue, "toStartWith", "<green>expected<r>");
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     var pass = value.isString();
     if (pass) {
@@ -59,7 +59,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

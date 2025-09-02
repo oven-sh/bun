@@ -9,7 +9,7 @@ pub fn toBeInstanceOf(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Ca
         return globalThis.throwInvalidArguments("toBeInstanceOf() requires 1 argument", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
     defer formatter.deinit();
 
@@ -48,7 +48,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

@@ -104,9 +104,10 @@ test("parseQueryParams - complex nested structure", () => {
 
 test("parseQueryParams - __proto__ is ignored for security", () => {
   const result = parseQueryParams("__proto__=evil&user[__proto__]=bad&normal=ok");
-  // When __proto__ is the only key for an object, the object is not created
+  // __proto__ keys are ignored, but the parent object is still created
   expect(result).toEqual({
     normal: "ok",
+    user: {},
   });
 
   // Verify prototype wasn't polluted

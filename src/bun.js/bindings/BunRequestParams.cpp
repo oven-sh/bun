@@ -52,7 +52,8 @@ static void parseRailsStyleParams(JSC::JSGlobalObject* globalObject, JSC::JSObje
             return;
 
         // Simple key-value assignment - last value wins
-        result->putDirect(vm, Identifier::fromString(vm, key), jsString(vm, value));
+        // Use putDirectMayBeIndex since key could be numeric
+        result->putDirectMayBeIndex(globalObject, Identifier::fromString(vm, key), jsString(vm, value));
         return;
     }
 
@@ -130,9 +131,7 @@ static void parseRailsStyleParams(JSC::JSGlobalObject* globalObject, JSC::JSObje
         return; // Malformed
 
     String innerKey = remainder.substring(1, closeBracket - 1);
-    if (innerKey == "__proto__"_s)
-        return;
-
+    
     // Determine if this should be an array (numeric index) or object (string key)
     unsigned index = 0;
     bool isIndex = isArrayIndex(innerKey, index);
@@ -185,13 +184,18 @@ static void parseRailsStyleParams(JSC::JSGlobalObject* globalObject, JSC::JSObje
                 array->putDirectIndex(globalObject, index, nestedObj);
             }
         } else {
+            // Skip __proto__ for security
+            if (innerKey == "__proto__"_s)
+                return;
+            
             JSValue existingNested = container->getDirect(vm, Identifier::fromString(vm, innerKey));
 
             if (!existingNested.isEmpty() && existingNested.isObject()) {
                 nestedObj = asObject(existingNested);
             } else {
                 nestedObj = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-                container->putDirect(vm, Identifier::fromString(vm, innerKey), nestedObj);
+                // Use putDirectMayBeIndex since innerKey could be numeric
+                container->putDirectMayBeIndex(globalObject, Identifier::fromString(vm, innerKey), nestedObj);
             }
         }
 
@@ -223,7 +227,11 @@ static void parseRailsStyleParams(JSC::JSGlobalObject* globalObject, JSC::JSObje
             JSArray* array = jsCast<JSArray*>(container);
             array->putDirectIndex(globalObject, index, jsString(vm, value));
         } else {
-            container->putDirect(vm, Identifier::fromString(vm, innerKey), jsString(vm, value));
+            // Skip __proto__ for security
+            if (innerKey != "__proto__"_s) {
+                // Use putDirectMayBeIndex since innerKey could be numeric
+                container->putDirectMayBeIndex(globalObject, Identifier::fromString(vm, innerKey), jsString(vm, value));
+            }
         }
     }
 }

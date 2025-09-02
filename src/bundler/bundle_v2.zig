@@ -45,14 +45,15 @@
 pub const logPartDependencyTree = Output.scoped(.part_dep_tree, .visible);
 
 pub const MangledProps = std.AutoArrayHashMapUnmanaged(Ref, []const u8);
-pub const PathToSourceIndexMap = std.HashMapUnmanaged(u64, Index.Int, IdentityContext(u64), 80);
+pub const PathToSourceIndexMap = @import("./PathToSourceIndexMap.zig");
 
 pub const Watcher = bun.jsc.hot_reloader.NewHotReloader(BundleV2, EventLoop, true);
 
 /// This assigns a concise, predictable, and unique `.pretty` attribute to a Path.
 /// DevServer relies on pretty paths for identifying modules, so they must be unique.
 pub fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, top_level_dir: string, allocator: std.mem.Allocator) !Fs.Path {
-    var buf: bun.PathBuffer = undefined;
+    const buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(buf);
 
     const is_node = bun.strings.eqlComptime(path.namespace, "node");
     if (is_node and
@@ -66,14 +67,16 @@ pub fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, t
     // the "node" namespace is also put through this code path so that the
     // "node:" prefix is not emitted.
     if (path.isFile() or is_node) {
-        const rel = bun.path.relativePlatform(top_level_dir, path.text, .loose, false);
+        const buf2 = if (target == .bake_server_components_ssr) bun.path_buffer_pool.get() else buf;
+        defer if (target == .bake_server_components_ssr) bun.path_buffer_pool.put(buf2);
+        const rel = bun.path.relativePlatformBuf(buf2, top_level_dir, path.text, .loose, false);
         var path_clone = path;
         // stack-allocated temporary is not leaked because dupeAlloc on the path will
         // move .pretty into the heap. that function also fixes some slash issues.
         if (target == .bake_server_components_ssr) {
             // the SSR graph needs different pretty names or else HMR mode will
             // confuse the two modules.
-            path_clone.pretty = std.fmt.bufPrint(&buf, "ssr:{s}", .{rel}) catch buf[0..];
+            path_clone.pretty = std.fmt.bufPrint(buf, "ssr:{s}", .{rel}) catch buf[0..];
         } else {
             path_clone.pretty = rel;
         }
@@ -81,7 +84,7 @@ pub fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, t
     } else {
         // in non-file namespaces, standard filesystem rules do not apply.
         var path_clone = path;
-        path_clone.pretty = std.fmt.bufPrint(&buf, "{s}{}:{s}", .{
+        path_clone.pretty = std.fmt.bufPrint(buf, "{s}{}:{s}", .{
             if (target == .bake_server_components_ssr) "ssr:" else "",
             // make sure that a namespace including a colon wont collide with anything
             std.fmt.Formatter(fmtEscapedNamespace){ .data = path.namespace },
@@ -469,6 +472,55 @@ pub const BundleV2 = struct {
         debug("Parsed {d} files, producing {d} ASTs", .{ this.graph.input_files.len, this.graph.ast.len });
     }
 
+    pub fn scanForSecondaryPaths(this: *BundleV2) void {
+        if (!this.graph.has_any_secondary_paths) {
+
+            // Assert the boolean is accurate.
+            if (comptime Environment.ci_assert) {
+                for (this.graph.input_files.items(.secondary_path)) |secondary_path| {
+                    if (secondary_path.len > 0) {
+                        @panic("secondary_path is not empty");
+                    }
+                }
+            }
+
+            // No dual package hazard. Do nothing.
+            return;
+        }
+
+        // Now that all files have been scanned, look for packages that are imported
+        // both with "import" and "require". Rewrite any imports that reference the
+        // "module" package.json field to the "main" package.json field instead.
+        //
+        // This attempts to automatically avoid the "dual package hazard" where a
+        // package has both a CommonJS module version and an ECMAScript module
+        // version and exports a non-object in CommonJS (often a function). If we
+        // pick the "module" field and the package is imported with "require" then
+        // code expecting a function will crash.
+        const ast_import_records: []const ImportRecord.List = this.graph.ast.items(.import_records);
+        const targets: []const options.Target = this.graph.ast.items(.target);
+        const max_valid_source_index: Index = .init(this.graph.input_files.len);
+        const secondary_paths: []const []const u8 = this.graph.input_files.items(.secondary_path);
+
+        for (ast_import_records, targets) |*ast_import_record_list, target| {
+            const import_records: []ImportRecord = ast_import_record_list.slice();
+            const path_to_source_index_map = this.pathToSourceIndexMap(target);
+            for (import_records) |*import_record| {
+                const source_index = import_record.source_index.get();
+                if (source_index >= max_valid_source_index.get()) {
+                    continue;
+                }
+                const secondary_path = secondary_paths[source_index];
+                if (secondary_path.len > 0) {
+                    const secondary_source_index = path_to_source_index_map.get(secondary_path) orelse continue;
+                    import_record.source_index = Index.init(secondary_source_index);
+                    // Keep path in sync for determinism, diagnostics, and dev tooling.
+                    import_record.path = this.graph.input_files.items(.source)[secondary_source_index].path;
+                }
+            }
+        }
+    }
+
     /// This runs on the Bundle Thread.
     pub fn runResolver(
         this: *BundleV2,
@@ -477,7 +529,7 @@ pub const BundleV2 = struct {
     ) void {
         const transpiler = this.transpilerForTarget(target);
         var had_busted_dir_cache: bool = false;
-        var resolve_result = while (true) break transpiler.resolver.resolve(
+        var resolve_result: _resolver.Result = while (true) break transpiler.resolver.resolve(
             Fs.PathName.init(import_record.source_file).dirWithTrailingSlash(),
             import_record.specifier,
             import_record.kind,
@@ -594,19 +646,11 @@ pub const BundleV2 = struct {
         }
         path.assertPrettyIsValid();
 
-        var secondary_path_to_copy: ?Fs.Path = null;
-        if (resolve_result.path_pair.secondary) |*secondary| {
-            if (!secondary.is_disabled and
-                secondary != path and
-                !strings.eqlLong(secondary.text, path.text, true))
-            {
-                secondary_path_to_copy = bun.handleOom(secondary.dupeAlloc(this.allocator()));
-            }
-        }
-
-        const entry = bun.handleOom(this.pathToSourceIndexMap(target).getOrPut(this.allocator(), path.hashKey()));
+        path.assertFilePathIsAbsolute();
+        const entry = bun.handleOom(this.pathToSourceIndexMap(target).getOrPut(this.allocator(), path.text));
         if (!entry.found_existing) {
             path.* = bun.handleOom(this.pathWithPrettyInitialized(path.*, target));
+            entry.key_ptr.* = path.text;
             const loader: Loader = brk: {
                 const record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
                 if (record.loader) |out_loader| {
@@ -626,6 +670,18 @@ pub const BundleV2 = struct {
             ) catch |err| bun.handleOom(err);
             entry.value_ptr.* = idx;
             out_source_index = Index.init(idx);
+
+            if (resolve_result.path_pair.secondary) |*secondary| {
+                if (!secondary.is_disabled and
+                    secondary != path and
+                    !strings.eqlLong(secondary.text, path.text, true))
+                {
+                    const secondary_path_to_copy = secondary.dupeAlloc(this.allocator()) catch |err| bun.handleOom(err);
+                    this.graph.input_files.items(.secondary_path)[idx] = secondary_path_to_copy.text;
+                    // Ensure the determinism pass runs.
+                    this.graph.has_any_secondary_paths = true;
+                }
+            }
 
             // For non-javascript files, make all of these files share indices.
             // For example, it is silly to bundle index.css depended on by client+server twice.
@@ -656,7 +712,7 @@ pub const BundleV2 = struct {
         target: options.Target,
     ) !void {
         // TODO: plugins with non-file namespaces
-        const entry = try this.pathToSourceIndexMap(target).getOrPut(this.allocator(), bun.hash(path_slice));
+        const entry = try this.pathToSourceIndexMap(target).getOrPut(this.allocator(), path_slice);
         if (entry.found_existing) {
             return;
         }
@@ -673,6 +729,7 @@ pub const BundleV2 = struct {
 
         path = bun.handleOom(this.pathWithPrettyInitialized(path, target));
         path.assertPrettyIsValid();
+        entry.key_ptr.* = path.text;
         entry.value_ptr.* = source_index.get();
         bun.handleOom(this.graph.ast.append(this.allocator(), JSAst.empty));
 
@@ -712,7 +769,6 @@ pub const BundleV2 = struct {
 
     pub fn enqueueEntryItem(
         this: *BundleV2,
-        hash: ?u64,
         resolve: _resolver.Result,
         is_entry_point: bool,
         target: options.Target,
@@ -720,7 +776,8 @@ pub const BundleV2 = struct {
         var result = resolve;
         var path = result.path() orelse return null;
 
-        const entry = try this.pathToSourceIndexMap(target).getOrPut(this.allocator(), hash orelse path.hashKey());
+        path.assertFilePathIsAbsolute();
+        const entry = try this.pathToSourceIndexMap(target).getOrPut(this.allocator(), path.text);
         if (entry.found_existing) {
             return null;
         }
@@ -734,6 +791,7 @@ pub const BundleV2 = struct {
 
         path.* = bun.handleOom(this.pathWithPrettyInitialized(path.*, target));
         path.assertPrettyIsValid();
+        entry.key_ptr.* = path.text;
         entry.value_ptr.* = source_index.get();
         bun.handleOom(this.graph.ast.append(this.allocator(), JSAst.empty));
 
@@ -805,6 +863,7 @@ pub const BundleV2 = struct {
                 .heap = heap,
                 .kit_referenced_server_data = false,
                 .kit_referenced_client_data = false,
+                .build_graphs = .initFill(.{}),
             },
             .linker = .{
                 .loop = event_loop,
@@ -930,7 +989,7 @@ pub const BundleV2 = struct {
 
             // try this.graph.entry_points.append(allocator, Index.runtime);
             try this.graph.ast.append(this.allocator(), JSAst.empty);
-            try this.pathToSourceIndexMap(this.transpiler.options.target).put(this.allocator(), bun.hash("bun:wrap"), Index.runtime.get());
+            try this.pathToSourceIndexMap(this.transpiler.options.target).put(this.allocator(), "bun:wrap", Index.runtime.get());
             var runtime_parse_task = try this.allocator().create(ParseTask);
             runtime_parse_task.* = rt.parse_task;
             runtime_parse_task.ctx = this;
@@ -973,7 +1032,6 @@ pub const BundleV2 = struct {
                             continue;
 
                         _ = try this.enqueueEntryItem(
-                            null,
                             resolved,
                             true,
                             brk: {
@@ -1041,13 +1099,13 @@ pub const BundleV2 = struct {
                         };
 
                         if (flags.client) brk: {
-                            const source_index = try this.enqueueEntryItem(null, resolved, true, .browser) orelse break :brk;
+                            const source_index = try this.enqueueEntryItem(resolved, true, .browser) orelse break :brk;
                             if (flags.css) {
                                 try data.css_data.putNoClobber(this.allocator(), Index.init(source_index), .{ .imported_on_server = false });
                             }
                         }
-                        if (flags.server) _ = try this.enqueueEntryItem(null, resolved, true, this.transpiler.options.target);
-                        if (flags.ssr) _ = try this.enqueueEntryItem(null, resolved, true, .bake_server_components_ssr);
+                        if (flags.server) _ = try this.enqueueEntryItem(resolved, true, this.transpiler.options.target);
+                        if (flags.ssr) _ = try this.enqueueEntryItem(resolved, true, .bake_server_components_ssr);
                     }
                 },
                 .bake_production => {
@@ -1067,7 +1125,7 @@ pub const BundleV2 = struct {
                             continue;
 
                         // TODO: wrap client files so the exports arent preserved.
-                        _ = try this.enqueueEntryItem(null, resolved, true, target) orelse continue;
+                        _ = try this.enqueueEntryItem(resolved, true, target) orelse continue;
                     }
                 },
             }
@@ -1444,6 +1502,8 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
+        this.scanForSecondaryPaths();
+
         try this.processServerComponentManifestFiles();
 
         const reachable_files = try this.findReachableFiles();
@@ -1504,6 +1564,8 @@ pub const BundleV2 = struct {
         if (this.transpiler.log.hasErrors()) {
             return error.BuildFailed;
         }
+
+        this.scanForSecondaryPaths();
 
         try this.processServerComponentManifestFiles();
 
@@ -1791,6 +1853,11 @@ pub const BundleV2 = struct {
             transpiler.options.css_chunking = config.css_chunking;
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
+
+            if (transpiler.options.compile) {
+                // Emitting DCE annotations is nonsensical in --compile.
+                transpiler.options.emit_dce_annotations = false;
+            }
 
             transpiler.configureLinker();
             try transpiler.configureDefines();
@@ -2265,7 +2332,7 @@ pub const BundleV2 = struct {
                         const resolved = this.transpilerForTarget(target).resolveEntryPoint(resolve.import_record.specifier) catch {
                             return;
                         };
-                        const source_index = this.enqueueEntryItem(null, resolved, true, target) catch {
+                        const source_index = this.enqueueEntryItem(resolved, true, target) catch {
                             return;
                         };
 
@@ -2314,11 +2381,12 @@ pub const BundleV2 = struct {
                         path.namespace = result.namespace;
                     }
 
-                    const existing = this.pathToSourceIndexMap(resolve.import_record.original_target).getOrPut(this.allocator(), path.hashKey()) catch unreachable;
+                    const existing = this.pathToSourceIndexMap(resolve.import_record.original_target)
+                        .getOrPutPath(this.allocator(), &path) catch |err| bun.handleOom(err);
                     if (!existing.found_existing) {
                         this.free_list.appendSlice(&.{ result.namespace, result.path }) catch {};
-
                         path = bun.handleOom(this.pathWithPrettyInitialized(path, resolve.import_record.original_target));
+                        existing.key_ptr.* = path.text;
 
                         // We need to parse this
                         const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
@@ -2481,6 +2549,8 @@ pub const BundleV2 = struct {
         if (this.transpiler.log.errors > 0) {
             return error.BuildFailed;
         }
+
+        this.scanForSecondaryPaths();
 
         try this.processServerComponentManifestFiles();
 
@@ -2953,7 +3023,7 @@ pub const BundleV2 = struct {
             estimated_resolve_queue_count += @as(usize, @intFromBool(!(import_record.is_internal or import_record.is_unused or import_record.source_index.isValid())));
         }
         var resolve_queue = ResolveQueue.init(this.allocator());
-        bun.handleOom(resolve_queue.ensureTotalCapacity(estimated_resolve_queue_count));
+        bun.handleOom(resolve_queue.ensureTotalCapacity(@intCast(estimated_resolve_queue_count)));
 
         var last_error: ?anyerror = null;
 
@@ -3305,14 +3375,12 @@ pub const BundleV2 = struct {
                 }
             }
 
-            const hash_key = path.hashKey();
-
             const import_record_loader = import_record.loader orelse path.loader(&transpiler.options.loaders) orelse .file;
             import_record.loader = import_record_loader;
 
             const is_html_entrypoint = import_record_loader == .html and target.isServerSide() and this.transpiler.options.dev_server == null;
 
-            if (this.pathToSourceIndexMap(target).get(hash_key)) |id| {
+            if (this.pathToSourceIndexMap(target).get(path.text)) |id| {
                 if (this.transpiler.options.dev_server != null and loader != .html) {
                     import_record.path = this.graph.input_files.items(.source)[id].path;
                 } else {
@@ -3325,7 +3393,7 @@ pub const BundleV2 = struct {
                 import_record.kind = .html_manifest;
             }
 
-            const resolve_entry = bun.handleOom(resolve_queue.getOrPut(hash_key));
+            const resolve_entry = resolve_queue.getOrPut(path.text) catch |err| bun.handleOom(err);
             if (resolve_entry.found_existing) {
                 import_record.path = resolve_entry.value_ptr.*.path;
                 continue;
@@ -3333,21 +3401,11 @@ pub const BundleV2 = struct {
 
             path.* = bun.handleOom(this.pathWithPrettyInitialized(path.*, target));
 
-            var secondary_path_to_copy: ?Fs.Path = null;
-            if (resolve_result.path_pair.secondary) |*secondary| {
-                if (!secondary.is_disabled and
-                    secondary != path and
-                    !strings.eqlLong(secondary.text, path.text, true))
-                {
-                    secondary_path_to_copy = bun.handleOom(secondary.dupeAlloc(this.allocator()));
-                }
-            }
-
             import_record.path = path.*;
+            resolve_entry.key_ptr.* = path.text;
             debug("created ParseTask: {s}", .{path.text});
             const resolve_task = bun.handleOom(bun.default_allocator.create(ParseTask));
             resolve_task.* = ParseTask.init(&resolve_result, Index.invalid, this);
-            resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
 
             resolve_task.known_target = if (import_record.kind == .html_manifest)
                 .browser
@@ -3364,9 +3422,17 @@ pub const BundleV2 = struct {
             resolve_task.loader = import_record_loader;
             resolve_task.tree_shaking = transpiler.options.tree_shaking;
             resolve_entry.value_ptr.* = resolve_task;
+            if (resolve_result.path_pair.secondary) |*secondary| {
+                if (!secondary.is_disabled and
+                    secondary != path and
+                    !strings.eqlLong(secondary.text, path.text, true))
+                {
+                    resolve_task.secondary_path_for_commonjs_interop = secondary.dupeAlloc(this.allocator()) catch |err| bun.handleOom(err);
+                }
+            }
 
             if (is_html_entrypoint) {
-                this.generateServerHTMLModule(path, target, import_record, hash_key) catch unreachable;
+                this.generateServerHTMLModule(path, target, import_record, path.text) catch unreachable;
             }
         }
 
@@ -3387,7 +3453,7 @@ pub const BundleV2 = struct {
         return resolve_queue;
     }
 
-    fn generateServerHTMLModule(this: *BundleV2, path: *const Fs.Path, target: options.Target, import_record: *ImportRecord, hash_key: u64) !void {
+    fn generateServerHTMLModule(this: *BundleV2, path: *const Fs.Path, target: options.Target, import_record: *ImportRecord, path_text: []const u8) !void {
         // 1. Create the ast right here
         // 2. Create a separate "virutal" module that becomes the manifest later on.
         // 3. Add it to the graph
@@ -3434,12 +3500,12 @@ pub const BundleV2 = struct {
         try graph.ast.append(this.allocator(), ast_for_html_entrypoint);
 
         import_record.source_index = fake_input_file.source.index;
-        try this.pathToSourceIndexMap(target).put(this.allocator(), hash_key, fake_input_file.source.index.get());
+        try this.pathToSourceIndexMap(target).put(this.allocator(), path_text, fake_input_file.source.index.get());
         try graph.html_imports.server_source_indices.push(this.allocator(), fake_input_file.source.index.get());
         this.ensureClientTranspiler();
     }
 
-    const ResolveQueue = std.AutoArrayHashMap(u64, *ParseTask);
+    const ResolveQueue = bun.StringHashMap(*ParseTask);
 
     pub fn onNotifyDefer(this: *BundleV2) void {
         this.thread_lock.assertLocked();
@@ -3562,32 +3628,34 @@ pub const BundleV2 = struct {
                 const path_to_source_index_map = this.pathToSourceIndexMap(result.ast.target);
                 const original_target = result.ast.target;
                 while (iter.next()) |entry| {
-                    const hash = entry.key_ptr.*;
                     const value: *ParseTask = entry.value_ptr.*;
-
                     const loader = value.loader orelse value.path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
-
                     const is_html_entrypoint = loader == .html and original_target.isServerSide() and this.transpiler.options.dev_server == null;
+                    const map: *PathToSourceIndexMap = if (is_html_entrypoint) this.pathToSourceIndexMap(.browser) else path_to_source_index_map;
+                    const existing = map.getOrPut(this.allocator(), entry.key_ptr.*) catch unreachable;
 
-                    const map = if (is_html_entrypoint) this.pathToSourceIndexMap(.browser) else path_to_source_index_map;
-                    var existing = map.getOrPut(this.allocator(), hash) catch unreachable;
-
-                    // If the same file is imported and required, and those point to different files
-                    // Automatically rewrite it to the secondary one
-                    if (value.secondary_path_for_commonjs_interop) |secondary_path| {
-                        const secondary_hash = secondary_path.hashKey();
-                        if (map.get(secondary_hash)) |secondary| {
-                            existing.found_existing = true;
-                            existing.value_ptr.* = secondary;
-                        }
-                    }
+                    // Originally, we attempted to avoid the "dual package
+                    // hazard" right here by checking if pathToSourceIndexMap
+                    // already contained the secondary_path for the ParseTask.
+                    // That leads to a race condition where whichever parse task
+                    // completes first ends up being used in the bundle. So we
+                    // added `scanForSecondaryPaths` before `findReachableFiles`
+                    // to prevent that.
+                    //
+                    // It would be nice, in theory, to find a way to bring that
+                    // back because it means we can skip parsing the files we
+                    // don't end up using.
+                    //
 
                     if (!existing.found_existing) {
                         var new_task: *ParseTask = value;
                         var new_input_file = Graph.InputFile{
                             .source = Logger.Source.initEmptyFile(new_task.path.text),
                             .side_effects = value.side_effects,
+                            .secondary_path = if (value.secondary_path_for_commonjs_interop) |*secondary_path| secondary_path.text else "",
                         };
+
+                        graph.has_any_secondary_paths = graph.has_any_secondary_paths or new_input_file.secondary_path.len > 0;
 
                         new_input_file.source.index = Index.source(graph.input_files.len);
                         new_input_file.source.path = new_task.path;
@@ -3656,7 +3724,7 @@ pub const BundleV2 = struct {
                 }
 
                 for (import_records.slice(), 0..) |*record, i| {
-                    if (path_to_source_index_map.get(record.path.hashKey())) |source_index| {
+                    if (path_to_source_index_map.getPath(&record.path)) |source_index| {
                         if (save_import_record_source_index or input_file_loaders[source_index] == .css)
                             record.source_index.value = source_index;
 
@@ -3664,7 +3732,7 @@ pub const BundleV2 = struct {
                             if (compare == @as(u32, @truncate(i))) {
                                 path_to_source_index_map.put(
                                     this.allocator(),
-                                    result.source.path.hashKey(),
+                                    result.source.path.text,
                                     source_index,
                                 ) catch unreachable;
                             }
@@ -3720,7 +3788,7 @@ pub const BundleV2 = struct {
 
                     graph.pathToSourceIndexMap(result.ast.target).put(
                         this.allocator(),
-                        result.source.path.hashKey(),
+                        result.source.path.text,
                         reference_source_index,
                     ) catch |err| bun.handleOom(err);
 
@@ -4448,7 +4516,6 @@ pub const Graph = @import("./Graph.zig");
 const string = []const u8;
 
 const options = @import("../options.zig");
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

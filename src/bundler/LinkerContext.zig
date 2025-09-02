@@ -304,7 +304,7 @@ pub const LinkerContext = struct {
 
             for (server_source_indices.slice()) |html_import| {
                 const source = &input_files[html_import];
-                const source_index = map.get(source.path.hashKey()) orelse {
+                const source_index = map.get(source.path.text) orelse {
                     @panic("Assertion failed: HTML import file not found in pathToSourceIndexMap");
                 };
 

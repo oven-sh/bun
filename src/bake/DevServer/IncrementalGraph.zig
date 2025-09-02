@@ -1496,9 +1496,8 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
 
             // Additionally, clear the cached entry of the file from the path to
             // source index map.
-            const hash = bun.hash(abs_path);
             for (&bv2.graph.build_graphs.values) |*map| {
-                _ = map.remove(hash);
+                _ = map.remove(abs_path);
             }
         }
 

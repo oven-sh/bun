@@ -183,6 +183,24 @@ static const WTF::String toStringCopy(ZigString str)
     }
 }
 
+static void appendToBuilder(ZigString str, WTF::StringBuilder& builder)
+{
+    if (str.len == 0 || str.ptr == nullptr) {
+        return;
+    }
+    if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
+        WTF::String converted = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { untag(str.ptr), str.len });
+        builder.append(converted);
+        return;
+    }
+    if (isTaggedUTF16Ptr(str.ptr)) {
+        builder.append({ reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len });
+        return;
+    }
+
+    builder.append({ untag(str.ptr), str.len });
+}
+
 static WTF::String toStringNotConst(ZigString str) { return toString(str); }
 
 static const JSC::JSString* toJSString(ZigString str, JSC::JSGlobalObject* global)

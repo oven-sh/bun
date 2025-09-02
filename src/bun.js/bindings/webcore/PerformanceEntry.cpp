@@ -88,7 +88,7 @@ std::optional<PerformanceEntry::Type> PerformanceEntry::parseEntryTypeString(con
 
     if (entryType == "resource"_s)
         return std::optional<Type>(Type::Resource);
-    
+
     if (entryType == "function"_s)
         return std::optional<Type>(Type::Function);
 

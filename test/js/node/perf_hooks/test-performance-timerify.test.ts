@@ -1,9 +1,9 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { performance, PerformanceObserver } from "perf_hooks";
 
 describe("performance.timerify", () => {
-  test("should wrap a function and measure its performance", (done) => {
-    const obs = new PerformanceObserver((list) => {
+  test("should wrap a function and measure its performance", done => {
+    const obs = new PerformanceObserver(list => {
       const entries = list.getEntries();
       expect(entries.length).toBe(1);
       const entry = entries[0];
@@ -34,7 +34,7 @@ describe("performance.timerify", () => {
     expect(timerified()).toBe(42);
   });
 
-  test("should handle constructor calls", (done) => {
+  test("should handle constructor calls", done => {
     class TestClass {
       value: number;
       constructor(val: number) {
@@ -42,7 +42,7 @@ describe("performance.timerify", () => {
       }
     }
 
-    const obs = new PerformanceObserver((list) => {
+    const obs = new PerformanceObserver(list => {
       const entries = list.getEntries();
       expect(entries.length).toBe(1);
       const entry = entries[0];
@@ -60,8 +60,8 @@ describe("performance.timerify", () => {
     expect(instance.value).toBe(123);
   });
 
-  test("should capture function arguments in entry", (done) => {
-    const obs = new PerformanceObserver((list) => {
+  test("should capture function arguments in entry", done => {
+    const obs = new PerformanceObserver(list => {
       const entries = list.getEntries();
       const entry = entries[0];
       expect(entry[0]).toBe(1);
@@ -89,14 +89,14 @@ describe("performance.timerify", () => {
       throw new Error("test error");
     }
     const timerified = performance.timerify(throwsError);
-    
+
     expect(() => timerified()).toThrow("test error");
     obs.disconnect();
   });
 
   test("should handle async functions", async () => {
     let observerCalled = false;
-    const obs = new PerformanceObserver((list) => {
+    const obs = new PerformanceObserver(list => {
       const entries = list.getEntries();
       expect(entries.length).toBe(1);
       const entry = entries[0];
@@ -113,11 +113,11 @@ describe("performance.timerify", () => {
       await new Promise(resolve => setTimeout(resolve, 50));
       return "done";
     }
-    
+
     const timerified = performance.timerify(asyncFunc);
     const result = await timerified();
     expect(result).toBe("done");
-    
+
     // Wait a bit for the observer to be called
     await new Promise(resolve => setTimeout(resolve, 10));
     expect(observerCalled).toBe(true);
@@ -128,13 +128,13 @@ describe("performance.timerify", () => {
       return a;
     }
     const timerified = performance.timerify(original);
-    
+
     expect(timerified.length).toBe(original.length);
     expect(timerified.name).toBe("timerified original");
   });
 
   test("should handle anonymous functions", () => {
-    const timerified = performance.timerify(function() {
+    const timerified = performance.timerify(function () {
       return 1;
     });
     expect(timerified.name).toBe("timerified anonymous");
@@ -146,7 +146,7 @@ describe("performance.timerify", () => {
     const timerified1 = performance.timerify(func);
     const timerified2 = performance.timerify(func);
     const timerified3 = performance.timerify(timerified1);
-    
+
     expect(timerified1).not.toBe(timerified2);
     expect(timerified1).not.toBe(timerified3);
     expect(timerified2).not.toBe(timerified3);
@@ -159,41 +159,41 @@ describe("performance.timerify", () => {
       expect(() => performance.timerify(input as any)).toThrow(
         expect.objectContaining({
           code: "ERR_INVALID_ARG_TYPE",
-        })
+        }),
       );
     }
   });
 
   test("should validate options argument", () => {
     function func() {}
-    
+
     // Should accept empty options
     expect(() => performance.timerify(func, {})).not.toThrow();
-    
+
     // Should accept undefined options
     expect(() => performance.timerify(func)).not.toThrow();
-    
+
     // Should reject non-object options
     expect(() => performance.timerify(func, "invalid" as any)).toThrow(
       expect.objectContaining({
         code: "ERR_INVALID_ARG_TYPE",
-      })
+      }),
     );
   });
 
   test("should validate histogram option", () => {
     function func() {}
-    
+
     // Invalid histogram types
     const invalidHistograms = [1, "", {}, [], false];
     for (const histogram of invalidHistograms) {
       expect(() => performance.timerify(func, { histogram })).toThrow(
         expect.objectContaining({
           code: "ERR_INVALID_ARG_TYPE",
-        })
+        }),
       );
     }
-    
+
     // Valid histogram (with record method)
     const validHistogram = { record: () => {} };
     expect(() => performance.timerify(func, { histogram: validHistogram })).not.toThrow();
@@ -204,23 +204,23 @@ describe("performance.timerify", () => {
       value: 42,
       getValue() {
         return this.value;
-      }
+      },
     };
-    
+
     obj.getValue = performance.timerify(obj.getValue);
     expect(obj.getValue()).toBe(42);
   });
 
-  test("should work with class methods", (done) => {
+  test("should work with class methods", done => {
     class MyClass {
       value = 100;
-      
+
       getValue() {
         return this.value;
       }
     }
-    
-    const obs = new PerformanceObserver((list) => {
+
+    const obs = new PerformanceObserver(list => {
       const entries = list.getEntries();
       expect(entries.length).toBe(1);
       expect(entries[0].name).toBe("getValue");
@@ -228,7 +228,7 @@ describe("performance.timerify", () => {
       done();
     });
     obs.observe({ entryTypes: ["function"] });
-    
+
     const instance = new MyClass();
     instance.getValue = performance.timerify(instance.getValue);
     expect(instance.getValue()).toBe(100);
@@ -236,7 +236,7 @@ describe("performance.timerify", () => {
 
   test("should handle functions that return promises", async () => {
     let observerCalled = false;
-    const obs = new PerformanceObserver((list) => {
+    const obs = new PerformanceObserver(list => {
       const entries = list.getEntries();
       expect(entries.length).toBe(1);
       expect(entries[0].name).toBe("returnsPromise");
@@ -244,15 +244,15 @@ describe("performance.timerify", () => {
       obs.disconnect();
     });
     obs.observe({ entryTypes: ["function"] });
-    
+
     function returnsPromise() {
       return Promise.resolve(123);
     }
-    
+
     const timerified = performance.timerify(returnsPromise);
     const result = await timerified();
     expect(result).toBe(123);
-    
+
     // Wait for observer
     await new Promise(resolve => setTimeout(resolve, 10));
     expect(observerCalled).toBe(true);
@@ -261,13 +261,13 @@ describe("performance.timerify", () => {
   test("should not call constructor as regular function", () => {
     class C {}
     const wrapped = performance.timerify(C);
-    
+
     expect(() => wrapped()).toThrow(TypeError);
     expect(new wrapped()).toBeInstanceOf(C);
   });
 
-  test("entry should have toJSON method", (done) => {
-    const obs = new PerformanceObserver((list) => {
+  test("entry should have toJSON method", done => {
+    const obs = new PerformanceObserver(list => {
       const entry = list.getEntries()[0];
       const json = entry.toJSON();
       expect(json).toHaveProperty("name", "func");
@@ -280,7 +280,7 @@ describe("performance.timerify", () => {
       done();
     });
     obs.observe({ entryTypes: ["function"] });
-    
+
     function func(x: number) {}
     const timerified = performance.timerify(func);
     timerified(42);

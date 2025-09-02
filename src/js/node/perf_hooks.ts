@@ -124,7 +124,7 @@ const functionObservers = new Set();
 
 function processComplete(name: string, start: number, args: any[], histogram?: any) {
   const duration = performance.now() - start;
-  
+
   // Create performance entry matching Node.js structure
   const entry = {
     name,
@@ -142,12 +142,12 @@ function processComplete(name: string, start: number, args: any[], histogram?: a
       };
     },
   };
-  
+
   // Add function arguments as indexed properties
   for (let n = 0; n < args.length; n++) {
     entry[n] = args[n];
   }
-  
+
   // Notify observers manually since we're creating entries from JS
   if (functionObservers.size > 0) {
     queueMicrotask(() => {
@@ -155,9 +155,15 @@ function processComplete(name: string, start: number, args: any[], histogram?: a
         if (observer && observer._callback) {
           try {
             const list = {
-              getEntries() { return [entry]; },
-              getEntriesByType(type: string) { return type === "function" ? [entry] : []; },
-              getEntriesByName(name: string) { return entry.name === name ? [entry] : []; },
+              getEntries() {
+                return [entry];
+              },
+              getEntriesByType(type: string) {
+                return type === "function" ? [entry] : [];
+              },
+              getEntriesByName(name: string) {
+                return entry.name === name ? [entry] : [];
+              },
             };
             observer._callback(list, observer);
           } catch (err) {
@@ -174,14 +180,14 @@ function timerify(fn: Function, options: { histogram?: any } = {}) {
   if (typeof fn !== "function") {
     throw $ERR_INVALID_ARG_TYPE("fn", "Function", fn);
   }
-  
+
   // Validate options
   if (options !== null && typeof options !== "object") {
     throw $ERR_INVALID_ARG_TYPE("options", "Object", options);
   }
-  
+
   const { histogram } = options;
-  
+
   // We're skipping histogram validation since we're not implementing that part
   // But keep the structure for compatibility
   if (histogram !== undefined) {
@@ -190,12 +196,12 @@ function timerify(fn: Function, options: { histogram?: any } = {}) {
       throw $ERR_INVALID_ARG_TYPE("options.histogram", "RecordableHistogram", histogram);
     }
   }
-  
+
   // Create the timerified function
   function timerified(this: any, ...args: any[]) {
     const isConstructorCall = new.target !== undefined;
     const start = performance.now();
-    
+
     let result;
     if (isConstructorCall) {
       // Use Reflect.construct for constructor calls
@@ -205,7 +211,7 @@ function timerify(fn: Function, options: { histogram?: any } = {}) {
       // Use $apply for regular function calls (Bun's internal apply)
       result = fn.$apply(this, args);
     }
-    
+
     // Handle async functions (promises)
     if (!isConstructorCall && result && typeof result.finally === "function") {
       // For promises, attach the processComplete to finally
@@ -213,12 +219,12 @@ function timerify(fn: Function, options: { histogram?: any } = {}) {
         processComplete(fn.name || "anonymous", start, args, histogram);
       });
     }
-    
+
     // For sync functions, process immediately
     processComplete(fn.name || "anonymous", start, args, histogram);
     return result;
   }
-  
+
   // Define properties on the timerified function to match the original
   Object.defineProperties(timerified, {
     length: {
@@ -232,12 +238,12 @@ function timerify(fn: Function, options: { histogram?: any } = {}) {
       value: `timerified ${fn.name || "anonymous"}`,
     },
   });
-  
+
   // Copy prototype for constructor functions
   if (fn.prototype) {
     timerified.prototype = fn.prototype;
   }
-  
+
   return timerified;
 }
 
@@ -245,19 +251,19 @@ function timerify(fn: Function, options: { histogram?: any } = {}) {
 const OriginalPerformanceObserver = PerformanceObserver;
 class WrappedPerformanceObserver extends OriginalPerformanceObserver {
   _callback: Function;
-  
+
   constructor(callback: Function) {
     super(callback);
     this._callback = callback;
   }
-  
+
   observe(options: any) {
     if ((options.entryTypes && options.entryTypes.includes("function")) || options.type === "function") {
       functionObservers.add(this);
     }
     super.observe(options);
   }
-  
+
   disconnect() {
     functionObservers.delete(this);
     super.disconnect();

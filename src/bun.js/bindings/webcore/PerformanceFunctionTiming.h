@@ -43,7 +43,7 @@ public:
     static Ref<PerformanceFunctionTiming> create(const String& name, double startTime, double endTime, RefPtr<SerializedScriptValue>&& detail);
 
     JSC::JSValue detail(JSC::JSGlobalObject&);
-    
+
     size_t memoryCost() const;
 
 private:

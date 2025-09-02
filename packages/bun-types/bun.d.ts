@@ -3243,15 +3243,15 @@ declare module "bun" {
     /**
      * An object containing the parsed query string parameters from the URL.
      * Uses Rails-style parameter parsing for nested objects and arrays.
-     * 
+     *
      * @example
      * ```ts
      * // URL: /api/users?name=john&age=30
      * req.query // { name: "john", age: "30" }
-     * 
+     *
      * // URL: /api/users?user[name]=john&user[email]=john@example.com
      * req.query // { user: { name: "john", email: "john@example.com" } }
-     * 
+     *
      * // URL: /api/users?ids[]=1&ids[]=2&ids[]=3
      * req.query // { ids: ["1", "2", "3"] }
      * ```

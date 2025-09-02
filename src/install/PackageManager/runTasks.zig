@@ -246,7 +246,7 @@ pub fn runTasks(
                             logger.Loc.Empty,
                             manager.allocator,
                             "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
-                            .{ metadata.url, response.status_code },
+                            .{ if (metadata.url.len > 0) metadata.url else task.url_buf, response.status_code },
                         ) catch |err| bun.handleOom(err);
                     } else {
                         manager.log.addWarningFmt(
@@ -254,7 +254,7 @@ pub fn runTasks(
                             logger.Loc.Empty,
                             manager.allocator,
                             "<r><yellow><b>GET<r><yellow> {s}<d> - {d}<r>",
-                            .{ metadata.url, response.status_code },
+                            .{ if (metadata.url.len > 0) metadata.url else task.url_buf, response.status_code },
                         ) catch |err| bun.handleOom(err);
                     }
                     if (manager.subcommand != .remove) {
@@ -448,7 +448,7 @@ pub fn runTasks(
                             manager.allocator,
                             "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
                             .{
-                                metadata.url,
+                                if (metadata.url.len > 0) metadata.url else task.url_buf,
                                 response.status_code,
                             },
                         ) catch |err| bun.handleOom(err);
@@ -459,7 +459,7 @@ pub fn runTasks(
                             manager.allocator,
                             "<r><yellow><b>GET<r><yellow> {s}<d> - {d}<r>",
                             .{
-                                metadata.url,
+                                if (metadata.url.len > 0) metadata.url else task.url_buf,
                                 response.status_code,
                             },
                         ) catch |err| bun.handleOom(err);

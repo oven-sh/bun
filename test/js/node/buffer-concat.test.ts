@@ -22,16 +22,16 @@ test("Buffer.concat with totalLength parameter", () => {
   const buf1 = Buffer.from("hello");
   const buf2 = Buffer.from(" ");
   const buf3 = Buffer.from("world");
-  
+
   // Test with exact length
   const result1 = Buffer.concat([buf1, buf2, buf3], 11);
   expect(result1.toString()).toBe("hello world");
-  
+
   // Test with larger length (should pad with zeros)
   const result2 = Buffer.concat([buf1, buf2, buf3], 15);
   expect(result2.length).toBe(15);
   expect(result2.toString("utf8", 0, 11)).toBe("hello world");
-  
+
   // Test with smaller length (should truncate)
   const result3 = Buffer.concat([buf1, buf2, buf3], 5);
   expect(result3.toString()).toBe("hello");

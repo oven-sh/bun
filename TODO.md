@@ -246,7 +246,7 @@ Exited with code [1]
   - When the timer triggers, find any tests which are past their end time. Mark them as timed out.
   - After this, start the next timer with the new first incomplete test timeout time
 
-- [ ] Add expect counts back
+- [x] Add expect counts back
 - [ ] add a test for this scenerio
   ```js
   test("more functions called after delayed done", done => {
@@ -264,6 +264,7 @@ Exited with code [1]
   - When the timer triggers, find any tests which are past their end time. Mark them as timed out.
     - should we advance the sequence in this case or end it completely? not sure. see what vitest/jest do when beforeAll/afterAll exceed the test timeout
   - After this, start the next timer with the new first incomplete test timeout time
+- [ ] make sure junit works
 - [ ] support having both a done callback and a promise result
 - [ ] support expect counter
 - [x] finalize describe call order. ideally `A[B, C], D[E, F[G]]` will run in normal order rather than `A, D, B, C, E, F, G`

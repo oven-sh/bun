@@ -613,7 +613,7 @@ pub const CommandLineReporter = struct {
         const assertions = sequence.expect_call_count;
         const line_number = test_entry.line_no;
 
-        const file = buntest.getFile();
+        const file: []const u8 = if (bun.jsc.Jest.Jest.runner) |runner| runner.files.get(buntest.file_id).source.path.text else "";
 
         while (parent_) |scope| {
             scopes_stack.append(scope) catch break;

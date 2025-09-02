@@ -39,8 +39,17 @@ pub const Expect = struct {
         return runner.describe2Root.active_file orelse return null;
     }
 
-    pub fn incrementExpectCallCounter(_: *Expect) void {
-        active_test_expectation_counter.actual += 1;
+    pub fn incrementExpectCallCounter(this: *Expect) void {
+        const parent = this.parent orelse return; // not in bun:test
+        if (parent.phase.sequence(parent.buntest)) |sequence| {
+            // found active sequence
+            sequence.expect_call_count +|= 1;
+        } else {
+            // in concurrent group or otherwise failed to get the sequence; increment the expect call count in the reporter directly
+            if (parent.buntest.reporter) |reporter| {
+                reporter.summary().expectations +|= 1;
+            }
+        }
     }
 
     pub const Flags = packed struct(u8) {

@@ -392,13 +392,6 @@ pub const BunTestFile = struct {
         });
     }
 
-    pub fn getFile(_: *BunTestFile) []const u8 {
-        return "/TODO/"; // TODO: store the file name (each file has its own BunTest instance)
-    }
-    pub fn getReporter(_: *BunTestFile) ?test_command.FileReporter {
-        return null; // TODO: get the reporter
-    }
-
     export const Bun__TestScope__Describe2__bunTestThen = jsc.toJSHostFn(bunTestThen);
     export const Bun__TestScope__Describe2__bunTestCatch = jsc.toJSHostFn(bunTestCatch);
     fn bunTestThenOrCatch(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, is_catch: bool) bun.JSError!void {

@@ -16,6 +16,9 @@ export const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeI
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 
+// Parse query parameters into Rails-style nested objects
+export const parseQueryParams = $newCppFunction("BunRequestParams.cpp", "Bun__parseQueryParams", 1);
+
 export const patchInternals = {
   parse: $newZigFunction("patch.zig", "TestingAPIs.parse", 1),
   apply: $newZigFunction("patch.zig", "TestingAPIs.apply", 2),

@@ -13,17 +13,20 @@
 #include "CookieMap.h"
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
+#include "BunRequestParams.h"
 
 namespace Bun {
 
 static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetParams);
 static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetCookies);
+static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetQuery);
 
 static JSC_DECLARE_HOST_FUNCTION(jsJSBunRequestClone);
 
 static const HashTableValue JSBunRequestPrototypeValues[] = {
     { "params"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsJSBunRequestGetParams, nullptr } },
     { "cookies"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsJSBunRequestGetCookies, nullptr } },
+    { "query"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsJSBunRequestGetQuery, nullptr } },
     { "clone"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsJSBunRequestClone, 1 } }
 };
 
@@ -245,6 +248,31 @@ JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetCookies, (JSC::JSGlobalObject * global
     }
 
     return JSValue::encode(cookies);
+}
+
+
+JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetQuery, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    
+    JSBunRequest* request = jsDynamicCast<JSBunRequest*>(JSValue::decode(thisValue));
+    if (!request)
+        return JSValue::encode(jsUndefined());
+    
+    // Get the URL from the request
+    JSValue urlValue = request->get(globalObject, Identifier::fromString(vm, "url"_s));
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    
+    if (!urlValue.isString())
+        return JSValue::encode(jsUndefined());
+    
+    String urlString = urlValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    
+    // Use the extracted parsing function
+    JSObject* queryObject = parseURLQueryParams(globalObject, urlString);
+    return JSValue::encode(queryObject);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsJSBunRequestClone, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

@@ -23,6 +23,7 @@ src/bun.js/bindings/BunJSCEventLoop.cpp
 src/bun.js/bindings/BunObject.cpp
 src/bun.js/bindings/BunPlugin.cpp
 src/bun.js/bindings/BunProcess.cpp
+src/bun.js/bindings/BunRequestParams.cpp
 src/bun.js/bindings/BunString.cpp
 src/bun.js/bindings/BunWorkerGlobalScope.cpp
 src/bun.js/bindings/c-bindings.cpp

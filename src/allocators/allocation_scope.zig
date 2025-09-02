@@ -267,7 +267,7 @@ const State = struct {
     fn setPointerExtra(self: *Self, ptr: *anyopaque, extra: Extra) void {
         const locked = self.lock();
         defer self.unlock();
-        const allocation = locked.history.allocations.getPtr(ptr) orelse
+        const allocation = locked.history.allocations.getPtr(@ptrCast(ptr)) orelse
             @panic("Pointer not owned by allocation scope");
         allocation.extra = extra;
     }

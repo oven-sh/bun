@@ -239,6 +239,14 @@ Exited with code [1]
 
 # Complete before merge:
 
+- [ ] Add timeouts back
+  - When we begin executing a test group, mark the end_before times of each item in the group
+  - Start a timer for the min of these times
+  - When a test group ends, cancel the timer
+  - When the timer triggers, find any tests which are past their end time. Mark them as timed out.
+  - After this, start the next timer with the new first incomplete test timeout time
+
+- [ ] Add expect counts back
 - [ ] add a test for this scenerio
   ```js
   test("more functions called after delayed done", done => {

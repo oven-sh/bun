@@ -77,10 +77,18 @@ const LockedState = struct {
     }
 
     fn free(self: Self, buf: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
-        const result = self.trackFree(buf, ret_addr);
-        self.parent.rawFree(buf, alignment, ret_addr);
-        // If asan did not catch the free, panic now.
-        result catch std.debug.panic("Invalid free: {*}", .{buf});
+        const success = if (self.trackFree(buf, ret_addr))
+            true
+        else |err| switch (err) {
+            error.NotAllocated => false,
+        };
+        if (success or bun.Environment.enable_asan) {
+            self.parent.rawFree(buf, alignment, ret_addr);
+        }
+        if (!success) {
+            // If asan did not catch the free, panic now.
+            std.debug.panic("Invalid free: {*}", .{buf});
+        }
     }
 
     fn assertOwned(self: Self, ptr: anytype) void {

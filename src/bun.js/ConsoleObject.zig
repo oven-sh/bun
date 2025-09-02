@@ -2054,7 +2054,7 @@ pub const Formatter = struct {
         //   `return try this.printAs`
         //
         // Then we can get a spurious `[Circular]` due to the value already being present in the map.
-        var @"Remove from map to prevent [Circular]" = false;
+        var remove_before_recurse = false;
 
         var writer = WrappedWriter(Writer){ .ctx = writer_, .estimated_line_length = &this.estimated_line_length };
         defer {
@@ -2082,13 +2082,15 @@ pub const Formatter = struct {
                 writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", enable_ansi_colors));
                 return;
             } else {
-                @"Remove from map to prevent [Circular]" = true;
+                remove_before_recurse = true;
             }
         }
 
         defer {
             if (comptime Format.canHaveCircularReferences()) {
-                _ = this.map.remove(value);
+                if (remove_before_recurse) {
+                    _ = this.map.remove(value);
+                }
             }
         }
 
@@ -2625,22 +2627,25 @@ pub const Formatter = struct {
                 } else if (try JestPrettyFormat.printAsymmetricMatcher(this, Format, &writer, writer_, name_buf, value, enable_ansi_colors)) {
                     return;
                 } else if (jsType != .DOMWrapper) {
-                    if (@"Remove from map to prevent [Circular]") {
-                        @"Remove from map to prevent [Circular]" = false;
+                    if (remove_before_recurse) {
+                        remove_before_recurse = false;
                         _ = this.map.remove(value);
                     }
 
                     if (value.isCallable()) {
+                        remove_before_recurse = true;
                         return try this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors);
                     }
 
+                    remove_before_recurse = true;
                     return try this.printAs(.Object, Writer, writer_, value, jsType, enable_ansi_colors);
                 }
-                if (@"Remove from map to prevent [Circular]") {
-                    @"Remove from map to prevent [Circular]" = false;
+                if (remove_before_recurse) {
+                    remove_before_recurse = false;
                     _ = this.map.remove(value);
                 }
 
+                remove_before_recurse = true;
                 return try this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
             },
             .NativeCode => {
@@ -2905,11 +2910,12 @@ pub const Formatter = struct {
                 const event_type = switch (try EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
                     .MessageEvent, .ErrorEvent => |evt| evt,
                     else => {
-                        if (@"Remove from map to prevent [Circular]") {
-                            @"Remove from map to prevent [Circular]" = false;
+                        if (remove_before_recurse) {
+                            remove_before_recurse = false;
                             _ = this.map.remove(value);
                         }
 
+                        remove_before_recurse = true;
                         return try this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
                     },
                 };

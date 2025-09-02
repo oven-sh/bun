@@ -312,12 +312,12 @@ JSC_DEFINE_HOST_FUNCTION(jsBunParseQueryParams, (JSC::JSGlobalObject * globalObj
 
     JSObject* result = parseQueryParams(globalObject, queryString);
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    
+
     // parseQueryParams might return nullptr if an exception occurred
     if (!result) {
         return JSValue::encode(jsUndefined());
     }
-    
+
     return JSValue::encode(result);
 }
 

@@ -42,8 +42,8 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         }
 
         MarkedArgumentBuffer args;
-        if (auto* butterfly = jsDynamicCast<JSImmutableButterfly*>(argumentsValue)) {
-            //  If it's a JSImmutableButterfly, there is more than 1 argument.
+        if (auto* butterfly = jsDynamicCast<JSCellButterfly*>(argumentsValue)) {
+            //  If it's a JSCellButterfly, there is more than 1 argument.
             unsigned length = butterfly->length();
             args.ensureCapacity(length);
             for (unsigned i = 0; i < length; ++i) {

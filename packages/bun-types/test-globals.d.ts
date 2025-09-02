@@ -3,7 +3,7 @@
 // This file gets loaded by developers including the following triple slash directive:
 //
 // ```ts
-// /// <reference types="bun/test-globals" />
+// /// <reference types="bun-types/test-globals" />
 // ```
 
 declare var test: typeof import("bun:test").test;
@@ -19,3 +19,6 @@ declare var setDefaultTimeout: typeof import("bun:test").setDefaultTimeout;
 declare var mock: typeof import("bun:test").mock;
 declare var spyOn: typeof import("bun:test").spyOn;
 declare var jest: typeof import("bun:test").jest;
+declare var xit: typeof import("bun:test").xit;
+declare var xtest: typeof import("bun:test").xtest;
+declare var xdescribe: typeof import("bun:test").xdescribe;

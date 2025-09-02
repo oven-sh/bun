@@ -211,7 +211,7 @@ declare module "bun" {
      * try {
      *   const result = await $`exit 1`;
      * } catch (error) {
-     *   if (error instanceof ShellError) {
+     *   if (error instanceof $.ShellError) {
      *     console.log(error.exitCode); // 1
      *   }
      * }

@@ -159,7 +159,7 @@ pub const TransitionHandler = struct {
                 dest.append(
                     context.allocator,
                     .{ .unparsed = x.getPrefixed(context.allocator, context.targets, Feature.transition) },
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             } else return false,
             else => return false,
         }
@@ -244,7 +244,7 @@ pub const TransitionHandler = struct {
                     dest.append(
                         context.allocator,
                         Property{ .transition = .{ transitions.deepClone(context.allocator), intersection } },
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                 }
 
                 bun.bits.remove(VendorPrefix, property_prefixes, intersection);
@@ -267,7 +267,7 @@ pub const TransitionHandler = struct {
                     );
                     rtl_properties = null;
                 } else {
-                    dest.append(context.allocator, Property{ .@"transition-property" = .{ properties, prefix } }) catch bun.outOfMemory();
+                    bun.handleOom(dest.append(context.allocator, Property{ .@"transition-property" = .{ properties, prefix } }));
                 }
             }
         }
@@ -277,7 +277,7 @@ pub const TransitionHandler = struct {
             const prefix: VendorPrefix = _durations.?[1];
             _durations = null;
             if (!prefix.isEmpty()) {
-                dest.append(context.allocator, Property{ .@"transition-duration" = .{ durations, prefix } }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(context.allocator, Property{ .@"transition-duration" = .{ durations, prefix } }));
             }
         }
 
@@ -286,7 +286,7 @@ pub const TransitionHandler = struct {
             const prefix: VendorPrefix = _delays.?[1];
             _delays = null;
             if (!prefix.isEmpty()) {
-                dest.append(context.allocator, Property{ .@"transition-delay" = .{ delays, prefix } }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(context.allocator, Property{ .@"transition-delay" = .{ delays, prefix } }));
             }
         }
 
@@ -295,7 +295,7 @@ pub const TransitionHandler = struct {
             const prefix: VendorPrefix = _timing_functions.?[1];
             _timing_functions = null;
             if (!prefix.isEmpty()) {
-                dest.append(context.allocator, Property{ .@"transition-timing-function" = .{ timing_functions, prefix } }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(context.allocator, Property{ .@"transition-timing-function" = .{ timing_functions, prefix } }));
             }
         }
 

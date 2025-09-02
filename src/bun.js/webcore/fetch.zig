@@ -642,7 +642,7 @@ pub const FetchTasklet = struct {
                 prom.reject(self.globalObject, res);
             }
         };
-        var holder = bun.default_allocator.create(Holder) catch bun.outOfMemory();
+        var holder = bun.handleOom(bun.default_allocator.create(Holder));
         holder.* = .{
             .held = result,
             // we need the promise to be alive until the task is done
@@ -849,7 +849,7 @@ pub const FetchTasklet = struct {
                 else => |e| bun.String.createFormat("{s} fetching \"{}\". For more information, pass `verbose: true` in the second argument to fetch()", .{
                     @errorName(e),
                     path,
-                }) catch bun.outOfMemory(),
+                }) catch |err| bun.handleOom(err),
             },
             .path = path,
         };
@@ -1203,8 +1203,14 @@ pub const FetchTasklet = struct {
             needs_schedule = stream_buffer.isEmpty();
             //16 is the max size of a hex number size that represents 64 bits + 2 for the \r\n
             var formated_size_buffer: [18]u8 = undefined;
-            const formated_size = std.fmt.bufPrint(formated_size_buffer[0..], "{x}\r\n", .{data.len}) catch bun.outOfMemory();
-            stream_buffer.ensureUnusedCapacity(formated_size.len + data.len + 2) catch bun.outOfMemory();
+            const formated_size = std.fmt.bufPrint(
+                formated_size_buffer[0..],
+                "{x}\r\n",
+                .{data.len},
+            ) catch |err| switch (err) {
+                error.NoSpaceLeft => unreachable,
+            };
+            bun.handleOom(stream_buffer.ensureUnusedCapacity(formated_size.len + data.len + 2));
             stream_buffer.writeAssumeCapacity(formated_size);
             stream_buffer.writeAssumeCapacity(data);
             stream_buffer.writeAssumeCapacity("\r\n");
@@ -1353,7 +1359,7 @@ pub const FetchTasklet = struct {
             }
         } else {
             if (success) {
-                _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch bun.outOfMemory();
+                _ = bun.handleOom(task.scheduled_response_buffer.write(task.response_buffer.list.items));
             }
             // reset for reuse
             task.response_buffer.reset();
@@ -1437,7 +1443,7 @@ pub fn Bun__fetchPreconnect_(
         return globalObject.ERR(.INVALID_ARG_TYPE, fetch_error_blank_url, .{}).throw();
     }
 
-    const url = ZigURL.parse(url_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory());
+    const url = ZigURL.parse(bun.handleOom(url_str.toOwnedSlice(bun.default_allocator)));
     if (!url.isHTTP() and !url.isHTTPS() and !url.isS3()) {
         bun.default_allocator.free(url.href);
         return globalObject.throwInvalidArguments("URL must be HTTP or HTTPS", .{});
@@ -1485,7 +1491,7 @@ pub fn Bun__fetch_(
     bun.analytics.Features.fetch += 1;
     const vm = jsc.VirtualMachine.get();
 
-    var memory_reporter = bun.default_allocator.create(bun.MemoryReportingAllocator) catch bun.outOfMemory();
+    var memory_reporter = bun.handleOom(bun.default_allocator.create(bun.MemoryReportingAllocator));
     // used to clean up dynamically allocated memory on error (a poor man's errdefer)
     var is_error = false;
     var allocator = memory_reporter.wrap(bun.default_allocator);
@@ -1625,7 +1631,7 @@ pub fn Bun__fetch_(
         if (url_str_optional) |str| break :extract_url str;
 
         if (request) |req| {
-            req.ensureURL() catch bun.outOfMemory();
+            bun.handleOom(req.ensureURL());
             break :extract_url req.url.dupeRef();
         }
 
@@ -1788,7 +1794,7 @@ pub fn Bun__fetch_(
                             is_error = true;
                             return .zero;
                         }) |config| {
-                            const ssl_config_object = bun.default_allocator.create(SSLConfig) catch bun.outOfMemory();
+                            const ssl_config_object = bun.handleOom(bun.default_allocator.create(SSLConfig));
                             ssl_config_object.* = config;
                             break :extract_ssl_config ssl_config_object;
                         }
@@ -2295,7 +2301,7 @@ pub fn Bun__fetch_(
                     hostname = null;
                     allocator.free(host);
                 }
-                hostname = _hostname.toOwnedSliceZ(allocator) catch bun.outOfMemory();
+                hostname = bun.handleOom(_hostname.toOwnedSliceZ(allocator));
             }
             if (url.isS3()) {
                 if (headers_.fastGet(bun.webcore.FetchHeaders.HTTPHeaderName.Range)) |_range| {
@@ -2303,11 +2309,11 @@ pub fn Bun__fetch_(
                         range = null;
                         allocator.free(range_);
                     }
-                    range = _range.toOwnedSliceZ(allocator) catch bun.outOfMemory();
+                    range = bun.handleOom(_range.toOwnedSliceZ(allocator));
                 }
             }
 
-            break :extract_headers Headers.from(headers_, allocator, .{ .body = body.getAnyBlob() }) catch bun.outOfMemory();
+            break :extract_headers Headers.from(headers_, allocator, .{ .body = body.getAnyBlob() }) catch |err| bun.handleOom(err);
         }
 
         break :extract_headers headers;
@@ -2357,7 +2363,7 @@ pub fn Bun__fetch_(
             // Support blob: urls
             if (url_type == URLType.blob) {
                 if (jsc.WebCore.ObjectURLRegistry.singleton().resolveAndDupe(url_path_decoded)) |blob| {
-                    url_string = bun.String.createFormat("blob:{s}", .{url_path_decoded}) catch bun.outOfMemory();
+                    url_string = bun.String.createFormat("blob:{s}", .{url_path_decoded}) catch |err| bun.handleOom(err);
                     break :blob blob;
                 } else {
                     // Consistent with what Node.js does - it rejects, not a 404.
@@ -2453,7 +2459,7 @@ pub fn Bun__fetch_(
             null,
             allocator,
             .{ .body = body.getAnyBlob() },
-        ) catch bun.outOfMemory();
+        ) catch |err| bun.handleOom(err);
     }
 
     var http_body = body;
@@ -2619,7 +2625,7 @@ pub fn Bun__fetch_(
                                 .body = .{
                                     .value = .{
                                         .InternalBlob = .{
-                                            .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, bun.default_allocator.dupe(u8, err.message) catch bun.outOfMemory()),
+                                            .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, bun.handleOom(bun.default_allocator.dupe(u8, err.message))),
                                             .was_string = true,
                                         },
                                     },
@@ -2688,7 +2694,7 @@ pub fn Bun__fetch_(
             // proxy and url are in the same buffer lets replace it
             const old_buffer = url_proxy_buffer;
             defer allocator.free(old_buffer);
-            var buffer = allocator.alloc(u8, result.url.len + proxy_.href.len) catch bun.outOfMemory();
+            var buffer = bun.handleOom(allocator.alloc(u8, result.url.len + proxy_.href.len));
             bun.copy(u8, buffer[0..result.url.len], result.url);
             bun.copy(u8, buffer[proxy_.href.len..], proxy_.href);
             url_proxy_buffer = buffer;
@@ -2767,7 +2773,7 @@ pub fn Bun__fetch_(
         // will leak it
         // see https://github.com/oven-sh/bun/issues/2985
         promise,
-    ) catch bun.outOfMemory();
+    ) catch |err| bun.handleOom(err);
 
     if (Environment.isDebug) {
         if (body.store()) |store| {
@@ -2798,7 +2804,7 @@ pub fn Bun__fetch_(
 }
 fn setHeaders(headers: *?Headers, new_headers: []const picohttp.Header, allocator: std.mem.Allocator) void {
     var old = headers.*;
-    headers.* = Headers.fromPicoHttpHeaders(new_headers, allocator) catch bun.outOfMemory();
+    headers.* = bun.handleOom(Headers.fromPicoHttpHeaders(new_headers, allocator));
 
     if (old) |*headers_| {
         headers_.deinit();

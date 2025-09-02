@@ -550,11 +550,16 @@ function spawnSync(file, args, options) {
     stderr = null;
   }
 
+  // When stdio is redirected to a file descriptor, Bun.spawnSync returns the fd number
+  // instead of the actual output. We should treat this as no output available.
+  const outputStdout = typeof stdout === "number" ? null : stdout;
+  const outputStderr = typeof stderr === "number" ? null : stderr;
+
   const result = {
     signal: signalCode ?? null,
     status: exitCode,
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
-    output: [null, stdout, stderr],
+    output: [null, outputStdout, outputStderr],
     pid,
   };
 
@@ -562,11 +567,11 @@ function spawnSync(file, args, options) {
     result.error = error;
   }
 
-  if (stdout && encoding && encoding !== "buffer") {
+  if (outputStdout && encoding && encoding !== "buffer") {
     result.output[1] = result.output[1]?.toString(encoding);
   }
 
-  if (stderr && encoding && encoding !== "buffer") {
+  if (outputStderr && encoding && encoding !== "buffer") {
     result.output[2] = result.output[2]?.toString(encoding);
   }
 
@@ -1132,7 +1137,7 @@ class ChildProcess extends EventEmitter {
 
             if (!stdin) {
               // This can happen if the process was already killed.
-              const { Writable } = require("node:stream");
+              const Writable = require("internal/streams/writable");
               const stream = new Writable({
                 write(chunk, encoding, callback) {
                   // Gracefully handle writes - stream acts as if it's ended
@@ -1151,7 +1156,7 @@ class ChildProcess extends EventEmitter {
           case "inherit":
             return null;
           case "destroyed": {
-            const { Writable } = require("node:stream");
+            const Writable = require("internal/streams/writable");
             const stream = new Writable({
               write(chunk, encoding, callback) {
                 // Gracefully handle writes - stream acts as if it's ended
@@ -1176,7 +1181,7 @@ class ChildProcess extends EventEmitter {
             const value = handle?.[fdToStdioName(i as 1 | 2)!];
             // This can happen if the process was already killed.
             if (!value) {
-              const { Readable } = require("node:stream");
+              const Readable = require("internal/streams/readable");
               const stream = new Readable({ read() {} });
               // Mark as destroyed to indicate it's not usable
               stream.destroy();
@@ -1190,7 +1195,7 @@ class ChildProcess extends EventEmitter {
             return pipe;
           }
           case "destroyed": {
-            const { Readable } = require("node:stream");
+            const Readable = require("internal/streams/readable");
             const stream = new Readable({ read() {} });
             // Mark as destroyed to indicate it's not usable
             stream.destroy();

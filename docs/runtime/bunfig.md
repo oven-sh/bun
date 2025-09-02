@@ -94,6 +94,7 @@ Bun supports the following loaders:
 - `file`
 - `json`
 - `toml`
+- `yaml`
 - `wasm`
 - `napi`
 - `base64`
@@ -495,6 +496,32 @@ Whether to generate a non-Bun lockfile alongside `bun.lock`. (A `bun.lock` will 
 [install.lockfile]
 print = "yarn"
 ```
+
+### `install.security.scanner`
+
+Configure a security scanner to scan packages for vulnerabilities before installation.
+
+First, install a security scanner from npm:
+
+```bash
+$ bun add -d @acme/bun-security-scanner
+```
+
+Then configure it in your `bunfig.toml`:
+
+```toml
+[install.security]
+scanner = "@acme/bun-security-scanner"
+```
+
+When a security scanner is configured:
+
+- Auto-install is automatically disabled for security
+- Packages are scanned before installation
+- Installation is cancelled if fatal issues are found
+- Security warnings are displayed during installation
+
+Learn more about [using and writing security scanners](/docs/install/security).
 
 ### `install.linker`
 

@@ -289,7 +289,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     JSC::JSObject* object = nullptr;
 
 #if OS(WINDOWS)
-    object = constructEmptyObject(globalObject, globalObject->nullPrototypeObjectStructure());
+    object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
 #else
     JSObject* prototype = globalObject->objectPrototype();
 

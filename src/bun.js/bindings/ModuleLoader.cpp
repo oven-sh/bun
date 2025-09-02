@@ -477,6 +477,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     auto entry = map->get(globalObject, specifierValue);
     RETURN_IF_EXCEPTION(scope, );
     if (entry) {
+        bool skipSourceProviderCreation = false;
         if (entry.isObject()) {
 
             auto* object = entry.getObject();
@@ -490,25 +491,8 @@ extern "C" void Bun__onFulfillAsyncModule(
                     // https://github.com/oven-sh/bun/issues/20489
                     
                     // The module is already being loaded or has been loaded.
-                    // For ESM modules, we need to provide the source to ensure proper module evaluation.
-                    // This makes sure all concurrent imports share the same module instance.
-                    
-                    if (!res->result.value.isCommonJSModule) {
-                        auto&& provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
-                        
-                        // Key fix: Call provideFetch to make this import use the same module instance
-                        // This ensures all concurrent imports get the same module namespace object
-                        globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, JSC::SourceCode(provider));
-                        RETURN_IF_EXCEPTION(scope, );
-                        
-                        // Now resolve the promise with a new JSSourceCode
-                        // The module loader will handle making sure it's the same module instance
-                        auto&& newProvider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
-                        promise->resolve(globalObject, JSC::JSSourceCode::create(vm, JSC::SourceCode(newProvider)));
-                        scope.assertNoExceptionExceptTermination();
-                        return;
-                    }
-                    // For CommonJS modules, continue with normal flow
+                    // Don't create duplicate module evaluations.
+                    skipSourceProviderCreation = true;
                 }
             }
         }
@@ -529,8 +513,26 @@ extern "C" void Bun__onFulfillAsyncModule(
                 }
             }
         } else {
-            auto&& provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
-            promise->resolve(globalObject, JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
+            if (skipSourceProviderCreation) {
+                // When race is detected, the module is already being loaded.
+                // The critical fix: provide the source to the loader AND use the same source for JSSourceCode.
+                // This should avoid triggering a new module evaluation.
+                auto&& provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
+                auto sourceCode = JSC::SourceCode(provider);
+                
+                // Provide the source to the module loader
+                globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, sourceCode);
+                RETURN_IF_EXCEPTION(scope, );
+                
+                // Create JSSourceCode with a new SourceCode from the same provider
+                // We can't reuse sourceCode directly as JSSourceCode::create needs an rvalue
+                auto&& sameProvider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
+                promise->resolve(globalObject, JSC::JSSourceCode::create(vm, JSC::SourceCode(sameProvider)));
+            } else {
+                // Normal path: create provider and resolve
+                auto&& provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
+                promise->resolve(globalObject, JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
+            }
             scope.assertNoExceptionExceptTermination();
         }
     } else {

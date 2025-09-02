@@ -533,7 +533,7 @@ var access = function access(path, mode, callback) {
   copyFileSync = fs.copyFileSync.bind(fs),
   // This behavior - never throwing -- matches Node.js behavior.
   // https://github.com/nodejs/node/blob/c82f3c9e80f0eeec4ae5b7aedd1183127abda4ad/lib/fs.js#L275C1-L295C1
-  existsSync = function existsSync() {
+  existsSync = function existsSync(_path: string) {
     try {
       return fs.existsSync.$apply(fs, arguments);
     } catch {

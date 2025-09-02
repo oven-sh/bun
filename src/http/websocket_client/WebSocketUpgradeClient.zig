@@ -351,7 +351,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var upgrade_header = PicoHTTP.Header{ .name = "", .value = "" };
             var connection_header = PicoHTTP.Header{ .name = "", .value = "" };
             var websocket_accept_header = PicoHTTP.Header{ .name = "", .value = "" };
-            var found_matching_protocol = false;
+            var protocol_header_seen = false;
 
             // var visited_version = false;
             var deflate_result = DeflateNegotiationResult{};
@@ -388,46 +388,33 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     },
                     "Sec-WebSocket-Protocol".len => {
                         if (strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Protocol", false)) {
-                            var iterator = bun.http.HeaderValueIterator.init(header.value);
-                            while (iterator.next()) |protocol| {
-                                if (this.subprotocols.contains(protocol)) {
-                                    found_matching_protocol = true;
-                                    if (this.outgoing_websocket) |ws| {
-                                        var protocol_str = bun.String.init(protocol);
-                                        defer protocol_str.deref();
-                                        // From the WHATWG Living Standard:
-                                        //
-                                        // “The protocol attribute must
-                                        // initially be the empty string. When
-                                        // the user agent validates the server’s
-                                        // response, if it included a
-                                        // subprotocol, and the subprotocol was
-                                        // one of the subprotocols originally
-                                        // requested by the client, then set
-                                        // protocol to that value. Otherwise,
-                                        // leave it as the empty string.”
-                                        ws.setProtocol(&protocol_str);
-                                    }
-                                    break;
-                                }
-                            }
+                            const valid = brk: {
+                                // Can't have multiple protocol headers in the response.
+                                if (protocol_header_seen) break :brk false;
 
-                            // This handles both:
-                            // - Empty value (such as `,`)
-                            // - No matching value
-                            if (!found_matching_protocol) {
-                                // RFC 6455:
-                                // “If the response includes a
-                                // Sec-WebSocket-Protocol header field and
-                                // this header field indicates the use of a
-                                // subprotocol that was not present in the
-                                // client’s handshake, the client MUST Fail
-                                // the WebSocket Connection.” ￼
-                                //
-                                // Notice the requirement is only about
-                                // rejecting unknown protocols. There is no
-                                // requirement that the server must echo one
-                                // back.
+                                protocol_header_seen = true;
+
+                                var iterator = bun.http.HeaderValueIterator.init(header.value);
+
+                                const protocol = iterator.next()
+                                    // Can't be empty.
+                                    orelse break :brk false;
+
+                                // Can't have multiple protocols.
+                                if (iterator.next() != null) break :brk false;
+
+                                // Protocol must be in the list of allowed protocols.
+                                if (!this.subprotocols.contains(protocol)) break :brk false;
+
+                                if (this.outgoing_websocket) |ws| {
+                                    var protocol_str = bun.String.init(protocol);
+                                    defer protocol_str.deref();
+                                    ws.setProtocol(&protocol_str);
+                                }
+                                break :brk true;
+                            };
+
+                            if (!valid) {
                                 this.terminate(ErrorCode.mismatch_client_protocol);
                                 return;
                             }

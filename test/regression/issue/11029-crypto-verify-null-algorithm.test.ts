@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import crypto from "crypto";
 
 // Regression test for issue #11029

@@ -119,6 +119,153 @@ class PerformanceResourceTiming {
 }
 $toClass(PerformanceResourceTiming, "PerformanceResourceTiming", PerformanceEntry);
 
+// Store active function observers
+const functionObservers = new Set();
+
+function processComplete(name: string, start: number, args: any[], histogram?: any) {
+  const duration = performance.now() - start;
+  
+  // Create performance entry matching Node.js structure
+  const entry = {
+    name,
+    entryType: "function",
+    startTime: start,
+    duration,
+    detail: args,
+    toJSON() {
+      return {
+        name: this.name,
+        entryType: this.entryType,
+        startTime: this.startTime,
+        duration: this.duration,
+        detail: this.detail,
+      };
+    },
+  };
+  
+  // Add function arguments as indexed properties
+  for (let n = 0; n < args.length; n++) {
+    entry[n] = args[n];
+  }
+  
+  // Notify observers manually since we're creating entries from JS
+  if (functionObservers.size > 0) {
+    queueMicrotask(() => {
+      for (const observer of functionObservers) {
+        if (observer && observer._callback) {
+          try {
+            const list = {
+              getEntries() { return [entry]; },
+              getEntriesByType(type: string) { return type === "function" ? [entry] : []; },
+              getEntriesByName(name: string) { return entry.name === name ? [entry] : []; },
+            };
+            observer._callback(list, observer);
+          } catch (err) {
+            // Ignore errors in observer callbacks
+          }
+        }
+      }
+    });
+  }
+}
+
+function timerify(fn: Function, options: { histogram?: any } = {}) {
+  // Validate that fn is a function
+  if (typeof fn !== "function") {
+    throw $ERR_INVALID_ARG_TYPE("fn", "Function", fn);
+  }
+  
+  // Validate options
+  if (options !== null && typeof options !== "object") {
+    throw $ERR_INVALID_ARG_TYPE("options", "Object", options);
+  }
+  
+  const { histogram } = options;
+  
+  // We're skipping histogram validation since we're not implementing that part
+  // But keep the structure for compatibility
+  if (histogram !== undefined) {
+    // Just validate it exists and has a record method for now
+    if (typeof histogram?.record !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("options.histogram", "RecordableHistogram", histogram);
+    }
+  }
+  
+  // Create the timerified function
+  function timerified(this: any, ...args: any[]) {
+    const isConstructorCall = new.target !== undefined;
+    const start = performance.now();
+    
+    let result;
+    if (isConstructorCall) {
+      // Use Reflect.construct for constructor calls
+      // Pass the timerified function as new.target to maintain instanceof
+      result = Reflect.construct(fn, args, timerified);
+    } else {
+      // Use $apply for regular function calls (Bun's internal apply)
+      result = fn.$apply(this, args);
+    }
+    
+    // Handle async functions (promises)
+    if (!isConstructorCall && result && typeof result.finally === "function") {
+      // For promises, attach the processComplete to finally
+      return result.finally(() => {
+        processComplete(fn.name || "anonymous", start, args, histogram);
+      });
+    }
+    
+    // For sync functions, process immediately
+    processComplete(fn.name || "anonymous", start, args, histogram);
+    return result;
+  }
+  
+  // Define properties on the timerified function to match the original
+  Object.defineProperties(timerified, {
+    length: {
+      configurable: false,
+      enumerable: true,
+      value: fn.length,
+    },
+    name: {
+      configurable: false,
+      enumerable: true,
+      value: `timerified ${fn.name || "anonymous"}`,
+    },
+  });
+  
+  // Copy prototype for constructor functions
+  if (fn.prototype) {
+    timerified.prototype = fn.prototype;
+  }
+  
+  return timerified;
+}
+
+// Minimal wrapper to track function observers
+const OriginalPerformanceObserver = PerformanceObserver;
+class WrappedPerformanceObserver extends OriginalPerformanceObserver {
+  _callback: Function;
+  
+  constructor(callback: Function) {
+    super(callback);
+    this._callback = callback;
+  }
+  
+  observe(options: any) {
+    if ((options.entryTypes && options.entryTypes.includes("function")) || options.type === "function") {
+      functionObservers.add(this);
+    }
+    super.observe(options);
+  }
+  
+  disconnect() {
+    functionObservers.delete(this);
+    super.disconnect();
+  }
+}
+
+PerformanceObserver = WrappedPerformanceObserver as any;
+
 export default {
   performance: {
     mark(_) {
@@ -154,6 +301,7 @@ export default {
     now: () => performance.now(),
     eventLoopUtilization: eventLoopUtilization,
     clearResourceTimings: function () {},
+    timerify,
   },
   // performance: {
   //   clearMarks: [Function: clearMarks],

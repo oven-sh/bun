@@ -66,6 +66,10 @@ size_t PerformanceEntry::memoryCost() const
         const PerformanceResourceTiming* resource = static_cast<const PerformanceResourceTiming*>(this);
         return resource->memoryCost() + baseCost;
     }
+    case Type::Function: {
+        // Function timing entries are created from JavaScript
+        return sizeof(PerformanceEntry) + baseCost;
+    }
     default: {
         return sizeof(PerformanceEntry) + baseCost;
     }
@@ -84,6 +88,9 @@ std::optional<PerformanceEntry::Type> PerformanceEntry::parseEntryTypeString(con
 
     if (entryType == "resource"_s)
         return std::optional<Type>(Type::Resource);
+    
+    if (entryType == "function"_s)
+        return std::optional<Type>(Type::Function);
 
     // if (DeprecatedGlobalSettings::paintTimingEnabled()) {
     //     if (entryType == "paint"_s)

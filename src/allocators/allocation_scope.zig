@@ -231,7 +231,7 @@ const State = struct {
     fn trackExternalAllocation(self: *Self, ptr: []const u8, ret_addr: ?usize, extra: Extra) void {
         const locked = self.lock();
         defer self.unlock();
-        locked.trackAllocation(ptr, ptr.len, ret_addr orelse @returnAddress(), extra) catch |err|
+        locked.trackAllocation(ptr, ret_addr orelse @returnAddress(), extra) catch |err|
             bun.handleOom(err);
     }
 

@@ -131,15 +131,19 @@ describe("WebSocket", () => {
       function testClient(client) {
         const { promise, resolve, reject } = Promise.withResolvers();
         let messages = [];
+        let errorFired = false;
         client.onopen = () => {
           client.send("Hello from client!");
         };
         client.onmessage = e => {
           messages.push(e.data);
         };
-        client.onerror = reject;
+        client.onerror = e => {
+          errorFired = true;
+          // Don't reject, we expect both error and close events
+        };
         client.onclose = e => {
-          resolve({ result: e, messages });
+          resolve({ result: e, messages, errorFired });
         };
         return promise;
       }
@@ -147,7 +151,8 @@ describe("WebSocket", () => {
       {
         // by default rejectUnauthorized is true
         const client = new WebSocket(url);
-        const { result, messages } = await testClient(client);
+        const { result, messages, errorFired } = await testClient(client);
+        expect(errorFired).toBe(true); // Error event should fire
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
         expect(result.code).toBe(1015);
         expect(result.reason).toBe("TLS handshake failed");
@@ -156,7 +161,8 @@ describe("WebSocket", () => {
       {
         // just in case we change the default to true and test
         const client = new WebSocket(url, { tls: { rejectUnauthorized: true } });
-        const { result, messages } = await testClient(client);
+        const { result, messages, errorFired } = await testClient(client);
+        expect(errorFired).toBe(true); // Error event should fire
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
         expect(result.code).toBe(1015);
         expect(result.reason).toBe("TLS handshake failed");
@@ -248,22 +254,27 @@ describe("WebSocket", () => {
       function testClient(client) {
         const { promise, resolve, reject } = Promise.withResolvers();
         let messages = [];
+        let errorFired = false;
         client.onopen = () => {
           client.send("Hello from client!");
         };
         client.onmessage = e => {
           messages.push(e.data);
         };
-        client.onerror = reject;
+        client.onerror = e => {
+          errorFired = true;
+          // Don't reject, we expect both error and close events
+        };
         client.onclose = e => {
-          resolve({ result: e, messages });
+          resolve({ result: e, messages, errorFired });
         };
         return promise;
       }
       const url = `wss://localhost:${server.address.port}`;
       {
         const client = new WebSocket(url);
-        const { result, messages } = await testClient(client);
+        const { result, messages, errorFired } = await testClient(client);
+        expect(errorFired).toBe(true); // Error event should fire
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
         expect(result.code).toBe(1015);
         expect(result.reason).toBe("TLS handshake failed");

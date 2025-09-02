@@ -389,6 +389,7 @@ pub fn RefPtr(T: type) type {
         }
 
         fn trackImpl(ref: @This(), scope: *AllocationScope, ret_addr: usize) void {
+            if (!comptime enable_debug) return;
             const debug = &ref.data.ref_count.debug;
             debug.allocation_scope = scope;
             scope.trackExternalAllocation(

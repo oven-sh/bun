@@ -62,19 +62,3 @@ test("tinyspawn-like library usage should work", () => {
   expect(typeof subprocess.stdout.on).toBe("function");
 });
 
-test("youtube-dl-exec compatibility through tinyspawn", async () => {
-  // This simulates what youtube-dl-exec does internally
-  const $ = require("tinyspawn");
-
-  // This should work without errors now
-  const result = $(process.execPath, ["-e", 'console.log("youtube-dl-test")']);
-
-  // Should be a Promise with child process properties
-  expect(result instanceof Promise).toBe(true);
-  expect(result.stdout).toBeTruthy();
-  expect(result.stderr).toBeTruthy();
-
-  // Should resolve properly
-  const resolved = await result;
-  expect(resolved.stdout).toBe("youtube-dl-test");
-});

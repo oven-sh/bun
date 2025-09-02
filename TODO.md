@@ -302,7 +302,7 @@ Exited with code [1]
 - [ ] add retry/run-multiple-times back
 - [ ] report expect counts per-test
 - [x] make --bail work again
-- [ ] update types for `test.concurrent.skip.only()`
+- [x] update types for `test.concurrent.skip.only()`
 - [x] make test filtering work again
 - [ ] decide what to do about test() inside test()
 - [ ] make sure ScopeFunctions class can finalize (see napi_handle_scope NapiHandleScopeImpl as an example)

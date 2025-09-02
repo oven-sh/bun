@@ -354,7 +354,7 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         // ================================================
         // When Node.js calls crypto.sign() or crypto.verify() with a null/undefined algorithm,
         // it passes NULL to OpenSSL's EVP_DigestSignInit/EVP_DigestVerifyInit functions.
-        // 
+        //
         // OpenSSL v3 then automatically provides a default digest for RSA keys through the
         // following mechanism:
         //

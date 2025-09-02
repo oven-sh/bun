@@ -73,7 +73,7 @@ function normalizeSSLMode(value: string): SSLMode {
     }
   }
 
-  throw $ERR_INVALID_ARG_VALUE("sslmode", value);
+  throw $ERR_INVALID_ARG_VALUE("sslmode", value, "must be one of: disable, prefer, require, verify-ca, verify-full");
 }
 
 export type { SQLHelper };
@@ -431,14 +431,12 @@ function parseOptions(
     prepare: boolean = true;
 
   if (url) {
-    // options object overrides url
-    ({ hostname, port, username, password } = options);
-
-    // but if it's not in options we reassign
-    hostname ||= url.hostname;
-    port ||= url.port;
-    username ||= decodeIfValid(url.username);
-    password ||= decodeIfValid(url.password);
+    // TODO(@alii): Move this logic into the switch statements below
+    // options object is always higher priority
+    hostname ||= options.host || options.hostname || url.hostname;
+    username ||= options.user || options.username || decodeIfValid(url.username);
+    password ||= options.pass || options.password || decodeIfValid(url.password);
+    port ||= options.port || url.port;
 
     const queryObject = url.searchParams.toJSON();
     for (const key in queryObject) {

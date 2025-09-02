@@ -2050,6 +2050,12 @@ pub const Formatter = struct {
             return error.JSError;
         }
 
+        // If we call
+        //   `return try this.printAs`
+        //
+        // Then we can get a spurious `[Circular]` due to the value already being present in the map.
+        var @"Remove from map to prevent [Circular]" = false;
+
         var writer = WrappedWriter(Writer){ .ctx = writer_, .estimated_line_length = &this.estimated_line_length };
         defer {
             if (writer.failed) {
@@ -2075,6 +2081,8 @@ pub const Formatter = struct {
             if (entry.found_existing) {
                 writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", enable_ansi_colors));
                 return;
+            } else {
+                @"Remove from map to prevent [Circular]" = true;
             }
         }
 
@@ -2617,12 +2625,22 @@ pub const Formatter = struct {
                 } else if (try JestPrettyFormat.printAsymmetricMatcher(this, Format, &writer, writer_, name_buf, value, enable_ansi_colors)) {
                     return;
                 } else if (jsType != .DOMWrapper) {
+                    if (@"Remove from map to prevent [Circular]") {
+                        @"Remove from map to prevent [Circular]" = false;
+                        _ = this.map.remove(value);
+                    }
+
                     if (value.isCallable()) {
                         return try this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors);
                     }
 
                     return try this.printAs(.Object, Writer, writer_, value, jsType, enable_ansi_colors);
                 }
+                if (@"Remove from map to prevent [Circular]") {
+                    @"Remove from map to prevent [Circular]" = false;
+                    _ = this.map.remove(value);
+                }
+
                 return try this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
             },
             .NativeCode => {
@@ -2887,6 +2905,11 @@ pub const Formatter = struct {
                 const event_type = switch (try EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
                     .MessageEvent, .ErrorEvent => |evt| evt,
                     else => {
+                        if (@"Remove from map to prevent [Circular]") {
+                            @"Remove from map to prevent [Circular]" = false;
+                            _ = this.map.remove(value);
+                        }
+
                         return try this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
                     },
                 };

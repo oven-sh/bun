@@ -352,7 +352,7 @@ Exited with code [1]
     - benchmark this vs the version that is only .protect()
   - the problem with .protect() is that every protected value is visited by the gc every gc, which is slow
   - basically we make BunTestFile into a class. BunTest is a class that holds BunTestFile. Expect holds a weak reference to BunTest
-  - an alternative option is making BunTestFile a jsobject that holds a jsarray rather than protect/unprotect
+  - an alternative option is making BunTestFile a jsobject that holds a jsarray rather than protect/unprotect ← do the c++ class
 - [ ] strong.list should only have one jsvalue (or be removed fully)
 
 - [x] Add private fields in SafeStrong.zig

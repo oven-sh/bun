@@ -120,7 +120,7 @@ pub fn OwnedIn(comptime Pointer: type, comptime Allocator: type) type {
             return switch (comptime info.kind()) {
                 .single => .allocIn(unwrapped.*, allocator_),
                 .slice => .{
-                    .#pointer = try allocator_.allocator().dupe(Child, unwrapped),
+                    .#pointer = try bun.allocators.asStd(allocator_).dupe(Child, unwrapped),
                     .#allocator = allocator_,
                 },
             };

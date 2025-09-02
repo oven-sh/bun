@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { spawnSync } from "child_process";
-import { tempDirWithFiles, bunExe, bunEnv } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 test("spawnSync should not crash when stdout is set to process.stderr (issue #20321)", () => {
   // Test with process.stderr as stdout
@@ -9,7 +9,7 @@ test("spawnSync should not crash when stdout is set to process.stderr (issue #20
     stdio: ["ignore", process.stderr, "inherit"],
     env: bunEnv,
   });
-  
+
   expect(proc1.error).toBeUndefined();
   expect(proc1.status).toBe(0);
   // When redirecting to a file descriptor, we don't capture the output
@@ -23,7 +23,7 @@ test("spawnSync should not crash when stderr is set to process.stdout", () => {
     stdio: ["ignore", "pipe", process.stdout],
     env: bunEnv,
   });
-  
+
   expect(proc2.error).toBeUndefined();
   expect(proc2.status).toBe(0);
   expect(proc2.stdout).toBe("hello\n");
@@ -38,7 +38,7 @@ test("spawnSync should handle process.stdin/stdout/stderr in stdio array", () =>
     stdio: [process.stdin, process.stdout, process.stderr],
     env: bunEnv,
   });
-  
+
   expect(proc3.error).toBeUndefined();
   expect(proc3.status).toBe(0);
   // When redirecting to file descriptors, we don't capture the output
@@ -53,7 +53,7 @@ test("spawnSync with mixed stdio options including process streams", () => {
     stdio: ["pipe", process.stderr, "pipe"],
     env: bunEnv,
   });
-  
+
   expect(proc4.error).toBeUndefined();
   expect(proc4.status).toBe(0);
   // stdout redirected to stderr fd, so no capture
@@ -69,7 +69,7 @@ test("spawnSync should work with file descriptors directly", () => {
     stdio: ["ignore", 2, "inherit"], // 2 is stderr fd
     env: bunEnv,
   });
-  
+
   expect(proc5.error).toBeUndefined();
   expect(proc5.status).toBe(0);
   expect(proc5.stdout).toBeNull();
@@ -87,7 +87,7 @@ test("spawnSync should handle the AWS CDK use case", () => {
     cwd: dir,
     env: bunEnv,
   });
-  
+
   expect(proc.error).toBeUndefined();
   expect(proc.status).toBe(0);
   // Output goes to stderr, not captured

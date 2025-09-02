@@ -8,6 +8,15 @@ The `bun` CLI contains a Node.js-compatible package manager designed to be a dra
 
 {% /callout %}
 
+{% callout %}
+
+**💾 Disk efficient** — Bun install stores all packages in a global cache (`~/.bun/install/cache/`) and creates hardlinks (Linux) or copy-on-write clones (macOS) to `node_modules`. This means duplicate packages across projects point to the same underlying data, taking up virtually no extra disk space.
+
+For more details, see [Package manager > Global cache](https://bun.com/docs/install/cache).
+
+{% /callout %}
+
+
 {% details summary="For Linux users" %}
 The recommended minimum Linux Kernel version is 5.6. If you're on Linux kernel 5.1 - 5.5, `bun install` will work, but HTTP requests will be slow due to a lack of support for io_uring's `connect()` operation.
 
@@ -206,6 +215,12 @@ $ bun install --linker isolated
 Isolated installs create a central package store in `node_modules/.bun/` with symlinks in the top-level `node_modules`. This ensures packages can only access their declared dependencies.
 
 For complete documentation on isolated installs, refer to [Package manager > Isolated installs](https://bun.com/docs/install/isolated).
+
+## Disk efficiency
+
+Bun uses a global cache at `~/.bun/install/cache/` to minimize disk usage. Packages are stored once and linked to `node_modules` using hardlinks (Linux/Windows) or copy-on-write (macOS), so duplicate packages across projects don't consume additional disk space. 
+
+For complete documentation refer to [Package manager > Global cache](https://bun.com/docs/install/cache).
 
 ## Configuration
 

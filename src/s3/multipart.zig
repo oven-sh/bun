@@ -284,7 +284,7 @@ pub const MultiPartUpload = struct {
         if (this.multipart_etags.capacity > 0)
             this.multipart_etags.deinit(bun.default_allocator);
         if (this.multipart_upload_list.cap > 0)
-            this.multipart_upload_list.deinitWithAllocator(bun.default_allocator);
+            this.multipart_upload_list.deinit(bun.default_allocator);
         bun.destroy(this);
     }
 
@@ -438,7 +438,10 @@ pub const MultiPartUpload = struct {
             // sort the etags
             std.sort.block(UploadPart.UploadPartResult, this.multipart_etags.items, this, UploadPart.sortEtags);
             // start the multipart upload list
-            bun.handleOom(this.multipart_upload_list.append(bun.default_allocator, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">"));
+            bun.handleOom(this.multipart_upload_list.appendSlice(
+                bun.default_allocator,
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">",
+            ));
             for (this.multipart_etags.items) |tag| {
                 bun.handleOom(this.multipart_upload_list.appendFmt(bun.default_allocator, "<Part><PartNumber>{}</PartNumber><ETag>{s}</ETag></Part>", .{ tag.number, tag.etag }));
 
@@ -446,7 +449,10 @@ pub const MultiPartUpload = struct {
             }
             this.multipart_etags.deinit(bun.default_allocator);
             this.multipart_etags = .{};
-            bun.handleOom(this.multipart_upload_list.append(bun.default_allocator, "</CompleteMultipartUpload>"));
+            bun.handleOom(this.multipart_upload_list.appendSlice(
+                bun.default_allocator,
+                "</CompleteMultipartUpload>",
+            ));
             // will deref and ends after commit
             this.commitMultiPartRequest();
         } else if (this.state == .singlefile_started) {

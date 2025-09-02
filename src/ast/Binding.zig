@@ -56,7 +56,14 @@ pub fn toExpr(binding: *const Binding, wrapper: anytype) Expr {
                 };
             }
 
-            return Expr.init(E.Array, E.Array{ .items = ExprNodeList.init(exprs), .is_single_line = b.is_single_line }, loc);
+            return Expr.init(
+                E.Array,
+                E.Array{
+                    .items = ExprNodeList.fromOwnedSlice(exprs),
+                    .is_single_line = b.is_single_line,
+                },
+                loc,
+            );
         },
         .b_object => |b| {
             const properties = wrapper
@@ -77,7 +84,7 @@ pub fn toExpr(binding: *const Binding, wrapper: anytype) Expr {
             return Expr.init(
                 E.Object,
                 E.Object{
-                    .properties = G.Property.List.init(properties),
+                    .properties = G.Property.List.fromOwnedSlice(properties),
                     .is_single_line = b.is_single_line,
                 },
                 loc,

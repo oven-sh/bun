@@ -166,12 +166,12 @@ pub fn drain(this: *ByteBlobLoader) bun.ByteList {
     temporary = temporary[this.offset..];
     temporary = temporary[0..@min(16384, @min(temporary.len, this.remain))];
 
-    var byte_list = bun.ByteList.init(temporary);
-    const cloned = bun.handleOom(byte_list.listManaged(bun.default_allocator).clone());
-    this.offset +|= @as(Blob.SizeType, @truncate(cloned.items.len));
-    this.remain -|= @as(Blob.SizeType, @truncate(cloned.items.len));
+    var byte_list = bun.ByteList.fromBorrowedSliceDangerous(temporary);
+    const cloned = bun.handleOom(byte_list.clone(bun.default_allocator));
+    this.offset +|= @as(Blob.SizeType, cloned.len);
+    this.remain -|= @as(Blob.SizeType, cloned.len);
 
-    return bun.ByteList.fromList(cloned);
+    return cloned;
 }
 
 pub fn toBufferedValue(this: *ByteBlobLoader, globalThis: *JSGlobalObject, action: streams.BufferAction.Tag) bun.JSError!JSValue {

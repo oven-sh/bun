@@ -188,7 +188,7 @@ pub const Parser = struct {
         // in the `symbols` array.
         bun.assert(p.symbols.items.len == 0);
         var symbols_ = symbols;
-        p.symbols = symbols_.listManaged(p.allocator);
+        p.symbols = symbols_.moveToListManaged(p.allocator);
 
         try p.prepareForVisitPass();
 
@@ -550,10 +550,7 @@ pub const Parser = struct {
                                 var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
                                 sliced.items.len = 1;
                                 var _local = local.*;
-                                var list = try ListManaged(G.Decl).initCapacity(p.allocator, 1);
-                                list.items.len = 1;
-                                list.items[0] = decl;
-                                _local.decls.update(list);
+                                _local.decls = try .initOne(p.allocator, decl);
                                 sliced.items[0] = p.s(_local, stmt.loc);
                                 try p.appendPart(&parts, sliced.items);
                             }
@@ -686,7 +683,7 @@ pub const Parser = struct {
                 var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
                 part_stmts[0] = p.s(S.Local{
                     .kind = .k_var,
-                    .decls = Decl.List.init(decls),
+                    .decls = Decl.List.fromOwnedSlice(decls),
                 }, logger.Loc.Empty);
                 before.append(js_ast.Part{
                     .stmts = part_stmts,
@@ -713,7 +710,7 @@ pub const Parser = struct {
                     var import_part_stmts = remaining_stmts[0..1];
                     remaining_stmts = remaining_stmts[1..];
 
-                    bun.handleOom(p.module_scope.generated.push(p.allocator, deferred_import.namespace.ref.?));
+                    bun.handleOom(p.module_scope.generated.append(p.allocator, deferred_import.namespace.ref.?));
 
                     import_part_stmts[0] = Stmt.alloc(
                         S.Import,
@@ -835,7 +832,7 @@ pub const Parser = struct {
                                     part.symbol_uses = .{};
                                     return js_ast.Result{
                                         .ast = js_ast.Ast{
-                                            .import_records = ImportRecord.List.init(p.import_records.items),
+                                            .import_records = ImportRecord.List.moveFromList(&p.import_records),
                                             .redirect_import_record_index = id,
                                             .named_imports = p.named_imports,
                                             .named_exports = p.named_exports,
@@ -905,7 +902,10 @@ pub const Parser = struct {
                                             break :brk new_stmts.items;
                                         };
 
-                                        part.import_record_indices.push(p.allocator, right.data.e_require_string.import_record_index) catch unreachable;
+                                        part.import_record_indices.append(
+                                            p.allocator,
+                                            right.data.e_require_string.import_record_index,
+                                        ) catch |err| bun.handleOom(err);
                                         p.symbols.items[p.module_ref.innerIndex()].use_count_estimate = 0;
                                         p.symbols.items[namespace_ref.innerIndex()].use_count_estimate -|= 1;
                                         _ = part.symbol_uses.swapRemove(namespace_ref);
@@ -1165,7 +1165,7 @@ pub const Parser = struct {
             var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
             part_stmts[0] = p.s(S.Local{
                 .kind = .k_var,
-                .decls = Decl.List.init(decls),
+                .decls = Decl.List.fromOwnedSlice(decls),
             }, logger.Loc.Empty);
             before.append(js_ast.Part{
                 .stmts = part_stmts,
@@ -1245,7 +1245,7 @@ pub const Parser = struct {
             before.append(js_ast.Part{
                 .stmts = part_stmts,
                 .declared_symbols = declared_symbols,
-                .import_record_indices = bun.BabyList(u32).init(import_record_indices),
+                .import_record_indices = bun.BabyList(u32).fromOwnedSlice(import_record_indices),
                 .tag = .bun_test,
             }) catch unreachable;
 

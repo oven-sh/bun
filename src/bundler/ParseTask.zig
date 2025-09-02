@@ -419,12 +419,12 @@ fn getAST(
                 }, Logger.Loc{ .start = 0 }),
             };
             require_args[1] = Expr.init(E.Object, E.Object{
-                .properties = G.Property.List.init(object_properties),
+                .properties = G.Property.List.fromOwnedSlice(object_properties),
                 .is_single_line = true,
             }, Logger.Loc{ .start = 0 });
             const require_call = Expr.init(E.Call, E.Call{
                 .target = require_property,
-                .args = BabyList(Expr).init(require_args),
+                .args = BabyList(Expr).fromOwnedSlice(require_args),
             }, Logger.Loc{ .start = 0 });
 
             const root = Expr.init(E.Dot, E.Dot{
@@ -460,7 +460,7 @@ fn getAST(
 
             const root = Expr.init(E.Call, E.Call{
                 .target = .{ .data = .{ .e_require_call_target = {} }, .loc = .{ .start = 0 } },
-                .args = BabyList(Expr).init(require_args),
+                .args = BabyList(Expr).fromOwnedSlice(require_args),
             }, Logger.Loc{ .start = 0 });
 
             unique_key_for_additional_file.* = .{

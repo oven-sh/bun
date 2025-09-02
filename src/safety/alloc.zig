@@ -136,14 +136,18 @@ pub const CheckedAllocator = struct {
         // Assertion will always fail. We want the error message.
         bun.safety.alloc.assertEq(old_alloc, alloc);
     }
+
+    pub fn get(self: Self) ?std.mem.Allocator {
+        return if (comptime enabled) self.#allocator.get() else null;
+    }
 };
+
+pub const enabled = bun.Environment.ci_assert;
 
 const bun = @import("bun");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const StoredTrace = bun.crash_handler.StoredTrace;
-
-const enabled = bun.Environment.ci_assert;
 const traces_enabled = bun.Environment.isDebug;
 
 const LinuxMemFdAllocator = bun.allocators.LinuxMemFdAllocator;

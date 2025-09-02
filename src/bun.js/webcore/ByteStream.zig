@@ -43,7 +43,8 @@ pub fn onStart(this: *@This()) streams.Start {
     }
 
     if (this.has_received_last_chunk) {
-        return .{ .owned_and_done = bun.ByteList.fromList(this.buffer.moveToUnmanaged()) };
+        var buffer = this.buffer.moveToUnmanaged();
+        return .{ .owned_and_done = bun.ByteList.moveFromList(&buffer) };
     }
 
     if (this.highWaterMark == 0) {
@@ -230,11 +231,11 @@ pub fn append(
     if (this.buffer.capacity == 0) {
         switch (stream_) {
             .owned => |*owned| {
-                this.buffer = owned.listManaged(allocator);
+                this.buffer = owned.moveToListManaged(allocator);
                 this.offset += offset;
             },
             .owned_and_done => |*owned| {
-                this.buffer = owned.listManaged(allocator);
+                this.buffer = owned.moveToListManaged(allocator);
                 this.offset += offset;
             },
             .temporary_and_done, .temporary => {
@@ -390,16 +391,8 @@ pub fn deinit(this: *@This()) void {
 
 pub fn drain(this: *@This()) bun.ByteList {
     if (this.buffer.items.len > 0) {
-        const out = bun.ByteList.fromList(this.buffer);
-        this.buffer = .{
-            .allocator = bun.default_allocator,
-            .items = &.{},
-            .capacity = 0,
-        };
-
-        return out;
+        return bun.ByteList.moveFromList(&this.buffer);
     }
-
     return .{};
 }
 

@@ -68,7 +68,7 @@ pub fn findImportedCSSFilesInJSOrder(this: *LinkerContext, temp_allocator: std.m
             }
 
             if (is_css and source_index.isValid()) {
-                bun.handleOom(o.push(temp, source_index));
+                bun.handleOom(o.append(temp, source_index));
             }
         }
     }.visit;

@@ -372,6 +372,10 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
             LinkerContext.doStep5,
             this.graph.reachable_files,
         );
+
+        // Some parts of the AST may now be owned by worker allocators. Transfer ownership back
+        // to the graph allocator.
+        this.graph.takeAstOwnership();
     }
 
     if (comptime FeatureFlags.help_catch_memory_issues) {
@@ -537,10 +541,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
 
                         const total_len = parts_declaring_symbol.len + @as(usize, import.re_exports.len) + @as(usize, part.dependencies.len);
                         if (part.dependencies.cap < total_len) {
-                            var list = std.ArrayList(Dependency).init(this.allocator());
-                            list.ensureUnusedCapacity(total_len) catch unreachable;
-                            list.appendSliceAssumeCapacity(part.dependencies.slice());
-                            part.dependencies.update(list);
+                            bun.handleOom(part.dependencies.ensureTotalCapacity(this.allocator(), total_len));
                         }
 
                         // Depend on the file containing the imported symbol
@@ -618,7 +619,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                 const entry_point_part_index = this.graph.addPartToFile(
                     id,
                     .{
-                        .dependencies = js_ast.Dependency.List.fromList(dependencies),
+                        .dependencies = js_ast.Dependency.List.moveFromList(&dependencies),
                         .can_be_removed_if_unused = false,
                     },
                 ) catch |err| bun.handleOom(err);
@@ -1020,7 +1021,7 @@ const ExportStarContext = struct {
                     }) catch |err| bun.handleOom(err);
                 } else if (gop.value_ptr.data.source_index.get() != other_source_index) {
                     // Two different re-exports colliding makes it potentially ambiguous
-                    gop.value_ptr.potentially_ambiguous_export_star_refs.push(this.allocator, .{
+                    gop.value_ptr.potentially_ambiguous_export_star_refs.append(this.allocator, .{
                         .data = .{
                             .source_index = Index.source(other_source_index),
                             .import_ref = name.ref,

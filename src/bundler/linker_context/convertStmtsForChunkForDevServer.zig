@@ -72,7 +72,7 @@ pub fn convertStmtsForChunkForDevServer(
                             .name = if (record.tag == .runtime) "require" else "builtin",
                             .name_loc = stmt.loc,
                         }, stmt.loc),
-                        .args = .init(try allocator.dupe(Expr, &.{Expr.init(E.String, .{
+                        .args = .fromOwnedSlice(try allocator.dupe(Expr, &.{Expr.init(E.String, .{
                             .data = if (record.tag == .runtime) "bun:wrap" else record.path.pretty,
                         }, record.range.loc)})),
                     }, stmt.loc);
@@ -144,7 +144,7 @@ pub fn convertStmtsForChunkForDevServer(
                     .name_loc = .Empty,
                 }, .Empty),
                 .right = Expr.init(E.Array, .{
-                    .items = .fromList(esm_callbacks),
+                    .items = .moveFromList(&esm_callbacks),
                     .is_single_line = esm_callbacks.items.len <= 2,
                 }, .Empty),
             }, .Empty),

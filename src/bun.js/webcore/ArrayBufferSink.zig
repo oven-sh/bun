@@ -16,15 +16,13 @@ pub fn connect(this: *ArrayBufferSink, signal: Signal) void {
 }
 
 pub fn start(this: *ArrayBufferSink, stream_start: streams.Start) bun.sys.Maybe(void) {
-    this.bytes.len = 0;
-    var list = this.bytes.listManaged(this.allocator);
-    list.clearRetainingCapacity();
+    this.bytes.clearRetainingCapacity();
 
     switch (stream_start) {
         .ArrayBufferSink => |config| {
             if (config.chunk_size > 0) {
-                list.ensureTotalCapacityPrecise(config.chunk_size) catch return .{ .err = Syscall.Error.oom };
-                this.bytes.update(list);
+                this.bytes.ensureTotalCapacityPrecise(this.allocator, config.chunk_size) catch
+                    return .{ .err = Syscall.Error.oom };
             }
 
             this.as_uint8array = config.as_uint8array;
@@ -63,7 +61,7 @@ pub fn finalize(this: *ArrayBufferSink) void {
 
 pub fn init(allocator: std.mem.Allocator, next: ?Sink) !*ArrayBufferSink {
     return bun.new(ArrayBufferSink, .{
-        .bytes = bun.ByteList.init(&.{}),
+        .bytes = bun.ByteList.empty,
         .allocator = allocator,
         .next = next,
     });
@@ -121,7 +119,7 @@ pub fn end(this: *ArrayBufferSink, err: ?Syscall.Error) bun.sys.Maybe(void) {
     return .success;
 }
 pub fn destroy(this: *ArrayBufferSink) void {
-    this.bytes.deinitWithAllocator(this.allocator);
+    this.bytes.deinit(this.allocator);
     bun.destroy(this);
 }
 pub fn toJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, as_uint8array: bool) JSValue {
@@ -134,10 +132,9 @@ pub fn toJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, as_uint8array: 
         return value;
     }
 
-    var list = this.bytes.listManaged(this.allocator);
-    this.bytes = bun.ByteList.init("");
+    defer this.bytes = bun.ByteList.empty;
     return ArrayBuffer.fromBytes(
-        try list.toOwnedSlice(),
+        try this.bytes.toOwnedSlice(this.allocator),
         if (as_uint8array)
             .Uint8Array
         else
@@ -151,12 +148,11 @@ pub fn endFromJS(this: *ArrayBufferSink, _: *JSGlobalObject) bun.sys.Maybe(Array
     }
 
     bun.assert(this.next == null);
-    var list = this.bytes.listManaged(this.allocator);
-    this.bytes = bun.ByteList.init("");
     this.done = true;
     this.signal.close(null);
+    defer this.bytes = bun.ByteList.empty;
     return .{ .result = ArrayBuffer.fromBytes(
-        bun.handleOom(list.toOwnedSlice()),
+        bun.handleOom(this.bytes.toOwnedSlice(this.allocator)),
         if (this.as_uint8array)
             .Uint8Array
         else

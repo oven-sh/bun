@@ -197,11 +197,11 @@ pub fn end(self: *Self) void {
     if (comptime enabled) self.internal_state.unlock();
 }
 
+pub const enabled = bun.Environment.ci_assert;
+
 const bun = @import("bun");
 const invalid_thread_id = @import("./thread_id.zig").invalid;
 const StoredTrace = bun.crash_handler.StoredTrace;
-
-const enabled = bun.Environment.ci_assert;
 const traces_enabled = bun.Environment.isDebug;
 
 const std = @import("std");

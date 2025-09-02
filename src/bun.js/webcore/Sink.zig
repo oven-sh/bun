@@ -53,10 +53,10 @@ pub const UTF8Fallback = struct {
 
             bun.strings.replaceLatin1WithUTF8(buf[0..str.len]);
             if (input.isDone()) {
-                const result = writeFn(ctx, .{ .temporary_and_done = bun.ByteList.init(buf[0..str.len]) });
+                const result = writeFn(ctx, .{ .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(buf[0..str.len]) });
                 return result;
             } else {
-                const result = writeFn(ctx, .{ .temporary = bun.ByteList.init(buf[0..str.len]) });
+                const result = writeFn(ctx, .{ .temporary = bun.ByteList.fromBorrowedSliceDangerous(buf[0..str.len]) });
                 return result;
             }
         }
@@ -67,9 +67,9 @@ pub const UTF8Fallback = struct {
 
             bun.strings.replaceLatin1WithUTF8(slice[0..str.len]);
             if (input.isDone()) {
-                return writeFn(ctx, .{ .owned_and_done = bun.ByteList.init(slice) });
+                return writeFn(ctx, .{ .owned_and_done = bun.ByteList.fromOwnedSlice(slice) });
             } else {
-                return writeFn(ctx, .{ .owned = bun.ByteList.init(slice) });
+                return writeFn(ctx, .{ .owned = bun.ByteList.fromOwnedSlice(slice) });
             }
         }
     }
@@ -83,10 +83,10 @@ pub const UTF8Fallback = struct {
             bun.assert(copied.written <= stack_size);
             bun.assert(copied.read <= stack_size);
             if (input.isDone()) {
-                const result = writeFn(ctx, .{ .temporary_and_done = bun.ByteList.init(buf[0..copied.written]) });
+                const result = writeFn(ctx, .{ .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(buf[0..copied.written]) });
                 return result;
             } else {
-                const result = writeFn(ctx, .{ .temporary = bun.ByteList.init(buf[0..copied.written]) });
+                const result = writeFn(ctx, .{ .temporary = bun.ByteList.fromBorrowedSliceDangerous(buf[0..copied.written]) });
                 return result;
             }
         }
@@ -94,9 +94,9 @@ pub const UTF8Fallback = struct {
         {
             const allocated = bun.strings.toUTF8Alloc(bun.default_allocator, str) catch return .{ .err = Syscall.Error.oom };
             if (input.isDone()) {
-                return writeFn(ctx, .{ .owned_and_done = bun.ByteList.init(allocated) });
+                return writeFn(ctx, .{ .owned_and_done = bun.ByteList.fromOwnedSlice(allocated) });
             } else {
-                return writeFn(ctx, .{ .owned = bun.ByteList.init(allocated) });
+                return writeFn(ctx, .{ .owned = bun.ByteList.fromOwnedSlice(allocated) });
             }
         }
     }
@@ -394,7 +394,9 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                     return jsc.JSValue.jsNumber(0);
                 }
 
-                return this.sink.writeBytes(.{ .temporary = bun.ByteList.init(slice) }).toJS(globalThis);
+                return this.sink.writeBytes(
+                    .{ .temporary = bun.ByteList.fromBorrowedSliceDangerous(slice) },
+                ).toJS(globalThis);
             }
 
             if (!arg.isString()) {
@@ -414,10 +416,14 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
 
             defer str.ensureStillAlive();
             if (view.is16Bit()) {
-                return this.sink.writeUTF16(.{ .temporary = bun.ByteList.initConst(std.mem.sliceAsBytes(view.utf16SliceAligned())) }).toJS(globalThis);
+                return this.sink.writeUTF16(.{ .temporary = bun.ByteList.fromBorrowedSliceDangerous(
+                    std.mem.sliceAsBytes(view.utf16SliceAligned()),
+                ) }).toJS(globalThis);
             }
 
-            return this.sink.writeLatin1(.{ .temporary = bun.ByteList.initConst(view.slice()) }).toJS(globalThis);
+            return this.sink.writeLatin1(
+                .{ .temporary = bun.ByteList.fromBorrowedSliceDangerous(view.slice()) },
+            ).toJS(globalThis);
         }
 
         pub fn writeUTF8(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {

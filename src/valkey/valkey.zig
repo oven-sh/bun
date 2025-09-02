@@ -431,7 +431,7 @@ pub const ValkeyClient = struct {
     /// Handle connection closed event
     pub fn onClose(this: *ValkeyClient) void {
         this.unregisterAutoFlusher();
-        this.write_buffer.deinit(this.allocator);
+        this.write_buffer.clearAndFree(this.allocator);
 
         // If manually closing, don't attempt to reconnect
         if (this.flags.is_manually_closed) {
@@ -794,8 +794,8 @@ pub const ValkeyClient = struct {
     /// Handle socket open event
     pub fn onOpen(this: *ValkeyClient, socket: uws.AnySocket) void {
         this.socket = socket;
-        this.write_buffer.deinit(this.allocator);
-        this.read_buffer.deinit(this.allocator);
+        this.write_buffer.clearAndFree(this.allocator);
+        this.read_buffer.clearAndFree(this.allocator);
         this.start();
     }
 

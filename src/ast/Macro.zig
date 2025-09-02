@@ -386,7 +386,7 @@ pub const Runner = struct {
                         const result = Expr.init(
                             E.Array,
                             E.Array{
-                                .items = ExprNodeList.init(&[_]Expr{}),
+                                .items = ExprNodeList.empty,
                                 .was_originally_macro = true,
                             },
                             this.caller.loc,
@@ -398,7 +398,7 @@ pub const Runner = struct {
                     var out = Expr.init(
                         E.Array,
                         E.Array{
-                            .items = ExprNodeList.init(array[0..0]),
+                            .items = ExprNodeList.empty,
                             .was_originally_macro = true,
                         },
                         this.caller.loc,
@@ -413,7 +413,7 @@ pub const Runner = struct {
                             continue;
                         i += 1;
                     }
-                    out.data.e_array.items = ExprNodeList.init(array);
+                    out.data.e_array.items = ExprNodeList.fromOwnedSlice(array);
                     _entry.value_ptr.* = out;
                     return out;
                 },
@@ -438,27 +438,37 @@ pub const Runner = struct {
                         .include_value = true,
                     }).init(this.global, obj);
                     defer object_iter.deinit();
-                    var properties = this.allocator.alloc(G.Property, object_iter.len) catch unreachable;
-                    errdefer this.allocator.free(properties);
-                    var out = Expr.init(
+
+                    const out = _entry.value_ptr;
+                    out.* = Expr.init(
                         E.Object,
                         E.Object{
-                            .properties = BabyList(G.Property).init(properties),
+                            .properties = bun.handleOom(
+                                G.Property.List.initCapacity(this.allocator, object_iter.len),
+                            ),
                             .was_originally_macro = true,
                         },
                         this.caller.loc,
                     );
-                    _entry.value_ptr.* = out;
+                    const properties = &out.data.e_object.properties;
+                    errdefer properties.clearAndFree(this.allocator);
 
                     while (try object_iter.next()) |prop| {
-                        properties[object_iter.i] = G.Property{
-                            .key = Expr.init(E.String, E.String.init(prop.toOwnedSlice(this.allocator) catch unreachable), this.caller.loc),
+                        bun.assertf(
+                            object_iter.i == properties.len,
+                            "`properties` unexpectedly modified (length {d}, expected {d})",
+                            .{ properties.len, object_iter.i },
+                        );
+                        properties.appendAssumeCapacity(G.Property{
+                            .key = Expr.init(
+                                E.String,
+                                E.String.init(prop.toOwnedSlice(this.allocator) catch unreachable),
+                                this.caller.loc,
+                            ),
                             .value = try this.run(object_iter.value),
-                        };
+                        });
                     }
-                    out.data.e_object.properties = BabyList(G.Property).init(properties[0..object_iter.i]);
-                    _entry.value_ptr.* = out;
-                    return out;
+                    return out.*;
                 },
 
                 .JSON => {
@@ -644,7 +654,6 @@ const Resolver = @import("../resolver/resolver.zig").Resolver;
 const isPackagePath = @import("../resolver/resolver.zig").isPackagePath;
 
 const bun = @import("bun");
-const BabyList = bun.BabyList;
 const Environment = bun.Environment;
 const Output = bun.Output;
 const Transpiler = bun.Transpiler;

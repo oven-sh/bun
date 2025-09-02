@@ -101,7 +101,7 @@ pub const AstBuilder = struct {
             .source_index = p.source_index,
             .tag = .symbol,
         };
-        try p.current_scope.generated.push(p.allocator, ref);
+        try p.current_scope.generated.append(p.allocator, ref);
         try p.declared_symbols.append(p.allocator, .{
             .ref = ref,
             .is_top_level = p.scopes.items.len == 0 or p.current_scope == p.scopes.items[0],
@@ -260,16 +260,16 @@ pub const AstBuilder = struct {
 
         parts.mut(1).declared_symbols = p.declared_symbols;
         parts.mut(1).scopes = p.scopes.items;
-        parts.mut(1).import_record_indices = BabyList(u32).fromList(p.import_records_for_current_part);
+        parts.mut(1).import_record_indices = BabyList(u32).moveFromList(&p.import_records_for_current_part);
 
         return .{
             .parts = parts,
             .module_scope = module_scope.*,
-            .symbols = js_ast.Symbol.List.fromList(p.symbols),
+            .symbols = js_ast.Symbol.List.moveFromList(&p.symbols),
             .exports_ref = Ref.None,
             .wrapper_ref = Ref.None,
             .module_ref = p.module_ref,
-            .import_records = ImportRecord.List.fromList(p.import_records),
+            .import_records = ImportRecord.List.moveFromList(&p.import_records),
             .export_star_import_records = &.{},
             .approximate_newline_count = 1,
             .exports_kind = .esm,

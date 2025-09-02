@@ -323,7 +323,7 @@ pub fn doFileWrite(this: *IOWriter) Yield {
     };
     if (child.bytelist) |bl| {
         const written_slice = this.buf.items[this.total_bytes_written .. this.total_bytes_written + amt];
-        bun.handleOom(bl.append(bun.default_allocator, written_slice));
+        bun.handleOom(bl.appendSlice(bun.default_allocator, written_slice));
     }
     child.written += amt;
     if (!child.wroteEverything()) {
@@ -347,7 +347,7 @@ pub fn onWritePollable(this: *IOWriter, amount: usize, status: bun.io.WriteStatu
     } else {
         if (child.bytelist) |bl| {
             const written_slice = this.buf.items[this.total_bytes_written .. this.total_bytes_written + amount];
-            bun.handleOom(bl.append(bun.default_allocator, written_slice));
+            bun.handleOom(bl.appendSlice(bun.default_allocator, written_slice));
         }
         this.total_bytes_written += amount;
         child.written += amount;

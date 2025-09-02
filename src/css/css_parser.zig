@@ -1416,7 +1416,7 @@ pub const BundlerAtRuleParser = struct {
         pub fn onImportRule(this: *This, import_rule: *ImportRule, start_position: u32, end_position: u32) void {
             const import_record_index = this.import_records.len;
             import_rule.import_record_idx = import_record_index;
-            this.import_records.push(this.allocator, ImportRecord{
+            this.import_records.append(this.allocator, ImportRecord{
                 .path = bun.fs.Path.init(import_rule.url),
                 .kind = if (import_rule.supports != null) .at_conditional else .at,
                 .range = bun.logger.Range{
@@ -1439,9 +1439,9 @@ pub const BundlerAtRuleParser = struct {
                     cloned.v.ensureTotalCapacity(this.allocator, this.enclosing_layer.v.len() + layer.v.len());
                     cloned.v.appendSliceAssumeCapacity(this.enclosing_layer.v.slice());
                     cloned.v.appendSliceAssumeCapacity(layer.v.slice());
-                    bun.handleOom(this.layer_names.push(this.allocator, cloned));
+                    bun.handleOom(this.layer_names.append(this.allocator, cloned));
                 } else {
-                    bun.handleOom(this.layer_names.push(this.allocator, layer.deepClone(this.allocator)));
+                    bun.handleOom(this.layer_names.append(this.allocator, layer.deepClone(this.allocator)));
                 }
             }
         }
@@ -2688,7 +2688,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                 if (!entry.found_existing) {
                     entry.value_ptr.* = ComposesEntry{};
                 }
-                bun.handleOom(entry.value_ptr.*.composes.push(allocator, composes.deepClone(allocator)));
+                bun.handleOom(entry.value_ptr.*.composes.append(allocator, composes.deepClone(allocator)));
             }
         }
 
@@ -3017,7 +3017,7 @@ pub fn fillPropertyBitSet(allocator: Allocator, bitset: *PropertyBitset, block: 
     for (block.declarations.items) |*prop| {
         const tag = switch (prop.*) {
             .custom => {
-                bun.handleOom(custom_properties.push(allocator, prop.custom.name.asStr()));
+                bun.handleOom(custom_properties.append(allocator, prop.custom.name.asStr()));
                 continue;
             },
             .unparsed => |u| @as(PropertyIdTag, u.property_id),
@@ -3030,7 +3030,7 @@ pub fn fillPropertyBitSet(allocator: Allocator, bitset: *PropertyBitset, block: 
     for (block.important_declarations.items) |*prop| {
         const tag = switch (prop.*) {
             .custom => {
-                bun.handleOom(custom_properties.push(allocator, prop.custom.name.asStr()));
+                bun.handleOom(custom_properties.append(allocator, prop.custom.name.asStr()));
                 continue;
             },
             .unparsed => |u| @as(PropertyIdTag, u.property_id),
@@ -3426,7 +3426,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                                     out.v.appendAssumeCapacity(rule.*);
                                     const import_record_idx = new_import_records.len;
                                     import_rule.import_record_idx = import_record_idx;
-                                    new_import_records.push(allocator, ImportRecord{
+                                    new_import_records.append(allocator, ImportRecord{
                                         .path = bun.fs.Path.init(import_rule.url),
                                         .kind = if (import_rule.supports != null) .at_conditional else .at,
                                         .range = bun.logger.Range.None,
@@ -3790,7 +3790,7 @@ const ParseUntilErrorBehavior = enum {
 //         return switch (this.*) {
 //             .list => |list| {
 //                 const len = list.len;
-//                 bun.handleOom(list.push(allocator, record));
+//                 bun.handleOom(list.append(allocator, record));
 //                 return len;
 //             },
 //             // .dummy => |*d| {
@@ -3835,7 +3835,7 @@ pub const Parser = struct {
                 },
                 .loc = loc,
             };
-            extra.symbols.push(this.allocator(), bun.ast.Symbol{
+            extra.symbols.append(this.allocator(), bun.ast.Symbol{
                 .kind = .local_css,
                 .original_name = name,
             }) catch |err| bun.handleOom(err);
@@ -3854,7 +3854,7 @@ pub const Parser = struct {
     pub fn addImportRecord(this: *Parser, url: []const u8, start_position: usize, kind: ImportKind) Result(u32) {
         if (this.import_records) |import_records| {
             const idx = import_records.len;
-            import_records.push(this.allocator(), ImportRecord{
+            import_records.append(this.allocator(), ImportRecord{
                 .path = bun.fs.Path.init(url),
                 .kind = kind,
                 .range = bun.logger.Range{
@@ -6975,7 +6975,7 @@ pub const parse_utility = struct {
     ) Result(T) {
         // I hope this is okay
         var import_records = bun.BabyList(bun.ImportRecord){};
-        defer import_records.deinitWithAllocator(allocator);
+        defer import_records.deinit(allocator);
         var i = ParserInput.new(allocator, input);
         var parser = Parser.new(&i, &import_records, .{}, null);
         const result = switch (parse_one(&parser)) {

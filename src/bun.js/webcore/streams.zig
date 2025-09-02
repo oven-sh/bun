@@ -207,8 +207,8 @@ pub const Result = union(Tag) {
 
     pub fn deinit(this: *Result) void {
         switch (this.*) {
-            .owned => |*owned| owned.deinitWithAllocator(bun.default_allocator),
-            .owned_and_done => |*owned_and_done| owned_and_done.deinitWithAllocator(bun.default_allocator),
+            .owned => |*owned| owned.clearAndFree(bun.default_allocator),
+            .owned_and_done => |*owned_and_done| owned_and_done.clearAndFree(bun.default_allocator),
             .err => |err| {
                 if (err == .JSValue) {
                     err.JSValue.unprotect();
@@ -910,17 +910,13 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 else => {},
             }
 
-            var list = this.buffer.listManaged(this.allocator);
-            list.clearRetainingCapacity();
-            list.ensureTotalCapacityPrecise(this.highWaterMark) catch return .{ .err = Syscall.Error.oom };
-            this.buffer.update(list);
+            this.buffer.clearRetainingCapacity();
+            this.buffer.ensureTotalCapacityPrecise(this.allocator, this.highWaterMark) catch
+                return .{ .err = Syscall.Error.oom };
 
             this.done = false;
-
             this.signal.start();
-
             log("start({d})", .{this.highWaterMark});
-
             return .success;
         }
 
@@ -1260,12 +1256,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         pub fn destroy(this: *@This()) void {
             log("destroy()", .{});
-            var bytes = this.buffer.listManaged(this.allocator);
-            if (bytes.capacity > 0) {
-                this.buffer = bun.ByteList.init("");
-                bytes.deinit();
-            }
-
+            this.buffer.deinit(this.allocator);
             this.unregisterAutoFlusher();
             this.allocator.destroy(this);
         }
@@ -1298,19 +1289,18 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             if (this.pooled_buffer) |pooled| {
                 this.buffer.len = 0;
                 if (this.buffer.cap > 64 * 1024) {
-                    this.buffer.deinitWithAllocator(bun.default_allocator);
-                    this.buffer = bun.ByteList.init("");
+                    this.buffer.clearAndFree(bun.default_allocator);
                 }
                 pooled.data = this.buffer;
 
-                this.buffer = bun.ByteList.init("");
+                this.buffer = bun.ByteList.empty;
                 this.pooled_buffer = null;
                 pooled.release();
             } else if (this.buffer.cap == 0) {
                 //
             } else if (FeatureFlags.http_buffer_pooling and !WebCore.ByteListPool.full()) {
                 const buffer = this.buffer;
-                this.buffer = bun.ByteList.init("");
+                this.buffer = bun.ByteList.empty;
                 WebCore.ByteListPool.push(this.allocator, buffer);
             } else {
                 // Don't release this buffer until destroy() is called
@@ -1621,9 +1611,9 @@ pub const ReadResult = union(enum) {
                 const done = is_done or (close_on_empty and slice.len == 0);
 
                 break :brk if (owned and done)
-                    Result{ .owned_and_done = bun.ByteList.init(slice) }
+                    Result{ .owned_and_done = bun.ByteList.fromOwnedSlice(slice) }
                 else if (owned)
-                    Result{ .owned = bun.ByteList.init(slice) }
+                    Result{ .owned = bun.ByteList.fromOwnedSlice(slice) }
                 else if (done)
                     Result{ .into_array_and_done = .{ .len = @as(Blob.SizeType, @truncate(slice.len)), .value = view } }
                 else
@@ -1632,28 +1622,6 @@ pub const ReadResult = union(enum) {
         };
     }
 };
-
-pub const AutoSizer = struct {
-    buffer: *bun.ByteList,
-    allocator: std.mem.Allocator,
-    max: usize,
-
-    pub fn resize(this: *AutoSizer, size: usize) ![]u8 {
-        const available = this.buffer.cap - this.buffer.len;
-        if (available >= size) return this.buffer.ptr[this.buffer.len..this.buffer.cap][0..size];
-        const to_grow = size -| available;
-        if (to_grow + @as(usize, this.buffer.cap) > this.max)
-            return this.buffer.ptr[this.buffer.len..this.buffer.cap];
-
-        var list = this.buffer.listManaged(this.allocator);
-        const prev_len = list.items.len;
-        try list.ensureTotalCapacity(to_grow + @as(usize, this.buffer.cap));
-        this.buffer.update(list);
-        return this.buffer.ptr[prev_len..@as(usize, this.buffer.cap)];
-    }
-};
-
-const string = []const u8;
 
 const std = @import("std");
 

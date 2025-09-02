@@ -528,7 +528,7 @@ pub const Chunk = struct {
             pub fn deinit(self: *Self, a: std.mem.Allocator) void {
                 // do shallow deinit since `LayerName` has
                 // allocations in arena
-                self.deinitWithAllocator(a);
+                self.clearAndFree(a);
             }
         });
 

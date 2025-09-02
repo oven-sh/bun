@@ -273,7 +273,8 @@ pub const SideEffects = enum(u1) {
                         }
 
                         properties_slice = properties_slice[0..end];
-                        expr.data.e_object.properties = G.Property.List.init(properties_slice);
+                        expr.data.e_object.properties =
+                            G.Property.List.fromBorrowedSliceDangerous(properties_slice);
                         return expr;
                     }
                 }
@@ -311,16 +312,14 @@ pub const SideEffects = enum(u1) {
                 for (items) |item| {
                     if (item.data == .e_spread) {
                         var end: usize = 0;
-                        for (items) |item__| {
-                            const item_ = item__;
+                        for (items) |item_| {
                             if (item_.data != .e_missing) {
                                 items[end] = item_;
                                 end += 1;
                             }
-
-                            expr.data.e_array.items = ExprNodeList.init(items[0..end]);
-                            return expr;
                         }
+                        expr.data.e_array.items.shrinkRetainingCapacity(end);
+                        return expr;
                     }
                 }
 
@@ -457,7 +456,7 @@ pub const SideEffects = enum(u1) {
                     findIdentifiers(decl.binding, &decls);
                 }
 
-                local.decls.update(decls);
+                local.decls = .moveFromList(&decls);
                 return true;
             },
 
@@ -889,7 +888,6 @@ const js_ast = bun.ast;
 const Binding = js_ast.Binding;
 const E = js_ast.E;
 const Expr = js_ast.Expr;
-const ExprNodeList = js_ast.ExprNodeList;
 const Stmt = js_ast.Stmt;
 
 const G = js_ast.G;

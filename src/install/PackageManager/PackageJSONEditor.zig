@@ -93,8 +93,8 @@ pub fn editTrustedDependencies(allocator: std.mem.Allocator, package_json: *Expr
     }
 
     const trusted_dependencies_to_add = len;
-    const new_trusted_deps = brk: {
-        var deps = try allocator.alloc(Expr, trusted_dependencies.len + trusted_dependencies_to_add);
+    const new_trusted_deps: JSAst.ExprNodeList = brk: {
+        const deps = try allocator.alloc(Expr, trusted_dependencies.len + trusted_dependencies_to_add);
         @memcpy(deps[0..trusted_dependencies.len], trusted_dependencies);
         @memset(deps[trusted_dependencies.len..], Expr.empty);
 
@@ -127,7 +127,7 @@ pub fn editTrustedDependencies(allocator: std.mem.Allocator, package_json: *Expr
             for (deps) |dep| bun.assert(dep.data != .e_missing);
         }
 
-        break :brk deps;
+        break :brk .fromOwnedSlice(deps);
     };
 
     var needs_new_trusted_dependencies_list = true;
@@ -141,20 +141,18 @@ pub fn editTrustedDependencies(allocator: std.mem.Allocator, package_json: *Expr
 
         break :brk Expr.init(
             E.Array,
-            E.Array{
-                .items = JSAst.ExprNodeList.init(new_trusted_deps),
-            },
+            E.Array{ .items = new_trusted_deps },
             logger.Loc.Empty,
         );
     };
 
     if (trusted_dependencies_to_add > 0 and new_trusted_deps.len > 0) {
-        trusted_dependencies_array.data.e_array.items = JSAst.ExprNodeList.init(new_trusted_deps);
+        trusted_dependencies_array.data.e_array.items = new_trusted_deps;
         trusted_dependencies_array.data.e_array.alphabetizeStrings();
     }
 
     if (package_json.data != .e_object or package_json.data.e_object.properties.len == 0) {
-        var root_properties = try allocator.alloc(JSAst.G.Property, 1);
+        const root_properties = try allocator.alloc(JSAst.G.Property, 1);
         root_properties[0] = JSAst.G.Property{
             .key = Expr.init(
                 E.String,
@@ -169,12 +167,12 @@ pub fn editTrustedDependencies(allocator: std.mem.Allocator, package_json: *Expr
         package_json.* = Expr.init(
             E.Object,
             E.Object{
-                .properties = JSAst.G.Property.List.init(root_properties),
+                .properties = JSAst.G.Property.List.fromOwnedSlice(root_properties),
             },
             logger.Loc.Empty,
         );
     } else if (needs_new_trusted_dependencies_list) {
-        var root_properties = try allocator.alloc(G.Property, package_json.data.e_object.properties.len + 1);
+        const root_properties = try allocator.alloc(G.Property, package_json.data.e_object.properties.len + 1);
         @memcpy(root_properties[0..package_json.data.e_object.properties.len], package_json.data.e_object.properties.slice());
         root_properties[root_properties.len - 1] = .{
             .key = Expr.init(
@@ -189,7 +187,7 @@ pub fn editTrustedDependencies(allocator: std.mem.Allocator, package_json: *Expr
         package_json.* = Expr.init(
             E.Object,
             E.Object{
-                .properties = JSAst.G.Property.List.init(root_properties),
+                .properties = JSAst.G.Property.List.fromOwnedSlice(root_properties),
             },
             logger.Loc.Empty,
         );
@@ -501,9 +499,12 @@ pub fn edit(
             }
         }
 
-        var new_dependencies = try allocator.alloc(G.Property, dependencies.len + remaining - replacing);
-        bun.copy(G.Property, new_dependencies, dependencies);
-        @memset(new_dependencies[dependencies.len..], G.Property{});
+        var new_dependencies = try std.ArrayListUnmanaged(G.Property)
+            .initCapacity(allocator, dependencies.len + remaining - replacing);
+        new_dependencies.expandToCapacity();
+
+        bun.copy(G.Property, new_dependencies.items, dependencies);
+        @memset(new_dependencies.items[dependencies.len..], G.Property{});
 
         var trusted_dependencies: []Expr = &[_]Expr{};
         if (options.add_trusted_dependencies) {
@@ -515,10 +516,10 @@ pub fn edit(
         }
 
         const trusted_dependencies_to_add = manager.trusted_deps_to_add_to_package_json.items.len;
-        const new_trusted_deps = brk: {
-            if (!options.add_trusted_dependencies or trusted_dependencies_to_add == 0) break :brk &[_]Expr{};
+        const new_trusted_deps: JSAst.ExprNodeList = brk: {
+            if (!options.add_trusted_dependencies or trusted_dependencies_to_add == 0) break :brk .empty;
 
-            var deps = try allocator.alloc(Expr, trusted_dependencies.len + trusted_dependencies_to_add);
+            const deps = try allocator.alloc(Expr, trusted_dependencies.len + trusted_dependencies_to_add);
             @memcpy(deps[0..trusted_dependencies.len], trusted_dependencies);
             @memset(deps[trusted_dependencies.len..], Expr.empty);
 
@@ -547,7 +548,7 @@ pub fn edit(
                 for (deps) |dep| bun.assert(dep.data != .e_missing);
             }
 
-            break :brk deps;
+            break :brk .fromOwnedSlice(deps);
         };
 
         for (updates.*) |*request| {
@@ -555,31 +556,31 @@ pub fn edit(
             defer if (comptime Environment.allow_assert) bun.assert(request.e_string != null);
 
             var k: usize = 0;
-            while (k < new_dependencies.len) : (k += 1) {
-                if (new_dependencies[k].key) |key| {
+            while (k < new_dependencies.items.len) : (k += 1) {
+                if (new_dependencies.items[k].key) |key| {
                     const name = request.getName();
                     if (!key.data.e_string.eql(string, name)) continue;
                     if (request.package_id == invalid_package_id) {
                         // Duplicate dependency (e.g., "react" in both "dependencies" and
                         // "optionalDependencies"). Remove the old dependency.
-                        new_dependencies[k] = .{};
-                        new_dependencies = new_dependencies[0 .. new_dependencies.len - 1];
+                        new_dependencies.items[k] = .{};
+                        new_dependencies.items.len -= 1;
                     }
                 }
 
-                new_dependencies[k].key = JSAst.Expr.allocate(
+                new_dependencies.items[k].key = JSAst.Expr.allocate(
                     allocator,
                     JSAst.E.String,
                     .{ .data = try allocator.dupe(u8, request.getResolvedName(manager.lockfile)) },
                     logger.Loc.Empty,
                 );
 
-                new_dependencies[k].value = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
+                new_dependencies.items[k].value = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
                     // we set it later
                     .data = "",
                 }, logger.Loc.Empty);
 
-                request.e_string = new_dependencies[k].value.?.data.e_string;
+                request.e_string = new_dependencies.items[k].value.?.data.e_string;
                 break;
             }
         }
@@ -595,12 +596,12 @@ pub fn edit(
             }
 
             break :brk JSAst.Expr.allocate(allocator, JSAst.E.Object, .{
-                .properties = JSAst.G.Property.List.init(new_dependencies),
+                .properties = .empty,
             }, logger.Loc.Empty);
         };
 
-        dependencies_object.data.e_object.properties = JSAst.G.Property.List.init(new_dependencies);
-        if (new_dependencies.len > 1)
+        dependencies_object.data.e_object.properties = JSAst.G.Property.List.moveFromList(&new_dependencies);
+        if (dependencies_object.data.e_object.properties.len > 1)
             dependencies_object.data.e_object.alphabetizeProperties();
 
         var needs_new_trusted_dependencies_list = true;
@@ -617,19 +618,19 @@ pub fn edit(
             }
 
             break :brk Expr.allocate(allocator, E.Array, .{
-                .items = JSAst.ExprNodeList.init(new_trusted_deps),
+                .items = new_trusted_deps,
             }, logger.Loc.Empty);
         };
 
         if (options.add_trusted_dependencies and trusted_dependencies_to_add > 0) {
-            trusted_dependencies_array.data.e_array.items = JSAst.ExprNodeList.init(new_trusted_deps);
+            trusted_dependencies_array.data.e_array.items = new_trusted_deps;
             if (new_trusted_deps.len > 1) {
                 trusted_dependencies_array.data.e_array.alphabetizeStrings();
             }
         }
 
         if (current_package_json.data != .e_object or current_package_json.data.e_object.properties.len == 0) {
-            var root_properties = try allocator.alloc(JSAst.G.Property, if (options.add_trusted_dependencies) 2 else 1);
+            const root_properties = try allocator.alloc(JSAst.G.Property, if (options.add_trusted_dependencies) 2 else 1);
             root_properties[0] = JSAst.G.Property{
                 .key = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
                     .data = dependency_list,
@@ -647,11 +648,11 @@ pub fn edit(
             }
 
             current_package_json.* = JSAst.Expr.allocate(allocator, JSAst.E.Object, .{
-                .properties = JSAst.G.Property.List.init(root_properties),
+                .properties = JSAst.G.Property.List.fromOwnedSlice(root_properties),
             }, logger.Loc.Empty);
         } else {
             if (needs_new_dependency_list and needs_new_trusted_dependencies_list) {
-                var root_properties = try allocator.alloc(G.Property, current_package_json.data.e_object.properties.len + 2);
+                const root_properties = try allocator.alloc(G.Property, current_package_json.data.e_object.properties.len + 2);
                 @memcpy(root_properties[0..current_package_json.data.e_object.properties.len], current_package_json.data.e_object.properties.slice());
                 root_properties[root_properties.len - 2] = .{
                     .key = Expr.allocate(allocator, E.String, E.String{
@@ -666,10 +667,10 @@ pub fn edit(
                     .value = trusted_dependencies_array,
                 };
                 current_package_json.* = Expr.allocate(allocator, E.Object, .{
-                    .properties = G.Property.List.init(root_properties),
+                    .properties = G.Property.List.fromOwnedSlice(root_properties),
                 }, logger.Loc.Empty);
             } else if (needs_new_dependency_list or needs_new_trusted_dependencies_list) {
-                var root_properties = try allocator.alloc(JSAst.G.Property, current_package_json.data.e_object.properties.len + 1);
+                const root_properties = try allocator.alloc(JSAst.G.Property, current_package_json.data.e_object.properties.len + 1);
                 @memcpy(root_properties[0..current_package_json.data.e_object.properties.len], current_package_json.data.e_object.properties.slice());
                 root_properties[root_properties.len - 1] = .{
                     .key = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
@@ -678,7 +679,7 @@ pub fn edit(
                     .value = if (needs_new_dependency_list) dependencies_object else trusted_dependencies_array,
                 };
                 current_package_json.* = JSAst.Expr.allocate(allocator, JSAst.E.Object, .{
-                    .properties = JSAst.G.Property.List.init(root_properties),
+                    .properties = JSAst.G.Property.List.fromOwnedSlice(root_properties),
                 }, logger.Loc.Empty);
             }
         }

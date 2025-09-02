@@ -309,7 +309,7 @@ pub fn getConnected(this: *MySQLConnection, _: *jsc.JSGlobalObject) JSValue {
 pub fn doClose(this: *MySQLConnection, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     _ = globalObject;
     this.disconnect();
-    this.write_buffer.deinit(bun.default_allocator);
+    this.write_buffer.clearAndFree(bun.default_allocator);
 
     return .js_undefined;
 }
@@ -1913,7 +1913,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
 fn close(this: *@This()) void {
     this.disconnect();
     this.unregisterAutoFlusher();
-    this.write_buffer.deinit(bun.default_allocator);
+    this.write_buffer.clearAndFree(bun.default_allocator);
 }
 
 pub fn closeStatement(this: *MySQLConnection, statement: *MySQLStatement) !void {

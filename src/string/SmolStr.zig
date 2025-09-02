@@ -169,7 +169,7 @@ pub const SmolStr = packed struct(u128) {
             if (inlined.len() + 1 > Inlined.max_len) {
                 var baby_list = try BabyList(u8).initCapacity(allocator, inlined.len() + 1);
                 baby_list.appendSliceAssumeCapacity(inlined.slice());
-                try baby_list.push(allocator, char);
+                try baby_list.append(allocator, char);
                 this.__len = baby_list.len;
                 this.__ptr = baby_list.ptr;
                 this.cap = baby_list.cap;
@@ -188,7 +188,7 @@ pub const SmolStr = packed struct(u128) {
             .len = this.__len,
             .cap = this.cap,
         };
-        try baby_list.push(allocator, char);
+        try baby_list.append(allocator, char);
 
         this.__len = baby_list.len;
         this.__ptr = baby_list.ptr;
@@ -217,7 +217,7 @@ pub const SmolStr = packed struct(u128) {
             .len = this.__len,
             .cap = this.cap,
         };
-        try baby_list.append(allocator, values);
+        try baby_list.appendSlice(allocator, values);
 
         this.* = SmolStr.fromBabyList(baby_list);
         return;

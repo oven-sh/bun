@@ -50,7 +50,7 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                     var conditions: ?*bun.css.ImportConditions = null;
                     if (entry.conditions.len > 0) {
                         conditions = entry.conditions.mut(0);
-                        entry.condition_import_records.push(
+                        entry.condition_import_records.append(
                             allocator,
                             bun.ImportRecord{ .kind = .at, .path = p.*, .range = Logger.Range{} },
                         ) catch |err| bun.handleOom(err);
@@ -118,7 +118,7 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                     var empty_conditions = bun.css.ImportConditions{};
                     const actual_conditions = if (conditions) |cc| cc else &empty_conditions;
 
-                    entry.condition_import_records.push(allocator, bun.ImportRecord{
+                    entry.condition_import_records.append(allocator, bun.ImportRecord{
                         .kind = .at,
                         .path = p.*,
                         .range = Logger.Range.none,

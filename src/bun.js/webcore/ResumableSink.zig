@@ -91,25 +91,23 @@ pub fn ResumableSink(
                             break :brk_err null;
                         };
 
-                        var byte_list = byte_stream.drain();
-                        const bytes = byte_list.listManaged(bun.default_allocator);
-                        defer bytes.deinit();
-                        log("onWrite {}", .{bytes.items.len});
-                        _ = onWrite(this.context, bytes.items);
+                        var bytes = byte_stream.drain();
+                        defer bytes.deinit(bun.default_allocator);
+                        log("onWrite {}", .{bytes.len});
+                        _ = onWrite(this.context, bytes.slice());
                         onEnd(this.context, err);
                         this.deref();
                         return this;
                     }
                     // We can pipe but we also wanna to drain as much as possible first
-                    var byte_list = byte_stream.drain();
-                    const bytes = byte_list.listManaged(bun.default_allocator);
-                    defer bytes.deinit();
+                    var bytes = byte_stream.drain();
+                    defer bytes.deinit(bun.default_allocator);
                     // lets write and see if we can still pipe or if we have backpressure
-                    if (bytes.items.len > 0) {
-                        log("onWrite {}", .{bytes.items.len});
+                    if (bytes.len > 0) {
+                        log("onWrite {}", .{bytes.len});
                         // we ignore the return value here because we dont want to pause the stream
                         // if we pause will just buffer in the pipe and we can do the buffer in one place
-                        _ = onWrite(this.context, bytes.items);
+                        _ = onWrite(this.context, bytes.slice());
                     }
                     this.status = .piped;
                     byte_stream.pipe = jsc.WebCore.Pipe.Wrap(@This(), onStreamPipe).init(this);
@@ -292,8 +290,8 @@ pub fn ResumableSink(
             defer {
                 if (stream_needs_deinit) {
                     switch (stream_) {
-                        .owned_and_done => |*owned| owned.listManaged(allocator).deinit(),
-                        .owned => |*owned| owned.listManaged(allocator).deinit(),
+                        .owned_and_done => |*owned| owned.deinit(allocator),
+                        .owned => |*owned| owned.deinit(allocator),
                         else => unreachable,
                     }
                 }

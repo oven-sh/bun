@@ -619,11 +619,17 @@ pub fn done(this: *Builtin, exit_code: anytype) Yield {
 
     // Aggregate output data if shell state is piped and this cmd is piped
     if (cmd.io.stdout == .pipe and cmd.io.stdout == .pipe and this.stdout == .buf) {
-        bun.handleOom(cmd.base.shell.buffered_stdout().append(bun.default_allocator, this.stdout.buf.items[0..]));
+        bun.handleOom(cmd.base.shell.buffered_stdout().appendSlice(
+            bun.default_allocator,
+            this.stdout.buf.items[0..],
+        ));
     }
     // Aggregate output data if shell state is piped and this cmd is piped
     if (cmd.io.stderr == .pipe and cmd.io.stderr == .pipe and this.stderr == .buf) {
-        bun.handleOom(cmd.base.shell.buffered_stderr().append(bun.default_allocator, this.stderr.buf.items[0..]));
+        bun.handleOom(cmd.base.shell.buffered_stderr().appendSlice(
+            bun.default_allocator,
+            this.stderr.buf.items[0..],
+        ));
     }
 
     return cmd.parent.childDone(cmd, this.exit_code.?);

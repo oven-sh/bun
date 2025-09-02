@@ -567,9 +567,9 @@ pub fn Visit(
                         // Make it an error to use "arguments" in a static class block
                         p.current_scope.forbid_arguments = true;
 
-                        var list = property.class_static_block.?.stmts.listManaged(p.allocator);
+                        var list = property.class_static_block.?.stmts.moveToListManaged(p.allocator);
                         p.visitStmts(&list, .fn_body) catch unreachable;
-                        property.class_static_block.?.stmts = js_ast.BabyList(Stmt).fromList(list);
+                        property.class_static_block.?.stmts = js_ast.BabyList(Stmt).moveFromList(&list);
                         p.popScope();
 
                         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
@@ -912,12 +912,13 @@ pub fn Visit(
                     before.ensureUnusedCapacity(@as(usize, @intFromBool(let_decls.items.len > 0)) + @as(usize, @intFromBool(var_decls.items.len > 0)) + non_fn_stmts.items.len) catch unreachable;
 
                     if (let_decls.items.len > 0) {
+                        const decls: Decl.List = .moveFromList(&let_decls);
                         before.appendAssumeCapacity(p.s(
                             S.Local{
                                 .kind = .k_let,
-                                .decls = Decl.List.fromList(let_decls),
+                                .decls = decls,
                             },
-                            let_decls.items[0].value.?.loc,
+                            decls.at(0).value.?.loc,
                         ));
                     }
 
@@ -928,12 +929,13 @@ pub fn Visit(
                                 before.appendAssumeCapacity(new);
                             }
                         } else {
+                            const decls: Decl.List = .moveFromList(&var_decls);
                             before.appendAssumeCapacity(p.s(
                                 S.Local{
                                     .kind = .k_var,
-                                    .decls = Decl.List.fromList(var_decls),
+                                    .decls = decls,
                                 },
-                                var_decls.items[0].value.?.loc,
+                                decls.at(0).value.?.loc,
                             ));
                         }
                     }
@@ -1166,7 +1168,10 @@ pub fn Visit(
                             if (prev_stmt.data == .s_local and
                                 local.canMergeWith(prev_stmt.data.s_local))
                             {
-                                prev_stmt.data.s_local.decls.append(p.allocator, local.decls.slice()) catch unreachable;
+                                prev_stmt.data.s_local.decls.appendSlice(
+                                    p.allocator,
+                                    local.decls.slice(),
+                                ) catch |err| bun.handleOom(err);
                                 continue;
                             }
                         }

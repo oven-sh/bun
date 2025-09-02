@@ -264,9 +264,7 @@ pub fn onStart(this: *FileReader) streams.Start {
     if (this.reader.isDone()) {
         this.consumeReaderBuffer();
         if (this.buffered.items.len > 0) {
-            const buffered = this.buffered;
-            this.buffered = .{};
-            return .{ .owned_and_done = bun.ByteList.fromList(buffered) };
+            return .{ .owned_and_done = bun.ByteList.moveFromList(&this.buffered) };
         }
     } else if (comptime Environment.isPosix) {
         if (!was_lazy and this.reader.flags.pollable) {
@@ -371,8 +369,7 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
                         @memcpy(this.pending_view[0..buffer.items.len], buffer.items);
                         this.pending.result = .{ .into_array_and_done = .{ .value = this.pending_value.get() orelse .zero, .len = @truncate(buffer.items.len) } };
                     } else {
-                        this.pending.result = .{ .owned_and_done = bun.ByteList.fromList(buffer.*) };
-                        buffer.* = .{};
+                        this.pending.result = .{ .owned_and_done = bun.ByteList.moveFromList(buffer) };
                     }
                 } else {
                     this.pending.result = .{ .done = {} };
@@ -419,11 +416,11 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
                     this.reader.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
                 }
                 this.pending.result = .{
-                    .temporary_and_done = bun.ByteList.init(buf),
+                    .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(buf),
                 };
             } else {
                 this.pending.result = .{
-                    .temporary = bun.ByteList.init(buf),
+                    .temporary = bun.ByteList.fromBorrowedSliceDangerous(buf),
                 };
 
                 if (bun.isSliceInBuffer(buf, this.reader.buffer().allocatedSlice())) {
@@ -439,11 +436,11 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
 
         if (this.reader.isDone()) {
             this.pending.result = .{
-                .owned_and_done = bun.ByteList.init(buf),
+                .owned_and_done = bun.ByteList.fromBorrowedSliceDangerous(buf),
             };
         } else {
             this.pending.result = .{
-                .owned = bun.ByteList.init(buf),
+                .owned = bun.ByteList.fromBorrowedSliceDangerous(buf),
             };
         }
         this.buffered = .{};
@@ -525,20 +522,17 @@ pub fn onPull(this: *FileReader, buffer: []u8, array: jsc.JSValue) streams.Resul
             .temporary => |buf| {
                 log("onPull({d}) = {d}", .{ buffer.len, buf.len });
                 if (this.reader.isDone()) {
-                    return .{ .temporary_and_done = bun.ByteList.init(buf) };
+                    return .{ .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(buf) };
                 }
 
-                return .{ .temporary = bun.ByteList.init(buf) };
+                return .{ .temporary = bun.ByteList.fromBorrowedSliceDangerous(buf) };
             },
             .use_buffered => {
-                const buffered = this.buffered;
-                this.buffered = .{};
-                log("onPull({d}) = {d}", .{ buffer.len, buffered.items.len });
+                log("onPull({d}) = {d}", .{ buffer.len, this.buffered.items.len });
                 if (this.reader.isDone()) {
-                    return .{ .owned_and_done = bun.ByteList.fromList(buffered) };
+                    return .{ .owned_and_done = bun.ByteList.moveFromList(&this.buffered) };
                 }
-
-                return .{ .owned = bun.ByteList.fromList(buffered) };
+                return .{ .owned = bun.ByteList.moveFromList(&this.buffered) };
             },
             else => {},
         }
@@ -560,8 +554,7 @@ pub fn onPull(this: *FileReader, buffer: []u8, array: jsc.JSValue) streams.Resul
 
 pub fn drain(this: *FileReader) bun.ByteList {
     if (this.buffered.items.len > 0) {
-        const out = bun.ByteList.fromList(this.buffered);
-        this.buffered = .{};
+        const out = bun.ByteList.moveFromList(&this.buffered);
         if (comptime Environment.allow_assert) {
             bun.assert(this.reader.buffer().items.ptr != out.ptr);
         }
@@ -572,9 +565,7 @@ pub fn drain(this: *FileReader) bun.ByteList {
         return .{};
     }
 
-    const out = this.reader.buffer().*;
-    this.reader.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
-    return bun.ByteList.fromList(out);
+    return bun.ByteList.moveFromList(this.reader.buffer());
 }
 
 pub fn setRefOrUnref(this: *FileReader, enable: bool) void {
@@ -594,7 +585,7 @@ pub fn onReaderDone(this: *FileReader) void {
         this.consumeReaderBuffer();
         if (this.pending.state == .pending) {
             if (this.buffered.items.len > 0) {
-                this.pending.result = .{ .owned_and_done = bun.ByteList.fromList(this.buffered) };
+                this.pending.result = .{ .owned_and_done = bun.ByteList.moveFromList(&this.buffered) };
             } else {
                 this.pending.result = .{ .done = {} };
             }

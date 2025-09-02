@@ -279,7 +279,7 @@ Exited with code [1]
 - [x] announce results of skip/todo with no callback, eg `test.skip("abc")` or `test.todo("def")`
 - [x] fix toMatchInlineSnapshot
 - [x] make sure error.SnapshotInConcurrentGroup prints well
-- [ ] test error.SnapshotInConcurrentGroup
+- [x] test error.SnapshotInConcurrentGroup
 - [ ] validate uses of sequence.entry_index (entry_index can be >= entries_end)
 - [ ] decide on beforeAll/beforeEach behaviour
   - these are all tested flat, not sure if it changes with describe()

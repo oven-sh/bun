@@ -487,7 +487,28 @@ extern "C" void Bun__onFulfillAsyncModule(
                     // it's a race! we lost.
                     // https://github.com/oven-sh/bun/issues/6946
                     // https://github.com/oven-sh/bun/issues/12910
-                    return;
+                    // https://github.com/oven-sh/bun/issues/20489
+                    
+                    // The module is already being loaded or has been loaded.
+                    // For ESM modules, we need to provide the source to ensure proper module evaluation.
+                    // This makes sure all concurrent imports share the same module instance.
+                    
+                    if (!res->result.value.isCommonJSModule) {
+                        auto&& provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
+                        
+                        // Key fix: Call provideFetch to make this import use the same module instance
+                        // This ensures all concurrent imports get the same module namespace object
+                        globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, JSC::SourceCode(provider));
+                        RETURN_IF_EXCEPTION(scope, );
+                        
+                        // Now resolve the promise with a new JSSourceCode
+                        // The module loader will handle making sure it's the same module instance
+                        auto&& newProvider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
+                        promise->resolve(globalObject, JSC::JSSourceCode::create(vm, JSC::SourceCode(newProvider)));
+                        scope.assertNoExceptionExceptTermination();
+                        return;
+                    }
+                    // For CommonJS modules, continue with normal flow
                 }
             }
         }

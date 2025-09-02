@@ -1365,33 +1365,27 @@ class ChildProcess extends EventEmitter {
 
       // Make stdio properties enumerable own properties for Object.assign() compatibility
       // This fixes libraries like tinyspawn that use Object.assign(promise, childProcess)
-      Object.defineProperty(this, "stdin", {
-        get() {
-          return (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false));
+      Object.defineProperties(this, {
+        stdin: {
+          get: () => (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false)),
+          enumerable: true,
+          configurable: true,
         },
-        enumerable: true,
-        configurable: true,
-      });
-      Object.defineProperty(this, "stdout", {
-        get() {
-          return (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false));
+        stdout: {
+          get: () => (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false)),
+          enumerable: true,
+          configurable: true,
         },
-        enumerable: true,
-        configurable: true,
-      });
-      Object.defineProperty(this, "stderr", {
-        get() {
-          return (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false));
+        stderr: {
+          get: () => (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false)),
+          enumerable: true,
+          configurable: true,
         },
-        enumerable: true,
-        configurable: true,
-      });
-      Object.defineProperty(this, "stdio", {
-        get() {
-          return (this.#stdioObject ??= this.#createStdioObject());
+        stdio: {
+          get: () => (this.#stdioObject ??= this.#createStdioObject()),
+          enumerable: true,
+          configurable: true,
         },
-        enumerable: true,
-        configurable: true,
       });
 
       if (has_ipc) {

@@ -367,7 +367,7 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
   return [url, sslMode, { ...options, adapter: parsedAdapterFromProtocol }];
 }
 
-function parseAdapterFromProtocol(protocol: string): Bun.SQL.__internal.Adapter {
+function parseAdapterFromProtocol(protocol: string): Bun.SQL.__internal.Adapter | null {
   switch (protocol) {
     case "http":
     case "https":
@@ -431,8 +431,10 @@ function parseOptions(
     prepare: boolean = true;
 
   if (url) {
-    ({ hostname, port, username, password } = options);
     // options object overrides url
+    ({ hostname, port, username, password } = options);
+
+    // but if it's not in options we reassign
     hostname ||= url.hostname;
     port ||= url.port;
     username ||= decodeIfValid(url.username);
@@ -775,7 +777,10 @@ export default {
   assertIsOptionsOfAdapter,
   parseOptions,
   SQLHelper,
-  SSLMode,
   normalizeSSLMode,
   SQLResultArray,
+
+  // @ts-expect-error we're exporting a const enum which works in our builtins
+  // generator but not in typescript officially
+  SSLMode,
 };

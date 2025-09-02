@@ -651,16 +651,16 @@ it("ErrorEvent", () => {
     colno: 10,
     error: new Error("Test error"),
   });
-  expect(normalizeBunSnapshot(Bun.inspect(errorEvent))).toMatchInlineSnapshot(`
+  expect(normalizeBunSnapshot(Bun.inspect(errorEvent)).replace(/\d+ \| /gim, "NNN |")).toMatchInlineSnapshot(`
     "ErrorEvent {
       type: "error",
       message: "Something went wrong",
-      error: 648 |   const errorEvent = new ErrorEvent("error", {
-    649 |     message: "Something went wrong",
-    650 |     filename: "script.js",
-    651 |     lineno: 42,
-    652 |     colno: 10,
-    653 |     error: new Error("Test error"),
+      error: NNN |  const errorEvent = new ErrorEvent("error", {
+    NNN |    message: "Something went wrong",
+    NNN |    filename: "script.js",
+    NNN |    lineno: 42,
+    NNN |    colno: 10,
+    NNN |    error: new Error("Test error"),
                      ^
     error: Test error
         at <anonymous> (file:NN:NN)

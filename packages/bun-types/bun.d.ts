@@ -617,6 +617,45 @@ declare module "bun" {
      * @returns A JavaScript object
      */
     export function parse(input: string): object;
+
+    /**
+     * Convert a JavaScript object to a TOML string.
+     *
+     * @category Utilities
+     *
+     * @param value The JavaScript object to stringify
+     * @returns A TOML string
+     *
+     * @example
+     * ```ts
+     * import { TOML } from "bun";
+     *
+     * const obj = {
+     *   title: "TOML Example",
+     *   database: {
+     *     server: "192.168.1.1",
+     *     ports: [8001, 8001, 8002],
+     *     connection_max: 5000,
+     *     enabled: true,
+     *   }
+     * };
+     *
+     * console.log(TOML.stringify(obj));
+     * // Output:
+     * // title = "TOML Example"
+     * //
+     * // [database]
+     * // server = "192.168.1.1"
+     * // ports = [
+     * //   8001,
+     * //   8001,
+     * //   8002
+     * // ]
+     * // connection_max = 5000
+     * // enabled = true
+     * ```
+     */
+    export function stringify(value: any): string;
   }
 
   /**

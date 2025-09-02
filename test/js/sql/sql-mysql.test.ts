@@ -276,6 +276,16 @@ describeWithContainer(
       expect((await sql`select ${"hello"} as x`)[0].x).toBe("hello");
     });
 
+    test("MediumInt/Int24", async () => {
+      let random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a mediumint unsigned)`;
+      await sql`INSERT INTO ${sql(random_name)} VALUES (${1})`;
+      const result = await sql`select * from ${sql(random_name)}`;
+      expect(result[0].a).toBe(1);
+      const result2 = await sql`select * from ${sql(random_name)}`.simple();
+      expect(result2[0].a).toBe(1);
+    });
+
     test("Boolean/TinyInt/BIT", async () => {
       // Protocol will always return 0 or 1 for TRUE and FALSE when not using a table.
       expect((await sql`select ${false} as x`)[0].x).toBe(0);

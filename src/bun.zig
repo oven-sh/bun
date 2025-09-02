@@ -1737,7 +1737,7 @@ pub const StringSet = struct {
 
     pub const Map = StringArrayHashMap(void);
 
-    pub fn clone(self: StringSet) !StringSet {
+    pub fn clone(self: *const StringSet) !StringSet {
         var new_map = Map.init(self.map.allocator);
         try new_map.ensureTotalCapacity(self.map.count());
         for (self.map.keys()) |key| {
@@ -1754,7 +1754,15 @@ pub const StringSet = struct {
         };
     }
 
-    pub fn keys(self: StringSet) []const []const u8 {
+    pub fn isEmpty(self: *const StringSet) bool {
+        return self.count() == 0;
+    }
+
+    pub fn count(self: *const StringSet) usize {
+        return self.map.count();
+    }
+
+    pub fn keys(self: *const StringSet) []const []const u8 {
         return self.map.keys();
     }
 
@@ -1771,6 +1779,13 @@ pub const StringSet = struct {
 
     pub fn swapRemove(self: *StringSet, key: []const u8) bool {
         return self.map.swapRemove(key);
+    }
+
+    pub fn clearAndFree(self: *StringSet) void {
+        for (self.map.keys()) |key| {
+            self.map.allocator.free(key);
+        }
+        self.map.clearAndFree();
     }
 
     pub fn deinit(self: *StringSet) void {
@@ -3721,7 +3736,7 @@ pub noinline fn throwStackOverflow() StackOverflow!void {
     @branchHint(.cold);
     return error.StackOverflow;
 }
-const StackOverflow = error{StackOverflow};
+pub const StackOverflow = error{StackOverflow};
 
 pub const S3 = @import("./s3/client.zig");
 

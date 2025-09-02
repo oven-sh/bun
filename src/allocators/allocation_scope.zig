@@ -106,7 +106,7 @@ const LockedState = struct {
             .c, .one, .many => ptr,
             .slice => if (ptr.len > 0) ptr.ptr else return,
         });
-        if (self.allocations.getPtr(cast_ptr)) |owned| {
+        if (self.history.allocations.getPtr(cast_ptr)) |owned| {
             Output.warn("Owned pointer allocated here:");
             bun.crash_handler.dumpStackTrace(
                 owned.allocated_at.trace(),

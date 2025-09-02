@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("WebSocket should emit error event before close event on handshake failure (issue #14338)", async () => {
   const { promise: errorPromise, resolve: resolveError } = Promise.withResolvers<Event>();
@@ -91,7 +91,7 @@ test("WebSocket successful connection should NOT emit error event", async () => 
 
   // Send a test message
   ws.send("test");
-  
+
   // Wait for echo
   const msg = await messagePromise;
   expect(msg.data).toBe("test");
@@ -148,4 +148,3 @@ test("WebSocket should emit error and close events on connection to non-WebSocke
   // After the fix, both error and close events should be emitted
   expect(events).toEqual(["error", "close"]);
 });
-

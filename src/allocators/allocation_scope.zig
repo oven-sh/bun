@@ -113,8 +113,8 @@ const LockedState = struct {
                 trace_limits,
                 trace_limits,
             );
+            @panic("this pointer was owned by the allocation scope when it was not supposed to be");
         }
-        @panic("this pointer was owned by the allocation scope when it was not supposed to be");
     }
 
     fn trackAllocation(self: Self, buf: []const u8, ret_addr: usize, extra: Extra) bun.OOM!void {

@@ -338,7 +338,7 @@ pub const BunTestFile = struct {
         buntest: *BunTestFile,
         phase: RefDataValue,
 
-        pub fn deinit(this: *RefData) void {
+        pub fn destroy(this: *RefData) void {
             group.begin(@src());
             defer group.end();
             group.log("refData: {}", .{this.phase});
@@ -402,7 +402,7 @@ pub const BunTestFile = struct {
         const result, const this_ptr = callframe.argumentsAsArray(2);
 
         const refdata: *RefData = this_ptr.asPromisePtr(RefData);
-        defer refdata.deinit();
+        defer refdata.destroy();
         const this = refdata.buntest;
 
         if (is_catch) {

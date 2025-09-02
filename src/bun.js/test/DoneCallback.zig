@@ -8,7 +8,7 @@ const DoneCallbackTask = struct {
 
     pub fn call(this: *DoneCallbackTask) void {
         defer bun.destroy(this);
-        defer this.ref.deinit();
+        defer this.ref.destroy();
         defer this.value.deinit();
         this.ref.buntest.bunTestDoneCallback(this.globalThis, this.value.get(), this.ref.phase) catch |e| {
             this.ref.buntest.onUncaughtException(this.globalThis, this.globalThis.takeError(e), false, this.ref.phase);
@@ -42,7 +42,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
     const task = jsc.ManagedTask.New(DoneCallbackTask, DoneCallbackTask.call).init(done_callback_test);
     jsc.VirtualMachine.get().enqueueTask(task);
 
-    ref.deinit();
+    ref.destroy();
     this.ref = null;
     return .js_undefined;
 }
@@ -58,7 +58,7 @@ pub fn finalize(
     groupLog.begin(@src());
     defer groupLog.end();
 
-    if (this.ref) |ref| ref.deinit();
+    if (this.ref) |ref| ref.destroy();
     VirtualMachine.get().allocator.destroy(this);
 }
 

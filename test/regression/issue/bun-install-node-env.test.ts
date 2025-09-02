@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import { tempDirWithFiles, bunExe, bunEnv } from "harness";
 import { spawn } from "bun";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 const testDir = tempDirWithFiles("bun-install-node-env", {
   "package.json": JSON.stringify({
@@ -10,7 +10,7 @@ const testDir = tempDirWithFiles("bun-install-node-env", {
   ".env.development": "DEVELOPMENT_VAR=false",
   ".env.production": "PRODUCTION_VAR=production_value",
   ".env.test": "TEST_VAR=test_value",
-  "bunfig.toml": "[run]\nsilent = false"
+  "bunfig.toml": "[run]\nsilent = false",
 });
 
 test("bun install respects NODE_ENV=development", async () => {
@@ -22,10 +22,7 @@ test("bun install respects NODE_ENV=development", async () => {
     stderr: "pipe",
   });
 
-  const [exitCode, output] = await Promise.all([
-    exited,
-    new Response(stderr).text(),
-  ]);
+  const [exitCode, output] = await Promise.all([exited, new Response(stderr).text()]);
 
   expect(exitCode).toBe(0);
   // Should load .env.development, not .env.production
@@ -42,10 +39,7 @@ test("bun install respects NODE_ENV=production", async () => {
     stderr: "pipe",
   });
 
-  const [exitCode, output] = await Promise.all([
-    exited,
-    new Response(stderr).text(),
-  ]);
+  const [exitCode, output] = await Promise.all([exited, new Response(stderr).text()]);
 
   expect(exitCode).toBe(0);
   // Should load .env.production
@@ -61,10 +55,7 @@ test("bun install respects NODE_ENV=test", async () => {
     stderr: "pipe",
   });
 
-  const [exitCode, output] = await Promise.all([
-    exited,
-    new Response(stderr).text(),
-  ]);
+  const [exitCode, output] = await Promise.all([exited, new Response(stderr).text()]);
 
   expect(exitCode).toBe(0);
   // Should load .env.test
@@ -80,10 +71,7 @@ test("bun install defaults to production when NODE_ENV is not set", async () => 
     stderr: "pipe",
   });
 
-  const [exitCode, output] = await Promise.all([
-    exited,
-    new Response(stderr).text(),
-  ]);
+  const [exitCode, output] = await Promise.all([exited, new Response(stderr).text()]);
 
   expect(exitCode).toBe(0);
   // Should default to .env.production
@@ -99,10 +87,7 @@ test("bun install respects BUN_ENV over NODE_ENV", async () => {
     stderr: "pipe",
   });
 
-  const [exitCode, output] = await Promise.all([
-    exited,
-    new Response(stderr).text(),
-  ]);
+  const [exitCode, output] = await Promise.all([exited, new Response(stderr).text()]);
 
   expect(exitCode).toBe(0);
   // BUN_ENV should take precedence over NODE_ENV

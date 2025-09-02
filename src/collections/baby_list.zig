@@ -4,7 +4,7 @@ pub fn BabyList(comptime Type: type) type {
     return struct {
         const Self = @This();
 
-        // NOTE: If you add, remove, or rename any fields, you need to update
+        // NOTE: If you add, remove, or rename any public fields, you need to update
         // `looksLikeListContainerType` in `meta.zig`.
         ptr: [*]Type = &[_]Type{},
         len: u32 = 0,

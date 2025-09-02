@@ -2911,10 +2911,10 @@ pub const Formatter = struct {
                     .MessageEvent, .ErrorEvent => |evt| evt,
                     else => {
                         if (remove_before_recurse) {
-                            remove_before_recurse = false;
                             _ = this.map.remove(value);
                         }
 
+                        // We must potentially remove it again.
                         remove_before_recurse = true;
                         return try this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
                     },

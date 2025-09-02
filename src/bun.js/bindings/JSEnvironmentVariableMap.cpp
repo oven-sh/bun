@@ -287,10 +287,17 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     void* list;
     size_t count = Bun__getEnvCount(globalObject, &list);
     JSC::JSObject* object = nullptr;
-    if (count < 63) {
-        object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
+#if OS(WINDOWS)
+    // TODO: make this consistent across platforms.
+    JSObject* prototype = globalObject->nullPrototype();
+#else
+    JSObject* prototype = globalObject->objectPrototype();
+#endif
+
+    if (count < JSFinalObject::maxInlineCapacity) {
+        object = constructEmptyObject(globalObject, prototype, count);
     } else {
-        object = constructEmptyObject(globalObject, globalObject->objectPrototype());
+        object = constructEmptyObject(globalObject, prototype);
     }
 
 #if OS(WINDOWS)

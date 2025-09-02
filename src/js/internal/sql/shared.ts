@@ -238,27 +238,30 @@ const env = Bun.env;
 
 function getConnectionDetailsFromEnvironment(
   adapter: Bun.SQL.__internal.Adapter | undefined,
-): [url: string | null, sslMode: SSLMode | null] {
+): [url: string | null, sslMode: SSLMode | null, adapter: Bun.SQL.__internal.Adapter | null] {
   let url: string | null = null;
   let sslMode: SSLMode | null = null;
 
   if (adapter === undefined) {
-    url =
-      env.POSTGRES_URL ||
-      env.DATABASE_URL ||
-      env.PGURL ||
-      env.PG_URL ||
-      env.PGURL ||
-      env.MYSQL_URL ||
-      env.SQLITE_URL ||
-      null; // fallback default values are handled in the parseOptions function, since the values are not coming from the env itself
-
+    url = env.DATABASE_URL || env.DATABASE_URL || env.POSTGRES_URL || env.PGURL || env.PG_URL || env.PGURL || null;
     if (!url) {
-      url = env.TLS_POSTGRES_DATABASE_URL || env.TLS_MYSQL_DATABASE_URL || env.TLS_DATABASE_URL || null;
+      url = env.TLS_POSTGRES_DATABASE_URL || env.TLS_DATABASE_URL || null;
       if (url) sslMode = SSLMode.require;
     }
 
-    return [url, sslMode];
+    url = env.MYSQL_URL || env.MYSQL_URL || null;
+    if (!url) {
+      url = env.TLS_MYSQL_DATABASE_URL || null;
+      if (url) sslMode = SSLMode.require;
+    }
+
+    url = env.MARIADB_URL || env.MARIADB_URL || null;
+    if (!url) {
+      url = env.TLS_MARIADB_DATABASE_URL || null;
+      if (url) sslMode = SSLMode.require;
+    }
+
+    return [url, sslMode, null]; // Couldn't detect adapter here automatically
   }
 
   switch (adapter) {
@@ -268,7 +271,7 @@ function getConnectionDetailsFromEnvironment(
         url = env.TLS_POSTGRES_DATABASE_URL || env.TLS_DATABASE_URL || null;
         if (url) sslMode = SSLMode.require;
       }
-      return [url, sslMode];
+      return [url, sslMode, "postgres"];
 
     case "mysql":
       url = env.MYSQL_URL || env.DATABASE_URL || null;
@@ -276,7 +279,7 @@ function getConnectionDetailsFromEnvironment(
         url = env.TLS_MYSQL_DATABASE_URL || env.TLS_DATABASE_URL || null;
         if (url) sslMode = SSLMode.require;
       }
-      return [url, sslMode];
+      return [url, sslMode, "mysql"];
 
     case "mariadb":
       url = env.MARIADB_URL || env.DATABASE_URL || null;
@@ -284,10 +287,10 @@ function getConnectionDetailsFromEnvironment(
         url = env.TLS_MARIADB_DATABASE_URL || env.TLS_DATABASE_URL || null;
         if (url) sslMode = SSLMode.require;
       }
-      return [url, sslMode];
+      return [url, sslMode, "mariadb"];
 
     case "sqlite":
-      return [env.SQLITE_URL || env.DATABASE_URL || null, null];
+      return [env.SQLITE_URL || env.DATABASE_URL || null, null, "sqlite"];
 
     default: {
       adapter satisfies never;
@@ -307,7 +310,9 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
   stringOrUrlOrOptions: Bun.SQL.Options | string | URL | undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options,
 ): [url: string | URL | null, sslMode: SSLMode | null, options: Bun.SQL.__internal.Define<Bun.SQL.Options, "adapter">] {
-  const [urlFromEnvironment, sslMode] = getConnectionDetailsFromEnvironment(definitelyOptionsButMaybeEmpty.adapter);
+  const [urlFromEnvironment, sslMode, adapter] = getConnectionDetailsFromEnvironment(
+    definitelyOptionsButMaybeEmpty.adapter,
+  );
 
   let stringOrUrl: string | URL | null;
   let options: Bun.SQL.Options;
@@ -331,11 +336,17 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
 
   let url: string | URL | null = stringOrUrl;
 
+  if (options.adapter === undefined && adapter !== null) {
+    options.adapter = adapter;
+  }
+
+  const parsedAdapter = adapter || options.adapter;
+
   // If adapter was specified in options, we should ALWAYS use it over anything
   // parsed from the connection string (options object is considered the
   // ultimate source of truth for values)
-  if (options.adapter !== undefined) {
-    return [url, sslMode, { ...options, adapter: options.adapter }] as const;
+  if (parsedAdapter) {
+    return [url, sslMode, { ...options, adapter: parsedAdapter }] as const;
   }
 
   let protocol: Bun.SQL.__internal.Adapter | (string & {}) = DEFAULT_PROTOCOL;
@@ -362,25 +373,35 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
     protocol = protocol.slice(0, -1);
   }
 
+  const parsedAdapterFromProtocol = parseAdapterFromProtocol(protocol);
+
+  if (!parsedAdapterFromProtocol) {
+    throw new Error(`Unsupported protocol: ${protocol}. Supported adapters: "postgres", "sqlite", "mysql", "mariadb"`);
+  }
+
+  return [url, sslMode, { ...options, adapter: parsedAdapterFromProtocol }];
+}
+
+function parseAdapterFromProtocol(protocol: string): Bun.SQL.__internal.Adapter {
   switch (protocol) {
     case "http":
     case "https":
     case "ftp":
     case "postgres":
     case "postgresql":
-      return [url, sslMode, { ...options, adapter: "postgres" }];
+      return "postgres";
 
     case "mysql":
     case "mysql2":
     case "mariadb":
-      return [url, sslMode, { ...options, adapter: "mysql" }];
+      return "mysql";
 
     case "file":
     case "sqlite":
-      return [url, sslMode, { ...options, adapter: "sqlite" }];
+      return "sqlite";
 
     default:
-      throw new Error(`Unsupported protocol: ${protocol}. Supported adapters: "postgres", "sqlite", "mysql"`);
+      return null;
   }
 }
 
@@ -453,37 +474,31 @@ function parseOptions(
 
   switch (adapter) {
     case "postgres": {
-      hostname ||= options.hostname || options.host || env.PGHOST || "localhost";
+      hostname ||= options.hostname || options.host || env.PG_HOST || env.PGHOST || "localhost";
       break;
     }
     case "mysql": {
-      hostname ||= options.hostname || options.host || env.MYSQLHOST || "localhost";
+      hostname ||= options.hostname || options.host || env.MYSQL_HOST || env.MYSQLHOST || "localhost";
       break;
     }
     case "mariadb": {
-      hostname ||= options.hostname || options.host || env.MARIADBHOST || "localhost";
+      hostname ||= options.hostname || options.host || env.MARIADB_HOST || env.MARIADBHOST || "localhost";
       break;
-    }
-    default: {
-      throw new Error(`Unsupported adapter: ${adapter}`);
     }
   }
 
   switch (adapter) {
     case "postgres": {
-      port ||= Number(options.port || env.PGPORT || "5432");
+      port ||= Number(options.port || env.PG_PORT || env.PGPORT || "5432");
       break;
     }
     case "mysql": {
-      port ||= Number(options.port || env.MYSQLPORT || "3306");
+      port ||= Number(options.port || env.MYSQL_PORT || env.MYSQLPORT || "3306");
       break;
     }
     case "mariadb": {
-      port ||= Number(options.port || env.MARIADBPORT || "3306");
+      port ||= Number(options.port || env.MARIADB_PORT || env.MARIADBPORT || "3306");
       break;
-    }
-    default: {
-      throw new Error(`Unsupported adapter: ${adapter}`);
     }
   }
 
@@ -503,23 +518,73 @@ function parseOptions(
     }
   }
 
-  username ||=
-    options.username ||
-    options.user ||
-    env.PGUSERNAME ||
-    env.PGUSER ||
-    env.USER ||
-    env.USERNAME ||
-    (adapter === "mysql" ? "root" : "postgres"); // default username for mysql is root and for postgres is postgres;
+  switch (adapter) {
+    case "mysql": {
+      username ||= options.username || options.user || env.MYSQL_USER || env.MYSQLUSER || env.USER || "root";
+      break;
+    }
+    case "mariadb": {
+      username ||= options.username || options.user || env.MARIADB_USER || env.MARIADBUSER || env.USER || "root";
+      break;
+    }
+    case "postgres": {
+      username ||= options.username || options.user || env.PG_USER || env.PGUSER || env.USER || "postgres";
+      break;
+    }
+  }
 
-  database ||=
-    options.database ||
-    options.db ||
-    decodeIfValid((url?.pathname ?? "").slice(1)) ||
-    env.PGDATABASE ||
-    (adapter === "postgres" ? username : "mysql"); // default database to the username under postgres, or mysql under mysql or mariadb
+  switch (adapter) {
+    case "mysql": {
+      password ||= options.password || options.pass || env.MYSQL_PASSWORD || env.MYSQLPASSWORD || env.PASSWORD || "";
+      break;
+    }
 
-  password ||= options.password || options.pass || env.PGPASSWORD || "";
+    case "mariadb": {
+      password ||=
+        options.password || options.pass || env.MARIADB_PASSWORD || env.MARIADBPASSWORD || env.PASSWORD || "";
+      break;
+    }
+
+    case "postgres": {
+      password ||= options.password || options.pass || env.PG_PASSWORD || env.PGPASSWORD || env.PASSWORD || "";
+      break;
+    }
+  }
+
+  switch (adapter) {
+    case "postgres": {
+      database ||=
+        options.database ||
+        options.db ||
+        env.PG_DATABASE ||
+        env.PGDATABASE ||
+        decodeIfValid((url?.pathname ?? "").slice(1)) ||
+        username;
+      break;
+    }
+
+    case "mysql": {
+      database ||=
+        options.database ||
+        options.db ||
+        env.MYSQL_DATABASE ||
+        env.MYSQLDATABASE ||
+        decodeIfValid((url?.pathname ?? "").slice(1)) ||
+        "mysql";
+      break;
+    }
+
+    case "mariadb": {
+      database ||=
+        options.database ||
+        options.db ||
+        env.MARIADB_DATABASE ||
+        env.MARIADBDATABASE ||
+        decodeIfValid((url?.pathname ?? "").slice(1)) ||
+        "mariadb";
+      break;
+    }
+  }
 
   const connection = options.connection;
   if (connection && $isObject(connection)) {

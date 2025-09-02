@@ -247,6 +247,7 @@ Exited with code [1]
   - After this, start the next timer with the new first incomplete test timeout time
 
 - [x] Add expect counts back
+- [ ] add back expecting a test to have a certain number of expect calls
 - [ ] add a test for this scenerio
   ```js
   test("more functions called after delayed done", done => {

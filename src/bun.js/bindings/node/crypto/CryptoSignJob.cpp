@@ -349,6 +349,14 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
             ERR::CRYPTO_INVALID_DIGEST(scope, globalObject, algorithmView);
             return {};
         }
+    } else {
+        // When no algorithm is specified, use a default for RSA keys
+        // Ed25519/Ed448 (one-shot variants) don't need a digest
+        if (keyObject.asymmetricKey().isRsaVariant()) {
+            // Use SHA256 as default for RSA keys when no algorithm is specified
+            // This matches Node.js behavior for crypto.verify with null algorithm
+            digest = Digest::FromName("SHA256"_s);
+        }
     }
 
     if (mode == Mode::Verify) {

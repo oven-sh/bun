@@ -6,7 +6,7 @@ import { spawn } from "child_process";
 
 test("child process stdio properties should be enumerable for Object.assign()", () => {
   const child = spawn(process.execPath, ["-e", 'console.log("hello")']);
-  
+
   // The real issue: stdio properties must be enumerable for Object.assign() to work
   // This is what libraries like tinyspawn depend on
   expect(Object.keys(child)).toContain("stdin");
@@ -22,7 +22,7 @@ test("child process stdio properties should be enumerable for Object.assign()", 
 
 test("Object.assign should copy child process stdio properties", () => {
   const child = spawn(process.execPath, ["-e", 'console.log("hello")']);
-  
+
   // This is what tinyspawn does: Object.assign(promise, childProcess)
   const merged = {};
   Object.assign(merged, child);
@@ -41,7 +41,7 @@ test("Object.assign should copy child process stdio properties", () => {
 test("tinyspawn-like library usage should work", () => {
   // Simulate the exact pattern from tinyspawn library
   let childProcess;
-  const promise = new Promise((resolve) => {
+  const promise = new Promise(resolve => {
     childProcess = spawn(process.execPath, ["-e", 'console.log("test")']);
     childProcess.on("exit", () => resolve(childProcess));
   });
@@ -68,7 +68,7 @@ test("youtube-dl-exec compatibility through tinyspawn", async () => {
 
   // This should work without errors now
   const result = $(process.execPath, ["-e", 'console.log("youtube-dl-test")']);
-  
+
   // Should be a Promise with child process properties
   expect(result instanceof Promise).toBe(true);
   expect(result.stdout).toBeTruthy();

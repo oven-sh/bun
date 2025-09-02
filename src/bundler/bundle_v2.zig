@@ -1027,6 +1027,28 @@ pub const BundleV2 = struct {
                             continue;
                         }
 
+                        // Validate entry points for --compile mode
+                        // Fixes GitHub issue #22317: directories should not be allowed as entry points with --compile
+                        if (this.transpiler.options.compile) {
+                            // Normalize Windows-style backslashes to forward slashes first
+                            const normalized_entry_point = if (std.mem.indexOf(u8, entry_point, "\\") != null) normalize: {
+                                const normalized = try this.allocator().dupe(u8, entry_point);
+                                bun.path.platformToPosixInPlace(u8, normalized);
+                                break :normalize normalized;
+                            } else entry_point;
+                            defer if (normalized_entry_point.ptr != entry_point.ptr) this.allocator().free(normalized_entry_point);
+
+                            // Check if entry point is a directory
+                            if (std.fs.cwd().statFile(normalized_entry_point)) |stat| {
+                                if (stat.kind == .directory) {
+                                    bun.handleOom(this.transpiler.log.addErrorFmt(null, Logger.Loc.Empty, this.transpiler.allocator, "\"{}\" is a directory. --compile requires explicit file paths, not directories.", .{bun.fmt.quote(normalized_entry_point)}));
+                                    continue;
+                                }
+                            } else |_| {
+                                // File not found - let normal resolution handle this error
+                            }
+                        }
+
                         // no plugins were matched
                         const resolved = this.transpiler.resolveEntryPoint(entry_point) catch
                             continue;

@@ -1114,7 +1114,31 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             else => {},
         }
 
-        opts.entry_points = entry_points;
+        // Normalize Windows-style backslashes to forward slashes in entry points
+        // Fixes GitHub issue #22317
+        var needs_normalization = false;
+        for (entry_points) |entry_point| {
+            if (std.mem.indexOf(u8, entry_point, "\\") != null) {
+                needs_normalization = true;
+                break;
+            }
+        }
+        
+        if (needs_normalization) {
+            var normalized_entry_points = ctx.allocator.alloc([]const u8, entry_points.len) catch unreachable;
+            for (entry_points, 0..) |entry_point, i| {
+                if (std.mem.indexOf(u8, entry_point, "\\") != null) {
+                    const normalized = ctx.allocator.dupe(u8, entry_point) catch unreachable;
+                    bun.path.platformToPosixInPlace(u8, normalized);
+                    normalized_entry_points[i] = normalized;
+                } else {
+                    normalized_entry_points[i] = entry_point;
+                }
+            }
+            opts.entry_points = normalized_entry_points;
+        } else {
+            opts.entry_points = entry_points;
+        }
     }
 
     const jsx_factory = args.option("--jsx-factory");

@@ -187,9 +187,16 @@ pub noinline fn computeChunks(
         chunks: []Chunk,
         allocator: std.mem.Allocator,
         source_id: u32,
+        entry_point_to_chunk_index: []?u32, // Maps entry point indices to chunk array indices
 
-        pub fn next(c: *@This(), chunk_id: usize) void {
-            _ = c.chunks[chunk_id].files_with_parts_in_chunk.getOrPut(c.allocator, @as(u32, @truncate(c.source_id))) catch unreachable;
+        pub fn next(c: *@This(), entry_point_id: usize) void {
+            // entry_point_id is the entry point index from entry_bits.forEach()
+            // We need to map it to the actual chunk array index
+            if (entry_point_id >= c.entry_point_to_chunk_index.len) return;
+            const chunk_index = c.entry_point_to_chunk_index[entry_point_id] orelse return;
+            if (chunk_index >= c.chunks.len) return;
+            
+            _ = c.chunks[chunk_index].files_with_parts_in_chunk.getOrPut(c.allocator, @as(u32, @truncate(c.source_id))) catch unreachable;
         }
     };
 
@@ -224,10 +231,32 @@ pub noinline fn computeChunks(
 
                         _ = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator(), @as(u32, @truncate(source_index.get()))) catch unreachable;
                     } else {
+                        // Create mapping from entry point indices to chunk array indices
+                        // Fixes GitHub issue #22317: prevents index out of bounds panic
+                        var entry_point_to_chunk_index = try this.allocator().alloc(?u32, this.graph.entry_points.len);
+                        defer this.allocator().free(entry_point_to_chunk_index);
+                        
+                        // Initialize all mappings to null
+                        for (entry_point_to_chunk_index) |*mapping| {
+                            mapping.* = null;
+                        }
+                        
+                        // Populate the mapping by iterating through js_chunks and finding their entry points
+                        const chunk_values = js_chunks.values();
+                        for (chunk_values, 0..) |chunk, chunk_idx| {
+                            if (chunk.entry_point.is_entry_point) {
+                                const entry_point_idx = chunk.entry_point.source_index;
+                                if (entry_point_idx < entry_point_to_chunk_index.len) {
+                                    entry_point_to_chunk_index[entry_point_idx] = @intCast(chunk_idx);
+                                }
+                            }
+                        }
+                        
                         var handler = Handler{
-                            .chunks = js_chunks.values(),
+                            .chunks = chunk_values,
                             .allocator = this.allocator(),
                             .source_id = source_index.get(),
+                            .entry_point_to_chunk_index = entry_point_to_chunk_index,
                         };
                         entry_bits.forEach(Handler, &handler, Handler.next);
                     }

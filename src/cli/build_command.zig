@@ -112,19 +112,28 @@ pub const BuildCommand = struct {
             this_transpiler.options.public_path = base_public_path;
 
             if (outfile.len == 0) {
-                outfile = std.fs.path.basename(this_transpiler.options.entry_points[0]);
+                // Normalize the entry point path to handle Windows backslashes
+                // This fixes GitHub issue #22317 where Windows-style paths with backslashes
+                // cause crashes in --compile mode
+                var normalized_entry_point_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const first_entry_point = this_transpiler.options.entry_points[0];
+                @memcpy(normalized_entry_point_buf[0..first_entry_point.len], first_entry_point);
+                bun.path.platformToPosixInPlace(u8, normalized_entry_point_buf[0..first_entry_point.len]);
+                const normalized_entry_point = normalized_entry_point_buf[0..first_entry_point.len];
+                
+                outfile = std.fs.path.basename(normalized_entry_point);
                 const ext = std.fs.path.extension(outfile);
                 if (ext.len > 0) {
                     outfile = outfile[0 .. outfile.len - ext.len];
                 }
 
                 if (strings.eqlComptime(outfile, "index")) {
-                    outfile = std.fs.path.basename(std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse "index");
+                    outfile = std.fs.path.basename(std.fs.path.dirname(normalized_entry_point) orelse "index");
                     was_renamed_from_index = !strings.eqlComptime(outfile, "index");
                 }
 
                 if (strings.eqlComptime(outfile, "bun")) {
-                    outfile = std.fs.path.basename(std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse "bun");
+                    outfile = std.fs.path.basename(std.fs.path.dirname(normalized_entry_point) orelse "bun");
                 }
             }
 

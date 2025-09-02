@@ -254,7 +254,7 @@ function getConnectionDetailsFromEnvironment(
       null; // fallback default values are handled in the parseOptions function, since the values are not coming from the env itself
 
     if (!url) {
-      url = env.TLS_POSTGRES_DATABASE_URL || env.TLS_DATABASE_URL || null;
+      url = env.TLS_POSTGRES_DATABASE_URL || env.TLS_MYSQL_DATABASE_URL || env.TLS_DATABASE_URL || null;
       if (url) sslMode = SSLMode.require;
     }
 
@@ -278,11 +278,22 @@ function getConnectionDetailsFromEnvironment(
       }
       return [url, sslMode];
 
+    case "mariadb":
+      url = env.MARIADB_URL || env.DATABASE_URL || null;
+      if (!url) {
+        url = env.TLS_MARIADB_DATABASE_URL || env.TLS_DATABASE_URL || null;
+        if (url) sslMode = SSLMode.require;
+      }
+      return [url, sslMode];
+
     case "sqlite":
       return [env.SQLITE_URL || env.DATABASE_URL || null, null];
-  }
 
-  return [null, null];
+    default: {
+      adapter satisfies never;
+      throw new Error(`Unsupported adapter: ${adapter}`);
+    }
+  }
 }
 
 /**

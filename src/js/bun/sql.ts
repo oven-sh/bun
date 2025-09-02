@@ -40,9 +40,10 @@ function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
   }
 }
 
+const empty: Bun.SQL.Options = {};
 const SQL: typeof Bun.SQL = function SQL(
   stringOrUrlOrOptions: Bun.SQL.Options | string | undefined = undefined,
-  definitelyOptionsButMaybeEmpty: Bun.SQL.Options = {},
+  definitelyOptionsButMaybeEmpty: Bun.SQL.Options = empty,
 ): Bun.SQL {
   const connectionInfo = parseOptions(stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
   const pool = adapterFromOptions(connectionInfo);

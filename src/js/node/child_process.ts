@@ -1363,30 +1363,6 @@ class ChildProcess extends EventEmitter {
         this.emit("spawn");
       });
 
-      // Make stdio properties enumerable own properties for Object.assign() compatibility
-      // This fixes libraries like tinyspawn that use Object.assign(promise, childProcess)
-      Object.defineProperties(this, {
-        stdin: {
-          get: () => (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false)),
-          enumerable: true,
-          configurable: true,
-        },
-        stdout: {
-          get: () => (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false)),
-          enumerable: true,
-          configurable: true,
-        },
-        stderr: {
-          get: () => (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false)),
-          enumerable: true,
-          configurable: true,
-        },
-        stdio: {
-          get: () => (this.#stdioObject ??= this.#createStdioObject()),
-          enumerable: true,
-          configurable: true,
-        },
-      });
 
       if (has_ipc) {
         this.send = this.#send;
@@ -1532,6 +1508,73 @@ class ChildProcess extends EventEmitter {
 
   unref() {
     if (this.#handle) this.#handle.unref();
+  }
+
+  // Static initializer to make stdio properties enumerable on the prototype
+  // This fixes libraries like tinyspawn that use Object.assign(promise, childProcess)
+  static {
+    Object.defineProperties(this.prototype, {
+      stdin: {
+        get: function() { 
+          const value = this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false);
+          // Define as own enumerable property on first access
+          Object.defineProperty(this, 'stdin', {
+            value: value,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
+          return value;
+        },
+        enumerable: true,
+        configurable: true,
+      },
+      stdout: {
+        get: function() { 
+          const value = this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false);
+          // Define as own enumerable property on first access
+          Object.defineProperty(this, 'stdout', {
+            value: value,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
+          return value;
+        },
+        enumerable: true,
+        configurable: true,
+      },
+      stderr: {
+        get: function() { 
+          const value = this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false);
+          // Define as own enumerable property on first access
+          Object.defineProperty(this, 'stderr', {
+            value: value,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
+          return value;
+        },
+        enumerable: true,
+        configurable: true,
+      },
+      stdio: {
+        get: function() { 
+          const value = this.#stdioObject ??= this.#createStdioObject();
+          // Define as own enumerable property on first access
+          Object.defineProperty(this, 'stdio', {
+            value: value,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
+          return value;
+        },
+        enumerable: true,
+        configurable: true,
+      },
+    });
   }
 }
 

@@ -240,63 +240,48 @@ function getConnectionDetailsFromEnvironment(
   adapter: Bun.SQL.__internal.Adapter | undefined,
 ): [url: string | null, sslMode: SSLMode | null, adapter: Bun.SQL.__internal.Adapter | null] {
   let url: string | null = null;
-  let sslMode: SSLMode | null = null;
+  let sslMode: SSLMode.require | null = null;
 
-  if (adapter === undefined) {
-    url = env.DATABASE_URL || env.DATABASE_URL || env.POSTGRES_URL || env.PGURL || env.PG_URL || env.PGURL || null;
+  url ||= env.DATABASE_URL || env.DATABASEURL || null;
+  if (!url) {
+    url = env.TLS_DATABASE_URL || null;
+    if (url) sslMode = SSLMode.require;
+  }
+  if (url) return [url, sslMode, adapter || null];
+
+  if (!adapter || adapter === "postgres") {
+    url ||= env.POSTGRES_URL || env.PGURL || env.PG_URL || env.PGURL || null;
     if (!url) {
-      url = env.TLS_POSTGRES_DATABASE_URL || env.TLS_DATABASE_URL || null;
+      url = env.TLS_POSTGRES_DATABASE_URL || null;
       if (url) sslMode = SSLMode.require;
     }
+    if (url) return [url, sslMode, "postgres"];
+  }
 
-    url = env.MYSQL_URL || env.MYSQL_URL || null;
+  if (!adapter || adapter === "mysql") {
+    url ||= env.MYSQL_URL || env.MYSQLURL || null;
     if (!url) {
       url = env.TLS_MYSQL_DATABASE_URL || null;
       if (url) sslMode = SSLMode.require;
     }
+    if (url) return [url, sslMode, "mysql"];
+  }
 
-    url = env.MARIADB_URL || env.MARIADB_URL || null;
+  if (!adapter || adapter === "mariadb") {
+    url ||= env.MARIADB_URL || env.MARIADBURL || null;
     if (!url) {
       url = env.TLS_MARIADB_DATABASE_URL || null;
       if (url) sslMode = SSLMode.require;
     }
-
-    return [url, sslMode, null]; // Couldn't detect adapter here automatically
+    if (url) return [url, sslMode, "mariadb"];
   }
 
-  switch (adapter) {
-    case "postgres":
-      url = env.POSTGRES_URL || env.DATABASE_URL || env.PG_URL || env.PGURL || env.PG_URL || null;
-      if (!url) {
-        url = env.TLS_POSTGRES_DATABASE_URL || env.TLS_DATABASE_URL || null;
-        if (url) sslMode = SSLMode.require;
-      }
-      return [url, sslMode, "postgres"];
-
-    case "mysql":
-      url = env.MYSQL_URL || env.DATABASE_URL || null;
-      if (!url) {
-        url = env.TLS_MYSQL_DATABASE_URL || env.TLS_DATABASE_URL || null;
-        if (url) sslMode = SSLMode.require;
-      }
-      return [url, sslMode, "mysql"];
-
-    case "mariadb":
-      url = env.MARIADB_URL || env.DATABASE_URL || null;
-      if (!url) {
-        url = env.TLS_MARIADB_DATABASE_URL || env.TLS_DATABASE_URL || null;
-        if (url) sslMode = SSLMode.require;
-      }
-      return [url, sslMode, "mariadb"];
-
-    case "sqlite":
-      return [env.SQLITE_URL || env.DATABASE_URL || null, null, "sqlite"];
-
-    default: {
-      adapter satisfies never;
-      throw new Error(`Unsupported adapter: ${adapter}`);
-    }
+  if (!adapter || adapter === "sqlite") {
+    url ||= env.SQLITE_URL || env.SQLITEURL || null;
+    if (url) return [url, sslMode, "sqlite"];
   }
+
+  return [url, sslMode, adapter || null];
 }
 
 /**

@@ -1366,11 +1366,58 @@ pub fn handleOnDataHeaders(
     const body_buf = to_read[@min(@as(usize, @intCast(response.bytes_read)), to_read.len)..];
     // handle the case where we have a 100 Continue
     if (response.status_code >= 100 and response.status_code < 200) {
-        log("information headers", .{});
-        // we still can have the 200 OK in the same buffer sometimes
-        if (body_buf.len > 0) {
-            log("information headers with body", .{});
-            this.onData(is_ssl, body_buf, ctx, socket);
+        log("informational response: {}", .{response.status_code});
+        
+        // Only 100 Continue expects the actual response to follow
+        if (response.status_code == 100) {
+            // we still can have the 200 OK in the same buffer sometimes
+            if (body_buf.len > 0) {
+                log("100 Continue with body", .{});
+                // Clear the response_message_buffer since we're done with the 100 Continue headers
+                // This prevents the recursive call from re-appending the same data
+                this.state.response_message_buffer.deinit();
+                this.state.response_message_buffer = MutableString{ .allocator = bun.http.default_allocator, .list = .{} };
+                
+                // Clone the remaining data to avoid use-after-free when the buffer is reallocated
+                const cloned_buf = bun.default_allocator.dupe(u8, body_buf) catch |err| {
+                    this.closeAndFail(err, is_ssl, socket);
+                    return;
+                };
+                defer bun.default_allocator.free(cloned_buf);
+                this.onData(is_ssl, cloned_buf, ctx, socket);
+            } else {
+                // No more data after 100 Continue, clear the buffer
+                this.state.response_message_buffer.deinit();
+                this.state.response_message_buffer = MutableString{ .allocator = bun.http.default_allocator, .list = .{} };
+            }
+        } else {
+            // For 101 Switching Protocols and other 1xx codes
+            // Clear the buffer for this informational response
+            this.state.response_message_buffer.deinit();
+            this.state.response_message_buffer = MutableString{ .allocator = bun.http.default_allocator, .list = .{} };
+            
+            if (response.status_code == 101) {
+                // Protocol has switched, any remaining data is not HTTP
+                if (body_buf.len > 0) {
+                    log("101 with non-HTTP data, closing connection", .{});
+                }
+                // We don't support protocol upgrades in this HTTP client
+                this.closeAndFail(error.UnexpectedData, is_ssl, socket);
+                return;
+            }
+            
+            // For other informational responses (e.g., 102, 103), the final response may follow immediately.
+            // Do not drop remaining bytes; process them now without recursing endlessly.
+            if (body_buf.len > 0) {
+                log("Non-100 informational response with body", .{});
+                const cloned_buf = bun.default_allocator.dupe(u8, body_buf) catch |err| {
+                    this.closeAndFail(err, is_ssl, socket);
+                    return;
+                };
+                defer bun.default_allocator.free(cloned_buf);
+                this.onData(is_ssl, cloned_buf, ctx, socket);
+                return;
+            }
         }
         return;
     }

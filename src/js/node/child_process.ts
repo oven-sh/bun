@@ -1363,7 +1363,6 @@ class ChildProcess extends EventEmitter {
         this.emit("spawn");
       });
 
-
       if (has_ipc) {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
@@ -1515,10 +1514,10 @@ class ChildProcess extends EventEmitter {
   static {
     Object.defineProperties(this.prototype, {
       stdin: {
-        get: function() { 
-          const value = this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false);
+        get: function () {
+          const value = (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false));
           // Define as own enumerable property on first access
-          Object.defineProperty(this, 'stdin', {
+          Object.defineProperty(this, "stdin", {
             value: value,
             enumerable: true,
             configurable: true,
@@ -1530,10 +1529,10 @@ class ChildProcess extends EventEmitter {
         configurable: true,
       },
       stdout: {
-        get: function() { 
-          const value = this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false);
+        get: function () {
+          const value = (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false));
           // Define as own enumerable property on first access
-          Object.defineProperty(this, 'stdout', {
+          Object.defineProperty(this, "stdout", {
             value: value,
             enumerable: true,
             configurable: true,
@@ -1545,10 +1544,10 @@ class ChildProcess extends EventEmitter {
         configurable: true,
       },
       stderr: {
-        get: function() { 
-          const value = this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false);
+        get: function () {
+          const value = (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false));
           // Define as own enumerable property on first access
-          Object.defineProperty(this, 'stderr', {
+          Object.defineProperty(this, "stderr", {
             value: value,
             enumerable: true,
             configurable: true,
@@ -1560,10 +1559,10 @@ class ChildProcess extends EventEmitter {
         configurable: true,
       },
       stdio: {
-        get: function() { 
-          const value = this.#stdioObject ??= this.#createStdioObject();
+        get: function () {
+          const value = (this.#stdioObject ??= this.#createStdioObject());
           // Define as own enumerable property on first access
-          Object.defineProperty(this, 'stdio', {
+          Object.defineProperty(this, "stdio", {
             value: value,
             enumerable: true,
             configurable: true,

@@ -6,4 +6,14 @@ pub const Status = enum {
     sent_startup_message,
     connected,
     failed,
+
+    pub fn hasPendingActivity(this: Status) bool {
+        return switch (this) {
+            .connected => false,
+            .connecting => true,
+            .sent_startup_message => true,
+            .failed => false,
+            .disconnected => false,
+        };
+    }
 };

@@ -209,7 +209,7 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
             return null;
         }
 
-        pub fn readAll(this: *ZlibReader) !void {
+        pub fn readAll(this: *ZlibReader, is_done: bool) !void {
             while (this.state == State.Uninitialized or this.state == State.Inflating) {
 
                 // Before the call of inflate(), the application should ensure
@@ -248,7 +248,7 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
                 }
 
                 // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
-                const rc = inflate(&this.zlib, FlushValue.PartialFlush);
+                const rc = inflate(&this.zlib, FlushValue.NoFlush);
                 this.state = State.Inflating;
 
                 switch (rc) {
@@ -269,6 +269,12 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
                     ReturnCode.BufError => {
                         // BufError with avail_in == 0 means we need more input data
                         if (this.zlib.avail_in == 0) {
+                            if (is_done) {
+                                // Stream is truncated - we're at EOF but decoder needs more data
+                                this.state = State.Error;
+                                return error.ZlibError;
+                            }
+                            // Not at EOF - we can retry with more data
                             return error.ShortRead;
                         }
                         this.state = State.Error;
@@ -424,7 +430,7 @@ pub const ZlibReaderArrayList = struct {
         return null;
     }
 
-    pub fn readAll(this: *ZlibReader) ZlibError!void {
+    pub fn readAll(this: *ZlibReader, is_done: bool) ZlibError!void {
         defer {
             if (this.list.items.len > this.zlib.total_out) {
                 this.list.shrinkRetainingCapacity(this.zlib.total_out);
@@ -471,7 +477,7 @@ pub const ZlibReaderArrayList = struct {
             }
 
             // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
-            const rc = inflate(&this.zlib, FlushValue.PartialFlush);
+            const rc = inflate(&this.zlib, FlushValue.NoFlush);
             this.state = State.Inflating;
 
             switch (rc) {
@@ -486,6 +492,12 @@ pub const ZlibReaderArrayList = struct {
                 ReturnCode.BufError => {
                     // BufError with avail_in == 0 means we need more input data
                     if (this.zlib.avail_in == 0) {
+                        if (is_done) {
+                            // Stream is truncated - we're at EOF but decoder needs more data
+                            this.state = State.Error;
+                            return error.ZlibError;
+                        }
+                        // Not at EOF - we can retry with more data
                         return error.ShortRead;
                     }
                     this.state = State.Error;

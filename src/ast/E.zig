@@ -977,27 +977,15 @@ pub const String = struct {
         return bun.handleOom(this.string(allocator));
     }
 
-    fn stringCompareForJavaScript(comptime T: type, a: []const T, b: []const T) std.math.Order {
-        const a_slice = a[0..@min(a.len, b.len)];
-        const b_slice = b[0..@min(a.len, b.len)];
-        for (a_slice, b_slice) |a_char, b_char| {
-            const delta: i32 = @as(i32, a_char) - @as(i32, b_char);
-            if (delta != 0) {
-                return if (delta < 0) .lt else .gt;
-            }
-        }
-        return std.math.order(a.len, b.len);
-    }
-
     /// Compares two strings lexicographically for JavaScript semantics.
     /// Both strings must share the same encoding (UTF-8 vs UTF-16).
     pub inline fn order(this: *const String, other: *const String) std.math.Order {
         bun.debugAssert(this.isUTF8() == other.isUTF8());
 
         if (this.isUTF8()) {
-            return stringCompareForJavaScript(u8, this.data, other.data);
+            return strings.order(u8, this.data, other.data);
         } else {
-            return stringCompareForJavaScript(u16, this.slice16(), other.slice16());
+            return strings.order(u16, this.slice16(), other.slice16());
         }
     }
 

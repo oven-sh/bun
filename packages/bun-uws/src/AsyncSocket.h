@@ -387,7 +387,7 @@ public:
                     return {0, true};
                 }
                 if (length == 0) {
-                    return {written, failed};
+                    return {0, true};
                 }
             }
 

@@ -23,10 +23,9 @@ test("deflate with zlib wrapper should work", async () => {
       // Create zlib-wrapped deflate (this is what the spec says deflate should be)
       const compressed = deflateSync(testData);
 
-      // Verify it has zlib header (first two bytes should be 0x78 0x9C for default compression)
+      // Verify it has a zlib header: CMF must be 0x78 and (CMF<<8 | FLG) % 31 == 0
       expect(compressed[0]).toBe(0x78);
-      expect(compressed[1] & 0xf0).toBe(0x90); // Can be 0x9C, 0x5E, 0xDA depending on level
-
+      expect(((compressed[0] << 8) | compressed[1]) % 31).toBe(0);
       return new Response(compressed, {
         headers: {
           "Content-Encoding": "deflate",

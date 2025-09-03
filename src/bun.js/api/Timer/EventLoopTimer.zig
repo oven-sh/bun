@@ -264,8 +264,6 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) Arm {
     }
 }
 
-pub fn deinit(_: *Self) void {}
-
 /// A timer created by WTF code and invoked by Bun's event loop
 const WTFTimer = bun.api.Timer.WTFTimer;
 

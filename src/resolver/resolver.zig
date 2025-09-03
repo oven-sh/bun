@@ -871,6 +871,30 @@ pub const Resolver = struct {
 
                 r.flushDebugLogs(.success) catch {};
                 result.import_kind = kind;
+                if (comptime Environment.enable_logs) {
+                    if (result.path_pair.secondary) |secondary| {
+                        debuglog(
+                            "resolve({}, from: {}, {s}) = {} (secondary: {})",
+                            .{
+                                bun.fmt.fmtPath(u8, import_path, .{}),
+                                bun.fmt.fmtPath(u8, source_dir, .{}),
+                                kind.label(),
+                                bun.fmt.fmtPath(u8, if (result.path()) |path| path.text else "<NULL>", .{}),
+                                bun.fmt.fmtPath(u8, secondary.text, .{}),
+                            },
+                        );
+                    } else {
+                        debuglog(
+                            "resolve({}, from: {}, {s}) = {}",
+                            .{
+                                bun.fmt.fmtPath(u8, import_path, .{}),
+                                bun.fmt.fmtPath(u8, source_dir, .{}),
+                                kind.label(),
+                                bun.fmt.fmtPath(u8, if (result.path()) |path| path.text else "<NULL>", .{}),
+                            },
+                        );
+                    }
+                }
                 return .{ .success = result.* };
             },
             .failure => |e| {

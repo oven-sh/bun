@@ -190,7 +190,7 @@ class FetchError extends FetchBaseError {
 }
 
 function blobFrom(path, options) {
-  return Promise.resolve(Bun.file(path, options));
+  return Promise.$resolve(Bun.file(path, options));
 }
 
 function blobFromSync(path, options) {

@@ -589,3 +589,99 @@ Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
 });
+
+test("coverage accuracy - switch statement", () => {
+  const dir = tempDirWithFiles("cov", {
+    "switch-func.ts": `
+export function func(value: string): string {
+  switch (value) {
+    case "A":
+      return "Alpha";
+    case "B":
+      return "Beta";
+    case "C":
+      return "Charlie";
+    default:
+      return "Unknown";
+  }
+}
+`,
+    "switch-test.test.ts": `
+import { test, expect } from "bun:test";
+import { func } from "./switch-func";
+
+test("switch test - case A only", () => {
+  expect(func("A")).toBe("Alpha");
+});
+`,
+  });
+
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+
+  let stderr = result.stderr.toString("utf-8");
+  // Normalize output for cross-platform consistency
+  stderr = normalizeBunSnapshot(stderr, dir);
+
+  // Lines 6-9 (case "B", "C", and default) should be uncovered
+  expect(stderr).toContain("55.56");
+  expect(stderr).toContain("6-9");
+  expect(result.exitCode).toBe(0);
+});
+
+test("coverage accuracy - try-catch statement", () => {
+  const dir = tempDirWithFiles("cov", {
+    "try-catch-func.ts": `
+export function func(value: number): string | number {
+  try {
+    if (value > 100) {
+      throw new Error("Too large");
+    }
+    if (value < 0) {
+      throw new Error("Negative");
+    }
+    return value * 2;
+  } catch (e) {
+    if (e instanceof Error) {
+      if (e.message === "Too large") {
+        return "error: large";
+      } else if (e.message === "Negative") {
+        return "error: negative";
+      }
+    }
+    return "unknown error";
+  }
+}
+`,
+    "try-catch-test.test.ts": `
+import { test, expect } from "bun:test";
+import { func } from "./try-catch-func";
+
+test("try-catch test - normal value", () => {
+  expect(func(50)).toBe(100);
+});
+`,
+  });
+
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+
+  let stderr = result.stderr.toString("utf-8");
+  // Normalize output for cross-platform consistency
+  stderr = normalizeBunSnapshot(stderr, dir);
+
+  // Lines 5,8,11-18 (error conditions and catch block) should be uncovered
+  expect(stderr).toContain("44.44");
+  expect(stderr).toContain("5,8,11-18");
+  expect(result.exitCode).toBe(0);
+});

@@ -170,43 +170,27 @@ function parseSQLiteOptions(
     filename: ":memory:",
   };
 
-  // Determine the actual filename
-  let filename: string = ":memory:";
+  // Determine filename with clear priority: options.filename > URL arg > :memory:
+  let filenameSource: string | URL | null | undefined;
+  filenameSource = ("filename" in options ? options.filename : undefined);
+  filenameSource ||= filenameOrUrl;
+  filenameSource ||= ":memory:";
+  
+  // Convert to string if needed
+  const filenameStr = filenameSource instanceof URL ? filenameSource.toString() : filenameSource;
+  
+  // Parse SQLite URL if applicable, otherwise use as-is
+  const parsed = parseDefinitelySqliteUrl(filenameStr);
+  const filename = parsed !== null ? parsed : filenameStr;
+  
+  // Extract query string for parameter parsing
   let queryString: string | null = null;
-
-  // Priority: options.filename > URL string > default
-  if ("filename" in options && options.filename) {
-    const fileStr = options.filename instanceof URL ? options.filename.toString() : options.filename;
-    // Check if it's a SQLite URL
-    const parsed = parseDefinitelySqliteUrl(fileStr);
-    if (parsed !== null) {
-      filename = parsed;
-      // Extract query string from the original
-      const queryIndex = fileStr.indexOf("?");
-      if (queryIndex !== -1) {
-        queryString = fileStr.slice(queryIndex + 1);
-      }
-    } else {
-      filename = fileStr;
-    }
-  } else if (filenameOrUrl) {
-    const urlStr = filenameOrUrl instanceof URL ? filenameOrUrl.toString() : filenameOrUrl;
-    // Check if it's a SQLite URL
-    const parsed = parseDefinitelySqliteUrl(urlStr);
-    if (parsed !== null) {
-      filename = parsed;
-    } else {
-      // If adapter is sqlite and no protocol, treat as filename
-      filename = urlStr;
-    }
-    // Extract query string
-    const queryIndex = urlStr.indexOf("?");
-    if (queryIndex !== -1) {
-      queryString = urlStr.slice(queryIndex + 1);
-    }
+  const queryIndex = filenameStr.indexOf("?");
+  if (queryIndex !== -1) {
+    queryString = filenameStr.slice(queryIndex + 1);
   }
 
-  // Empty filename should default to :memory:
+  // Empty filename defaults to :memory:
   sqliteOptions.filename = filename || ":memory:";
 
   // Parse query parameters if present

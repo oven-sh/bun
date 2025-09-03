@@ -1006,7 +1006,7 @@ pub fn onOpen(this: *MySQLConnection, socket: Socket) void {
 }
 
 pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
-    debug("onHandshake: {d} {d}", .{ success, ssl_error.error_no });
+    debug("onHandshake: {d} {d} {s}", .{ success, ssl_error.error_no, @tagName(this.ssl_mode) });
     const handshake_success = if (success == 1) true else false;
     if (handshake_success) {
         this.tls_status = .ssl_ok;
@@ -1030,9 +1030,7 @@ pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_v
                         }
                     }
                 },
-                else => {
-                    return;
-                },
+                else => {},
             }
         }
         this.sendHandshakeResponse() catch |err| {

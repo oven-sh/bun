@@ -439,7 +439,7 @@ pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us
                     if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
                         const hostname = servername[0..bun.len(servername)];
                         if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
-                            return this.failWithJSValue(ssl_error.toJS(this.globalObject));
+                            this.failWithJSValue(ssl_error.toJS(this.globalObject));
                         }
                     }
                 },

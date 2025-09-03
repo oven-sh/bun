@@ -35,30 +35,54 @@ pub const mysql_native_password = struct {
     }
 };
 
+pub const sha256_password = struct {
+    pub fn scramble(password: []const u8, nonce: []const u8) ![32]u8 {
+        _ = nonce; // sha256_password doesn't use nonce in initial scramble
+        // For sha256_password, if using TLS, send password as-is
+        // If not using TLS, needs RSA encryption (handled separately)
+        // This is just a placeholder that returns SHA256 hash for initial auth
+        var result: [32]u8 = [_]u8{0} ** 32;
+        
+        if (password.len == 0) {
+            return result;
+        }
+        
+        // SHA256(password)
+        bun.sha.SHA256.hash(password, &result, jsc.VirtualMachine.get().rareData().boringEngine());
+        
+        return result;
+    }
+};
+
 pub const caching_sha2_password = struct {
     pub fn scramble(password: []const u8, nonce: []const u8) ![32]u8 {
-        // XOR(SHA256(password), SHA256(SHA256(SHA256(password)), nonce))
-        var digest1 = [_]u8{0} ** 32;
-        var digest2 = [_]u8{0} ** 32;
-        var digest3 = [_]u8{0} ** 32;
+        // MySQL caching_sha2_password algorithm:
+        // XOR(SHA256(password), SHA256(nonce + SHA256(SHA256(password))))
+        var stage1 = [_]u8{0} ** 32;
+        var stage2 = [_]u8{0} ** 32;
+        var stage3 = [_]u8{0} ** 32;
         var result: [32]u8 = [_]u8{0} ** 32;
 
-        // SHA256(password)
-        bun.sha.SHA256.hash(password, &digest1, jsc.VirtualMachine.get().rareData().boringEngine());
+        if (password.len == 0) {
+            return result;
+        }
 
-        // SHA256(SHA256(password))
-        bun.sha.SHA256.hash(&digest1, &digest2, jsc.VirtualMachine.get().rareData().boringEngine());
+        // Stage 1: SHA256(password)
+        bun.sha.SHA256.hash(password, &stage1, jsc.VirtualMachine.get().rareData().boringEngine());
 
-        // SHA256(SHA256(SHA256(password)) + nonce)
-        const combined = try bun.default_allocator.alloc(u8, nonce.len + digest2.len);
+        // Stage 2: SHA256(SHA256(password))
+        bun.sha.SHA256.hash(&stage1, &stage2, jsc.VirtualMachine.get().rareData().boringEngine());
+
+        // Stage 3: SHA256(nonce + SHA256(SHA256(password)))
+        const combined = try bun.default_allocator.alloc(u8, nonce.len + stage2.len);
         defer bun.default_allocator.free(combined);
         @memcpy(combined[0..nonce.len], nonce);
-        @memcpy(combined[nonce.len..], &digest2);
-        bun.sha.SHA256.hash(combined, &digest3, jsc.VirtualMachine.get().rareData().boringEngine());
+        @memcpy(combined[nonce.len..], &stage2);
+        bun.sha.SHA256.hash(combined, &stage3, jsc.VirtualMachine.get().rareData().boringEngine());
 
-        // XOR(SHA256(password), digest3)
-        for (&result, &digest1, &digest3) |*out, d1, d3| {
-            out.* = d1 ^ d3;
+        // Final: XOR(SHA256(password), SHA256(nonce + SHA256(SHA256(password))))
+        for (&result, &stage1, &stage3) |*out, s1, s3| {
+            out.* = s1 ^ s3;
         }
 
         return result;

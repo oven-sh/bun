@@ -14,7 +14,7 @@ pub const AuthMethod = enum {
         switch (this) {
             .mysql_native_password => @memcpy(buf[0..len], &try Auth.mysql_native_password.scramble(password, auth_data)),
             .caching_sha2_password => @memcpy(buf[0..len], &try Auth.caching_sha2_password.scramble(password, auth_data)),
-            .sha256_password => @memcpy(buf[0..len], &try Auth.caching_sha2_password.scramble(password, auth_data)),
+            .sha256_password => @memcpy(buf[0..len], &try Auth.sha256_password.scramble(password, auth_data)),
         }
 
         return buf[0..len];

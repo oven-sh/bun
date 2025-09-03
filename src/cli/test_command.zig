@@ -672,12 +672,13 @@ pub const CommandLineReporter = struct {
 
             switch (Output.enable_ansi_colors_stderr) {
                 inline else => |colors| switch (status) {
-                    .pending, .pass, .skip, .skipped_because_label, .todo, .timeout, .fail => {},
+                    .pending, .pass, .skip, .skipped_because_label, .todo, .fail => {},
 
                     .fail_because_failing_test_passed => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n", colors)) catch {},
                     .fail_because_todo_passed => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` if tested behavior now works<r>\n", colors)) catch {},
                     .fail_because_expected_assertion_count => @panic("TODO: print the expected and actual assertion counts"),
                     .fail_because_expected_has_assertions => @panic("TODO: print the expected and actual assertion counts"),
+                    .timeout => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test timed out.<r>\n", colors)) catch {},
                 },
             }
         }

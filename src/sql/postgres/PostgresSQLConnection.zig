@@ -448,8 +448,6 @@ pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us
                 },
             }
         }
-
-        this.flags.handshake_success = true;
     } else {
         // if we are here is because server rejected us, and the error_no is the cause of this
         // no matter if reject_unauthorized is false because we are disconnected by the server

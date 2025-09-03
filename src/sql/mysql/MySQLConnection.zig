@@ -254,11 +254,14 @@ fn drainInternal(this: *@This()) void {
     defer event_loop.exit();
 
     this.flushData();
-
     if (!this.flags.has_backpressure) {
-        // no backpressure yet so pipeline more if possible and flush again
-        this.advance();
-        this.flushData();
+        if (this.tls_status == .message_sent) {
+            this.upgradeToTLS();
+        } else {
+            // no backpressure yet so pipeline more if possible and flush again
+            this.advance();
+            this.flushData();
+        }
     }
 }
 pub fn finalize(this: *MySQLConnection) void {
@@ -820,6 +823,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             return globalObject.throwValue(err.toJS(globalObject));
         }
 
+        debug("configured TLS context", .{});
         uws.NewSocketHandler(true).configure(tls_ctx.?, true, *@This(), SocketHandler(true));
     }
 
@@ -908,6 +912,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         };
 
         if (path.len > 0) {
+            debug("connecting to mysql with path", .{});
             ptr.socket = .{
                 .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false) catch |err| {
                     tls_config.deinit();
@@ -919,6 +924,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
                 },
             };
         } else {
+            debug("connecting to mysql with hostname", .{});
             ptr.socket = .{
                 .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
                     tls_config.deinit();
@@ -973,6 +979,22 @@ pub fn deinit(this: *MySQLConnection) void {
     bun.default_allocator.destroy(this);
 }
 
+pub fn upgradeToTLS(this: *MySQLConnection) void {
+    if (this.socket == .SocketTCP) {
+        const new_socket = this.socket.SocketTCP.socket.connected.upgrade(this.tls_ctx.?, this.tls_config.server_name) orelse {
+            this.fail("Failed to upgrade to TLS", error.AuthenticationFailed);
+            return;
+        };
+        this.socket = .{
+            .SocketTLS = .{
+                .socket = .{
+                    .connected = new_socket,
+                },
+            },
+        };
+    }
+}
+
 pub fn onOpen(this: *MySQLConnection, socket: Socket) void {
     this.setupMaxLifetimeTimerIfNecessary();
     this.resetConnectionTimeout();
@@ -986,11 +1008,14 @@ pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_v
     debug("onHandshake: {d} {d}", .{ success, ssl_error.error_no });
     const handshake_success = if (success == 1) true else false;
     if (handshake_success) {
+        this.tls_status = .ssl_ok;
+
         if (this.tls_config.reject_unauthorized != 0) {
             // only reject the connection if reject_unauthorized == true
             switch (this.ssl_mode) {
                 .verify_ca, .verify_full => {
                     if (ssl_error.error_no != 0) {
+                        this.tls_status = .ssl_failed;
                         this.failWithJSValue(ssl_error.toJS(this.globalObject));
                         return;
                     }
@@ -999,6 +1024,7 @@ pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_v
                     if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
                         const hostname = servername[0..bun.len(servername)];
                         if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
+                            this.tls_status = .ssl_failed;
                             return this.failWithJSValue(ssl_error.toJS(this.globalObject));
                         }
                     }
@@ -1008,13 +1034,12 @@ pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_v
                 },
             }
         }
-
-        this.flags.handshake_success = true;
         this.sendHandshakeResponse() catch |err| {
             this.failFmt(err, "Failed to send handshake response", .{});
             return;
         };
     } else {
+        this.tls_status = .ssl_failed;
         // if we are here is because server rejected us, and the error_no is the cause of this
         // no matter if reject_unauthorized is false because we are disconnected by the server
         this.failWithJSValue(ssl_error.toJS(this.globalObject));
@@ -1190,6 +1215,24 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
     // Update status
     this.setStatus(.authenticating);
 
+    // https://dev.mysql.com/doc/dev/mysql-server/8.4.6/page_protocol_connection_phase_packets_protocol_ssl_request.html
+    if (this.capabilities.CLIENT_SSL) {
+        var response = SSLRequest{
+            .capability_flags = this.capabilities,
+            .max_packet_size = 0, //16777216,
+            .character_set = CharacterSet.default,
+        };
+        defer response.deinit();
+        try response.write(this.writer());
+        this.capabilities = response.capability_flags;
+        this.flushData();
+        this.tls_status = .message_sent;
+        if (!this.flags.has_backpressure) {
+            this.upgradeToTLS();
+        }
+        return;
+    }
+    this.tls_status = .ssl_not_available;
     // Send auth response
     try this.sendHandshakeResponse();
 }
@@ -1444,19 +1487,7 @@ pub fn sendHandshakeResponse(this: *MySQLConnection) AnyMySQLError.Error!void {
             return;
         }
     }
-    // https://dev.mysql.com/doc/dev/mysql-server/8.4.6/page_protocol_connection_phase_packets_protocol_ssl_request.html
-    if (this.capabilities.CLIENT_SSL and !this.flags.handshake_success) {
-        var response = SSLRequest{
-            .capability_flags = this.capabilities,
-            .max_packet_size = 0, //16777216,
-            .character_set = CharacterSet.default,
-        };
-        defer response.deinit();
-        try response.write(this.writer());
-        this.capabilities = response.capability_flags;
-        this.flushData();
-        return;
-    }
+
     var response = HandshakeResponse41{
         .capability_flags = this.capabilities,
         .max_packet_size = 0, //16777216,

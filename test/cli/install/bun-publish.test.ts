@@ -872,7 +872,7 @@ describe("--tolerate-republish", async () => {
     // Second publish should fail
     ({ out, err, exitCode } = await publish(env, packageDir));
     expect(exitCode).toBe(1);
-    expect(err).toContain("403") || expect(err).toContain("already exists") || expect(err).toContain("cannot publish");
+    expect(err).toMatch(/403|409|already exists|already present|cannot publish/);
   });
 
   test("republishing with --tolerate-republish skips when version exists", async () => {

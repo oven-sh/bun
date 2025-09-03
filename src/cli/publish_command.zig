@@ -462,11 +462,12 @@ pub const PublishCommand = struct {
         const registry_url = strings.withoutTrailingSlash(registry.url.href);
         const encoded_name = bun.fmt.dependencyUrl(package_name);
 
-        url_buf.writer().print("{s}/{s}/{s}", .{ registry_url, encoded_name, version }) catch return false;
+        // Try to get package metadata to check if version exists
+        url_buf.writer().print("{s}/{s}", .{ registry_url, encoded_name }) catch return false;
 
-        const package_version_url = URL.parse(url_buf.items);
+        const package_url = URL.parse(url_buf.items);
 
-        var response_buf = MutableString.init(allocator, 64) catch return false;
+        var response_buf = MutableString.init(allocator, 1024) catch return false;
         defer response_buf.deinit();
 
         var headers = http.HeaderBuilder{};
@@ -498,8 +499,8 @@ pub const PublishCommand = struct {
 
         var req = http.AsyncHTTP.initSync(
             allocator,
-            .HEAD,
-            package_version_url,
+            .GET,
+            package_url,
             headers.entries,
             headers.content.ptr.?[0..headers.content.len],
             &response_buf,
@@ -510,7 +511,21 @@ pub const PublishCommand = struct {
         );
 
         const res = req.sendSync() catch return false;
-        return res.status_code == 200;
+        if (res.status_code != 200) return false;
+        
+        // Parse the response to check if this specific version exists
+        const source = logger.Source.initPathString("???", response_buf.list.items);
+        var log = logger.Log.init(allocator);
+        const json = JSON.parseUTF8(&source, &log, allocator) catch return false;
+        
+        // Check if the version exists in the versions object
+        if (json.get("versions")) |versions| {
+            if (versions.get(version)) |_| {
+                return true;
+            }
+        }
+        
+        return false;
     }
 
     pub fn publish(
@@ -534,7 +549,7 @@ pub const PublishCommand = struct {
             );
 
             if (package_exists) {
-                Output.prettyln("<yellow>warning<r>: Registry already knows about version {s}; skipping.", .{version_without_build_tag});
+                Output.prettyErrorln("<yellow>warning<r>: Registry already knows about version {s}; skipping.", .{version_without_build_tag});
                 return;
             }
         }

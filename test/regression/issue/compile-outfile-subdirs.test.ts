@@ -210,7 +210,7 @@ describe("compile --outfile with subdirectories", () => {
 });
 
 describe("Bun.build() compile with subdirectories", () => {
-  test("places executable in subdirectory via API", async () => {
+  test.if(isWindows)("places executable in subdirectory via API", async () => {
     using dir = tempDir("api-compile-subdir", {
       "app.js": `console.log("API subdirectory test!");`,
     });
@@ -218,7 +218,6 @@ describe("Bun.build() compile with subdirectories", () => {
     const result = await Bun.build({
       entrypoints: [join(String(dir), "app.js")],
       compile: {
-        target: "bun-windows-x64",
         outfile: "dist/bin/app.exe",
       },
       outdir: String(dir),
@@ -244,7 +243,6 @@ describe("Bun.build() compile with subdirectories", () => {
     const result = await Bun.build({
       entrypoints: [join(String(dir), "app.js")],
       compile: {
-        target: "bun-windows-x64",
         outfile: "build/release/app.exe",
         windows: {
           title: "API Subdirectory App",

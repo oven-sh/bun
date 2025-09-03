@@ -457,7 +457,7 @@ pub const ByteRangeMapping = struct {
 
                 const has_executed = block.hasExecuted or block.executionCount > 0;
 
-                for (min..max) |byte_offset| {
+                for (min..(max + 1)) |byte_offset| {
                     const new_line_index = LineOffsetTable.findIndex(line_starts, .{ .start = @intCast(byte_offset) }) orelse continue;
                     const line_start_byte_offset = line_starts[new_line_index];
                     if (line_start_byte_offset >= byte_offset) {
@@ -494,7 +494,7 @@ pub const ByteRangeMapping = struct {
                 var min_line: u32 = std.math.maxInt(u32);
                 var max_line: u32 = 0;
 
-                for (min..max) |byte_offset| {
+                for (min..(max + 1)) |byte_offset| {
                     const new_line_index = LineOffsetTable.findIndex(line_starts, .{ .start = @intCast(byte_offset) }) orelse continue;
                     const line_start_byte_offset = line_starts[new_line_index];
                     if (line_start_byte_offset >= byte_offset) {
@@ -546,7 +546,7 @@ pub const ByteRangeMapping = struct {
                 var max_line: u32 = 0;
                 const has_executed = block.hasExecuted or block.executionCount > 0;
 
-                for (min..max) |byte_offset| {
+                for (min..(max + 1)) |byte_offset| {
                     const new_line_index = LineOffsetTable.findIndex(line_starts, .{ .start = @intCast(byte_offset) }) orelse continue;
                     const line_start_byte_offset = line_starts[new_line_index];
                     if (line_start_byte_offset >= byte_offset) {
@@ -589,7 +589,7 @@ pub const ByteRangeMapping = struct {
                 var min_line: u32 = std.math.maxInt(u32);
                 var max_line: u32 = 0;
 
-                for (min..max) |byte_offset| {
+                for (min..(max + 1)) |byte_offset| {
                     const new_line_index = LineOffsetTable.findIndex(line_starts, .{ .start = @intCast(byte_offset) }) orelse continue;
                     const line_start_byte_offset = line_starts[new_line_index];
                     if (line_start_byte_offset >= byte_offset) {

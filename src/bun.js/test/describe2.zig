@@ -330,14 +330,14 @@ pub const BunTestFile = struct {
         try this.runOneCompleted(globalThis, if (is_catch) null else err_arg, data);
         try this.run(globalThis);
     }
-    pub fn bunTestTimeoutCallback(this: *BunTestFile, now: *const bun.timespec, vm: *jsc.VirtualMachine) bun.api.Timer.EventLoopTimer.Arm {
+    pub fn bunTestTimeoutCallback(this: *BunTestFile, _: *const bun.timespec, vm: *jsc.VirtualMachine) bun.api.Timer.EventLoopTimer.Arm {
         group.begin(@src());
         defer group.end();
-        group.log("bunTestTimeoutCallback", .{});
-        // TODO
-        _ = this;
-        _ = now;
-        _ = vm;
+        this.timer.next = .epoch;
+        this.timer.state = .PENDING;
+        this.run(vm.global) catch |e| {
+            this.onUncaughtException(vm.global, vm.global.takeError(e), false, .done);
+        };
         return .disarm;
     }
 
@@ -373,10 +373,14 @@ pub const BunTestFile = struct {
             }
 
             const timeout = status.execute.timeout;
-            if (timeout.eql(&.epoch)) {
-                group.log("-> no timeout", .{});
-            } else {
-                group.log("-> timeout: {s}", .{bun.fmt.fmtDurationOneDecimal(timeout.sinceNow())});
+
+            group.log("-> timeout: {}", .{timeout});
+            if (!this.timer.next.eql(&timeout) and !this.timer.next.eql(&.epoch)) {
+                globalThis.bunVM().timer.remove(&this.timer);
+            }
+            this.timer.next = timeout;
+            if (!this.timer.next.eql(&.epoch)) {
+                globalThis.bunVM().timer.insert(&this.timer);
             }
 
             // if one says continue_async and two say continue_sync then you continue_sync

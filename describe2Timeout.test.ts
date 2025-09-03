@@ -5,6 +5,10 @@ test.concurrent(
   },
   500,
 );
-test.concurrent("this one triggers the other one to notice", async () => {
-  await Bun.sleep(1000);
-});
+test.concurrent(
+  "this one also fails due to timeout",
+  async () => {
+    await Bun.sleep(4000);
+  },
+  1000,
+);

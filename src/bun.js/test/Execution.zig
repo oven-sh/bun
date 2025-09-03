@@ -160,9 +160,9 @@ fn advanceSequencesInGroup(this: *Execution, group: *ConcurrentGroup, callback_q
                 .done => {},
                 .execute => |exec| {
                     const prev_timeout: bun.timespec = if (final_status == .execute) final_status.execute.timeout else .epoch;
-                    const this_timeout = bun.timespec.min(prev_timeout, exec.timeout);
+                    const this_timeout = exec.timeout;
                     const final_timeout = if (prev_timeout.eql(&.epoch)) this_timeout else if (this_timeout.eql(&.epoch)) prev_timeout else bun.timespec.min(prev_timeout, this_timeout);
-                    final_status = .{ .execute = .{ .timeout = bun.timespec.min(prev_timeout, final_timeout) } };
+                    final_status = .{ .execute = .{ .timeout = final_timeout } };
                 },
                 .again => continue,
             }
@@ -186,14 +186,17 @@ fn advanceSequenceInGroup(this: *Execution, sequence: *ExecutionSequence, sequen
     defer groupLog.end();
 
     if (sequence.executing) {
-        if (sequence.started_at.order(&now) == .lt) {
+        const active_entry = sequence.activeEntry(this) orelse {
+            bun.debugAssert(false); // sequence is executing with no active entry
+            return .{ .execute = .{} };
+        };
+        if (!active_entry.timespec.eql(&.epoch) and active_entry.timespec.order(&now) == .lt) {
             // timed out
             sequence.result = .timeout;
             this.advanceSequence(sequence);
             return .again;
         }
         groupLog.log("runOne: can't advance; already executing", .{});
-        const active_entry = sequence.activeEntry(this) orelse return .{ .execute = .{} };
         return .{ .execute = .{ .timeout = active_entry.timespec } };
     }
 
@@ -322,7 +325,11 @@ fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     sequence.started_at = bun.timespec.now();
 }
 fn onEntryStarted(_: *Execution, entry: *ExecutionEntry) void {
-    entry.timespec = bun.timespec.now().addMs(entry.timeout);
+    if (entry.timeout > 0) {
+        entry.timespec = bun.timespec.msFromNow(entry.timeout);
+    } else {
+        entry.timespec = .epoch;
+    }
 }
 fn onSequenceCompleted(this: *Execution, sequence: *ExecutionSequence) void {
     const elapsed_ns = sequence.started_at.sinceNow();

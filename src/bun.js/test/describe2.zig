@@ -55,7 +55,6 @@ pub const js_fns = struct {
 
                     _ = try bunTestRoot.hook_scope.appendHook(bunTestRoot.gpa, tag, callback, .{
                         .line_no = 0,
-                        .timeout = 0,
                         .has_done_parameter = false,
                     }, .{});
                     return .js_undefined;
@@ -65,7 +64,6 @@ pub const js_fns = struct {
                     .collection => {
                         try bunTest.collection.enqueueHookCallback(tag, callback, .{
                             .line_no = 0,
-                            .timeout = 0,
                             .has_done_parameter = false,
                         }, .{});
 
@@ -377,12 +375,15 @@ pub const BunTestFile = struct {
             const timeout = status.execute.timeout;
 
             group.log("-> timeout: {}", .{timeout});
-            if (!this.timer.next.eql(&timeout) and !this.timer.next.eql(&.epoch)) {
-                globalThis.bunVM().timer.remove(&this.timer);
-            }
-            this.timer.next = timeout;
-            if (!this.timer.next.eql(&.epoch)) {
-                globalThis.bunVM().timer.insert(&this.timer);
+            if (!this.timer.next.eql(&timeout)) {
+                // timer is not yet set; set timer
+                if (!this.timer.next.eql(&.epoch)) {
+                    globalThis.bunVM().timer.remove(&this.timer);
+                }
+                this.timer.next = timeout;
+                if (!this.timer.next.eql(&.epoch)) {
+                    globalThis.bunVM().timer.insert(&this.timer);
+                }
             }
 
             // if one says continue_async and two say continue_sync then you continue_sync

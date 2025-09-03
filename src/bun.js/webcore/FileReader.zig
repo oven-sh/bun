@@ -358,6 +358,14 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
         }
 
         if (buf.len == 0) {
+            // Certain readers (such as pipes) may return 0-byte reads even when
+            // not at EOF. Consequently, we need to check whether the reader is
+            // actually done or not.
+            if (state == .drained) {
+                // If the reader is not done, we still want to keep reading.
+                return true;
+            }
+
             if (this.buffered.items.len == 0) {
                 this.buffered.clearAndFree(bun.default_allocator);
                 this.buffered = reader_buffer.moveToUnmanaged();
@@ -530,7 +538,6 @@ pub fn onPull(this: *FileReader, buffer: []u8, array: jsc.JSValue) streams.Resul
     this.pending_view = buffer;
 
     log("onPull({d}) = pending", .{buffer.len});
-
     return .{ .pending = &this.pending };
 }
 
@@ -563,37 +570,40 @@ fn consumeReaderBuffer(this: *FileReader) void {
 
 pub fn onReaderDone(this: *FileReader) void {
     log("onReaderDone()", .{});
-    if (!this.isPulling()) {
-        this.consumeReaderBuffer();
-        if (this.pending.state == .pending) {
-            if (this.buffered.items.len > 0) {
-                this.pending.result = .{ .owned_and_done = bun.ByteList.moveFromList(&this.buffered) };
-            } else {
-                this.pending.result = .{ .done = {} };
-            }
-            this.buffered = .{};
-            this.pending.run();
-        } else if (this.buffered.items.len > 0) {
-            const this_value = this.parent().this_jsvalue;
-            const globalThis = this.parent().globalThis;
-            if (this_value != .zero) {
-                if (Source.js.onDrainCallbackGetCached(this_value)) |cb| {
-                    const buffered = this.buffered;
-                    this.buffered = .{};
-                    this.parent().incrementCount();
-                    defer _ = this.parent().decrementCount();
-                    this.eventLoop().js.runCallback(
-                        cb,
-                        globalThis,
-                        .js_undefined,
-                        &.{
-                            jsc.ArrayBuffer.fromBytes(buffered.items, .Uint8Array).toJS(globalThis) catch |err| {
-                                this.pending.result = .{ .err = .{ .WeakJSValue = globalThis.takeException(err) } };
-                                return;
-                            },
+
+    if (this.isPulling()) {
+        return;
+    }
+
+    this.consumeReaderBuffer();
+    if (this.pending.state == .pending) {
+        if (this.buffered.items.len > 0) {
+            this.pending.result = .{ .owned_and_done = bun.ByteList.moveFromList(&this.buffered) };
+        } else {
+            this.pending.result = .{ .done = {} };
+        }
+        this.buffered = .{};
+        this.pending.run();
+    } else if (this.buffered.items.len > 0) {
+        const this_value = this.parent().this_jsvalue;
+        const globalThis = this.parent().globalThis;
+        if (this_value != .zero) {
+            if (Source.js.onDrainCallbackGetCached(this_value)) |cb| {
+                const buffered = this.buffered;
+                this.buffered = .{};
+                this.parent().incrementCount();
+                defer _ = this.parent().decrementCount();
+                this.eventLoop().js.runCallback(
+                    cb,
+                    globalThis,
+                    .js_undefined,
+                    &.{
+                        jsc.ArrayBuffer.fromBytes(buffered.items, .Uint8Array).toJS(globalThis) catch |err| {
+                            this.pending.result = .{ .err = .{ .WeakJSValue = globalThis.takeException(err) } };
+                            return;
                         },
-                    );
-                }
+                    },
+                );
             }
         }
     }

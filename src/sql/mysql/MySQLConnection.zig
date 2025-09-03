@@ -989,8 +989,6 @@ pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_v
         if (this.tls_config.reject_unauthorized != 0) {
             // only reject the connection if reject_unauthorized == true
             switch (this.ssl_mode) {
-                // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
-
                 .verify_ca, .verify_full => {
                     if (ssl_error.error_no != 0) {
                         this.failWithJSValue(ssl_error.toJS(this.globalObject));
@@ -1001,7 +999,7 @@ pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_v
                     if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
                         const hostname = servername[0..bun.len(servername)];
                         if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
-                            this.failWithJSValue(ssl_error.toJS(this.globalObject));
+                            return this.failWithJSValue(ssl_error.toJS(this.globalObject));
                         }
                     }
                 },
@@ -1010,6 +1008,12 @@ pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_v
                 },
             }
         }
+
+        this.flags.handshake_success = true;
+        this.sendHandshakeResponse() catch |err| {
+            this.failFmt(err, "Failed to send handshake response", .{});
+            return;
+        };
     } else {
         // if we are here is because server rejected us, and the error_no is the cause of this
         // no matter if reject_unauthorized is false because we are disconnected by the server
@@ -1325,7 +1329,7 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
                                     debug("sending password TLS enabled", .{});
                                     // SSL mode is enabled, send password as is
                                     var packet = try this.writer().start(this.sequence_id);
-                                    try this.writer().write(this.password);
+                                    try this.writer().writeZ(this.password);
                                     try packet.end();
                                     this.flushData();
                                 }
@@ -1441,6 +1445,18 @@ pub fn sendHandshakeResponse(this: *MySQLConnection) AnyMySQLError.Error!void {
         }
     }
 
+    if (this.capabilities.CLIENT_SSL and !this.flags.handshake_success) {
+        var response = HandshakeSSLResponse{
+            .capability_flags = this.capabilities,
+            .max_packet_size = 0, //16777216,
+            .character_set = CharacterSet.default,
+        };
+        defer response.deinit();
+        try response.write(this.writer());
+        this.capabilities = response.capability_flags;
+        this.flushData();
+        return;
+    }
     var response = HandshakeResponse41{
         .capability_flags = this.capabilities,
         .max_packet_size = 0, //16777216,
@@ -1928,6 +1944,7 @@ const Capabilities = @import("./Capabilities.zig");
 const ColumnDefinition41 = @import("./protocol/ColumnDefinition41.zig");
 const ErrorPacket = @import("./protocol/ErrorPacket.zig");
 const HandshakeResponse41 = @import("./protocol/HandshakeResponse41.zig");
+const HandshakeSSLResponse = @import("./protocol/HandshakeSSLResponse.zig");
 const HandshakeV10 = @import("./protocol/HandshakeV10.zig");
 const LocalInfileRequest = @import("./protocol/LocalInfileRequest.zig");
 const MySQLQuery = @import("./MySQLQuery.zig");

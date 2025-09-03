@@ -439,7 +439,7 @@ pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us
                     if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
                         const hostname = servername[0..bun.len(servername)];
                         if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
-                            this.failWithJSValue(ssl_error.toJS(this.globalObject));
+                            return this.failWithJSValue(ssl_error.toJS(this.globalObject));
                         }
                     }
                 },
@@ -448,6 +448,8 @@ pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us
                 },
             }
         }
+
+        this.flags.handshake_success = true;
     } else {
         // if we are here is because server rejected us, and the error_no is the cause of this
         // no matter if reject_unauthorized is false because we are disconnected by the server

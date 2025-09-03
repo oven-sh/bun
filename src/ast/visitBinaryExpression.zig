@@ -10,35 +10,31 @@ pub fn CreateBinaryExpressionVisitor(
         /// Returns the optimized expression if successful, null otherwise
         fn tryOptimizeTypeofUndefined(e_: *E.Binary, p: *P, replacement_op: js_ast.Op.Code) ?Expr {
             // Check if this is a typeof comparison with "undefined"
-            var typeof_expr: Expr = undefined;
-            var string_expr: Expr = undefined;
-            var flip_comparison = false;
+            const typeof_expr, const string_expr, const flip_comparison = exprs: {
+                // Try left side as typeof, right side as string
+                if (e_.left.data == .e_unary and e_.left.data.e_unary.op == .un_typeof) {
+                    if (e_.right.data == .e_string and
+                        e_.right.data.e_string.eqlComptime("undefined"))
+                    {
+                        break :exprs .{ e_.left, e_.right, false };
+                    }
 
-            // Try left side as typeof, right side as string
-            if (e_.left.data == .e_unary and e_.left.data.e_unary.op == .un_typeof) {
-                if (e_.right.data == .e_string and
-                    e_.right.data.e_string.eqlComptime("undefined"))
-                {
-                    typeof_expr = e_.left;
-                    string_expr = e_.right;
-                } else {
                     return null;
                 }
-            }
-            // Try right side as typeof, left side as string
-            else if (e_.right.data == .e_unary and e_.right.data.e_unary.op == .un_typeof) {
-                if (e_.left.data == .e_string and
-                    e_.left.data.e_string.eqlComptime("undefined"))
-                {
-                    typeof_expr = e_.right;
-                    string_expr = e_.left;
-                    flip_comparison = true;
-                } else {
+
+                // Try right side as typeof, left side as string
+                if (e_.right.data == .e_unary and e_.right.data.e_unary.op == .un_typeof) {
+                    if (e_.left.data == .e_string and
+                        e_.left.data.e_string.eqlComptime("undefined"))
+                    {
+                        break :exprs .{ e_.right, e_.left, true };
+                    }
+
                     return null;
                 }
-            } else {
+
                 return null;
-            }
+            };
 
             // Create new string with "u"
             const u_string = p.newExpr(E.String{ .data = "u" }, string_expr.loc);

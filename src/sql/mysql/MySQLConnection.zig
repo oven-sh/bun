@@ -1000,7 +1000,10 @@ pub fn onOpen(this: *MySQLConnection, socket: Socket) void {
     this.setupMaxLifetimeTimerIfNecessary();
     this.resetConnectionTimeout();
     this.socket = socket;
-    this.setStatus(.handshaking);
+    if (socket == .SocketTCP) {
+        // when upgrading to TLS the onOpen callback will be called again and at this moment we dont wanna to change the status to handshaking
+        this.setStatus(.handshaking);
+    }
     this.poll_ref.ref(this.vm);
     this.updateHasPendingActivity();
 }
@@ -1008,9 +1011,9 @@ pub fn onOpen(this: *MySQLConnection, socket: Socket) void {
 pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
     debug("onHandshake: {d} {d} {s}", .{ success, ssl_error.error_no, @tagName(this.ssl_mode) });
     const handshake_success = if (success == 1) true else false;
+    this.sequence_id = this.sequence_id +% 1;
     if (handshake_success) {
         this.tls_status = .ssl_ok;
-
         if (this.tls_config.reject_unauthorized != 0) {
             // only reject the connection if reject_unauthorized == true
             switch (this.ssl_mode) {
@@ -1033,10 +1036,7 @@ pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_v
                 else => {},
             }
         }
-        this.sendHandshakeResponse() catch |err| {
-            this.failFmt(err, "Failed to send handshake response", .{});
-            return;
-        };
+        this.sendHandshakeResponse() catch |err| this.failFmt(err, "Failed to send handshake response", .{});
     } else {
         this.tls_status = .ssl_failed;
         // if we are here is because server rejected us, and the error_no is the cause of this
@@ -1220,13 +1220,14 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
             .capability_flags = this.capabilities,
             .max_packet_size = 0, //16777216,
             .character_set = CharacterSet.default,
+            // bun always send connection attributes
             .has_connection_attributes = true,
         };
         defer response.deinit();
         try response.write(this.writer());
         this.capabilities = response.capability_flags;
-        this.flushData();
         this.tls_status = .message_sent;
+        this.flushData();
         if (!this.flags.has_backpressure) {
             this.upgradeToTLS();
         }
@@ -1234,6 +1235,13 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
     }
     if (this.tls_status != .none) {
         this.tls_status = .ssl_not_available;
+
+        switch (this.ssl_mode) {
+            .verify_ca, .verify_full => {
+                return this.failFmt(error.AuthenticationFailed, "SSL is not available", .{});
+            },
+            else => {},
+        }
     }
     // Send auth response
     try this.sendHandshakeResponse();
@@ -1508,6 +1516,7 @@ pub fn sendHandshakeResponse(this: *MySQLConnection) AnyMySQLError.Error!void {
                 "",
         },
         .auth_response = .{ .empty = {} },
+        .sequence_id = this.sequence_id,
     };
     defer response.deinit();
 

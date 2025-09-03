@@ -159,33 +159,80 @@ function stripQueryParams(path: string): string {
   return queryIndex !== -1 ? path.slice(0, queryIndex) : path;
 }
 
-function parseSQLiteOptionsWithQueryParams(
-  urlString: string | URL | null | undefined,
-  sqliteOptions: Bun.SQL.__internal.DefinedSQLiteOptions,
+function parseSQLiteOptions(
+  filenameOrUrl: string | URL | null | undefined,
+  options: Bun.SQL.__internal.OptionsWithDefinedAdapter,
 ): Bun.SQL.__internal.DefinedSQLiteOptions {
-  if (!urlString) return sqliteOptions;
+  // Start with base options
+  const sqliteOptions: Bun.SQL.__internal.DefinedSQLiteOptions = {
+    ...options,
+    adapter: "sqlite" as const,
+    filename: ":memory:",
+  };
 
-  let params: URLSearchParams | null = null;
+  // Determine the actual filename
+  let filename: string = ":memory:";
+  let queryString: string | null = null;
 
-  if (urlString instanceof URL) {
-    params = urlString.searchParams;
-  } else {
-    const queryIndex = urlString.indexOf("?");
-    if (queryIndex === -1) return sqliteOptions;
-
-    const queryString = urlString.slice(queryIndex + 1);
-    params = new URLSearchParams(queryString);
+  // Priority: options.filename > URL string > default
+  if ("filename" in options && options.filename) {
+    const fileStr = options.filename instanceof URL ? options.filename.toString() : options.filename;
+    // Check if it's a SQLite URL
+    const parsed = parseDefinitelySqliteUrl(fileStr);
+    if (parsed !== null) {
+      filename = parsed;
+      // Extract query string from the original
+      const queryIndex = fileStr.indexOf("?");
+      if (queryIndex !== -1) {
+        queryString = fileStr.slice(queryIndex + 1);
+      }
+    } else {
+      filename = fileStr;
+    }
+  } else if (filenameOrUrl) {
+    const urlStr = filenameOrUrl instanceof URL ? filenameOrUrl.toString() : filenameOrUrl;
+    // Check if it's a SQLite URL
+    const parsed = parseDefinitelySqliteUrl(urlStr);
+    if (parsed !== null) {
+      filename = parsed;
+    } else {
+      // If adapter is sqlite and no protocol, treat as filename
+      filename = urlStr;
+    }
+    // Extract query string
+    const queryIndex = urlStr.indexOf("?");
+    if (queryIndex !== -1) {
+      queryString = urlStr.slice(queryIndex + 1);
+    }
   }
 
-  const mode = params.get("mode");
+  // Empty filename should default to :memory:
+  sqliteOptions.filename = filename || ":memory:";
 
-  if (mode === "ro") {
-    sqliteOptions.readonly = true;
-  } else if (mode === "rw") {
-    sqliteOptions.readonly = false;
-  } else if (mode === "rwc") {
-    sqliteOptions.readonly = false;
-    sqliteOptions.create = true;
+  // Parse query parameters if present
+  if (queryString) {
+    const params = new URLSearchParams(queryString);
+    const mode = params.get("mode");
+
+    if (mode === "ro") {
+      sqliteOptions.readonly = true;
+    } else if (mode === "rw") {
+      sqliteOptions.readonly = false;
+    } else if (mode === "rwc") {
+      sqliteOptions.readonly = false;
+      sqliteOptions.create = true;
+    }
+  }
+
+  // Apply other SQLite-specific options
+  if ("readonly" in options) {
+    sqliteOptions.readonly = options.readonly;
+  }
+  if ("create" in options) {
+    sqliteOptions.create = options.create;
+  }
+  if ("safeIntegers" in options) {
+    sqliteOptions.safeIntegers = options.safeIntegers;
   }
 
   return sqliteOptions;
@@ -320,27 +367,18 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
     stringOrUrl = options.url;
   }
 
-  // Step 2: Handle SQLite special case early SQLite needs special handling
-  // because "sqlite://:memory:" can't be parsed with URL constructor
-  if (options.adapter === "sqlite" || (options.adapter === undefined && typeof stringOrUrl === "string")) {
-    // If options.filename is already specified and we have a URL string, ignore the URL
-    // (options take precedence over URL string)
-    if (options.adapter === "sqlite" && options.filename && stringOrUrl) {
-      // Parse filename if it contains a sqlite URL
-      const parsedFilename = parseDefinitelySqliteUrl(options.filename);
-      let finalFilename = parsedFilename !== null ? parsedFilename : options.filename;
-      
-      // Handle URL instances
-      if (finalFilename instanceof URL) {
-        finalFilename = finalFilename.pathname;
-      }
-      
-      return [stringOrUrl, null, { ...options, filename: finalFilename || ":memory:", adapter: "sqlite" }];
-    }
-
-    const sqliteResult = handleSQLiteUrl(stringOrUrl, options);
-    if (sqliteResult) {
-      return sqliteResult;
+  // Step 2: Handle SQLite special case - just detect it and pass through
+  if (options.adapter === "sqlite") {
+    // For SQLite, just return what we have - let parseOptions handle the details
+    return [stringOrUrl, null, options as Bun.SQL.__internal.OptionsWithDefinedAdapter];
+  }
+  
+  // Check if the URL string indicates SQLite
+  if (!options.adapter && typeof stringOrUrl === "string") {
+    const parsedPath = parseDefinitelySqliteUrl(stringOrUrl);
+    if (parsedPath !== null) {
+      // This is definitely a SQLite URL
+      return [stringOrUrl, null, { ...options, adapter: "sqlite" }];
     }
   }
 
@@ -387,26 +425,6 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
   return [stringOrUrl, sslMode, { ...options, adapter: parsedAdapterFromProtocol }];
 }
 
-function handleSQLiteUrl(
-  stringOrUrl: string | URL | null,
-  options: Bun.SQL.Options,
-): [string | URL | null, SSLMode | null, Bun.SQL.__internal.OptionsWithDefinedAdapter] | null {
-  // Only process if this is definitely SQLite
-  if (options.adapter !== "sqlite") {
-    // Check if stringOrUrl is a SQLite URL
-    if (typeof stringOrUrl === "string") {
-      const parsedPath = parseDefinitelySqliteUrl(stringOrUrl);
-      if (parsedPath !== null) {
-        // This is definitely a SQLite URL - don't set filename here, let parseOptions handle it
-        return [stringOrUrl, null, { ...options, adapter: "sqlite" }];
-      }
-    }
-    return null;
-  }
-
-  // Adapter is explicitly "sqlite" - we'll handle everything in parseOptions
-  return [stringOrUrl, null, { ...options, adapter: "sqlite" }];
-}
 
 function parseAdapterFromProtocol(protocol: string): Bun.SQL.__internal.Adapter | null {
   switch (protocol) {
@@ -445,39 +463,7 @@ function parseOptions(
   const adapter = options.adapter;
 
   if (adapter === "sqlite") {
-    // Extract filename from various sources, with options.filename as highest priority
-    let filename: string | URL | null | undefined;
-
-    // First, try to extract from URL if provided
-    if (_url) {
-      const urlString = _url instanceof URL ? _url.toString() : _url;
-      const parsedFromUrl = parseDefinitelySqliteUrl(urlString);
-      // If it's definitely a SQLite URL, use the parsed path
-      // Otherwise, if adapter is sqlite, treat the string as a filename
-      filename = parsedFromUrl !== null ? parsedFromUrl : urlString;
-    }
-
-    // Options.filename takes precedence (source of truth)
-    if (options.filename) {
-      // If filename contains a SQLite URL, parse it
-      const parsedFromOptions =
-        typeof options.filename === "string" ? parseDefinitelySqliteUrl(options.filename) : null;
-      filename = parsedFromOptions !== null ? parsedFromOptions : options.filename;
-    }
-
-    // Finally apply defaults
-    filename ||= SQLITE_MEMORY;
-
-    // Ensure filename is a string (handle URL instances)
-    if (filename instanceof URL) {
-      filename = filename.pathname;
-    }
-
-    return parseSQLiteOptionsWithQueryParams(_url, {
-      ...options,
-      adapter: "sqlite",
-      filename,
-    });
+    return parseSQLiteOptions(_url, options);
   }
 
   // The rest of this function is logic specific to postgres/mysql/mariadb (they have the same options object)

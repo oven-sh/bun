@@ -1941,10 +1941,19 @@ pub const BundleV2 = struct {
                 }
             }
 
-            if (!(dirname.len == 0 or strings.eqlComptime(dirname, "."))) {
-                // makeOpenPath handles both absolute and relative paths correctly
+            // On Windows, don't change root_dir, just pass the full relative path
+            // On POSIX, change root_dir to the target directory and pass basename
+            const outfile_for_executable = if (Environment.isWindows) full_outfile_path else basename;
+
+            if (Environment.isPosix and !(dirname.len == 0 or strings.eqlComptime(dirname, "."))) {
+                // On POSIX, makeOpenPath and change root_dir
                 root_dir = std.fs.cwd().makeOpenPath(dirname, .{}) catch |err| {
                     return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to open output directory {s}: {s}", .{ dirname, @errorName(err) })));
+                };
+            } else if (Environment.isWindows and !(dirname.len == 0 or strings.eqlComptime(dirname, "."))) {
+                // On Windows, ensure directories exist but don't change root_dir
+                _ = std.fs.cwd().makePath(dirname) catch |err| {
+                    return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to create output directory {s}: {s}", .{ dirname, @errorName(err) })));
                 };
             }
 
@@ -1957,7 +1966,7 @@ pub const BundleV2 = struct {
                 output_files.items,
                 root_dir,
                 module_prefix,
-                basename,
+                outfile_for_executable,
                 this.env,
                 this.config.format,
                 .{

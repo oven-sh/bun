@@ -146,9 +146,7 @@ function parseDefinitelySqliteUrl(value: string | URL | null): string | null {
       }
     }
 
-    const stripped = stripQueryParams(str.slice(stripLength));
-    // Return the stripped path as-is, even if empty
-    return stripped;
+    return stripQueryParams(str.slice(stripLength));
   }
 
   // couldn't reliably determine this was definitely a sqlite url
@@ -325,15 +323,6 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
   // Step 2: Handle SQLite special case early SQLite needs special handling
   // because "sqlite://:memory:" can't be parsed with URL constructor
   if (options.adapter === "sqlite" || (options.adapter === undefined && typeof stringOrUrl === "string")) {
-    // If options.filename is already specified and we have a URL string, ignore the URL
-    // (options take precedence over URL string)
-    if (options.adapter === "sqlite" && options.filename && stringOrUrl) {
-      // Parse filename if it contains a sqlite URL
-      const parsedFilename = parseDefinitelySqliteUrl(options.filename);
-      const finalFilename = parsedFilename !== null ? parsedFilename : options.filename;
-      return [stringOrUrl, null, { ...options, filename: normalizeSQLiteFilename(finalFilename), adapter: "sqlite" }];
-    }
-    
     const sqliteResult = handleSQLiteUrl(stringOrUrl, options);
     if (sqliteResult) {
       return sqliteResult;
@@ -363,16 +352,12 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
 
   // Step 5: Return early if adapter is explicitly specified
   if (options.adapter) {
-    // Validate that the adapter is supported
-    const supportedAdapters = ["postgres", "sqlite", "mysql", "mariadb"];
-    if (!supportedAdapters.includes(options.adapter)) {
-      throw new Error(`Unsupported adapter: ${options.adapter}. Supported adapters: "postgres", "sqlite", "mysql", "mariadb"`);
-    }
     return [stringOrUrl, sslMode, options as Bun.SQL.__internal.OptionsWithDefinedAdapter];
   }
 
   // Step 6: Infer adapter from protocol
   const parsedAdapterFromProtocol = parseAdapterFromProtocol(protocol);
+
   if (!parsedAdapterFromProtocol) {
     throw new Error(`Unsupported protocol: ${protocol}. Supported adapters: "postgres", "sqlite", "mysql", "mariadb"`);
   }
@@ -380,49 +365,25 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
   return [stringOrUrl, sslMode, { ...options, adapter: parsedAdapterFromProtocol }];
 }
 
-function normalizeSQLiteFilename(filename: string | URL | null | undefined): string {
-  if (!filename) return SQLITE_MEMORY;
-  if (filename instanceof URL) return filename.pathname;
-  return filename;
-}
-
 function handleSQLiteUrl(
   stringOrUrl: string | URL | null,
   options: Bun.SQL.Options,
 ): [string | URL | null, SSLMode | null, Bun.SQL.__internal.OptionsWithDefinedAdapter] | null {
-  if (typeof stringOrUrl !== "string") {
-    // If adapter is explicitly sqlite but no string URL, use filename from options or default to :memory:
-    if (options.adapter === "sqlite") {
-      let filename = options.filename || SQLITE_MEMORY;
-      // Parse filename if it contains a sqlite URL
-      if (typeof filename === "string") {
-        const parsedFilename = parseDefinitelySqliteUrl(filename);
-        if (parsedFilename !== null) {
-          filename = parsedFilename;
-        }
+  // Only process if this is definitely SQLite
+  if (options.adapter !== "sqlite") {
+    // Check if stringOrUrl is a SQLite URL
+    if (typeof stringOrUrl === "string") {
+      const parsedPath = parseDefinitelySqliteUrl(stringOrUrl);
+      if (parsedPath !== null) {
+        // This is definitely a SQLite URL - don't set filename here, let parseOptions handle it
+        return [stringOrUrl, null, { ...options, adapter: "sqlite" }];
       }
-      return [stringOrUrl, null, { ...options, filename: normalizeSQLiteFilename(filename), adapter: "sqlite" }];
     }
     return null;
   }
 
-  const parsedSqlitePath = parseDefinitelySqliteUrl(stringOrUrl);
-
-  if (parsedSqlitePath !== null) {
-    // This is definitely a SQLite URL
-    return [
-      stringOrUrl, // Keep original for query param parsing
-      null,
-      { ...options, adapter: "sqlite", filename: parsedSqlitePath },
-    ];
-  }
-
-  // If adapter is explicitly "sqlite", treat the string as a filename
-  if (options.adapter === "sqlite") {
-    return [stringOrUrl, null, { ...options, adapter: "sqlite", filename: normalizeSQLiteFilename(stringOrUrl) }];
-  }
-
-  return null;
+  // Adapter is explicitly "sqlite" - we'll handle everything in parseOptions
+  return [stringOrUrl, null, { ...options, adapter: "sqlite" }];
 }
 
 function parseAdapterFromProtocol(protocol: string): Bun.SQL.__internal.Adapter | null {
@@ -458,21 +419,50 @@ function parseOptions(
     stringOrUrlOrOptions,
     definitelyOptionsButMaybeEmpty,
   );
-  let url = _url;
 
   const adapter = options.adapter;
 
   if (adapter === "sqlite") {
+    // Extract filename from various sources, with options.filename as highest priority
+    let filename: string | URL | null | undefined;
+
+    // First, try to extract from URL if provided
+    if (_url) {
+      const urlString = _url instanceof URL ? _url.toString() : _url;
+      const parsedFromUrl = parseDefinitelySqliteUrl(urlString);
+      // If it's definitely a SQLite URL, use the parsed path
+      // Otherwise, if adapter is sqlite, treat the string as a filename
+      filename = parsedFromUrl !== null ? parsedFromUrl : urlString;
+    }
+
+    // Options.filename takes precedence (source of truth)
+    if (options.filename) {
+      // If filename contains a SQLite URL, parse it
+      const parsedFromOptions =
+        typeof options.filename === "string" ? parseDefinitelySqliteUrl(options.filename) : null;
+      filename = parsedFromOptions !== null ? parsedFromOptions : options.filename;
+    }
+
+    // Finally apply defaults
+    filename ||= SQLITE_MEMORY;
+
+    // Ensure filename is a string (handle URL instances)
+    if (filename instanceof URL) {
+      filename = filename.pathname;
+    }
+
     return parseSQLiteOptionsWithQueryParams(_url, {
       ...options,
       adapter: "sqlite",
-      filename: normalizeSQLiteFilename(options.filename),
+      filename,
     });
   }
 
   // The rest of this function is logic specific to postgres/mysql/mariadb (they have the same options object)
 
   let sslMode: SSLMode = sslModeFromConnectionDetails || SSLMode.disable;
+
+  let url = _url;
 
   let hostname: string | undefined;
   let port: number | string | undefined;

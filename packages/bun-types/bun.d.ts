@@ -5531,17 +5531,15 @@ declare module "bun" {
     defer: () => Promise<void>;
   }
 
-  interface OnBeforeParseArgs {
-    napiModule: unknown;
-    symbol: string;
-    external?: unknown | undefined;
-  }
-
   type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | void;
   type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
   type OnStartCallback = () => void | Promise<void>;
   type OnEndCallback = (result: BuildOutput) => void | Promise<void>;
-  type OnBeforeParseCallback = (args: OnBeforeParseArgs) => void | Promise<void>;
+  type OnBeforeParseCallback = {
+    napiModule: unknown;
+    symbol: string;
+    external?: unknown | undefined;
+  };
 
   interface OnResolveArgs {
     /**

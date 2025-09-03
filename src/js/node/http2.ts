@@ -54,6 +54,7 @@ const EventEmitter = require("node:events");
 const { Duplex } = Stream;
 
 const { SafeArrayIterator, SafeSet } = require("internal/primordials");
+const { promisify } = require("internal/promisify");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ObjectAssign = Object.assign;
@@ -3929,6 +3930,20 @@ function getDefaultSettings() {
   // return default settings
   return getUnpackedSettings();
 }
+
+Object.defineProperty(connect, promisify.custom, {
+  __proto__: null,
+  value: function (authority, options) {
+    return new Promise((resolve, reject) => {
+      const server = connect(authority, options, () => {
+        server.removeListener("error", reject);
+        return resolve(server);
+      });
+
+      server.once("error", reject);
+    });
+  },
+});
 
 export default {
   constants,

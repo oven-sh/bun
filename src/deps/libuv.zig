@@ -143,10 +143,10 @@ pub const UV__ENODATA = -@as(c_int, 4024);
 pub const UV__EUNATCH = -@as(c_int, 4023);
 pub const UV_VERSION_H = "";
 pub const UV_VERSION_MAJOR = @as(c_int, 1);
-pub const UV_VERSION_MINOR = @as(c_int, 46);
-pub const UV_VERSION_PATCH = @as(c_int, 1);
+pub const UV_VERSION_MINOR = @as(c_int, 51);
+pub const UV_VERSION_PATCH = @as(c_int, 0);
 pub const UV_VERSION_IS_RELEASE = @as(c_int, 0);
-pub const UV_VERSION_SUFFIX = "dev";
+pub const UV_VERSION_SUFFIX = "";
 pub const UV_VERSION_HEX = ((UV_VERSION_MAJOR << @as(c_int, 16)) | (UV_VERSION_MINOR << @as(c_int, 8))) | UV_VERSION_PATCH;
 
 pub const UV_THREADPOOL_H_ = "";

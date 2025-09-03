@@ -186,4 +186,4 @@ scratch*.{js,ts,tsx,cjs,mjs}
 
 *.bun-build
 
-scripts/lldb-inline
+scripts/lldb-inline*.so

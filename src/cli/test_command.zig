@@ -47,14 +47,14 @@ fn fmtStatusTextLine(status: describe2.Execution.Result, emoji_or_color: bool) [
         true => switch (status) {
             .pending => Output.prettyFmt("<r><d>…<r>", emoji_or_color),
             .pass => Output.prettyFmt("<r><green>✓<r>", emoji_or_color),
-            .fail, .timeout, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => Output.prettyFmt("<r><red>✗<r>", emoji_or_color),
+            .fail, .fail_because_timeout, .fail_because_timeout_with_done_callback, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => Output.prettyFmt("<r><red>✗<r>", emoji_or_color),
             .skip, .skipped_because_label => Output.prettyFmt("<r><yellow>»<d>", emoji_or_color),
             .todo => Output.prettyFmt("<r><magenta>✎<r>", emoji_or_color),
         },
         else => switch (status) {
             .pending => Output.prettyFmt("<r><d>(pending)<r>", emoji_or_color),
             .pass => Output.prettyFmt("<r><green>(pass)<r>", emoji_or_color),
-            .fail, .timeout, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => Output.prettyFmt("<r><red>(fail)<r>", emoji_or_color),
+            .fail, .fail_because_timeout, .fail_because_timeout_with_done_callback, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => Output.prettyFmt("<r><red>(fail)<r>", emoji_or_color),
             .skip, .skipped_because_label => Output.prettyFmt("<r><yellow>(skip)<d>", emoji_or_color),
             .todo => Output.prettyFmt("<r><magenta>(todo)<r>", emoji_or_color),
         },
@@ -678,7 +678,8 @@ pub const CommandLineReporter = struct {
                     .fail_because_todo_passed => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` if tested behavior now works<r>\n", colors)) catch {},
                     .fail_because_expected_assertion_count => @panic("TODO: print the expected and actual assertion counts"),
                     .fail_because_expected_has_assertions => @panic("TODO: print the expected and actual assertion counts"),
-                    .timeout => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test timed out.<r>\n", colors)) catch {},
+                    .fail_because_timeout => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test timed out.<r>\n", colors)) catch {},
+                    .fail_because_timeout_with_done_callback => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test timed out because the done callback was never called.<r> <d>If this was not intended, remove the last parameter from the test callback function<r>\n", colors)) catch {},
                 },
             }
         }
@@ -839,7 +840,8 @@ pub const CommandLineReporter = struct {
             .fail_because_todo_passed,
             .fail_because_expected_has_assertions,
             .fail_because_expected_assertion_count,
-            .timeout,
+            .fail_because_timeout,
+            .fail_because_timeout_with_done_callback,
             => {
                 this.summary().fail += 1;
 

@@ -80,7 +80,8 @@ pub const Result = enum {
     fail,
     skip,
     todo,
-    timeout,
+    fail_because_timeout,
+    fail_because_timeout_with_done_callback,
     skipped_because_label,
     fail_because_failing_test_passed,
     fail_because_todo_passed,
@@ -90,7 +91,7 @@ pub const Result = enum {
     fn isPass(this: Result) bool {
         return switch (this) {
             .pass, .skip, .todo, .skipped_because_label => true,
-            .fail, .timeout, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => false,
+            .fail, .fail_because_timeout, .fail_because_timeout_with_done_callback, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => false,
             .pending => false,
         };
     }
@@ -192,7 +193,7 @@ fn advanceSequenceInGroup(this: *Execution, sequence: *ExecutionSequence, sequen
         };
         if (!active_entry.timespec.eql(&.epoch) and active_entry.timespec.order(&now) == .lt) {
             // timed out
-            sequence.result = .timeout;
+            sequence.result = if (active_entry.has_done_parameter) .fail_because_timeout_with_done_callback else .fail_because_timeout;
             this.advanceSequence(sequence);
             return .again;
         }

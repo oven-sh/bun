@@ -42,14 +42,14 @@ pub const sha256_password = struct {
         // If not using TLS, needs RSA encryption (handled separately)
         // This is just a placeholder that returns SHA256 hash for initial auth
         var result: [32]u8 = [_]u8{0} ** 32;
-        
+
         if (password.len == 0) {
             return result;
         }
-        
+
         // SHA256(password)
         bun.sha.SHA256.hash(password, &result, jsc.VirtualMachine.get().rareData().boringEngine());
-        
+
         return result;
     }
 };

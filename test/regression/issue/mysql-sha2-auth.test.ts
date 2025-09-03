@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 describe("MySQL SHA2 Authentication", () => {
   // Test credentials (free Aiven database)
@@ -7,7 +7,7 @@ describe("MySQL SHA2 Authentication", () => {
 
   test("should connect with mysql_native_password", async () => {
     process.env.DATABASE_URL = NATIVE_URL;
-    
+
     const result = await Bun.sql`SELECT 1 as test`;
     expect(result).toHaveLength(1);
     expect(result[0].test).toBe(1);
@@ -16,7 +16,7 @@ describe("MySQL SHA2 Authentication", () => {
   test.skip("should connect with caching_sha2_password", async () => {
     // TODO: Enable when SHA2 auth is fully fixed
     process.env.DATABASE_URL = SHA2_URL;
-    
+
     const result = await Bun.sql`SELECT 1 as test`;
     expect(result).toHaveLength(1);
     expect(result[0].test).toBe(1);

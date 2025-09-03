@@ -512,19 +512,19 @@ pub const PublishCommand = struct {
 
         const res = req.sendSync() catch return false;
         if (res.status_code != 200) return false;
-        
+
         // Parse the response to check if this specific version exists
         const source = logger.Source.initPathString("???", response_buf.list.items);
         var log = logger.Log.init(allocator);
         const json = JSON.parseUTF8(&source, &log, allocator) catch return false;
-        
+
         // Check if the version exists in the versions object
         if (json.get("versions")) |versions| {
             if (versions.get(version)) |_| {
                 return true;
             }
         }
-        
+
         return false;
     }
 

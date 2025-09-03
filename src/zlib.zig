@@ -247,10 +247,7 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
                     this.zlib.next_out = &this.buf;
                 }
 
-                if (this.zlib.avail_in == 0) {
-                    return error.ShortRead;
-                }
-
+                // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
                 const rc = inflate(&this.zlib, FlushValue.PartialFlush);
                 this.state = State.Inflating;
 
@@ -269,9 +266,16 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
                         this.state = State.Error;
                         return error.OutOfMemory;
                     },
+                    ReturnCode.BufError => {
+                        // BufError with avail_in == 0 means we need more input data
+                        if (this.zlib.avail_in == 0) {
+                            return error.ShortRead;
+                        }
+                        this.state = State.Error;
+                        return error.ZlibError;
+                    },
                     ReturnCode.StreamError,
                     ReturnCode.DataError,
-                    ReturnCode.BufError,
                     ReturnCode.NeedDict,
                     ReturnCode.VersionError,
                     ReturnCode.ErrNo,
@@ -466,10 +470,7 @@ pub const ZlibReaderArrayList = struct {
                 this.zlib.avail_out = @truncate(this.list.items.len -| initial);
             }
 
-            if (this.zlib.avail_in == 0) {
-                return error.ShortRead;
-            }
-
+            // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
             const rc = inflate(&this.zlib, FlushValue.PartialFlush);
             this.state = State.Inflating;
 
@@ -482,9 +483,16 @@ pub const ZlibReaderArrayList = struct {
                     this.state = State.Error;
                     return error.OutOfMemory;
                 },
+                ReturnCode.BufError => {
+                    // BufError with avail_in == 0 means we need more input data
+                    if (this.zlib.avail_in == 0) {
+                        return error.ShortRead;
+                    }
+                    this.state = State.Error;
+                    return error.ZlibError;
+                },
                 ReturnCode.StreamError,
                 ReturnCode.DataError,
-                ReturnCode.BufError,
                 ReturnCode.NeedDict,
                 ReturnCode.VersionError,
                 ReturnCode.ErrNo,

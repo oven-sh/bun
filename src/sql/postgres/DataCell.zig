@@ -601,6 +601,38 @@ pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, 
                 return SQLDataCell{ .tag = .date, .value = .{ .date = try str.parseDate(globalObject) } };
             }
         },
+        .time, .timetz => |tag| {
+            if (bytes.len == 0) {
+                return SQLDataCell{ .tag = .null, .value = .{ .null = 0 } };
+            }
+            if (binary) {
+                if (tag == .time and bytes.len == 8) {
+                    // PostgreSQL sends time as microseconds since midnight in binary format
+                    const microseconds = @byteSwap(@as(i64, @bitCast(bytes[0..8].*)));
+                    
+                    // Use C++ helper for formatting
+                    var buffer: [32]u8 = undefined;
+                    const len = Postgres__formatTime(microseconds, &buffer, buffer.len);
+                    
+                    return SQLDataCell{ .tag = .string, .value = .{ .string = bun.String.cloneUTF8(buffer[0..len]).value.WTFStringImpl }, .free_value = 1 };
+                } else if (tag == .timetz and bytes.len == 12) {
+                    // PostgreSQL sends timetz as microseconds since midnight (8 bytes) + timezone offset in seconds (4 bytes)
+                    const microseconds = @byteSwap(@as(i64, @bitCast(bytes[0..8].*)));
+                    const tz_offset_seconds = @byteSwap(@as(i32, @bitCast(bytes[8..12].*)));
+                    
+                    // Use C++ helper for formatting with timezone
+                    var buffer: [48]u8 = undefined;
+                    const len = Postgres__formatTimeTz(microseconds, tz_offset_seconds, &buffer, buffer.len);
+                    
+                    return SQLDataCell{ .tag = .string, .value = .{ .string = bun.String.cloneUTF8(buffer[0..len]).value.WTFStringImpl }, .free_value = 1 };
+                } else {
+                    return error.InvalidBinaryData;
+                }
+            } else {
+                // Text format - just return as string
+                return SQLDataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.cloneUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
+            }
+        },
 
         .bytea => {
             if (binary) {
@@ -950,6 +982,10 @@ pub const Putter = struct {
 };
 
 const debug = bun.Output.scoped(.Postgres, .visible);
+
+// External C++ formatting functions
+extern fn Postgres__formatTime(microseconds: i64, buffer: [*]u8, bufferSize: usize) usize;
+extern fn Postgres__formatTimeTz(microseconds: i64, tzOffsetSeconds: i32, buffer: [*]u8, bufferSize: usize) usize;
 
 const PostgresCachedStructure = @import("../shared/CachedStructure.zig");
 const protocol = @import("./PostgresProtocol.zig");

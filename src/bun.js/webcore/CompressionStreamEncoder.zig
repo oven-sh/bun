@@ -26,7 +26,6 @@ pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 
-
 pub fn finalize(this: *CompressionStreamEncoder) void {
     // Clean up the compressor state
     switch (this.state) {
@@ -250,13 +249,13 @@ pub fn encode(this: *CompressionStreamEncoder, globalObject: *JSGlobalObject, ca
     }
 
     const chunk_value = arguments[0];
-    
+
     // Handle string and buffer inputs using StringOrBuffer
     const string_or_buffer = try JSC.Node.StringOrBuffer.fromJS(globalObject, this.allocator, chunk_value) orelse {
         return globalObject.throwInvalidArguments("Input must be a string, ArrayBuffer or TypedArray", .{});
     };
     defer string_or_buffer.deinit();
-    
+
     const chunk_slice = string_or_buffer.slice();
 
     // Process the chunk

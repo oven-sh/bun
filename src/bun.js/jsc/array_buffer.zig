@@ -628,7 +628,11 @@ pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) v
     //         mimalloc.mi_heap_check_owned(jsc.VirtualMachine.get().arena.heap.?, bytes_));
     // }
 
-    mimalloc.mi_free(bytes_);
+    if (comptime bun.use_mimalloc) {
+        mimalloc.mi_free(bytes_);
+    } else {
+        std.c.free(bytes_);
+    }
 }
 
 pub export fn BlobArrayBuffer_deallocator(_: *anyopaque, blob: *anyopaque) void {

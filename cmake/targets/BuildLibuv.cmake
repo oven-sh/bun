@@ -2,9 +2,9 @@ register_repository(
   NAME
     libuv
   REPOSITORY
-    libuv/libuv
+    oven-sh/libuv
   COMMIT
-    da527d8d2a908b824def74382761566371439003
+    537d74411e9a5587bc5c6dd9ca04a77976ecb120
 )
 
 if(WIN32)

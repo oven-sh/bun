@@ -1,5 +1,5 @@
 import { SQL } from "bun";
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 
 declare module "bun" {
   namespace SQL {
@@ -13,6 +13,20 @@ describe("SQL adapter environment variable precedence", () => {
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
+    for (const key of Object.keys(process.env).concat(...Object.keys(Bun.env), ...Object.keys(import.meta.env))) {
+      delete process.env[key];
+      delete Bun.env[key];
+      delete import.meta.env[key];
+    }
+
+    for (const key in originalEnv) {
+      process.env[key] = originalEnv[key];
+      Bun.env[key] = originalEnv[key];
+      import.meta.env[key] = originalEnv[key];
+    }
+  });
+
+  afterAll(() => {
     for (const key of Object.keys(process.env).concat(...Object.keys(Bun.env), ...Object.keys(import.meta.env))) {
       delete process.env[key];
       delete Bun.env[key];

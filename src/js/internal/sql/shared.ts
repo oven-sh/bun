@@ -113,41 +113,43 @@ class SQLHelper<T> {
   }
 }
 
+const sqliteProtocols = [
+  { prefix: "sqlite://", stripLength: 9 },
+  { prefix: "sqlite:", stripLength: 7 },
+  { prefix: "file://", stripLength: -1 }, // Special case we can use Bun.fileURLToPath
+  { prefix: "file:", stripLength: 5 },
+];
+
 function parseDefinitelySqliteUrl(value: string | URL | null): string | null {
   if (value === null) return null;
   const str = value instanceof URL ? value.toString() : value;
 
   if (str === ":memory:" || str === "sqlite://:memory:" || str === "sqlite:memory") return ":memory:";
 
-  // For any URL-like string, just extract the path portion
-  // Strip the protocol and handle query params
-  let path: string;
+  for (const { prefix, stripLength } of sqliteProtocols) {
+    if (!str.startsWith(prefix)) continue;
 
-  if (str.startsWith("sqlite://")) {
-    path = str.slice(9); // "sqlite://".length
-  } else if (str.startsWith("sqlite:")) {
-    path = str.slice(7); // "sqlite:".length
-  } else if (str.startsWith("file://")) {
-    // For file:// URLs, use Bun's built-in converter for correct platform handling
-    // This properly handles Windows paths, UNC paths, etc.
-    try {
-      return Bun.fileURLToPath(str);
-    } catch {
-      // Fallback: just strip the protocol
-      path = str.slice(7); // "file://".length
+    if (stripLength === -1) {
+      try {
+        return Bun.fileURLToPath(str);
+      } catch {
+        // if it cant pass it's probably query string, we can just strip it
+        // slicing off the file:// at the beginning
+        return stripQueryParams(str.slice(7));
+      }
     }
-  } else if (str.startsWith("file:")) {
-    path = str.slice(5); // "file:".length
-  } else {
-    // Not a SQLite URL
-    return null;
+
+    return stripQueryParams(str.slice(stripLength));
   }
-  // Remove query parameters if present (only looking for ?)
+
+  // couldn't reliably determine this was definitely a sqlite url
+  // it still *could* be, but not unambigously.
+  return null;
+}
+
+function stripQueryParams(path: string): string {
   const queryIndex = path.indexOf("?");
-  if (queryIndex !== -1) {
-    path = path.slice(0, queryIndex);
-  }
-  return path;
+  return queryIndex !== -1 ? path.slice(0, queryIndex) : path;
 }
 
 function parseSQLiteOptionsWithQueryParams(
@@ -276,15 +278,15 @@ hasProtocol.regex = /^(?:\w+:)?\/\//;
  * @returns A tuple containing the parsed adapter (this is always correct) and a
  * url string, that you should continue to use for further options. In some
  * cases the it will be a parsed URL instance, and in others a string. This is
- * to save unnecessary parses in some caes. The third value is the SSL mode The last value is the options object
+ * to save unnecessary parses in some cases. The third value is the SSL mode The last value is the options object
  * resolved from the possible overloads of the Bun.SQL constructor, it may have modifications
  */
 function parseConnectionDetailsFromOptionsOrEnvironment(
   stringOrUrlOrOptions: Bun.SQL.Options | string | URL | undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options,
 ): [url: string | URL | null, sslMode: SSLMode | null, options: Bun.SQL.__internal.OptionsWithDefinedAdapter] {
+  // Step 1: Determine the options object and initial URL
   let options: Bun.SQL.Options;
-
   let stringOrUrl: string | URL | null = null;
   let sslMode: SSLMode | null = null;
   let adapter: Bun.SQL.__internal.Adapter | null = null;
@@ -292,11 +294,10 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
   if (typeof stringOrUrlOrOptions === "string" || stringOrUrlOrOptions instanceof URL) {
     stringOrUrl = stringOrUrlOrOptions;
     options = definitelyOptionsButMaybeEmpty;
-  } else if (stringOrUrlOrOptions) {
-    options = { ...stringOrUrlOrOptions, ...definitelyOptionsButMaybeEmpty };
-    [stringOrUrl, sslMode, adapter] = getConnectionDetailsFromEnvironment(options.adapter);
   } else {
-    options = definitelyOptionsButMaybeEmpty;
+    options = stringOrUrlOrOptions
+      ? { ...stringOrUrlOrOptions, ...definitelyOptionsButMaybeEmpty }
+      : definitelyOptionsButMaybeEmpty;
     [stringOrUrl, sslMode, adapter] = getConnectionDetailsFromEnvironment(options.adapter);
   }
 
@@ -306,71 +307,87 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
     stringOrUrl = options.url;
   }
 
-  // try default protocol to whatever adapter is in options... (:337)
+  // Step 2: Handle SQLite special case early SQLite needs special handling
+  // because "sqlite://:memory:" can't be parsed with URL constructor
+  if (options.adapter === "sqlite" || (options.adapter === undefined && typeof stringOrUrl === "string")) {
+    const sqliteResult = handleSQLiteUrl(stringOrUrl, options);
+    if (sqliteResult) {
+      return sqliteResult;
+    }
+  }
+
+  // Step 3: Parse protocol and ensure URL format for non-SQLite databases
   let protocol: Bun.SQL.__internal.Adapter | (string & {}) = options.adapter || DEFAULT_PROTOCOL;
 
   if (stringOrUrl instanceof URL) {
-    protocol = stringOrUrl.protocol;
-  } else {
-    if (options.adapter === "sqlite" || options.adapter === undefined) {
-      const definitelySqliteUrl = parseDefinitelySqliteUrl(stringOrUrl);
-
-      if (definitelySqliteUrl !== null) {
-        // Pass the original stringOrUrl for query param parsing, but store the parsed filename
-        return [
-          stringOrUrl,
-          /*sslMode*/ null,
-          { ...options, adapter: "sqlite", filename: definitelySqliteUrl || ":memory:" },
-        ] as const;
-      }
-    }
-
-    if (options.adapter === "sqlite") {
-      // For SQLite without a protocol, treat the stringOrUrl as a filename
-      return [
-        stringOrUrl,
-        /*sslMode*/ null,
-        { ...options, filename: stringOrUrl || ":memory:" } as Bun.SQL.__internal.OptionsWithDefinedAdapter,
-      ] as const;
-    }
-
-    if (stringOrUrl !== null) {
-      if (hasProtocol(stringOrUrl)) {
-        stringOrUrl = new URL(stringOrUrl);
-        protocol = stringOrUrl.protocol;
-      }
-
-      // ...that if there's no protocol in the url yet, we can default to the
-      // adapter name as a valid protocol
+    protocol = stringOrUrl.protocol.replace(/:$/, "");
+  } else if (stringOrUrl !== null) {
+    if (hasProtocol(stringOrUrl)) {
+      stringOrUrl = new URL(stringOrUrl);
+      protocol = (stringOrUrl as URL).protocol.replace(/:$/, "");
+    } else {
+      // Add protocol if missing
       stringOrUrl = ensureUrlHasProtocol(stringOrUrl, protocol);
     }
   }
 
-  if (protocol.endsWith(":")) {
-    protocol = protocol.slice(0, -1);
-  }
-
+  // Step 4: Set adapter from environment if not already set, but ONLY if not
+  // already set (options object is highest priority)
   if (options.adapter === undefined && adapter !== null) {
     options.adapter = adapter;
   }
 
-  // ...that if there's no protocol in the url yet, we can default to the
-  // adapter name as a valid protocol
-
-  // If adapter was specified in options, we should ALWAYS use it over anything
-  // parsed from the connection string (options object is considered the
-  // ultimate source of truth for values)
+  // Step 5: Return early if adapter is explicitly specified
   if (options.adapter) {
     return [stringOrUrl, sslMode, options as Bun.SQL.__internal.OptionsWithDefinedAdapter] as const;
   }
 
+  // Step 6: Infer adapter from protocol
   const parsedAdapterFromProtocol = parseAdapterFromProtocol(protocol);
-
   if (!parsedAdapterFromProtocol) {
     throw new Error(`Unsupported protocol: ${protocol}. Supported adapters: "postgres", "sqlite", "mysql", "mariadb"`);
   }
 
   return [stringOrUrl, sslMode, { ...options, adapter: parsedAdapterFromProtocol }];
+}
+
+function handleSQLiteUrl(
+  stringOrUrl: string | URL | null,
+  options: Bun.SQL.Options,
+): [string | URL | null, SSLMode | null, Bun.SQL.__internal.OptionsWithDefinedAdapter] | null {
+  if (typeof stringOrUrl !== "string") {
+    // If adapter is explicitly sqlite but no string URL, default to :memory:
+    if (options.adapter === "sqlite") {
+      return [
+        stringOrUrl,
+        null,
+        { ...options, filename: ":memory:", adapter: "sqlite" } as Bun.SQL.__internal.OptionsWithDefinedAdapter,
+      ];
+    }
+    return null;
+  }
+
+  const parsedSqlitePath = parseDefinitelySqliteUrl(stringOrUrl);
+
+  if (parsedSqlitePath !== null) {
+    // This is definitely a SQLite URL
+    return [
+      stringOrUrl, // Keep original for query param parsing
+      null,
+      { ...options, adapter: "sqlite", filename: parsedSqlitePath },
+    ] as const;
+  }
+
+  // If adapter is explicitly "sqlite", treat the string as a filename
+  if (options.adapter === "sqlite") {
+    return [
+      stringOrUrl,
+      null,
+      { ...options, filename: stringOrUrl || ":memory:" } as Bun.SQL.__internal.OptionsWithDefinedAdapter,
+    ] as const;
+  }
+
+  return null;
 }
 
 function parseAdapterFromProtocol(protocol: string): Bun.SQL.__internal.Adapter | null {
@@ -409,24 +426,14 @@ function parseOptions(
   const adapter = options.adapter;
 
   if (adapter === "sqlite") {
-    // For SQLite, check if filename was already set in options during parseConnectionDetailsFromOptionsOrEnvironment
-    let filename: URL | string | null = options.filename || null;
-    if (!filename) {
-      // If not set, parse it from the URL
-      if (typeof url === "string") {
-        filename = parseDefinitelySqliteUrl(url);
-      }
-      // Default to :memory: if no filename
-      filename = filename || ":memory:";
-    }
-
-    // Pass the original _url for query param parsing, but use the parsed filename
     return parseSQLiteOptionsWithQueryParams(_url, {
       ...options,
       adapter: "sqlite",
-      filename: filename,
+      filename: options.filename || ":memory:",
     });
   }
+
+  // The rest of this function is logic specific to postgres/mysql/mariadb (they have the same options object)
 
   let sslMode: SSLMode = sslModeFromConnectionDetails || SSLMode.prefer;
 

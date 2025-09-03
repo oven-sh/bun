@@ -67,6 +67,10 @@ describe("SQLite URL Parsing Matrix", () => {
             // Not a valid file:// URL, so implementation just strips the prefix
             expected = testCase.url.slice(7); // "file://".length
           }
+          // Empty filename should default to :memory:
+          if (expected === "") {
+            expected = ":memory:";
+          }
           expect(filename).toBe(expected);
         } else {
           expect(sql.options.filename).toBe(testCase.expected);

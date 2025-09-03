@@ -381,6 +381,7 @@ Exited with code [1]
 - [ ] if we hold a weak reference to the done param, we can gc(true) (if a done param is provided) and then when it is finalized, count that as the function finishing (assuming it's not a promise). that way it fixes the done discard problem without solving waitForPromise.
 - [ ] m_terminationException in timeouts
 - [ ] support test() inside test()
+- [ ] add a warning message when a test resolves after it times out
 
 If this doesn't land:
 

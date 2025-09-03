@@ -404,8 +404,10 @@ function parseAdapterFromProtocol(protocol: string): Bun.SQL.__internal.Adapter 
 
     case "mysql":
     case "mysql2":
-    case "mariadb":
       return "mysql";
+
+    case "mariadb":
+      return "mariadb";
 
     case "file":
     case "sqlite":

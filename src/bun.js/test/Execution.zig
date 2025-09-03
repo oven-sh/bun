@@ -143,11 +143,14 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
         // loop over items in the group and advance their execution
 
         const status = try this.advanceSequencesInGroup(group, callback_queue, now);
-        if (status == .execute) return .{ .execute = .{ .timeout = null } };
+        switch (status) {
+            .execute => |exec| return .{ .execute = .{ .timeout = exec.timeout } },
+            .done => {},
+        }
         this.group_index += 1;
     }
 }
-const AdvanceStatus = enum { done, execute };
+const AdvanceStatus = union(enum) { done, execute: struct { timeout: bun.timespec = .epoch } };
 fn advanceSequencesInGroup(this: *Execution, group: *ConcurrentGroup, callback_queue: *describe2.CallbackQueue, now: bun.timespec) !AdvanceStatus {
     var final_status: AdvanceStatus = .done;
     for (group.sequences(this), 0..) |*sequence, sequence_index| {
@@ -155,7 +158,12 @@ fn advanceSequencesInGroup(this: *Execution, group: *ConcurrentGroup, callback_q
             const sequence_status = try this.advanceSequenceInGroup(sequence, sequence_index, callback_queue, now);
             switch (sequence_status) {
                 .done => {},
-                .execute => final_status = .execute,
+                .execute => |exec| {
+                    const prev_timeout: bun.timespec = if (final_status == .execute) final_status.execute.timeout else .epoch;
+                    const this_timeout = bun.timespec.min(prev_timeout, exec.timeout);
+                    const final_timeout = if (prev_timeout.eql(&.epoch)) this_timeout else if (this_timeout.eql(&.epoch)) prev_timeout else bun.timespec.min(prev_timeout, this_timeout);
+                    final_status = .{ .execute = .{ .timeout = bun.timespec.min(prev_timeout, final_timeout) } };
+                },
                 .again => continue,
             }
             break;
@@ -163,11 +171,13 @@ fn advanceSequencesInGroup(this: *Execution, group: *ConcurrentGroup, callback_q
     }
     return final_status;
 }
-const AdvanceSequenceStatus = enum {
+const AdvanceSequenceStatus = union(enum) {
     /// the entire sequence is completed.
     done,
     /// the item is queued for execution or has not completed yet. need to wait for it
-    execute,
+    execute: struct {
+        timeout: bun.timespec = .epoch,
+    },
     /// the item completed immediately; advance to the next item
     again,
 };
@@ -183,7 +193,8 @@ fn advanceSequenceInGroup(this: *Execution, sequence: *ExecutionSequence, sequen
             return .again;
         }
         groupLog.log("runOne: can't advance; already executing", .{});
-        return .execute;
+        const active_entry = sequence.activeEntry(this) orelse return .{ .execute = .{} };
+        return .{ .execute = .{ .timeout = active_entry.timespec } };
     }
 
     const next_item = sequence.activeEntry(this) orelse {
@@ -214,7 +225,7 @@ fn advanceSequenceInGroup(this: *Execution, sequence: *ExecutionSequence, sequen
         };
         groupLog.log("runSequence queued callback: {}", .{callback_data});
         try callback_queue.append(.{ .callback = cb.dupe(this.bunTest().gpa), .done_parameter = true, .data = callback_data });
-        return .execute;
+        return .{ .execute = .{ .timeout = next_item.timespec } };
     } else {
         switch (next_item.base.mode) {
             .skip => if (sequence.result == .pending) {

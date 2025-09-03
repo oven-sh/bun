@@ -362,7 +362,7 @@ pub const BunTestFile = struct {
                 .done => .done,
             };
             group.log("-> runOne status: {s}", .{@tagName(status)});
-            if (status == .done) {
+            if (status != .execute) {
                 group.log("-> advancing", .{});
                 bun.assert(callback_queue.items.len == 0);
                 if (try this._advance(globalThis) == .exit) {
@@ -371,6 +371,14 @@ pub const BunTestFile = struct {
                     continue;
                 }
             }
+
+            const timeout = status.execute.timeout;
+            if (timeout.eql(&.epoch)) {
+                group.log("-> no timeout", .{});
+            } else {
+                group.log("-> timeout: {s}", .{bun.fmt.fmtDurationOneDecimal(timeout.sinceNow())});
+            }
+
             // if one says continue_async and two say continue_sync then you continue_sync
             // if two say continue_async then you continue_async
             // if there are zero then you continue_sync
@@ -778,7 +786,7 @@ pub const TestScheduleEntry = union(enum) {
 pub const RunOneResult = union(enum) {
     done,
     execute: struct {
-        timeout: ?bun.timespec,
+        timeout: bun.timespec = .epoch,
     },
 };
 

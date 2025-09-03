@@ -209,6 +209,12 @@ const DEFAULT_PROTOCOL: Bun.SQL.__internal.Adapter = "postgres";
 
 const env = Bun.env;
 
+/**
+ * Reads environment variables to try and find a connnection string
+ * @param adapter If an adapter is specified in the options, pass it here and
+ * this function will only resolve from environment variables that are specific
+ * to that adapter. Otherwise it will try them all.
+ */
 function getConnectionDetailsFromEnvironment(
   adapter: Bun.SQL.__internal.Adapter | undefined,
 ): [url: string | null, sslMode: SSLMode | null, adapter: Bun.SQL.__internal.Adapter | null] {
@@ -440,7 +446,7 @@ function parseOptions(
 
   // The rest of this function is logic specific to postgres/mysql/mariadb (they have the same options object)
 
-  let sslMode: SSLMode = sslModeFromConnectionDetails || SSLMode.prefer;
+  let sslMode: SSLMode = sslModeFromConnectionDetails || SSLMode.disable;
 
   let hostname: string | undefined;
   let port: number | string | undefined;

@@ -2,14 +2,10 @@ import { PGlite } from "@electric-sql/pglite";
 import { SQL, randomUUIDv7 } from "bun";
 import { expect, test } from "bun:test";
 import { once } from "events";
-import { isCI, isLinux } from "harness";
 import net, { AddressInfo } from "node:net";
 import { fromNodeSocket } from "pg-gateway/node";
 
-// TODO(@190n) linux-x64 sometimes fails due to JavaScriptCore bug
-// https://github.com/oven-sh/bun/issues/17841#issuecomment-2695792567
-// https://bugs.webkit.org/show_bug.cgi?id=289009
-test.todoIf(isCI && isLinux && process.arch == "x64")(
+test(
   "pglite should be able to query using pg-gateway and Bun.SQL",
   async () => {
     const name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
@@ -56,12 +52,17 @@ test.todoIf(isCI && isLinux && process.arch == "x64")(
 
     const port = (server.address() as AddressInfo).port;
 
-    await using sql = new SQL({
+    const sql = new SQL({
       hostname: "localhost",
       port: port,
       database: name,
       max: 1,
     });
+
+    expect(sql.options.hostname).toBe("localhost");
+    expect(sql.options.port).toBe(port);
+    expect(sql.options.database).toBe(name);
+    expect(sql.options.max).toBe(1);
 
     {
       // prepared statement without parameters
@@ -95,4 +96,5 @@ test.todoIf(isCI && isLinux && process.arch == "x64")(
       expect(result[0]).toEqual({ id: 1, name: "Test 1" });
     }
   },
+  Infinity,
 );

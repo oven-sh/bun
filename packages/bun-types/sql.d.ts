@@ -143,13 +143,13 @@ declare module "bun" {
 
       /**
        * Database server hostname
+       * @deprecated Prefer {@link hostname}
        * @default "localhost"
        */
       host?: string | undefined;
 
       /**
-       * Database server hostname (alias for host)
-       * @deprecated Prefer {@link host}
+       * Database server hostname
        * @default "localhost"
        */
       hostname?: string | undefined;
@@ -339,15 +339,6 @@ declare module "bun" {
     type Options = SQLiteOptions | PostgresOrMySQLOptions;
 
     /**
-     * A type with all properties in any of the possible Options union values.
-     *
-     * For example, this contains {@link SQLiteOptions.safeIntegers} as well as
-     * {@link PostgresOrMySQLOptions.host}, where both are optional as they
-     * would be in their respective original options.
-     */
-    type MergedOptions = Bun.__internal.DistributedMerge<SQL.Options>;
-
-    /**
      * Represents a SQL query that can be executed, with additional control
      * methods Extends Promise to allow for async/await usage
      */
@@ -533,7 +524,7 @@ declare module "bun" {
     /**
      * Current client options
      */
-    options: SQL.MergedOptions;
+    options: Bun.__internal.DistributedMerge<SQL.Options>;
 
     /**
      * Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL

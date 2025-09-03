@@ -142,13 +142,11 @@ function parseDefinitelySqliteUrl(value: string | URL | null): string | null {
     // Not a SQLite URL
     return null;
   }
-
   // Remove query parameters if present (only looking for ?)
   const queryIndex = path.indexOf("?");
   if (queryIndex !== -1) {
     path = path.slice(0, queryIndex);
   }
-
   return path;
 }
 
@@ -314,12 +312,19 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
   if (stringOrUrl instanceof URL) {
     protocol = stringOrUrl.protocol;
   } else {
-    const definitelySqliteUrl = parseDefinitelySqliteUrl(stringOrUrl);
+    if (options.adapter === "sqlite" || options.adapter === undefined) {
+      const definitelySqliteUrl = parseDefinitelySqliteUrl(stringOrUrl);
 
-    if (definitelySqliteUrl) {
-      protocol = "sqlite";
-      stringOrUrl = definitelySqliteUrl;
-    } else if (stringOrUrl !== null) {
+      if (definitelySqliteUrl) {
+        return [definitelySqliteUrl, /*sslMode*/ null, { ...options, adapter: "sqlite" }] as const;
+      }
+    }
+
+    if (options.adapter === "sqlite") {
+      return [stringOrUrl, /*sslMode*/ null, options as Bun.SQL.__internal.OptionsWithDefinedAdapter] as const;
+    }
+
+    if (stringOrUrl !== null) {
       if (hasProtocol(stringOrUrl)) {
         stringOrUrl = new URL(stringOrUrl);
         protocol = stringOrUrl.protocol;
@@ -397,7 +402,7 @@ function parseOptions(
     return parseSQLiteOptionsWithQueryParams(url, {
       ...options,
       adapter: "sqlite",
-      filename: url ?? ":memory:",
+      filename: url || ":memory:",
     });
   }
 

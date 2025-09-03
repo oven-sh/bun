@@ -143,8 +143,6 @@ describe("SQL adapter environment variable precedence", () => {
   });
 
   test("should infer postgres adapter from POSTGRES_URL env var", () => {
-    debugger;
-
     process.env.POSTGRES_URL = "postgres://user:pass@host:5432/db";
 
     const options = new SQL();

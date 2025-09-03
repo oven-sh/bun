@@ -985,7 +985,7 @@ pub const StandaloneModuleGraph = struct {
             const temp_path = bun.getFdPath(fd, &temp_buf) catch |err| {
                 return CompileResult.fail(std.fmt.allocPrint(allocator, "Failed to get temp file path: {s}", .{@errorName(err)}) catch "Failed to get temp file path");
             };
-            
+
             // Build the absolute destination path
             // On Windows, we need an absolute path for MoveFileExW
             // Get the current working directory and join with outfile
@@ -997,29 +997,25 @@ pub const StandaloneModuleGraph = struct {
                 outfile
             else
                 bun.path.joinAbsString(cwd_path, &[_][]const u8{outfile}, .auto);
-            
+
             // Convert paths to Windows UTF-16
             var temp_buf_w: bun.OSPathBuffer = undefined;
             var dest_buf_w: bun.OSPathBuffer = undefined;
             const temp_w = bun.strings.toWPathNormalized(&temp_buf_w, temp_path);
             const dest_w = bun.strings.toWPathNormalized(&dest_buf_w, dest_path);
-            
+
             // Ensure null termination
             const temp_buf_u16 = bun.reinterpretSlice(u16, &temp_buf_w);
             const dest_buf_u16 = bun.reinterpretSlice(u16, &dest_buf_w);
             temp_buf_u16[temp_w.len] = 0;
             dest_buf_u16[dest_w.len] = 0;
-            
+
             // Close the file handle before moving (Windows requires this)
             fd.close();
             fd = bun.invalid_fd;
-            
+
             // Move the file using MoveFileExW
-            if (bun.windows.kernel32.MoveFileExW(
-                temp_buf_u16[0..temp_w.len :0].ptr,
-                dest_buf_u16[0..dest_w.len :0].ptr,
-                bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH
-            ) == bun.windows.FALSE) {
+            if (bun.windows.kernel32.MoveFileExW(temp_buf_u16[0..temp_w.len :0].ptr, dest_buf_u16[0..dest_w.len :0].ptr, bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH) == bun.windows.FALSE) {
                 const err = bun.windows.Win32Error.get();
                 if (err.toSystemErrno()) |sys_err| {
                     if (sys_err == .EISDIR) {

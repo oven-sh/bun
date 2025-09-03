@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { execSync } from "child_process";
+import { existsSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { existsSync, mkdirSync } from "fs";
-import { execSync } from "child_process";
 
 describe("compile --outfile with subdirectories", () => {
   test("places executable in subdirectory with forward slash", async () => {
@@ -12,7 +12,7 @@ describe("compile --outfile with subdirectories", () => {
 
     // Use forward slash in outfile
     const outfile = "subdir/nested/app.exe";
-    
+
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
       env: bunEnv,
@@ -21,26 +21,22 @@ describe("compile --outfile with subdirectories", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    
+
     // Check that the file exists in the subdirectory
     const expectedPath = join(String(dir), "subdir", "nested", "app.exe");
     expect(existsSync(expectedPath)).toBe(true);
-    
+
     // Run the executable to verify it works
     await using exe = Bun.spawn({
       cmd: [expectedPath],
       env: bunEnv,
       stdout: "pipe",
     });
-    
+
     const exeOutput = await exe.stdout.text();
     expect(exeOutput.trim()).toBe("Hello from subdirectory!");
   });
@@ -52,7 +48,7 @@ describe("compile --outfile with subdirectories", () => {
 
     // Use backslash in outfile
     const outfile = "subdir\\nested\\app.exe";
-    
+
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
       env: bunEnv,
@@ -61,15 +57,11 @@ describe("compile --outfile with subdirectories", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    
+
     // Check that the file exists in the subdirectory
     const expectedPath = join(String(dir), "subdir", "nested", "app.exe");
     expect(existsSync(expectedPath)).toBe(true);
@@ -82,7 +74,7 @@ describe("compile --outfile with subdirectories", () => {
 
     // Use a deep nested path that doesn't exist yet
     const outfile = "a/b/c/d/e/app.exe";
-    
+
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
       env: bunEnv,
@@ -93,7 +85,7 @@ describe("compile --outfile with subdirectories", () => {
 
     const exitCode = await proc.exited;
     expect(exitCode).toBe(0);
-    
+
     // Check that the file and all directories were created
     const expectedPath = join(String(dir), "a", "b", "c", "d", "e", "app.exe");
     expect(existsSync(expectedPath)).toBe(true);
@@ -105,7 +97,7 @@ describe("compile --outfile with subdirectories", () => {
     });
 
     const outfile = "output/bin/app.exe";
-    
+
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -127,25 +119,20 @@ describe("compile --outfile with subdirectories", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    
+
     const expectedPath = join(String(dir), "output", "bin", "app.exe");
     expect(existsSync(expectedPath)).toBe(true);
-    
+
     // Verify metadata was set correctly
     const getMetadata = (field: string) => {
       try {
-        return execSync(
-          `powershell -Command "(Get-ItemProperty '${expectedPath}').VersionInfo.${field}"`,
-          { encoding: "utf8" }
-        ).trim();
+        return execSync(`powershell -Command "(Get-ItemProperty '${expectedPath}').VersionInfo.${field}"`, {
+          encoding: "utf8",
+        }).trim();
       } catch {
         return "";
       }
@@ -164,7 +151,7 @@ describe("compile --outfile with subdirectories", () => {
 
     // Try to use blocked/app.exe where blocked is a file
     const outfile = "blocked/app.exe";
-    
+
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
       env: bunEnv,
@@ -173,11 +160,7 @@ describe("compile --outfile with subdirectories", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).not.toBe(0);
     // Should get an error about the path
@@ -191,7 +174,7 @@ describe("compile --outfile with subdirectories", () => {
 
     // Use relative path with . and ..
     const outfile = "./output/../output/./app.exe";
-    
+
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", join(String(dir), "src", "app.js"), "--outfile", outfile],
       env: bunEnv,
@@ -202,7 +185,7 @@ describe("compile --outfile with subdirectories", () => {
 
     const exitCode = await proc.exited;
     expect(exitCode).toBe(0);
-    
+
     // Should normalize to output/app.exe
     const expectedPath = join(String(dir), "output", "app.exe");
     expect(existsSync(expectedPath)).toBe(true);
@@ -225,11 +208,11 @@ describe("Bun.build() compile with subdirectories", () => {
 
     expect(result.success).toBe(true);
     expect(result.outputs.length).toBe(1);
-    
+
     // The output path should include the subdirectories
     expect(result.outputs[0].path).toContain("dist");
     expect(result.outputs[0].path).toContain("bin");
-    
+
     // File should exist at the expected location
     const expectedPath = join(String(dir), "dist", "bin", "app.exe");
     expect(existsSync(expectedPath)).toBe(true);
@@ -254,17 +237,16 @@ describe("Bun.build() compile with subdirectories", () => {
     });
 
     expect(result.success).toBe(true);
-    
+
     const expectedPath = join(String(dir), "build", "release", "app.exe");
     expect(existsSync(expectedPath)).toBe(true);
-    
+
     // Verify metadata
     const getMetadata = (field: string) => {
       try {
-        return execSync(
-          `powershell -Command "(Get-ItemProperty '${expectedPath}').VersionInfo.${field}"`,
-          { encoding: "utf8" }
-        ).trim();
+        return execSync(`powershell -Command "(Get-ItemProperty '${expectedPath}').VersionInfo.${field}"`, {
+          encoding: "utf8",
+        }).trim();
       } catch {
         return "";
       }

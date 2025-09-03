@@ -735,6 +735,11 @@ pub const ExecutionEntry = struct {
     result: Execution.Result = .pending,
     /// '0' = no timeout
     timeout: u32,
+    /// '.epoch' = not set
+    /// when this entry begins executing, the timespec will be set to the current time plus the timeout(ms).
+    /// runOne will return the lowest timespec
+    /// when the timeout completes, any items with a timespec < now will have their timespec reset to .epoch
+    timespec: bun.timespec = .epoch,
 
     fn create(gpa: std.mem.Allocator, name_not_owned: ?[]const u8, cb: ?CallbackWithArgs, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg, allow_update_parent: bool) bun.JSError!*ExecutionEntry {
         const entry = bun.create(gpa, ExecutionEntry, .{

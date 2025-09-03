@@ -335,21 +335,9 @@ pub const FontFamily = union(enum) {
                 // Generic family names such as sans-serif must be quoted if parsed as a string.
                 // CSS wide keywords, as well as "default", must also be quoted.
                 // https://www.w3.org/TR/css-fonts-4/#family-name-syntax
-                var needs_quotes = false;
-                for (val) |c| {
-                    if (c == ' ' or c == '"' or c == '\'') {
-                        needs_quotes = true;
-                        break;
-                    }
-                }
-
-                if (needs_quotes) {
-                    try dest.writeChar('"');
-                    try dest.writeStr(val);
-                    try dest.writeChar('"');
-                } else {
-                    try dest.writeStr(val);
-                }
+                try dest.writeChar('"');
+                try dest.writeStr(val);
+                try dest.writeChar('"');
             },
         }
     }

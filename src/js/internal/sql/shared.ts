@@ -389,8 +389,21 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
     protocol = stringOrUrl.protocol.replace(/:$/, "");
   } else if (stringOrUrl !== null) {
     if (hasProtocol(stringOrUrl)) {
-      stringOrUrl = new URL(stringOrUrl);
-      protocol = (stringOrUrl as URL).protocol.replace(/:$/, "");
+      try {
+        stringOrUrl = new URL(stringOrUrl);
+        protocol = (stringOrUrl as URL).protocol.replace(/:$/, "");
+      } catch (e) {
+        // options.adpater won't be sqlite here, we already did the special case check for it
+        if (options.adapter && typeof stringOrUrl === "string" && stringOrUrl.includes("sqlite")) {
+          throw new Error(
+            `Invalid URL '${stringOrUrl}' for ${options.adapter}. Did you mean to specify \`{ adapter: "sqlite" }\`?`,
+            { cause: e },
+          );
+        }
+
+        // unrelated error to do with url parsing, we should re-throw. This is a real user error
+        throw e;
+      }
     } else {
       // Add protocol if missing
       stringOrUrl = ensureUrlHasProtocol(stringOrUrl, protocol);

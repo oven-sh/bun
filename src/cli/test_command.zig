@@ -684,7 +684,7 @@ pub const CommandLineReporter = struct {
             }
         }
 
-        if (@as(?FileReporter, null)) |reporter| {
+        if (buntest.reporter) |cmd_reporter| if (cmd_reporter.file_reporter) |reporter| {
             switch (reporter) {
                 .junit => |junit| {
                     const filename = brk: {
@@ -709,15 +709,15 @@ pub const CommandLineReporter = struct {
 
                     // To make the juint reporter generate nested suites, we need to find the needed suites and create/print them.
                     // This assumes that the scopes are in the correct order.
-                    var needed_suites = std.ArrayList(*jest.DescribeScope).init(bun.default_allocator);
+                    var needed_suites = std.ArrayList(*describe2.DescribeScope).init(bun.default_allocator);
                     defer needed_suites.deinit();
 
                     for (scopes, 0..) |_, i| {
                         const index = (scopes.len - 1) - i;
                         const scope = scopes[index];
-                        if (scope.label.len > 0) {
+                        if (scope.base.name) |name| if (name.len > 0) {
                             bun.handleOom(needed_suites.append(scope));
-                        }
+                        };
                     }
 
                     var current_suite_depth: u32 = 0;
@@ -745,7 +745,7 @@ pub const CommandLineReporter = struct {
 
                         if (suite_index < needed_suites.items.len) {
                             const needed_scope = needed_suites.items[suite_index];
-                            if (!strings.eql(suite_info.name, needed_scope.label)) {
+                            if (!strings.eql(suite_info.name, needed_scope.base.name orelse "")) {
                                 suites_to_close = @as(u32, @intCast(current_suite_depth)) - @as(u32, @intCast(suite_index));
                                 break;
                             }
@@ -775,7 +775,7 @@ pub const CommandLineReporter = struct {
 
                     while (describe_suite_index < needed_suites.items.len) {
                         const scope = needed_suites.items[describe_suite_index];
-                        bun.handleOom(junit.beginTestSuiteWithLine(scope.label, scope.line_number, false));
+                        bun.handleOom(junit.beginTestSuiteWithLine(scope.base.name orelse "", 2, false));
                         describe_suite_index += 1;
                     }
 
@@ -788,20 +788,33 @@ pub const CommandLineReporter = struct {
                     {
                         const initial_length = concatenated_describe_scopes.items.len;
                         for (scopes) |scope| {
-                            if (scope.label.len > 0) {
+                            if (scope.base.name) |name| if (name.len > 0) {
                                 if (initial_length != concatenated_describe_scopes.items.len) {
                                     bun.handleOom(concatenated_describe_scopes.appendSlice(" &gt; "));
                                 }
 
-                                bun.handleOom(escapeXml(scope.label, concatenated_describe_scopes.writer()));
-                            }
+                                bun.handleOom(escapeXml(name, concatenated_describe_scopes.writer()));
+                            };
                         }
                     }
 
-                    bun.handleOom(junit.writeTestCase(status, filename, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns, line_number));
+                    const converted_status: TestRunner.Test.Status = switch (status) {
+                        .pending => .pending,
+                        .pass => .pass,
+                        .fail => .fail,
+                        .skip => .skip,
+                        .todo => .todo,
+                        .fail_because_timeout, .fail_because_timeout_with_done_callback => .timeout,
+                        .skipped_because_label => .skipped_because_label,
+                        .fail_because_failing_test_passed => .fail_because_failing_test_passed,
+                        .fail_because_todo_passed => .fail_because_todo_passed,
+                        .fail_because_expected_has_assertions => .fail_because_expected_has_assertions,
+                        .fail_because_expected_assertion_count => .fail_because_expected_assertion_count,
+                    };
+                    bun.handleOom(junit.writeTestCase(converted_status, filename, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns, line_number));
                 },
             }
-        }
+        };
     }
 
     pub inline fn summary(this: *CommandLineReporter) *TestRunner.Summary {

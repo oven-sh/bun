@@ -35,7 +35,7 @@ Ran 3 tests across 1 file. [1081.00ms]
 
 Limitations:
 
-- concurrent tests cannot attribute `expect()` call counts to the test
+- concurrent tests cannot attribute `expect()` call counts to the test, meaning `expect.assertions()` does not function
 - concurrent tests cannot use `toMatchSnapshot`. `toMatchInlineSnapshot` is still supported.
 - `beforeAll`/`afterAll` will never be executed concurrently. `beforeEach`/`afterEach` will.
 
@@ -262,6 +262,9 @@ Exited with code [1]
 - [ ] support having both a done callback and a promise result
 - [ ] support expect counter
 - [ ] decide if beforeEach/beforeAll/afterEach/afterAll should skip executing the test and when. do we match existing behaviour, jest, vitest, or diverge? what does existing behaviour/jest/vitest do?
+- [ ] support `expect.assertions()` in non-concurrent tests
+- [ ] test behaviour of `expect.assertions()` in concurrent tests
+- [ ] test what happens when done callback is called after the test fails to timeout, or promise resolves after. make sure we match existing behaviour
 - [x] finalize describe call order. ideally `A[B, C], D[E, F[G]]` will run in normal order rather than `A, D, B, C, E, F, G`
 - [x] sometimes error messages aren't printing!
 - [x] make sure it exits with code 1 on failure
@@ -326,6 +329,7 @@ Exited with code [1]
 
 # Code quality:
 
+- [ ] in test_command.zig, it has `const converted_status: TestRunner.Test.Status = switch (status) {`. instead, change junit writeTestCase to accept the new status type.
 - [ ] BunTestFile is called buntest. what is BunTest called? rename these. maybe BunTestFile -> BunTest and BunTest -> BunTestAllFiles? or BunTestRoot?
 - [ ] need to weakly hold BunTestFile from ref()
   - two tests for comparing performance

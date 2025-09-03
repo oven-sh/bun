@@ -242,6 +242,7 @@ describe("junit reporter", () => {
         });
       `,
     });
+    console.log(tmpDir);
 
     const junitPath1 = `${tmpDir}/junit-all.xml`;
     const proc1 = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath1], {

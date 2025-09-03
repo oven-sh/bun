@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
 import { SQL } from "bun";
+import { expect, test } from "bun:test";
 import { bunEnv } from "harness";
 
 // Skip test if PostgreSQL is not available
@@ -19,7 +19,7 @@ const isPostgresAvailable = () => {
 
 test.skipIf(!isPostgresAvailable())("PostgreSQL TIME and TIMETZ types are handled correctly", async () => {
   const db = new SQL("postgres://postgres@localhost/postgres");
-  
+
   try {
     // Create test table with time and timetz columns
     await db`DROP TABLE IF EXISTS bun_time_test`;
@@ -54,20 +54,20 @@ test.skipIf(!isPostgresAvailable())("PostgreSQL TIME and TIMETZ types are handle
     // Verify that time values are returned as strings, not binary data
     expect(result[0].regular_time).toBe("09:00:00");
     expect(result[0].time_with_tz).toBe("09:00:00+00");
-    
+
     expect(result[1].regular_time).toBe("10:30:45.123456");
     expect(result[1].time_with_tz).toBe("10:30:45.123456-05");
-    
+
     expect(result[2].regular_time).toBe("23:59:59.999999");
     expect(result[2].time_with_tz).toBe("23:59:59.999999+08:30");
-    
+
     expect(result[3].regular_time).toBe("00:00:00");
     expect(result[3].time_with_tz).toBe("00:00:00-12");
-    
+
     // NULL values
     expect(result[4].regular_time).toBeNull();
     expect(result[4].time_with_tz).toBeNull();
-    
+
     // None of the values should contain null bytes
     for (const row of result) {
       if (row.regular_time) {
@@ -89,7 +89,7 @@ test.skipIf(!isPostgresAvailable())("PostgreSQL TIME and TIMETZ types are handle
 
 test.skipIf(!isPostgresAvailable())("PostgreSQL TIME array types are handled correctly", async () => {
   const db = new SQL("postgres://postgres@localhost/postgres");
-  
+
   try {
     // Create test table with time array
     await db`DROP TABLE IF EXISTS bun_time_array_test`;
@@ -122,13 +122,13 @@ test.skipIf(!isPostgresAvailable())("PostgreSQL TIME array types are handled cor
     // Verify array values
     expect(result[0].time_values).toEqual(["09:00:00", "17:00:00"]);
     expect(result[0].timetz_values).toEqual(["09:00:00+00", "17:00:00-05"]);
-    
+
     expect(result[1].time_values).toEqual(["10:30:00", "18:30:00", "20:00:00"]);
     expect(result[1].timetz_values).toEqual(["10:30:00+02"]);
-    
+
     expect(result[2].time_values).toBeNull();
     expect(result[2].timetz_values).toBeNull();
-    
+
     expect(result[3].time_values).toEqual([]);
     expect(result[3].timetz_values).toEqual([]);
 
@@ -157,7 +157,7 @@ test.skipIf(!isPostgresAvailable())("PostgreSQL TIME array types are handled cor
 
 test.skipIf(!isPostgresAvailable())("PostgreSQL TIME in nested structures (JSONB) works correctly", async () => {
   const db = new SQL("postgres://postgres@localhost/postgres");
-  
+
   try {
     await db`DROP TABLE IF EXISTS bun_time_json_test`;
     await db`
@@ -186,7 +186,7 @@ test.skipIf(!isPostgresAvailable())("PostgreSQL TIME in nested structures (JSONB
     expect(result[0].schedule.dayOfWeek).toBe(1);
     expect(result[0].schedule.timeBlocks[0].startTime).toBe("09:00:00");
     expect(result[0].schedule.timeBlocks[0].endTime).toBe("17:00:00");
-    
+
     expect(result[1].schedule.dayOfWeek).toBe(2);
     expect(result[1].schedule.timeBlocks[0].startTime).toBe("10:30:00");
     expect(result[1].schedule.timeBlocks[0].endTime).toBe("18:30:00");

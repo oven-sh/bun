@@ -317,17 +317,6 @@
     },
     {
       "type": "bun",
-      "name": "[JS] [bun in $PATH] test [file]",
-      "runtime": "bun",
-      "runtimeArgs": ["test", "${file}"],
-      "cwd": "${workspaceFolder}",
-      "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-      },
-    },
-    {
-      "type": "bun",
       "name": "[JS] bun run [file]",
       "runtime": "${workspaceFolder}/build/debug/bun-debug",
       "runtimeArgs": ["run", "${file}"],

@@ -358,11 +358,7 @@ function handleSQLiteUrl(
   if (typeof stringOrUrl !== "string") {
     // If adapter is explicitly sqlite but no string URL, default to :memory:
     if (options.adapter === "sqlite") {
-      return [
-        stringOrUrl,
-        null,
-        { ...options, filename: ":memory:", adapter: "sqlite" } as Bun.SQL.__internal.OptionsWithDefinedAdapter,
-      ];
+      return [stringOrUrl, null, { ...options, filename: ":memory:", adapter: "sqlite" }];
     }
     return null;
   }
@@ -380,11 +376,7 @@ function handleSQLiteUrl(
 
   // If adapter is explicitly "sqlite", treat the string as a filename
   if (options.adapter === "sqlite") {
-    return [
-      stringOrUrl,
-      null,
-      { ...options, filename: stringOrUrl || ":memory:" } as Bun.SQL.__internal.OptionsWithDefinedAdapter,
-    ] as const;
+    return [stringOrUrl, null, { ...options, adapter: "sqlite", filename: stringOrUrl || ":memory:" }] as const;
   }
 
   return null;

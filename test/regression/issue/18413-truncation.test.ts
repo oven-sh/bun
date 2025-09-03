@@ -1,6 +1,5 @@
-import { test, expect } from "bun:test";
 import { serve } from "bun";
-import { Readable } from "node:stream";
+import { expect, test } from "bun:test";
 import { brotliCompressSync } from "node:zlib";
 
 /**
@@ -16,8 +15,8 @@ function createTruncatedServer(compression: "gzip" | "br" | "zstd" | "deflate", 
     async fetch(req) {
       let compressed: Uint8Array;
       const data = Buffer.from("Hello World! This is a test message.");
-      
-      switch(compression) {
+
+      switch (compression) {
         case "gzip":
           compressed = Bun.gzipSync(data);
           break;
@@ -31,10 +30,10 @@ function createTruncatedServer(compression: "gzip" | "br" | "zstd" | "deflate", 
           compressed = Bun.deflateSync(data);
           break;
       }
-      
+
       // Truncate the compressed data
       const truncated = compressed.slice(0, compressed.length - truncateBytes);
-      
+
       return new Response(truncated, {
         headers: {
           "Content-Encoding": compression,
@@ -53,8 +52,8 @@ function createDelayedChunksServer(compression: "gzip" | "br" | "zstd" | "deflat
     async fetch(req) {
       let compressed: Uint8Array;
       const data = Buffer.from("Hello World! This is a test message.");
-      
-      switch(compression) {
+
+      switch (compression) {
         case "gzip":
           compressed = Bun.gzipSync(data);
           break;
@@ -68,12 +67,12 @@ function createDelayedChunksServer(compression: "gzip" | "br" | "zstd" | "deflat
           compressed = Bun.deflateSync(data);
           break;
       }
-      
+
       // Split compressed data into chunks
       const mid = Math.floor(compressed.length / 2);
       const chunk1 = compressed.slice(0, mid);
       const chunk2 = compressed.slice(mid);
-      
+
       return new Response(
         new ReadableStream({
           async start(controller) {
@@ -100,7 +99,7 @@ function createDelayedChunksServer(compression: "gzip" | "br" | "zstd" | "deflat
 // Test truncated gzip stream
 test("truncated gzip stream should throw error", async () => {
   using server = createTruncatedServer("gzip", 5);
-  
+
   try {
     const response = await fetch(`http://localhost:${server.port}`);
     await response.text();
@@ -113,7 +112,7 @@ test("truncated gzip stream should throw error", async () => {
 // Test truncated brotli stream
 test("truncated brotli stream should throw error", async () => {
   using server = createTruncatedServer("br", 5);
-  
+
   try {
     const response = await fetch(`http://localhost:${server.port}`);
     await response.text();
@@ -126,7 +125,7 @@ test("truncated brotli stream should throw error", async () => {
 // Test truncated zstd stream
 test("truncated zstd stream should throw error", async () => {
   using server = createTruncatedServer("zstd", 5);
-  
+
   try {
     const response = await fetch(`http://localhost:${server.port}`);
     await response.text();
@@ -139,7 +138,7 @@ test("truncated zstd stream should throw error", async () => {
 // Test truncated deflate stream
 test("truncated deflate stream should throw error", async () => {
   using server = createTruncatedServer("deflate", 1);
-  
+
   try {
     const response = await fetch(`http://localhost:${server.port}`);
     await response.text();
@@ -152,7 +151,7 @@ test("truncated deflate stream should throw error", async () => {
 // Test delayed chunks for gzip (should succeed)
 test("gzip with delayed chunks should succeed", async () => {
   using server = createDelayedChunksServer("gzip", 50);
-  
+
   const response = await fetch(`http://localhost:${server.port}`);
   const text = await response.text();
   expect(text).toBe("Hello World! This is a test message.");
@@ -161,7 +160,7 @@ test("gzip with delayed chunks should succeed", async () => {
 // Test delayed chunks for brotli (should succeed)
 test("brotli with delayed chunks should succeed", async () => {
   using server = createDelayedChunksServer("br", 50);
-  
+
   const response = await fetch(`http://localhost:${server.port}`);
   const text = await response.text();
   expect(text).toBe("Hello World! This is a test message.");
@@ -170,7 +169,7 @@ test("brotli with delayed chunks should succeed", async () => {
 // Test delayed chunks for zstd (should succeed)
 test("zstd with delayed chunks should succeed", async () => {
   using server = createDelayedChunksServer("zstd", 50);
-  
+
   const response = await fetch(`http://localhost:${server.port}`);
   const text = await response.text();
   expect(text).toBe("Hello World! This is a test message.");
@@ -179,7 +178,7 @@ test("zstd with delayed chunks should succeed", async () => {
 // Test delayed chunks for deflate (should succeed)
 test("deflate with delayed chunks should succeed", async () => {
   using server = createDelayedChunksServer("deflate", 50);
-  
+
   const response = await fetch(`http://localhost:${server.port}`);
   const text = await response.text();
   expect(text).toBe("Hello World! This is a test message.");
@@ -192,7 +191,7 @@ test("mismatched Content-Encoding should fail gracefully", async () => {
     async fetch(req) {
       // Send gzip data but claim it's brotli
       const gzipped = Bun.gzipSync(Buffer.from("Hello World"));
-      
+
       return new Response(gzipped, {
         headers: {
           "Content-Encoding": "br",
@@ -201,7 +200,7 @@ test("mismatched Content-Encoding should fail gracefully", async () => {
       });
     },
   });
-  
+
   try {
     const response = await fetch(`http://localhost:${server.port}`);
     await response.text();
@@ -225,7 +224,7 @@ test("zero-byte body with gzip Content-Encoding and Content-Length: 0", async ()
       });
     },
   });
-  
+
   // When Content-Length is 0, the decompressor is not invoked, so this succeeds
   const response = await fetch(`http://localhost:${server.port}`);
   const text = await response.text();
@@ -238,8 +237,8 @@ test("invalid gzip data should fail", async () => {
     port: 0,
     async fetch(req) {
       // Send random bytes claiming to be gzip
-      const invalid = new Uint8Array([0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
-      
+      const invalid = new Uint8Array([0xff, 0xff, 0xff, 0xff, 0xff]);
+
       return new Response(invalid, {
         headers: {
           "Content-Encoding": "gzip",
@@ -248,7 +247,7 @@ test("invalid gzip data should fail", async () => {
       });
     },
   });
-  
+
   try {
     const response = await fetch(`http://localhost:${server.port}`);
     await response.text();
@@ -264,7 +263,7 @@ test("empty first chunk followed by valid gzip should succeed", async () => {
     port: 0,
     async fetch(req) {
       const gzipped = Bun.gzipSync(Buffer.from("Hello World"));
-      
+
       return new Response(
         new ReadableStream({
           async start(controller) {
@@ -286,7 +285,7 @@ test("empty first chunk followed by valid gzip should succeed", async () => {
       );
     },
   });
-  
+
   const response = await fetch(`http://localhost:${server.port}`);
   const text = await response.text();
   expect(text).toBe("Hello World");

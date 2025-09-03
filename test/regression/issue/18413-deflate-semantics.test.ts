@@ -1,14 +1,14 @@
-import { test, expect } from "bun:test";
 import { serve } from "bun";
-import { deflateSync, deflateRawSync, inflateSync, inflateRawSync } from "node:zlib";
+import { expect, test } from "bun:test";
+import { deflateRawSync, deflateSync } from "node:zlib";
 
 /**
  * Test deflate semantics - both zlib-wrapped and raw deflate
- * 
+ *
  * HTTP Content-Encoding: deflate is ambiguous:
  * - RFC 2616 (HTTP/1.1) says it should be zlib format (RFC 1950)
  * - Many implementations incorrectly use raw deflate (RFC 1951)
- * 
+ *
  * Bun should handle both gracefully, auto-detecting the format.
  */
 
@@ -22,11 +22,11 @@ test("deflate with zlib wrapper should work", async () => {
     async fetch(req) {
       // Create zlib-wrapped deflate (this is what the spec says deflate should be)
       const compressed = deflateSync(testData);
-      
+
       // Verify it has zlib header (first two bytes should be 0x78 0x9C for default compression)
       expect(compressed[0]).toBe(0x78);
-      expect(compressed[1] & 0xF0).toBe(0x90); // Can be 0x9C, 0x5E, 0xDA depending on level
-      
+      expect(compressed[1] & 0xf0).toBe(0x90); // Can be 0x9C, 0x5E, 0xDA depending on level
+
       return new Response(compressed, {
         headers: {
           "Content-Encoding": "deflate",
@@ -35,7 +35,7 @@ test("deflate with zlib wrapper should work", async () => {
       });
     },
   });
-  
+
   const response = await fetch(`http://localhost:${server.port}`);
   const text = await response.text();
   expect(text).toBe(testData.toString());
@@ -48,10 +48,10 @@ test("raw deflate without zlib wrapper should work", async () => {
     async fetch(req) {
       // Create raw deflate (no zlib wrapper)
       const compressed = deflateRawSync(testData);
-      
+
       // Verify it doesn't have zlib header (shouldn't start with 0x78)
       expect(compressed[0]).not.toBe(0x78);
-      
+
       return new Response(compressed, {
         headers: {
           "Content-Encoding": "deflate",
@@ -60,7 +60,7 @@ test("raw deflate without zlib wrapper should work", async () => {
       });
     },
   });
-  
+
   const response = await fetch(`http://localhost:${server.port}`);
   const text = await response.text();
   expect(text).toBe(testData.toString());
@@ -72,7 +72,7 @@ test("empty zlib-wrapped deflate should work", async () => {
     port: 0,
     async fetch(req) {
       const compressed = deflateSync(Buffer.alloc(0));
-      
+
       return new Response(compressed, {
         headers: {
           "Content-Encoding": "deflate",
@@ -81,7 +81,7 @@ test("empty zlib-wrapped deflate should work", async () => {
       });
     },
   });
-  
+
   const response = await fetch(`http://localhost:${server.port}`);
   const text = await response.text();
   expect(text).toBe("");
@@ -93,7 +93,7 @@ test("empty raw deflate should work", async () => {
     port: 0,
     async fetch(req) {
       const compressed = deflateRawSync(Buffer.alloc(0));
-      
+
       return new Response(compressed, {
         headers: {
           "Content-Encoding": "deflate",
@@ -102,7 +102,7 @@ test("empty raw deflate should work", async () => {
       });
     },
   });
-  
+
   const response = await fetch(`http://localhost:${server.port}`);
   const text = await response.text();
   expect(text).toBe("");
@@ -115,7 +115,7 @@ test("chunked zlib-wrapped deflate should work", async () => {
     async fetch(req) {
       const compressed = deflateSync(testData);
       const mid = Math.floor(compressed.length / 2);
-      
+
       return new Response(
         new ReadableStream({
           async start(controller) {
@@ -135,7 +135,7 @@ test("chunked zlib-wrapped deflate should work", async () => {
       );
     },
   });
-  
+
   const response = await fetch(`http://localhost:${server.port}`);
   const text = await response.text();
   expect(text).toBe(testData.toString());
@@ -148,7 +148,7 @@ test("chunked raw deflate should work", async () => {
     async fetch(req) {
       const compressed = deflateRawSync(testData);
       const mid = Math.floor(compressed.length / 2);
-      
+
       return new Response(
         new ReadableStream({
           async start(controller) {
@@ -168,7 +168,7 @@ test("chunked raw deflate should work", async () => {
       );
     },
   });
-  
+
   const response = await fetch(`http://localhost:${server.port}`);
   const text = await response.text();
   expect(text).toBe(testData.toString());
@@ -182,7 +182,7 @@ test("truncated zlib-wrapped deflate should fail", async () => {
       const compressed = deflateSync(testData);
       // Remove the 4-byte Adler32 trailer
       const truncated = compressed.slice(0, -4);
-      
+
       return new Response(truncated, {
         headers: {
           "Content-Encoding": "deflate",
@@ -191,7 +191,7 @@ test("truncated zlib-wrapped deflate should fail", async () => {
       });
     },
   });
-  
+
   try {
     const response = await fetch(`http://localhost:${server.port}`);
     await response.text();
@@ -207,8 +207,8 @@ test("invalid deflate data should fail", async () => {
     port: 0,
     async fetch(req) {
       // Random bytes that are neither zlib-wrapped nor raw deflate
-      const invalid = new Uint8Array([0xFF, 0xFE, 0xFD, 0xFC, 0xFB]);
-      
+      const invalid = new Uint8Array([0xff, 0xfe, 0xfd, 0xfc, 0xfb]);
+
       return new Response(invalid, {
         headers: {
           "Content-Encoding": "deflate",
@@ -217,7 +217,7 @@ test("invalid deflate data should fail", async () => {
       });
     },
   });
-  
+
   try {
     const response = await fetch(`http://localhost:${server.port}`);
     await response.text();
@@ -229,20 +229,20 @@ test("invalid deflate data should fail", async () => {
 
 /**
  * Documentation of deflate semantics in Bun:
- * 
+ *
  * When Content-Encoding: deflate is received, Bun's HTTP client should:
  * 1. Attempt to decompress as zlib format (RFC 1950) first
  * 2. If that fails with a header error, retry as raw deflate (RFC 1951)
  * 3. This handles both correct implementations and common misimplementations
- * 
+ *
  * The zlib format has:
  * - 2-byte header with compression method and flags
  * - Compressed data using DEFLATE algorithm
  * - 4-byte Adler-32 checksum trailer
- * 
+ *
  * Raw deflate has:
  * - Just the compressed data, no header or trailer
- * 
+ *
  * Empty streams:
  * - Empty zlib-wrapped: Has header and trailer, total ~8 bytes
  * - Empty raw deflate: Minimal DEFLATE stream, ~2-3 bytes

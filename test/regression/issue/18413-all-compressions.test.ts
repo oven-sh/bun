@@ -1,6 +1,5 @@
-import { test, expect } from "bun:test";
 import { serve } from "bun";
-import { Readable } from "node:stream";
+import { expect, test } from "bun:test";
 
 /**
  * Comprehensive test to ensure all compression algorithms handle empty streams correctly
@@ -14,7 +13,7 @@ test("empty chunked brotli response should work", async () => {
       // Create an empty brotli buffer using the proper API
       const { brotliCompressSync } = require("node:zlib");
       const emptyBrotli = brotliCompressSync(Buffer.alloc(0));
-      
+
       // Return as chunked response
       return new Response(
         new ReadableStream({
@@ -36,7 +35,7 @@ test("empty chunked brotli response should work", async () => {
 
   const response = await fetch(`http://localhost:${server.port}`);
   expect(response.status).toBe(200);
-  
+
   // Should not throw decompression error
   const text = await response.text();
   expect(text).toBe("");
@@ -49,7 +48,7 @@ test("empty non-chunked brotli response", async () => {
       // Create an empty brotli buffer using the proper API
       const { brotliCompressSync } = require("node:zlib");
       const emptyBrotli = brotliCompressSync(Buffer.alloc(0));
-      
+
       return new Response(emptyBrotli, {
         headers: {
           "Content-Encoding": "br",
@@ -62,7 +61,7 @@ test("empty non-chunked brotli response", async () => {
 
   const response = await fetch(`http://localhost:${server.port}`);
   expect(response.status).toBe(200);
-  
+
   const text = await response.text();
   expect(text).toBe("");
 });
@@ -73,7 +72,7 @@ test("empty chunked zstd response should work", async () => {
     async fetch(req) {
       // Create an empty zstd buffer using the proper API
       const emptyZstd = Bun.zstdCompressSync(Buffer.alloc(0));
-      
+
       // Return as chunked response
       return new Response(
         new ReadableStream({
@@ -95,7 +94,7 @@ test("empty chunked zstd response should work", async () => {
 
   const response = await fetch(`http://localhost:${server.port}`);
   expect(response.status).toBe(200);
-  
+
   // Should not throw decompression error
   const text = await response.text();
   expect(text).toBe("");
@@ -107,7 +106,7 @@ test("empty non-chunked zstd response", async () => {
     async fetch(req) {
       // Create an empty zstd buffer using the proper API
       const emptyZstd = Bun.zstdCompressSync(Buffer.alloc(0));
-      
+
       return new Response(emptyZstd, {
         headers: {
           "Content-Encoding": "zstd",
@@ -120,7 +119,7 @@ test("empty non-chunked zstd response", async () => {
 
   const response = await fetch(`http://localhost:${server.port}`);
   expect(response.status).toBe(200);
-  
+
   const text = await response.text();
   expect(text).toBe("");
 });
@@ -131,7 +130,7 @@ test("empty chunked deflate response should work", async () => {
     async fetch(req) {
       // Create an empty deflate buffer
       const emptyDeflate = Bun.deflateSync(Buffer.alloc(0));
-      
+
       // Return as chunked response
       return new Response(
         new ReadableStream({
@@ -153,7 +152,7 @@ test("empty chunked deflate response should work", async () => {
 
   const response = await fetch(`http://localhost:${server.port}`);
   expect(response.status).toBe(200);
-  
+
   // Should not throw decompression error
   const text = await response.text();
   expect(text).toBe("");
@@ -165,7 +164,7 @@ test("empty non-chunked deflate response", async () => {
     async fetch(req) {
       // Create an empty deflate buffer
       const emptyDeflate = Bun.deflateSync(Buffer.alloc(0));
-      
+
       return new Response(emptyDeflate, {
         headers: {
           "Content-Encoding": "deflate",
@@ -178,7 +177,7 @@ test("empty non-chunked deflate response", async () => {
 
   const response = await fetch(`http://localhost:${server.port}`);
   expect(response.status).toBe(200);
-  
+
   const text = await response.text();
   expect(text).toBe("");
 });

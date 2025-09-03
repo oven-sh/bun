@@ -679,7 +679,7 @@ pub const CommandLineReporter = struct {
                     .fail_because_expected_assertion_count => @panic("TODO: print the expected and actual assertion counts"),
                     .fail_because_expected_has_assertions => @panic("TODO: print the expected and actual assertion counts"),
                     .fail_because_timeout => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test timed out.<r>\n", colors)) catch {},
-                    .fail_because_timeout_with_done_callback => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test timed out because the done callback was never called.<r> <d>If this was not intended, remove the last parameter from the test callback function<r>\n", colors)) catch {},
+                    .fail_because_timeout_with_done_callback => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test timed out before the done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the test callback function<r>\n", colors)) catch {},
                 },
             }
         }

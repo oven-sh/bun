@@ -200,38 +200,6 @@ function assertIsOptionsOfAdapter<A extends Bun.SQL.__internal.Adapter>(
   }
 }
 
-function hasProtocol(url: string) {
-  if (typeof url !== "string") return false;
-  const protocols: string[] = [
-    "http",
-    "https",
-    "ftp",
-    "postgres",
-    "postgresql",
-    "mysql",
-    "mysql2",
-    "mariadb",
-    "file",
-    "sqlite",
-  ];
-  for (const protocol of protocols) {
-    if (url.startsWith(protocol + "://")) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function defaultToPostgresIfNoProtocol(url: string | URL | null): URL {
-  if (url instanceof URL) {
-    return url;
-  }
-  if (hasProtocol(url as string)) {
-    return new URL(url as string);
-  }
-  return new URL("postgres://" + url);
-}
-
 const DEFAULT_PROTOCOL: Bun.SQL.__internal.Adapter = "postgres";
 
 const env = Bun.env;
@@ -278,6 +246,7 @@ function getConnectionDetailsFromEnvironment(
 
   if (!adapter || adapter === "sqlite") {
     url ||= env.SQLITE_URL || env.SQLITEURL || null;
+    // No TLS_ check because SQLite has no applicable sslMode
     if (url) return [url, sslMode, "sqlite"];
   }
 
@@ -397,7 +366,9 @@ function parseOptions(
   const [urlFromConnectionDetails, sslModeFromConnectionDetails, options] =
     parseConnectionDetailsFromOptionsOrEnvironment(stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
 
-  if (options.adapter === "sqlite") {
+  const adapter = options.adapter;
+
+  if (adapter === "sqlite") {
     return parseSQLiteOptionsWithQueryParams(urlFromConnectionDetails, {
       ...options,
       adapter: "sqlite",
@@ -454,8 +425,6 @@ function parseOptions(
     }
     query = query.trim();
   }
-
-  const adapter = options.adapter;
 
   switch (adapter) {
     case "postgres": {

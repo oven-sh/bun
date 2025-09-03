@@ -4,21 +4,14 @@ const SSLRequest = @This();
 capability_flags: Capabilities,
 max_packet_size: u32 = 0xFFFFFF, // 16MB default
 character_set: CharacterSet = CharacterSet.default,
-connect_attrs: bun.StringHashMapUnmanaged([]const u8) = .{},
+has_connection_attributes: bool = false,
 
-pub fn deinit(this: *SSLRequest) void {
-    var it = this.connect_attrs.iterator();
-    while (it.next()) |entry| {
-        bun.default_allocator.free(entry.key_ptr.*);
-        bun.default_allocator.free(entry.value_ptr.*);
-    }
-    this.connect_attrs.deinit(bun.default_allocator);
-}
+pub fn deinit(_: *SSLRequest) void {}
 
 pub fn writeInternal(this: *SSLRequest, comptime Context: type, writer: NewWriter(Context)) !void {
     var packet = try writer.start(1);
 
-    this.capability_flags.CLIENT_CONNECT_ATTRS = this.connect_attrs.count() > 0;
+    this.capability_flags.CLIENT_CONNECT_ATTRS = this.has_connection_attributes;
 
     // Write client capabilities flags (4 bytes)
     const caps = this.capability_flags.toInt();

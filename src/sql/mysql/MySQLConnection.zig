@@ -996,6 +996,7 @@ pub fn upgradeToTLS(this: *MySQLConnection) void {
 }
 
 pub fn onOpen(this: *MySQLConnection, socket: Socket) void {
+    debug("onOpen", .{});
     this.setupMaxLifetimeTimerIfNecessary();
     this.resetConnectionTimeout();
     this.socket = socket;
@@ -1221,6 +1222,7 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
             .capability_flags = this.capabilities,
             .max_packet_size = 0, //16777216,
             .character_set = CharacterSet.default,
+            .has_connection_attributes = true,
         };
         defer response.deinit();
         try response.write(this.writer());
@@ -1232,7 +1234,9 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
         }
         return;
     }
-    this.tls_status = .ssl_not_available;
+    if (this.tls_status != .none) {
+        this.tls_status = .ssl_not_available;
+    }
     // Send auth response
     try this.sendHandshakeResponse();
 }
@@ -1474,6 +1478,7 @@ pub fn handleCommand(this: *MySQLConnection, comptime Context: type, reader: New
 }
 
 pub fn sendHandshakeResponse(this: *MySQLConnection) AnyMySQLError.Error!void {
+    debug("sendHandshakeResponse", .{});
     // Only require password for caching_sha2_password when connecting for the first time
     if (this.auth_plugin) |plugin| {
         const requires_password = switch (plugin) {

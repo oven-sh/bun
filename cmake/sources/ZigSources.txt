@@ -917,6 +917,7 @@ src/sql/mysql/protocol/EncodeInt.zig
 src/sql/mysql/protocol/EOFPacket.zig
 src/sql/mysql/protocol/ErrorPacket.zig
 src/sql/mysql/protocol/HandshakeResponse41.zig
+src/sql/mysql/protocol/HandshakeSSLResponse.zig
 src/sql/mysql/protocol/HandshakeV10.zig
 src/sql/mysql/protocol/LocalInfileRequest.zig
 src/sql/mysql/protocol/NewReader.zig

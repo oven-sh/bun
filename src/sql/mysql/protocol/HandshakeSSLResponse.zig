@@ -43,8 +43,6 @@ const debug = bun.Output.scoped(.MySQLConnection, .hidden);
 const Capabilities = @import("../Capabilities.zig");
 const bun = @import("bun");
 const CharacterSet = @import("./CharacterSet.zig").CharacterSet;
-const Data = @import("../../shared/Data.zig").Data;
-const encodeLengthInt = @import("./EncodeInt.zig").encodeLengthInt;
 
 const NewWriter = @import("./NewWriter.zig").NewWriter;
 const writeWrap = @import("./NewWriter.zig").writeWrap;

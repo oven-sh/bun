@@ -835,7 +835,7 @@ pub fn transpileSourceCode(
     const disable_transpilying = comptime flags.disableTranspiling();
 
     if (comptime disable_transpilying) {
-        if (!(loader.isJavaScriptLike() or loader == .toml or loader == .text or loader == .json or loader == .jsonc)) {
+        if (!(loader.isJavaScriptLike() or loader == .toml or loader == .yaml or loader == .text or loader == .json or loader == .jsonc)) {
             // Don't print "export default <file path>"
             return ResolvedSource{
                 .allocator = null,
@@ -847,7 +847,7 @@ pub fn transpileSourceCode(
     }
 
     switch (loader) {
-        .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .text => {
+        .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .yaml, .text => {
             // Ensure that if there was an ASTMemoryAllocator in use, it's not used anymore.
             var ast_scope = js_ast.ASTMemoryAllocator.Scope{};
             ast_scope.enter();
@@ -1096,7 +1096,7 @@ pub fn transpileSourceCode(
                 };
             }
 
-            if (loader == .json or loader == .jsonc or loader == .toml) {
+            if (loader == .json or loader == .jsonc or loader == .toml or loader == .yaml) {
                 if (parse_result.empty) {
                     return ResolvedSource{
                         .allocator = null,
@@ -1517,7 +1517,7 @@ pub fn transpileSourceCode(
 
             const value = brk: {
                 if (!jsc_vm.origin.isEmpty()) {
-                    var buf = MutableString.init2048(jsc_vm.allocator) catch bun.outOfMemory();
+                    var buf = bun.handleOom(MutableString.init2048(jsc_vm.allocator));
                     defer buf.deinit();
                     var writer = buf.writer();
                     jsc.API.Bun.getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
@@ -2079,7 +2079,7 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
         };
         if (vm.source_mappings.get(specifier)) |mappings| {
             defer mappings.deref();
-            const map_path = std.mem.concat(bun.default_allocator, u8, &.{ std.fs.path.basename(specifier), ".map" }) catch bun.outOfMemory();
+            const map_path = bun.handleOom(std.mem.concat(bun.default_allocator, u8, &.{ std.fs.path.basename(specifier), ".map" }));
             defer bun.default_allocator.free(map_path);
             const file = try parent.createFile(map_path, .{});
             defer file.close();
@@ -2319,7 +2319,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (ast_memory_store == null) {
-                ast_memory_store = bun.default_allocator.create(js_ast.ASTMemoryAllocator) catch bun.outOfMemory();
+                ast_memory_store = bun.handleOom(bun.default_allocator.create(js_ast.ASTMemoryAllocator));
                 ast_memory_store.?.* = js_ast.ASTMemoryAllocator{
                     .allocator = allocator,
                     .previous = null,
@@ -2340,7 +2340,7 @@ pub const RuntimeTranspilerStore = struct {
             var log = logger.Log.init(allocator);
             defer {
                 this.log = logger.Log.init(bun.default_allocator);
-                log.cloneToWithRecycled(&this.log, true) catch bun.outOfMemory();
+                bun.handleOom(log.cloneToWithRecycled(&this.log, true));
             }
             var vm = this.vm;
             var transpiler: bun.Transpiler = undefined;
@@ -3062,7 +3062,7 @@ export fn ModuleLoader__isBuiltin(data: [*]const u8, len: usize) bool {
     return HardcodedModule.Alias.bun_aliases.get(str) != null;
 }
 
-const debug = Output.scoped(.ModuleLoader, true);
+const debug = Output.scoped(.ModuleLoader, .hidden);
 
 const string = []const u8;
 

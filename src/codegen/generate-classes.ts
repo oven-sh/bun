@@ -431,7 +431,7 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
       `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${symbolName(
         typeName,
         "onStructuredCloneDeserialize",
-      )}(JSC::JSGlobalObject*, const uint8_t*, const uint8_t*);` + "\n";
+      )}(JSC::JSGlobalObject*, uint8_t**, const uint8_t*);` + "\n";
   }
   if (obj.finalize) {
     externs +=
@@ -2181,7 +2181,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("structuredCloneDeserialize", symbolName(typeName, "onStructuredCloneDeserialize"));
 
       output += `
-      pub fn ${symbolName(typeName, "onStructuredCloneDeserialize")}(globalObject: *jsc.JSGlobalObject, ptr: [*]u8, end: [*]u8) callconv(jsc.conv) jsc.JSValue {
+      pub fn ${symbolName(typeName, "onStructuredCloneDeserialize")}(globalObject: *jsc.JSGlobalObject, ptr: *[*]u8, end: [*]u8) callconv(jsc.conv) jsc.JSValue {
         if (comptime Environment.enable_logs) log_zig_structured_clone_deserialize("${typeName}");
         return @call(.always_inline, jsc.toJSHostCall, .{ globalObject, @src(), ${typeName}.onStructuredCloneDeserialize, .{globalObject, ptr, end} });
       }
@@ -2495,7 +2495,7 @@ const jsc = bun.jsc;
 const Classes = jsc.GeneratedClassesList;
 const Environment = bun.Environment;
 const std = @import("std");
-const zig = bun.Output.scoped(.zig, true);
+const zig = bun.Output.scoped(.zig, .hidden);
 
 const wrapHostFunction = bun.gen_classes_lib.wrapHostFunction;
 const wrapMethod = bun.gen_classes_lib.wrapMethod;
@@ -2567,10 +2567,13 @@ class StructuredCloneableSerialize {
     CppStructuredCloneableSerializeFunction cppWriteBytes;
     ZigStructuredCloneableSerializeFunction zigFunction;
 
-    uint8_t tag;
+    uint8_t tag = 0;
 
     // the type from zig
-    void* impl;
+    void* impl = nullptr;
+
+    bool isForTransfer = false;
+    bool isForStorage = false;
 
     static std::optional<StructuredCloneableSerialize> fromJS(JSC::JSValue);
     void write(CloneSerializer* serializer, JSC::JSGlobalObject* globalObject)
@@ -2581,7 +2584,7 @@ class StructuredCloneableSerialize {
 
 class StructuredCloneableDeserialize {
   public:
-    static std::optional<JSC::EncodedJSValue> fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject*, const uint8_t*, const uint8_t*);
+    static std::optional<JSC::EncodedJSValue> fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject*, const uint8_t*&, const uint8_t*);
 };
 
 }
@@ -2601,7 +2604,7 @@ function writeCppSerializers() {
       return StructuredCloneableSerialize { .cppWriteBytes = SerializedScriptValue::writeBytesForBun, .zigFunction = ${symbolName(
         klass.name,
         "onStructuredCloneSerialize",
-      )}, .tag = ${klass.structuredClone.tag}, .impl = result->wrapped() };
+      )}, .tag = ${klass.structuredClone.tag}, .impl = result->wrapped(), .isForTransfer = ${!!klass.structuredClone.transferable}, .isForStorage = ${!!klass.structuredClone.storable} };
     }
     `;
   }
@@ -2609,7 +2612,7 @@ function writeCppSerializers() {
   function fromTagDeserializeForEachClass(klass) {
     return `
     if (tag == ${klass.structuredClone.tag}) {
-      return ${symbolName(klass.name, "onStructuredCloneDeserialize")}(globalObject, ptr, end);
+      return ${symbolName(klass.name, "onStructuredCloneDeserialize")}(globalObject, (uint8_t**)&ptr, end);
     }
     `;
   }
@@ -2623,7 +2626,7 @@ function writeCppSerializers() {
   `;
 
   output += `
-  std::optional<JSC::EncodedJSValue> StructuredCloneableDeserialize::fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject* globalObject, const uint8_t* ptr, const uint8_t* end)
+  std::optional<JSC::EncodedJSValue> StructuredCloneableDeserialize::fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject* globalObject, const uint8_t*& ptr, const uint8_t* end)
   {
     ${structuredClonable.map(fromTagDeserializeForEachClass).join("\n").trim()}
     return std::nullopt;

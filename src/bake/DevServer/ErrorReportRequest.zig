@@ -22,7 +22,7 @@ body: uws.BodyReaderMixin(@This(), "body", runWithBody, finalize),
 pub fn run(dev: *DevServer, _: *Request, resp: anytype) void {
     const ctx = bun.new(ErrorReportRequest, .{
         .dev = dev,
-        .body = .init(dev.allocator),
+        .body = .init(dev.allocator()),
     });
     ctx.dev.server.?.onPendingRequest();
     ctx.body.readBody(resp);
@@ -41,8 +41,8 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
     var s = std.io.fixedBufferStream(body);
     const reader = s.reader();
 
-    var sfa_general = std.heap.stackFallback(65536, ctx.dev.allocator);
-    var sfa_sourcemap = std.heap.stackFallback(65536, ctx.dev.allocator);
+    var sfa_general = std.heap.stackFallback(65536, ctx.dev.allocator());
+    var sfa_sourcemap = std.heap.stackFallback(65536, ctx.dev.allocator());
     const temp_alloc = sfa_general.get();
     var arena = std.heap.ArenaAllocator.init(temp_alloc);
     defer arena.deinit();
@@ -124,9 +124,21 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
         }
         const result: *const SourceMapStore.GetResult = &(gop.value_ptr.* orelse continue);
 
-        // When before the first generated line, remap to the HMR runtime
+        // When before the first generated line, remap to the HMR runtime.
+        //
+        // Reminder that the HMR runtime is *not* sourcemapped. And appears
+        // first in the bundle. This means that the mappings usually looks like
+        // this:
+        //
+        // AAAA;;;;;;;;;;;ICGA,qCAA4B;
+        // ^              ^ generated_mappings[1], actual code
+        // ^
+        // ^ generated_mappings[0], we always start it with this
+        //
+        // So we can know if the frame is inside the HMR runtime if
+        // `frame.position.line < generated_mappings[1].lines`.
         const generated_mappings = result.mappings.generated();
-        if (frame.position.line.oneBased() < generated_mappings[1].lines) {
+        if (generated_mappings.len <= 1 or frame.position.line.zeroBased() < generated_mappings[1].lines.zeroBased()) {
             frame.source_url = .init(runtime_name); // matches value in source map
             frame.position = .invalid;
             continue;
@@ -147,18 +159,18 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
             if (index >= 1 and (index - 1) < result.file_paths.len) {
                 const abs_path = result.file_paths[@intCast(index - 1)];
                 frame.source_url = .init(abs_path);
-                const relative_path_buf = ctx.dev.relative_path_buf.lock();
+                const relative_path_buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(relative_path_buf);
                 const rel_path = ctx.dev.relativePath(relative_path_buf, abs_path);
                 if (bun.strings.eql(frame.function_name.value.ZigString.slice(), rel_path)) {
                     frame.function_name = .empty;
                 }
-                ctx.dev.relative_path_buf.unlock();
                 frame.remapped = true;
 
                 if (runtime_lines == null) {
                     const file = result.entry_files.get(@intCast(index - 1));
-                    if (file != .empty) {
-                        const json_encoded_source_code = file.ref.data.quotedContents();
+                    if (file.get()) |source_map| {
+                        const json_encoded_source_code = source_map.quotedContents();
                         // First line of interest is two above the target line.
                         const target_line = @as(usize, @intCast(frame.position.line.zeroBased()));
                         first_line_of_interest = target_line -| 2;
@@ -226,7 +238,7 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
         ) catch {},
     }
 
-    var out: std.ArrayList(u8) = .init(ctx.dev.allocator);
+    var out: std.ArrayList(u8) = .init(ctx.dev.allocator());
     errdefer out.deinit();
     const w = out.writer();
 
@@ -241,7 +253,8 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
 
         const src_to_write = frame.source_url.value.ZigString.slice();
         if (bun.strings.hasPrefixComptime(src_to_write, "/")) {
-            const relative_path_buf = ctx.dev.relative_path_buf.lock();
+            const relative_path_buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(relative_path_buf);
             const file = ctx.dev.relativePath(relative_path_buf, src_to_write);
             try w.writeInt(u32, @intCast(file.len), .little);
             try w.writeAll(file);

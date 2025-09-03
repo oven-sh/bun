@@ -478,7 +478,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             else
                 host;
 
-            const host_ = allocator.dupeZ(u8, clean_host) catch bun.outOfMemory();
+            const host_ = bun.handleOom(allocator.dupeZ(u8, clean_host));
             defer allocator.free(host);
 
             var did_dns_resolve: i32 = 0;
@@ -578,7 +578,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             debug("connect(unix:{s})", .{path});
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
-            const path_ = allocator.dupeZ(u8, path) catch bun.outOfMemory();
+            const path_ = bun.handleOom(allocator.dupeZ(u8, path));
             defer allocator.free(path_);
 
             const socket = socket_ctx.connectUnix(is_ssl, path_, if (allowHalfOpen) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0, 8) orelse
@@ -608,7 +608,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             else
                 raw_host;
 
-            const host = allocator.dupeZ(u8, clean_host) catch bun.outOfMemory();
+            const host = bun.handleOom(allocator.dupeZ(u8, clean_host));
             defer allocator.free(host);
 
             var did_dns_resolve: i32 = 0;
@@ -1211,7 +1211,7 @@ const c = struct {
     pub extern fn us_socket_wrap_with_tls(ssl: i32, s: *uws.us_socket_t, options: uws.SocketContext.BunSocketContextOptions, events: c.us_socket_events_t, socket_ext_size: i32) ?*uws.us_socket_t;
 };
 
-const debug = bun.Output.scoped(.uws, false);
+const debug = bun.Output.scoped(.uws, .visible);
 
 const std = @import("std");
 

@@ -1,4 +1,4 @@
-const log = Output.scoped(.Script, false);
+const log = Output.scoped(.Script, .visible);
 pub const LifecycleScriptSubprocess = struct {
     package_name: string,
 
@@ -183,8 +183,8 @@ pub const LifecycleScriptSubprocess = struct {
             null,
         };
         if (Environment.isWindows) {
-            this.stdout.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
-            this.stderr.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
+            this.stdout.source = .{ .pipe = bun.handleOom(bun.default_allocator.create(uv.Pipe)) };
+            this.stderr.source = .{ .pipe = bun.handleOom(bun.default_allocator.create(uv.Pipe)) };
         }
         const spawn_options = bun.spawn.SpawnOptions{
             .stdin = if (this.foreground)

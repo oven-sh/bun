@@ -531,7 +531,7 @@ fn findReactComponentExport(bundler: *BundleV2) ?[]const u8 {
             }
 
             if (filename[0] >= 'a' and filename[0] <= 'z') {
-                const duped = default_allocator.dupe(u8, filename) catch bun.outOfMemory();
+                const duped = bun.handleOom(default_allocator.dupe(u8, filename));
                 duped[0] = duped[0] - 32;
                 if (bun.js_lexer.isIdentifier(duped)) {
                     if (exports.contains(duped)) {

@@ -139,7 +139,7 @@ pub const MultiPartUpload = struct {
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
-    const log = bun.Output.scoped(.S3MultiPartUpload, true);
+    const log = bun.Output.scoped(.S3MultiPartUpload, .hidden);
 
     pub const UploadPart = struct {
         data: []const u8,
@@ -214,8 +214,8 @@ pub const MultiPartUpload = struct {
                     // we will need to order this
                     this.ctx.multipart_etags.append(bun.default_allocator, .{
                         .number = this.partNumber,
-                        .etag = bun.default_allocator.dupe(u8, etag) catch bun.outOfMemory(),
-                    }) catch bun.outOfMemory();
+                        .etag = bun.handleOom(bun.default_allocator.dupe(u8, etag)),
+                    }) catch |err| bun.handleOom(err);
                     this.state = .not_assigned;
                     defer this.ctx.deref();
                     // mark as available
@@ -337,7 +337,7 @@ pub const MultiPartUpload = struct {
         defer this.currentPartNumber += 1;
         if (this.queue == null) {
             // queueSize will never change and is small (max 255)
-            const queue = bun.default_allocator.alloc(UploadPart, queueSize) catch bun.outOfMemory();
+            const queue = bun.handleOom(bun.default_allocator.alloc(UploadPart, queueSize));
             // zero set just in case
             @memset(queue, UploadPart{
                 .data = "",
@@ -350,7 +350,7 @@ pub const MultiPartUpload = struct {
             });
             this.queue = queue;
         }
-        const data = if (needs_clone) bun.default_allocator.dupe(u8, chunk) catch bun.outOfMemory() else chunk;
+        const data = if (needs_clone) bun.handleOom(bun.default_allocator.dupe(u8, chunk)) else chunk;
         const allocated_len = if (needs_clone) data.len else allocated_size;
 
         const queue_item = &this.queue.?[index];
@@ -438,15 +438,15 @@ pub const MultiPartUpload = struct {
             // sort the etags
             std.sort.block(UploadPart.UploadPartResult, this.multipart_etags.items, this, UploadPart.sortEtags);
             // start the multipart upload list
-            this.multipart_upload_list.append(bun.default_allocator, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">") catch bun.outOfMemory();
+            bun.handleOom(this.multipart_upload_list.append(bun.default_allocator, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">"));
             for (this.multipart_etags.items) |tag| {
-                this.multipart_upload_list.appendFmt(bun.default_allocator, "<Part><PartNumber>{}</PartNumber><ETag>{s}</ETag></Part>", .{ tag.number, tag.etag }) catch bun.outOfMemory();
+                bun.handleOom(this.multipart_upload_list.appendFmt(bun.default_allocator, "<Part><PartNumber>{}</PartNumber><ETag>{s}</ETag></Part>", .{ tag.number, tag.etag }));
 
                 bun.default_allocator.free(tag.etag);
             }
             this.multipart_etags.deinit(bun.default_allocator);
             this.multipart_etags = .{};
-            this.multipart_upload_list.append(bun.default_allocator, "</CompleteMultipartUpload>") catch bun.outOfMemory();
+            bun.handleOom(this.multipart_upload_list.append(bun.default_allocator, "</CompleteMultipartUpload>"));
             // will deref and ends after commit
             this.commitMultiPartRequest();
         } else if (this.state == .singlefile_started) {

@@ -22,7 +22,7 @@ pub const SocketType = union(enum) {
 };
 
 pub const new = bun.TrivialNew(WindowsNamedPipeContext);
-const log = Output.scoped(.WindowsNamedPipeContext, false);
+const log = Output.scoped(.WindowsNamedPipeContext, .visible);
 
 fn onOpen(this: *WindowsNamedPipeContext) void {
     this.is_open = true;
@@ -177,7 +177,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject, socket: SocketType) *WindowsNamed
     });
 
     // named_pipe owns the pipe (PipeWriter owns the pipe and will close and deinit it)
-    this.named_pipe = uws.WindowsNamedPipe.from(bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory(), .{
+    this.named_pipe = uws.WindowsNamedPipe.from(bun.handleOom(bun.default_allocator.create(uv.Pipe)), .{
         .ctx = this,
         .onOpen = @ptrCast(&WindowsNamedPipeContext.onOpen),
         .onData = @ptrCast(&WindowsNamedPipeContext.onData),

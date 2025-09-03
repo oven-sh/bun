@@ -79,7 +79,7 @@ pub const RequestBodyBuffer = union(enum) {
     }
 };
 
-const threadlog = Output.scoped(.HTTPThread, true);
+const threadlog = Output.scoped(.HTTPThread, .hidden);
 const WriteMessage = struct {
     async_http_id: u32,
     flags: packed struct(u8) {
@@ -195,8 +195,8 @@ pub fn init(opts: *const InitOpts) void {
 
 pub fn onStart(opts: InitOpts) void {
     Output.Source.configureNamedThread("HTTP Client");
-    bun.http.default_arena = Arena.init() catch unreachable;
-    bun.http.default_allocator = bun.default_allocator;
+    bun.http.default_arena = Arena.init();
+    bun.http.default_allocator = bun.http.default_arena.allocator();
 
     const loop = bun.jsc.MiniEventLoop.initGlobal(null);
 
@@ -406,7 +406,7 @@ pub fn scheduleShutdown(this: *@This(), http: *AsyncHTTP) void {
         this.queued_shutdowns.append(bun.default_allocator, .{
             .async_http_id = http.async_http_id,
             .is_tls = http.client.isHTTPS(),
-        }) catch bun.outOfMemory();
+        }) catch |err| bun.handleOom(err);
     }
     if (this.has_awoken.load(.monotonic))
         this.loop.loop.wakeup();
@@ -422,7 +422,7 @@ pub fn scheduleRequestWrite(this: *@This(), http: *AsyncHTTP, messageType: Write
                 .is_tls = http.client.isHTTPS(),
                 .type = messageType,
             },
-        }) catch bun.outOfMemory();
+        }) catch |err| bun.handleOom(err);
     }
     if (this.has_awoken.load(.monotonic))
         this.loop.loop.wakeup();
@@ -431,7 +431,7 @@ pub fn scheduleRequestWrite(this: *@This(), http: *AsyncHTTP, messageType: Write
 pub fn scheduleProxyDeref(this: *@This(), proxy: *ProxyTunnel) void {
     // this is always called on the http thread
     {
-        this.queued_proxy_deref.append(bun.default_allocator, proxy) catch bun.outOfMemory();
+        bun.handleOom(this.queued_proxy_deref.append(bun.default_allocator, proxy));
     }
     if (this.has_awoken.load(.monotonic))
         this.loop.loop.wakeup();
@@ -460,7 +460,7 @@ pub fn schedule(this: *@This(), batch: Batch) void {
 
 pub const Queue = UnboundedQueue(AsyncHTTP, .next);
 
-const log = Output.scoped(.HTTPThread, false);
+const log = Output.scoped(.HTTPThread, .visible);
 
 const stringZ = [:0]const u8;
 

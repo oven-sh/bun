@@ -65,6 +65,12 @@ src/js/internal/linkedlist.ts
 src/js/internal/primordials.js
 src/js/internal/promisify.ts
 src/js/internal/shared.ts
+src/js/internal/sql/errors.ts
+src/js/internal/sql/mysql.ts
+src/js/internal/sql/postgres.ts
+src/js/internal/sql/query.ts
+src/js/internal/sql/shared.ts
+src/js/internal/sql/sqlite.ts
 src/js/internal/stream.promises.ts
 src/js/internal/stream.ts
 src/js/internal/streams/add-abort-signal.ts
@@ -91,6 +97,7 @@ src/js/internal/tls.ts
 src/js/internal/tty.ts
 src/js/internal/url.ts
 src/js/internal/util/colors.ts
+src/js/internal/util/deprecate.ts
 src/js/internal/util/inspect.d.ts
 src/js/internal/util/inspect.js
 src/js/internal/util/mime.ts

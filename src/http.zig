@@ -15,6 +15,8 @@ comptime {
     @export(&max_http_header_size, .{ .name = "BUN_DEFAULT_MAX_HTTP_HEADER_SIZE" });
 }
 
+pub var overridden_default_user_agent: []const u8 = "";
+
 const print_every = 0;
 var print_every_i: usize = 0;
 
@@ -27,7 +29,7 @@ var shared_response_headers_buf: [256]picohttp.Header = undefined;
 
 pub const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
 
-const log = Output.scoped(.fetch, false);
+const log = Output.scoped(.fetch, .visible);
 
 pub var temp_hostname: [8192]u8 = undefined;
 
@@ -48,7 +50,7 @@ pub fn checkServerIdentity(
                 if (client.signals.get(.cert_errors)) {
                     // clone the relevant data
                     const cert_size = BoringSSL.i2d_X509(x509, null);
-                    const cert = bun.default_allocator.alloc(u8, @intCast(cert_size)) catch bun.outOfMemory();
+                    const cert = bun.handleOom(bun.default_allocator.alloc(u8, @intCast(cert_size)));
                     var cert_ptr = cert.ptr;
                     const result_size = BoringSSL.i2d_X509(x509, &cert_ptr);
                     assert(result_size == cert_size);
@@ -62,11 +64,11 @@ pub fn checkServerIdentity(
 
                     client.state.certificate_info = .{
                         .cert = cert,
-                        .hostname = bun.default_allocator.dupe(u8, hostname) catch bun.outOfMemory(),
+                        .hostname = bun.handleOom(bun.default_allocator.dupe(u8, hostname)),
                         .cert_error = .{
                             .error_no = certError.error_no,
-                            .code = bun.default_allocator.dupeZ(u8, certError.code) catch bun.outOfMemory(),
-                            .reason = bun.default_allocator.dupeZ(u8, certError.reason) catch bun.outOfMemory(),
+                            .code = bun.handleOom(bun.default_allocator.dupeZ(u8, certError.code)),
+                            .reason = bun.handleOom(bun.default_allocator.dupeZ(u8, certError.reason)),
                         },
                     };
 
@@ -525,7 +527,12 @@ const accept_encoding_header = if (FeatureFlags.disable_compression_in_http_clie
 else
     accept_encoding_header_compression;
 
-const user_agent_header = picohttp.Header{ .name = "User-Agent", .value = Global.user_agent };
+fn getUserAgentHeader() picohttp.Header {
+    return picohttp.Header{ .name = "User-Agent", .value = if (overridden_default_user_agent.len > 0)
+        overridden_default_user_agent
+    else
+        Global.user_agent };
+}
 
 pub fn headerStr(this: *const HTTPClient, ptr: api.StringPointer) string {
     return this.header_buf[ptr.offset..][0..ptr.length];
@@ -619,7 +626,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     }
 
     if (!override_user_agent) {
-        request_headers_buf[header_count] = user_agent_header;
+        request_headers_buf[header_count] = getUserAgentHeader();
         header_count += 1;
     }
 
@@ -977,7 +984,7 @@ fn writeToSocket(comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocke
 fn writeToSocketWithBufferFallback(comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, buffer: *bun.io.StreamBuffer, data: []const u8) !usize {
     const amount = try writeToSocket(is_ssl, socket, data);
     if (amount < data.len) {
-        buffer.write(data[@intCast(amount)..]) catch bun.outOfMemory();
+        bun.handleOom(buffer.write(data[@intCast(amount)..]));
     }
     return amount;
 }
@@ -992,7 +999,7 @@ fn writeToStreamUsingBuffer(this: *HTTPClient, comptime is_ssl: bool, socket: Ne
         if (amount < to_send.len) {
             // we could not send all pending data so we need to buffer the extra data
             if (data.len > 0) {
-                buffer.write(data) catch bun.outOfMemory();
+                bun.handleOom(buffer.write(data));
             }
             // failed to send everything so we have backpressure
             return true;
@@ -1301,7 +1308,7 @@ inline fn handleShortRead(
 
         if (to_copy.len > 0) {
             // this one will probably be another chunk, so we leave a little extra room
-            this.state.response_message_buffer.append(to_copy) catch bun.outOfMemory();
+            bun.handleOom(this.state.response_message_buffer.append(to_copy));
         }
     }
 
@@ -1321,7 +1328,7 @@ pub fn handleOnDataHeaders(
     var needs_move = true;
     if (this.state.response_message_buffer.list.items.len > 0) {
         // this one probably won't be another chunk, so we use appendSliceExact() to avoid over-allocating
-        this.state.response_message_buffer.appendSliceExact(incoming_data) catch bun.outOfMemory();
+        bun.handleOom(this.state.response_message_buffer.appendSliceExact(incoming_data));
         to_read = this.state.response_message_buffer.list.items;
         needs_move = false;
     }
@@ -2442,6 +2449,7 @@ pub const FetchRedirect = @import("./http/FetchRedirect.zig").FetchRedirect;
 pub const InitError = @import("./http/InitError.zig").InitError;
 pub const HTTPRequestBody = @import("./http/HTTPRequestBody.zig").HTTPRequestBody;
 pub const SendFile = @import("./http/SendFile.zig");
+pub const HeaderValueIterator = @import("./http/HeaderValueIterator.zig");
 
 const string = []const u8;
 

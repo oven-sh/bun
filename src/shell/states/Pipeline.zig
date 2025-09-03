@@ -95,9 +95,9 @@ fn setupCommands(this: *Pipeline) ?Yield {
         break :brk i;
     };
 
-    this.cmds = if (cmd_count >= 1) this.base.allocator().alloc(CmdOrResult, this.node.items.len) catch bun.outOfMemory() else null;
+    this.cmds = if (cmd_count >= 1) bun.handleOom(this.base.allocator().alloc(CmdOrResult, this.node.items.len)) else null;
     if (this.cmds == null) return null;
-    var pipes = this.base.allocator().alloc(Pipe, if (cmd_count > 1) cmd_count - 1 else 1) catch bun.outOfMemory();
+    var pipes = bun.handleOom(this.base.allocator().alloc(Pipe, if (cmd_count > 1) cmd_count - 1 else 1));
 
     if (cmd_count > 1) {
         var pipes_set: u32 = 0;
@@ -254,7 +254,7 @@ pub fn childDone(this: *Pipeline, child: ChildPtr, exit_code: ExitCode) Yield {
             }
         }
         this.state = .{ .done = .{ .exit_code = last_exit_code } };
-        return this.next();
+        return .{ .pipeline = this };
     }
 
     return .suspended;
@@ -282,12 +282,10 @@ pub fn deinit(this: *Pipeline) void {
 fn initializePipes(pipes: []Pipe, set_count: *u32) Maybe(void) {
     for (pipes) |*pipe| {
         if (bun.Environment.isWindows) {
-            var fds: [2]uv.uv_file = undefined;
-            if (uv.uv_pipe(&fds, 0, 0).errEnum()) |e| {
-                return .{ .err = Syscall.Error.fromCode(e, .pipe) };
-            }
-            pipe[0] = .fromUV(fds[0]);
-            pipe[1] = .fromUV(fds[1]);
+            pipe.* = switch (bun.sys.pipe()) {
+                .result => |p| p,
+                .err => |e| return .{ .err = e },
+            };
         } else {
             switch (bun.sys.socketpairForShell(
                 // switch (bun.sys.socketpair(
@@ -353,9 +351,5 @@ const Subshell = bun.shell.Interpreter.Subshell;
 
 const Pipe = bun.shell.interpret.Pipe;
 const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const Syscall = bun.shell.interpret.Syscall;
 const closefd = bun.shell.interpret.closefd;
 const log = bun.shell.interpret.log;
-
-const windows = bun.windows;
-const uv = windows.libuv;

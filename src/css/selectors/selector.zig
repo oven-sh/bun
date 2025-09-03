@@ -11,7 +11,7 @@ pub const Component = parser.Component;
 pub const PseudoClass = parser.PseudoClass;
 pub const PseudoElement = parser.PseudoElement;
 
-const debug = bun.Output.scoped(.CSS_SELECTORS, false);
+const debug = bun.Output.scoped(.CSS_SELECTORS, .visible);
 
 /// Our implementation of the `SelectorImpl` interface
 ///
@@ -151,13 +151,13 @@ pub fn downlevelComponent(allocator: Allocator, component: *Component, targets: 
             // https://drafts.csswg.org/selectors/#specificity-rules
             if (selectors.len > 1 and css.targets.Targets.shouldCompileSame(&targets, .not_selector_list)) {
                 const is: Selector = Selector.fromComponent(allocator, Component{ .is = selectors: {
-                    const new_selectors = allocator.alloc(Selector, selectors.len) catch bun.outOfMemory();
+                    const new_selectors = bun.handleOom(allocator.alloc(Selector, selectors.len));
                     for (new_selectors, selectors) |*new, *sel| {
                         new.* = sel.deepClone(allocator);
                     }
                     break :selectors new_selectors;
                 } });
-                var list = ArrayList(Selector).initCapacity(allocator, 1) catch bun.outOfMemory();
+                var list = bun.handleOom(ArrayList(Selector).initCapacity(allocator, 1));
                 list.appendAssumeCapacity(is);
                 component.* = .{ .negation = list.items };
 
@@ -188,7 +188,7 @@ fn downlevelDir(allocator: Allocator, dir: parser.Direction, targets: css.target
         const c = Component{
             .non_ts_pseudo_class = PseudoClass{
                 .lang = .{ .languages = lang: {
-                    var list = ArrayList([]const u8).initCapacity(allocator, RTL_LANGS.len) catch bun.outOfMemory();
+                    var list = bun.handleOom(ArrayList([]const u8).initCapacity(allocator, RTL_LANGS.len));
                     list.appendSliceAssumeCapacity(RTL_LANGS);
                     break :lang list;
                 } },
@@ -196,7 +196,7 @@ fn downlevelDir(allocator: Allocator, dir: parser.Direction, targets: css.target
         };
         if (dir == .ltr) return Component{
             .negation = negation: {
-                var list = allocator.alloc(Selector, 1) catch bun.outOfMemory();
+                var list = bun.handleOom(allocator.alloc(Selector, 1));
                 list[0] = Selector.fromComponent(allocator, c);
                 break :negation list;
             },
@@ -209,12 +209,12 @@ fn downlevelDir(allocator: Allocator, dir: parser.Direction, targets: css.target
 }
 
 fn langListToSelectors(allocator: Allocator, langs: []const []const u8) []Selector {
-    var selectors = allocator.alloc(Selector, langs.len) catch bun.outOfMemory();
+    var selectors = bun.handleOom(allocator.alloc(Selector, langs.len));
     for (langs, selectors[0..]) |lang, *sel| {
         sel.* = Selector.fromComponent(allocator, Component{
             .non_ts_pseudo_class = PseudoClass{
                 .lang = .{ .languages = langs: {
-                    var list = ArrayList([]const u8).initCapacity(allocator, 1) catch bun.outOfMemory();
+                    var list = bun.handleOom(ArrayList([]const u8).initCapacity(allocator, 1));
                     list.appendAssumeCapacity(lang);
                     break :langs list;
                 } },

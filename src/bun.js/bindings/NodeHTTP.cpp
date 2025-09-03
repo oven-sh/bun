@@ -1037,6 +1037,11 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
                 res->writeMark();
             }
         }
+
+        // Prevent automatic Date header insertion when user provides one
+        if (header.key == WebCore::HTTPHeaderName::Date) {
+            data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
+        }
         writeResponseHeader<isSSL>(res, name, value);
     }
 

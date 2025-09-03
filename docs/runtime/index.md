@@ -92,14 +92,17 @@ every file before execution. Its transpiler  can directly run TypeScript and JSX
 
 ## JSX
 
-## JSON and TOML
+## JSON, TOML, and YAML
 
-Source files can import a `*.json` or `*.toml` file to load its contents as a plain old JavaScript object.
+Source files can import `*.json`, `*.toml`, or `*.yaml` files to load their contents as plain JavaScript objects.
 
 ```ts
 import pkg from "./package.json";
 import bunfig from "./bunfig.toml";
+import config from "./config.yaml";
 ```
+
+See the [YAML API documentation](/docs/api/yaml) for more details on YAML support.
 
 ## WASI
 

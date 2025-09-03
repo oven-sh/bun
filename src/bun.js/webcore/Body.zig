@@ -219,7 +219,7 @@ pub const PendingValue = struct {
 
 /// This is a duplex stream!
 pub const Value = union(Tag) {
-    const log = Output.scoped(.BodyValue, false);
+    const log = Output.scoped(.BodyValue, .visible);
 
     const pool_size = if (bun.heap_breakdown.enabled) 0 else 256;
     pub const HiveRef = bun.HiveRef(jsc.WebCore.Body.Value, pool_size);
@@ -790,7 +790,7 @@ pub const Value = union(Tag) {
                     );
                 } else {
                     new_blob = Blob.init(
-                        bun.default_allocator.dupe(u8, wtf.latin1Slice()) catch bun.outOfMemory(),
+                        bun.handleOom(bun.default_allocator.dupe(u8, wtf.latin1Slice())),
                         bun.default_allocator,
                         jsc.VirtualMachine.get().global,
                     );
@@ -930,7 +930,7 @@ pub const Value = union(Tag) {
         return this.toErrorInstance(.{ .Message = bun.String.createFormat(
             "Error reading file {s}",
             .{@errorName(err)},
-        ) catch bun.outOfMemory() }, global);
+        ) catch |e| bun.handleOom(e) }, global);
     }
 
     pub fn deinit(this: *Value) void {
@@ -1322,7 +1322,7 @@ pub fn Mixin(comptime Type: type) type {
 }
 
 pub const ValueBufferer = struct {
-    const log = bun.Output.scoped(.BodyValueBufferer, false);
+    const log = bun.Output.scoped(.BodyValueBufferer, .visible);
 
     const ArrayBufferSink = bun.webcore.Sink.ArrayBufferSink;
     const Callback = *const fn (ctx: *anyopaque, bytes: []const u8, err: ?Body.Value.ValueError, is_async: bool) void;
@@ -1450,7 +1450,7 @@ pub const ValueBufferer = struct {
 
         const chunk = stream.slice();
         log("onStreamPipe chunk {}", .{chunk.len});
-        _ = sink.stream_buffer.write(chunk) catch bun.outOfMemory();
+        _ = bun.handleOom(sink.stream_buffer.write(chunk));
         if (stream.isDone()) {
             const bytes = sink.stream_buffer.list.items;
             log("onStreamPipe done {}", .{bytes.len});
@@ -1607,7 +1607,7 @@ pub const ValueBufferer = struct {
                     sink.byte_stream = byte_stream;
                     log("byte stream pre-buffered {}", .{bytes.len});
 
-                    _ = sink.stream_buffer.write(bytes) catch bun.outOfMemory();
+                    _ = bun.handleOom(sink.stream_buffer.write(bytes));
                     return;
                 },
             }

@@ -2518,7 +2518,7 @@ pub const bindings = struct {
         defer sha1.deinit();
         sha1.update(tarball);
         sha1.final(&sha1_digest);
-        const shasum_str = String.createFormat("{s}", .{std.fmt.bytesToHex(sha1_digest, .lower)}) catch bun.outOfMemory();
+        const shasum_str = bun.handleOom(String.createFormat("{s}", .{std.fmt.bytesToHex(sha1_digest, .lower)}));
 
         var sha512_digest: sha.SHA512.Digest = undefined;
         var sha512 = sha.SHA512.init();
@@ -2591,7 +2591,7 @@ pub const bindings = struct {
                     const pathname_string = if (bun.Environment.isWindows) blk: {
                         const pathname_w = archive_entry.pathnameW();
                         const list = std.ArrayList(u8).init(bun.default_allocator);
-                        var result = bun.strings.toUTF8ListWithType(list, []const u16, pathname_w) catch bun.outOfMemory();
+                        var result = bun.handleOom(bun.strings.toUTF8ListWithType(list, []const u16, pathname_w));
                         defer result.deinit();
                         break :blk String.cloneUTF8(result.items);
                     } else String.cloneUTF8(archive_entry.pathname());
@@ -2607,7 +2607,7 @@ pub const bindings = struct {
 
                     if (kind == .file) {
                         const size: usize = @intCast(archive_entry.size());
-                        read_buf.resize(size) catch bun.outOfMemory();
+                        bun.handleOom(read_buf.resize(size));
                         defer read_buf.clearRetainingCapacity();
 
                         const read = archive.readData(read_buf.items);
@@ -2623,7 +2623,7 @@ pub const bindings = struct {
                         entry_info.contents = String.cloneUTF8(read_buf.items);
                     }
 
-                    entries_info.append(entry_info) catch bun.outOfMemory();
+                    bun.handleOom(entries_info.append(entry_info));
                 },
             }
         }

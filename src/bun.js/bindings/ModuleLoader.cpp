@@ -268,13 +268,15 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
                     loader = BunLoaderTypeJSON;
                 } else if (loaderString == "toml"_s) {
                     loader = BunLoaderTypeTOML;
+                } else if (loaderString == "yaml"_s) {
+                    loader = BunLoaderTypeYAML;
                 }
             }
         }
     }
 
     if (loader == BunLoaderTypeNone) [[unlikely]] {
-        throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"toml\", or \"json\""_s));
+        throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"toml\", \"yaml\", or \"json\""_s));
         result.value.error = scope.exception();
         scope.clearException();
         return result;

@@ -446,7 +446,7 @@ pub inline fn deepClone(comptime T: type, this: *const T, allocator: Allocator) 
             return bun.create(allocator, TT, deepClone(TT, this.*, allocator));
         }
         if (comptime tyinfo.pointer.size == .slice) {
-            var slc = allocator.alloc(tyinfo.pointer.child, this.len) catch bun.outOfMemory();
+            var slc = bun.handleOom(allocator.alloc(tyinfo.pointer.child, this.len));
             if (comptime bun.meta.isSimpleCopyType(tyinfo.pointer.child) or tyinfo.pointer.child == []const u8) {
                 @memcpy(slc, this.*);
             } else {
@@ -469,9 +469,7 @@ pub inline fn deepClone(comptime T: type, this: *const T, allocator: Allocator) 
     if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
         return switch (result.list) {
             .array_list => css.deepClone(result.child, allocator, this),
-            .baby_list => {
-                return bun.BabyList(result.child).deepClone2(this, allocator);
-            },
+            .baby_list => this.deepCloneInfallible(allocator),
             .small_list => this.deepClone(allocator),
         };
     }

@@ -219,6 +219,9 @@ export default {
     page("install/npmrc", ".npmrc support", {
       description: "Bun supports loading some configuration options from .npmrc",
     }),
+    page("install/security-scanner-api", "Security Scanner API", {
+      description: "Scan your project for vulnerabilities with Bun's security scanner API.",
+    }),
     // page("install/utilities", "Utilities", {
     //   description: "Use `bun pm` to introspect your global module cache or project dependency tree.",
     // }),
@@ -382,6 +385,9 @@ export default {
     }), // "`Bun.$`"),
     page("api/spawn", "Child processes", {
       description: `Spawn sync and async child processes with easily configurable input and output streams.`,
+    }), // "`Bun.spawn`"),
+    page("api/yaml", "YAML", {
+      description: `Bun.YAML.parse(string) lets you parse YAML files in JavaScript`,
     }), // "`Bun.spawn`"),
     page("api/html-rewriter", "HTMLRewriter", {
       description: `Parse and transform HTML with Bun's native HTMLRewriter API, inspired by Cloudflare Workers.`,

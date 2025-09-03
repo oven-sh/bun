@@ -226,7 +226,7 @@ pub const StringOrBuffer = union(enum) {
                 if (is_async) {
                     defer str.deref();
                     var possible_clone = str;
-                    var sliced = possible_clone.toThreadSafeSlice(allocator);
+                    var sliced = try possible_clone.toThreadSafeSlice(allocator);
                     sliced.reportExtraMemory(global.vm());
 
                     if (sliced.underlying.isEmpty()) {
@@ -399,7 +399,13 @@ pub const Encoding = enum(u8) {
             },
             .hex => {
                 var buf: [size * 4]u8 = undefined;
-                const out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch bun.outOfMemory();
+                const out = std.fmt.bufPrint(
+                    &buf,
+                    "{}",
+                    .{std.fmt.fmtSliceHexLower(input)},
+                ) catch |err| switch (err) {
+                    error.NoSpaceLeft => unreachable,
+                };
                 const result = jsc.ZigString.init(out).toJS(globalObject);
                 return result;
             },
@@ -417,6 +423,11 @@ pub const Encoding = enum(u8) {
     }
 
     pub fn encodeWithMaxSize(encoding: Encoding, globalObject: *jsc.JSGlobalObject, comptime max_size: usize, input: []const u8) bun.JSError!jsc.JSValue {
+        bun.assertf(
+            input.len <= max_size,
+            "input length ({}) should not exceed max_size ({})",
+            .{ input.len, max_size },
+        );
         switch (encoding) {
             .base64 => {
                 var base64_buf: [std.base64.standard.Encoder.calcSize(max_size * 4)]u8 = undefined;
@@ -433,7 +444,13 @@ pub const Encoding = enum(u8) {
             },
             .hex => {
                 var buf: [max_size * 4]u8 = undefined;
-                const out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch bun.outOfMemory();
+                const out = std.fmt.bufPrint(
+                    &buf,
+                    "{}",
+                    .{std.fmt.fmtSliceHexLower(input)},
+                ) catch |err| switch (err) {
+                    error.NoSpaceLeft => unreachable,
+                };
                 const result = jsc.ZigString.init(out).toJS(globalObject);
                 return result;
             },
@@ -686,7 +703,7 @@ pub const PathLike = union(enum) {
         try Valid.pathStringLength(str.length(), global);
 
         if (will_be_async) {
-            var sliced = str.toThreadSafeSlice(allocator);
+            var sliced = try str.toThreadSafeSlice(allocator);
             errdefer sliced.deinit();
 
             try Valid.pathNullBytes(sliced.slice(), global);
@@ -785,7 +802,7 @@ pub const VectorArrayBuffer = struct {
         var bufferlist = std.ArrayList(bun.PlatformIOVec).init(allocator);
         var i: usize = 0;
         const len = try val.getLength(globalObject);
-        bufferlist.ensureTotalCapacityPrecise(len) catch bun.outOfMemory();
+        bun.handleOom(bufferlist.ensureTotalCapacityPrecise(len));
 
         while (i < len) {
             const element = try val.getIndex(globalObject, @as(u32, @truncate(i)));
@@ -799,7 +816,7 @@ pub const VectorArrayBuffer = struct {
             };
 
             const buf = array_buffer.byteSlice();
-            bufferlist.append(bun.platformIOVecCreate(buf)) catch bun.outOfMemory();
+            bun.handleOom(bufferlist.append(bun.platformIOVecCreate(buf)));
             i += 1;
         }
 

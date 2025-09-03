@@ -33,6 +33,13 @@ pub const JSValue = enum(i64) {
         return @as(JSValue, @enumFromInt(@as(i64, @bitCast(@intFromPtr(ptr)))));
     }
 
+    pub fn isBigIntInUInt64Range(this: JSValue, min: u64, max: u64) bool {
+        return bun.cpp.JSC__isBigIntInUInt64Range(this, min, max);
+    }
+
+    pub fn isBigIntInInt64Range(this: JSValue, min: i64, max: i64) bool {
+        return bun.cpp.JSC__isBigIntInInt64Range(this, min, max);
+    }
     pub fn coerceToInt32(this: JSValue, globalThis: *jsc.JSGlobalObject) bun.JSError!i32 {
         return bun.cpp.JSC__JSValue__coerceToInt32(this, globalThis);
     }
@@ -646,6 +653,17 @@ pub const JSValue = enum(i64) {
         return jsNumberWithType(@TypeOf(number), number);
     }
 
+    pub fn jsBigInt(number: anytype) JSValue {
+        const Number = @TypeOf(number);
+        return switch (comptime Number) {
+            u64 => JSValue.fromUInt64NoTruncate(number),
+            i64 => JSValue.fromInt64NoTruncate(number),
+            i32 => JSValue.fromInt64NoTruncate(number),
+            u32 => JSValue.fromUInt64NoTruncate(number),
+            else => @compileError("Expected u64, i64, u32 or i32, got " ++ @typeName(Number)),
+        };
+    }
+
     pub inline fn jsTDZValue() JSValue {
         return bun.cpp.JSC__JSValue__jsTDZValue();
     }
@@ -1024,6 +1042,10 @@ pub const JSValue = enum(i64) {
     extern fn JSC__JSValue__getClassName(this: JSValue, global: *JSGlobalObject, ret: *ZigString) void;
     // TODO: absorb this into className()
     pub fn getClassName(this: JSValue, global: *JSGlobalObject, ret: *ZigString) bun.JSError!void {
+        if (!this.isCell()) {
+            ret.* = ZigString.static("[not a class]").*;
+            return;
+        }
         return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__getClassName, .{ this, global, ret });
     }
 
@@ -1248,6 +1270,17 @@ pub const JSValue = enum(i64) {
     pub fn getObject(this: JSValue) ?*JSObject {
         return if (this.isObject()) this.uncheckedPtrCast(JSObject) else null;
     }
+
+    /// Unwraps Number, Boolean, String, and BigInt objects to their primitive forms.
+    pub fn unwrapBoxedPrimitive(this: JSValue, global: *JSGlobalObject) JSError!JSValue {
+        var scope: CatchScope = undefined;
+        scope.init(global, @src());
+        defer scope.deinit();
+        const result = JSC__JSValue__unwrapBoxedPrimitive(global, this);
+        try scope.returnIfException();
+        return result;
+    }
+    extern fn JSC__JSValue__unwrapBoxedPrimitive(*JSGlobalObject, JSValue) JSValue;
 
     extern fn JSC__JSValue__getPrototype(this: JSValue, globalObject: *JSGlobalObject) JSValue;
     pub fn getPrototype(this: JSValue, globalObject: *JSGlobalObject) JSValue {
@@ -1564,7 +1597,7 @@ pub const JSValue = enum(i64) {
     ///
     /// Returns null when the value is:
     /// - JSValue.null
-    /// - JSValue.false
+    /// - .false
     /// - .js_undefined
     /// - an empty string
     pub fn getStringish(this: JSValue, global: *JSGlobalObject, property: []const u8) bun.JSError!?bun.String {
@@ -2164,7 +2197,7 @@ pub const JSValue = enum(i64) {
         return bun.jsc.fromJSHostCall(global, @src(), Bun__JSValue__deserialize, .{ global, bytes.ptr, bytes.len });
     }
 
-    extern fn Bun__serializeJSValue(global: *jsc.JSGlobalObject, value: JSValue, forTransfer: bool) SerializedScriptValue.External;
+    extern fn Bun__serializeJSValue(global: *jsc.JSGlobalObject, value: JSValue, flags: u8) SerializedScriptValue.External;
     extern fn Bun__SerializedScriptSlice__free(*anyopaque) void;
 
     pub const SerializedScriptValue = struct {
@@ -2182,10 +2215,20 @@ pub const JSValue = enum(i64) {
         }
     };
 
+    pub const SerializedFlags = packed struct(u8) {
+        forCrossProcessTransfer: bool = false,
+        forStorage: bool = false,
+        _padding: u6 = 0,
+    };
+
     /// Throws a JS exception and returns null if the serialization fails, otherwise returns a SerializedScriptValue.
     /// Must be freed when you are done with the bytes.
-    pub inline fn serialize(this: JSValue, global: *JSGlobalObject, forTransfer: bool) bun.JSError!SerializedScriptValue {
-        const value = try bun.jsc.fromJSHostCallGeneric(global, @src(), Bun__serializeJSValue, .{ global, this, forTransfer });
+    pub inline fn serialize(this: JSValue, global: *JSGlobalObject, flags: SerializedFlags) bun.JSError!SerializedScriptValue {
+        var flags_u8: u8 = 0;
+        if (flags.forCrossProcessTransfer) flags_u8 |= 1 << 0;
+        if (flags.forStorage) flags_u8 |= 1 << 1;
+
+        const value = try bun.jsc.fromJSHostCallGeneric(global, @src(), Bun__serializeJSValue, .{ global, this, flags_u8 });
         return .{ .data = value.bytes.?[0..value.size], .handle = value.handle.? };
     }
 

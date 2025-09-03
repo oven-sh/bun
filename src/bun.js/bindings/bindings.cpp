@@ -36,6 +36,7 @@
 #include "JavaScriptCore/JSArrayBuffer.h"
 #include "JavaScriptCore/JSArrayInlines.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
+#include "JavaScriptCore/BigIntObject.h"
 
 #include "JavaScriptCore/JSCallbackObject.h"
 #include "JavaScriptCore/JSClassRef.h"
@@ -73,6 +74,8 @@
 #include "wtf/text/StringImpl.h"
 #include "wtf/text/StringView.h"
 #include "wtf/text/WTFString.h"
+#include "wtf/GregorianDateTime.h"
+
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JSFetchHeaders.h"
 #include "FetchHeaders.h"
@@ -2092,6 +2095,28 @@ BunString WebCore__DOMURL__fileSystemPath(WebCore::DOMURL* arg0, int* errorCode)
     }
     *errorCode = 3;
     return BunString { BunStringTag::Dead, nullptr };
+}
+
+// Taken from unwrapBoxedPrimitive in JSONObject.cpp in WebKit
+extern "C" JSC::EncodedJSValue JSC__JSValue__unwrapBoxedPrimitive(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
+{
+    JSValue value = JSValue::decode(encodedValue);
+
+    if (!value.isObject()) {
+        return JSValue::encode(value);
+    }
+
+    JSObject* object = asObject(value);
+
+    if (object->inherits<NumberObject>()) {
+        return JSValue::encode(jsNumber(object->toNumber(globalObject)));
+    }
+    if (object->inherits<StringObject>())
+        return JSValue::encode(object->toString(globalObject));
+    if (object->inherits<BooleanObject>() || object->inherits<BigIntObject>())
+        return JSValue::encode(jsCast<JSWrapperObject*>(object)->internalValue());
+
+    return JSValue::encode(object);
 }
 
 extern "C" JSC::EncodedJSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JSGlobalObject* globalObject)
@@ -4193,9 +4218,13 @@ void JSC__JSValue__getSymbolDescription(JSC::EncodedJSValue symbolValue_, JSC::J
         return;
 
     JSC::Symbol* symbol = JSC::asSymbol(symbolValue);
-    WTF::String string = symbol->description();
 
-    *arg2 = Zig::toZigString(string);
+    auto result = symbol->description();
+    if (!result.isEmpty()) {
+        *arg2 = Zig::toZigString(result);
+    } else {
+        *arg2 = ZigStringEmpty;
+    }
 }
 
 JSC::EncodedJSValue JSC__JSValue__symbolFor(JSC::JSGlobalObject* globalObject, ZigString* arg2)
@@ -5020,7 +5049,12 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
 
         switch (type) {
         case JSC::SymbolType: {
-            except->message = Bun::toStringRef(jsCast<JSC::Symbol*>(cell)->descriptiveString());
+            auto* symbol = asSymbol(cell);
+            if (symbol->description().isEmpty()) {
+                except->message = BunStringEmpty;
+            } else {
+                except->message = Bun::toStringRef(symbol->description());
+            }
             return;
         }
 
@@ -5880,6 +5914,36 @@ extern "C" void JSC__JSValue__forEachPropertyNonIndexed(JSC::EncodedJSValue JSVa
     JSC__JSValue__forEachPropertyImpl<true>(JSValue0, globalObject, arg2, iter);
 }
 
+extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInUInt64Range(JSC::EncodedJSValue value, uint64_t max, uint64_t min)
+{
+    JSValue jsValue = JSValue::decode(value);
+    if (!jsValue.isHeapBigInt())
+        return false;
+
+    JSC::JSBigInt* bigInt = jsValue.asHeapBigInt();
+    auto result = bigInt->compare(bigInt, min);
+    if (result == JSBigInt::ComparisonResult::GreaterThan || result == JSBigInt::ComparisonResult::Equal) {
+        return true;
+    }
+    result = bigInt->compare(bigInt, max);
+    return result == JSBigInt::ComparisonResult::LessThan || result == JSBigInt::ComparisonResult::Equal;
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJSValue value, int64_t max, int64_t min)
+{
+    JSValue jsValue = JSValue::decode(value);
+    if (!jsValue.isHeapBigInt())
+        return false;
+
+    JSC::JSBigInt* bigInt = jsValue.asHeapBigInt();
+    auto result = bigInt->compare(bigInt, min);
+    if (result == JSBigInt::ComparisonResult::GreaterThan || result == JSBigInt::ComparisonResult::Equal) {
+        return true;
+    }
+    result = bigInt->compare(bigInt, max);
+    return result == JSBigInt::ComparisonResult::LessThan || result == JSBigInt::ComparisonResult::Equal;
+}
+
 [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
@@ -6197,6 +6261,19 @@ extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__parseDate(JSC::JSGlobalObject*
 {
     auto& vm = JSC::getVM(globalObject);
     return vm.dateCache.parseDate(globalObject, vm, str->toWTFString());
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__gregorianDateTimeToMS(JSC::JSGlobalObject* globalObject, int year, int month, int day, int hour, int minute, int second, int millisecond)
+{
+    auto& vm = JSC::getVM(globalObject);
+    WTF::GregorianDateTime dateTime;
+    dateTime.setYear(year);
+    dateTime.setMonth(month - 1);
+    dateTime.setMonthDay(day);
+    dateTime.setHour(hour);
+    dateTime.setMinute(minute);
+    dateTime.setSecond(second);
+    return vm.dateCache.gregorianDateTimeToMS(dateTime, millisecond, WTF::TimeType::LocalTime);
 }
 
 extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNumber(JSC::JSGlobalObject* globalObject, double unixTimestamp)

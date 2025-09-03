@@ -1,4 +1,4 @@
-const debug = Output.scoped(.migrate, false);
+const debug = Output.scoped(.migrate, .visible);
 
 pub fn detectAndLoadOtherLockfile(
     this: *Lockfile,
@@ -379,7 +379,7 @@ pub fn migrateNPMLockfile(
                             const pkg_name = packageNameFromPath(pkg_path);
                             if (!strings.eqlLong(wksp_entry.name, pkg_name, true)) {
                                 const pkg_name_hash = stringHash(pkg_name);
-                                const path_entry = this.workspace_paths.getOrPut(allocator, pkg_name_hash) catch bun.outOfMemory();
+                                const path_entry = bun.handleOom(this.workspace_paths.getOrPut(allocator, pkg_name_hash));
                                 if (!path_entry.found_existing) {
                                     // Package resolve path is an entry in the workspace map, but
                                     // the package name is different. This package doesn't exist
@@ -391,7 +391,7 @@ pub fn migrateNPMLockfile(
                                         const sliced_version = Semver.SlicedString.init(version_string, version_string);
                                         const result = Semver.Version.parse(sliced_version);
                                         if (result.valid and result.wildcard == .none) {
-                                            this.workspace_versions.put(allocator, pkg_name_hash, result.version.min()) catch bun.outOfMemory();
+                                            bun.handleOom(this.workspace_versions.put(allocator, pkg_name_hash, result.version.min()));
                                         }
                                     }
                                 }

@@ -57,7 +57,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
 
     const bunTest = try describe2.js_fns.getActive(globalThis, .{ .signature = .{ .scope_functions = this }, .allow_in_preload = false });
 
-    const callback_mode: describe2.js_fns.CallbackMode = switch (this.cfg.self_mode) {
+    const callback_mode: CallbackMode = switch (this.cfg.self_mode) {
         .skip => .ignore,
         .todo => blk: {
             const run_todo = if (bun.jsc.Jest.Jest.runner) |runner| runner.run_todo else false;
@@ -66,7 +66,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
         else => .require,
     };
 
-    var args = try describe2.js_fns.parseArguments(globalThis, callFrame, .{ .scope_functions = this }, bunTest, .{ .callback = callback_mode });
+    var args = try parseArguments(globalThis, callFrame, .{ .scope_functions = this }, bunTest, .{ .callback = callback_mode });
     defer args.deinit(bunTest.gpa);
 
     switch (bunTest.phase) {
@@ -164,6 +164,117 @@ fn errorInCI(globalThis: *jsc.JSGlobalObject, signature: []const u8) bun.JSError
     }
 }
 
+const ParseArgumentsResult = struct {
+    description: ?[]const u8,
+    callback: ?jsc.JSValue,
+    options: struct {
+        timeout: ?f64 = null, // TODO: use this value
+        retry: ?f64 = null, // TODO: use this value
+        repeats: ?f64 = null, // TODO: use this value
+    },
+    pub fn deinit(this: *ParseArgumentsResult, gpa: std.mem.Allocator) void {
+        if (this.description) |str| gpa.free(str);
+    }
+};
+pub const CallbackMode = enum { require, allow, ignore };
+
+fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, description: jsc.JSValue, signature: Signature) bun.JSError![]const u8 {
+    const is_valid_description =
+        description.isClass(globalThis) or
+        (description.isFunction() and !description.getName(globalThis).isEmpty()) or
+        description.isNumber() or
+        description.isString();
+
+    if (!is_valid_description) {
+        return globalThis.throwPretty("{s} expects first argument to be a named class, named function, number, or string", .{signature});
+    }
+
+    if (description == .zero) {
+        return "";
+    }
+
+    if (description.isClass(globalThis)) {
+        const name_str = if ((try description.className(globalThis)).toSlice(gpa).length() == 0)
+            description.getName(globalThis).toSlice(gpa).slice()
+        else
+            (try description.className(globalThis)).toSlice(gpa).slice();
+        return try gpa.dupe(u8, name_str);
+    }
+    if (description.isFunction()) {
+        var slice = description.getName(globalThis).toSlice(gpa);
+        defer slice.deinit();
+        return try gpa.dupe(u8, slice.slice());
+    }
+    var slice = try description.toSlice(globalThis, gpa);
+    defer slice.deinit();
+    return try gpa.dupe(u8, slice.slice());
+}
+
+pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, bunTest: *BunTestFile, cfg: struct { callback: CallbackMode }) bun.JSError!ParseArgumentsResult {
+    var a1, var a2, var a3 = callframe.argumentsAsArray(3);
+
+    if (a1.isFunction()) {
+        a3 = a2;
+        a2 = a1;
+        a1 = .js_undefined;
+    }
+    if (!a2.isFunction() and a3.isFunction()) {
+        const tmp = a2;
+        a2 = a3;
+        a3 = tmp;
+    }
+
+    const description, const callback, const options = .{ a1, a2, a3 };
+
+    const result_callback: ?jsc.JSValue = if (cfg.callback == .ignore) blk: {
+        break :blk null;
+    } else if (cfg.callback != .require and callback.isUndefinedOrNull()) blk: {
+        break :blk null;
+    } else if (callback.isFunction()) blk: {
+        break :blk callback.withAsyncContextIfNeeded(globalThis);
+    } else {
+        return globalThis.throw("{s} expects a function as the second argument", .{signature});
+    };
+
+    var result: ParseArgumentsResult = .{
+        .description = null,
+        .callback = result_callback,
+        .options = .{},
+    };
+    errdefer result.deinit(bunTest.gpa);
+
+    if (options.isNumber()) {
+        result.options.timeout = options.asNumber();
+    } else if (options.isObject()) {
+        if (try options.get(globalThis, "timeout")) |timeout| {
+            if (!timeout.isNumber()) {
+                return globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
+            }
+            result.options.timeout = timeout.asNumber();
+        }
+        if (try options.get(globalThis, "retry")) |retries| {
+            if (!retries.isNumber()) {
+                return globalThis.throwPretty("{s} expects retry to be a number", .{signature});
+            }
+            result.options.retry = retries.asNumber();
+        }
+        if (try options.get(globalThis, "repeats")) |repeats| {
+            if (!repeats.isNumber()) {
+                return globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
+            }
+            result.options.repeats = repeats.asNumber();
+        }
+    } else if (options.isUndefinedOrNull()) {
+        // no options
+    } else {
+        return globalThis.throw("describe() expects a number, object, or undefined as the third argument", .{});
+    }
+
+    result.description = if (description.isUndefinedOrNull()) null else try getDescription(bunTest.gpa, globalThis, description, signature);
+
+    return result;
+}
+
 pub const js = jsc.Codegen.JSScopeFunctions;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
@@ -212,3 +323,4 @@ const describe2 = jsc.Jest.describe2;
 const BunTestFile = describe2.BunTestFile;
 const ScopeFunctions = describe2.ScopeFunctions;
 const groupLog = describe2.group;
+const Signature = describe2.js_fns.Signature;

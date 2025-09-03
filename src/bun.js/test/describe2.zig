@@ -1,14 +1,3 @@
-const Signature = union(enum) {
-    scope_functions: *const ScopeFunctions,
-    str: []const u8,
-    pub fn format(this: Signature, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        switch (this) {
-            .scope_functions => try writer.print("{}", .{this.scope_functions.*}),
-            .str => try writer.print("{s}", .{this.str}),
-        }
-    }
-};
-
 pub fn getActive() ?*BunTestFile {
     const runner = bun.jsc.Jest.Jest.runner orelse return null;
     return runner.describe2Root.active_file orelse return null;
@@ -17,116 +6,16 @@ pub fn getActive() ?*BunTestFile {
 pub const DoneCallback = @import("./DoneCallback.zig");
 
 pub const js_fns = struct {
-    fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, description: jsc.JSValue, signature: Signature) bun.JSError![]const u8 {
-        const is_valid_description =
-            description.isClass(globalThis) or
-            (description.isFunction() and !description.getName(globalThis).isEmpty()) or
-            description.isNumber() or
-            description.isString();
-
-        if (!is_valid_description) {
-            return globalThis.throwPretty("{s} expects first argument to be a named class, named function, number, or string", .{signature});
-        }
-
-        if (description == .zero) {
-            return "";
-        }
-
-        if (description.isClass(globalThis)) {
-            const name_str = if ((try description.className(globalThis)).toSlice(gpa).length() == 0)
-                description.getName(globalThis).toSlice(gpa).slice()
-            else
-                (try description.className(globalThis)).toSlice(gpa).slice();
-            return try gpa.dupe(u8, name_str);
-        }
-        if (description.isFunction()) {
-            var slice = description.getName(globalThis).toSlice(gpa);
-            defer slice.deinit();
-            return try gpa.dupe(u8, slice.slice());
-        }
-        var slice = try description.toSlice(globalThis, gpa);
-        defer slice.deinit();
-        return try gpa.dupe(u8, slice.slice());
-    }
-
-    const ParseArgumentsResult = struct {
-        description: ?[]const u8,
-        callback: ?jsc.JSValue,
-        options: struct {
-            timeout: ?f64 = null, // TODO: use this value
-            retry: ?f64 = null, // TODO: use this value
-            repeats: ?f64 = null, // TODO: use this value
-        },
-        pub fn deinit(this: *ParseArgumentsResult, gpa: std.mem.Allocator) void {
-            if (this.description) |str| gpa.free(str);
+    pub const Signature = union(enum) {
+        scope_functions: *const ScopeFunctions,
+        str: []const u8,
+        pub fn format(this: Signature, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            switch (this) {
+                .scope_functions => try writer.print("{}", .{this.scope_functions.*}),
+                .str => try writer.print("{s}", .{this.str}),
+            }
         }
     };
-    pub const CallbackMode = enum { require, allow, ignore };
-    pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, bunTest: *BunTestFile, cfg: struct { callback: CallbackMode }) bun.JSError!ParseArgumentsResult {
-        var a1, var a2, var a3 = callframe.argumentsAsArray(3);
-
-        if (a1.isFunction()) {
-            a3 = a2;
-            a2 = a1;
-            a1 = .js_undefined;
-        }
-        if (!a2.isFunction() and a3.isFunction()) {
-            const tmp = a2;
-            a2 = a3;
-            a3 = tmp;
-        }
-
-        const description, const callback, const options = .{ a1, a2, a3 };
-
-        const result_callback: ?jsc.JSValue = if (cfg.callback == .ignore) blk: {
-            break :blk null;
-        } else if (cfg.callback != .require and callback.isUndefinedOrNull()) blk: {
-            break :blk null;
-        } else if (callback.isFunction()) blk: {
-            break :blk callback.withAsyncContextIfNeeded(globalThis);
-        } else {
-            return globalThis.throw("{s} expects a function as the second argument", .{signature});
-        };
-
-        var result: ParseArgumentsResult = .{
-            .description = null,
-            .callback = result_callback,
-            .options = .{},
-        };
-        errdefer result.deinit(bunTest.gpa);
-
-        if (options.isNumber()) {
-            result.options.timeout = options.asNumber();
-        } else if (options.isObject()) {
-            if (try options.get(globalThis, "timeout")) |timeout| {
-                if (!timeout.isNumber()) {
-                    return globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
-                }
-                result.options.timeout = timeout.asNumber();
-            }
-            if (try options.get(globalThis, "retry")) |retries| {
-                if (!retries.isNumber()) {
-                    return globalThis.throwPretty("{s} expects retry to be a number", .{signature});
-                }
-                result.options.retry = retries.asNumber();
-            }
-            if (try options.get(globalThis, "repeats")) |repeats| {
-                if (!repeats.isNumber()) {
-                    return globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
-                }
-                result.options.repeats = repeats.asNumber();
-            }
-        } else if (options.isUndefinedOrNull()) {
-            // no options
-        } else {
-            return globalThis.throw("describe() expects a number, object, or undefined as the third argument", .{});
-        }
-
-        result.description = if (description.isUndefinedOrNull()) null else try getDescription(bunTest.gpa, globalThis, description, signature);
-
-        return result;
-    }
-
     const GetActiveCfg = struct { signature: Signature, allow_in_preload: bool };
     fn getActiveTestRoot(globalThis: *jsc.JSGlobalObject, cfg: GetActiveCfg) bun.JSError!*BunTest {
         if (bun.jsc.Jest.Jest.runner == null) {

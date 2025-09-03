@@ -158,6 +158,12 @@ pub const BrotliReaderArrayList = struct {
                     }
                     this.state = .Inflating;
                     if (is_done) {
+                        // If we're done and brotli needs more input, it could be a valid empty stream
+                        // Check if we've already written some output - if not, it's an empty stream
+                        if (this.list.items.len == 0) {
+                            this.end();
+                            return;
+                        }
                         this.state = .Error;
                     }
 

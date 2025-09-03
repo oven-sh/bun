@@ -47,14 +47,18 @@ test("describe/test", async () => {
     (pass) LINE 71
     (skip) LINE 72
     (pass) LINE 74
+    (fail) this test times out
+      ^ this test timed out.
+    (fail) this test times out with done
+      ^ this test timed out because the done callback was never called. If this was not intended, remove the last parameter from the test callback function
 
      9 pass
      2 skip
      1 todo
-     3 fail
+     5 fail
      1 error
      1 snapshots, 2 expect() calls
-    Ran 15 tests across 1 file."
+    Ran 17 tests across 1 file."
     ,
       "stdout": 
     "bun test <version> (<revision>)

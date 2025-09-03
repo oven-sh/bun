@@ -109,4 +109,8 @@ test.if(true)("LINE 71", () => console.log("LINE 71"));
 test.skipIf(true)("LINE 72", () => console.log("LINE 72"));
 test.concurrent("LINE 74", () => console.log("LINE 74"));
 
+// == timeout ==
+test("this test times out", () => Bun.sleep(100), 1);
+test("this test times out with done", done => {}, 1);
+
 console.log("exit");

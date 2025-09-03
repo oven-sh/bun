@@ -88,7 +88,7 @@ pub const Result = enum {
     fail_because_expected_has_assertions,
     fail_because_expected_assertion_count,
 
-    fn isPass(this: Result) bool {
+    pub fn isPass(this: Result) bool {
         return switch (this) {
             .pass, .skip, .todo, .skipped_because_label => true,
             .fail, .fail_because_timeout, .fail_because_timeout_with_done_callback, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => false,

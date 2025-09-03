@@ -624,7 +624,7 @@ pub const CommandLineReporter = struct {
         const display_label = test_entry.base.name orelse "(unnamed)";
 
         // Quieter output when claude code is in use.
-        if (!Output.isAIAgent() or status == .fail) {
+        if (!Output.isAIAgent() or !status.isPass()) {
             const color_code = comptime if (status == .skip) "<d>" else "";
 
             if (Output.enable_ansi_colors_stderr) {

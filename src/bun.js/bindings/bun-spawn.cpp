@@ -114,10 +114,13 @@ extern "C" ssize_t posix_spawn_bun(
                     // Remove the O_CLOEXEC flag
                     // If we don't do this, then the process will have an already-closed file descriptor
                     int mask = fcntl(action.fds[0], F_GETFD, 0);
+                    if (mask == -1) {
+                        // fcntl failed - the fd might be invalid
+                        return childFailed();
+                    }
+                    
                     mask &= ~FD_CLOEXEC;
-                    fcntl(action.fds[0], F_SETFD, mask);
-
-                    if (errno != 0) {
+                    if (fcntl(action.fds[0], F_SETFD, mask) == -1) {
                         return childFailed();
                     }
 
@@ -189,7 +192,29 @@ extern "C" ssize_t posix_spawn_bun(
                 *pid = child;
             }
         } else {
-            wait4(child, 0, 0, 0);
+            // Properly capture and handle the wait status to ensure error propagation
+            int wait_status = 0;
+            pid_t wait_result = wait4(child, &wait_status, 0, 0);
+            
+            // Check if wait4 succeeded and handle the child's exit status
+            if (wait_result > 0) {
+                if (WIFEXITED(wait_status)) {
+                    int exit_code = WEXITSTATUS(wait_status);
+                    // If the child exited with 127, it means execve failed or childFailed was called
+                    if (exit_code == 127) {
+                        // If we didn't get a specific error through the volatile status variable,
+                        // default to a reasonable error code
+                        if (res == 0) {
+                            res = ENOENT; // Assume command not found if no specific error
+                        }
+                    }
+                } else if (WIFSIGNALED(wait_status)) {
+                    // Child was killed by a signal
+                    if (res == 0) {
+                        res = EINTR; // Or another appropriate error code
+                    }
+                }
+            }
         }
     } else {
         res = errno;

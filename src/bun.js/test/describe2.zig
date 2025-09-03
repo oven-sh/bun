@@ -55,6 +55,7 @@ pub const js_fns = struct {
 
                     _ = try bunTestRoot.hook_scope.appendHook(bunTestRoot.gpa, tag, callback, .{
                         .line_no = 0,
+                        .timeout = 0,
                     }, .{});
                     return .js_undefined;
                 };
@@ -63,6 +64,7 @@ pub const js_fns = struct {
                     .collection => {
                         try bunTest.collection.enqueueHookCallback(tag, callback, .{
                             .line_no = 0,
+                            .timeout = 0,
                         }, .{});
 
                         return .js_undefined;
@@ -723,6 +725,7 @@ pub const DescribeScope = struct {
 };
 pub const ExecutionEntryCfg = struct {
     line_no: u32,
+    timeout: u32,
 };
 pub const ExecutionEntry = struct {
     base: BaseScope,
@@ -730,12 +733,15 @@ pub const ExecutionEntry = struct {
     /// only available if using junit reporter, otherwise 0
     line_no: u32,
     result: Execution.Result = .pending,
+    /// '0' = no timeout
+    timeout: u32,
 
     fn create(gpa: std.mem.Allocator, name_not_owned: ?[]const u8, cb: ?CallbackWithArgs, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg, allow_update_parent: bool) bun.JSError!*ExecutionEntry {
         const entry = bun.create(gpa, ExecutionEntry, .{
             .base = .init(base, gpa, name_not_owned, parent, cb != null, allow_update_parent),
             .callback = if (cb) |c| c.dupe(gpa) else null,
             .line_no = cfg.line_no,
+            .timeout = cfg.timeout,
         });
         return entry;
     }

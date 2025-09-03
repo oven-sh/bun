@@ -110,25 +110,29 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
             const formatted_label: ?[]const u8 = if (args.description) |desc| try jsc.Jest.formatLabel(globalThis, desc, if (callback) |*c| c.args.get() else &.{}, test_idx, bunTest.gpa) else null;
             defer if (formatted_label) |label| bunTest.gpa.free(label);
 
-            try this.enqueueDescribeOrTestCallback(bunTest, callback, formatted_label, line_no);
+            try this.enqueueDescribeOrTestCallback(bunTest, callback, formatted_label, .{
+                .line_no = line_no,
+                .timeout = std.math.lossyCast(u32, args.options.timeout orelse 0),
+            });
         }
     } else {
         var callback: ?describe2.CallbackWithArgs = if (args.callback) |callback| .init(bunTest.gpa, callback, &.{}) else null;
         defer if (callback) |*cb| cb.deinit(bunTest.gpa);
 
-        try this.enqueueDescribeOrTestCallback(bunTest, callback, args.description, line_no);
+        try this.enqueueDescribeOrTestCallback(bunTest, callback, args.description, .{
+            .line_no = line_no,
+            .timeout = std.math.lossyCast(u32, args.options.timeout orelse 0),
+        });
     }
 
     return .js_undefined;
 }
 
-fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunTestFile, callback: ?describe2.CallbackWithArgs, description: ?[]const u8, line_no: u32) bun.JSError!void {
+fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunTestFile, callback: ?describe2.CallbackWithArgs, description: ?[]const u8, cfg: describe2.ExecutionEntryCfg) bun.JSError!void {
     switch (this.mode) {
         .describe => try bunTest.collection.enqueueDescribeCallback(callback, description, this.cfg),
         .@"test" => {
-            try bunTest.collection.enqueueTestCallback(description, callback, .{
-                .line_no = line_no,
-            }, this.cfg);
+            try bunTest.collection.enqueueTestCallback(description, callback, cfg, this.cfg);
         },
     }
 }

@@ -323,6 +323,15 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
   // Step 2: Handle SQLite special case early SQLite needs special handling
   // because "sqlite://:memory:" can't be parsed with URL constructor
   if (options.adapter === "sqlite" || (options.adapter === undefined && typeof stringOrUrl === "string")) {
+    // If options.filename is already specified and we have a URL string, ignore the URL
+    // (options take precedence over URL string)
+    if (options.adapter === "sqlite" && options.filename && stringOrUrl) {
+      // Parse filename if it contains a sqlite URL
+      const parsedFilename = parseDefinitelySqliteUrl(options.filename);
+      const finalFilename = parsedFilename !== null ? parsedFilename : options.filename;
+      return [stringOrUrl, null, { ...options, filename: normalizeSQLiteFilename(finalFilename), adapter: "sqlite" }];
+    }
+
     const sqliteResult = handleSQLiteUrl(stringOrUrl, options);
     if (sqliteResult) {
       return sqliteResult;
@@ -352,6 +361,13 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
 
   // Step 5: Return early if adapter is explicitly specified
   if (options.adapter) {
+    // Validate that the adapter is supported
+    const supportedAdapters = ["postgres", "sqlite", "mysql", "mariadb"];
+    if (!supportedAdapters.includes(options.adapter)) {
+      throw new Error(
+        `Unsupported adapter: ${options.adapter}. Supported adapters: "postgres", "sqlite", "mysql", "mariadb"`,
+      );
+    }
     return [stringOrUrl, sslMode, options as Bun.SQL.__internal.OptionsWithDefinedAdapter];
   }
 

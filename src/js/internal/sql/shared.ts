@@ -385,18 +385,20 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
   // Step 3: Parse protocol and ensure URL format for non-SQLite databases
   let protocol: Bun.SQL.__internal.Adapter | (string & {}) = options.adapter || DEFAULT_PROTOCOL;
 
-  if (stringOrUrl instanceof URL) {
-    protocol = stringOrUrl.protocol.replace(/:$/, "");
-  } else if (stringOrUrl !== null) {
-    if (hasProtocol(stringOrUrl)) {
+  let urlToProcess = resolvedUrl || stringOrUrl;
+
+  if (urlToProcess instanceof URL) {
+    protocol = urlToProcess.protocol.replace(/:$/, "");
+  } else if (urlToProcess !== null) {
+    if (hasProtocol(urlToProcess)) {
       try {
-        stringOrUrl = new URL(stringOrUrl);
-        protocol = (stringOrUrl as URL).protocol.replace(/:$/, "");
+        urlToProcess = new URL(urlToProcess);
+        protocol = urlToProcess.protocol.replace(/:$/, "");
       } catch (e) {
         // options.adpater won't be sqlite here, we already did the special case check for it
-        if (options.adapter && typeof stringOrUrl === "string" && stringOrUrl.includes("sqlite")) {
+        if (options.adapter && typeof urlToProcess === "string" && urlToProcess.includes("sqlite")) {
           throw new Error(
-            `Invalid URL '${stringOrUrl}' for ${options.adapter}. Did you mean to specify \`{ adapter: "sqlite" }\`?`,
+            `Invalid URL '${urlToProcess}' for ${options.adapter}. Did you mean to specify \`{ adapter: "sqlite" }\`?`,
             { cause: e },
           );
         }
@@ -406,7 +408,7 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
       }
     } else {
       // Add protocol if missing
-      stringOrUrl = ensureUrlHasProtocol(stringOrUrl, protocol);
+      urlToProcess = ensureUrlHasProtocol(urlToProcess, protocol);
     }
   }
 
@@ -425,7 +427,7 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
         `Unsupported adapter: ${options.adapter}. Supported adapters: "postgres", "sqlite", "mysql", "mariadb"`,
       );
     }
-    return [stringOrUrl, sslMode, options as Bun.SQL.__internal.OptionsWithDefinedAdapter];
+    return [urlToProcess, sslMode, options as Bun.SQL.__internal.OptionsWithDefinedAdapter];
   }
 
   // Step 6: Infer adapter from protocol
@@ -435,7 +437,7 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
     throw new Error(`Unsupported protocol: ${protocol}. Supported adapters: "postgres", "sqlite", "mysql", "mariadb"`);
   }
 
-  return [stringOrUrl, sslMode, { ...options, adapter: parsedAdapterFromProtocol }];
+  return [urlToProcess, sslMode, { ...options, adapter: parsedAdapterFromProtocol }];
 }
 
 function parseAdapterFromProtocol(protocol: string): Bun.SQL.__internal.Adapter | null {

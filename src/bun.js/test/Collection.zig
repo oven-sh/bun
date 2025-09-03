@@ -161,7 +161,7 @@ pub fn runOne(this: *Collection, globalThis: *jsc.JSGlobalObject, callback_queue
                 .active_scope = previous_scope,
             },
         } });
-        return .execute;
+        return .{ .execute = .{ .timeout = null } };
     }
     return .done;
 }

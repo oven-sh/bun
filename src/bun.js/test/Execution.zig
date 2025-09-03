@@ -142,7 +142,7 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
         // loop over items in the group and advance their execution
         const group = &this.groups[this.group_index];
         if (!group.executing) this.resetGroup(this.group_index);
-        var status: describe2.RunOneResult = .done;
+        var status: enum { done, execute } = .done;
         for (group.sequences(this), 0..) |*sequence, sequence_index| {
             while (true) {
                 groupLog.begin(@src());
@@ -202,7 +202,7 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
             }
         }
 
-        if (status == .execute) return .execute;
+        if (status == .execute) return .{ .execute = .{ .timeout = null } };
         this.group_index += 1;
     }
 }

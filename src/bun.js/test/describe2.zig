@@ -770,9 +770,11 @@ pub const TestScheduleEntry = union(enum) {
         }
     }
 };
-pub const RunOneResult = enum {
+pub const RunOneResult = union(enum) {
     done,
-    execute,
+    execute: struct {
+        timeout: ?bun.timespec,
+    },
 };
 
 pub const Execution = @import("./Execution.zig");

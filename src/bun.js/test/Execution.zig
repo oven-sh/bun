@@ -134,78 +134,105 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
     groupLog.begin(@src());
     defer groupLog.end();
 
+    const now = bun.timespec.now();
+
     while (true) {
         const group = this.activeGroup() orelse return .done;
         group.executing = true;
 
         // loop over items in the group and advance their execution
-        var status: enum { done, execute } = .done;
-        for (group.sequences(this), 0..) |*sequence, sequence_index| {
-            while (true) {
-                groupLog.begin(@src());
-                defer groupLog.end();
 
-                if (sequence.executing) {
-                    groupLog.log("runOne: can't advance; already executing", .{});
-                    status = .execute; // can't advance; already executing
-                    break;
-                }
-
-                const next_item = sequence.activeEntry(this) orelse {
-                    bun.assert(sequence.remaining_repeat_count == 0);
-                    groupLog.log("runOne: no repeats left; wait for group completion.", .{});
-                    break; // done
-                };
-                sequence.executing = true;
-                if (sequence.index == 0) {
-                    this.onSequenceStarted(sequence);
-                }
-                this.onEntryStarted(next_item);
-
-                // switch(executeEntry) {.immediate => continue, .queued => {}}
-
-                if (next_item.callback) |cb| {
-                    groupLog.log("runSequence queued callback", .{});
-
-                    const callback_data: describe2.BunTestFile.RefDataValue = .{
-                        .execution = .{
-                            .group_index = this.group_index,
-                            .entry_data = .{
-                                .sequence_index = sequence_index,
-                                .entry_index = sequence.index,
-                                .remaining_repeat_count = sequence.remaining_repeat_count,
-                            },
-                        },
-                    };
-                    groupLog.log("runSequence queued callback: {}", .{callback_data});
-                    try callback_queue.append(.{ .callback = cb.dupe(this.bunTest().gpa), .done_parameter = true, .data = callback_data });
-                    status = .execute;
-                    break;
-                } else {
-                    switch (next_item.base.mode) {
-                        .skip => if (sequence.result == .pending) {
-                            sequence.result = .skip;
-                        },
-                        .todo => if (sequence.result == .pending) {
-                            sequence.result = .todo;
-                        },
-                        .filtered_out => if (sequence.result == .pending) {
-                            sequence.result = .skipped_because_label;
-                        },
-                        else => {
-                            groupLog.log("runSequence: no callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.index });
-                            bun.debugAssert(false);
-                        },
-                    }
-                    this.advanceSequence(sequence);
-                    continue;
-                }
-                comptime unreachable;
-            }
-        }
-
+        const status = try this.advanceSequencesInGroup(group, callback_queue, now);
         if (status == .execute) return .{ .execute = .{ .timeout = null } };
         this.group_index += 1;
+    }
+}
+const AdvanceStatus = enum { done, execute };
+fn advanceSequencesInGroup(this: *Execution, group: *ConcurrentGroup, callback_queue: *describe2.CallbackQueue, now: bun.timespec) !AdvanceStatus {
+    var final_status: AdvanceStatus = .done;
+    for (group.sequences(this), 0..) |*sequence, sequence_index| {
+        while (true) {
+            const sequence_status = try this.advanceSequenceInGroup(sequence, sequence_index, callback_queue, now);
+            switch (sequence_status) {
+                .done => {},
+                .execute => final_status = .execute,
+                .again => continue,
+            }
+            break;
+        }
+    }
+    return final_status;
+}
+const AdvanceSequenceStatus = enum {
+    /// the entire sequence is completed.
+    done,
+    /// the item is queued for execution or has not completed yet. need to wait for it
+    execute,
+    /// the item completed immediately; advance to the next item
+    again,
+};
+fn advanceSequenceInGroup(this: *Execution, sequence: *ExecutionSequence, sequence_index: usize, callback_queue: *describe2.CallbackQueue, now: bun.timespec) !AdvanceSequenceStatus {
+    groupLog.begin(@src());
+    defer groupLog.end();
+
+    if (sequence.executing) {
+        if (sequence.started_at.order(&now) == .lt) {
+            // timed out
+            sequence.result = .timeout;
+            this.advanceSequence(sequence);
+            return .again;
+        }
+        groupLog.log("runOne: can't advance; already executing", .{});
+        return .execute;
+    }
+
+    const next_item = sequence.activeEntry(this) orelse {
+        bun.assert(sequence.remaining_repeat_count == 0);
+        groupLog.log("runOne: no repeats left; wait for group completion.", .{});
+        return .done;
+    };
+    sequence.executing = true;
+    if (sequence.index == 0) {
+        this.onSequenceStarted(sequence);
+    }
+    this.onEntryStarted(next_item);
+
+    // switch(executeEntry) {.immediate => continue, .queued => {}}
+
+    if (next_item.callback) |cb| {
+        groupLog.log("runSequence queued callback", .{});
+
+        const callback_data: describe2.BunTestFile.RefDataValue = .{
+            .execution = .{
+                .group_index = this.group_index,
+                .entry_data = .{
+                    .sequence_index = sequence_index,
+                    .entry_index = sequence.index,
+                    .remaining_repeat_count = sequence.remaining_repeat_count,
+                },
+            },
+        };
+        groupLog.log("runSequence queued callback: {}", .{callback_data});
+        try callback_queue.append(.{ .callback = cb.dupe(this.bunTest().gpa), .done_parameter = true, .data = callback_data });
+        return .execute;
+    } else {
+        switch (next_item.base.mode) {
+            .skip => if (sequence.result == .pending) {
+                sequence.result = .skip;
+            },
+            .todo => if (sequence.result == .pending) {
+                sequence.result = .todo;
+            },
+            .filtered_out => if (sequence.result == .pending) {
+                sequence.result = .skipped_because_label;
+            },
+            else => {
+                groupLog.log("runSequence: no callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.index });
+                bun.debugAssert(false);
+            },
+        }
+        this.advanceSequence(sequence);
+        return .again;
     }
 }
 pub fn activeGroup(this: *Execution) ?*ConcurrentGroup {

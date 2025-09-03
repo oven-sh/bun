@@ -113,6 +113,9 @@ class SQLHelper<T> {
   }
 }
 
+const SQLITE_MEMORY = ":memory:";
+const SQLITE_MEMORY_VARIANTS: string[] = [":memory:", "sqlite://:memory:", "sqlite:memory"];
+
 const sqliteProtocols = [
   { prefix: "sqlite://", stripLength: 9 },
   { prefix: "sqlite:", stripLength: 7 },
@@ -124,7 +127,9 @@ function parseDefinitelySqliteUrl(value: string | URL | null): string | null {
   if (value === null) return null;
   const str = value instanceof URL ? value.toString() : value;
 
-  if (str === ":memory:" || str === "sqlite://:memory:" || str === "sqlite:memory") return ":memory:";
+  if (SQLITE_MEMORY_VARIANTS.includes(str)) {
+    return SQLITE_MEMORY;
+  }
 
   for (const { prefix, stripLength } of sqliteProtocols) {
     if (!str.startsWith(prefix)) continue;
@@ -339,7 +344,7 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
 
   // Step 5: Return early if adapter is explicitly specified
   if (options.adapter) {
-    return [stringOrUrl, sslMode, options as Bun.SQL.__internal.OptionsWithDefinedAdapter] as const;
+    return [stringOrUrl, sslMode, options as Bun.SQL.__internal.OptionsWithDefinedAdapter];
   }
 
   // Step 6: Infer adapter from protocol
@@ -351,6 +356,12 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
   return [stringOrUrl, sslMode, { ...options, adapter: parsedAdapterFromProtocol }];
 }
 
+function normalizeSQLiteFilename(filename: string | URL | null | undefined): string {
+  if (!filename) return SQLITE_MEMORY;
+  if (filename instanceof URL) return filename.pathname;
+  return filename;
+}
+
 function handleSQLiteUrl(
   stringOrUrl: string | URL | null,
   options: Bun.SQL.Options,
@@ -358,7 +369,7 @@ function handleSQLiteUrl(
   if (typeof stringOrUrl !== "string") {
     // If adapter is explicitly sqlite but no string URL, default to :memory:
     if (options.adapter === "sqlite") {
-      return [stringOrUrl, null, { ...options, filename: ":memory:", adapter: "sqlite" }];
+      return [stringOrUrl, null, { ...options, filename: SQLITE_MEMORY, adapter: "sqlite" }];
     }
     return null;
   }
@@ -371,12 +382,12 @@ function handleSQLiteUrl(
       stringOrUrl, // Keep original for query param parsing
       null,
       { ...options, adapter: "sqlite", filename: parsedSqlitePath },
-    ] as const;
+    ];
   }
 
   // If adapter is explicitly "sqlite", treat the string as a filename
   if (options.adapter === "sqlite") {
-    return [stringOrUrl, null, { ...options, adapter: "sqlite", filename: stringOrUrl || ":memory:" }] as const;
+    return [stringOrUrl, null, { ...options, adapter: "sqlite", filename: normalizeSQLiteFilename(stringOrUrl) }];
   }
 
   return null;
@@ -421,7 +432,7 @@ function parseOptions(
     return parseSQLiteOptionsWithQueryParams(_url, {
       ...options,
       adapter: "sqlite",
-      filename: options.filename || ":memory:",
+      filename: normalizeSQLiteFilename(options.filename),
     });
   }
 

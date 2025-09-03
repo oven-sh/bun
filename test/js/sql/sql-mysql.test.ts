@@ -1,6 +1,6 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { describe, expect, mock, test } from "bun:test";
-import { describeWithContainer, dockerExe, tempDirWithFiles, isDockerEnabled } from "harness";
+import { describeWithContainer, dockerExe, isDockerEnabled, tempDirWithFiles } from "harness";
 import net from "net";
 import path from "path";
 const dir = tempDirWithFiles("sql-test", {

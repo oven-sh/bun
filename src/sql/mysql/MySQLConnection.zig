@@ -1444,9 +1444,9 @@ pub fn sendHandshakeResponse(this: *MySQLConnection) AnyMySQLError.Error!void {
             return;
         }
     }
-
+    // https://dev.mysql.com/doc/dev/mysql-server/8.4.6/page_protocol_connection_phase_packets_protocol_ssl_request.html
     if (this.capabilities.CLIENT_SSL and !this.flags.handshake_success) {
-        var response = HandshakeSSLResponse{
+        var response = SSLRequest{
             .capability_flags = this.capabilities,
             .max_packet_size = 0, //16777216,
             .character_set = CharacterSet.default,
@@ -1944,7 +1944,7 @@ const Capabilities = @import("./Capabilities.zig");
 const ColumnDefinition41 = @import("./protocol/ColumnDefinition41.zig");
 const ErrorPacket = @import("./protocol/ErrorPacket.zig");
 const HandshakeResponse41 = @import("./protocol/HandshakeResponse41.zig");
-const HandshakeSSLResponse = @import("./protocol/HandshakeSSLResponse.zig");
+const SSLRequest = @import("./protocol/SSLRequest.zig");
 const HandshakeV10 = @import("./protocol/HandshakeV10.zig");
 const LocalInfileRequest = @import("./protocol/LocalInfileRequest.zig");
 const MySQLQuery = @import("./MySQLQuery.zig");

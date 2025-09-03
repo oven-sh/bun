@@ -333,7 +333,7 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
       const finalFilename = parsedFilename !== null ? parsedFilename : options.filename;
       return [stringOrUrl, null, { ...options, filename: normalizeSQLiteFilename(finalFilename), adapter: "sqlite" }];
     }
-    
+
     const sqliteResult = handleSQLiteUrl(stringOrUrl, options);
     if (sqliteResult) {
       return sqliteResult;
@@ -366,7 +366,9 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
     // Validate that the adapter is supported
     const supportedAdapters = ["postgres", "sqlite", "mysql", "mariadb"];
     if (!supportedAdapters.includes(options.adapter)) {
-      throw new Error(`Unsupported adapter: ${options.adapter}. Supported adapters: "postgres", "sqlite", "mysql", "mariadb"`);
+      throw new Error(
+        `Unsupported adapter: ${options.adapter}. Supported adapters: "postgres", "sqlite", "mysql", "mariadb"`,
+      );
     }
     return [stringOrUrl, sslMode, options as Bun.SQL.__internal.OptionsWithDefinedAdapter];
   }

@@ -155,21 +155,13 @@ pub const ZstdReaderArrayList = struct {
             };
 
             const rc = c.ZSTD_decompressStream(this.zstd, &out_buf, &in_buf);
-            
-            const bytes_written = out_buf.pos;
-            const bytes_read = in_buf.pos;
-            
             if (c.ZSTD_isError(rc) != 0) {
-                // Special case: zstd might report an error for certain empty streams
-                // If we have no output yet and this is the final chunk, treat it as empty
-                if (is_done and this.list.items.len == 0 and bytes_read == next_in.len) {
-                    this.end();
-                    return;
-                }
                 this.state = .Error;
                 return error.ZstdDecompressionError;
             }
-            
+
+            const bytes_written = out_buf.pos;
+            const bytes_read = in_buf.pos;
             this.list.items.len += bytes_written;
             this.total_in += bytes_read;
             this.total_out += bytes_written;

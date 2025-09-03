@@ -11,10 +11,9 @@ test("empty chunked brotli response should work", async () => {
   using server = serve({
     port: 0,
     async fetch(req) {
-      // Create an empty brotli buffer
-      const emptyBrotli = Bun.deflateSync(Buffer.alloc(0), {
-        format: "br",
-      });
+      // Create an empty brotli buffer using the proper API
+      const { brotliCompressSync } = require("node:zlib");
+      const emptyBrotli = brotliCompressSync(Buffer.alloc(0));
       
       // Return as chunked response
       return new Response(
@@ -47,10 +46,9 @@ test("empty non-chunked brotli response", async () => {
   using server = serve({
     port: 0,
     async fetch(req) {
-      // Create an empty brotli buffer
-      const emptyBrotli = Bun.deflateSync(Buffer.alloc(0), {
-        format: "br",
-      });
+      // Create an empty brotli buffer using the proper API
+      const { brotliCompressSync } = require("node:zlib");
+      const emptyBrotli = brotliCompressSync(Buffer.alloc(0));
       
       return new Response(emptyBrotli, {
         headers: {
@@ -73,10 +71,8 @@ test("empty chunked zstd response should work", async () => {
   using server = serve({
     port: 0,
     async fetch(req) {
-      // Create an empty zstd buffer
-      const emptyZstd = Bun.deflateSync(Buffer.alloc(0), {
-        format: "zstd",
-      });
+      // Create an empty zstd buffer using the proper API
+      const emptyZstd = Bun.zstdCompressSync(Buffer.alloc(0));
       
       // Return as chunked response
       return new Response(
@@ -109,10 +105,8 @@ test("empty non-chunked zstd response", async () => {
   using server = serve({
     port: 0,
     async fetch(req) {
-      // Create an empty zstd buffer
-      const emptyZstd = Bun.deflateSync(Buffer.alloc(0), {
-        format: "zstd",
-      });
+      // Create an empty zstd buffer using the proper API
+      const emptyZstd = Bun.zstdCompressSync(Buffer.alloc(0));
       
       return new Response(emptyZstd, {
         headers: {

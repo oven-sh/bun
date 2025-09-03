@@ -52,7 +52,7 @@ test(
 
     const port = (server.address() as AddressInfo).port;
 
-    const sql = new SQL({
+    await using sql = new SQL({
       hostname: "localhost",
       port: port,
       database: name,

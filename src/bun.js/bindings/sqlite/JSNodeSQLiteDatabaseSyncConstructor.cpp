@@ -9,16 +9,17 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <wtf/text/WTFString.h>
 
-#include "sqlite3_local.h"
-
 #if LAZY_LOAD_SQLITE
 #include "lazy_sqlite3.h"
 #else
+#include "sqlite3_local.h"
 static inline int lazyLoadSQLite()
 {
     return 0;
 }
 #endif
+
+#include "sqlite_init.h"
 
 namespace Bun {
 
@@ -253,6 +254,9 @@ JSC_DEFINE_HOST_FUNCTION(nodeSQLiteDatabaseSyncConstructorConstruct, (JSGlobalOb
     thisObject->setPath(databasePath);
     thisObject->setOptions(readBigInts, returnArrays, allowBareNamedParameters, allowUnknownNamedParameters);
 
+    // Initialize SQLite before opening the database
+    Bun::initializeSQLite();
+    
     // Only open the database if shouldOpen is true
     if (shouldOpen) {
         sqlite3* db = nullptr;

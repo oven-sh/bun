@@ -204,6 +204,7 @@ src/bun.js/bindings/sqlite/JSNodeSQLiteStatementSync.cpp
 src/bun.js/bindings/sqlite/JSNodeSQLiteStatementSyncConstructor.cpp
 src/bun.js/bindings/sqlite/JSNodeSQLiteStatementSyncPrototype.cpp
 src/bun.js/bindings/sqlite/JSSQLStatement.cpp
+src/bun.js/bindings/sqlite/sqlite_init.cpp
 src/bun.js/bindings/StringBuilderBinding.cpp
 src/bun.js/bindings/stripANSI.cpp
 src/bun.js/bindings/Strong.cpp

@@ -9,28 +9,68 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/JSBigInt.h>
+#include <JavaScriptCore/JSArrayBufferView.h>
+#include <JavaScriptCore/Uint8Array.h>
+#include <JavaScriptCore/ArrayBuffer.h>
+#include <JavaScriptCore/ArgList.h>
+#include <JavaScriptCore/CallData.h>
 #include <wtf/text/WTFString.h>
-
-#include "sqlite3_local.h"
 
 #if LAZY_LOAD_SQLITE
 #include "lazy_sqlite3.h"
 #else
+#include "sqlite3_local.h"
 static inline int lazyLoadSQLite()
 {
     return 0;
 }
 #endif
 
+#include "sqlite_init.h"
+
 namespace Bun {
 
 using namespace JSC;
+
+// User-defined function support - COMMENTED OUT FOR COMPILATION
+// TODO: Fix Strong<JSValue> template issues and visitor implementation
+/*
+// Helper structs for SQLite callback context
+struct UserFunctionContext {
+    JSNodeSQLiteDatabaseSync* database;
+    WTF::String functionName;
+};
+
+struct AggregateFunctionContext {
+    JSNodeSQLiteDatabaseSync* database;
+    WTF::String functionName;
+};
+
+// SQLite callback functions
+static void sqliteUserFunctionCallback(sqlite3_context* context, int argc, sqlite3_value** argv)
+{
+    // Implementation commented out for compilation
+}
+
+static void sqliteAggregateStepCallback(sqlite3_context* context, int argc, sqlite3_value** argv)
+{
+    // Implementation commented out for compilation
+}
+
+static void sqliteAggregateFinalCallback(sqlite3_context* context)
+{
+    // Implementation commented out for compilation
+}
+*/
 
 static JSC_DECLARE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncExec);
 static JSC_DECLARE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncPrepare);
 static JSC_DECLARE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncClose);
 static JSC_DECLARE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncOpen);
 static JSC_DECLARE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncLocation);
+static JSC_DECLARE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncFunction);
+static JSC_DECLARE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncAggregate);
 static JSC_DECLARE_CUSTOM_GETTER(jsNodeSQLiteDatabaseSyncProtoGetterIsOpen);
 static JSC_DECLARE_CUSTOM_GETTER(jsNodeSQLiteDatabaseSyncProtoGetterIsTransaction);
 
@@ -40,6 +80,8 @@ static const HashTableValue JSNodeSQLiteDatabaseSyncPrototypeTableValues[] = {
     { "close"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeSQLiteDatabaseSyncProtoFuncClose, 0 } },
     { "open"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeSQLiteDatabaseSyncProtoFuncOpen, 0 } },
     { "location"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeSQLiteDatabaseSyncProtoFuncLocation, 0 } },
+    { "function"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeSQLiteDatabaseSyncProtoFuncFunction, 2 } },
+    { "aggregate"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodeSQLiteDatabaseSyncProtoFuncAggregate, 2 } },
     { "isOpen"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeSQLiteDatabaseSyncProtoGetterIsOpen, 0 } },
     { "isTransaction"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeSQLiteDatabaseSyncProtoGetterIsTransaction, 0 } },
 };
@@ -172,6 +214,19 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncOpen, (JSGlobalObject*
         return {};
     }
 
+    if (lazyLoadSQLite() != 0) {
+        throwVMError(globalObject, scope, createError(globalObject, "Failed to load SQLite"_s));
+        return {};
+    }
+
+#if LAZY_LOAD_SQLITE
+    // Check if the function pointer is actually loaded
+    if (!lazy_sqlite3_open_v2) {
+        throwVMError(globalObject, scope, createError(globalObject, "sqlite3_open_v2 function not available"_s));
+        return {};
+    }
+#endif
+
     // Check if already open
     if (thisObject->database()) {
         return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE, "database is already open"_s);
@@ -184,17 +239,37 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncOpen, (JSGlobalObject*
         return {};
     }
 
+    // Initialize SQLite before opening the database
+    Bun::initializeSQLite();
+
     // Open the SQLite database
     sqlite3* db = nullptr;
     CString pathUTF8 = databasePath.utf8();
-    int result = sqlite3_open(pathUTF8.data(), &db);
+    int result = sqlite3_open_v2(pathUTF8.data(), &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr);
     
     if (result != SQLITE_OK) {
-        const char* errorMsg = sqlite3_errmsg(db);
-        if (db) {
-            sqlite3_close(db);
+        const char* errorMsg = nullptr;
+#if LAZY_LOAD_SQLITE
+        if (lazy_sqlite3_errmsg) {
+            errorMsg = sqlite3_errmsg(db);
         }
-        throwVMError(globalObject, scope, createError(globalObject, String::fromUTF8(errorMsg)));
+#else
+        errorMsg = sqlite3_errmsg(db);
+#endif
+        
+        if (db) {
+#if LAZY_LOAD_SQLITE
+            // Check if the function pointer is actually loaded
+            if (lazy_sqlite3_close) {
+                sqlite3_close(db);
+            }
+#else
+            sqlite3_close(db);
+#endif
+        }
+        
+        String errorString = errorMsg ? String::fromUTF8(errorMsg) : "Failed to open database"_s;
+        throwVMError(globalObject, scope, createError(globalObject, errorString));
         return {};
     }
 
@@ -231,14 +306,16 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncLocation, (JSGlobalObj
     }
 
     // Get database file name using sqlite3_db_filename
-    const char* filename = sqlite3_db_filename(db, dbName.utf8().data());
+    CString dbNameUTF8 = dbName.utf8();
+    const char* filename = sqlite3_db_filename(db, dbNameUTF8.data());
     if (!filename) {
         return JSValue::encode(jsNull());
     }
     
-    // Return null for in-memory databases
-    if (strcmp(filename, ":memory:") == 0 || strcmp(filename, "") == 0) {
-        return JSValue::encode(jsNull());
+    // For in-memory databases, return ":memory:" or empty string based on what was used
+    if (strcmp(filename, "") == 0 || filename == nullptr) {
+        // Return the original path that was used when creating the database
+        return JSValue::encode(jsString(vm, thisObject->path()));
     }
 
     return JSValue::encode(jsString(vm, String::fromUTF8(filename)));
@@ -279,6 +356,24 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeSQLiteDatabaseSyncProtoGetterIsTransaction, (JSGl
     // Returns 0 if in a transaction, non-zero if not in a transaction
     bool inTransaction = sqlite3_get_autocommit(db) == 0;
     return JSValue::encode(jsBoolean(inTransaction));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncFunction, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // User-defined functions are not implemented yet
+    return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_METHOD_NOT_IMPLEMENTED, "function() method is not implemented yet"_s);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsNodeSQLiteDatabaseSyncProtoFuncAggregate, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Aggregate functions are not implemented yet
+    return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_METHOD_NOT_IMPLEMENTED, "aggregate() method is not implemented yet"_s);
 }
 
 

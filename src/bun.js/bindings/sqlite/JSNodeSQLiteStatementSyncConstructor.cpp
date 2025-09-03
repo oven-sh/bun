@@ -25,7 +25,6 @@
 #include "BunBuiltinNames.h"
 #include "ErrorCode.h"
 
-#include "sqlite3_local.h"
 #include <wtf/text/WTFString.h>
 
 namespace Bun {

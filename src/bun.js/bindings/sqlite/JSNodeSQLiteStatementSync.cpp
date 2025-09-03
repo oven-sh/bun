@@ -26,12 +26,12 @@
 #include "BunBuiltinNames.h"
 #include "ErrorCode.h"
 
-#include "sqlite3_local.h"
 #include <wtf/text/WTFString.h>
 
 #if LAZY_LOAD_SQLITE
 #include "lazy_sqlite3.h"
 #else
+#include "sqlite3_local.h"
 static inline int lazyLoadSQLite()
 {
     return 0;
@@ -109,9 +109,12 @@ JSNodeSQLiteStatementSync* JSNodeSQLiteStatementSync::create(VM& vm, Structure* 
     JSNodeSQLiteStatementSync* object = new (NotNull, allocateCell<JSNodeSQLiteStatementSync>(vm)) JSNodeSQLiteStatementSync(vm, structure, database);
     object->finishCreation(vm);
     
+    // Store the source SQL for the sourceSQL property
+    object->m_sourceSQL = sql;
+    
     if (lazyLoadSQLite() == 0) {
         CString sqlUTF8 = sql.utf8();
-        int result = sqlite3_prepare_v2(database->database(), sqlUTF8.data(), sqlUTF8.length(), &object->m_stmt, nullptr);
+        int result = sqlite3_prepare_v3(database->database(), sqlUTF8.data(), sqlUTF8.length(), 0, &object->m_stmt, nullptr);
         if (result != SQLITE_OK) {
             object->m_stmt = nullptr;
         }

@@ -79,48 +79,14 @@ static inline int lazyLoadSQLite()
 #endif
 /* ******************************************************************************** */
 
+#include "sqlite_init.h"
+
 #if !USE(SYSTEM_MALLOC)
 #include <bmalloc/BPlatform.h>
 #define ENABLE_SQLITE_FAST_MALLOC (BENABLE(MALLOC_SIZE) && BENABLE(MALLOC_GOOD_SIZE))
 #endif
 
-static std::atomic<int64_t> sqlite_malloc_amount = 0;
 
-static void enableFastMallocForSQLite()
-{
-#if ENABLE(SQLITE_FAST_MALLOC)
-    int returnCode = sqlite3_config(SQLITE_CONFIG_LOOKASIDE, 0, 0);
-    ASSERT_WITH_MESSAGE(returnCode == SQLITE_OK, "Unable to reduce lookaside buffer size");
-
-    static sqlite3_mem_methods fastMallocMethods = {
-        [](int n) {
-            auto* ret = fastMalloc(n);
-            sqlite_malloc_amount += fastMallocSize(ret);
-            return ret;
-        },
-        [](void* p) {
-            sqlite_malloc_amount -= fastMallocSize(p);
-            return fastFree(p);
-        },
-        [](void* p, int n) {
-            sqlite_malloc_amount -= fastMallocSize(p);
-            auto* out = fastRealloc(p, n);
-            sqlite_malloc_amount += fastMallocSize(out);
-
-            return out;
-        },
-        [](void* p) { return static_cast<int>(fastMallocSize(p)); },
-        [](int n) { return static_cast<int>(fastMallocGoodSize(n)); },
-        [](void*) { return SQLITE_OK; },
-        [](void*) {},
-        nullptr
-    };
-
-    returnCode = sqlite3_config(SQLITE_CONFIG_MALLOC, &fastMallocMethods);
-    ASSERT_WITH_MESSAGE(returnCode == SQLITE_OK, "Unable to replace SQLite malloc");
-
-#endif
-}
 
 class AutoDestructingSQLiteStatement {
 public:
@@ -132,13 +98,6 @@ public:
     }
 };
 
-static void initializeSQLite()
-{
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
-        enableFastMallocForSQLite();
-    });
-}
 
 static WTF::String sqliteString(const char* str)
 {
@@ -1139,7 +1098,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
     }
 #endif
 
-    initializeSQLite();
+    Bun::initializeSQLite();
 
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsBoolean(true)));
 }
@@ -1192,7 +1151,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
         return {};
     }
 #endif
-    initializeSQLite();
+    Bun::initializeSQLite();
 
     size_t byteLength = array->byteLength();
     void* ptr = array->vector();
@@ -1586,7 +1545,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
 
     // This is inherently somewhat racy if using Worker
     // but that should be okay.
-    int64_t currentMemoryUsage = sqlite_malloc_amount;
+    int64_t currentMemoryUsage = Bun::sqlite_malloc_amount;
 
     int rc = SQLITE_OK;
     rc = sqlite3_prepare_v3(db, reinterpret_cast<const char*>(utf8.span().data()), utf8.span().size(), flags, &statement, nullptr);
@@ -1596,7 +1555,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
         return {};
     }
 
-    int64_t memoryChange = sqlite_malloc_amount - currentMemoryUsage;
+    int64_t memoryChange = Bun::sqlite_malloc_amount - currentMemoryUsage;
 
     JSSQLStatement* sqlStatement = JSSQLStatement::create(
         reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject), statement, databases()[handle], memoryChange);
@@ -1653,7 +1612,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
         return {};
     }
 #endif
-    initializeSQLite();
+    Bun::initializeSQLite();
 
     auto catchScope = DECLARE_CATCH_SCOPE(vm);
     String path = pathValue.toWTFString(lexicalGlobalObject);
@@ -2109,7 +2068,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
         return {};
     }
 
-    int64_t currentMemoryUsage = sqlite_malloc_amount;
+    int64_t currentMemoryUsage = Bun::sqlite_malloc_amount;
 
     if (callFrame->argumentCount() > 0) {
         auto arg0 = callFrame->argument(0);
@@ -2170,7 +2129,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
         return {};
     }
 
-    int64_t memoryChange = sqlite_malloc_amount - currentMemoryUsage;
+    int64_t memoryChange = Bun::sqlite_malloc_amount - currentMemoryUsage;
     if (memoryChange > 255) {
         vm.heap.deprecatedReportExtraMemory(memoryChange);
     }

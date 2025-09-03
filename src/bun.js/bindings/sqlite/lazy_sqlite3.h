@@ -1,7 +1,9 @@
 #pragma once
 
 #include "root.h"
+#ifndef SQLITE3_H
 #include "sqlite3.h"
+#endif
 
 #if !OS(WINDOWS)
 #include <dlfcn.h>
@@ -67,6 +69,14 @@ typedef int (*lazy_sqlite3_column_type_type)(sqlite3_stmt*, int iCol);
 typedef int (*lazy_sqlite3_db_config_type)(sqlite3*, int op, ...);
 typedef const char* (*lazy_sqlite3_bind_parameter_name_type)(sqlite3_stmt*, int);
 
+typedef const char* (*lazy_sqlite3_db_filename_type)(sqlite3* db, const char* zDbName);
+typedef int (*lazy_sqlite3_exec_type)(
+    sqlite3*, /* An open database */
+    const char* sql, /* SQL to be evaluated */
+    int (*callback)(void*, int, char**, char**), /* Callback function */
+    void* arg, /* 1st argument to callback */
+    char** errmsg /* Error msg written here */
+);
 typedef int (*lazy_sqlite3_load_extension_type)(
     sqlite3* db, /* Load the extension into this database connection */
     const char* zFile, /* Name of the shared library containing extension */
@@ -113,6 +123,7 @@ static lazy_sqlite3_column_blob_type lazy_sqlite3_column_blob;
 static lazy_sqlite3_column_bytes_type lazy_sqlite3_column_bytes;
 static lazy_sqlite3_column_bytes16_type lazy_sqlite3_column_bytes16;
 static lazy_sqlite3_column_count_type lazy_sqlite3_column_count;
+static lazy_sqlite3_db_filename_type lazy_sqlite3_db_filename;
 static lazy_sqlite3_column_decltype_type lazy_sqlite3_column_decltype;
 static lazy_sqlite3_column_double_type lazy_sqlite3_column_double;
 static lazy_sqlite3_column_int_type lazy_sqlite3_column_int;
@@ -122,6 +133,7 @@ static lazy_sqlite3_column_text_type lazy_sqlite3_column_text;
 static lazy_sqlite3_column_type_type lazy_sqlite3_column_type;
 static lazy_sqlite3_errmsg_type lazy_sqlite3_errmsg;
 static lazy_sqlite3_errstr_type lazy_sqlite3_errstr;
+static lazy_sqlite3_exec_type lazy_sqlite3_exec;
 static lazy_sqlite3_expanded_sql_type lazy_sqlite3_expanded_sql;
 static lazy_sqlite3_finalize_type lazy_sqlite3_finalize;
 static lazy_sqlite3_free_type lazy_sqlite3_free;
@@ -165,6 +177,7 @@ static lazy_sqlite3_last_insert_rowid_type lazy_sqlite3_last_insert_rowid;
 #define sqlite3_column_blob lazy_sqlite3_column_blob
 #define sqlite3_column_bytes lazy_sqlite3_column_bytes
 #define sqlite3_column_count lazy_sqlite3_column_count
+#define sqlite3_db_filename lazy_sqlite3_db_filename
 #define sqlite3_column_decltype lazy_sqlite3_column_decltype
 #define sqlite3_column_double lazy_sqlite3_column_double
 #define sqlite3_column_int lazy_sqlite3_column_int
@@ -173,6 +186,7 @@ static lazy_sqlite3_last_insert_rowid_type lazy_sqlite3_last_insert_rowid;
 #define sqlite3_column_type lazy_sqlite3_column_type
 #define sqlite3_errmsg lazy_sqlite3_errmsg
 #define sqlite3_errstr lazy_sqlite3_errstr
+#define sqlite3_exec lazy_sqlite3_exec
 #define sqlite3_expanded_sql lazy_sqlite3_expanded_sql
 #define sqlite3_finalize lazy_sqlite3_finalize
 #define sqlite3_free lazy_sqlite3_free
@@ -252,6 +266,7 @@ static int lazyLoadSQLite()
     lazy_sqlite3_column_blob = (lazy_sqlite3_column_blob_type)dlsym(sqlite3_handle, "sqlite3_column_blob");
     lazy_sqlite3_column_bytes = (lazy_sqlite3_column_bytes_type)dlsym(sqlite3_handle, "sqlite3_column_bytes");
     lazy_sqlite3_column_count = (lazy_sqlite3_column_count_type)dlsym(sqlite3_handle, "sqlite3_column_count");
+    lazy_sqlite3_db_filename = (lazy_sqlite3_db_filename_type)dlsym(sqlite3_handle, "sqlite3_db_filename");
     lazy_sqlite3_column_decltype = (lazy_sqlite3_column_decltype_type)dlsym(sqlite3_handle, "sqlite3_column_decltype");
     lazy_sqlite3_column_double = (lazy_sqlite3_column_double_type)dlsym(sqlite3_handle, "sqlite3_column_double");
     lazy_sqlite3_column_int = (lazy_sqlite3_column_int_type)dlsym(sqlite3_handle, "sqlite3_column_int");
@@ -261,6 +276,7 @@ static int lazyLoadSQLite()
     lazy_sqlite3_column_type = (lazy_sqlite3_column_type_type)dlsym(sqlite3_handle, "sqlite3_column_type");
     lazy_sqlite3_errmsg = (lazy_sqlite3_errmsg_type)dlsym(sqlite3_handle, "sqlite3_errmsg");
     lazy_sqlite3_errstr = (lazy_sqlite3_errstr_type)dlsym(sqlite3_handle, "sqlite3_errstr");
+    lazy_sqlite3_exec = (lazy_sqlite3_exec_type)dlsym(sqlite3_handle, "sqlite3_exec");
     lazy_sqlite3_expanded_sql = (lazy_sqlite3_expanded_sql_type)dlsym(sqlite3_handle, "sqlite3_expanded_sql");
     lazy_sqlite3_finalize = (lazy_sqlite3_finalize_type)dlsym(sqlite3_handle, "sqlite3_finalize");
     lazy_sqlite3_free = (lazy_sqlite3_free_type)dlsym(sqlite3_handle, "sqlite3_free");

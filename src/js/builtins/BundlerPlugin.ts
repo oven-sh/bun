@@ -124,7 +124,7 @@ export function runOnEndCallbacks(
         $arrayPush(promises, result);
       }
     } catch (e) {
-      $arrayPush(promises, Promise.reject(e));
+      $arrayPush(promises, Promise.$reject(e));
     }
   }
 

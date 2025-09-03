@@ -152,10 +152,40 @@ declare module "bun:test" {
     type SpiedSetter<T> = JestMock.SpiedSetter<T>;
   }
 
+  /**
+   * Create a spy on an object property or method
+   */
   export function spyOn<T extends object, K extends keyof T>(
     obj: T,
     methodOrPropertyValue: K,
   ): Mock<Extract<T[K], (...args: any[]) => any>>;
+
+  /**
+   * Vitest-compatible mocking utilities
+   * Provides Vitest-style mocking API for easier migration from Vitest to Bun
+   */
+  export const vi: {
+    /**
+     * Create a mock function
+     */
+    fn: typeof jest.fn;
+    /**
+     * Create a spy on an object property or method
+     */
+    spyOn: typeof spyOn;
+    /**
+     * Mock a module
+     */
+    module: typeof mock.module;
+    /**
+     * Restore all mocks to their original implementation
+     */
+    restoreAllMocks: typeof jest.restoreAllMocks;
+    /**
+     * Clear all mock state (calls, results, etc.) without restoring original implementation
+     */
+    clearAllMocks: typeof jest.clearAllMocks;
+  };
 
   interface FunctionLike {
     readonly name: string;

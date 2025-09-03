@@ -608,7 +608,7 @@ pub const CommandLineReporter = struct {
         elapsed_ns: u64,
         writer: anytype,
     ) void {
-        var scopes_stack = std.BoundedArray(*describe2.DescribeScope, 64).init(0) catch unreachable;
+        var scopes_stack = bun.BoundedArray(*describe2.DescribeScope, 64).init(0) catch unreachable;
         var parent_: ?*describe2.DescribeScope = test_entry.base.parent;
         const assertions = sequence.expect_call_count;
         const line_number = test_entry.line_no;
@@ -1298,7 +1298,6 @@ pub const TestCommand = struct {
                 .smol = ctx.runtime_options.smol,
                 .debugger = ctx.runtime_options.debugger,
                 .is_main_thread = true,
-                .destruct_main_thread_on_exit = bun.getRuntimeFeatureFlag(.BUN_DESTRUCT_VM_ON_EXIT),
             },
         );
         vm.argv = ctx.passthrough;

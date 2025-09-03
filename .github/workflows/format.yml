@@ -8,10 +8,8 @@ on:
   workflow_dispatch:
   pull_request:
   merge_group:
-  push:
-    branches: ["main"]
 env:
-  BUN_VERSION: "1.2.11"
+  BUN_VERSION: "1.2.20"
   LLVM_VERSION: "19.1.7"
   LLVM_VERSION_MAJOR: "19"
 
@@ -37,6 +35,7 @@ jobs:
       - name: Setup Dependencies
         run: |
           bun install
+          bun scripts/glob-sources.mjs
       - name: Format Code
         run: |
           # Start prettier in background with prefixed output
@@ -62,7 +61,7 @@ jobs:
           (
             ZIG_TEMP=$(mktemp -d)
             echo "[zig] Downloading Zig (musl build)..."
-            wget -q -O "$ZIG_TEMP/zig.zip" https://github.com/oven-sh/zig/releases/download/autobuild-ebe0cdac3170b0462a39caff4d1d7252b608e98d/bootstrap-x86_64-linux-musl.zip
+            wget -q -O "$ZIG_TEMP/zig.zip" https://github.com/oven-sh/zig/releases/download/autobuild-e0b7c318f318196c5f81fdf3423816a7b5bb3112/bootstrap-x86_64-linux-musl.zip
             unzip -q -d "$ZIG_TEMP" "$ZIG_TEMP/zig.zip"
             export PATH="$ZIG_TEMP/bootstrap-x86_64-linux-musl:$PATH"
             echo "[zig] Running zig fmt..."

@@ -200,6 +200,7 @@ src/bun.js/bindings/sizes.zig
 src/bun.js/bindings/SourceProvider.zig
 src/bun.js/bindings/SourceType.zig
 src/bun.js/bindings/static_export.zig
+src/bun.js/bindings/StringBuilder.zig
 src/bun.js/bindings/SystemError.zig
 src/bun.js/bindings/TextCodec.zig
 src/bun.js/bindings/URL.zig
@@ -451,6 +452,7 @@ src/bundler/linker_context/writeOutputFilesToDisk.zig
 src/bundler/LinkerContext.zig
 src/bundler/LinkerGraph.zig
 src/bundler/ParseTask.zig
+src/bundler/PathToSourceIndexMap.zig
 src/bundler/ServerComponentParseTask.zig
 src/bundler/ThreadPool.zig
 src/bunfig.zig
@@ -499,6 +501,7 @@ src/codegen/process_windows_translate_c.zig
 src/collections.zig
 src/collections/baby_list.zig
 src/collections/bit_set.zig
+src/collections/BoundedArray.zig
 src/collections/hive_array.zig
 src/collections/multi_array_list.zig
 src/compile_target.zig
@@ -672,6 +675,7 @@ src/http/ETag.zig
 src/http/FetchRedirect.zig
 src/http/HeaderBuilder.zig
 src/http/Headers.zig
+src/http/HeaderValueIterator.zig
 src/http/HTTPCertError.zig
 src/http/HTTPContext.zig
 src/http/HTTPRequestBody.zig

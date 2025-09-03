@@ -412,11 +412,13 @@ pub const Jest = struct {
         mockFn.put(globalObject, ZigString.static("restore"), restoreAllMocks);
         mockFn.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
 
-        const jest = JSValue.createEmptyObject(globalObject, 8);
+        const jest = JSValue.createEmptyObject(globalObject, 10);
         jest.put(globalObject, ZigString.static("fn"), mockFn);
+        jest.put(globalObject, ZigString.static("mock"), mockModuleFn);
         jest.put(globalObject, ZigString.static("spyOn"), spyOn);
         jest.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
         jest.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
+        jest.put(globalObject, ZigString.static("resetAllMocks"), clearAllMocks);
         jest.put(
             globalObject,
             ZigString.static("setSystemTime"),
@@ -443,10 +445,10 @@ pub const Jest = struct {
             Expect.js.getConstructor(globalObject),
         );
 
-        const vi = JSValue.createEmptyObject(globalObject, 3);
+        const vi = JSValue.createEmptyObject(globalObject, 5);
         vi.put(globalObject, ZigString.static("fn"), mockFn);
+        vi.put(globalObject, ZigString.static("mock"), mockModuleFn);
         vi.put(globalObject, ZigString.static("spyOn"), spyOn);
-        vi.put(globalObject, ZigString.static("module"), mockModuleFn);
         vi.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
         vi.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
         module.put(globalObject, ZigString.static("vi"), vi);

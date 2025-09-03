@@ -418,7 +418,7 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
                                     else => {
                                         const value = std.fmt.parseInt(i32, element, 0) catch return error.UnsupportedArrayFormat;
 
-                                        try array.append(bun.default_allocator, SQLDataCell{ .tag = .int4, .value = .{ .int4 = @truncate(value) } });
+                                        try array.append(bun.default_allocator, SQLDataCell{ .tag = .int4, .value = .{ .int4 = value } });
                                         slice = trySlice(slice, current_idx);
                                         continue;
                                     },
@@ -776,7 +776,7 @@ fn parseBinaryNumeric(input: []const u8, result: *std.ArrayList(u8)) !PGNummeric
         // negative scale means we need to add zeros before the decimal point
         // greater than ndigits means we need to add zeros after the decimal point
         var idx: isize = scale_start;
-        const end: usize = @as(usize, result.items.len) + @as(usize, @max(dscale, 0));
+        const end: usize = result.items.len + @as(usize, @max(dscale, 0));
         while (idx < dscale) : (idx += 4) {
             if (idx >= 0 and idx < ndigits) {
                 const digit = reader.readInt(u16, .big) catch 0;
@@ -911,7 +911,7 @@ pub const Putter = struct {
         if (is_raw) {
             cell.* = SQLDataCell.raw(optional_bytes);
         } else {
-            const tag = if (std.math.maxInt(short) < oid) .text else @as(types.Tag, @enumFromInt(@as(short, @truncate(oid))));
+            const tag = if (std.math.maxInt(short) < oid) .text else @as(types.Tag, @enumFromInt(@as(short, @intCast(oid))));
             cell.* = if (optional_bytes) |data|
                 try fromBytes((field.binary or this.binary) and tag.isBinaryFormatSupported(), this.bigint, tag, data.slice(), this.globalObject)
             else
@@ -927,7 +927,7 @@ pub const Putter = struct {
             // The indexed columns can be out of order.
             .index => |i| i,
 
-            else => @truncate(index),
+            else => index,
         };
 
         // TODO: when duplicate and we know the result will be an object

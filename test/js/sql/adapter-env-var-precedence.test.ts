@@ -13,6 +13,21 @@ declare module "bun" {
 describe("SQL adapter environment variable precedence", () => {
   const originalEnv = { ...process.env };
 
+  // prettier-ignore
+  const SQL_ENV_VARS = [
+    'DATABASE_URL', 'DATABASEURL',
+    'TLS_DATABASE_URL',
+    'POSTGRES_URL', 'PGURL', 'PG_URL',
+    'TLS_POSTGRES_DATABASE_URL',
+    'MYSQL_URL', 'MYSQLURL',
+    'TLS_MYSQL_DATABASE_URL',
+    'MARIADB_URL', 'MARIADBURL',
+    'TLS_MARIADB_DATABASE_URL',
+    'SQLITE_URL', 'SQLITEURL',
+    'PGHOST', 'PGUSER', 'PGPASSWORD', 'PGDATABASE', 'PGPORT',
+    'MYSQL_HOST', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE', 'MYSQL_PORT'
+  ];
+
   beforeEach(() => {
     for (const key of Object.keys(process.env).concat(...Object.keys(Bun.env), ...Object.keys(import.meta.env))) {
       delete process.env[key];
@@ -24,6 +39,12 @@ describe("SQL adapter environment variable precedence", () => {
       process.env[key] = originalEnv[key];
       Bun.env[key] = originalEnv[key];
       import.meta.env[key] = originalEnv[key];
+    }
+
+    for (const key of SQL_ENV_VARS) {
+      delete process.env[key];
+      delete Bun.env[key];
+      delete import.meta.env[key];
     }
   });
 
@@ -38,6 +59,12 @@ describe("SQL adapter environment variable precedence", () => {
       process.env[key] = originalEnv[key];
       Bun.env[key] = originalEnv[key];
       import.meta.env[key] = originalEnv[key];
+    }
+
+    for (const key of SQL_ENV_VARS) {
+      delete process.env[key];
+      delete Bun.env[key];
+      delete import.meta.env[key];
     }
   });
 

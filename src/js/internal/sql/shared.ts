@@ -154,11 +154,6 @@ function parseDefinitelySqliteUrl(value: string | URL | null): string | null {
   return null;
 }
 
-function stripQueryParams(path: string): string {
-  const queryIndex = path.indexOf("?");
-  return queryIndex !== -1 ? path.slice(0, queryIndex) : path;
-}
-
 function parseSQLiteOptions(
   filenameOrUrl: string | URL | null | undefined,
   options: Bun.SQL.__internal.OptionsWithDefinedAdapter,

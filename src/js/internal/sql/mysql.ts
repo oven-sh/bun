@@ -319,7 +319,7 @@ class PooledMySQLConnection {
         // performance overhead if possible. It is only provided as the default for
         // backward compatibility, and is not recommended in secure deployments.
         sslMode || SSLMode.disable,
-        tls || null,
+        tls || false,
         query || "",
         path || "",
         onConnected,

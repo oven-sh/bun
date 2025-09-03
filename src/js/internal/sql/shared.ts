@@ -814,7 +814,7 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   normalizeQuery(strings: string | TemplateStringsArray, values: unknown[]): [sql: string, values: unknown[]];
   createQueryHandle(sql: string, values: unknown[], flags: number): QueryHandle;
   connect(onConnected: OnConnected<Connection>, reserved?: boolean): void;
-  release(connection: ConnectionHandle, connectingEvent?: boolean): void;
+  release(connection: Connection, connectingEvent?: boolean): void;
   close(options?: { timeout?: number }): Promise<void>;
   flush(): void;
 

@@ -2246,7 +2246,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 if (req_len > this.config.max_request_body_size) {
                     resp.writeStatus("413 Request Entity Too Large");
                     resp.endWithoutBody(true);
-                    this.finalize();
+                    
+                    // Clean up the request context to avoid memory leak and segfault
+                    // finalizeWithoutDeinit handles cleanup of request_weakref and signal
+                    ctx.finalizeWithoutDeinit();
+                    ctx.deinit();
+                    _ = body.unref();
+                    
+                    // Decrement pending request count since we're not processing this request
+                    this.onRequestComplete();
                     return null;
                 }
 

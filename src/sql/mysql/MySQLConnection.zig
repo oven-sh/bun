@@ -1015,6 +1015,8 @@ pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_v
     if (handshake_success) {
         this.tls_status = .ssl_ok;
         if (this.tls_config.reject_unauthorized != 0) {
+            // follow the same rules as postgres
+            // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
             // only reject the connection if reject_unauthorized == true
             switch (this.ssl_mode) {
                 .verify_ca, .verify_full => {
@@ -1033,7 +1035,8 @@ pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_v
                         }
                     }
                 },
-                else => {},
+                // require is the same as prefer
+                .require, .prefer, .disable => {},
             }
         }
         this.sendHandshakeResponse() catch |err| this.failFmt(err, "Failed to send handshake response", .{});
@@ -1240,7 +1243,8 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
             .verify_ca, .verify_full => {
                 return this.failFmt(error.AuthenticationFailed, "SSL is not available", .{});
             },
-            else => {},
+            // require is the same as prefer
+            .require, .prefer, .disable => {},
         }
     }
     // Send auth response

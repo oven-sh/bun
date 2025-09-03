@@ -509,12 +509,27 @@ pub const StandaloneModuleGraph = struct {
         }
     };
 
-    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) bun.FileDescriptor {
+    pub const InjectError = struct {
+        message: []const u8,
+
+        pub fn deinit(this: *const @This()) void {
+            bun.default_allocator.free(this.message);
+        }
+    };
+
+    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) bun.Maybe(bun.FileDescriptor, InjectError) {
         var buf: bun.PathBuffer = undefined;
 
         var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
-            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
-            return bun.invalid_fd;
+            return .{
+                .err = .{
+                    .message = std.fmt.allocPrint(
+                        bun.default_allocator,
+                        "failed to get temporary file name: {s}",
+                        .{@errorName(err)},
+                    ) catch |e| bun.handleOom(e),
+                },
+            };
         });
 
         const cleanup = struct {
@@ -544,8 +559,15 @@ pub const StandaloneModuleGraph = struct {
                     const out = out_buf[0..zname.len :0];
 
                     bun.copyFile(in, out).unwrap() catch |err| {
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
-                        return bun.invalid_fd;
+                        return .{
+                            .err = .{
+                                .message = std.fmt.allocPrint(
+                                    bun.default_allocator,
+                                    "failed to copy bun executable into temporary file: {s}",
+                                    .{@errorName(err)},
+                                ) catch |e| bun.handleOom(e),
+                            },
+                        };
                     };
                     const file = bun.sys.openFileAtWindows(
                         bun.invalid_fd,
@@ -556,8 +578,15 @@ pub const StandaloneModuleGraph = struct {
                             .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
                         },
                     ).unwrap() catch |e| {
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}", .{e});
-                        return bun.invalid_fd;
+                        return .{
+                            .err = .{
+                                .message = std.fmt.allocPrint(
+                                    bun.default_allocator,
+                                    "failed to open temporary file to copy bun into: {}",
+                                    .{e},
+                                ) catch |err| bun.handleOom(err),
+                            },
+                        };
                     };
 
                     break :brk file;
@@ -610,9 +639,15 @@ pub const StandaloneModuleGraph = struct {
                                         else => break,
                                     }
 
-                                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}", .{err});
-                                    // No fd to cleanup yet, just return error
-                                    return bun.invalid_fd;
+                                    return .{
+                                        .err = .{
+                                            .message = std.fmt.allocPrint(
+                                                bun.default_allocator,
+                                                "failed to open temporary file to copy bun into: {}",
+                                                .{err},
+                                            ) catch |e| bun.handleOom(e),
+                                        },
+                                    };
                                 }
                             },
                         }
@@ -632,9 +667,16 @@ pub const StandaloneModuleGraph = struct {
                                     }
                                 }
 
-                                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open bun executable to copy from as read-only\n{}", .{err});
                                 cleanup(zname, fd);
-                                return bun.invalid_fd;
+                                return .{
+                                    .err = .{
+                                        .message = std.fmt.allocPrint(
+                                            bun.default_allocator,
+                                            "failed to open bun executable to copy from as read-only: {}",
+                                            .{err},
+                                        ) catch |e| bun.handleOom(e),
+                                    },
+                                };
                             },
                         }
                     }
@@ -644,9 +686,16 @@ pub const StandaloneModuleGraph = struct {
                 defer self_fd.close();
 
                 bun.copyFile(self_fd, fd).unwrap() catch |err| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
                     cleanup(zname, fd);
-                    return bun.invalid_fd;
+                    return .{
+                        .err = .{
+                            .message = std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "failed to copy bun executable into temporary file: {s}",
+                                .{@errorName(err)},
+                            ) catch |e| bun.handleOom(e),
+                        },
+                    };
                 };
 
                 break :brk fd;
@@ -663,24 +712,52 @@ pub const StandaloneModuleGraph = struct {
             .mac => {
                 const input_result = file.readToEnd(bun.default_allocator);
                 if (input_result.err) |err| {
-                    Output.prettyErrorln("Error reading standalone module graph: {}", .{err});
-                    return bun.invalid_fd;
+                    return .{
+                        .err = .{
+                            .message = std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "reading standalone module graph: {}",
+                                .{err},
+                            ) catch |e| bun.handleOom(e),
+                        },
+                    };
                 }
                 var macho_file = bun.macho.MachoFile.init(bun.default_allocator, input_result.bytes.items, bytes.len) catch |err| {
-                    Output.prettyErrorln("Error initializing standalone module graph: {}", .{err});
-                    return bun.invalid_fd;
+                    return .{
+                        .err = .{
+                            .message = std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "initializing standalone module graph: {}",
+                                .{err},
+                            ) catch |e| bun.handleOom(e),
+                        },
+                    };
                 };
                 defer macho_file.deinit();
                 macho_file.writeSection(bytes) catch |err| {
-                    Output.prettyErrorln("Error writing standalone module graph: {}", .{err});
-                    return bun.invalid_fd;
+                    return .{
+                        .err = .{
+                            .message = std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "writing standalone module graph: {}",
+                                .{err},
+                            ) catch |e| bun.handleOom(e),
+                        },
+                    };
                 };
                 input_result.bytes.deinit();
 
                 switch (file.setFileOffset(0)) {
                     .err => |err| {
-                        Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
-                        return bun.invalid_fd;
+                        return .{
+                            .err = .{
+                                .message = std.fmt.allocPrint(
+                                    bun.default_allocator,
+                                    "seeking to start of temporary file: {}",
+                                    .{err},
+                                ) catch |e| bun.handleOom(e),
+                            },
+                        };
                     },
                     else => {},
                 }
@@ -692,70 +769,133 @@ pub const StandaloneModuleGraph = struct {
                     .unbuffered_writer = writer,
                 };
                 macho_file.buildAndSign(buffered_writer.writer()) catch |err| {
-                    Output.prettyErrorln("Error writing standalone module graph: {}", .{err});
-                    return bun.invalid_fd;
+                    return .{
+                        .err = .{
+                            .message = std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "writing standalone module graph: {}",
+                                .{err},
+                            ) catch |e| bun.handleOom(e),
+                        },
+                    };
                 };
                 buffered_writer.flush() catch |err| {
-                    Output.prettyErrorln("Error flushing standalone module graph: {}", .{err});
-                    return bun.invalid_fd;
+                    return .{
+                        .err = .{
+                            .message = std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "flushing standalone module graph: {}",
+                                .{err},
+                            ) catch |e| bun.handleOom(e),
+                        },
+                    };
                 };
                 if (comptime !Environment.isWindows) {
                     _ = file.fchmod(0o777);
                 }
                 needs_cleanup = false;
-                return file.handle;
+                return .{ .result = file.handle };
             },
             .windows => {
                 const input_result = file.readToEnd(bun.default_allocator);
                 if (input_result.err) |err| {
-                    Output.prettyErrorln("Error reading standalone module graph: {}", .{err});
-                    return bun.invalid_fd;
+                    return .{
+                        .err = .{
+                            .message = std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "reading standalone module graph: {}",
+                                .{err},
+                            ) catch |e| bun.handleOom(e),
+                        },
+                    };
                 }
                 var pe_file = bun.pe.PEFile.init(bun.default_allocator, input_result.bytes.items) catch |err| {
-                    Output.prettyErrorln("Error initializing PE file: {}", .{err});
-                    return bun.invalid_fd;
+                    return .{
+                        .err = .{
+                            .message = std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "initializing PE file: {}",
+                                .{err},
+                            ) catch |e| bun.handleOom(e),
+                        },
+                    };
                 };
                 defer pe_file.deinit();
                 pe_file.addBunSection(bytes) catch |err| {
-                    Output.prettyErrorln("Error adding Bun section to PE file: {}", .{err});
-                    return bun.invalid_fd;
+                    return .{
+                        .err = .{
+                            .message = std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "adding Bun section to PE file: {}",
+                                .{err},
+                            ) catch |e| bun.handleOom(e),
+                        },
+                    };
                 };
                 input_result.bytes.deinit();
 
                 switch (file.setFileOffset(0)) {
                     .err => |err| {
-                        Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
-                        return bun.invalid_fd;
+                        return .{
+                            .err = .{
+                                .message = std.fmt.allocPrint(
+                                    bun.default_allocator,
+                                    "seeking to start of temporary file: {}",
+                                    .{err},
+                                ) catch |e| bun.handleOom(e),
+                            },
+                        };
                     },
                     else => {},
                 }
 
                 const writer = file.writer();
                 pe_file.write(writer) catch |err| {
-                    Output.prettyErrorln("Error writing PE file: {}", .{err});
-                    return bun.invalid_fd;
+                    return .{
+                        .err = .{
+                            .message = std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "writing PE file: {}",
+                                .{err},
+                            ) catch |e| bun.handleOom(e),
+                        },
+                    };
                 };
                 // Set executable permissions when running on POSIX hosts, even for Windows targets
                 if (comptime !Environment.isWindows) {
                     _ = file.fchmod(0o777);
                 }
                 needs_cleanup = false;
-                return file.handle;
+                return .{ .result = file.handle };
             },
             else => {
                 var total_byte_count: usize = undefined;
                 if (Environment.isWindows) {
                     total_byte_count = bytes.len + 8 + (Syscall.setFileOffsetToEndWindows(file.handle).unwrap() catch |err| {
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> failed to seek to end of temporary file\n{}", .{err});
-                        return bun.invalid_fd;
+                        return .{
+                            .err = .{
+                                .message = std.fmt.allocPrint(
+                                    bun.default_allocator,
+                                    "failed to seek to end of temporary file: {}",
+                                    .{err},
+                                ) catch |e| bun.handleOom(e),
+                            },
+                        };
                     });
                 } else {
                     const seek_position = @as(u64, @intCast(brk: {
                         const fstat = switch (file.stat()) {
                             .result => |res| res,
                             .err => |err| {
-                                Output.prettyErrorln("{}", .{err});
-                                return bun.invalid_fd;
+                                return .{
+                                    .err = .{
+                                        .message = std.fmt.allocPrint(
+                                            bun.default_allocator,
+                                            "{}",
+                                            .{err},
+                                        ) catch |e| bun.handleOom(e),
+                                    },
+                                };
                             },
                         };
 
@@ -774,14 +914,15 @@ pub const StandaloneModuleGraph = struct {
                     //
                     switch (file.setFileOffset(seek_position)) {
                         .err => |err| {
-                            Output.prettyErrorln(
-                                "{}\nwhile seeking to end of temporary file (pos: {d})",
-                                .{
-                                    err,
-                                    seek_position,
+                            return .{
+                                .err = .{
+                                    .message = std.fmt.allocPrint(
+                                        bun.default_allocator,
+                                        "{} while seeking to end of temporary file (pos: {d})",
+                                        .{ err, seek_position },
+                                    ) catch |e| bun.handleOom(e),
                                 },
-                            );
-                            return bun.invalid_fd;
+                            };
                         },
                         else => {},
                     }
@@ -790,8 +931,15 @@ pub const StandaloneModuleGraph = struct {
                 switch (file.writeAll(bytes)) {
                     .result => {},
                     .err => |err| {
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write to temporary file\n{}", .{err});
-                        return bun.invalid_fd;
+                        return .{
+                            .err = .{
+                                .message = std.fmt.allocPrint(
+                                    bun.default_allocator,
+                                    "failed to write to temporary file: {}",
+                                    .{err},
+                                ) catch |e| bun.handleOom(e),
+                            },
+                        };
                     },
                 }
 
@@ -802,14 +950,21 @@ pub const StandaloneModuleGraph = struct {
                 }
 
                 needs_cleanup = false;
-                return file.handle;
+                return .{ .result = file.handle };
             },
         }
 
         if (Environment.isWindows and inject_options.hide_console) {
             bun.windows.editWin32BinarySubsystem(.{ .handle = file }, .windows_gui) catch |err| {
-                Output.err(err, "failed to disable console on executable", .{});
-                return bun.invalid_fd;
+                return .{
+                    .err = .{
+                        .message = std.fmt.allocPrint(
+                            bun.default_allocator,
+                            "failed to disable console on executable: {}",
+                            .{err},
+                        ) catch |e| bun.handleOom(e),
+                    },
+                };
             };
         }
 
@@ -823,8 +978,15 @@ pub const StandaloneModuleGraph = struct {
         {
             var zname_buf: bun.OSPathBuffer = undefined;
             const zname_w = bun.strings.toWPathNormalized(&zname_buf, zname) catch |err| {
-                Output.err(err, "failed to resolve executable path", .{});
-                return bun.invalid_fd;
+                return .{
+                    .err = .{
+                        .message = std.fmt.allocPrint(
+                            bun.default_allocator,
+                            "failed to resolve executable path: {}",
+                            .{err},
+                        ) catch |e| bun.handleOom(e),
+                    },
+                };
             };
 
             // Single call to set all Windows metadata at once
@@ -837,13 +999,20 @@ pub const StandaloneModuleGraph = struct {
                 inject_options.description,
                 inject_options.copyright,
             ) catch |err| {
-                Output.err(err, "failed to set Windows metadata on executable", .{});
-                return bun.invalid_fd;
+                return .{
+                    .err = .{
+                        .message = std.fmt.allocPrint(
+                            bun.default_allocator,
+                            "failed to set Windows metadata on executable: {}",
+                            .{err},
+                        ) catch |e| bun.handleOom(e),
+                    },
+                };
             };
         }
 
         needs_cleanup = false;
-        return file;
+        return .{ .result = file.handle };
     }
 
     pub const CompileTarget = @import("./compile_target.zig");
@@ -955,12 +1124,17 @@ pub const StandaloneModuleGraph = struct {
             allocator.free(self_exe);
         };
 
-        var fd = inject(
+        var fd = switch (inject(
             bytes,
             self_exe,
             windows_options,
             target,
-        );
+        )) {
+            .result => |result| result,
+            .err => |err| {
+                return CompileResult.fail(err.message);
+            },
+        };
         defer if (fd != bun.invalid_fd) fd.close();
         bun.debugAssert(fd.kind == .system);
 

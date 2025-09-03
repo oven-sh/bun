@@ -1367,7 +1367,7 @@ pub fn handleOnDataHeaders(
     // handle the case where we have a 100 Continue
     if (response.status_code >= 100 and response.status_code < 200) {
         log("information headers", .{});
-        
+
         // Only handle specific 1xx codes that are followed by another response
         switch (response.status_code) {
             100, // Continue - server will send final response

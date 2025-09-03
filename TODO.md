@@ -293,6 +293,7 @@ Exited with code [1]
   - [ ] there should be an issue that this can close
 - [ ] support the default per-test timeout
 - [ ] add retry/run-multiple-times back
+- [ ] test passing bad values to describe()/test()
 - [x] report expect counts per-test
 - [x] make --bail work again
 - [x] update types for `test.concurrent.skip.only()`

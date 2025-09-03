@@ -84,6 +84,8 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
     const override_timeout_ms = if (bun.jsc.Jest.Jest.runner) |runner| runner.default_timeout_override else std.math.maxInt(u32);
     const final_default_timeout_ms = if (override_timeout_ms != std.math.maxInt(u32)) override_timeout_ms else default_timeout_ms;
 
+    const callback_length = if (args.callback) |callback| try callback.getLength(globalThis) else 0;
+
     if (this.each != .zero) {
         if (this.each.isUndefinedOrNull() or !this.each.isArray()) {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
@@ -117,6 +119,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
             try this.enqueueDescribeOrTestCallback(bunTest, callback, formatted_label, .{
                 .line_no = line_no,
                 .timeout = std.math.lossyCast(u32, args.options.timeout orelse @as(f64, @floatFromInt(final_default_timeout_ms))),
+                .has_done_parameter = callback_length > (if (callback) |*c| c.args.get().len else 0),
             });
         }
     } else {
@@ -126,6 +129,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
         try this.enqueueDescribeOrTestCallback(bunTest, callback, args.description, .{
             .line_no = line_no,
             .timeout = std.math.lossyCast(u32, args.options.timeout orelse @as(f64, @floatFromInt(final_default_timeout_ms))),
+            .has_done_parameter = callback_length > 0,
         });
     }
 

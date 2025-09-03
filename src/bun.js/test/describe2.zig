@@ -56,6 +56,7 @@ pub const js_fns = struct {
                     _ = try bunTestRoot.hook_scope.appendHook(bunTestRoot.gpa, tag, callback, .{
                         .line_no = 0,
                         .timeout = 0,
+                        .has_done_parameter = false,
                     }, .{});
                     return .js_undefined;
                 };
@@ -65,6 +66,7 @@ pub const js_fns = struct {
                         try bunTest.collection.enqueueHookCallback(tag, callback, .{
                             .line_no = 0,
                             .timeout = 0,
+                            .has_done_parameter = false,
                         }, .{});
 
                         return .js_undefined;
@@ -485,12 +487,9 @@ pub const BunTestFile = struct {
 
         var done_callback: ?jsc.JSValue = null;
         if (cfg.done_parameter) {
-            const length = try cfg.callback.callback.get().getLength(globalThis);
-            if (length > cfg.callback.args.get().len) {
-                group.log("callTestCallback -> appending done callback param: data {}", .{cfg.data});
-                done_callback = DoneCallback.create(globalThis, this, cfg.data);
-                args.append(this.gpa, done_callback.?);
-            }
+            group.log("callTestCallback -> appending done callback param: data {}", .{cfg.data});
+            done_callback = DoneCallback.create(globalThis, this, cfg.data);
+            args.append(this.gpa, done_callback.?);
         }
 
         const result: ?jsc.JSValue = cfg.callback.callback.get().call(globalThis, .js_undefined, args.get()) catch |e| blk: {
@@ -739,6 +738,7 @@ pub const ExecutionEntryCfg = struct {
     line_no: u32,
     /// std.math.maxInt(u32) = no timeout
     timeout: u32 = std.math.maxInt(u32),
+    has_done_parameter: bool,
 };
 pub const ExecutionEntry = struct {
     base: BaseScope,
@@ -746,8 +746,9 @@ pub const ExecutionEntry = struct {
     /// only available if using junit reporter, otherwise 0
     line_no: u32,
     result: Execution.Result = .pending,
-    /// '0' = no timeout
+    /// std.math.maxInt(u32) = no timeout
     timeout: u32,
+    has_done_parameter: bool,
     /// '.epoch' = not set
     /// when this entry begins executing, the timespec will be set to the current time plus the timeout(ms).
     /// runOne will return the lowest timespec
@@ -760,6 +761,7 @@ pub const ExecutionEntry = struct {
             .callback = if (cb) |c| c.dupe(gpa) else null,
             .line_no = cfg.line_no,
             .timeout = cfg.timeout,
+            .has_done_parameter = cfg.has_done_parameter,
         });
         return entry;
     }

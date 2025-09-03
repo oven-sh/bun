@@ -227,7 +227,8 @@ fn advanceSequenceInGroup(this: *Execution, sequence: *ExecutionSequence, sequen
             },
         };
         groupLog.log("runSequence queued callback: {}", .{callback_data});
-        try callback_queue.append(.{ .callback = cb.dupe(this.bunTest().gpa), .done_parameter = true, .data = callback_data });
+
+        try callback_queue.append(.{ .callback = cb.dupe(this.bunTest().gpa), .done_parameter = next_item.has_done_parameter, .data = callback_data });
         return .{ .execute = .{ .timeout = next_item.timespec } };
     } else {
         switch (next_item.base.mode) {

@@ -8,3 +8,4 @@ test.concurrent(
 test.concurrent("this one fails due to default timeout", async () => {
   await Bun.sleep(10_000);
 });
+test.concurrent("done callback is never called", done => {});

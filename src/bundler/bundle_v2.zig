@@ -1934,17 +1934,27 @@ pub const BundleV2 = struct {
             const dirname = std.fs.path.dirname(full_outfile_path) orelse ".";
             const basename = std.fs.path.basename(full_outfile_path);
 
-            var root_dir = bun.FD.cwd().stdDir();
+            var root_dir = if (dirname.len == 0 or strings.eqlComptime(dirname, "."))
+                bun.FD.cwd().stdDir()
+            else if (std.fs.path.isAbsolute(dirname))
+                // If dirname is absolute, open it directly
+                std.fs.openDirAbsolute(dirname, .{}) catch brk: {
+                    // Try to create it if it doesn't exist
+                    std.fs.makeDirAbsolute(dirname) catch {};
+                    break :brk std.fs.openDirAbsolute(dirname, .{}) catch |err2| {
+                        return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to open output directory {s}: {s}", .{ dirname, @errorName(err2) })));
+                    };
+                }
+            else
+                // If dirname is relative, create it relative to cwd
+                bun.FD.cwd().stdDir().makeOpenPath(dirname, .{}) catch |err| {
+                    return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to open output directory {s}: {s}", .{ dirname, @errorName(err) })));
+                };
+                
             defer {
                 if (bun.FD.fromStdDir(root_dir) != bun.FD.cwd()) {
                     root_dir.close();
                 }
-            }
-
-            if (!(dirname.len == 0 or strings.eqlComptime(dirname, "."))) {
-                root_dir = root_dir.makeOpenPath(dirname, .{}) catch |err| {
-                    return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to open output directory {s}: {s}", .{ dirname, @errorName(err) })));
-                };
             }
 
             // Use the target-specific base path for compile mode, not the user-configured public_path

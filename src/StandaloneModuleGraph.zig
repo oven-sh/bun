@@ -1010,15 +1010,16 @@ pub const StandaloneModuleGraph = struct {
                 windows_options.copyright != null)
             {
                 // Need to get the full path to the executable
+                // The file has been moved to root_dir/outfile
                 var full_path_buf: bun.OSPathBuffer = undefined;
                 const full_path = brk: {
-                    // Get the directory path
+                    // Get the absolute path to the directory
                     var dir_buf: bun.PathBuffer = undefined;
                     const dir_path = bun.getFdPath(bun.FD.fromStdDir(root_dir), &dir_buf) catch |err| {
                         return CompileResult.fail(std.fmt.allocPrint(allocator, "Failed to get directory path: {s}", .{@errorName(err)}) catch "Failed to get directory path");
                     };
 
-                    // Join with the outfile name
+                    // The file is at dir_path/outfile (outfile is just the basename)
                     const full_path_str = bun.path.joinAbsString(dir_path, &[_][]const u8{outfile}, .auto);
                     const full_path_w = bun.strings.toWPathNormalized(&full_path_buf, full_path_str);
                     const buf_u16 = bun.reinterpretSlice(u16, &full_path_buf);

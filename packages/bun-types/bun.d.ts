@@ -1673,11 +1673,16 @@ declare module "bun" {
    * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
    */
   interface BuildConfigBase {
-    entrypoints: string[]; // list of file path
+    /**
+     * List of entrypoints, usually file paths
+     */
+    entrypoints: string[];
+
     /**
      * @default "browser"
      */
     target?: Target; // default: "browser"
+
     /**
      * Output module format. Top-level await is only supported for `"esm"`.
      *
@@ -1908,12 +1913,28 @@ declare module "bun" {
      * ```
      */
     compile: boolean | Bun.Build.Target | CompileBuildOptions;
+
+    /**
+     * Splitting is not currently supported with `.compile`
+     */
+    splitting?: never;
+  }
+
+  interface NormalBuildConfig extends BuildConfigBase {
+    /**
+     * Enable code splitting
+     *
+     * This does not currently work with {@link CompileBuildConfig.compile `compile`}
+     *
+     * @default true
+     */
+    splitting?: boolean;
   }
 
   /**
    * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
    */
-  type BuildConfig = BuildConfigBase | CompileBuildConfig;
+  type BuildConfig = CompileBuildConfig | NormalBuildConfig;
 
   /**
    * Hash and verify passwords using argon2 or bcrypt
@@ -5510,10 +5531,17 @@ declare module "bun" {
     defer: () => Promise<void>;
   }
 
+  interface OnBeforeParseArgs {
+    napiModule: unknown;
+    symbol: string;
+    external?: unknown | undefined;
+  }
+
   type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | void;
   type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
   type OnStartCallback = () => void | Promise<void>;
   type OnEndCallback = (result: BuildOutput) => void | Promise<void>;
+  type OnBeforeParseCallback = (args: OnBeforeParseArgs) => void | Promise<void>;
 
   interface OnResolveArgs {
     /**
@@ -5610,14 +5638,7 @@ declare module "bun" {
      * @returns `this` for method chaining
      */
     onEnd(callback: OnEndCallback): this;
-    onBeforeParse(
-      constraints: PluginConstraints,
-      callback: {
-        napiModule: unknown;
-        symbol: string;
-        external?: unknown | undefined;
-      },
-    ): this;
+    onBeforeParse(constraints: PluginConstraints, callback: OnBeforeParseCallback): this;
     /**
      * Register a callback to load imports with a specific import specifier
      * @param constraints The constraints to apply the plugin to

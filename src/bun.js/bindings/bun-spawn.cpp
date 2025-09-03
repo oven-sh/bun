@@ -118,7 +118,7 @@ extern "C" ssize_t posix_spawn_bun(
                         // fcntl failed - the fd might be invalid
                         return childFailed();
                     }
-                    
+
                     mask &= ~FD_CLOEXEC;
                     if (fcntl(action.fds[0], F_SETFD, mask) == -1) {
                         return childFailed();
@@ -195,7 +195,7 @@ extern "C" ssize_t posix_spawn_bun(
             // Properly capture and handle the wait status to ensure error propagation
             int wait_status = 0;
             pid_t wait_result = wait4(child, &wait_status, 0, 0);
-            
+
             // Check if wait4 succeeded and handle the child's exit status
             if (wait_result > 0) {
                 if (WIFEXITED(wait_status)) {

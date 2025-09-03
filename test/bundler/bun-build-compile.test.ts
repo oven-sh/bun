@@ -117,8 +117,9 @@ describe("Bun.build compile", () => {
     // Test with default target (current platform)
     const result = await Bun.build({
       entrypoints: [join(dir + "", "app.js")],
-      compile: true,  // Use default target
-      outfile: "app-with-resources",
+      compile: {
+        outfile: "app-with-resources",
+      },
     });
 
     expect(result.success).toBe(true);

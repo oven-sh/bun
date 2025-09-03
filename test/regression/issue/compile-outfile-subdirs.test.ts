@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { existsSync, mkdirSync } from "fs";
 import { execSync } from "child_process";
 
 describe("compile --outfile with subdirectories", () => {
   test("places executable in subdirectory with forward slash", async () => {
-    const dir = tempDirWithFiles("compile-subdir-forward", {
+    using dir = tempDir("compile-subdir-forward", {
       "app.js": `console.log("Hello from subdirectory!");`,
     });
 
@@ -14,9 +14,9 @@ describe("compile --outfile with subdirectories", () => {
     const outfile = "subdir/nested/app.exe";
     
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", join(dir, "app.js"), "--outfile", outfile],
+      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
       env: bunEnv,
-      cwd: dir,
+      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -31,7 +31,7 @@ describe("compile --outfile with subdirectories", () => {
     expect(stderr).toBe("");
     
     // Check that the file exists in the subdirectory
-    const expectedPath = join(dir, "subdir", "nested", "app.exe");
+    const expectedPath = join(String(dir), "subdir", "nested", "app.exe");
     expect(existsSync(expectedPath)).toBe(true);
     
     // Run the executable to verify it works
@@ -46,7 +46,7 @@ describe("compile --outfile with subdirectories", () => {
   });
 
   test("places executable in subdirectory with backslash", async () => {
-    const dir = tempDirWithFiles("compile-subdir-backslash", {
+    using dir = tempDir("compile-subdir-backslash", {
       "app.js": `console.log("Hello with backslash!");`,
     });
 
@@ -54,9 +54,9 @@ describe("compile --outfile with subdirectories", () => {
     const outfile = "subdir\\nested\\app.exe";
     
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", join(dir, "app.js"), "--outfile", outfile],
+      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
       env: bunEnv,
-      cwd: dir,
+      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -71,12 +71,12 @@ describe("compile --outfile with subdirectories", () => {
     expect(stderr).toBe("");
     
     // Check that the file exists in the subdirectory
-    const expectedPath = join(dir, "subdir", "nested", "app.exe");
+    const expectedPath = join(String(dir), "subdir", "nested", "app.exe");
     expect(existsSync(expectedPath)).toBe(true);
   });
 
   test("creates parent directories if they don't exist", async () => {
-    const dir = tempDirWithFiles("compile-create-dirs", {
+    using dir = tempDir("compile-create-dirs", {
       "app.js": `console.log("Created directories!");`,
     });
 
@@ -84,9 +84,9 @@ describe("compile --outfile with subdirectories", () => {
     const outfile = "a/b/c/d/e/app.exe";
     
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", join(dir, "app.js"), "--outfile", outfile],
+      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
       env: bunEnv,
-      cwd: dir,
+      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -95,12 +95,12 @@ describe("compile --outfile with subdirectories", () => {
     expect(exitCode).toBe(0);
     
     // Check that the file and all directories were created
-    const expectedPath = join(dir, "a", "b", "c", "d", "e", "app.exe");
+    const expectedPath = join(String(dir), "a", "b", "c", "d", "e", "app.exe");
     expect(existsSync(expectedPath)).toBe(true);
   });
 
   test.if(isWindows)("Windows metadata works with subdirectories", async () => {
-    const dir = tempDirWithFiles("compile-metadata-subdir", {
+    using dir = tempDir("compile-metadata-subdir", {
       "app.js": `console.log("App with metadata!");`,
     });
 
@@ -111,7 +111,7 @@ describe("compile --outfile with subdirectories", () => {
         bunExe(),
         "build",
         "--compile",
-        join(dir, "app.js"),
+        join(String(dir), "app.js"),
         "--outfile",
         outfile,
         "--windows-title",
@@ -122,7 +122,7 @@ describe("compile --outfile with subdirectories", () => {
         "App in a subdirectory",
       ],
       env: bunEnv,
-      cwd: dir,
+      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -136,7 +136,7 @@ describe("compile --outfile with subdirectories", () => {
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
     
-    const expectedPath = join(dir, "output", "bin", "app.exe");
+    const expectedPath = join(String(dir), "output", "bin", "app.exe");
     expect(existsSync(expectedPath)).toBe(true);
     
     // Verify metadata was set correctly
@@ -157,7 +157,7 @@ describe("compile --outfile with subdirectories", () => {
   });
 
   test("fails gracefully when parent is a file", async () => {
-    const dir = tempDirWithFiles("compile-parent-is-file", {
+    using dir = tempDir("compile-parent-is-file", {
       "app.js": `console.log("Won't compile!");`,
       "blocked": "This is a file, not a directory",
     });
@@ -166,9 +166,9 @@ describe("compile --outfile with subdirectories", () => {
     const outfile = "blocked/app.exe";
     
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", join(dir, "app.js"), "--outfile", outfile],
+      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
       env: bunEnv,
-      cwd: dir,
+      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -185,7 +185,7 @@ describe("compile --outfile with subdirectories", () => {
   });
 
   test("works with . and .. in paths", async () => {
-    const dir = tempDirWithFiles("compile-relative-paths", {
+    using dir = tempDir("compile-relative-paths", {
       "src/app.js": `console.log("Relative paths work!");`,
     });
 
@@ -193,9 +193,9 @@ describe("compile --outfile with subdirectories", () => {
     const outfile = "./output/../output/./app.exe";
     
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", join(dir, "src", "app.js"), "--outfile", outfile],
+      cmd: [bunExe(), "build", "--compile", join(String(dir), "src", "app.js"), "--outfile", outfile],
       env: bunEnv,
-      cwd: dir,
+      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -204,24 +204,24 @@ describe("compile --outfile with subdirectories", () => {
     expect(exitCode).toBe(0);
     
     // Should normalize to output/app.exe
-    const expectedPath = join(dir, "output", "app.exe");
+    const expectedPath = join(String(dir), "output", "app.exe");
     expect(existsSync(expectedPath)).toBe(true);
   });
 });
 
 describe("Bun.build() compile with subdirectories", () => {
   test("places executable in subdirectory via API", async () => {
-    const dir = tempDirWithFiles("api-compile-subdir", {
+    using dir = tempDir("api-compile-subdir", {
       "app.js": `console.log("API subdirectory test!");`,
     });
 
     const result = await Bun.build({
-      entrypoints: [join(dir, "app.js")],
+      entrypoints: [join(String(dir), "app.js")],
       compile: {
         target: "bun-windows-x64",
         outfile: "dist/bin/app.exe",
       },
-      outdir: dir,
+      outdir: String(dir),
     });
 
     expect(result.success).toBe(true);
@@ -232,17 +232,17 @@ describe("Bun.build() compile with subdirectories", () => {
     expect(result.outputs[0].path).toContain("bin");
     
     // File should exist at the expected location
-    const expectedPath = join(dir, "dist", "bin", "app.exe");
+    const expectedPath = join(String(dir), "dist", "bin", "app.exe");
     expect(existsSync(expectedPath)).toBe(true);
   });
 
   test.if(isWindows)("API with Windows metadata and subdirectories", async () => {
-    const dir = tempDirWithFiles("api-metadata-subdir", {
+    using dir = tempDir("api-metadata-subdir", {
       "app.js": `console.log("API with metadata!");`,
     });
 
     const result = await Bun.build({
-      entrypoints: [join(dir, "app.js")],
+      entrypoints: [join(String(dir), "app.js")],
       compile: {
         target: "bun-windows-x64",
         outfile: "build/release/app.exe",
@@ -252,12 +252,12 @@ describe("Bun.build() compile with subdirectories", () => {
           publisher: "Test Publisher",
         },
       },
-      outdir: dir,
+      outdir: String(dir),
     });
 
     expect(result.success).toBe(true);
     
-    const expectedPath = join(dir, "build", "release", "app.exe");
+    const expectedPath = join(String(dir), "build", "release", "app.exe");
     expect(existsSync(expectedPath)).toBe(true);
     
     // Verify metadata

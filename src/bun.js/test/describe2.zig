@@ -253,6 +253,7 @@ pub const BunTestFile = struct {
     file_id: jsc.Jest.TestRunner.File.ID,
     /// null if the runner has moved on to the next file
     reporter: ?*test_command.CommandLineReporter,
+    timer: bun.api.Timer.EventLoopTimer = .{ .next = .epoch, .tag = .BunTestFile },
 
     phase: enum {
         collection,
@@ -283,6 +284,11 @@ pub const BunTestFile = struct {
     pub fn deinit(this: *BunTestFile) void {
         group.begin(@src());
         defer group.end();
+
+        if (this.timer.state == .ACTIVE) {
+            // must remove an active timer to prevent UAF (if the timer were to trigger after BunTestFile deinit)
+            bun.jsc.VirtualMachine.get().timer.remove(&this.timer);
+        }
 
         this.done_promise.deinit();
         this.execution.deinit();
@@ -432,6 +438,16 @@ pub const BunTestFile = struct {
 
         try this.runOneCompleted(globalThis, if (is_catch) null else err_arg, data);
         try this.run(globalThis);
+    }
+    pub fn bunTestTimeoutCallback(this: *BunTestFile, now: *const bun.timespec, vm: *jsc.VirtualMachine) bun.api.Timer.EventLoopTimer.Arm {
+        group.begin(@src());
+        defer group.end();
+        group.log("bunTestTimeoutCallback", .{});
+        // TODO
+        _ = this;
+        _ = now;
+        _ = vm;
+        return .disarm;
     }
 
     pub fn run(this: *BunTestFile, globalThis: *jsc.JSGlobalObject) bun.JSError!void {

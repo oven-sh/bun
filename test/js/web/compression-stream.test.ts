@@ -205,13 +205,28 @@ test("streaming compression with multiple writes", async () => {
   expect(result).toBe("Hello, World!");
 });
 
-test("CompressionStream rejects non-ArrayBuffer input", async () => {
+test("CompressionStream accepts string input", async () => {
   const cs = new CompressionStream("gzip");
   const writer = cs.writable.getWriter();
 
-  await expect(writer.write("not an arraybuffer" as any)).rejects.toThrow();
+  // Strings should now be accepted
+  await expect(writer.write("test string")).resolves.toBeUndefined();
+  
+  await writer.close();
+});
+
+test("CompressionStream rejects invalid input types", async () => {
+  const cs = new CompressionStream("gzip");
+  const writer = cs.writable.getWriter();
+  
+  // Numbers and plain objects should still throw
   await expect(writer.write(123 as any)).rejects.toThrow();
-  await expect(writer.write({} as any)).rejects.toThrow();
+  
+  // Create a new stream since the first one errored
+  const cs2 = new CompressionStream("gzip");
+  const writer2 = cs2.writable.getWriter();
+  
+  await expect(writer2.write({} as any)).rejects.toThrow();
 });
 
 test("DecompressionStream rejects non-ArrayBuffer input", async () => {
@@ -251,6 +266,60 @@ test("format parameter is case-insensitive", () => {
   expect(() => new CompressionStream("DEFLATE" as any)).not.toThrow();
   expect(() => new CompressionStream("Deflate-Raw" as any)).not.toThrow();
   expect(() => new CompressionStream("BROTLI" as any)).not.toThrow();
+});
+
+test("string input compression and decompression", async () => {
+  const testString = "Hello, World! This is a test of string compression.";
+  
+  const cs = new CompressionStream("gzip");
+  const writer = cs.writable.getWriter();
+  const reader = cs.readable.getReader();
+  
+  // Write string directly (no TextEncoder needed)
+  await writer.write(testString);
+  await writer.close();
+  
+  const chunks: Uint8Array[] = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  
+  const compressed = new Uint8Array(chunks.reduce((acc, chunk) => acc + chunk.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    compressed.set(chunk, offset);
+    offset += chunk.length;
+  }
+  
+  // Now decompress
+  const ds = new DecompressionStream("gzip");
+  const dsWriter = ds.writable.getWriter();
+  const dsReader = ds.readable.getReader();
+  
+  await dsWriter.write(compressed);
+  await dsWriter.close();
+  
+  const decompressedChunks: Uint8Array[] = [];
+  while (true) {
+    const { done, value } = await dsReader.read();
+    if (done) break;
+    decompressedChunks.push(value);
+  }
+  
+  const result = bytesToString(
+    new Uint8Array(
+      decompressedChunks.reduce((acc, chunk) => {
+        const combined = new Uint8Array(acc.length + chunk.length);
+        combined.set(acc);
+        combined.set(chunk, acc.length);
+        return combined;
+      }, new Uint8Array(0))
+    )
+  );
+  
+  expect(result).toBe(testString);
 });
 
 test("compression actually reduces size for repetitive data", async () => {

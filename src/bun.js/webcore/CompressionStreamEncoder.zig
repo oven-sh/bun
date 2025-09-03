@@ -26,6 +26,7 @@ pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 
+
 pub fn finalize(this: *CompressionStreamEncoder) void {
     // Clean up the compressor state
     switch (this.state) {
@@ -160,6 +161,88 @@ pub fn constructor(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun
     return encoder;
 }
 
+fn encodeBrotli(this: *CompressionStreamEncoder, encoder: *bun.brotli.c.BrotliEncoder, chunk_slice: []const u8, globalObject: *JSGlobalObject) bun.JSError!void {
+    // Process input with Brotli streaming compression
+    const result = encoder.compressStream(.process, chunk_slice);
+    if (!result.success) {
+        return globalObject.throwValue(globalObject.createErrorInstance("Brotli compression failed", .{}));
+    }
+
+    // Add the initial output
+    if (result.output.len > 0) {
+        this.pending_output.appendSlice(result.output) catch |err| {
+            return globalObject.throwError(err, "Out of memory");
+        };
+    }
+
+    // Brotli may have more output buffered - keep taking output until none left
+    while (encoder.hasMoreOutput()) {
+        const output_chunk = encoder.takeOutput();
+        if (output_chunk.len > 0) {
+            this.pending_output.appendSlice(output_chunk) catch |err| {
+                return globalObject.throwError(err, "Out of memory");
+            };
+        }
+    }
+}
+
+fn encodeZlib(this: *CompressionStreamEncoder, stream: *zlib.z_stream, chunk_slice: []const u8, globalObject: *JSGlobalObject) bun.JSError!void {
+    // Process input with zlib streaming compression
+    var output_buf: [16384]u8 = undefined;
+
+    stream.next_in = @constCast(@ptrCast(chunk_slice.ptr));
+    stream.avail_in = @intCast(chunk_slice.len);
+
+    while (stream.avail_in > 0 or stream.avail_out == 0) {
+        stream.next_out = &output_buf;
+        stream.avail_out = output_buf.len;
+
+        const rc = zlib.deflate(stream, .NoFlush);
+        if (rc != .Ok and rc != .StreamEnd) {
+            return globalObject.throwValue(globalObject.createErrorInstance("Compression failed", .{}));
+        }
+
+        const bytes_written = output_buf.len - stream.avail_out;
+        if (bytes_written > 0) {
+            this.pending_output.appendSlice(output_buf[0..bytes_written]) catch |err| {
+                return globalObject.throwError(err, "Out of memory");
+            };
+        }
+
+        if (rc == .StreamEnd) break;
+        if (stream.avail_in == 0 and bytes_written == 0) break;
+    }
+}
+
+fn encodeZstd(this: *CompressionStreamEncoder, stream: *bun.c.ZSTD_CStream, chunk_slice: []const u8, globalObject: *JSGlobalObject) bun.JSError!void {
+    // Process input with zstd streaming compression
+    var input = bun.c.ZSTD_inBuffer{
+        .src = chunk_slice.ptr,
+        .size = chunk_slice.len,
+        .pos = 0,
+    };
+
+    var output_buf: [16384]u8 = undefined;
+    while (input.pos < input.size) {
+        var output = bun.c.ZSTD_outBuffer{
+            .dst = &output_buf,
+            .size = output_buf.len,
+            .pos = 0,
+        };
+
+        const rc = bun.c.ZSTD_compressStream(stream, &output, &input);
+        if (bun.c.ZSTD_isError(rc) != 0) {
+            return globalObject.throwValue(globalObject.createErrorInstance("Zstd compression failed", .{}));
+        }
+
+        if (output.pos > 0) {
+            this.pending_output.appendSlice(output_buf[0..output.pos]) catch |err| {
+                return globalObject.throwError(err, "Out of memory");
+            };
+        }
+    }
+}
+
 pub fn encode(this: *CompressionStreamEncoder, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
     const arguments = callFrame.arguments_old(1).slice();
     if (arguments.len == 0) {
@@ -167,95 +250,25 @@ pub fn encode(this: *CompressionStreamEncoder, globalObject: *JSGlobalObject, ca
     }
 
     const chunk_value = arguments[0];
-    var chunk_slice: []const u8 = &.{};
+    
+    // Handle string and buffer inputs using StringOrBuffer
+    const string_or_buffer = try JSC.Node.StringOrBuffer.fromJS(globalObject, this.allocator, chunk_value) orelse {
+        return globalObject.throwInvalidArguments("Input must be a string, ArrayBuffer or TypedArray", .{});
+    };
+    defer string_or_buffer.deinit();
+    
+    const chunk_slice = string_or_buffer.slice();
 
-    // Handle ArrayBuffer and TypedArrays
-    if (chunk_value.asArrayBuffer(globalObject)) |array_buffer| {
-        chunk_slice = array_buffer.slice();
-    } else {
-        return globalObject.throwInvalidArguments("Input must be an ArrayBuffer or TypedArray", .{});
-    }
-
-    // Process even empty chunks as they might produce output from buffered data
+    // Process the chunk
     switch (this.state) {
         .brotli => |encoder| {
-            // Process input with Brotli streaming compression
-            const result = encoder.compressStream(.process, chunk_slice);
-            if (!result.success) {
-                return globalObject.throwValue(globalObject.createErrorInstance("Brotli compression failed", .{}));
-            }
-
-            // Add the initial output
-            if (result.output.len > 0) {
-                this.pending_output.appendSlice(result.output) catch |err| {
-                    return globalObject.throwError(err, "Out of memory");
-                };
-            }
-
-            // Brotli may have more output buffered - keep taking output until none left
-            while (encoder.hasMoreOutput()) {
-                const output_chunk = encoder.takeOutput();
-                if (output_chunk.len > 0) {
-                    this.pending_output.appendSlice(output_chunk) catch |err| {
-                        return globalObject.throwError(err, "Out of memory");
-                    };
-                }
-            }
+            try this.encodeBrotli(encoder, chunk_slice, globalObject);
         },
         .deflate, .gzip, .deflate_raw => |stream| {
-            // Process input with zlib streaming compression
-            var output_buf: [16384]u8 = undefined;
-
-            stream.next_in = @constCast(@ptrCast(chunk_slice.ptr));
-            stream.avail_in = @intCast(chunk_slice.len);
-
-            while (stream.avail_in > 0 or stream.avail_out == 0) {
-                stream.next_out = &output_buf;
-                stream.avail_out = output_buf.len;
-
-                const rc = zlib.deflate(stream, .NoFlush);
-                if (rc != .Ok and rc != .StreamEnd) {
-                    return globalObject.throwValue(globalObject.createErrorInstance("Compression failed", .{}));
-                }
-
-                const bytes_written = output_buf.len - stream.avail_out;
-                if (bytes_written > 0) {
-                    this.pending_output.appendSlice(output_buf[0..bytes_written]) catch |err| {
-                        return globalObject.throwError(err, "Out of memory");
-                    };
-                }
-
-                if (rc == .StreamEnd) break;
-                if (stream.avail_in == 0 and bytes_written == 0) break;
-            }
+            try this.encodeZlib(stream, chunk_slice, globalObject);
         },
         .zstd => |stream| {
-            // Process input with zstd streaming compression
-            var input = bun.c.ZSTD_inBuffer{
-                .src = chunk_slice.ptr,
-                .size = chunk_slice.len,
-                .pos = 0,
-            };
-
-            var output_buf: [16384]u8 = undefined;
-            while (input.pos < input.size) {
-                var output = bun.c.ZSTD_outBuffer{
-                    .dst = &output_buf,
-                    .size = output_buf.len,
-                    .pos = 0,
-                };
-
-                const rc = bun.c.ZSTD_compressStream(stream, &output, &input);
-                if (bun.c.ZSTD_isError(rc) != 0) {
-                    return globalObject.throwValue(globalObject.createErrorInstance("Zstd compression failed", .{}));
-                }
-
-                if (output.pos > 0) {
-                    this.pending_output.appendSlice(output_buf[0..output.pos]) catch |err| {
-                        return globalObject.throwError(err, "Out of memory");
-                    };
-                }
-            }
+            try this.encodeZstd(stream, chunk_slice, globalObject);
         },
         .uninitialized => {
             return globalObject.throwValue(globalObject.createErrorInstance("Encoder not initialized", .{}));
@@ -274,86 +287,98 @@ pub fn encode(this: *CompressionStreamEncoder, globalObject: *JSGlobalObject, ca
     return JSValue.jsNull();
 }
 
+fn flushBrotli(this: *CompressionStreamEncoder, encoder: *bun.brotli.c.BrotliEncoder, globalObject: *JSGlobalObject) bun.JSError!void {
+    // Flush remaining data with Brotli
+    const result = encoder.compressStream(.finish, "");
+    if (!result.success) {
+        return globalObject.throwValue(globalObject.createErrorInstance("Brotli flush failed", .{}));
+    }
+
+    // Add the initial output
+    if (result.output.len > 0) {
+        this.pending_output.appendSlice(result.output) catch |err| {
+            return globalObject.throwError(err, "Out of memory");
+        };
+    }
+
+    // Brotli may have more output buffered - keep taking output until none left
+    while (encoder.hasMoreOutput()) {
+        const output_chunk = encoder.takeOutput();
+        if (output_chunk.len > 0) {
+            this.pending_output.appendSlice(output_chunk) catch |err| {
+                return globalObject.throwError(err, "Out of memory");
+            };
+        }
+    }
+}
+
+fn flushZlib(this: *CompressionStreamEncoder, stream: *zlib.z_stream, globalObject: *JSGlobalObject) bun.JSError!void {
+    // Flush remaining data with zlib
+    var output_buf: [16384]u8 = undefined;
+
+    stream.next_in = null;
+    stream.avail_in = 0;
+
+    while (true) {
+        stream.next_out = &output_buf;
+        stream.avail_out = output_buf.len;
+
+        const rc = zlib.deflate(stream, .Finish);
+
+        const bytes_written = output_buf.len - stream.avail_out;
+        if (bytes_written > 0) {
+            this.pending_output.appendSlice(output_buf[0..bytes_written]) catch |err| {
+                return globalObject.throwError(err, "Out of memory");
+            };
+        }
+
+        if (rc == .StreamEnd) break;
+        if (rc != .Ok and rc != .BufError) {
+            return globalObject.throwValue(globalObject.createErrorInstance("Flush failed", .{}));
+        }
+    }
+}
+
+fn flushZstd(this: *CompressionStreamEncoder, stream: *bun.c.ZSTD_CStream, globalObject: *JSGlobalObject) bun.JSError!void {
+    // Flush remaining data with zstd
+    var output_buf: [16384]u8 = undefined;
+
+    while (true) {
+        var output = bun.c.ZSTD_outBuffer{
+            .dst = &output_buf,
+            .size = output_buf.len,
+            .pos = 0,
+        };
+
+        const rc = bun.c.ZSTD_endStream(stream, &output);
+        if (bun.c.ZSTD_isError(rc) != 0) {
+            return globalObject.throwValue(globalObject.createErrorInstance("Zstd flush failed", .{}));
+        }
+
+        if (output.pos > 0) {
+            this.pending_output.appendSlice(output_buf[0..output.pos]) catch |err| {
+                return globalObject.throwError(err, "Out of memory");
+            };
+        }
+
+        // rc == 0 means all data has been flushed
+        if (rc == 0) break;
+    }
+}
+
 pub fn flush(this: *CompressionStreamEncoder, globalObject: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
     // Clear any pending output
     this.pending_output.clearRetainingCapacity();
 
     switch (this.state) {
         .brotli => |encoder| {
-            // Flush remaining data with Brotli
-            const result = encoder.compressStream(.finish, "");
-            if (!result.success) {
-                return globalObject.throwValue(globalObject.createErrorInstance("Brotli flush failed", .{}));
-            }
-
-            // Add the initial output
-            if (result.output.len > 0) {
-                this.pending_output.appendSlice(result.output) catch |err| {
-                    return globalObject.throwError(err, "Out of memory");
-                };
-            }
-
-            // Brotli may have more output buffered - keep taking output until none left
-            while (encoder.hasMoreOutput()) {
-                const output_chunk = encoder.takeOutput();
-                if (output_chunk.len > 0) {
-                    this.pending_output.appendSlice(output_chunk) catch |err| {
-                        return globalObject.throwError(err, "Out of memory");
-                    };
-                }
-            }
+            try this.flushBrotli(encoder, globalObject);
         },
         .deflate, .gzip, .deflate_raw => |stream| {
-            // Flush remaining data with zlib
-            var output_buf: [16384]u8 = undefined;
-
-            stream.next_in = null;
-            stream.avail_in = 0;
-
-            while (true) {
-                stream.next_out = &output_buf;
-                stream.avail_out = output_buf.len;
-
-                const rc = zlib.deflate(stream, .Finish);
-
-                const bytes_written = output_buf.len - stream.avail_out;
-                if (bytes_written > 0) {
-                    this.pending_output.appendSlice(output_buf[0..bytes_written]) catch |err| {
-                        return globalObject.throwError(err, "Out of memory");
-                    };
-                }
-
-                if (rc == .StreamEnd) break;
-                if (rc != .Ok and rc != .BufError) {
-                    return globalObject.throwValue(globalObject.createErrorInstance("Flush failed", .{}));
-                }
-            }
+            try this.flushZlib(stream, globalObject);
         },
         .zstd => |stream| {
-            // Flush remaining data with zstd
-            var output_buf: [16384]u8 = undefined;
-
-            while (true) {
-                var output = bun.c.ZSTD_outBuffer{
-                    .dst = &output_buf,
-                    .size = output_buf.len,
-                    .pos = 0,
-                };
-
-                const rc = bun.c.ZSTD_endStream(stream, &output);
-                if (bun.c.ZSTD_isError(rc) != 0) {
-                    return globalObject.throwValue(globalObject.createErrorInstance("Zstd flush failed", .{}));
-                }
-
-                if (output.pos > 0) {
-                    this.pending_output.appendSlice(output_buf[0..output.pos]) catch |err| {
-                        return globalObject.throwError(err, "Out of memory");
-                    };
-                }
-
-                // rc == 0 means all data has been flushed
-                if (rc == 0) break;
-            }
+            try this.flushZstd(stream, globalObject);
         },
         .uninitialized => {
             return globalObject.throwValue(globalObject.createErrorInstance("Encoder not initialized", .{}));

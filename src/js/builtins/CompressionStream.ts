@@ -46,9 +46,7 @@ export function initializeCompressionStream(format) {
     return Promise.$resolve();
   };
   const transformAlgorithm = chunk => {
-    if (!$isObject(chunk) || (!(chunk instanceof ArrayBuffer) && !(chunk.buffer instanceof ArrayBuffer)))
-      return Promise.$reject($makeTypeError("Invalid type should be ArrayBuffer"));
-
+    // No longer need to check for ArrayBuffer since the encoder handles strings now
     try {
       const encoder = $getByIdDirectPrivate(this, "compressionStreamEncoder");
 

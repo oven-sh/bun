@@ -239,13 +239,6 @@ Exited with code [1]
 
 # Complete before merge:
 
-- [ ] Add timeouts back
-  - When we begin executing a test group, mark the end_before times of each item in the group
-  - Start a timer for the min of these times
-  - When a test group ends, cancel the timer
-  - When the timer triggers, find any tests which are past their end time. Mark them as timed out.
-  - After this, start the next timer with the new first incomplete test timeout time
-
 - [x] Add expect counts back
 - [ ] add back expecting a test to have a certain number of expect calls
 - [ ] add a test for this scenerio
@@ -258,7 +251,7 @@ Exited with code [1]
   });
   test("another test", async () => {});
   ```
-- [ ] Add timeouts back
+- [x] Add timeouts back
   - When we begin executing a test group, mark the end_before times of each item in the group
   - Start a timer for the min of these times
   - When a test group ends, cancel the timer
@@ -296,9 +289,9 @@ Exited with code [1]
     - jest: beforeAll1 beforeAll2 beforeEach1 beforeEach2 test1 <b>afterEach1</b> afterEach2 beforeEach1 beforeEach2 test1 <b>afterEach1</b> afterEach2 afterAll1 afterAll2
     - bun: beforeAll1 beforeAll2 beforeEach1 beforeEach2 test1 <b>afterEach1</b> <s>afterEach2</s> beforeEach1 beforeEach2 test1 <b>afterEach1</b> <s>afterEach2</s> afterAll1 afterAll2
 - [x] make the summary work again
-- [ ] add timeouts back
 - [ ] when a timeout triggers on a funciton with a done callback because the done callback was never called, note in the error that the function must call the done callback
   - [ ] there should be an issue that this can close
+- [ ] support the default per-test timeout
 - [ ] add retry/run-multiple-times back
 - [x] report expect counts per-test
 - [x] make --bail work again

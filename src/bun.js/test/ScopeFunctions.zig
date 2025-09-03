@@ -100,7 +100,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
             var callback: ?describe2.CallbackWithArgs = if (args.callback) |callback| .init(bunTest.gpa, callback, &.{}) else null;
             defer if (callback) |*cb| cb.deinit(bunTest.gpa);
 
-            if (item.isUndefinedOrNull() and item.isArray()) {
+            if (item.isArray()) {
                 // Spread array as args (matching Jest & Vitest)
                 if (callback) |*c| c.args.ensureUnusedCapacity(bunTest.gpa, try item.getLength(globalThis));
 

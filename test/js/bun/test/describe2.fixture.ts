@@ -113,4 +113,14 @@ test.concurrent("LINE 74", () => console.log("LINE 74"));
 test("this test times out", () => Bun.sleep(100), 1);
 test("this test times out with done", done => {}, 1);
 
+// == each ==
+test.each([
+  [1, 2, 3],
+  [2, 3, 5],
+  [3, 4, 7],
+])("addition %i + %i = %i", (a, b, expected) => {
+  console.log(`adding: ${a} + ${b} = ${expected}`);
+  expect(a + b).toBe(expected);
+});
+
 console.log("exit");

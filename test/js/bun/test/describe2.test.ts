@@ -50,15 +50,18 @@ test("describe/test", async () => {
     (fail) this test times out
       ^ this test timed out.
     (fail) this test times out with done
-      ^ this test timed out because the done callback was never called. If this was not intended, remove the last parameter from the test callback function
+      ^ this test timed out before the done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
+    (pass) addition 1 + 2 = 3
+    (pass) addition 2 + 3 = 5
+    (pass) addition 3 + 4 = 7
 
-     9 pass
+     12 pass
      2 skip
      1 todo
      5 fail
      1 error
-     1 snapshots, 2 expect() calls
-    Ran 17 tests across 1 file."
+     1 snapshots, 5 expect() calls
+    Ran 20 tests across 1 file."
     ,
       "stdout": 
     "bun test <version> (<revision>)
@@ -105,7 +108,10 @@ test("describe/test", async () => {
     LINE 70 2
     LINE 70 3
     LINE 71
-    LINE 74"
+    LINE 74
+    adding: 1 + 2 = 3
+    adding: 2 + 3 = 5
+    adding: 3 + 4 = 7"
     ,
     }
   `);

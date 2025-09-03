@@ -258,13 +258,14 @@ Exited with code [1]
   - When the timer triggers, find any tests which are past their end time. Mark them as timed out.
     - should we advance the sequence in this case or end it completely? not sure. see what vitest/jest do when beforeAll/afterAll exceed the test timeout
   - After this, start the next timer with the new first incomplete test timeout time
-- [ ] make sure junit works
+- [x] make sure junit works
 - [ ] support having both a done callback and a promise result
-- [ ] support expect counter
+- [x] support expect counter
 - [ ] decide if beforeEach/beforeAll/afterEach/afterAll should skip executing the test and when. do we match existing behaviour, jest, vitest, or diverge? what does existing behaviour/jest/vitest do?
 - [ ] support `expect.assertions()` in non-concurrent tests
 - [ ] test behaviour of `expect.assertions()` in concurrent tests
 - [ ] test what happens when done callback is called after the test fails to timeout, or promise resolves after. make sure we match existing behaviour
+- [ ] validate junit output does not regress (make sure the generated xml files are identical to existing behaviour)
 - [x] finalize describe call order. ideally `A[B, C], D[E, F[G]]` will run in normal order rather than `A, D, B, C, E, F, G`
 - [x] sometimes error messages aren't printing!
 - [x] make sure it exits with code 1 on failure

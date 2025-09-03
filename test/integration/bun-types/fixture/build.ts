@@ -41,10 +41,17 @@ Bun.build({
           expectType(result.logs).is<Array<BuildMessage | ResolveMessage>>();
         });
 
-        build.onBeforeParse({ filter: /^hey$/ }, args => {
-          expectType(args).is<Bun.OnBeforeParseArgs>();
-          expectType(args.symbol).is<string>();
-        });
+        build.onBeforeParse(
+          {
+            namespace: "file",
+            filter: /\.tsx$/,
+          },
+          {
+            napiModule: {},
+            symbol: "replace_foo_with_bar",
+            // external: myNativeAddon.getSharedState()
+          },
+        );
       },
     },
   ],

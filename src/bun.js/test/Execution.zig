@@ -160,7 +160,12 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
                     break; // done
                 };
                 sequence.executing = true;
-                this.onSequenceStarted(sequence);
+                if (sequence.index == 0) {
+                    this.onSequenceStarted(sequence);
+                }
+                this.onEntryStarted(next_item);
+
+                // switch(executeEntry) {.immediate => continue, .queued => {}}
 
                 if (next_item.callback) |cb| {
                     groupLog.log("runSequence queued callback", .{});
@@ -280,6 +285,9 @@ fn advanceSequence(this: *Execution, sequence: *ExecutionSequence) void {
 }
 fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     sequence.started_at = bun.timespec.now();
+}
+fn onEntryStarted(_: *Execution, entry: *ExecutionEntry) void {
+    entry.timespec = bun.timespec.now().addMs(entry.timeout);
 }
 fn onSequenceCompleted(this: *Execution, sequence: *ExecutionSequence) void {
     const elapsed_ns = sequence.started_at.sinceNow();

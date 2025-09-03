@@ -230,57 +230,57 @@ describe("Connection & Initialization", () => {
 
   describe("options.url overrides first argument", () => {
     test("should use options.url for postgres when it overrides first argument", () => {
-      const sql = new SQL("http://wrong-host/db", { 
+      const sql = new SQL("http://wrong-host/db", {
         adapter: "postgres",
-        url: "postgres://correct-host:5432/mydb"
+        url: "postgres://correct-host:5432/mydb",
       });
-      
+
       expect(sql.options.adapter).toBe("postgres");
       expect(sql.options.hostname).toBe("correct-host");
       expect(sql.options.port).toBe(5432);
       expect(sql.options.database).toBe("mydb");
-      
+
       sql.close();
     });
 
     test("should use options.url for mysql when it overrides first argument", () => {
-      const sql = new SQL("http://wrong-host/wrongdb", { 
+      const sql = new SQL("http://wrong-host/wrongdb", {
         adapter: "mysql",
-        url: "mysql://user:pass@mysql-host:3306/correctdb"
+        url: "mysql://user:pass@mysql-host:3306/correctdb",
       });
-      
+
       expect(sql.options.adapter).toBe("mysql");
       expect(sql.options.hostname).toBe("mysql-host");
       expect(sql.options.port).toBe(3306);
       expect(sql.options.database).toBe("correctdb");
-      
+
       sql.close();
     });
 
     test("should use options.url for mariadb when it overrides first argument", () => {
-      const sql = new SQL("http://wrong-host:1234/wrongdb", { 
+      const sql = new SQL("http://wrong-host:1234/wrongdb", {
         adapter: "mariadb",
-        url: "mariadb://maria-host:3307/mariadb"
+        url: "mariadb://maria-host:3307/mariadb",
       });
-      
+
       expect(sql.options.adapter).toBe("mariadb");
       expect(sql.options.hostname).toBe("maria-host");
       expect(sql.options.port).toBe(3307);
       expect(sql.options.database).toBe("mariadb");
-      
+
       sql.close();
     });
 
     test("should use first argument when options.url is not provided", () => {
-      const sql = new SQL("postgres://first-arg-host:5432/firstdb", { 
-        adapter: "postgres"
+      const sql = new SQL("postgres://first-arg-host:5432/firstdb", {
+        adapter: "postgres",
       });
-      
+
       expect(sql.options.adapter).toBe("postgres");
       expect(sql.options.hostname).toBe("first-arg-host");
       expect(sql.options.port).toBe(5432);
       expect(sql.options.database).toBe("firstdb");
-      
+
       sql.close();
     });
   });

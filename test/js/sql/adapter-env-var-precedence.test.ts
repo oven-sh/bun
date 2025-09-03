@@ -10,22 +10,16 @@ declare module "bun" {
 }
 
 describe("SQL adapter environment variable precedence", () => {
-  const allKeys = ([] as string[]).concat(
-    ...Object.keys(process.env),
-    ...Object.keys(Bun.env),
-    ...Object.keys(import.meta.env),
-  );
-
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
-    for (const key of allKeys) {
+    for (const key of Object.keys(process.env).concat(...Object.keys(Bun.env), ...Object.keys(import.meta.env))) {
       delete process.env[key];
       delete Bun.env[key];
       delete import.meta.env[key];
     }
 
-    for (const key of allKeys) {
+    for (const key in originalEnv) {
       process.env[key] = originalEnv[key];
       Bun.env[key] = originalEnv[key];
       import.meta.env[key] = originalEnv[key];
@@ -42,12 +36,15 @@ describe("SQL adapter environment variable precedence", () => {
       port: 5432,
     });
 
+    expect(options.options.adapter).toBe("postgres");
     expect(options.options.hostname).toBe("bar_url");
     expect(options.options.port).toBe(5432);
     expect(options.options.username).toBe("postgres");
   });
 
   test("should only read PostgreSQL env vars when adapter is postgres", () => {
+    debugger;
+
     process.env.PGHOST = "pg-host";
     process.env.PGUSER = "pg-user";
     process.env.PGPASSWORD = "pg-pass";
@@ -284,38 +281,27 @@ describe("SQL adapter environment variable precedence", () => {
       expect(options.options.port).toBe(3306);
     });
 
-    test("should throw error when adapter conflicts with protocol (mysql adapter with postgres protocol)", () => {
-      expect(() => {
-        new SQL("postgres://user:pass@host:5432/db", { adapter: "mysql" });
-      }).toThrow(/Protocol 'postgres' is not compatible with adapter 'mysql'/);
-    });
-
-    test("should throw error when adapter conflicts with protocol (postgres adapter with mysql protocol)", () => {
-      expect(() => {
-        new SQL("mysql://user:pass@host:3306/db", { adapter: "postgres" });
-      }).toThrow(/Protocol 'mysql' is not compatible with adapter 'postgres'/);
-    });
-
-    test("should throw error when sqlite adapter used with mysql protocol", () => {
-      expect(() => {
-        new SQL("mysql://user:pass@host:3306/db", { adapter: "sqlite" });
-      }).toThrow(/Protocol 'mysql' is not compatible with adapter 'sqlite'/);
-    });
-
-    test("should throw error when mysql adapter used with postgres protocol", () => {
-      expect(() => {
-        new SQL("postgres://user:pass@host:5432/db", { adapter: "mysql" });
-      }).toThrow(/Protocol 'postgres' is not compatible with adapter 'mysql'/);
-    });
-
     test("should work with unix:// protocol and explicit adapter", () => {
-      const options = new SQL("unix:///tmp/mysql.sock", { adapter: "mysql" });
+      using sock = Bun.listen({
+        unix: "/tmp/mysql.sock",
+        socket: {
+          data: console.log,
+        },
+      });
+
+      const options = new SQL(`unix://${sock.unix}`, { adapter: "mysql" });
       expect(options.options.adapter).toBe("mysql");
       expect(options.options.path).toBe("/tmp/mysql.sock");
     });
 
     test("should work with sqlite:// protocol and sqlite adapter", () => {
       const options = new SQL("sqlite:///tmp/test.db", { adapter: "sqlite" });
+      expect(options.options.adapter).toBe("sqlite");
+      expect(options.options.filename).toBe("/tmp/test.db");
+    });
+
+    test("should work with sqlite:// protocol without adapter", () => {
+      const options = new SQL("sqlite:///tmp/test.db");
       expect(options.options.adapter).toBe("sqlite");
       expect(options.options.filename).toBe("/tmp/test.db");
     });

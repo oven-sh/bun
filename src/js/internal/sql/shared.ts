@@ -253,6 +253,27 @@ function getConnectionDetailsFromEnvironment(
   return [url, sslMode, adapter || null];
 }
 
+function ensureUrlHasProtocol<T extends string | URL>(
+  url: T | null,
+  protocol: string,
+): (T extends string ? string : T extends URL ? URL : never) | null {
+  if (url === null) return null;
+  if (url instanceof URL) {
+    url.protocol = protocol;
+    return url as never;
+  }
+  return `${protocol}://${url}` as never;
+}
+
+function hasProtocol(url: string | URL): boolean {
+  if (url instanceof URL) {
+    return true;
+  }
+
+  return hasProtocol.regex.test(url);
+}
+hasProtocol.regex = /^(?:\w+:)?\/\//;
+
 /**
  * @returns A tuple containing the parsed adapter (this is always correct) and a
  * url string, that you should continue to use for further options. In some
@@ -263,23 +284,22 @@ function getConnectionDetailsFromEnvironment(
 function parseConnectionDetailsFromOptionsOrEnvironment(
   stringOrUrlOrOptions: Bun.SQL.Options | string | URL | undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options,
-): [url: string | URL | null, sslMode: SSLMode | null, options: Bun.SQL.__internal.Define<Bun.SQL.Options, "adapter">] {
-  const [urlFromEnvironment, sslMode, adapter] = getConnectionDetailsFromEnvironment(
-    definitelyOptionsButMaybeEmpty.adapter,
-  );
-
-  let stringOrUrl: string | URL | null;
+): [url: string | URL | null, sslMode: SSLMode | null, options: Bun.SQL.__internal.OptionsWithDefinedAdapter] {
   let options: Bun.SQL.Options;
+
+  let stringOrUrl: string | URL | null = null;
+  let sslMode: SSLMode | null = null;
+  let adapter: Bun.SQL.__internal.Adapter | null = null;
 
   if (typeof stringOrUrlOrOptions === "string" || stringOrUrlOrOptions instanceof URL) {
     stringOrUrl = stringOrUrlOrOptions;
     options = definitelyOptionsButMaybeEmpty;
   } else if (stringOrUrlOrOptions) {
-    stringOrUrl = null;
     options = { ...stringOrUrlOrOptions, ...definitelyOptionsButMaybeEmpty };
+    [stringOrUrl, sslMode, adapter] = getConnectionDetailsFromEnvironment(options.adapter);
   } else {
-    stringOrUrl = urlFromEnvironment;
     options = definitelyOptionsButMaybeEmpty;
+    [stringOrUrl, sslMode, adapter] = getConnectionDetailsFromEnvironment(options.adapter);
   }
 
   // Always use .url if specified in options since we consider options as the
@@ -288,22 +308,8 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
     stringOrUrl = options.url;
   }
 
-  let url: string | URL | null = stringOrUrl;
-
-  if (options.adapter === undefined && adapter !== null) {
-    options.adapter = adapter;
-  }
-
-  const parsedAdapter = adapter || options.adapter;
-
-  // If adapter was specified in options, we should ALWAYS use it over anything
-  // parsed from the connection string (options object is considered the
-  // ultimate source of truth for values)
-  if (parsedAdapter) {
-    return [url, sslMode, { ...options, adapter: parsedAdapter }] as const;
-  }
-
-  let protocol: Bun.SQL.__internal.Adapter | (string & {}) = DEFAULT_PROTOCOL;
+  // try default protocol to whatever adapter is in options... (:337)
+  let protocol: Bun.SQL.__internal.Adapter | (string & {}) = options.adapter || DEFAULT_PROTOCOL;
 
   if (stringOrUrl instanceof URL) {
     protocol = stringOrUrl.protocol;
@@ -312,19 +318,35 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
 
     if (definitelySqliteUrl) {
       protocol = "sqlite";
-      url = definitelySqliteUrl;
-    }
+      stringOrUrl = definitelySqliteUrl;
+    } else if (stringOrUrl !== null) {
+      if (hasProtocol(stringOrUrl)) {
+        stringOrUrl = new URL(stringOrUrl);
+        protocol = stringOrUrl.protocol;
+      }
 
-    if (stringOrUrl !== null) {
-      try {
-        url = new URL(stringOrUrl);
-        protocol = url.protocol;
-      } catch {}
+      // ...that if there's no protocol in the url yet, we can default to the
+      // adapter name as a valid protocol
+      stringOrUrl = ensureUrlHasProtocol(stringOrUrl, protocol);
     }
   }
 
   if (protocol.endsWith(":")) {
     protocol = protocol.slice(0, -1);
+  }
+
+  if (options.adapter === undefined && adapter !== null) {
+    options.adapter = adapter;
+  }
+
+  // ...that if there's no protocol in the url yet, we can default to the
+  // adapter name as a valid protocol
+
+  // If adapter was specified in options, we should ALWAYS use it over anything
+  // parsed from the connection string (options object is considered the
+  // ultimate source of truth for values)
+  if (options.adapter) {
+    return [stringOrUrl, sslMode, options as Bun.SQL.__internal.OptionsWithDefinedAdapter] as const;
   }
 
   const parsedAdapterFromProtocol = parseAdapterFromProtocol(protocol);
@@ -333,7 +355,7 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
     throw new Error(`Unsupported protocol: ${protocol}. Supported adapters: "postgres", "sqlite", "mysql", "mariadb"`);
   }
 
-  return [url, sslMode, { ...options, adapter: parsedAdapterFromProtocol }];
+  return [stringOrUrl, sslMode, { ...options, adapter: parsedAdapterFromProtocol }];
 }
 
 function parseAdapterFromProtocol(protocol: string): Bun.SQL.__internal.Adapter | null {
@@ -363,26 +385,23 @@ function parseOptions(
   stringOrUrlOrOptions: Bun.SQL.Options | string | URL | undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options,
 ): Bun.SQL.__internal.DefinedOptions {
-  const [urlFromConnectionDetails, sslModeFromConnectionDetails, options] =
-    parseConnectionDetailsFromOptionsOrEnvironment(stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
+  const [_url, sslModeFromConnectionDetails, options] = parseConnectionDetailsFromOptionsOrEnvironment(
+    stringOrUrlOrOptions,
+    definitelyOptionsButMaybeEmpty,
+  );
+  let url = _url;
 
   const adapter = options.adapter;
 
   if (adapter === "sqlite") {
-    return parseSQLiteOptionsWithQueryParams(urlFromConnectionDetails, {
+    return parseSQLiteOptionsWithQueryParams(url, {
       ...options,
       adapter: "sqlite",
-      filename: urlFromConnectionDetails ?? ":memory:",
+      filename: url ?? ":memory:",
     });
   }
 
   let sslMode: SSLMode = sslModeFromConnectionDetails || SSLMode.prefer;
-
-  const url = urlFromConnectionDetails
-    ? urlFromConnectionDetails instanceof URL
-      ? urlFromConnectionDetails
-      : new URL(urlFromConnectionDetails)
-    : null;
 
   let hostname: string | undefined,
     port: number | string | undefined,
@@ -401,13 +420,19 @@ function parseOptions(
     path: string,
     prepare: boolean = true;
 
+  if (url !== null) {
+    url = url instanceof URL ? url : new URL(url);
+  }
+
   if (url) {
     // TODO(@alii): Move this logic into the switch statements below
     // options object is always higher priority
     hostname ||= options.host || options.hostname || url.hostname;
+    port ||= options.port || url.port;
     username ||= options.user || options.username || decodeIfValid(url.username);
     password ||= options.pass || options.password || decodeIfValid(url.password);
-    port ||= options.port || url.port;
+
+    path ||= options.path || url.pathname;
 
     const queryObject = url.searchParams.toJSON();
     for (const key in queryObject) {

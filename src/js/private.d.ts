@@ -34,6 +34,7 @@ declare module "bun" {
     };
 
     type DefinedOptions = DefinedSQLiteOptions | DefinedPostgresOrMySQLOptions;
+    type OptionsWithDefinedAdapter = Define<Bun.SQL.Options, "adapter">;
   }
 }
 

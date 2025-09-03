@@ -1231,15 +1231,25 @@ describe("websocket and routes test", () => {
           resolve(event.data);
           ws.close();
         };
-        ws.onerror = reject;
+        let errorFired = false;
+        ws.onerror = e => {
+          errorFired = true;
+          // Don't reject on error, we expect both error and close for failed upgrade
+        };
         ws.onclose = event => {
-          reject(event.code);
+          if (!shouldBeUpgraded) {
+            // For failed upgrade, resolve with the close code
+            resolve(event.code);
+          } else {
+            reject(event.code);
+          }
         };
         if (shouldBeUpgraded) {
           const result = await promise;
           expect(result).toBe("recv: Hello server");
         } else {
-          const result = await promise.catch(e => e);
+          const result = await promise;
+          expect(errorFired).toBe(true); // Error event should fire for failed upgrade
           expect(result).toBe(1002);
         }
         if (hasPOST) {

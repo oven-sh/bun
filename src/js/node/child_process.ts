@@ -550,11 +550,16 @@ function spawnSync(file, args, options) {
     stderr = null;
   }
 
+  // When stdio is redirected to a file descriptor, Bun.spawnSync returns the fd number
+  // instead of the actual output. We should treat this as no output available.
+  const outputStdout = typeof stdout === "number" ? null : stdout;
+  const outputStderr = typeof stderr === "number" ? null : stderr;
+
   const result = {
     signal: signalCode ?? null,
     status: exitCode,
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
-    output: [null, stdout, stderr],
+    output: [null, outputStdout, outputStderr],
     pid,
   };
 
@@ -562,11 +567,11 @@ function spawnSync(file, args, options) {
     result.error = error;
   }
 
-  if (stdout && encoding && encoding !== "buffer") {
+  if (outputStdout && encoding && encoding !== "buffer") {
     result.output[1] = result.output[1]?.toString(encoding);
   }
 
-  if (stderr && encoding && encoding !== "buffer") {
+  if (outputStderr && encoding && encoding !== "buffer") {
     result.output[2] = result.output[2]?.toString(encoding);
   }
 

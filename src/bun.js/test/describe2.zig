@@ -737,7 +737,8 @@ pub const DescribeScope = struct {
 };
 pub const ExecutionEntryCfg = struct {
     line_no: u32,
-    timeout: u32,
+    /// std.math.maxInt(u32) = no timeout
+    timeout: u32 = std.math.maxInt(u32),
 };
 pub const ExecutionEntry = struct {
     base: BaseScope,

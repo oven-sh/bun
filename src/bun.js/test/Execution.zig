@@ -325,7 +325,7 @@ fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     sequence.started_at = bun.timespec.now();
 }
 fn onEntryStarted(_: *Execution, entry: *ExecutionEntry) void {
-    if (entry.timeout > 0) {
+    if (entry.timeout != std.math.maxInt(u32)) {
         entry.timespec = bun.timespec.msFromNow(entry.timeout);
     } else {
         entry.timespec = .epoch;

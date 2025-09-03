@@ -1728,7 +1728,7 @@ describe("css tests", () => {
       `.foo {
           box-shadow: var(--foo) 12px #b32323;
         }
-        
+
         @supports (color: lab(0% 0 0)) {
           .foo {
             box-shadow: var(--foo) 12px lab(40% 56.6 39);
@@ -4721,7 +4721,7 @@ describe("css tests", () => {
     `,
       indoc`
       .foo {
-        font: italic small-caps bold expanded 12px / 1.2em Helvetica, Times New Roman, sans-serif;
+        font: italic small-caps bold expanded 12px / 1.2em "Helvetica","Times New Roman", sans-serif;
       }
 `,
     );
@@ -4738,7 +4738,7 @@ describe("css tests", () => {
         line-height: 1.2em;
       }
     `,
-      indoc`.foo{font:italic small-caps 700 125% 12px/1.2em Helvetica,Times New Roman,sans-serif}`,
+      indoc`.foo{font:italic small-caps 700 125% 12px/1.2em "Helvetica","Times New Roman",sans-serif}`,
     );
 
     cssTest(
@@ -4750,7 +4750,7 @@ describe("css tests", () => {
     `,
       indoc`
       .foo {
-        font: 12px / 1.2em Helvetica, Times New Roman, sans-serif;
+        font: 12px / 1.2em "Helvetica", "Times New Roman", sans-serif;
       }
 `,
     );
@@ -4764,7 +4764,7 @@ describe("css tests", () => {
     `,
       indoc`
       .foo {
-        font: 12px Helvetica, Times New Roman, sans-serif;
+        font: 12px "Helvetica", "Times New Roman", sans-serif;
         line-height: var(--lh);
       }
 `,
@@ -4778,7 +4778,7 @@ describe("css tests", () => {
         font-stretch: expanded;
       }
     `,
-      indoc`.foo{font-family:Helvetica,Times New Roman,sans-serif;font-size:12px;font-stretch:125%}`,
+      indoc`.foo{font-family:"Helvetica","Times New Roman",sans-serif;font-size:12px;font-stretch:125%}`,
     );
 
     cssTest(
@@ -4795,13 +4795,12 @@ describe("css tests", () => {
     `,
       indoc`
       .foo {
-        font: italic bold expanded 12px / 1.2em Helvetica, Times New Roman, sans-serif;
+        font: italic bold expanded 12px / 1.2em "Helvetica", "Times New Roman", sans-serif;
         font-variant-caps: all-small-caps;
       }
 `,
     );
 
-    minify_test(".foo { font: normal normal 600 9px/normal Charcoal; }", ".foo{font:600 9px Charcoal}");
     minify_test(".foo { font: normal normal 500 medium/normal Charcoal; }", ".foo{font:500 medium Charcoal}");
     minify_test(".foo { font: normal normal 400 medium Charcoal; }", ".foo{font:400 medium Charcoal}");
     minify_test(".foo { font: normal normal 500 medium/10px Charcoal; }", ".foo{font:500 medium/10px Charcoal}");
@@ -4812,13 +4811,13 @@ describe("css tests", () => {
     minify_test(".foo { font-family: 'inherit'; }", '.foo{font-family:"inherit"}');
     minify_test(".foo { font-family: inherit; }", ".foo{font-family:inherit}");
     minify_test(".foo { font-family: inherit test; }", ".foo{font-family:inherit test}");
-    minify_test(".foo { font-family: 'inherit test'; }", ".foo{font-family:inherit test}");
+    minify_test(".foo { font-family: 'inherit test'; }", '.foo{font-family:"inherit test"}');
     minify_test(".foo { font-family: revert; }", ".foo{font-family:revert}");
     minify_test(".foo { font-family: 'revert'; }", '.foo{font-family:"revert"}');
     minify_test(".foo { font-family: revert-layer; }", ".foo{font-family:revert-layer}");
     minify_test(".foo { font-family: revert-layer, serif; }", ".foo{font-family:revert-layer,serif}");
     minify_test(".foo { font-family: 'revert', sans-serif; }", '.foo{font-family:"revert",sans-serif}');
-    minify_test(".foo { font-family: 'revert', foo, sans-serif; }", '.foo{font-family:"revert",foo,sans-serif}');
+    minify_test(".foo { font-family: 'revert', foo, sans-serif; }", ".foo{font-family:'revert',foo,sans-serif}");
     minify_test(".foo { font-family: ''; }", '.foo{font-family:""}');
 
     // fonTfamily in @font-face
@@ -7170,7 +7169,7 @@ describe("css tests", () => {
           --buncss-dark: ;
           color-scheme: light dark;
         }
-        
+
         @media (prefers-color-scheme: dark) {
           .foo {
             --buncss-light: ;

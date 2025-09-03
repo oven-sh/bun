@@ -315,13 +315,23 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
     if (options.adapter === "sqlite" || options.adapter === undefined) {
       const definitelySqliteUrl = parseDefinitelySqliteUrl(stringOrUrl);
 
-      if (definitelySqliteUrl) {
-        return [definitelySqliteUrl, /*sslMode*/ null, { ...options, adapter: "sqlite" }] as const;
+      if (definitelySqliteUrl !== null) {
+        // Pass the original stringOrUrl for query param parsing, but store the parsed filename
+        return [
+          stringOrUrl,
+          /*sslMode*/ null,
+          { ...options, adapter: "sqlite", filename: definitelySqliteUrl || ":memory:" },
+        ] as const;
       }
     }
 
     if (options.adapter === "sqlite") {
-      return [stringOrUrl, /*sslMode*/ null, options as Bun.SQL.__internal.OptionsWithDefinedAdapter] as const;
+      // For SQLite without a protocol, treat the stringOrUrl as a filename
+      return [
+        stringOrUrl,
+        /*sslMode*/ null,
+        { ...options, filename: stringOrUrl || ":memory:" } as Bun.SQL.__internal.OptionsWithDefinedAdapter,
+      ] as const;
     }
 
     if (stringOrUrl !== null) {
@@ -399,31 +409,43 @@ function parseOptions(
   const adapter = options.adapter;
 
   if (adapter === "sqlite") {
-    return parseSQLiteOptionsWithQueryParams(url, {
+    // For SQLite, check if filename was already set in options during parseConnectionDetailsFromOptionsOrEnvironment
+    let filename: URL | string | null = options.filename || null;
+    if (!filename) {
+      // If not set, parse it from the URL
+      if (typeof url === "string") {
+        filename = parseDefinitelySqliteUrl(url);
+      }
+      // Default to :memory: if no filename
+      filename = filename || ":memory:";
+    }
+
+    // Pass the original _url for query param parsing, but use the parsed filename
+    return parseSQLiteOptionsWithQueryParams(_url, {
       ...options,
       adapter: "sqlite",
-      filename: url || ":memory:",
+      filename: filename,
     });
   }
 
   let sslMode: SSLMode = sslModeFromConnectionDetails || SSLMode.prefer;
 
-  let hostname: string | undefined,
-    port: number | string | undefined,
-    username: string | null | undefined,
-    password: string | (() => Bun.MaybePromise<string>) | undefined | null,
-    database: string | undefined,
-    tls: Bun.TLSOptions | boolean | undefined,
-    query: string = "",
-    idleTimeout: number | null | undefined,
-    connectionTimeout: number | null | undefined,
-    maxLifetime: number | null | undefined,
-    onconnect: ((client: Bun.SQL) => void) | undefined,
-    onclose: ((client: Bun.SQL) => void) | undefined,
-    max: number | null | undefined,
-    bigint: boolean | undefined,
-    path: string,
-    prepare: boolean = true;
+  let hostname: string | undefined;
+  let port: number | string | undefined;
+  let username: string | null | undefined;
+  let password: string | (() => Bun.MaybePromise<string>) | undefined | null;
+  let database: string | undefined;
+  let tls: Bun.TLSOptions | boolean | undefined;
+  let query: string = "";
+  let idleTimeout: number | null | undefined;
+  let connectionTimeout: number | null | undefined;
+  let maxLifetime: number | null | undefined;
+  let onconnect: ((error?: Error | undefined) => void) | undefined;
+  let onclose: ((error?: Error | undefined) => void) | undefined;
+  let max: number | null | undefined;
+  let bigint: boolean | undefined;
+  let path: string;
+  let prepare: boolean = true;
 
   if (url !== null) {
     url = url instanceof URL ? url : new URL(url);

@@ -955,13 +955,13 @@ export async function describeWithContainer(
     beforeAll(async () => {
       await waitForPort(port);
     });
-    // afterAll(() => {
-    //   Bun.spawnSync({
-    //     cmd: [docker, "rm", "-f", containerId],
-    //     stdout: "ignore",
-    //     stderr: "ignore",
-    //   });
-    // });
+    afterAll(() => {
+      Bun.spawnSync({
+        cmd: [docker, "rm", "-f", containerId],
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+    });
     fn(port);
   });
 }

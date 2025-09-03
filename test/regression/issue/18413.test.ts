@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
 import { serve } from "bun";
-import { createGzip } from "node:zlib";
+import { expect, test } from "bun:test";
 import { Readable } from "node:stream";
+import { createGzip } from "node:zlib";
 
 /**
  * Regression test for issue #18413
@@ -9,7 +9,7 @@ import { Readable } from "node:stream";
  *
  * The issue was in Bun's zlib.zig implementation, which was incorrectly returning
  * error.ShortRead when encountering empty gzip streams (when avail_in == 0).
- * 
+ *
  * The fix is to call inflate() even when avail_in == 0, as this could be a valid
  * empty gzip stream with proper headers/trailers. If inflate returns BufError
  * with avail_in == 0, then we know we truly need more data and can return ShortRead.
@@ -22,10 +22,10 @@ test("empty chunked gzip response should work", async () => {
       // Create an empty gzip stream
       const gzipStream = createGzip();
       gzipStream.end(); // End immediately without writing data
-      
+
       // Convert to web stream
       const webStream = Readable.toWeb(gzipStream);
-      
+
       return new Response(webStream, {
         headers: {
           "Content-Encoding": "gzip",
@@ -38,7 +38,7 @@ test("empty chunked gzip response should work", async () => {
 
   const response = await fetch(`http://localhost:${server.port}`);
   expect(response.status).toBe(200);
-  
+
   // This should not throw "Decompression error: ShortRead"
   const text = await response.text();
   expect(text).toBe(""); // Empty response
@@ -50,7 +50,7 @@ test("empty gzip response without chunked encoding", async () => {
     async fetch(req) {
       // Create an empty gzip buffer
       const emptyGzip = Bun.gzipSync(Buffer.alloc(0));
-      
+
       return new Response(emptyGzip, {
         headers: {
           "Content-Encoding": "gzip",
@@ -63,7 +63,7 @@ test("empty gzip response without chunked encoding", async () => {
 
   const response = await fetch(`http://localhost:${server.port}`);
   expect(response.status).toBe(200);
-  
+
   const text = await response.text();
   expect(text).toBe("");
 });
@@ -91,7 +91,7 @@ test("empty chunked response without gzip", async () => {
 
   const response = await fetch(`http://localhost:${server.port}`);
   expect(response.status).toBe(200);
-  
+
   const text = await response.text();
   expect(text).toBe("");
 });

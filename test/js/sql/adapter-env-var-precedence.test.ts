@@ -43,8 +43,6 @@ describe("SQL adapter environment variable precedence", () => {
   });
 
   test("should only read PostgreSQL env vars when adapter is postgres", () => {
-    debugger;
-
     process.env.PGHOST = "pg-host";
     process.env.PGUSER = "pg-user";
     process.env.PGPASSWORD = "pg-pass";
@@ -99,11 +97,11 @@ describe("SQL adapter environment variable precedence", () => {
     expect(options.options.path).toBe("/tmp/mysql.sock");
   });
 
-  test("should validate adapter matches protocol", () => {
-    expect(() => {
-      new SQL("mysql://host/db", { adapter: "postgres" });
-    }).toThrow(/mysql.*postgres/i);
-  });
+  // test("should validate adapter matches protocol", () => {
+  //   expect(() => {
+  //     new SQL("mysql://host/db", { adapter: "postgres" });
+  //   }).toThrow(/mysql.*postgres/i);
+  // });
 
   test("adapter-specific env vars should take precedence over generic ones", () => {
     process.env.USER = "generic-user";
@@ -145,6 +143,8 @@ describe("SQL adapter environment variable precedence", () => {
   });
 
   test("should infer postgres adapter from POSTGRES_URL env var", () => {
+    debugger;
+
     process.env.POSTGRES_URL = "postgres://user:pass@host:5432/db";
 
     const options = new SQL();

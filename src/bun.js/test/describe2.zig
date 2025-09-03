@@ -801,55 +801,6 @@ pub const RunOneResult = union(enum) {
 pub const Execution = @import("./Execution.zig");
 pub const debug = @import("./debug.zig");
 
-pub const group = struct {
-    fn printIndent() void {
-        std.io.getStdOut().writer().print("\x1b[90m", .{}) catch {};
-        for (0..indent) |_| {
-            std.io.getStdOut().writer().print("│ ", .{}) catch {};
-        }
-        std.io.getStdOut().writer().print("\x1b[m", .{}) catch {};
-    }
-    var indent: usize = 0;
-    var last_was_start = false;
-    var wants_quiet: ?bool = null;
-    fn getWantsQuiet() bool {
-        if (wants_quiet) |v| return v;
-        if (bun.getenvZ("WANTS_QUIET")) |val| {
-            if (!std.mem.eql(u8, val, "0")) {
-                wants_quiet = true;
-                return wants_quiet.?;
-            }
-        }
-        wants_quiet = false;
-        return wants_quiet.?;
-    }
-    pub fn begin(pos: std.builtin.SourceLocation) void {
-        return beginMsg("\x1b[36m{s}\x1b[37m:\x1b[93m{d}\x1b[37m:\x1b[33m{d}\x1b[37m: \x1b[35m{s}\x1b[m", .{ pos.file, pos.line, pos.column, pos.fn_name });
-    }
-    pub fn beginMsg(comptime fmtt: []const u8, args: anytype) void {
-        if (getWantsQuiet()) return;
-        printIndent();
-        std.io.getStdOut().writer().print("\x1b[32m++ \x1b[0m", .{}) catch {};
-        std.io.getStdOut().writer().print(fmtt ++ "\n", args) catch {};
-        indent += 1;
-        last_was_start = true;
-    }
-    pub fn end() void {
-        if (getWantsQuiet()) return;
-        indent -= 1;
-        defer last_was_start = false;
-        if (last_was_start) return; //std.io.getStdOut().writer().print("\x1b[A", .{}) catch {};
-        printIndent();
-        std.io.getStdOut().writer().print("\x1b[32m{s}\x1b[m\n", .{if (last_was_start) "+-" else "--"}) catch {};
-    }
-    pub fn log(comptime fmtt: []const u8, args: anytype) void {
-        if (getWantsQuiet()) return;
-        printIndent();
-        std.io.getStdOut().writer().print(fmtt ++ "\n", args) catch {};
-        last_was_start = false;
-    }
-};
-
 pub const ScopeFunctions = @import("./ScopeFunctions.zig");
 
 pub const Order = @import("./Order.zig");
@@ -860,3 +811,5 @@ const test_command = @import("../../cli/test_command.zig");
 const bun = @import("bun");
 const jsc = bun.jsc;
 const Strong = jsc.Strong.Safe;
+
+const group = debug.group;

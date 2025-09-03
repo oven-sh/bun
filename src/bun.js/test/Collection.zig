@@ -203,4 +203,4 @@ const describe2 = jsc.Jest.describe2;
 const BunTestFile = describe2.BunTestFile;
 const Collection = describe2.Collection;
 const DescribeScope = describe2.DescribeScope;
-const group = describe2.group;
+const group = describe2.debug.group;

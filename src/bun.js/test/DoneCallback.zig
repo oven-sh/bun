@@ -86,4 +86,4 @@ const Strong = jsc.Strong.Safe;
 const describe2 = jsc.Jest.describe2;
 const BunTestFile = describe2.BunTestFile;
 const DoneCallback = describe2.DoneCallback;
-const groupLog = describe2.group;
+const groupLog = describe2.debug.group;

@@ -413,4 +413,4 @@ const BunTestFile = describe2.BunTestFile;
 const Execution = describe2.Execution;
 const ExecutionEntry = describe2.ExecutionEntry;
 const Order = describe2.Order;
-const groupLog = describe2.group;
+const groupLog = describe2.debug.group;

@@ -1716,8 +1716,8 @@ pub const TestCommand = struct {
         _: std.mem.Allocator,
         is_last: bool,
     ) !void {
-        bun.jsc.Jest.describe2.group.begin(@src()); // TODO: remove this
-        defer bun.jsc.Jest.describe2.group.end();
+        bun.jsc.Jest.describe2.debug.group.begin(@src()); // TODO: remove this
+        defer bun.jsc.Jest.describe2.debug.group.end();
 
         defer {
             js_ast.Expr.Data.Store.reset();
@@ -1755,8 +1755,8 @@ pub const TestCommand = struct {
         vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
 
         while (repeat_index < repeat_count) : (repeat_index += 1) {
-            bun.jsc.Jest.describe2.group.begin(@src()); // TODO: remove this
-            defer bun.jsc.Jest.describe2.group.end();
+            bun.jsc.Jest.describe2.debug.group.begin(@src()); // TODO: remove this
+            defer bun.jsc.Jest.describe2.debug.group.end();
 
             var describe2Root = &jest.Jest.runner.?.describe2Root;
             describe2Root.enterFile(file_id, reporter);
@@ -1764,7 +1764,7 @@ pub const TestCommand = struct {
 
             reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index);
 
-            bun.jsc.Jest.describe2.group.log("loadEntryPointForTestRunner(\"{}\")", .{std.zig.fmtEscapes(file_path)});
+            bun.jsc.Jest.describe2.debug.group.log("loadEntryPointForTestRunner(\"{}\")", .{std.zig.fmtEscapes(file_path)});
             var promise = try vm.loadEntryPointForTestRunner(file_path);
             reporter.summary().files += 1;
 
@@ -1799,8 +1799,8 @@ pub const TestCommand = struct {
             const file_end = reporter.jest.files.len;
 
             {
-                bun.jsc.Jest.describe2.group.begin(@src()); // TODO: remove this
-                defer bun.jsc.Jest.describe2.group.end();
+                bun.jsc.Jest.describe2.debug.group.begin(@src()); // TODO: remove this
+                defer bun.jsc.Jest.describe2.debug.group.end();
 
                 // Check if describe2 is available and has tests to run
                 bun.assert(describe2Root.active_file != null);

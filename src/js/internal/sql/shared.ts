@@ -142,11 +142,11 @@ function parseDefinitelySqliteUrl(value: string | URL | null): string | null {
       } catch {
         // if it cant pass it's probably query string, we can just strip it
         // slicing off the file:// at the beginning
-        return stripQueryParams(str.slice(7));
+        return str.slice(7);
       }
     }
 
-    return stripQueryParams(str.slice(stripLength));
+    return str.slice(stripLength);
   }
 
   // couldn't reliably determine this was definitely a sqlite url
@@ -170,24 +170,19 @@ function parseSQLiteOptions(
     filename: ":memory:",
   };
 
-  // Determine filename with clear priority: options.filename > URL arg > :memory:
-  let filenameSource: string | URL | null | undefined;
-  filenameSource = ("filename" in options ? options.filename : undefined);
-  filenameSource ||= filenameOrUrl;
-  filenameSource ||= ":memory:";
-  
-  // Convert to string if needed
-  const filenameStr = filenameSource instanceof URL ? filenameSource.toString() : filenameSource;
-  
-  // Parse SQLite URL if applicable, otherwise use as-is
-  const parsed = parseDefinitelySqliteUrl(filenameStr);
-  const filename = parsed !== null ? parsed : filenameStr;
-  
-  // Extract query string for parameter parsing
+  let filename = filenameOrUrl || ":memory:";
+
+  if (filename instanceof URL) {
+    filename = filename.toString();
+  }
+
   let queryString: string | null = null;
-  const queryIndex = filenameStr.indexOf("?");
-  if (queryIndex !== -1) {
-    queryString = filenameStr.slice(queryIndex + 1);
+  if (typeof filename === "string") {
+    const queryIndex = filename.indexOf("?");
+    if (queryIndex !== -1) {
+      queryString = filename.slice(queryIndex + 1);
+      filename = filename.slice(0, queryIndex);
+    }
   }
 
   // Empty filename defaults to :memory:
@@ -345,24 +340,45 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
     [stringOrUrl, sslMode, adapter] = getConnectionDetailsFromEnvironment(options.adapter);
   }
 
-  // Always use .url if specified in options since we consider options as the
-  // ultimate source of truth
-  if ("url" in options && options.url) {
-    stringOrUrl = options.url;
+  // Resolve URL based on adapter type
+  let resolvedUrl: string | URL | null = stringOrUrl;
+
+  if (options.adapter === "sqlite") {
+    // SQLite adapter - only check filename (not url)
+    if ("filename" in options && options.filename) {
+      resolvedUrl = options.filename;
+    }
+  } else if (!options.adapter) {
+    // Unknown adapter - check both, filename first (more specific)
+    if ("filename" in options && options.filename) {
+      resolvedUrl = options.filename;
+    } else if ("url" in options && options.url) {
+      resolvedUrl = options.url;
+    }
+  } else {
+    // Known non-SQLite adapter - only check url (not filename)
+    if ("url" in options && options.url) {
+      resolvedUrl = options.url;
+    }
   }
 
-  // Step 2: Handle SQLite special case - just detect it and pass through
   if (options.adapter === "sqlite") {
-    // For SQLite, just return what we have - let parseOptions handle the details
-    return [stringOrUrl, null, options as Bun.SQL.__internal.OptionsWithDefinedAdapter];
+    if (resolvedUrl !== null) {
+      const parsed = parseDefinitelySqliteUrl(resolvedUrl);
+
+      if (parsed !== null) {
+        resolvedUrl = parsed;
+      }
+    }
+
+    return [resolvedUrl, null, options as Bun.SQL.__internal.OptionsWithDefinedAdapter];
   }
-  
-  // Check if the URL string indicates SQLite
-  if (!options.adapter && typeof stringOrUrl === "string") {
-    const parsedPath = parseDefinitelySqliteUrl(stringOrUrl);
+
+  if (!options.adapter && resolvedUrl !== null) {
+    const parsedPath = parseDefinitelySqliteUrl(resolvedUrl);
+
     if (parsedPath !== null) {
-      // This is definitely a SQLite URL
-      return [stringOrUrl, null, { ...options, adapter: "sqlite" }];
+      return [parsedPath, null, { ...options, adapter: "sqlite" }];
     }
   }
 
@@ -408,7 +424,6 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
 
   return [stringOrUrl, sslMode, { ...options, adapter: parsedAdapterFromProtocol }];
 }
-
 
 function parseAdapterFromProtocol(protocol: string): Bun.SQL.__internal.Adapter | null {
   switch (protocol) {

@@ -1947,12 +1947,12 @@ pub const BundleV2 = struct {
 
             if (Environment.isPosix and !(dirname.len == 0 or strings.eqlComptime(dirname, "."))) {
                 // On POSIX, makeOpenPath and change root_dir
-                root_dir = std.fs.cwd().makeOpenPath(dirname, .{}) catch |err| {
+                root_dir = root_dir.makeOpenPath(dirname, .{}) catch |err| {
                     return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to open output directory {s}: {s}", .{ dirname, @errorName(err) })));
                 };
             } else if (Environment.isWindows and !(dirname.len == 0 or strings.eqlComptime(dirname, "."))) {
                 // On Windows, ensure directories exist but don't change root_dir
-                _ = std.fs.cwd().makePath(dirname) catch |err| {
+                _ = bun.makePath(root_dir, dirname) catch |err| {
                     return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to create output directory {s}: {s}", .{ dirname, @errorName(err) })));
                 };
             }

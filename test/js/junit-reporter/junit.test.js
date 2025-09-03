@@ -254,6 +254,7 @@ describe("junit reporter", () => {
     await proc1.exited;
 
     const xmlContent1 = await file(junitPath1).text();
+    expect(filterJunitXmlOutput(xmlContent1)).toMatchSnapshot();
     const result1 = await new Promise((resolve, reject) => {
       xml2js.parseString(xmlContent1, (err, result) => {
         if (err) reject(err);
@@ -281,6 +282,7 @@ describe("junit reporter", () => {
     await proc2.exited;
 
     const xmlContent2 = await file(junitPath2).text();
+    expect(filterJunitXmlOutput(xmlContent2)).toMatchSnapshot();
     const result2 = await new Promise((resolve, reject) => {
       xml2js.parseString(xmlContent2, (err, result) => {
         if (err) reject(err);
@@ -313,3 +315,7 @@ describe("junit reporter", () => {
     expect(xmlContent2).toContain("line=");
   });
 });
+
+function filterJunitXmlOutput(xmlContent) {
+  return xmlContent.replaceAll(/ time="[\d.]+"/g, "");
+}

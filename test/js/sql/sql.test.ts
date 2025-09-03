@@ -1,10 +1,10 @@
 import { $, randomUUIDv7, sql, SQL } from "bun";
 import { afterAll, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isLinux, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
 import path from "path";
 const postgres = (...args) => new SQL(...args);
 
-import { exec, execSync } from "child_process";
+import { exec } from "child_process";
 import net from "net";
 import { promisify } from "util";
 
@@ -88,23 +88,6 @@ async function startContainer(): Promise<{ port: number; containerName: string }
   }
 }
 
-function isDockerEnabled(): boolean {
-  if (!dockerCLI) {
-    return false;
-  }
-
-  // TODO: investigate why its not starting on Linux arm64
-  if (isLinux && process.arch === "arm64") {
-    return false;
-  }
-
-  try {
-    const info = execSync(`${dockerCLI} info`, { stdio: ["ignore", "pipe", "inherit"] });
-    return info.toString().indexOf("Server Version:") !== -1;
-  } catch {
-    return false;
-  }
-}
 if (isDockerEnabled()) {
   const container: { port: number; containerName: string } = await startContainer();
   afterAll(async () => {

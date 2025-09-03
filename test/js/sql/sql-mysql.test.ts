@@ -1,6 +1,6 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { describe, expect, mock, test } from "bun:test";
-import { describeWithContainer, dockerExe, tempDirWithFiles } from "harness";
+import { describeWithContainer, dockerExe, tempDirWithFiles, isDockerEnabled } from "harness";
 import net from "net";
 import path from "path";
 const dir = tempDirWithFiles("sql-test", {
@@ -10,7 +10,7 @@ const dir = tempDirWithFiles("sql-test", {
 function rel(filename: string) {
   return path.join(dir, filename);
 }
-const docker = dockerExe();
+const docker = isDockerEnabled() ? dockerExe() : null;
 if (docker) {
   const dockerfilePath = path.join(import.meta.dir, "mysql-tls", ".");
   console.log("Building Docker image...");

@@ -1837,7 +1837,7 @@ pub const BundleV2 = struct {
             transpiler.options.output_format = config.format;
             transpiler.options.bytecode = config.bytecode;
             transpiler.options.compile = config.compile != null;
-            
+
             // For compile mode, set the public_path to the target-specific base path
             // This ensures embedded resources like yoga.wasm are correctly found
             if (config.compile) |compile_opts| {
@@ -1916,7 +1916,7 @@ pub const BundleV2 = struct {
                 const outdir_slice = this.config.outdir.slice();
                 const top_level_dir = bun.fs.FileSystem.instance.top_level_dir;
                 break :brk bun.path.joinAbsStringBuf(top_level_dir, outbuf, &[_][]const u8{ outdir_slice, compile_options.outfile.slice() }, .auto);
-            } else if (std.fs.path.isAbsolute(compile_options.outfile.slice())) 
+            } else if (std.fs.path.isAbsolute(compile_options.outfile.slice()))
                 compile_options.outfile.slice()
             else brk: {
                 // For relative paths, ensure we make them absolute relative to the current working directory
@@ -1950,7 +1950,7 @@ pub const BundleV2 = struct {
 
             // Use the target-specific base path for compile mode, not the user-configured public_path
             const module_prefix = bun.StandaloneModuleGraph.targetBasePublicPath(compile_options.compile_target.os, "root/");
-            
+
             const result = bun.StandaloneModuleGraph.toExecutable(
                 &compile_options.compile_target,
                 bun.default_allocator,

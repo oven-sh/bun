@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe("Bun.build compile with wasm", () => {
   test("compile with wasm module imports", async () => {
     // This test ensures that embedded wasm modules compile and run correctly
     // The regression was that the module prefix wasn't being set correctly
-    
+
     const dir = tempDirWithFiles("build-compile-wasm", {
       "app.js": `
         // Import a wasm module and properly instantiate it
@@ -45,16 +45,51 @@ describe("Bun.build compile with wasm", () => {
       //     i32.add)
       //   (export "add" (func $add)))
       "test.wasm": Buffer.from([
-        0x00, 0x61, 0x73, 0x6d, // WASM magic number
-        0x01, 0x00, 0x00, 0x00, // WASM version 1
+        0x00,
+        0x61,
+        0x73,
+        0x6d, // WASM magic number
+        0x01,
+        0x00,
+        0x00,
+        0x00, // WASM version 1
         // Type section
-        0x01, 0x07, 0x01, 0x60, 0x02, 0x7f, 0x7f, 0x01, 0x7f,
+        0x01,
+        0x07,
+        0x01,
+        0x60,
+        0x02,
+        0x7f,
+        0x7f,
+        0x01,
+        0x7f,
         // Function section
-        0x03, 0x02, 0x01, 0x00,
+        0x03,
+        0x02,
+        0x01,
+        0x00,
         // Export section
-        0x07, 0x07, 0x01, 0x03, 0x61, 0x64, 0x64, 0x00, 0x00,
+        0x07,
+        0x07,
+        0x01,
+        0x03,
+        0x61,
+        0x64,
+        0x64,
+        0x00,
+        0x00,
         // Code section
-        0x0a, 0x09, 0x01, 0x07, 0x00, 0x20, 0x00, 0x20, 0x01, 0x6a, 0x0b
+        0x0a,
+        0x09,
+        0x01,
+        0x07,
+        0x00,
+        0x20,
+        0x00,
+        0x20,
+        0x01,
+        0x6a,
+        0x0b,
       ]),
     });
 
@@ -68,7 +103,7 @@ describe("Bun.build compile with wasm", () => {
 
     expect(result.success).toBe(true);
     expect(result.outputs.length).toBe(1);
-    
+
     // Run the compiled version to verify it works
     const proc = Bun.spawn({
       cmd: [result.outputs[0].path],
@@ -79,7 +114,7 @@ describe("Bun.build compile with wasm", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(), 
+      new Response(proc.stderr).text(),
       proc.exited,
     ]);
 

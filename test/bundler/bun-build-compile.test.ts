@@ -73,7 +73,7 @@ describe("Bun.build compile", () => {
     });
     expect(result1.success).toBe(true);
     expect(result1.outputs[0].path).toContain(join("output", "nested", isWindows ? "app1.exe" : "app1"));
-    
+
     // Test 2: Current directory relative path
     const result2 = await Bun.build({
       entrypoints: [join(dir + "", "app.js")],
@@ -83,7 +83,7 @@ describe("Bun.build compile", () => {
     });
     expect(result2.success).toBe(true);
     expect(result2.outputs[0].path).toEndWith(isWindows ? "app2.exe" : "app2");
-    
+
     // Test 3: Deeply nested path
     const result3 = await Bun.build({
       entrypoints: [join(dir + "", "app.js")],
@@ -125,7 +125,7 @@ describe("Bun.build compile", () => {
     expect(result.success).toBe(true);
     expect(result.outputs.length).toBe(1);
     expect(result.outputs[0].path).toEndWith(isWindows ? "app-with-resources.exe" : "app-with-resources");
-    
+
     // The test passes if compilation succeeds - the actual embedded resource
     // path handling is verified by the successful compilation
   });

@@ -328,8 +328,14 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
     if (options.adapter === "sqlite" && options.filename && stringOrUrl) {
       // Parse filename if it contains a sqlite URL
       const parsedFilename = parseDefinitelySqliteUrl(options.filename);
-      const finalFilename = parsedFilename !== null ? parsedFilename : options.filename;
-      return [stringOrUrl, null, { ...options, filename: normalizeSQLiteFilename(finalFilename), adapter: "sqlite" }];
+      let finalFilename = parsedFilename !== null ? parsedFilename : options.filename;
+      
+      // Handle URL instances
+      if (finalFilename instanceof URL) {
+        finalFilename = finalFilename.pathname;
+      }
+      
+      return [stringOrUrl, null, { ...options, filename: finalFilename || ":memory:", adapter: "sqlite" }];
     }
 
     const sqliteResult = handleSQLiteUrl(stringOrUrl, options);

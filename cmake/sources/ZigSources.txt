@@ -1,10 +1,11 @@
 src/allocators.zig
-src/allocators/AllocationScope.zig
+src/allocators/allocation_scope.zig
 src/allocators/basic.zig
 src/allocators/fallback.zig
 src/allocators/fallback/z.zig
 src/allocators/LinuxMemFdAllocator.zig
 src/allocators/MaxHeapAllocator.zig
+src/allocators/maybe_owned.zig
 src/allocators/MemoryReportingAllocator.zig
 src/allocators/mimalloc.zig
 src/allocators/MimallocArena.zig
@@ -64,7 +65,6 @@ src/async/windows_event_loop.zig
 src/bake.zig
 src/bake/DevServer.zig
 src/bake/DevServer/Assets.zig
-src/bake/DevServer/DevAllocator.zig
 src/bake/DevServer/DirectoryWatchStore.zig
 src/bake/DevServer/ErrorReportRequest.zig
 src/bake/DevServer/HmrSocket.zig
@@ -200,6 +200,7 @@ src/bun.js/bindings/sizes.zig
 src/bun.js/bindings/SourceProvider.zig
 src/bun.js/bindings/SourceType.zig
 src/bun.js/bindings/static_export.zig
+src/bun.js/bindings/StringBuilder.zig
 src/bun.js/bindings/SystemError.zig
 src/bun.js/bindings/TextCodec.zig
 src/bun.js/bindings/URL.zig
@@ -443,6 +444,7 @@ src/bundler/linker_context/writeOutputFilesToDisk.zig
 src/bundler/LinkerContext.zig
 src/bundler/LinkerGraph.zig
 src/bundler/ParseTask.zig
+src/bundler/PathToSourceIndexMap.zig
 src/bundler/ServerComponentParseTask.zig
 src/bundler/ThreadPool.zig
 src/bunfig.zig
@@ -665,6 +667,7 @@ src/http/ETag.zig
 src/http/FetchRedirect.zig
 src/http/HeaderBuilder.zig
 src/http/Headers.zig
+src/http/HeaderValueIterator.zig
 src/http/HTTPCertError.zig
 src/http/HTTPContext.zig
 src/http/HTTPRequestBody.zig
@@ -780,6 +783,7 @@ src/macho.zig
 src/main_test.zig
 src/main_wasm.zig
 src/main.zig
+src/memory.zig
 src/meta.zig
 src/napi/napi.zig
 src/node_fallbacks.zig
@@ -801,8 +805,6 @@ src/ptr/Cow.zig
 src/ptr/CowSlice.zig
 src/ptr/meta.zig
 src/ptr/owned.zig
-src/ptr/owned/maybe.zig
-src/ptr/owned/scoped.zig
 src/ptr/ref_count.zig
 src/ptr/shared.zig
 src/ptr/tagged_pointer.zig
@@ -1033,7 +1035,7 @@ src/threading.zig
 src/threading/channel.zig
 src/threading/Condition.zig
 src/threading/Futex.zig
-src/threading/guarded_value.zig
+src/threading/guarded.zig
 src/threading/Mutex.zig
 src/threading/ThreadPool.zig
 src/threading/unbounded_queue.zig

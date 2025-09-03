@@ -121,7 +121,7 @@ const SQL: typeof Bun.SQL = function SQL(
         pool,
       );
     } catch (err) {
-      return Promise.reject(err);
+      return Promise.$reject(err);
     }
   }
 
@@ -136,7 +136,7 @@ const SQL: typeof Bun.SQL = function SQL(
       }
       return new Query(strings, values, flags, queryFromPoolHandler, pool);
     } catch (err) {
-      return Promise.reject(err);
+      return Promise.$reject(err);
     }
   }
 
@@ -192,7 +192,7 @@ const SQL: typeof Bun.SQL = function SQL(
       transactionQueries.add(query);
       return query;
     } catch (err) {
-      return Promise.reject(err);
+      return Promise.$reject(err);
     }
   }
 
@@ -220,7 +220,7 @@ const SQL: typeof Bun.SQL = function SQL(
       transactionQueries.add(query);
       return query;
     } catch (err) {
-      return Promise.reject(err);
+      return Promise.$reject(err);
     }
   }
 
@@ -263,7 +263,7 @@ const SQL: typeof Bun.SQL = function SQL(
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
-        return Promise.reject(pool.connectionClosedError());
+        return Promise.$reject(pool.connectionClosedError());
       }
       if ($isArray(strings)) {
         // detect if is tagged template
@@ -291,9 +291,9 @@ const SQL: typeof Bun.SQL = function SQL(
 
     reserved_sql.connect = () => {
       if (state.connectionState & ReservedConnectionState.closed) {
-        return Promise.reject(this.connectionClosedError());
+        return Promise.$reject(this.connectionClosedError());
       }
-      return Promise.resolve(reserved_sql);
+      return Promise.$resolve(reserved_sql);
     };
 
     reserved_sql.commitDistributed = async function (name: string) {
@@ -322,16 +322,16 @@ const SQL: typeof Bun.SQL = function SQL(
     reserved_sql.beginDistributed = (name: string, fn: TransactionCallback) => {
       // begin is allowed the difference is that we need to make sure to use the same connection and never release it
       if (state.connectionState & ReservedConnectionState.closed) {
-        return Promise.reject(this.connectionClosedError());
+        return Promise.$reject(this.connectionClosedError());
       }
       let callback = fn;
 
       if (typeof name !== "string") {
-        return Promise.reject($ERR_INVALID_ARG_VALUE("name", name, "must be a string"));
+        return Promise.$reject($ERR_INVALID_ARG_VALUE("name", name, "must be a string"));
       }
 
       if (!$isCallable(callback)) {
-        return Promise.reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
+        return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
       }
       const { promise, resolve, reject } = Promise.withResolvers();
       // lets just reuse the same code path as the transaction begin
@@ -346,7 +346,7 @@ const SQL: typeof Bun.SQL = function SQL(
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
-        return Promise.reject(this.connectionClosedError());
+        return Promise.$reject(this.connectionClosedError());
       }
       let callback = fn;
       let options: string | undefined = options_or_fn as unknown as string;
@@ -354,10 +354,10 @@ const SQL: typeof Bun.SQL = function SQL(
         callback = options_or_fn as unknown as TransactionCallback;
         options = undefined;
       } else if (typeof options_or_fn !== "string") {
-        return Promise.reject($ERR_INVALID_ARG_VALUE("options", options_or_fn, "must be a string"));
+        return Promise.$reject($ERR_INVALID_ARG_VALUE("options", options_or_fn, "must be a string"));
       }
       if (!$isCallable(callback)) {
-        return Promise.reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
+        return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
       }
       const { promise, resolve, reject } = Promise.withResolvers();
       // lets just reuse the same code path as the transaction begin
@@ -383,7 +383,7 @@ const SQL: typeof Bun.SQL = function SQL(
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
-        return Promise.resolve(undefined);
+        return Promise.$resolve(undefined);
       }
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
       let timeout = options?.timeout;
@@ -422,14 +422,14 @@ const SQL: typeof Bun.SQL = function SQL(
 
       pooledConnection.close();
 
-      return Promise.resolve(undefined);
+      return Promise.$resolve(undefined);
     };
     reserved_sql.release = () => {
       if (
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
-        return Promise.reject(this.connectionClosedError());
+        return Promise.$reject(this.connectionClosedError());
       }
       // just release the connection back to the pool
       state.connectionState |= ReservedConnectionState.closed;
@@ -439,7 +439,7 @@ const SQL: typeof Bun.SQL = function SQL(
         pool.detachConnectionCloseHandler(pooledConnection, onClose);
       }
       pool.release(pooledConnection);
-      return Promise.resolve(undefined);
+      return Promise.$resolve(undefined);
     };
     // this dont need to be async dispose only disposable but we keep compatibility with other types of sql functions
     reserved_sql[Symbol.asyncDispose] = () => reserved_sql.release();
@@ -552,7 +552,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
     function run_internal_transaction_sql(string) {
       if (state.connectionState & ReservedConnectionState.closed) {
-        return Promise.reject(this.connectionClosedError());
+        return Promise.$reject(this.connectionClosedError());
       }
       return unsafeQueryFromTransaction(string, [], pooledConnection, state.queries);
     }
@@ -564,7 +564,7 @@ const SQL: typeof Bun.SQL = function SQL(
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
-        return Promise.reject(this.connectionClosedError());
+        return Promise.$reject(this.connectionClosedError());
       }
       if ($isArray(strings)) {
         // detect if is tagged template
@@ -593,10 +593,10 @@ const SQL: typeof Bun.SQL = function SQL(
 
     transaction_sql.connect = () => {
       if (state.connectionState & ReservedConnectionState.closed) {
-        return Promise.reject(this.connectionClosedError());
+        return Promise.$reject(this.connectionClosedError());
       }
 
-      return Promise.resolve(transaction_sql);
+      return Promise.$resolve(transaction_sql);
     };
     transaction_sql.commitDistributed = async function (name: string) {
       if (!pool.getCommitDistributedSQL) {
@@ -647,7 +647,7 @@ const SQL: typeof Bun.SQL = function SQL(
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
-        return Promise.resolve(undefined);
+        return Promise.$resolve(undefined);
       }
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
       const transactionQueries = state.queries;
@@ -746,8 +746,7 @@ const SQL: typeof Bun.SQL = function SQL(
         const save_point_name = `s${savepoints++}${name ? `_${name}` : ""}`;
         const promise = run_internal_savepoint(save_point_name, savepoint_callback);
         transactionSavepoints.add(promise);
-        promise.finally(onSavepointFinished.bind(null, promise));
-        return await promise;
+        return await promise.finally(onSavepointFinished.bind(null, promise));
       };
     }
     let needs_rollback = false;
@@ -817,12 +816,12 @@ const SQL: typeof Bun.SQL = function SQL(
 
   sql.reserve = () => {
     if (pool.closed) {
-      return Promise.reject(this.connectionClosedError());
+      return Promise.$reject(this.connectionClosedError());
     }
 
     // Check if adapter supports reserved connections
     if (pool.supportsReservedConnections && !pool.supportsReservedConnections()) {
-      return Promise.reject(new Error("This adapter doesn't support connection reservation"));
+      return Promise.$reject(new Error("This adapter doesn't support connection reservation"));
     }
 
     // Try to reserve a connection - adapters that support it will handle appropriately
@@ -858,16 +857,16 @@ const SQL: typeof Bun.SQL = function SQL(
 
   sql.beginDistributed = (name: string, fn: TransactionCallback) => {
     if (pool.closed) {
-      return Promise.reject(this.connectionClosedError());
+      return Promise.$reject(this.connectionClosedError());
     }
     let callback = fn;
 
     if (typeof name !== "string") {
-      return Promise.reject($ERR_INVALID_ARG_VALUE("name", name, "must be a string"));
+      return Promise.$reject($ERR_INVALID_ARG_VALUE("name", name, "must be a string"));
     }
 
     if (!$isCallable(callback)) {
-      return Promise.reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
+      return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
     }
     const { promise, resolve, reject } = Promise.withResolvers();
     const useReserved = pool.supportsReservedConnections?.() ?? true;
@@ -877,7 +876,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
   sql.begin = (options_or_fn: string | TransactionCallback, fn?: TransactionCallback) => {
     if (pool.closed) {
-      return Promise.reject(this.connectionClosedError());
+      return Promise.$reject(this.connectionClosedError());
     }
     let callback = fn;
     let options: string | undefined = options_or_fn as unknown as string;
@@ -885,10 +884,10 @@ const SQL: typeof Bun.SQL = function SQL(
       callback = options_or_fn as unknown as TransactionCallback;
       options = undefined;
     } else if (typeof options_or_fn !== "string") {
-      return Promise.reject($ERR_INVALID_ARG_VALUE("options", options_or_fn, "must be a string"));
+      return Promise.$reject($ERR_INVALID_ARG_VALUE("options", options_or_fn, "must be a string"));
     }
     if (!$isCallable(callback)) {
-      return Promise.reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
+      return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
     }
     const { promise, resolve, reject } = Promise.withResolvers();
     const useReserved = pool.supportsReservedConnections?.() ?? true;
@@ -897,11 +896,11 @@ const SQL: typeof Bun.SQL = function SQL(
   };
   sql.connect = () => {
     if (pool.closed) {
-      return Promise.reject(this.connectionClosedError());
+      return Promise.$reject(this.connectionClosedError());
     }
 
     if (pool.isConnected()) {
-      return Promise.resolve(sql);
+      return Promise.$resolve(sql);
     }
 
     let { resolve, reject, promise } = Promise.withResolvers();

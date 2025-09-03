@@ -314,7 +314,8 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                 bun.assertf(side == .client, "freeFileContent requires client graph", .{});
             }
             if (file.source_map.take()) |ptr| {
-                ptr.deinit();
+                var ptr_mut = ptr;
+                ptr_mut.deinit();
             }
             defer file.content = .unknown;
             switch (file.content) {
@@ -444,7 +445,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             g: *Self,
             ctx: *HotUpdateContext,
             index: bun.ast.Index,
-            content: union(enum) {
+            content_: union(enum) {
                 js: struct {
                     code: JsCode,
                     source_map: ?struct {
@@ -456,6 +457,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             },
             is_ssr_graph: bool,
         ) !void {
+            var content = content_;
             const dev = g.owner();
             dev.graph_safety_lock.assertLocked();
 
@@ -538,20 +540,18 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                         },
                         .source_map = switch (content) {
                             .css => .none,
-                            .js => |js| blk: {
+                            .js => |*js| blk: {
                                 // Insert new source map or patch existing empty source map.
-                                if (js.source_map) |source_map| {
+                                if (js.source_map) |*source_map| {
                                     bun.assert(html_route_bundle_index == null); // suspect behind #17956
-                                    var chunk = source_map.chunk;
-                                    var escaped_source = source_map.escaped_source;
-                                    if (chunk.buffer.len() > 0) {
+                                    if (source_map.chunk.buffer.len() > 0) {
                                         break :blk .{ .some = PackedMap.newNonEmpty(
-                                            chunk,
-                                            escaped_source.take().?,
+                                            source_map.chunk,
+                                            source_map.escaped_source.take().?,
                                         ) };
                                     }
-                                    chunk.buffer.deinit();
-                                    escaped_source.deinit();
+                                    source_map.chunk.buffer.deinit();
+                                    source_map.escaped_source.deinit();
                                 }
 
                                 // Must precompute this. Otherwise, source maps won't have
@@ -634,9 +634,8 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                     if (content == .js) {
                         try g.current_chunk_parts.append(dev.allocator(), content.js.code);
                         g.current_chunk_len += content.js.code.len;
-                        if (content.js.source_map) |source_map| {
-                            var buffer = source_map.chunk.buffer;
-                            buffer.deinit();
+                        if (content.js.source_map) |*source_map| {
+                            source_map.chunk.buffer.deinit();
                             source_map.escaped_source.deinit();
                         }
                     }
@@ -1496,9 +1495,8 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
 
             // Additionally, clear the cached entry of the file from the path to
             // source index map.
-            const hash = bun.hash(abs_path);
             for (&bv2.graph.build_graphs.values) |*map| {
-                _ = map.remove(hash);
+                _ = map.remove(abs_path);
             }
         }
 
@@ -1912,12 +1910,13 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             return @alignCast(@fieldParentPtr(@tagName(side) ++ "_graph", g));
         }
 
-        fn dev_allocator(g: *Self) DevAllocator {
-            return g.owner().dev_allocator();
+        fn allocator(g: *const Self) Allocator {
+            return g.dev_allocator().allocator();
         }
 
-        fn allocator(g: *Self) Allocator {
-            return g.dev_allocator().get();
+        fn dev_allocator(g: *const Self) DevAllocator {
+            const dev_server: *const DevServer = @constCast(g).owner();
+            return dev_server.dev_allocator();
         }
     };
 }

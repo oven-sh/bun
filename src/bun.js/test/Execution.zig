@@ -135,13 +135,10 @@ pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describ
     defer groupLog.end();
 
     while (true) {
-        if (this.group_index >= this.groups.len) return .done;
-
-        this.groups[this.group_index].executing = true;
+        const group = this.activeGroup() orelse return .done;
+        group.executing = true;
 
         // loop over items in the group and advance their execution
-        const group = &this.groups[this.group_index];
-        if (!group.executing) this.resetGroup(this.group_index);
         var status: enum { done, execute } = .done;
         for (group.sequences(this), 0..) |*sequence, sequence_index| {
             while (true) {

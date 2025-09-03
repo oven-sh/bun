@@ -1,5 +1,6 @@
 import { SQL } from "bun";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { isWindows } from "harness";
 
 declare module "bun" {
   namespace SQL {
@@ -102,7 +103,7 @@ describe("SQL adapter environment variable precedence", () => {
     expect(options.options.adapter).toBe("postgres");
   });
 
-  test("should support unix:// with explicit adapter", () => {
+  test.skipIf(isWindows)("should support unix:// with explicit adapter", () => {
     const options = new SQL("unix:///tmp/mysql.sock", {
       adapter: "mysql",
     });
@@ -110,12 +111,6 @@ describe("SQL adapter environment variable precedence", () => {
     expect(options.options.adapter).toBe("mysql");
     expect(options.options.path).toBe("/tmp/mysql.sock");
   });
-
-  // test("should validate adapter matches protocol", () => {
-  //   expect(() => {
-  //     new SQL("mysql://host/db", { adapter: "postgres" });
-  //   }).toThrow(/mysql.*postgres/i);
-  // });
 
   test("adapter-specific env vars should take precedence over generic ones", () => {
     process.env.USER = "generic-user";
@@ -293,7 +288,7 @@ describe("SQL adapter environment variable precedence", () => {
       expect(options.options.port).toBe(3306);
     });
 
-    test("should work with unix:// protocol and explicit adapter", () => {
+    test.skipIf(isWindows)("should work with unix:// protocol and explicit adapter", () => {
       using sock = Bun.listen({
         unix: "/tmp/mysql.sock",
         socket: {

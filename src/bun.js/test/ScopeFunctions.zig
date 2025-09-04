@@ -153,7 +153,7 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunT
             test_id_for_debugger = globals.max_test_id_for_debugger;
         }
     }
-    const has_done_parameter = if (callback) |*c| c.args.get().len > callback_length else false;
+    const has_done_parameter = if (callback) |*c| callback_length > c.args.get().len else false;
 
     var base = this.cfg;
     base.test_id_for_debugger = test_id_for_debugger;

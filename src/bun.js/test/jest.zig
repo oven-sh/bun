@@ -588,7 +588,7 @@ pub const TestScope = struct {
         const err = arguments.ptr[0];
         _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
         var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
-        task.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .promise);
+        task.handleResult(.{ .fail = 0 }, .promise);
         globalThis.bunVM().autoGarbageCollect();
         return .js_undefined;
     }
@@ -598,7 +598,7 @@ pub const TestScope = struct {
         debug("onResolve", .{});
         const arguments = callframe.arguments_old(2);
         var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
-        task.handleResult(.{ .pass = expect.active_test_expectation_counter.actual }, .promise);
+        task.handleResult(.{ .pass = 0 }, .promise);
         globalThis.bunVM().autoGarbageCollect();
         return .js_undefined;
     }
@@ -614,7 +614,7 @@ pub const TestScope = struct {
 
         if (jsc.host_fn.getFunctionData(function)) |data| {
             var task = bun.cast(*TestRunnerTask, data);
-            const expect_count = expect.active_test_expectation_counter.actual;
+            const expect_count = 0;
             const current_test = task.testScope();
             const no_err_result: Result = if (current_test.tag == .fail)
                 .{ .fail_because_failing_test_passed = expect_count }
@@ -713,8 +713,8 @@ pub const TestScope = struct {
 
             return switch (this.tag) {
                 .todo => .{ .todo = {} },
-                .fail => .{ .pass = expect.active_test_expectation_counter.actual },
-                else => .{ .fail = expect.active_test_expectation_counter.actual },
+                .fail => .{ .pass = 0 },
+                else => .{ .fail = 0 },
             };
         }
 
@@ -741,9 +741,9 @@ pub const TestScope = struct {
                         .fail => fail: {
                             promise.setHandled(vm.global.vm());
 
-                            break :fail .{ .pass = expect.active_test_expectation_counter.actual };
+                            break :fail .{ .pass = 0 };
                         },
-                        else => .{ .fail = expect.active_test_expectation_counter.actual },
+                        else => .{ .fail = 0 },
                     };
                 },
                 .pending => {
@@ -766,18 +766,18 @@ pub const TestScope = struct {
             return Result{ .pending = {} };
         }
 
-        if (expect.active_test_expectation_counter.expected > 0 and expect.active_test_expectation_counter.expected < expect.active_test_expectation_counter.actual) {
+        if (0 > 0 and 0 < 0) {
             Output.prettyErrorln("Test fail: {d} / {d} expectations\n (make this better!)", .{
-                expect.active_test_expectation_counter.actual,
-                expect.active_test_expectation_counter.expected,
+                0,
+                0,
             });
-            return .{ .fail = expect.active_test_expectation_counter.actual };
+            return .{ .fail = 0 };
         }
 
         return if (this.tag == .fail)
-            .{ .fail_because_failing_test_passed = expect.active_test_expectation_counter.actual }
+            .{ .fail_because_failing_test_passed = 0 }
         else
-            .{ .pass = expect.active_test_expectation_counter.actual };
+            .{ .pass = 0 };
     }
 
     comptime {
@@ -1370,9 +1370,9 @@ pub const TestRunnerTask = struct {
             var this = bun.cast(*TestRunnerTask, ctx);
             jsc_vm.onUnhandledRejectionCtx = null;
             const result: Result = if (this.testScope().tag == .fail)
-                .{ .pass = expect.active_test_expectation_counter.actual }
+                .{ .pass = 0 }
             else
-                .{ .fail = expect.active_test_expectation_counter.actual };
+                .{ .fail = 0 };
             this.handleResult(result, .unhandledRejection);
         } else if (Jest.runner) |runner| {
             if (!deduped)
@@ -1380,19 +1380,7 @@ pub const TestRunnerTask = struct {
         }
     }
 
-    pub fn checkAssertionsCounter(result: *Result) void {
-        if (expect.is_expecting_assertions and expect.active_test_expectation_counter.actual == 0) {
-            expect.is_expecting_assertions = false;
-            expect.is_expecting_assertions_count = false;
-            result.* = .{ .fail_because_expected_has_assertions = {} };
-        }
-
-        if (expect.is_expecting_assertions_count and expect.active_test_expectation_counter.actual != expect.active_test_expectation_counter.expected) {
-            expect.is_expecting_assertions = false;
-            expect.is_expecting_assertions_count = false;
-            result.* = .{ .fail_because_expected_assertion_count = expect.active_test_expectation_counter };
-        }
-    }
+    pub fn checkAssertionsCounter(_: *Result) void {}
 
     pub fn run(this: *TestRunnerTask) bool {
         var describe = this.describe;
@@ -1401,9 +1389,6 @@ pub const TestRunnerTask = struct {
 
         // reset the global state for each test
         // prior to the run
-        expect.active_test_expectation_counter = .{};
-        expect.is_expecting_assertions = false;
-        expect.is_expecting_assertions_count = false;
         jsc_vm.last_reported_error_for_dedupe = .zero;
         this.started_at = .now();
 

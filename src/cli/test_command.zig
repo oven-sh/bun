@@ -624,8 +624,29 @@ pub const CommandLineReporter = struct {
         const display_label = test_entry.base.name orelse "(unnamed)";
 
         // Quieter output when claude code is in use.
-        if (!Output.isAIAgent() or !status.isPass()) {
+        if (!Output.isAIAgent() or !status.isPass(.pending_is_fail)) {
             const color_code = comptime if (status == .skip) "<d>" else "";
+
+            switch (Output.enable_ansi_colors_stderr) {
+                inline else => |_| switch (status) {
+                    .fail_because_expected_assertion_count => {
+                        // not sent to writer so it doesn't get printed twice
+                        const expected_count = if (sequence.expect_assertions == .exact) sequence.expect_assertions.exact else 12345;
+                        Output.err(error.AssertionError, "expected <green>{d} assertion{s}<r>, but test ended with <red>{d} assertion{s}<r>\n", .{
+                            expected_count,
+                            if (expected_count == 1) "" else "s",
+                            sequence.expect_call_count,
+                            if (sequence.expect_call_count == 1) "" else "s",
+                        });
+                        Output.flush();
+                    },
+                    .fail_because_expected_has_assertions => {
+                        Output.err(error.AssertionError, "received <red>0 assertions<r>, but expected <green>at least one assertion<r> to be called\n", .{});
+                        Output.flush();
+                    },
+                    else => {},
+                },
+            }
 
             if (Output.enable_ansi_colors_stderr) {
                 for (scopes, 0..) |_, i| {
@@ -676,8 +697,7 @@ pub const CommandLineReporter = struct {
 
                     .fail_because_failing_test_passed => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n", colors)) catch {},
                     .fail_because_todo_passed => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` if tested behavior now works<r>\n", colors)) catch {},
-                    .fail_because_expected_assertion_count => @panic("TODO: print the expected and actual assertion counts"),
-                    .fail_because_expected_has_assertions => @panic("TODO: print the expected and actual assertion counts"),
+                    .fail_because_expected_assertion_count, .fail_because_expected_has_assertions => {}, // printed above
                     .fail_because_timeout => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test timed out.<r>\n", colors)) catch {},
                     .fail_because_timeout_with_done_callback => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test timed out before the done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the test callback function<r>\n", colors)) catch {},
                 },

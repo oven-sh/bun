@@ -3,10 +3,6 @@ pub const Counter = struct {
     actual: u32 = 0,
 };
 
-pub var active_test_expectation_counter: Counter = .{};
-pub var is_expecting_assertions: bool = false;
-pub var is_expecting_assertions_count: bool = false;
-
 /// Helper to retrieve matcher flags from a jsvalue of a class like ExpectAny, ExpectStringMatching, etc.
 pub fn getMatcherFlags(comptime T: type, value: JSValue) Expect.Flags {
     if (T.flagsGetCached(value)) |flagsValue| {
@@ -1140,7 +1136,12 @@ pub const Expect = struct {
         _ = callFrame;
         defer globalThis.bunVM().autoGarbageCollect();
 
-        is_expecting_assertions = true;
+        const buntest = bun.jsc.Jest.describe2.getActive() orelse return globalThis.throw("expect.assertions() must be called within a test", .{});
+        const state_data = buntest.getCurrentStateData();
+        const execution = state_data.sequence(buntest) orelse return globalThis.throw("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed", .{});
+        if (execution.expect_assertions != .exact) {
+            execution.expect_assertions = .at_least_one;
+        }
 
         return .js_undefined;
     }
@@ -1170,8 +1171,10 @@ pub const Expect = struct {
 
         const unsigned_expected_assertions: u32 = @intFromFloat(expected_assertions);
 
-        is_expecting_assertions_count = true;
-        active_test_expectation_counter.expected = unsigned_expected_assertions;
+        const buntest = bun.jsc.Jest.describe2.getActive() orelse return globalThis.throw("expect.assertions() must be called within a test", .{});
+        const state_data = buntest.getCurrentStateData();
+        const execution = state_data.sequence(buntest) orelse return globalThis.throw("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed", .{});
+        execution.expect_assertions = .{ .exact = unsigned_expected_assertions };
 
         return .js_undefined;
     }

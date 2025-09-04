@@ -123,4 +123,27 @@ test.each([
   expect(a + b).toBe(expected);
 });
 
+// == expect.assertions/hasAssertions ==
+test.failing("expect.assertions", () => {
+  // this test should fail despite being 'test.failing', matching existing behaviour
+  // we might consider changing this.
+  expect.assertions(1);
+  expect.hasAssertions(); // make sure this doesn't overwrite the assertions count, matching existing behaviour
+});
+
+test.concurrent.failing("expect.assertions not yet supported in concurrent tests", () => {
+  expect.hasAssertions(); // this call will fail because expect.hasAssertions is not yet supported in concurrent tests
+  expect(true).toBe(true);
+});
+test.concurrent.failing("expect.assertions not yet supported in concurrent tests", () => {
+  expect.assertions(1); // this call will fail because expect.assertions is not yet supported in concurrent tests
+  expect(true).toBe(true);
+});
+
+test("expect.assertions works", () => {
+  expect.assertions(2);
+  expect(true).toBe(true);
+  expect(true).toBe(true);
+});
+
 console.log("exit");

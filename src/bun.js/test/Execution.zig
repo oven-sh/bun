@@ -57,8 +57,13 @@ pub const ExecutionSequence = struct {
     remaining_repeat_count: i64 = 1,
     result: Result = .pending,
     executing: bool = false,
-    started_at: bun.timespec = bun.timespec.epoch,
+    started_at: bun.timespec = .epoch,
     expect_call_count: u32 = 0, // TODO: impl incrementExpectCallCounter to increment this number and others
+    expect_assertions: union(enum) {
+        not_set,
+        at_least_one,
+        exact: u32,
+    } = .not_set,
 
     fn entryMode(this: ExecutionSequence) describe2.ScopeMode {
         if (this.test_entry) |entry| return entry.base.mode;
@@ -88,12 +93,20 @@ pub const Result = enum {
     fail_because_expected_has_assertions,
     fail_because_expected_assertion_count,
 
-    pub fn isPass(this: Result) bool {
+    pub fn isPass(this: Result, pending_is: enum { pending_is_pass, pending_is_fail }) bool {
         return switch (this) {
             .pass, .skip, .todo, .skipped_because_label => true,
             .fail, .fail_because_timeout, .fail_because_timeout_with_done_callback, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => false,
-            .pending => false,
+            .pending => pending_is == .pending_is_pass,
         };
+    }
+
+    fn switchPassAndFail(this: Result, failure: Result) Result {
+        switch (this) {
+            .pass => return failure,
+            .fail => return .pass,
+            else => return this, // note that this includes other fail reasons (eg fail_because_expected_has_assertions, fail_because_timeout).
+        }
     }
 };
 const EntryID = enum(usize) {
@@ -338,21 +351,18 @@ fn onSequenceCompleted(this: *Execution, sequence: *ExecutionSequence) void {
     if (sequence.result == .pending) {
         sequence.result = .pass;
     }
+    switch (sequence.expect_assertions) {
+        .not_set => {},
+        .at_least_one => if (sequence.expect_call_count == 0 and sequence.result.isPass(.pending_is_pass)) {
+            sequence.result = .fail_because_expected_has_assertions;
+        },
+        .exact => |expected| if (sequence.expect_call_count != expected and sequence.result.isPass(.pending_is_pass)) {
+            sequence.result = .fail_because_expected_assertion_count;
+        },
+    }
     switch (sequence.entryMode()) {
-        .failing => {
-            sequence.result = switch (sequence.result) {
-                .fail => .pass,
-                .pass => .fail_because_failing_test_passed,
-                else => sequence.result,
-            };
-        },
-        .todo => {
-            sequence.result = switch (sequence.result) {
-                .fail => .todo,
-                .pass => .fail_because_todo_passed,
-                else => sequence.result,
-            };
-        },
+        .failing => sequence.result = sequence.result.switchPassAndFail(.fail_because_failing_test_passed),
+        .todo => sequence.result = sequence.result.switchPassAndFail(.fail_because_todo_passed),
         else => {},
     }
     const entries = sequence.entries(this);
@@ -372,10 +382,13 @@ pub fn resetGroup(this: *Execution, group_index: usize) void {
 }
 pub fn resetSequence(this: *Execution, sequence: *ExecutionSequence) void {
     bun.assert(!sequence.executing);
-    if (sequence.result.isPass()) {
+    if (sequence.result.isPass(.pending_is_pass)) {
         // passed or pending; run again
         sequence.index = 0;
         sequence.result = .pending;
+        sequence.expect_call_count = 0;
+        sequence.expect_assertions = .not_set;
+        sequence.started_at = .epoch;
     } else {
         // already failed or skipped; don't run again
         sequence.index = sequence.entries(this).len;

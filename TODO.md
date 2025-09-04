@@ -262,8 +262,8 @@ Exited with code [1]
 - [ ] support having both a done callback and a promise result
 - [x] support expect counter
 - [ ] decide if beforeEach/beforeAll/afterEach/afterAll should skip executing the test and when. do we match existing behaviour, jest, vitest, or diverge? what does existing behaviour/jest/vitest do?
-- [ ] support `expect.assertions()` in non-concurrent tests
-- [ ] test behaviour of `expect.assertions()` in concurrent tests
+- [x] support `expect.assertions()` in non-concurrent tests
+- [x] test behaviour of `expect.assertions()` in concurrent tests
 - [ ] test what happens when done callback is called after the test fails to timeout, or promise resolves after. make sure we match existing behaviour
 - [ ] validate junit output does not regress (make sure the generated xml files are identical to existing behaviour)
 - [x] finalize describe call order. ideally `A[B, C], D[E, F[G]]` will run in normal order rather than `A, D, B, C, E, F, G`
@@ -330,6 +330,8 @@ Exited with code [1]
 
 # Code quality:
 
+- [ ] consider making RefDataValue methods return the reason for failure rather than ?value. that way we can improve error messages. the reason could be a string or it could be a defined error set
+- [ ] expect_call_count/expect_assertions is confusing. rename to `expect_calls`, `assert_expect_calls`. or something.
 - [ ] instead of 'description orelse (unnamed)', let's have description default to 'unnamed' and not free it if it === the global that defines that
 - [ ] in test_command.zig, it has `const converted_status: TestRunner.Test.Status = switch (status) {`. instead, change junit writeTestCase to accept the new status type.
 - [ ] BunTestFile is called buntest. what is BunTest called? rename these. maybe BunTestFile -> BunTest and BunTest -> BunTestAllFiles? or BunTestRoot?

@@ -41,6 +41,7 @@
   ResolveError                    GlobalObject::m_JSResolveMessage                     ClassStructure
   ResolveMessage                  GlobalObject::m_JSResolveMessage                     ClassStructure
   Response                        GlobalObject::m_JSResponse                           ClassStructure
+  SSRResponse                     GlobalObject::m_JSBakeResponseClassStructure         ClassStructure
   TextDecoder                     GlobalObject::m_JSTextDecoder                        ClassStructure
 
   AbortController                 AbortControllerConstructorCallback                   PropertyCallback

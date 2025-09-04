@@ -64,6 +64,7 @@ src/bun.js/bindings/InternalModuleRegistry.cpp
 src/bun.js/bindings/IPC.cpp
 src/bun.js/bindings/isBuiltinModule.cpp
 src/bun.js/bindings/JS2Native.cpp
+src/bun.js/bindings/JSBakeResponse.cpp
 src/bun.js/bindings/JSBigIntBinding.cpp
 src/bun.js/bindings/JSBuffer.cpp
 src/bun.js/bindings/JSBufferEncodingType.cpp

@@ -30,8 +30,6 @@ redirected: bool = false,
 /// In the server we use a flag response_protected to protect/unprotect the response
 ref_count: u32 = 1,
 
-is_jsx: bool = false,
-
 // We must report a consistent value for this
 reported_estimated_size: usize = 0,
 
@@ -626,9 +624,30 @@ pub fn constructError(
 }
 
 pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_value: jsc.JSValue) bun.JSError!*Response {
+    return constructorImpl(globalThis, callframe, this_value, false);
+}
+
+pub fn ResponseClass__constructForSSR(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, thisValue: jsc.JSValue) callconv(jsc.conv) ?*anyopaque {
+    return @as(*Response, Response.constructor(globalObject, callFrame, thisValue) catch |err| switch (err) {
+        error.JSError => return null,
+        error.OutOfMemory => {
+            globalObject.throwOutOfMemory() catch {};
+            return null;
+        },
+    });
+}
+
+comptime {
+    @export(&ResponseClass__constructForSSR, .{ .name = "ResponseClass__constructForSSR" });
+}
+
+pub fn constructorForSSR(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_value: jsc.JSValue) bun.JSError!*Response {
+    return constructorImpl(globalThis, callframe, this_value);
+}
+
+pub fn constructorImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_value: jsc.JSValue, bake_ssr_response_enabled: bool) bun.JSError!*Response {
     var arguments = callframe.argumentsAsArray(2);
 
-    var is_jsx = false;
     if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
         if (arguments[0].as(Blob)) |blob| {
             if (blob.isS3()) {
@@ -664,21 +683,21 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, t
 
         // Special case for bake: allow `return new Response(<jsx> ... </jsx>, { ... }`
         // inside of a react component
-        if (globalThis.allowJSXInResponseConstructor()) {
-            const arg = arguments[0];
-            // Check if it's a JSX element (object with $$typeof)
-            if (try arg.isJSXElement(globalThis)) {
-                const vm = globalThis.bunVM();
-                if (vm.dev_server_async_local_storage.get()) |async_local_storage| {
-                    try assertStreamingDisabled(globalThis, async_local_storage, "new Response(<jsx />, { ... })");
-                }
+        if (bake_ssr_response_enabled and globalThis.allowJSXInResponseConstructor()) {
+            _ = this_value;
+            // const arg = arguments[0];
+            // // Check if it's a JSX element (object with $$typeof)
+            // if (try arg.isJSXElement(globalThis)) {
+            //     const vm = globalThis.bunVM();
+            //     if (vm.dev_server_async_local_storage.get()) |async_local_storage| {
+            //         try assertStreamingDisabled(globalThis, async_local_storage, "new Response(<jsx />, { ... })");
+            //     }
 
-                // Pass the response options (arguments[1]) to transformToReactElement
-                // so it can store them for later use when the component is rendered
-                const responseOptions = if (arguments[1].isObject()) arguments[1] else .js_undefined;
-                try JSValue.transformToReactElementWithOptions(this_value, arg, responseOptions, globalThis);
-                is_jsx = true;
-            }
+            //     // Pass the response options (arguments[1]) to transformToReactElement
+            //     // so it can store them for later use when the component is rendered
+            //     const responseOptions = if (arguments[1].isObject()) arguments[1] else .js_undefined;
+            //     try JSValue.transformToReactElementWithOptions(this_value, arg, responseOptions, globalThis);
+            // }
         }
     }
     var init: Init = (brk: {
@@ -719,7 +738,6 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, t
     var response = bun.new(Response, Response{
         .body = body,
         .init = init,
-        .is_jsx = is_jsx,
     });
 
     if (response.body.value == .Blob and

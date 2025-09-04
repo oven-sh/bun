@@ -234,6 +234,10 @@ public:
     JSC::JSValue HTTPSResponseSinkPrototype() const { return m_JSHTTPSResponseSinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableHTTPSResponseSinkControllerPrototype() const { return m_JSHTTPSResponseControllerPrototype.getInitializedOnMainThread(this); }
 
+    JSC::Structure* JSBakeResponseStructure() const { return m_JSBakeResponseClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* JSBakeResponseConstructor() { return m_JSBakeResponseClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue JSBakeResponsePrototype() const { return m_JSBakeResponseClassStructure.prototypeInitializedOnMainThread(this); }
+
     JSC::Structure* NetworkSinkStructure() const { return m_JSNetworkSinkClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* NetworkSink() { return m_JSNetworkSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NetworkSinkPrototype() const { return m_JSNetworkSinkClassStructure.prototypeInitializedOnMainThread(this); }
@@ -527,6 +531,7 @@ public:
     V(private, LazyClassStructure, m_JSFileSinkClassStructure)                                               \
     V(private, LazyClassStructure, m_JSHTTPResponseSinkClassStructure)                                       \
     V(private, LazyClassStructure, m_JSHTTPSResponseSinkClassStructure)                                      \
+    V(public, LazyClassStructure, m_JSBakeResponseClassStructure)                                            \
     V(private, LazyClassStructure, m_JSNetworkSinkClassStructure)                                            \
                                                                                                              \
     V(private, LazyClassStructure, m_JSStringDecoderClassStructure)                                          \

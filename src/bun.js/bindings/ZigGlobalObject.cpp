@@ -164,6 +164,7 @@
 #include "JSPerformanceResourceTiming.h"
 #include "JSPerformanceTiming.h"
 #include "JSX509Certificate.h"
+#include "JSBakeResponse.h"
 #include "JSSign.h"
 #include "JSVerify.h"
 #include "JSHmac.h"
@@ -3363,6 +3364,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.setPrototype(prototype);
             init.setStructure(structure);
             init.setConstructor(constructor);
+        });
+
+    m_JSBakeResponseClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupJSBakeResponseClassStructure(init);
         });
 
     m_JSNetworkSinkClassStructure.initLater(

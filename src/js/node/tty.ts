@@ -11,6 +11,9 @@ const {
 
 const { validateInteger } = require("internal/validators");
 const fs = require("internal/fs/streams");
+const KeepAlive = $zig("node_binding.zig", "KeepAlive");
+
+const kKeepAlive = Symbol("kKeepAlive");
 
 function ReadStream(fd): void {
   if (!(this instanceof ReadStream)) {
@@ -19,6 +22,7 @@ function ReadStream(fd): void {
   fs.ReadStream.$apply(this, ["", { fd }]);
   this.isRaw = false;
   this.isTTY = true;
+  this[kKeepAlive] = new KeepAlive();
 }
 $toClass(ReadStream, "ReadStream", fs.ReadStream);
 
@@ -74,6 +78,15 @@ Object.defineProperty(ReadStream, "prototype", {
       return this;
     };
 
+    Prototype.ref = function () {
+      // in Bun ReadStream is not a net.Socket so these methods need to be added explicitly
+      this[kKeepAlive].ref();
+    };
+    Prototype.unref = function () {
+      // in Bun ReadStream is not a net.Socket so these methods need to be added explicitly
+      this[kKeepAlive].unref();
+    };
+
     Object.defineProperty(ReadStream, "prototype", { value: Prototype });
 
     return Prototype;
@@ -89,6 +102,7 @@ function WriteStream(fd): void {
   stream.columns = undefined;
   stream.rows = undefined;
   stream.isTTY = isatty(stream.fd);
+  stream[kKeepAlive] = new KeepAlive();
 
   if (stream.isTTY) {
     const windowSizeArray = [0, 0];
@@ -165,6 +179,15 @@ Object.defineProperty(WriteStream, "prototype", {
       return (async function* () {
         // stdout/stderr don't produce readable data, so yield nothing
       })();
+    };
+
+    WriteStream.prototype.ref = function () {
+      // in Bun WriteStream is not a net.Socket so these methods need to be added explicitly
+      this[kKeepAlive].ref();
+    };
+    WriteStream.prototype.unref = function () {
+      // in Bun WriteStream is not a net.Socket so these methods need to be added explicitly
+      this[kKeepAlive].unref();
     };
 
     return Real;

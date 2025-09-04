@@ -87,6 +87,7 @@ pub const Classes = struct {
     pub const BlockList = api.BlockList;
     pub const NativeZstd = api.NativeZstd;
     pub const SourceMap = bun.sourcemap.JSSourceMap;
+    pub const KeepAlive = api.KeepAlive;
 };
 
 const bun = @import("bun");

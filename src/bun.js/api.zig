@@ -51,6 +51,7 @@ pub const UDPSocket = @import("./api/bun/udp_socket.zig").UDPSocket;
 pub const Valkey = @import("../valkey/js_valkey.zig").JSValkeyClient;
 pub const BlockList = @import("./node/net/BlockList.zig");
 pub const NativeZstd = @import("./node/zlib/NativeZstd.zig");
+pub const KeepAlive = @import("./node/misc/KeepAlive.zig");
 
 pub const napi = @import("../napi/napi.zig");
 pub const node = @import("./node.zig");

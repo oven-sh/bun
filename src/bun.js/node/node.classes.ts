@@ -333,4 +333,17 @@ export default [
       Stats: { getter: "getStats" },
     },
   }),
+  define({
+    name: "KeepAlive",
+    construct: true,
+    noConstructor: false,
+    finalize: true,
+    configurable: false,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      ref: { fn: "jsRef" },
+      unref: { fn: "jsUnref" },
+    },
+  }),
 ];

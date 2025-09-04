@@ -1446,18 +1446,15 @@ pub fn init(comptime Type: type, st: Type, loc: logger.Loc) Expr {
 
 /// If this returns true, then calling this expression captures the target of
 /// the property access as "this" when calling the function in the property.
-pub fn isPropertyAccess(this: *const Expr) bool {
-    return switch (this.data) {
-        .e_dot, .e_index => true,
-        else => false,
-    };
+pub inline fn isPropertyAccess(this: *const Expr) bool {
+    return this.hasValueForThisInCall();
 }
 
-pub fn isPrimitiveLiteral(this: Expr) bool {
+pub inline fn isPrimitiveLiteral(this: *const Expr) bool {
     return @as(Tag, this.data).isPrimitiveLiteral();
 }
 
-pub fn isRef(this: Expr, ref: Ref) bool {
+pub inline fn isRef(this: *const Expr, ref: Ref) bool {
     return switch (this.data) {
         .e_import_identifier => |import_identifier| import_identifier.ref.eql(ref),
         .e_identifier => |ident| ident.ref.eql(ref),
@@ -1919,36 +1916,19 @@ pub const Tag = enum {
     }
 };
 
-pub fn isBoolean(a: Expr) bool {
-    switch (a.data) {
-        .e_boolean => {
-            return true;
+pub fn isBoolean(a: *const Expr) bool {
+    return switch (a.data) {
+        .e_boolean => true,
+        .e_if => |ex| ex.yes.isBoolean() and ex.no.isBoolean(),
+        .e_unary => |ex| ex.op == .un_not or ex.op == .un_delete,
+        .e_binary => |ex| switch (ex.op) {
+            .bin_strict_eq, .bin_strict_ne, .bin_loose_eq, .bin_loose_ne, .bin_lt, .bin_gt, .bin_le, .bin_ge, .bin_instanceof, .bin_in => true,
+            .bin_logical_or => ex.left.isBoolean() and ex.right.isBoolean(),
+            .bin_logical_and => ex.left.isBoolean() and ex.right.isBoolean(),
+            else => false,
         },
-
-        .e_if => |ex| {
-            return isBoolean(ex.yes) and isBoolean(ex.no);
-        },
-        .e_unary => |ex| {
-            return ex.op == .un_not or ex.op == .un_delete;
-        },
-        .e_binary => |ex| {
-            switch (ex.op) {
-                .bin_strict_eq, .bin_strict_ne, .bin_loose_eq, .bin_loose_ne, .bin_lt, .bin_gt, .bin_le, .bin_ge, .bin_instanceof, .bin_in => {
-                    return true;
-                },
-                .bin_logical_or => {
-                    return isBoolean(ex.left) and isBoolean(ex.right);
-                },
-                .bin_logical_and => {
-                    return isBoolean(ex.left) and isBoolean(ex.right);
-                },
-                else => {},
-            }
-        },
-        else => {},
-    }
-
-    return false;
+        else => false,
+    };
 }
 
 pub fn assign(a: Expr, b: Expr) Expr {
@@ -1958,7 +1938,7 @@ pub fn assign(a: Expr, b: Expr) Expr {
         .right = b,
     }, a.loc);
 }
-pub inline fn at(expr: Expr, comptime Type: type, t: Type, _: std.mem.Allocator) Expr {
+pub inline fn at(expr: *const Expr, comptime Type: type, t: Type, _: std.mem.Allocator) Expr {
     return init(Type, t, expr.loc);
 }
 
@@ -1966,21 +1946,19 @@ pub inline fn at(expr: Expr, comptime Type: type, t: Type, _: std.mem.Allocator)
 // will potentially be simplified to avoid generating unnecessary extra "!"
 // operators. For example, calling this with "!!x" will return "!x" instead
 // of returning "!!!x".
-pub fn not(expr: Expr, allocator: std.mem.Allocator) Expr {
-    return maybeSimplifyNot(
-        expr,
-        allocator,
-    ) orelse Expr.init(
-        E.Unary,
-        E.Unary{
-            .op = .un_not,
-            .value = expr,
-        },
-        expr.loc,
-    );
+pub fn not(expr: *const Expr, allocator: std.mem.Allocator) Expr {
+    return expr.maybeSimplifyNot(allocator) orelse
+        Expr.init(
+            E.Unary,
+            E.Unary{
+                .op = .un_not,
+                .value = expr.*,
+            },
+            expr.loc,
+        );
 }
 
-pub fn hasValueForThisInCall(expr: Expr) bool {
+pub inline fn hasValueForThisInCall(expr: *const Expr) bool {
     return switch (expr.data) {
         .e_dot, .e_index => true,
         else => false,
@@ -1992,7 +1970,7 @@ pub fn hasValueForThisInCall(expr: Expr) bool {
 /// whole operator (i.e. the "!x") if it can be simplified, or false if not.
 /// It's separate from "Not()" above to avoid allocation on failure in case
 /// that is undesired.
-pub fn maybeSimplifyNot(expr: Expr, allocator: std.mem.Allocator) ?Expr {
+pub fn maybeSimplifyNot(expr: *const Expr, allocator: std.mem.Allocator) ?Expr {
     switch (expr.data) {
         .e_null, .e_undefined => {
             return expr.at(E.Boolean, E.Boolean{ .value = true }, allocator);
@@ -2014,7 +1992,7 @@ pub fn maybeSimplifyNot(expr: Expr, allocator: std.mem.Allocator) ?Expr {
         },
         // "!!!a" => "!a"
         .e_unary => |un| {
-            if (un.op == Op.Code.un_not and knownPrimitive(un.value) == .boolean) {
+            if (un.op == Op.Code.un_not and un.value.knownPrimitive() == .boolean) {
                 return un.value;
             }
         },
@@ -2027,33 +2005,33 @@ pub fn maybeSimplifyNot(expr: Expr, allocator: std.mem.Allocator) ?Expr {
                 Op.Code.bin_loose_eq => {
                     // "!(a == b)" => "a != b"
                     ex.op = .bin_loose_ne;
-                    return expr;
+                    return expr.*;
                 },
                 Op.Code.bin_loose_ne => {
                     // "!(a != b)" => "a == b"
                     ex.op = .bin_loose_eq;
-                    return expr;
+                    return expr.*;
                 },
                 Op.Code.bin_strict_eq => {
                     // "!(a === b)" => "a !== b"
                     ex.op = .bin_strict_ne;
-                    return expr;
+                    return expr.*;
                 },
                 Op.Code.bin_strict_ne => {
                     // "!(a !== b)" => "a === b"
                     ex.op = .bin_strict_eq;
-                    return expr;
+                    return expr.*;
                 },
                 Op.Code.bin_comma => {
                     // "!(a, b)" => "a, !b"
                     ex.right = ex.right.not(allocator);
-                    return expr;
+                    return expr.*;
                 },
                 else => {},
             }
         },
         .e_inlined_enum => |inlined| {
-            return maybeSimplifyNot(inlined.value, allocator);
+            return inlined.value.maybeSimplifyNot(allocator);
         },
 
         else => {},
@@ -2062,11 +2040,11 @@ pub fn maybeSimplifyNot(expr: Expr, allocator: std.mem.Allocator) ?Expr {
     return null;
 }
 
-pub fn toStringExprWithoutSideEffects(expr: Expr, allocator: std.mem.Allocator) ?Expr {
+pub fn toStringExprWithoutSideEffects(expr: *const Expr, allocator: std.mem.Allocator) ?Expr {
     const unwrapped = expr.unwrapInlined();
     const slice = switch (unwrapped.data) {
         .e_null => "null",
-        .e_string => return expr,
+        .e_string => return expr.*,
         .e_undefined => "undefined",
         .e_boolean => |data| if (data.value) "true" else "false",
         .e_big_int => |bigint| bigint.value,
@@ -2100,7 +2078,7 @@ pub fn isOptionalChain(self: *const @This()) bool {
     };
 }
 
-pub inline fn knownPrimitive(self: @This()) PrimitiveType {
+pub inline fn knownPrimitive(self: *const @This()) PrimitiveType {
     return self.data.knownPrimitive();
 }
 

@@ -1135,6 +1135,7 @@ fn runWithSourceCode(
     // this is not done when there is one server graph because it is easier for plugins to deal with.
     (use_directive == .client and
         task.known_target != .bake_server_components_ssr and
+        this.ctx.framework != null and
         this.ctx.framework.?.server_components.?.separate_ssr_graph) or
         // set the target to the client when bundling client-side files
         ((transpiler.options.server_components or transpiler.options.dev_server != null) and

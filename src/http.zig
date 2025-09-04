@@ -1340,18 +1340,18 @@ pub fn handleOnDataHeaders(
     ctx: *NewHTTPContext(is_ssl),
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
-    log("handleOnDataHeaders", .{});
+    log("handleOnDataHeader data: {s}", .{incoming_data});
     var to_read = incoming_data;
+    var needs_move = true;
+    if (this.state.response_message_buffer.list.items.len > 0) {
+        // this one probably won't be another chunk, so we use appendSliceExact() to avoid over-allocating
+        bun.handleOom(this.state.response_message_buffer.appendSliceExact(incoming_data));
+        to_read = this.state.response_message_buffer.list.items;
+        needs_move = false;
+    }
 
     while (true) {
         var amount_read: usize = 0;
-        var needs_move = true;
-        if (this.state.response_message_buffer.list.items.len > 0) {
-            // this one probably won't be another chunk, so we use appendSliceExact() to avoid over-allocating
-            bun.handleOom(this.state.response_message_buffer.appendSliceExact(incoming_data));
-            to_read = this.state.response_message_buffer.list.items;
-            needs_move = false;
-        }
 
         // we reset the pending_response each time wich means that on parse error this will be always be empty
         this.state.pending_response = picohttp.Response{};
@@ -1402,11 +1402,15 @@ pub fn handleOnDataHeaders(
         }
 
         // handle the case where we have a 100 Continue
-        if (response.status_code >= 100 and response.status_code < 200 and to_read.len > 0) {
+        if (response.status_code >= 100 and response.status_code < 200) {
             log("information headers", .{});
-            // we still can have the 200 OK in the same buffer sometimes
-            // 1XX responses MUST NOT include a message-body, therefore we need to continue parsing
 
+            this.state.pending_response = null;
+            if (to_read.len == 0) {
+                // we only received 1XX responses, we wanna wait for the next status code
+                return;
+            }
+            // the buffer could still contain more 1XX responses or other status codes, so we continue parsing
             continue;
         }
 
@@ -2188,7 +2192,7 @@ pub fn handleResponseMetadata(
         //      [...] cannot contain a message body or trailer section.
         // therefore in these cases set content-length to 0, so the response body is always ignored
         // and is not waited for (which could cause a timeout)
-        if ((response.status_code >= 100 and response.status_code < 200 and response.status_code != 101) or response.status_code == 204 or response.status_code == 304) {
+        if ((response.status_code >= 100 and response.status_code < 200) or response.status_code == 204 or response.status_code == 304) {
             this.state.content_length = 0;
         }
 
@@ -2454,8 +2458,13 @@ pub fn handleResponseMetadata(
     } else {
         log("handleResponseMetadata: content_length is null and transfer_encoding {}", .{this.state.transfer_encoding});
     }
+    if (this.flags.upgrade_state == .upgraded) {
+        this.state.content_length = null;
+        this.state.flags.allow_keepalive = false;
+        return ShouldContinue.continue_streaming;
+    }
 
-    if (this.method.hasBody() and (content_length == null or content_length.? > 0 or !this.state.flags.allow_keepalive or this.state.transfer_encoding == .chunked or is_server_sent_events or this.flags.upgrade_state == .upgraded)) {
+    if (this.method.hasBody() and (content_length == null or content_length.? > 0 or !this.state.flags.allow_keepalive or this.state.transfer_encoding == .chunked or is_server_sent_events)) {
         return ShouldContinue.continue_streaming;
     } else {
         return ShouldContinue.finished;

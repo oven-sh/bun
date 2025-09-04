@@ -94,11 +94,16 @@ test("security scanner does not run on bun update when not configured", async ()
     stderr: "pipe",
   });
 
-  const [out, exitCode] = await Promise.all([updateProc.stdout.text(), updateProc.exited]);
+  const [out, err, exitCode] = await Promise.all([
+    updateProc.stdout.text(),
+    updateProc.stderr.text(),
+    updateProc.exited,
+  ]);
 
-  expect(out).not.toContain("Security scanner");
-  expect(out).not.toContain("FATAL:");
-  expect(out).not.toContain("WARN:");
+  const combined = out + err;
+  expect(combined).not.toContain("Security scanner");
+  expect(combined).not.toContain("FATAL:");
+  expect(combined).not.toContain("WARN:");
 
   expect(exitCode).toBe(0);
 });

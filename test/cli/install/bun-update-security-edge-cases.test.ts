@@ -274,9 +274,10 @@ module.exports = {
 
     // Install without scanner first
     const tempBunfig = join(dir, "bunfig.toml");
-    await Bun.$`mv ${tempBunfig} ${tempBunfig}.bak`.quiet();
+    const fs = await import("node:fs/promises");
+    await fs.rename(tempBunfig, `${tempBunfig}.bak`);
     await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-    await Bun.$`mv ${tempBunfig}.bak ${tempBunfig}`.quiet();
+    await fs.rename(`${tempBunfig}.bak`, tempBunfig);
 
     // Add a new package without scanner
     await Bun.$`${bunExe()} add lodash`.cwd(dir).env(bunEnv).quiet();

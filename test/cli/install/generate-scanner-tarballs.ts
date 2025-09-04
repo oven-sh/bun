@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
-import { mkdir } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 const __dirname = dirname(Bun.fileURLToPath(import.meta.url));
 
 async function createScannerTarball(behavior: "clean" | "warn" | "fatal") {
-  const tmpDir = `/tmp/test-security-scanner-${behavior}-${Date.now()}`;
+  const tmpDir = await mkdtemp(join(tmpdir(), `test-security-scanner-${behavior}-`));
   const outputPath = join(__dirname, `test-security-scanner-1.0.0-${behavior}.tgz`);
 
   try {

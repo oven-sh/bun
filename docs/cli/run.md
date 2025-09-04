@@ -166,6 +166,38 @@ will execute `<script>` in both `bar` and `baz`, but not in `foo`.
 
 Find more details in the docs page for [filter](https://bun.com/docs/cli/filter#running-scripts-with-filter).
 
+### Workspaces
+
+Similar to npm, you can use the `--workspace` argument to run scripts in specific workspace packages.
+
+Use `bun run --workspace <name> <script>` to execute `<script>` in the workspace package named `<name>`.
+
+```bash
+bun run --workspace foo test
+```
+
+You can specify multiple workspaces by using the flag multiple times:
+
+```bash
+bun run --workspace foo --workspace bar test
+```
+
+Or use the short flag `-w`:
+
+```bash
+bun run -w foo -w bar test
+```
+
+Unlike `--filter`, the `--workspace` flag requires exact package name matches and executes scripts in the order they appear in your `package.json` workspaces configuration, not in dependency order.
+
+You can also combine `--workspace` with `--filter`:
+
+```bash
+bun run --workspace foo --filter 'ba*' test
+```
+
+This will run the `test` script in both the `foo` workspace (exact match) and any packages matching `ba*` (pattern match).
+
 ## `bun run -` to pipe code from stdin
 
 `bun run -` lets you read JavaScript, TypeScript, TSX, or JSX from stdin and execute it without writing to a temporary file first.

@@ -94,6 +94,7 @@ describe("fetch upgrade", () => {
     const clientMessages: string[] = [];
 
     const { promise, resolve, reject } = Promise.withResolvers<void>();
+
     req.on("upgrade", (req, socket, head) => {
       try {
         expect(req.statusCode).toBe(101);
@@ -102,7 +103,7 @@ describe("fetch upgrade", () => {
         expect(req.headers.connection).toBe("Upgrade");
         expect(head).toBeDefined();
         expect(Buffer.isBuffer(head)).toBe(true);
-        socket.on("data", data => {
+        function onData(data: Buffer) {
           for (const msg of decodeFrames(data)) {
             if (typeof msg === "string") {
               clientMessages.push(msg);
@@ -114,7 +115,11 @@ describe("fetch upgrade", () => {
               }
             }
           }
-        });
+        }
+        if (head.length > 0) {
+          onData(head);
+        }
+        socket.on("data", onData);
 
         socket.write(encodeTextFrame("hello"));
         socket.write(encodeTextFrame("world"));

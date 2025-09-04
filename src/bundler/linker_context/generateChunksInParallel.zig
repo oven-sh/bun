@@ -427,7 +427,7 @@ pub fn generateChunksInParallel(
                     else
                         .js;
 
-                    if (loader.isJavaScriptLike()) {
+                    if (chunk.content == .javascript and loader.isJavaScriptLike()) {
                         jsc.VirtualMachine.is_bundler_thread_for_bytecode_cache = true;
                         jsc.initialize(false);
                         var fdpath: bun.PathBuffer = undefined;

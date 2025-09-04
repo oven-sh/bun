@@ -58,7 +58,7 @@ pub const ExecutionSequence = struct {
     result: Result = .pending,
     executing: bool = false,
     started_at: bun.timespec = .epoch,
-    expect_call_count: u32 = 0, // TODO: impl incrementExpectCallCounter to increment this number and others
+    expect_call_count: u32 = 0,
     expect_assertions: union(enum) {
         not_set,
         at_least_one,

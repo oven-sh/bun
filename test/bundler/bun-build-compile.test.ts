@@ -68,7 +68,7 @@ describe("Bun.build compile", () => {
     const result1 = await Bun.build({
       entrypoints: [join(dir + "", "app.js")],
       compile: {
-        outfile: "output/nested/app1",
+        outfile: join(dir + "", "output/nested/app1"),
       },
     });
     expect(result1.success).toBe(true);
@@ -78,7 +78,7 @@ describe("Bun.build compile", () => {
     const result2 = await Bun.build({
       entrypoints: [join(dir + "", "app.js")],
       compile: {
-        outfile: "./app2",
+        outfile: join(dir + "", "app2"),
       },
     });
     expect(result2.success).toBe(true);
@@ -88,7 +88,7 @@ describe("Bun.build compile", () => {
     const result3 = await Bun.build({
       entrypoints: [join(dir + "", "app.js")],
       compile: {
-        outfile: "./a/b/c/d/app3",
+        outfile: join(dir + "", "a/b/c/d/app3"),
       },
     });
     expect(result3.success).toBe(true);

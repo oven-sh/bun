@@ -97,7 +97,7 @@ describe("Bun.build compile with wasm", () => {
     const result = await Bun.build({
       entrypoints: [join(dir, "app.js")],
       compile: {
-        outfile: "app-wasm",
+        outfile: join(dir, "app-wasm"),
       },
     });
 

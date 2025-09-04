@@ -4,7 +4,7 @@ import { existsSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
-describe("compile --outfile with subdirectories", () => {
+describe.if(isWindows)("compile --outfile with subdirectories", () => {
   test("places executable in subdirectory with forward slash", async () => {
     using dir = tempDir("compile-subdir-forward", {
       "app.js": `console.log("Hello from subdirectory!");`,

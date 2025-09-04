@@ -6411,11 +6411,41 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] bool JSC__JSMap__remove(JSC::JSMap* map, JSC::J
     JSC::JSValue value = JSC::JSValue::decode(JSValue2);
     return map->remove(arg1, value);
 }
+/**
+ * @brief Set a key/value pair on a JavaScript Map.
+ *
+ * Stores the given key/value pair into the provided JSC::JSMap. The key and value are passed as
+ * encoded JS values and will be associated in the map (overwriting any existing entry for the key).
+ *
+ * @param map The JSMap to modify.
+ * @param JSValue2 EncodedJSValue representing the key.
+ * @param JSValue3 EncodedJSValue representing the value to associate with the key.
+ */
 CPP_DECL [[ZIG_EXPORT(nothrow)]] void JSC__JSMap__set(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2, JSC::EncodedJSValue JSValue3)
 {
     map->set(arg1, JSC::JSValue::decode(JSValue2), JSC::JSValue::decode(JSValue3));
 }
 
+/**
+ * @brief Return the number of entries in a JavaScript Map.
+ *
+ * @param map Pointer to the JSMap to query.
+ * @param arg1 Global object (unused by this function).
+ * @return uint32_t The map's size (number of key/value entries).
+ */
+CPP_DECL [[ZIG_EXPORT(nothrow)]] uint32_t JSC__JSMap__size(JSC::JSMap* map, JSC::JSGlobalObject* arg1)
+{
+    return map->size();
+}
+
+/**
+ * @brief Enable or disable the VM's control-flow profiler.
+ *
+ * Toggles the JSC::VM control-flow profiler on or off. When enabled, the VM
+ * collects control-flow profiling data; when disabled, profiling is stopped.
+ *
+ * @param isEnabled True to enable the control-flow profiler, false to disable it.
+ */
 CPP_DECL void JSC__VM__setControlFlowProfiler(JSC::VM* vm, bool isEnabled)
 {
     if (isEnabled) {

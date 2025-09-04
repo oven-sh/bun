@@ -454,55 +454,49 @@ import { tmpdir } from "os";
 /**
  * Create a new client with specific connection type
  */
-export function createClient(
-    connectionType: ConnectionType = ConnectionType.TCP,
-    customOptions = {},
-    dbId: number | undefined = undefined,
-) {
+export function createClient(connectionType: ConnectionType = ConnectionType.TCP, customOptions = {}) {
   let url: string;
-  const mkUrl = (baseUrl: string) => dbId ? `${baseUrl}/${dbId}`: baseUrl;
-
   let options: any = {};
   context.id++;
 
   switch (connectionType) {
     case ConnectionType.TCP:
-      url = mkUrl(DEFAULT_REDIS_URL);
+      url = DEFAULT_REDIS_URL;
       options = {
         ...DEFAULT_REDIS_OPTIONS,
         ...customOptions,
       };
       break;
     case ConnectionType.TLS:
-      url = mkUrl(TLS_REDIS_URL);
+      url = TLS_REDIS_URL;
       options = {
         ...TLS_REDIS_OPTIONS,
         ...customOptions,
       };
       break;
     case ConnectionType.UNIX:
-      url = mkUrl(UNIX_REDIS_URL);
+      url = UNIX_REDIS_URL;
       options = {
         ...UNIX_REDIS_OPTIONS,
         ...customOptions,
       };
       break;
     case ConnectionType.AUTH:
-      url = mkUrl(AUTH_REDIS_URL);
+      url = AUTH_REDIS_URL;
       options = {
         ...AUTH_REDIS_OPTIONS,
         ...customOptions,
       };
       break;
     case ConnectionType.READONLY:
-      url = mkUrl(READONLY_REDIS_URL);
+      url = READONLY_REDIS_URL;
       options = {
         ...READONLY_REDIS_OPTIONS,
         ...customOptions,
       };
       break;
     case ConnectionType.WRITEONLY:
-      url = mkUrl(WRITEONLY_REDIS_URL);
+      url = WRITEONLY_REDIS_URL;
       options = {
         ...WRITEONLY_REDIS_OPTIONS,
         ...customOptions,
@@ -764,7 +758,15 @@ async function getRedisContainerName(): Promise<string> {
 }
 
 /**
- * Restart the Redis container to simulate connection drop
+ * Restart the Redis Docker container used by the tests.
+ *
+ * Restarts the container identified by the test harness and waits briefly for it
+ * to come back online (approximately 2 seconds). Use this to simulate a server
+ * restart or connection drop during tests.
+ *
+ * @returns A promise that resolves when the restart and short wait complete.
+ * @throws If the Docker restart command exits with a non-zero code; the error
+ *         message includes the container's stderr output.
  */
 export async function restartRedisContainer(): Promise<void> {
   const containerName = await getRedisContainerName();
@@ -788,4 +790,15 @@ export async function restartRedisContainer(): Promise<void> {
   await delay(2000);
 
   console.log(`Redis container restarted: ${containerName}`);
+}
+
+/**
+ * Returns a random boolean (a 50/50 coin flip).
+ *
+ * Useful for tests that need a nondeterministic boolean. Uses Math.random and is not suitable for cryptographic purposes.
+ *
+ * @returns true or false with approximately equal probability
+ */
+export function randomCoinFlip(): boolean {
+  return Math.floor(Math.random() * 2) == 0;
 }

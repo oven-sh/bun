@@ -663,7 +663,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
 
     if (body_len > 0 or this.method.hasRequestBody()) {
         if (this.flags.is_streaming_request_body) {
-            if (add_transfer_encoding) {
+            if (add_transfer_encoding and this.flags.upgrade_state == .none) {
                 request_headers_buf[header_count] = chunked_encoded_header;
                 header_count += 1;
             }

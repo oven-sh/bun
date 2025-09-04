@@ -295,9 +295,14 @@ pub fn finalize(this: *JSSourceMap) void {
     this.deinit();
 }
 
+fn setEnabled(enabled: bool) callconv(.C) void {
+    @"--enable-source-maps" = enabled;
+}
+
 comptime {
     const jsFunctionFindSourceMap = jsc.toJSHostFn(findSourceMap);
     @export(&jsFunctionFindSourceMap, .{ .name = "Bun__JSSourceMap__find" });
+    @export(&setEnabled, .{ .name = "Bun__JSSourceMap__setEnabled" });
 }
 
 pub const js = jsc.Codegen.JSSourceMap;

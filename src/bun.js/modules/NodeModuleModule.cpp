@@ -38,6 +38,9 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveFileName);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveLookupPaths);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSyncBuiltinExports);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetSourceMapsSupport);
+
+extern "C" void Bun__JSSourceMap__setEnabled(bool enabled);
 
 JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
 JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
@@ -809,6 +812,72 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetCompileCacheDir,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetSourceMapsSupport,
+    (JSGlobalObject * globalObject,
+        CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 1) {
+        return Bun::throwError(globalObject, scope,
+            Bun::ErrorCode::ERR_MISSING_ARGS,
+            "setSourceMapsSupport() requires at least one argument"_s);
+    }
+
+    JSValue enabledArg = callFrame->argument(0);
+    
+    // Validate first argument is boolean
+    if (!enabledArg.isBoolean()) {
+        return Bun::throwError(globalObject, scope,
+            Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+            "The \"enabled\" argument must be of type boolean"_s);
+    }
+
+    bool enabled = enabledArg.asBoolean();
+    
+    // Handle optional options object
+    if (callFrame->argumentCount() > 1) {
+        JSValue optionsArg = callFrame->argument(1);
+        
+        if (!optionsArg.isUndefined() && !optionsArg.isObject()) {
+            return Bun::throwError(globalObject, scope,
+                Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+                "The \"options\" argument must be of type object"_s);
+        }
+        
+        if (optionsArg.isObject()) {
+            JSObject* options = optionsArg.getObject();
+            
+            // Check nodeModules option
+            JSValue nodeModulesValue = options->get(globalObject, JSC::Identifier::fromString(vm, "nodeModules"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            
+            if (!nodeModulesValue.isUndefined() && !nodeModulesValue.isBoolean()) {
+                return Bun::throwError(globalObject, scope,
+                    Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+                    "The \"options.nodeModules\" property must be of type boolean"_s);
+            }
+            
+            // Check generatedCode option  
+            JSValue generatedCodeValue = options->get(globalObject, JSC::Identifier::fromString(vm, "generatedCode"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            
+            if (!generatedCodeValue.isUndefined() && !generatedCodeValue.isBoolean()) {
+                return Bun::throwError(globalObject, scope,
+                    Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+                    "The \"options.generatedCode\" property must be of type boolean"_s);
+            }
+        }
+    }
+
+    // For now, we'll just set the global flag that already exists
+    // This matches the behavior we already have with --enable-source-maps
+    Bun__JSSourceMap__setEnabled(enabled);
+    
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
 static JSValue getModuleObject(VM& vm, JSObject* moduleObject)
 {
     return moduleObject;
@@ -839,6 +908,7 @@ isBuiltin               jsFunctionIsBuiltinModule         Function 1
 prototype               getModulePrototypeObject          PropertyCallback
 register                jsFunctionRegister                Function 1
 runMain                 moduleRunMain                        CustomAccessor
+setSourceMapsSupport    jsFunctionSetSourceMapsSupport    Function 2
 SourceMap               getSourceMapFunction              PropertyCallback
 syncBuiltinESMExports   jsFunctionSyncBuiltinESMExports   Function 0
 wrap                    jsFunctionWrap                    Function 1

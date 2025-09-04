@@ -10,6 +10,8 @@ pub const Environment = @import("./env.zig");
 
 pub const use_mimalloc = true;
 pub const default_allocator: std.mem.Allocator = allocators.c_allocator;
+/// Zero-sized type whose `allocator` method returns `default_allocator`.
+pub const DefaultAllocator = allocators.Default;
 /// Zeroing memory allocator
 pub const z_allocator: std.mem.Allocator = allocators.z_allocator;
 
@@ -40,16 +42,16 @@ pub const debug_allocator_data = struct {
         return backing.?.allocator().rawAlloc(new_len, alignment, ret_addr);
     }
 
-    fn resize(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
-        return backing.?.allocator().rawResize(memory, alignment, new_len, ret_addr);
+    fn resize(_: *anyopaque, mem: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+        return backing.?.allocator().rawResize(mem, alignment, new_len, ret_addr);
     }
 
-    fn remap(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
-        return backing.?.allocator().rawRemap(memory, alignment, new_len, ret_addr);
+    fn remap(_: *anyopaque, mem: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        return backing.?.allocator().rawRemap(mem, alignment, new_len, ret_addr);
     }
 
-    fn free(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
-        return backing.?.allocator().rawFree(memory, alignment, ret_addr);
+    fn free(_: *anyopaque, mem: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+        return backing.?.allocator().rawFree(mem, alignment, ret_addr);
     }
 };
 
@@ -415,6 +417,7 @@ pub const BabyList = collections.BabyList;
 pub const OffsetList = collections.OffsetList;
 pub const bit_set = collections.bit_set;
 pub const HiveArray = collections.HiveArray;
+pub const BoundedArray = collections.BoundedArray;
 
 pub const ByteList = BabyList(u8);
 pub const OffsetByteList = OffsetList(u8);
@@ -662,17 +665,18 @@ pub fn onceUnsafe(comptime function: anytype, comptime ReturnType: type) ReturnT
     return Result.execute();
 }
 
-pub fn isHeapMemory(memory: anytype) bool {
+pub fn isHeapMemory(mem: anytype) bool {
     if (comptime use_mimalloc) {
-        const Memory = @TypeOf(memory);
+        const Memory = @TypeOf(mem);
         if (comptime std.meta.trait.isSingleItemPtr(Memory)) {
-            return mimalloc.mi_is_in_heap_region(memory);
+            return mimalloc.mi_is_in_heap_region(mem);
         }
-        return mimalloc.mi_is_in_heap_region(std.mem.sliceAsBytes(memory).ptr);
+        return mimalloc.mi_is_in_heap_region(std.mem.sliceAsBytes(mem).ptr);
     }
     return false;
 }
 
+pub const memory = @import("./memory.zig");
 pub const allocators = @import("./allocators.zig");
 pub const mimalloc = allocators.mimalloc;
 pub const MimallocArena = allocators.MimallocArena;
@@ -1733,7 +1737,7 @@ pub const StringSet = struct {
 
     pub const Map = StringArrayHashMap(void);
 
-    pub fn clone(self: StringSet) !StringSet {
+    pub fn clone(self: *const StringSet) !StringSet {
         var new_map = Map.init(self.map.allocator);
         try new_map.ensureTotalCapacity(self.map.count());
         for (self.map.keys()) |key| {
@@ -1750,7 +1754,15 @@ pub const StringSet = struct {
         };
     }
 
-    pub fn keys(self: StringSet) []const []const u8 {
+    pub fn isEmpty(self: *const StringSet) bool {
+        return self.count() == 0;
+    }
+
+    pub fn count(self: *const StringSet) usize {
+        return self.map.count();
+    }
+
+    pub fn keys(self: *const StringSet) []const []const u8 {
         return self.map.keys();
     }
 
@@ -1767,6 +1779,13 @@ pub const StringSet = struct {
 
     pub fn swapRemove(self: *StringSet, key: []const u8) bool {
         return self.map.swapRemove(key);
+    }
+
+    pub fn clearAndFree(self: *StringSet) void {
+        for (self.map.keys()) |key| {
+            self.map.allocator.free(key);
+        }
+        self.map.clearAndFree();
     }
 
     pub fn deinit(self: *StringSet) void {
@@ -2625,39 +2644,7 @@ pub noinline fn outOfMemory() noreturn {
     crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
 
-/// If `error_union` is `error.OutOfMemory`, calls `bun.outOfMemory`. Otherwise:
-///
-/// * If that was the only possible error, returns the non-error payload.
-/// * If other errors are possible, returns the same error union, but without `error.OutOfMemory`
-///   in the error set.
-///
-/// Prefer this method over `catch bun.outOfMemory()`, since that could mistakenly catch
-/// non-OOM-related errors.
-pub fn handleOom(error_union: anytype) blk: {
-    const error_union_info = @typeInfo(@TypeOf(error_union)).error_union;
-    const ErrorSet = error_union_info.error_set;
-    const oom_is_only_error = for (@typeInfo(ErrorSet).error_set orelse &.{}) |err| {
-        if (!std.mem.eql(u8, err.name, "OutOfMemory")) break false;
-    } else true;
-
-    break :blk @TypeOf(error_union catch |err| if (comptime oom_is_only_error)
-        unreachable
-    else switch (err) {
-        error.OutOfMemory => unreachable,
-        else => |other_error| other_error,
-    });
-} {
-    const error_union_info = @typeInfo(@TypeOf(error_union)).error_union;
-    const Payload = error_union_info.payload;
-    const ReturnType = @TypeOf(handleOom(error_union));
-    return error_union catch |err|
-        if (comptime ReturnType == Payload)
-            bun.outOfMemory()
-        else switch (err) {
-            error.OutOfMemory => bun.outOfMemory(),
-            else => |other_error| other_error,
-        };
-}
+pub const handleOom = @import("./handle_oom.zig").handleOom;
 
 pub fn todoPanic(
     src: std.builtin.SourceLocation,
@@ -3143,8 +3130,6 @@ pub fn assertf(ok: bool, comptime format: []const u8, args: anytype) callconv(ca
     }
 
     if (!ok) {
-        // crash handler has runtime-only code.
-        if (@inComptime()) @compileError(std.fmt.comptimePrint(format, args));
         assertionFailureWithMsg(format, args);
     }
 }
@@ -3751,7 +3736,7 @@ pub noinline fn throwStackOverflow() StackOverflow!void {
     @branchHint(.cold);
     return error.StackOverflow;
 }
-const StackOverflow = error{StackOverflow};
+pub const StackOverflow = error{StackOverflow};
 
 pub const S3 = @import("./s3/client.zig");
 

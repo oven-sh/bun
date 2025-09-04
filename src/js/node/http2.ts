@@ -51,8 +51,7 @@ type Http2ConnectOptions = {
 const TLSSocket = tls.TLSSocket;
 const Socket = net.Socket;
 const EventEmitter = require("node:events");
-const { Duplex } = require("node:stream");
-
+const { Duplex } = Stream;
 const { SafeArrayIterator, SafeSet } = require("internal/primordials");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
@@ -2725,11 +2724,9 @@ class ServerHttp2Session extends Http2Session {
       return -1;
     },
   };
-
   #onRead(data: Buffer) {
     this.#parser?.read(data);
   }
-
   #onClose() {
     const parser = this.#parser;
     if (parser) {
@@ -2739,11 +2736,9 @@ class ServerHttp2Session extends Http2Session {
     }
     this.close();
   }
-
   #onError(error: Error) {
     this.destroy(error);
   }
-
   #onTimeout() {
     const parser = this.#parser;
     if (parser) {
@@ -2751,14 +2746,12 @@ class ServerHttp2Session extends Http2Session {
     }
     this.emit("timeout");
   }
-
   #onDrain() {
     const parser = this.#parser;
     if (parser) {
       parser.flush();
     }
   }
-
   altsvc(alt: string, originOrStream) {
     const MAX_LENGTH = 16382;
     const parser = this.#parser;

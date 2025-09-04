@@ -72,7 +72,7 @@ pub const PathWatcherManager = struct {
                         .err => |file_err| return .{ .err = file_err.withPath(path) },
                         .result => |r| r,
                     };
-                    const cloned_path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory();
+                    const cloned_path = bun.handleOom(bun.default_allocator.dupeZ(u8, path));
                     const result = PathInfo{
                         .fd = file,
                         .is_file = true,
@@ -82,13 +82,13 @@ pub const PathWatcherManager = struct {
                         .hash = Watcher.getHash(cloned_path),
                         .refs = 1,
                     };
-                    _ = this.file_paths.put(cloned_path, result) catch bun.outOfMemory();
+                    _ = bun.handleOom(this.file_paths.put(cloned_path, result));
                     return .{ .result = result };
                 }
                 return .{ .err = e.withPath(path) };
             },
             .result => |iterable_dir| {
-                const cloned_path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory();
+                const cloned_path = bun.handleOom(bun.default_allocator.dupeZ(u8, path));
                 const result = PathInfo{
                     .fd = iterable_dir,
                     .is_file = false,
@@ -97,7 +97,7 @@ pub const PathWatcherManager = struct {
                     .hash = Watcher.getHash(cloned_path),
                     .refs = 1,
                 };
-                _ = this.file_paths.put(cloned_path, result) catch bun.outOfMemory();
+                _ = bun.handleOom(this.file_paths.put(cloned_path, result));
                 return .{ .result = result };
             },
         }
@@ -110,9 +110,9 @@ pub const PathWatcherManager = struct {
         std.Thread.SpawnError;
 
     pub fn init(vm: *jsc.VirtualMachine) PathWatcherManagerError!*PathWatcherManager {
-        const this = bun.default_allocator.create(PathWatcherManager) catch bun.outOfMemory();
+        const this = bun.handleOom(bun.default_allocator.create(PathWatcherManager));
         errdefer bun.default_allocator.destroy(this);
-        var watchers = bun.BabyList(?*PathWatcher).initCapacity(bun.default_allocator, 1) catch bun.outOfMemory();
+        var watchers = bun.handleOom(bun.BabyList(?*PathWatcher).initCapacity(bun.default_allocator, 1));
         errdefer watchers.deinitWithAllocator(bun.default_allocator);
 
         const manager = PathWatcherManager{

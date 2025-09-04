@@ -50,7 +50,7 @@ pub fn checkServerIdentity(
                 if (client.signals.get(.cert_errors)) {
                     // clone the relevant data
                     const cert_size = BoringSSL.i2d_X509(x509, null);
-                    const cert = bun.default_allocator.alloc(u8, @intCast(cert_size)) catch bun.outOfMemory();
+                    const cert = bun.handleOom(bun.default_allocator.alloc(u8, @intCast(cert_size)));
                     var cert_ptr = cert.ptr;
                     const result_size = BoringSSL.i2d_X509(x509, &cert_ptr);
                     assert(result_size == cert_size);
@@ -64,11 +64,11 @@ pub fn checkServerIdentity(
 
                     client.state.certificate_info = .{
                         .cert = cert,
-                        .hostname = bun.default_allocator.dupe(u8, hostname) catch bun.outOfMemory(),
+                        .hostname = bun.handleOom(bun.default_allocator.dupe(u8, hostname)),
                         .cert_error = .{
                             .error_no = certError.error_no,
-                            .code = bun.default_allocator.dupeZ(u8, certError.code) catch bun.outOfMemory(),
-                            .reason = bun.default_allocator.dupeZ(u8, certError.reason) catch bun.outOfMemory(),
+                            .code = bun.handleOom(bun.default_allocator.dupeZ(u8, certError.code)),
+                            .reason = bun.handleOom(bun.default_allocator.dupeZ(u8, certError.reason)),
                         },
                     };
 
@@ -984,7 +984,7 @@ fn writeToSocket(comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocke
 fn writeToSocketWithBufferFallback(comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, buffer: *bun.io.StreamBuffer, data: []const u8) !usize {
     const amount = try writeToSocket(is_ssl, socket, data);
     if (amount < data.len) {
-        buffer.write(data[@intCast(amount)..]) catch bun.outOfMemory();
+        bun.handleOom(buffer.write(data[@intCast(amount)..]));
     }
     return amount;
 }
@@ -999,7 +999,7 @@ fn writeToStreamUsingBuffer(this: *HTTPClient, comptime is_ssl: bool, socket: Ne
         if (amount < to_send.len) {
             // we could not send all pending data so we need to buffer the extra data
             if (data.len > 0) {
-                buffer.write(data) catch bun.outOfMemory();
+                bun.handleOom(buffer.write(data));
             }
             // failed to send everything so we have backpressure
             return true;
@@ -1308,7 +1308,7 @@ inline fn handleShortRead(
 
         if (to_copy.len > 0) {
             // this one will probably be another chunk, so we leave a little extra room
-            this.state.response_message_buffer.append(to_copy) catch bun.outOfMemory();
+            bun.handleOom(this.state.response_message_buffer.append(to_copy));
         }
     }
 
@@ -1328,7 +1328,7 @@ pub fn handleOnDataHeaders(
     var needs_move = true;
     if (this.state.response_message_buffer.list.items.len > 0) {
         // this one probably won't be another chunk, so we use appendSliceExact() to avoid over-allocating
-        this.state.response_message_buffer.appendSliceExact(incoming_data) catch bun.outOfMemory();
+        bun.handleOom(this.state.response_message_buffer.appendSliceExact(incoming_data));
         to_read = this.state.response_message_buffer.list.items;
         needs_move = false;
     }
@@ -2449,6 +2449,7 @@ pub const FetchRedirect = @import("./http/FetchRedirect.zig").FetchRedirect;
 pub const InitError = @import("./http/InitError.zig").InitError;
 pub const HTTPRequestBody = @import("./http/HTTPRequestBody.zig").HTTPRequestBody;
 pub const SendFile = @import("./http/SendFile.zig");
+pub const HeaderValueIterator = @import("./http/HeaderValueIterator.zig");
 
 const string = []const u8;
 

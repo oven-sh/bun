@@ -799,6 +799,9 @@ pub const api = struct {
         /// import_source
         import_source: []const u8,
 
+        /// side_effects
+        side_effects: bool = false,
+
         pub fn decode(reader: anytype) anyerror!Jsx {
             var this = std.mem.zeroes(Jsx);
 
@@ -807,6 +810,7 @@ pub const api = struct {
             this.fragment = try reader.readValue([]const u8);
             this.development = try reader.readValue(bool);
             this.import_source = try reader.readValue([]const u8);
+            this.side_effects = try reader.readValue(bool);
             return this;
         }
 
@@ -816,6 +820,7 @@ pub const api = struct {
             try writer.writeValue(@TypeOf(this.fragment), this.fragment);
             try writer.writeInt(@as(u8, @intFromBool(this.development)));
             try writer.writeValue(@TypeOf(this.import_source), this.import_source);
+            try writer.writeInt(@as(u8, @intFromBool(this.side_effects)));
         }
     };
 
@@ -2820,7 +2825,7 @@ pub const api = struct {
         token: []const u8,
 
         pub fn dupe(this: NpmRegistry, allocator: std.mem.Allocator) NpmRegistry {
-            const buf = allocator.alloc(u8, this.url.len + this.username.len + this.password.len + this.token.len) catch bun.outOfMemory();
+            const buf = bun.handleOom(allocator.alloc(u8, this.url.len + this.username.len + this.password.len + this.token.len));
 
             var out: NpmRegistry = .{
                 .url = "",

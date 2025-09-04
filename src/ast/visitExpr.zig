@@ -257,7 +257,7 @@ pub fn VisitExpr(
                                 .target = if (runtime == .classic) target else p.jsxImport(.createElement, expr.loc),
                                 .args = ExprNodeList.init(args[0..i]),
                                 // Enable tree shaking
-                                .can_be_unwrapped_if_unused = if (!p.options.ignore_dce_annotations) .if_unused else .never,
+                                .can_be_unwrapped_if_unused = if (!p.options.ignore_dce_annotations and !p.options.jsx.side_effects) .if_unused else .never,
                                 .close_paren_loc = e_.close_tag_loc,
                             }, expr.loc);
                         }
@@ -311,12 +311,12 @@ pub fn VisitExpr(
                                         .items = e_.children,
                                         .is_single_line = e_.children.len < 2,
                                     }, e_.close_tag_loc),
-                                }) catch bun.outOfMemory();
+                                }) catch |err| bun.handleOom(err);
                             } else if (e_.children.len == 1) {
                                 props.append(allocator, G.Property{
                                     .key = children_key,
                                     .value = e_.children.ptr[0],
-                                }) catch bun.outOfMemory();
+                                }) catch |err| bun.handleOom(err);
                             }
 
                             // Either:
@@ -362,7 +362,7 @@ pub fn VisitExpr(
                                 .target = p.jsxImportAutomatic(expr.loc, is_static_jsx),
                                 .args = ExprNodeList.init(args),
                                 // Enable tree shaking
-                                .can_be_unwrapped_if_unused = if (!p.options.ignore_dce_annotations) .if_unused else .never,
+                                .can_be_unwrapped_if_unused = if (!p.options.ignore_dce_annotations and !p.options.jsx.side_effects) .if_unused else .never,
                                 .was_jsx_element = true,
                                 .close_paren_loc = e_.close_tag_loc,
                             }, expr.loc);
@@ -490,7 +490,7 @@ pub fn VisitExpr(
                     // Note that we only append to the stack (and therefore allocate memory
                     // on the heap) when there are nested binary expressions. A single binary
                     // expression doesn't add anything to the stack.
-                    p.binary_expression_stack.append(v) catch bun.outOfMemory();
+                    bun.handleOom(p.binary_expression_stack.append(v));
                     v = BinaryExpressionVisitor{
                         .e = left_binary.?,
                         .loc = left.loc,
@@ -1449,8 +1449,8 @@ pub fn VisitExpr(
                                     p.allocator,
                                     "\"useState\" is not available in a server component. If you need interactivity, consider converting part of this to a Client Component (by adding `\"use client\";` to the top of the file).",
                                     .{},
-                                ) catch bun.outOfMemory(),
-                            ) catch bun.outOfMemory();
+                                ) catch |err| bun.handleOom(err),
+                            ) catch |err| bun.handleOom(err);
                         }
                     }
                 }
@@ -1542,7 +1542,7 @@ pub fn VisitExpr(
 
                 if (react_hook_data) |*hook| try_mark_hook: {
                     const stmts = p.nearest_stmt_list orelse break :try_mark_hook;
-                    stmts.append(p.getReactRefreshHookSignalDecl(hook.signature_cb)) catch bun.outOfMemory();
+                    bun.handleOom(stmts.append(p.getReactRefreshHookSignalDecl(hook.signature_cb)));
 
                     p.handleReactRefreshPostVisitFunctionBody(&stmts_list, hook);
                     e_.body.stmts = stmts_list.items;
@@ -1568,7 +1568,7 @@ pub fn VisitExpr(
 
                 if (react_hook_data) |*hook| try_mark_hook: {
                     const stmts = p.nearest_stmt_list orelse break :try_mark_hook;
-                    stmts.append(p.getReactRefreshHookSignalDecl(hook.signature_cb)) catch bun.outOfMemory();
+                    bun.handleOom(stmts.append(p.getReactRefreshHookSignalDecl(hook.signature_cb)));
                     final_expr = p.getReactRefreshHookSignalInit(hook, expr);
                 }
 

@@ -12,21 +12,21 @@ pub fn writeFormatCredentials(credentials: *S3Credentials, options: bun.S3.Multi
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime bun.Output.prettyFmt("<r>endpoint<d>:<r> \"", enable_ansi_colors));
         try writer.print(comptime bun.Output.prettyFmt("<r><b>{s}<r>\"", enable_ansi_colors), .{endpoint});
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
         try writer.writeAll("\n");
 
         const region = if (credentials.region.len > 0) credentials.region else S3Credentials.guessRegion(credentials.endpoint);
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime bun.Output.prettyFmt("<r>region<d>:<r> \"", enable_ansi_colors));
         try writer.print(comptime bun.Output.prettyFmt("<r><b>{s}<r>\"", enable_ansi_colors), .{region});
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
         try writer.writeAll("\n");
 
         // PS: We don't want to print the credentials if they are empty just signal that they are there without revealing them
         if (credentials.accessKeyId.len > 0) {
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime bun.Output.prettyFmt("<r>accessKeyId<d>:<r> \"<r><b>[REDACTED]<r>\"", enable_ansi_colors));
-            formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+            bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
 
             try writer.writeAll("\n");
         }
@@ -34,7 +34,7 @@ pub fn writeFormatCredentials(credentials: *S3Credentials, options: bun.S3.Multi
         if (credentials.secretAccessKey.len > 0) {
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime bun.Output.prettyFmt("<r>secretAccessKey<d>:<r> \"<r><b>[REDACTED]<r>\"", enable_ansi_colors));
-            formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+            bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
 
             try writer.writeAll("\n");
         }
@@ -42,7 +42,7 @@ pub fn writeFormatCredentials(credentials: *S3Credentials, options: bun.S3.Multi
         if (credentials.sessionToken.len > 0) {
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime bun.Output.prettyFmt("<r>sessionToken<d>:<r> \"<r><b>[REDACTED]<r>\"", enable_ansi_colors));
-            formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+            bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
 
             try writer.writeAll("\n");
         }
@@ -51,7 +51,7 @@ pub fn writeFormatCredentials(credentials: *S3Credentials, options: bun.S3.Multi
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime bun.Output.prettyFmt("<r>acl<d>:<r> ", enable_ansi_colors));
             try writer.print(comptime bun.Output.prettyFmt("<r><b>{s}<r>\"", enable_ansi_colors), .{acl_value.toString()});
-            formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+            bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
 
             try writer.writeAll("\n");
         }
@@ -59,14 +59,14 @@ pub fn writeFormatCredentials(credentials: *S3Credentials, options: bun.S3.Multi
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime bun.Output.prettyFmt("<r>partSize<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Double, Writer, writer, jsc.JSValue.jsNumber(options.partSize), .NumberObject, enable_ansi_colors);
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
 
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime bun.Output.prettyFmt("<r>queueSize<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Double, Writer, writer, jsc.JSValue.jsNumber(options.queueSize), .NumberObject, enable_ansi_colors);
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);

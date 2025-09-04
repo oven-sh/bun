@@ -1,10 +1,11 @@
 /**
  * See `./expectBundled.md` for how this works.
  */
-import { BuildConfig, BuildOutput, BunPlugin, fileURLToPath, PluginBuilder, Loader, CompileBuildOptions } from "bun";
+import { BuildConfig, BuildOutput, BunPlugin, CompileBuildOptions, fileURLToPath, Loader, PluginBuilder } from "bun";
 import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
+import filenamify from "filenamify";
 import {
   existsSync,
   mkdirSync,
@@ -20,7 +21,6 @@ import { bunEnv, bunExe, isCI, isDebug } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 import { SourceMapConsumer } from "source-map";
-import filenamify from "filenamify";
 
 /** Dedent module does a bit too much with their stuff. we will be much simpler */
 export function dedent(str: string | TemplateStringsArray, ...args: any[]) {
@@ -130,7 +130,7 @@ export const ESBUILD_PATH = import.meta.resolveSync("esbuild/bin/esbuild");
 export interface BundlerTestInput {
   /** Temporary flag to mark failing tests as skipped. */
   todo?: boolean;
-
+  throw?: boolean;
   // file options
   files: Record<string, string | Buffer | Uint8ClampedArray | Blob>;
   /** Files to be written only after the bundle is done. */
@@ -488,6 +488,7 @@ function expectBundled(
     expectExactFilesize,
     generateOutput = true,
     onAfterApiBundle,
+    throw: _throw = false,
     ...unknownProps
   } = opts;
 
@@ -564,6 +565,9 @@ function expectBundled(
   }
   if (ESBUILD && dotenv) {
     throw new Error("dotenv not implemented in esbuild");
+  }
+  if (ESBUILD && _throw) {
+    throw new Error("throw not implemented in esbuild");
   }
   if (dryRun) {
     return testRef(id, opts);
@@ -713,6 +717,7 @@ function expectBundled(
               jsx.factory && ["--jsx-factory", jsx.factory],
               jsx.fragment && ["--jsx-fragment", jsx.fragment],
               jsx.importSource && ["--jsx-import-source", jsx.importSource],
+              jsx.side_effects && ["--jsx-side-effects"],
               dotenv && ["--env", dotenv],
               // metafile && `--manifest=${metafile}`,
               sourceMap && `--sourcemap=${sourceMap}`,
@@ -756,6 +761,7 @@ function expectBundled(
               // jsx.preserve && "--jsx=preserve",
               jsx.factory && `--jsx-factory=${jsx.factory}`,
               jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
+              jsx.side_effects && `--jsx-side-effects`,
               env?.NODE_ENV !== "production" && `--jsx-dev`,
               entryNaming &&
                 entryNaming !== "[dir]/[name].[ext]" &&
@@ -1037,7 +1043,7 @@ function expectBundled(
           }
         }
 
-        const buildConfig = {
+        const buildConfig: BuildConfig = {
           entrypoints: [...entryPaths, ...(entryPointsRaw ?? [])],
           external,
           packages,
@@ -1063,7 +1069,7 @@ function expectBundled(
           ignoreDCEAnnotations,
           drop,
           define: define ?? {},
-          throw: false,
+          throw: _throw ?? false,
           compile,
         } as BuildConfig;
 
@@ -1100,12 +1106,26 @@ for (const [key, blob] of build.outputs) {
         try {
           build = await Bun.build(buildConfig);
         } catch (e) {
-          const err = e as AggregateError;
-          build = {
-            outputs: [],
-            success: false,
-            logs: err.errors,
-          };
+          if (e instanceof AggregateError) {
+            build = {
+              outputs: [],
+              success: false,
+              logs: e.errors,
+            };
+          } else {
+            build = {
+              outputs: [],
+              success: false,
+              logs: [
+                {
+                  level: "error",
+                  message: e instanceof Error ? e.message : String(e),
+                  name: "BuildMessage",
+                  position: null,
+                },
+              ],
+            };
+          }
         }
         if (onAfterApiBundle) await onAfterApiBundle(build);
         configRef = null!;

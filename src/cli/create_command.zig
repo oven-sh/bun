@@ -327,8 +327,8 @@ pub const CreateCommand = struct {
 
                 var tarball_buf_list = std.ArrayListUnmanaged(u8){ .capacity = file_buf.len, .items = file_buf };
                 var gunzip = try Zlib.ZlibReaderArrayList.init(tarball_bytes.list.items, &tarball_buf_list, ctx.allocator);
-                try gunzip.readAll();
-                gunzip.deinit();
+                defer gunzip.deinit();
+                try gunzip.readAll(true);
 
                 node.name = try ProgressBuf.print("Extracting {s}", .{template});
                 node.setCompletedItems(0);
@@ -1701,7 +1701,7 @@ pub const CreateCommand = struct {
                         const extension = std.fs.path.extension(positional);
                         if (Example.Tag.fromFileExtension(extension)) |tag| {
                             example_tag = tag;
-                            break :brk bun.default_allocator.dupe(u8, outdir_path) catch bun.outOfMemory();
+                            break :brk bun.handleOom(bun.default_allocator.dupe(u8, outdir_path));
                         }
                         // Show a warning when the local file exists and it's not a .js file
                         // A lot of create-* npm packages have .js in the name, so you could end up with that warning.

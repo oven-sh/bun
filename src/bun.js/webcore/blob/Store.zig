@@ -418,7 +418,7 @@ pub const S3 = struct {
         var aws_options = try this.getCredentialsWithOptions(extra_options, globalThis);
         defer aws_options.deinit();
 
-        const options = bun.S3.getListObjectsOptionsFromJS(globalThis, listOptions) catch bun.outOfMemory();
+        const options = try bun.S3.getListObjectsOptionsFromJS(globalThis, listOptions);
         store.ref();
 
         bun.S3.listObjects(&aws_options.credentials, options, @ptrCast(&Wrapper.resolve), bun.new(Wrapper, .{

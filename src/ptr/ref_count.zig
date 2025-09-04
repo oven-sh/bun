@@ -186,6 +186,7 @@ pub fn RefCount(T: type, field_name: []const u8, destructor: anytype, options: O
         ///
         /// Don't modify the ref count or create any `RefPtr`s after calling this method.
         pub fn clearWithoutDestructor(count: *@This()) void {
+            count.assertSingleThreaded();
             count.raw_count = 0;
         }
 

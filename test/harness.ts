@@ -907,7 +907,7 @@ export async function describeWithContainer(
       return;
     }
     const { arch, platform } = process;
-    if ((archs && !archs?.includes(arch)) || platform === "win32") {
+    if ((archs && !archs?.includes(arch)) || platform === "win32" || platform === "darwin") {
       test.skip(`docker image is not supported on ${platform}/${arch}, skipped: ${image}`, () => {});
       return false;
     }

@@ -7,16 +7,22 @@ const redSubprocessPrefix = "\x1b[31m [SUBPROC]\x1b[0m";
 const redDebugPrefix = "\x1b[31m   [DEBUG]\x1b[0m";
 const redShellPrefix = "\x1b[31m   [SHELL] $\x1b[0m";
 
+function getTestName(testId: string, hasExistingNodeModules: boolean) {
+  return `${testId} (${hasExistingNodeModules ? "with modules" : "without modules"})` as const;
+}
+type TestName = ReturnType<typeof getTestName>;
+
 // prettier-ignore
 // These tests are failing for other reasons outside of the security scanner.
 // You should leave a comment above pointing to a GitHub issue for reference, so these
 // don't get totally lost.
-const TESTS_TO_SKIP: Set<string> = new Set<`${number}`>([
+const TESTS_TO_SKIP: Set<string> = new Set<TestName>([
   // https://github.com/oven-sh/bun/issues/22255
-  "0721", "0724", "0727", "0730", "0739", "0742", "0745", "0748", // remove "is-even"
-  "0757", "0760", "0763", "0766", "0775", "0778", "0781", "0784", // remove "left-pad,is-even"
-                                                                  // uninstall "is-even"
-                                                                  // uninstall "left-pad,is-even"
+  "0289 (without modules)", "0292 (without modules)", "0295 (without modules)", "0298 (without modules)", "0307 (without modules)", "0310 (without modules)", "0313 (without modules)", "0316 (without modules)", // remove "is-even"
+  "0325 (without modules)", "0328 (without modules)", "0331 (without modules)", "0334 (without modules)", "0343 (without modules)", "0346 (without modules)", "0349 (without modules)", "0352 (without modules)", // remove "left-pad,is-even"
+                                                                                                                                                                                                                  // uninstall "is-even"
+                                                                                                                                                                                                                  // uninstall "left-pad,is-even"
+  
   // Previously this list had the broken `bun uninstall` test ids, too. They're
   // currently skipped since it's the same code path as `bun remove` internally
   // and we can save on CI time by skipping them. We can add them back if we
@@ -436,9 +442,9 @@ scanner = "${scannerPath}"`,
   }
 }
 
-let i = 0;
-
 export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeModules: boolean) {
+  let i = 0;
+
   const bunTest = Bun.jest(selfModuleName);
 
   const { describe, beforeAll, afterAll } = bunTest;
@@ -469,7 +475,7 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
                 return;
               }
 
-              const testName = String(++i).padStart(4, "0");
+              const testName = getTestName(String(++i).padStart(4, "0"), hasExistingNodeModules);
 
               if (TESTS_TO_SKIP.has(testName)) {
                 return test.skip(testName, async () => {

@@ -826,7 +826,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetSourceMapsSupport,
     }
 
     JSValue enabledArg = callFrame->argument(0);
-    
+
     // Validate first argument is boolean
     if (!enabledArg.isBoolean()) {
         return Bun::throwError(globalObject, scope,
@@ -835,34 +835,34 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetSourceMapsSupport,
     }
 
     bool enabled = enabledArg.asBoolean();
-    
+
     // Handle optional options object
     if (callFrame->argumentCount() > 1) {
         JSValue optionsArg = callFrame->argument(1);
-        
+
         if (!optionsArg.isUndefined() && !optionsArg.isObject()) {
             return Bun::throwError(globalObject, scope,
                 Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
                 "The \"options\" argument must be of type object"_s);
         }
-        
+
         if (optionsArg.isObject()) {
             JSObject* options = optionsArg.getObject();
-            
+
             // Check nodeModules option
             JSValue nodeModulesValue = options->get(globalObject, JSC::Identifier::fromString(vm, "nodeModules"_s));
             RETURN_IF_EXCEPTION(scope, {});
-            
+
             if (!nodeModulesValue.isUndefined() && !nodeModulesValue.isBoolean()) {
                 return Bun::throwError(globalObject, scope,
                     Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
                     "The \"options.nodeModules\" property must be of type boolean"_s);
             }
-            
-            // Check generatedCode option  
+
+            // Check generatedCode option
             JSValue generatedCodeValue = options->get(globalObject, JSC::Identifier::fromString(vm, "generatedCode"_s));
             RETURN_IF_EXCEPTION(scope, {});
-            
+
             if (!generatedCodeValue.isUndefined() && !generatedCodeValue.isBoolean()) {
                 return Bun::throwError(globalObject, scope,
                     Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
@@ -874,7 +874,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetSourceMapsSupport,
     // For now, we'll just set the global flag that already exists
     // This matches the behavior we already have with --enable-source-maps
     Bun__JSSourceMap__setEnabled(enabled);
-    
+
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

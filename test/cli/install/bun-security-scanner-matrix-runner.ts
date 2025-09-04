@@ -1,4 +1,3 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, runBunInstall, tempDirWithFiles } from "harness";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -14,10 +13,17 @@ const redShellPrefix = "\x1b[31m   [SHELL] $\x1b[0m";
 // don't get totally lost.
 const TESTS_TO_SKIP: Set<string> = new Set<`${number}`>([
   // https://github.com/oven-sh/bun/issues/22255
-  "0613", "0616", "0619", "0622", "0631", "0634", "0637", "0640",  // remove "is-even"
-  "0685", "0688", "0691", "0694", "0703", "0706", "0709", "0712",  // remove "left-pad,is-even"
-  "0757", "0760", "0763", "0766", "0775", "0778", "0781", "0784",  // uninstall "is-even"
-  "0829", "0832", "0835", "0838", "0847", "0850", "0853", "0856",  // uninstall "left-pad,is-even"
+  // "0613", "0616", "0619", "0622", "0631", "0634", "0637", "0640",  // remove "is-even"
+  // "0685", "0688", "0691", "0694", "0703", "0706", "0709", "0712",  // remove "left-pad,is-even"
+  // "0757", "0760", "0763", "0766", "0775", "0778", "0781", "0784",  // uninstall "is-even"
+  // "0829", "0832", "0835", "0838", "0847", "0850", "0853", "0856",  // uninstall "left-pad,is-even"
+
+  "0721", "0724", "0727", "0730", "0739", "0742", "0745", "0748", // remove "is-even"
+  "0757", "0760", "0763", "0766", "0775", "0778", "0781", "0784", // remove "left-pad,is-even"
+
+  // Previously this list had the broken `bun uninstall` test ids, too. They're
+  // currently skipped since it's the same code path as `bun remove` internally
+  // and we can save on CI time by skipping them.
 ]);
 
 interface SecurityScannerTestOptions {
@@ -431,16 +437,20 @@ scanner = "${scannerPath}"`,
   }
 }
 
-beforeAll(async () => {
-  registryUrl = await startRegistry(DO_TEST_DEBUG);
-});
+let i = 0;
 
-afterAll(() => {
-  stopRegistry();
-});
+export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeModules: boolean) {
+  const bunTest = Bun.jest(selfModuleName);
 
-describe("Security Scanner Matrix Tests", () => {
-  let i = 0;
+  const { describe, beforeAll, afterAll } = bunTest;
+
+  beforeAll(async () => {
+    registryUrl = await startRegistry(DO_TEST_DEBUG);
+  });
+
+  afterAll(() => {
+    stopRegistry();
+  });
 
   describe.each(["install", "update", "add", "remove", "uninstall"] as const)("bun %s", command => {
     describe.each([
@@ -448,54 +458,52 @@ describe("Security Scanner Matrix Tests", () => {
       { args: ["is-even"], name: "is-even" },
       { args: ["left-pad", "is-even"], name: "left-pad,is-even" },
     ])("$name", ({ args }) => {
-      describe.each([true, false] as const)("(node_modules: %p)", hasExistingNodeModules => {
-        describe.each(["hoisted", "isolated"] as const)("--linker=%s", linker => {
-          describe.each(["local", "npm", "npm.bunfigonly"] as const)("(scanner: %s)", scannerType => {
-            describe.each([true, false] as const)("(bun.lock exists: %p)", hasLockfile => {
-              describe.each(["none", "warn", "fatal"] as const)("(advisories: %s)", scannerReturns => {
-                if ((command === "add" || command === "uninstall" || command === "remove") && args.length === 0) {
-                  // TODO(@alii): Test this case:
-                  //  - Exit code 1
-                  //  - No changes to disk
-                  //  - Scanner does not run
-                  return;
-                }
+      describe.each(["hoisted", "isolated"] as const)("--linker=%s", linker => {
+        describe.each(["local", "npm", "npm.bunfigonly"] as const)("(scanner: %s)", scannerType => {
+          describe.each([true, false] as const)("(bun.lock exists: %p)", hasLockfile => {
+            describe.each(["none", "warn", "fatal"] as const)("(advisories: %s)", scannerReturns => {
+              if ((command === "add" || command === "uninstall" || command === "remove") && args.length === 0) {
+                // TODO(@alii): Test this case:
+                //  - Exit code 1
+                //  - No changes to disk
+                //  - Scanner does not run
+                return;
+              }
 
-                const testName = String(++i).padStart(4, "0");
+              const testName = String(++i).padStart(4, "0");
 
-                if (TESTS_TO_SKIP.has(testName)) {
-                  return test.skip(testName, async () => {
-                    // TODO
-                  });
-                }
+              if (TESTS_TO_SKIP.has(testName)) {
+                return test.skip(testName, async () => {
+                  // TODO
+                });
+              }
 
-                if (command === "uninstall") {
-                  return test.skip(testName, async () => {
-                    // Same as `remove`, optimising for CI time here
-                  });
-                }
+              if (command === "uninstall") {
+                return test.skip(testName, async () => {
+                  // Same as `remove`, optimising for CI time here
+                });
+              }
 
-                // npm.bunfigonly is the case where a scanner is a valid npm package name identifier
-                // but is not referenced in package.json anywhere and is not in the lockfile, so the only knowledge
-                // of this package's existence is the fact that it was defined in as the value in bunfig.toml
-                // Therefore, we should fail because we don't know where to install it from
-                const shouldFail =
-                  scannerType === "npm.bunfigonly" || scannerReturns === "fatal" || scannerReturns === "warn";
+              // npm.bunfigonly is the case where a scanner is a valid npm package name identifier
+              // but is not referenced in package.json anywhere and is not in the lockfile, so the only knowledge
+              // of this package's existence is the fact that it was defined in as the value in bunfig.toml
+              // Therefore, we should fail because we don't know where to install it from
+              const shouldFail =
+                scannerType === "npm.bunfigonly" || scannerReturns === "fatal" || scannerReturns === "warn";
 
-                test(testName, async () => {
-                  await runSecurityScannerTest({
-                    command,
-                    args,
-                    hasExistingNodeModules,
-                    linker,
-                    scannerType,
-                    scannerReturns,
-                    shouldFail,
-                    hasLockfile,
+              test(testName, async () => {
+                await runSecurityScannerTest({
+                  command,
+                  args,
+                  hasExistingNodeModules,
+                  linker,
+                  scannerType,
+                  scannerReturns,
+                  shouldFail,
+                  hasLockfile,
 
-                    // TODO(@alii): Test this case
-                    scannerSyncronouslyThrows: false,
-                  });
+                  // TODO(@alii): Test this case
+                  scannerSyncronouslyThrows: false,
                 });
               });
             });
@@ -504,4 +512,4 @@ describe("Security Scanner Matrix Tests", () => {
       });
     });
   });
-});
+}

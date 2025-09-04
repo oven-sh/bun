@@ -7,3 +7,7 @@ interface ReadableStream {
   blob(): Promise<Blob>;
   bytes(): Promise<Uint8Array<ArrayBuffer>>;
 }
+
+declare module "bun" {
+  function jest(path: string): typeof import("bun:test");
+}

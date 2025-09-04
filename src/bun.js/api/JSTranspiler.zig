@@ -649,8 +649,11 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         .transpiler = undefined,
         .scan_pass_result = ScanPassResult.init(bun.default_allocator),
     });
-    errdefer bun.destroy(this);
-    errdefer this.arena.deinit();
+    errdefer {
+        this.arena.deinit();
+        this.ref_count.clearWithoutDestructor();
+        bun.destroy(this);
+    }
 
     const config_arg = if (arguments.len > 0) arguments.ptr[0] else .js_undefined;
     const allocator = this.arena.allocator();

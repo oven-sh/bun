@@ -175,9 +175,18 @@ pub fn RefCount(T: type, field_name: []const u8, destructor: anytype, options: O
 
         /// The count is 0 after the destructor is called.
         pub fn assertNoRefs(count: *const @This()) void {
-            if (enable_debug) {
+            if (comptime bun.Environment.ci_assert) {
                 bun.assert(count.raw_count == 0);
             }
+        }
+
+        /// Sets the ref count to 0 without running the destructor.
+        ///
+        /// Only use this if you're about to free the object (e.g., with `bun.destroy`).
+        ///
+        /// Don't modify the ref count or create any `RefPtr`s after calling this method.
+        pub fn clearWithoutDestructor(count: *@This()) void {
+            count.raw_count = 0;
         }
 
         fn assertSingleThreaded(count: *@This()) void {
@@ -282,9 +291,21 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
 
         /// The count is 0 after the destructor is called.
         pub fn assertNoRefs(count: *const @This()) void {
-            if (enable_debug) {
+            if (comptime bun.Environment.ci_assert) {
                 bun.assert(count.raw_count.load(.seq_cst) == 0);
             }
+        }
+
+        /// Sets the ref count to 0 without running the destructor.
+        ///
+        /// Only use this if you're about to free the object (e.g., with `bun.destroy`).
+        ///
+        /// Don't modify the ref count or create any `RefPtr`s after calling this method.
+        pub fn clearWithoutDestructor(count: *@This()) void {
+            // This method should only be used if you're about the free the object. You shouldn't
+            // be freeing the object if other threads might be using it, and no memory order can
+            // help with that, so .monotonic is sufficient.
+            count.raw_count.store(0, .monotonic);
         }
 
         fn getRefCount(self: *T) *@This() {

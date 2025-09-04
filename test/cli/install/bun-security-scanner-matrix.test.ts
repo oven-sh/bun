@@ -432,7 +432,7 @@ scanner = "${scannerPath}"`,
 }
 
 beforeAll(async () => {
-  registryUrl = await startRegistry();
+  registryUrl = await startRegistry(DO_TEST_DEBUG);
 });
 
 afterAll(() => {

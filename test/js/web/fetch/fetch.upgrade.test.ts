@@ -5,7 +5,7 @@ describe("fetch upgrade", () => {
   test("should upgrade to websocket", async () => {
     const serverMessages: string[] = [];
     using server = Bun.serve({
-      port: 3000,
+      port: 0,
       fetch(req) {
         if (server.upgrade(req)) return;
         return new Response("Hello World");

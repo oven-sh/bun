@@ -159,7 +159,7 @@ class WrappedSocket extends Duplex {
     this.#ended = true;
   }
 
-  _read(size) {
+  _read(_size) {
     this.#consumeBody();
   }
 

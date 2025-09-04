@@ -2836,8 +2836,6 @@ pub fn Parser(comptime enc: Encoding) type {
 
         const ScanSingleQuotedScalarError = OOM || error{
             UnexpectedCharacter,
-            UnexpectedDocumentStart,
-            UnexpectedDocumentEnd,
         };
 
         fn scanSingleQuotedScalar(self: *@This()) ScanSingleQuotedScalarError!Token(enc) {
@@ -2847,26 +2845,16 @@ pub fn Parser(comptime enc: Encoding) type {
 
             var text: std.ArrayList(enc.unit()) = .init(self.allocator);
 
-            var nl = false;
-
             next: switch (self.next()) {
                 0 => return error.UnexpectedCharacter,
 
                 '.' => {
-                    if (nl and self.remainStartsWith("...") and self.isSWhiteOrBCharAt(3)) {
-                        return error.UnexpectedDocumentEnd;
-                    }
-                    nl = false;
                     try text.append('.');
                     self.inc(1);
                     continue :next self.next();
                 },
 
                 '-' => {
-                    if (nl and self.remainStartsWith("---") and self.isSWhiteOrBCharAt(3)) {
-                        return error.UnexpectedDocumentStart;
-                    }
-                    nl = false;
                     try text.append('-');
                     self.inc(1);
                     continue :next self.next();
@@ -2875,7 +2863,6 @@ pub fn Parser(comptime enc: Encoding) type {
                 '\r',
                 '\n',
                 => {
-                    nl = true;
                     self.newline();
                     self.inc(1);
                     switch (self.foldLines()) {
@@ -2893,7 +2880,6 @@ pub fn Parser(comptime enc: Encoding) type {
                 ' ',
                 '\t',
                 => {
-                    nl = false;
                     const off = self.pos;
                     self.inc(1);
                     self.skipSWhite();
@@ -2904,7 +2890,6 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 '\'' => {
-                    nl = false;
                     self.inc(1);
                     if (self.next() == '\'') {
                         try text.append('\'');
@@ -2928,7 +2913,6 @@ pub fn Parser(comptime enc: Encoding) type {
                     });
                 },
                 else => |c| {
-                    nl = false;
                     try text.append(c);
                     self.inc(1);
                     continue :next self.next();
@@ -2938,8 +2922,6 @@ pub fn Parser(comptime enc: Encoding) type {
 
         const ScanDoubleQuotedScalarError = OOM || error{
             UnexpectedCharacter,
-            UnexpectedDocumentStart,
-            UnexpectedDocumentEnd,
         };
 
         fn scanDoubleQuotedScalar(self: *@This()) ScanDoubleQuotedScalarError!Token(enc) {
@@ -2948,26 +2930,16 @@ pub fn Parser(comptime enc: Encoding) type {
             const scalar_indent = self.line_indent;
             var text: std.ArrayList(enc.unit()) = .init(self.allocator);
 
-            var nl = false;
-
             next: switch (self.next()) {
                 0 => return error.UnexpectedCharacter,
 
                 '.' => {
-                    if (nl and self.remainStartsWith("...") and self.isSWhiteOrBCharAt(3)) {
-                        return error.UnexpectedDocumentEnd;
-                    }
-                    nl = false;
                     try text.append('.');
                     self.inc(1);
                     continue :next self.next();
                 },
 
                 '-' => {
-                    if (nl and self.remainStartsWith("---") and self.isSWhiteOrBCharAt(3)) {
-                        return error.UnexpectedDocumentStart;
-                    }
-                    nl = false;
                     try text.append('-');
                     self.inc(1);
                     continue :next self.next();
@@ -2988,14 +2960,12 @@ pub fn Parser(comptime enc: Encoding) type {
                             return error.UnexpectedCharacter;
                         }
                     }
-                    nl = true;
                     continue :next self.next();
                 },
 
                 ' ',
                 '\t',
                 => {
-                    nl = false;
                     const off = self.pos;
                     self.inc(1);
                     self.skipSWhite();
@@ -3006,7 +2976,6 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 '"' => {
-                    nl = false;
                     self.inc(1);
                     return .scalar(.{
                         .start = start,
@@ -3023,7 +2992,6 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 '\\' => {
-                    nl = false;
                     self.inc(1);
                     switch (self.next()) {
                         '\r',
@@ -3094,7 +3062,6 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 else => |c| {
-                    nl = false;
                     try text.append(c);
                     self.inc(1);
                     continue :next self.next();

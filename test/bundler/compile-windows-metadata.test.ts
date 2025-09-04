@@ -443,7 +443,7 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
       expect(getMetadata("CompanyName")).toBe("Test Publisher");
       expect(getMetadata("FileDescription")).toBe("Application with full metadata");
       expect(getMetadata("ProductVersion")).toBe("5.4.3.2");
-      
+
       // But Original Filename should still be empty
       const originalFilename = getMetadata("OriginalFilename");
       expect(originalFilename).toBe("");

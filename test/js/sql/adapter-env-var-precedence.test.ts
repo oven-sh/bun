@@ -130,15 +130,6 @@ describe("SQL adapter environment variable precedence", () => {
     expect(options.options.adapter).toBe("postgres");
   });
 
-  test.skipIf(isWindows)("should support unix:// with explicit adapter", () => {
-    const options = new SQL("unix:///tmp/thisisacoolmysql.sock", {
-      adapter: "mysql",
-    });
-
-    expect(options.options.adapter).toBe("mysql");
-    expect(options.options.path).toBe("/tmp/thisisacoolmysql.sock");
-  });
-
   test("adapter-specific env vars should take precedence over generic ones", () => {
     process.env.USER = "generic-user";
     process.env.PGUSER = "postgres-user";

@@ -23,15 +23,8 @@ const TESTS_TO_SKIP: Set<string> = new Set<TestName>([
   // https://github.com/oven-sh/bun/issues/22255
   "0289 (without modules)", "0292 (without modules)", "0295 (without modules)", "0298 (without modules)", "0307 (without modules)", "0310 (without modules)", "0313 (without modules)", "0316 (without modules)", // remove "is-even"
   "0325 (without modules)", "0328 (without modules)", "0331 (without modules)", "0334 (without modules)", "0343 (without modules)", "0346 (without modules)", "0349 (without modules)", "0352 (without modules)", // remove "left-pad,is-even"
-                                                                                                                                                                                                                  // uninstall "is-even"
-                                                                                                                                                                                                                  // uninstall "left-pad,is-even"
-  
-  // Previously this list had the broken `bun uninstall` test ids, too. They're
-  // currently skipped since it's the same code path as `bun remove` internally
-  // and we can save on CI time by skipping them. We can add them back if we
-  // ever unskip the uninstall tests.
-
-  // ...
+  "0361 (without modules)", "0364 (without modules)", "0367 (without modules)", "0370 (without modules)", "0379 (without modules)", "0382 (without modules)", "0385 (without modules)", "0388 (without modules)", // uninstall "is-even"
+  "0397 (without modules)", "0400 (without modules)", "0403 (without modules)", "0406 (without modules)", "0415 (without modules)", "0418 (without modules)", "0421 (without modules)", "0424 (without modules)", // uninstall "left-pad,is-even"
 ]);
 
 interface SecurityScannerTestOptions {
@@ -486,13 +479,13 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
                 });
               }
 
-              if (command === "uninstall") {
-                return test.skip(testName, async () => {
-                  // Same as `remove`, optimising for CI time here
-                });
-              }
-
               if (isCI) {
+                if (command === "uninstall") {
+                  return test.skip(testName, async () => {
+                    // Same as `remove`, optimising for CI time here
+                  });
+                }
+
                 const random = Math.random();
 
                 if (random < (100 - CI_SAMPLE_PERCENT) / 100) {

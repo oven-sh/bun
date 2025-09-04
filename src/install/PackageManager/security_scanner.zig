@@ -166,7 +166,7 @@ const ScannerFinder = struct {
 pub fn performSecurityScanAfterResolution(manager: *PackageManager, command_ctx: bun.cli.Command.Context, original_cwd: []const u8) !?SecurityScanResults {
     const security_scanner = manager.options.security_scanner orelse return null;
 
-    if (manager.options.dry_run or !manager.options.do.install_packages) return null;
+    if (manager.options.dry_run) return null;
 
     // For remove/uninstall, scan all remaining packages after removal
     // For other commands, scan all if no update requests, otherwise scan update packages

@@ -176,12 +176,9 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       }).toThrowErrorMatchingInlineSnapshot(`"WRONGPASS invalid username-password pair or user is disabled."`);
     });
 
-    const DEFAULT_REDIS_URL = "redis://localhost:6379";
-
     const testKeyUniquePerDb = crypto.randomUUID();
     test.each([...Array(16).keys()].map((i) => DEFAULT_REDIS_URL + `/${i}`))
-        ("Connecting to database with url $url suceeds", async (url) => {
-      console.log("Testing URL:", url);
+        ("Connecting to database with url $url succeeds", async (url) => {
       const client = new RedisClient(url);
 
       // Ensure the value is not in the database.

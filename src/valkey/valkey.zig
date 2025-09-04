@@ -5,7 +5,10 @@
 pub const ValkeyContext = @import("./ValkeyContext.zig");
 
 /// Connection flags to track Valkey client state
-pub const ConnectionFlags = packed struct {
+pub const ConnectionFlags = packed struct(u9) {
+    // TODO(markovejnovic): I am not a huge fan of these flags. I would
+    // consider refactoring them into an enumerated state machine, as that
+    // feels significantly more natural compared to a bag of booleans.
     is_authenticated: bool = false,
     is_manually_closed: bool = false,
     is_selecting_db_internal: bool = false,
@@ -413,7 +416,7 @@ pub const ValkeyClient = struct {
         this.status = .failed;
         rejectAllPendingCommands(&this.in_flight, &this.queue, globalThis, this.allocator, jsvalue);
 
-        if (!this.flags.is_authenticated) {
+        if (!this.connectionReady()) {
             this.flags.is_manually_closed = true;
             this.close();
         }
@@ -462,14 +465,14 @@ pub const ValkeyClient = struct {
         this.status = .disconnected;
         this.flags.is_reconnecting = true;
         this.flags.is_authenticated = false;
+        this.flags.is_selecting_db_internal = false;
 
         // Signal reconnect timer should be started
         this.onValkeyReconnect();
     }
 
     pub fn sendNextCommand(this: *ValkeyClient) void {
-        const connection_ready = this.flags.is_authenticated and !this.flags.is_selecting_db_internal;
-        if (this.write_buffer.remaining().len == 0 and connection_ready) {
+        if (this.write_buffer.remaining().len == 0 and this.connectionReady()) {
             if (this.queue.readableLength() > 0) {
                 // Check the command at the head of the queue
                 const flags = &this.queue.peekItem(0).meta;
@@ -678,7 +681,7 @@ pub const ValkeyClient = struct {
 
         // Handle initial SELECT response
         if (this.flags.is_selecting_db_internal) {
-            this.flags.is_selecting_db_internal = false; // Consume this state
+            this.flags.is_selecting_db_internal = false;
 
             switch (value.*) {
                 .Error => |err_str| {
@@ -699,7 +702,7 @@ pub const ValkeyClient = struct {
                     }
                 },
                 else => { // Unexpected response type for SELECT
-                    this.fail("SELECT command received unexpected response type", protocol.RedisError.InvalidResponse);
+                    this.fail("Received non-SELECT response while in the SELECT state.", protocol.RedisError.InvalidResponse);
                     return;
                 },
             }
@@ -805,6 +808,12 @@ pub const ValkeyClient = struct {
         _ = this.flushData();
     }
 
+    /// Test whether we are ready to run "normal" RESP commands, such as
+    /// get/set, pub/sub, etc.
+    fn connectionReady(this: *const ValkeyClient) bool {
+        return this.flags.is_authenticated and !this.flags.is_selecting_db_internal;
+    }
+
     /// Process queued commands in the offline queue
     pub fn drain(this: *ValkeyClient) bool {
         // If there's something in the in-flight queue and the next command
@@ -825,8 +834,7 @@ pub const ValkeyClient = struct {
         }) catch |err| bun.handleOom(err);
         const data = offline_cmd.serialized_data;
 
-        const connection_ready = this.flags.is_authenticated and !this.flags.is_selecting_db_internal;
-        if (connection_ready and this.write_buffer.remaining().len == 0) {
+        if (this.connectionReady() and this.write_buffer.remaining().len == 0) {
             // Optimization: avoid cloning the data an extra time.
             defer this.allocator.free(data);
 
@@ -857,7 +865,6 @@ pub const ValkeyClient = struct {
 
     fn enqueue(this: *ValkeyClient, command: *const Command, promise: *Command.Promise) !void {
         const can_pipeline = command.meta.supports_auto_pipelining and this.flags.auto_pipelining;
-        const connection_ready = this.flags.is_authenticated and !this.flags.is_selecting_db_internal;
 
         // For commands that don't support pipelining, we need to wait for the queue to drain completely
         // before sending the command. This ensures proper order of execution for state-changing commands.
@@ -869,7 +876,7 @@ pub const ValkeyClient = struct {
             // With auto pipelining, we can accept commands regardless of in_flight commands
             (!can_pipeline and this.in_flight.readableLength() > 0) or
             // We need authentication before processing commands
-            !connection_ready or
+            !this.connectionReady() or
             // Commands that don't support pipelining must wait for the entire queue to drain
             must_wait_for_queue or
             // If can pipeline, we can accept commands regardless of in_flight commands

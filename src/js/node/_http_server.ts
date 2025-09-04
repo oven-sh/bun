@@ -303,7 +303,8 @@ Server.prototype.closeAllConnections = function () {
 };
 
 Server.prototype.closeIdleConnections = function () {
-  // not actually implemented
+  const server = this[serverSymbol];
+  server.closeIdleConnections();
 };
 
 Server.prototype.close = function (optionalCallback?) {
@@ -319,6 +320,7 @@ Server.prototype.close = function (optionalCallback?) {
   }
   if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
   this.listening = false;
+  server.closeIdleConnections();
   server.stop();
 };
 

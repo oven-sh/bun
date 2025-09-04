@@ -7,6 +7,7 @@
 //  or wpt test runner is fully adopted.
 // FYI: https://github.com/oven-sh/bun/issues/19673
 
+import { isCI } from "harness";
 import {
   allAlgorithmSpecifiersFor,
   allNameVariants,
@@ -14,7 +15,6 @@ import {
   objectToString,
   registeredAlgorithmNames,
 } from "./webcryptoTestHelpers";
-import { isCI } from "harness";
 
 registeredAlgorithmNames.forEach(name => {
   run_test_success([name]);

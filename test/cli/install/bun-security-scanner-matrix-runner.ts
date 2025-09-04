@@ -13,17 +13,16 @@ const redShellPrefix = "\x1b[31m   [SHELL] $\x1b[0m";
 // don't get totally lost.
 const TESTS_TO_SKIP: Set<string> = new Set<`${number}`>([
   // https://github.com/oven-sh/bun/issues/22255
-  // "0613", "0616", "0619", "0622", "0631", "0634", "0637", "0640",  // remove "is-even"
-  // "0685", "0688", "0691", "0694", "0703", "0706", "0709", "0712",  // remove "left-pad,is-even"
-  // "0757", "0760", "0763", "0766", "0775", "0778", "0781", "0784",  // uninstall "is-even"
-  // "0829", "0832", "0835", "0838", "0847", "0850", "0853", "0856",  // uninstall "left-pad,is-even"
-
   "0721", "0724", "0727", "0730", "0739", "0742", "0745", "0748", // remove "is-even"
   "0757", "0760", "0763", "0766", "0775", "0778", "0781", "0784", // remove "left-pad,is-even"
-
+                                                                  // uninstall "is-even"
+                                                                  // uninstall "left-pad,is-even"
   // Previously this list had the broken `bun uninstall` test ids, too. They're
   // currently skipped since it's the same code path as `bun remove` internally
-  // and we can save on CI time by skipping them.
+  // and we can save on CI time by skipping them. We can add them back if we
+  // ever unskip the uninstall tests.
+
+  // ...
 ]);
 
 interface SecurityScannerTestOptions {

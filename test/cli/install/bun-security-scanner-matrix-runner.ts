@@ -1,7 +1,10 @@
 import { bunEnv, bunExe, runBunInstall, tempDirWithFiles } from "harness";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
+import { isCI } from "../../harness";
 import { getRegistry, SimpleRegistry, startRegistry, stopRegistry } from "./simple-dummy-registry";
+
+const CI_SAMPLE_PERCENT = 10; // only 10% of tests will run in CI because this matrix generates so many tests
 
 const redSubprocessPrefix = "\x1b[31m [SUBPROC]\x1b[0m";
 const redDebugPrefix = "\x1b[31m   [DEBUG]\x1b[0m";
@@ -487,6 +490,16 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
                 return test.skip(testName, async () => {
                   // Same as `remove`, optimising for CI time here
                 });
+              }
+
+              if (isCI) {
+                const random = Math.random();
+
+                if (random < (100 - CI_SAMPLE_PERCENT) / 100) {
+                  return test.skip(testName, async () => {
+                    // skipping this one for CI
+                  });
+                }
               }
 
               // npm.bunfigonly is the case where a scanner is a valid npm package name identifier

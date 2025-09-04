@@ -240,17 +240,8 @@ Exited with code [1]
 # Complete before merge:
 
 - [x] Add expect counts back
-- [ ] add back expecting a test to have a certain number of expect calls
-- [ ] add a test for this scenerio
-  ```js
-  test("more functions called after delayed done", done => {
-    process.nextTick(() => {
-      done();
-      expect(true).toBe(false);
-    });
-  });
-  test("another test", async () => {});
-  ```
+- [x] add back expecting a test to have a certain number of expect calls
+- [x] add a test for done callback nexttick after
 - [x] Add timeouts back
   - When we begin executing a test group, mark the end_before times of each item in the group
   - Start a timer for the min of these times

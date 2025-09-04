@@ -146,4 +146,23 @@ test("expect.assertions works", () => {
   expect(true).toBe(true);
 });
 
+// === timing edge case ===
+test.failing("more functions called after delayed done", done => {
+  process.nextTick(() => {
+    done();
+    expect(true).toBe(false);
+  });
+});
+test("another test", async () => {});
+
+// === timing failure case. if this is fixed in the future, update the test ===
+test("misattributed error", () => {
+  setTimeout(() => {
+    expect(true).toBe(false);
+  }, 10);
+});
+test.failing("passes because it catches the misattributed error", done => {
+  setTimeout(done, 50);
+});
+
 console.log("exit");

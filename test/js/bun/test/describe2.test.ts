@@ -54,14 +54,23 @@ test("describe/test", async () => {
     (pass) addition 1 + 2 = 3
     (pass) addition 2 + 3 = 5
     (pass) addition 3 + 4 = 7
+    AssertionError: expected 1 assertion, but test ended with 0 assertions
+    (fail) expect.assertions
+    (pass) expect.assertions not yet supported in concurrent tests
+    (pass) expect.assertions not yet supported in concurrent tests
+    (pass) expect.assertions works
+    (pass) more functions called after delayed done
+    (pass) another test
+    (pass) misattributed error
+    (pass) passes because it catches the misattributed error
 
-     12 pass
+     19 pass
      2 skip
      1 todo
-     5 fail
+     6 fail
      1 error
-     1 snapshots, 5 expect() calls
-    Ran 20 tests across 1 file."
+     1 snapshots, 9 expect() calls
+    Ran 28 tests across 1 file."
     ,
       "stdout": 
     "bun test <version> (<revision>)

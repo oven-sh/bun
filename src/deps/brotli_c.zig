@@ -59,7 +59,7 @@ pub const BrotliDecoder = opaque {
         return BrotliDecoderHasMoreOutput(state) != 0;
     }
 
-    pub fn takeOutput(state: *BrotliDecoder) callconv(.C) []const u8 {
+    pub fn takeOutput(state: *BrotliDecoder) []const u8 {
         var max_size: usize = std.math.maxInt(usize);
         const ptr = BrotliDecoderTakeOutput(state, &max_size) orelse return "";
         return ptr[0..max_size];

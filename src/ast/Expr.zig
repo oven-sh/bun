@@ -2553,6 +2553,7 @@ pub const Data = union(Tag) {
                 }
             },
             .e_unary => |e| {
+                writeAnyToHasher(hasher, @as(u8, @bitCast(e.flags)));
                 writeAnyToHasher(hasher, .{e.op});
                 e.value.data.writeToHasher(hasher, symbol_table);
             },
@@ -2584,7 +2585,7 @@ pub const Data = union(Tag) {
             inline .e_spread, .e_await => |e| {
                 e.value.data.writeToHasher(hasher, symbol_table);
             },
-            inline .e_yield => |e| {
+            .e_yield => |e| {
                 writeAnyToHasher(hasher, .{ e.is_star, e.value });
                 if (e.value) |value|
                     value.data.writeToHasher(hasher, symbol_table);

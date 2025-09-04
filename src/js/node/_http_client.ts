@@ -1,4 +1,5 @@
 const { isIP, isIPv6 } = require("node:net");
+const Duplex = require("internal/streams/duplex");
 
 const { checkIsHttpToken, validateFunction, validateInteger, validateBoolean } = require("internal/validators");
 const { urlToHttpOptions } = require("internal/url");
@@ -42,6 +43,7 @@ const {
   callCloseCallback,
   emitCloseNTAndComplete,
   ConnResetException,
+  kEmptyBuffer,
 } = require("internal/http");
 
 const { Agent, NODE_HTTP_WARNING } = require("node:_http_agent");
@@ -66,7 +68,109 @@ function emitErrorEventNT(self, err) {
     self.emit("error", err);
   }
 }
+const kWrappedSocketWritable = Symbol("WrappedSocketWritable");
+class WrappedSocket extends Duplex {
+  #fetchBody: ReadableStream<Uint8Array> | null = null;
+  #resolveNextRead: ((value: Uint8Array | null) => void) | null = null;
+  #queue: { value: Buffer | null; cb: () => void }[] = [];
+  #ended: boolean = false;
+  constructor(fetchBody: ReadableStream<Uint8Array> | null) {
+    super();
+    this.#fetchBody = fetchBody;
+  }
 
+  #write(value, cb) {
+    if (this.#ended) {
+      cb();
+      return;
+    }
+    if (this.#resolveNextRead) {
+      this.#resolveNextRead(value);
+      this.#resolveNextRead = null;
+      cb();
+    } else {
+      this.#queue.push({ value, cb });
+    }
+  }
+
+  async *[kWrappedSocketWritable]() {
+    while (true) {
+      if (this.#queue.length === 0) {
+        if (this.listenerCount("drain") > 0) {
+          this.emit("drain");
+        }
+        const { promise, resolve } = Promise.withResolvers();
+        this.#resolveNextRead = resolve;
+        const value = await promise;
+        if (value === null) {
+          this.#ended = true;
+          break;
+        }
+        yield value;
+      }
+      if (this.#queue.length > 0) {
+        const { value, cb } = this.#queue.shift();
+        if (value !== null) {
+          yield value;
+          cb();
+        } else {
+          this.#ended = true;
+          cb();
+          break;
+        }
+      }
+    }
+  }
+  async #consumeBody() {
+    try {
+      if (this.#fetchBody) {
+        const reader = await this.#fetchBody.getReader();
+        this.#fetchBody = null;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          this.push(value);
+        }
+        this.push(null);
+      }
+    } catch (e) {
+      if (e.code === "ECONNRESET") {
+        // end the readable side gracefully because the server closed the connection
+        this.push(null);
+      } else {
+        this.destroy(e);
+      }
+    }
+  }
+
+  // Writable side proxies to inner writable
+  _write(chunk, enc, cb) {
+    let buffer;
+    if (Buffer.isBuffer(chunk)) {
+      buffer = chunk;
+    } else {
+      buffer = Buffer.from(chunk, enc);
+    }
+    this.#write(buffer, cb);
+  }
+
+  _final(cb) {
+    this.#write(null, cb);
+    this.#ended = true;
+  }
+
+  _read(size) {
+    this.#consumeBody();
+  }
+
+  _destroy(err, cb) {
+    if (!this.readableEnded) {
+      this.push(null);
+    }
+    this.#write(null, cb);
+    cb(err);
+  }
+}
 function ClientRequest(input, options, cb) {
   if (!(this instanceof ClientRequest)) {
     return new (ClientRequest as any)(input, options, cb);
@@ -313,16 +417,31 @@ function ClientRequest(input, options, cb) {
         decompress: false,
         keepalive,
       };
+      const upgradeHeader = fetchOptions?.headers?.upgrade;
+      const isUpgrade = typeof upgradeHeader === "string" && upgradeHeader != "h2" && upgradeHeader != "h2c";
       let keepOpen = false;
       // no body and not finished
-      const isDuplex = customBody === undefined && !this.finished;
+      const isDuplex = isUpgrade || (customBody === undefined && !this.finished);
 
       if (isDuplex) {
         fetchOptions.duplex = "half";
         keepOpen = true;
       }
 
-      if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+      let upgradedResponse: ((socket: WrappedSocket | null) => void) | undefined = undefined;
+      if (isUpgrade) {
+        const { promise: upgradedPromise, resolve } = Promise.withResolvers();
+        upgradedResponse = resolve;
+        fetchOptions.body = async function* () {
+          const socket = await upgradedPromise;
+          if (socket) {
+            const iter = socket[kWrappedSocketWritable]();
+            for await (const value of iter) {
+              yield value;
+            }
+          }
+        };
+      } else if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
         const self = this;
         if (customBody !== undefined) {
           fetchOptions.body = customBody;
@@ -379,6 +498,7 @@ function ClientRequest(input, options, cb) {
       //@ts-ignore
       this[kFetchRequest] = fetch(url, fetchOptions).then(response => {
         if (this.aborted) {
+          upgradedResponse?.(null);
           maybeEmitClose();
           return;
         }
@@ -423,6 +543,16 @@ function ClientRequest(input, options, cb) {
                 return;
               }
               try {
+                if (isUpgrade) {
+                  if (response.status === 101) {
+                    const socket = new WrappedSocket(response.body);
+                    upgradedResponse(socket);
+                    this.socket = socket;
+                    this.emit("upgrade", res, socket, kEmptyBuffer);
+                    return;
+                  }
+                  upgradedResponse(null);
+                }
                 if (self.aborted || !self.emit("response", res)) {
                   res._dump();
                 }

@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -665,4 +665,21 @@ error: Hello World`,
       },
     ],
   });
+
+  test(
+    "does not crash",
+    async () => {
+      const dir = tempDirWithFiles("bundler-compile-shadcn", {});
+
+      // Step 1: Run bun init --react=shadcn in the tempdir
+      await Bun.$`${bunExe()} init --react=shadcn`.cwd(dir).env(bunEnv).throws(true);
+
+      // Step 2: Run bun build with compile, minify, sourcemap, and bytecode
+      await Bun.$`${bunExe()} build ./src/index.tsx --compile --minify --sourcemap --bytecode`
+        .cwd(dir)
+        .env(bunEnv)
+        .throws(true);
+    },
+    60 * 1000,
+  );
 });

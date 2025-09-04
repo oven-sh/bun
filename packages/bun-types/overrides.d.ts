@@ -261,8 +261,8 @@ declare global {
           "FLUSH",
           "QUERY",
         ];
-        HTTPParser;
-        ConnectionsList;
+        HTTPParser: unknown;
+        ConnectionsList: unknown;
       };
       binding(m: string): object;
     }

@@ -1290,7 +1290,7 @@ extern "C"
       auto *data = uwsRes->getHttpResponseData();
       data->offset = offset;
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
-      data->markDone();
+      data->markDone(uwsRes);
       uwsRes->resetTimeout();
     }
     else
@@ -1298,8 +1298,8 @@ extern "C"
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       auto *data = uwsRes->getHttpResponseData();
       data->offset = offset;
-      data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
-      data->markDone();
+      data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
+      data->markDone(uwsRes);
       uwsRes->resetTimeout();
     }
   }
@@ -1341,7 +1341,7 @@ extern "C"
         uwsRes->AsyncSocket<true>::write("\r\n", 2);
       }
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
-      data->markDone();
+      data->markDone(uwsRes);
       uwsRes->resetTimeout();
     }
     else
@@ -1363,7 +1363,7 @@ extern "C"
         uwsRes->AsyncSocket<false>::write("\r\n", 2);
       }
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
-      data->markDone();
+      data->markDone(uwsRes);
       uwsRes->resetTimeout();
     }
   }
@@ -1806,7 +1806,7 @@ __attribute__((callback (corker, ctx)))
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       uwsRes->flushHeaders();
     } else {
-      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res; 
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       uwsRes->flushHeaders();
     }
   }

@@ -2516,6 +2516,20 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_SOCKET_ENCODING, "Changing the socket encoding is not allowed per RFC7230 Section 3."_s));
     case ErrorCode::ERR_HTTP_REQUEST_TIMEOUT:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_REQUEST_TIMEOUT, "Request timeout"_s));
+    case ErrorCode::ERR_TLS_ALPN_CALLBACK_WITH_PROTOCOLS:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_ALPN_CALLBACK_WITH_PROTOCOLS, "The ALPNCallback and ALPNProtocols TLS options are mutually exclusive"_s));
+    case ErrorCode::ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS, "Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS"_s));
+    case ErrorCode::ERR_HTTP2_CONNECT_AUTHORITY:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_CONNECT_AUTHORITY, ":authority header is required for CONNECT requests"_s));
+    case ErrorCode::ERR_HTTP2_CONNECT_SCHEME:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_CONNECT_SCHEME, "The :scheme header is forbidden for CONNECT requests"_s));
+    case ErrorCode::ERR_HTTP2_CONNECT_PATH:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_CONNECT_PATH, "The :path header is forbidden for CONNECT requests"_s));
+    case ErrorCode::ERR_HTTP2_TOO_MANY_INVALID_FRAMES:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_TOO_MANY_INVALID_FRAMES, "Too many invalid HTTP/2 frames"_s));
+    case ErrorCode::ERR_HTTP2_PING_CANCEL:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_PING_CANCEL, "HTTP2 ping cancelled"_s));
 
     default: {
         break;

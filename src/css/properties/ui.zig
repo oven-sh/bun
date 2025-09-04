@@ -159,11 +159,11 @@ pub const ColorSchemeHandler = struct {
                         dest.append(
                             context.allocator,
                             defineVar(context.allocator, "--buncss-light", .{ .ident = "initial" }),
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                         dest.append(
                             context.allocator,
                             defineVar(context.allocator, "--buncss-dark", .{ .whitespace = " " }),
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
 
                         if (color_scheme.dark) {
                             context.addDarkRule(
@@ -176,11 +176,11 @@ pub const ColorSchemeHandler = struct {
                             );
                         }
                     } else if (color_scheme.dark) {
-                        dest.append(context.allocator, defineVar(context.allocator, "--buncss-light", .{ .whitespace = " " })) catch bun.outOfMemory();
-                        dest.append(context.allocator, defineVar(context.allocator, "--buncss-dark", .{ .ident = "initial" })) catch bun.outOfMemory();
+                        bun.handleOom(dest.append(context.allocator, defineVar(context.allocator, "--buncss-light", .{ .whitespace = " " })));
+                        bun.handleOom(dest.append(context.allocator, defineVar(context.allocator, "--buncss-dark", .{ .ident = "initial" })));
                     }
                 }
-                dest.append(context.allocator, property.deepClone(context.allocator)) catch bun.outOfMemory();
+                bun.handleOom(dest.append(context.allocator, property.deepClone(context.allocator)));
                 return true;
             },
             else => return false,
@@ -197,7 +197,7 @@ fn defineVar(allocator: Allocator, name: []const u8, value: css.Token) css.Prope
             .value = css.TokenList{
                 .v = brk: {
                     var list = ArrayList(css.css_properties.custom.TokenOrValue){};
-                    list.append(allocator, css.css_properties.custom.TokenOrValue{ .token = value }) catch bun.outOfMemory();
+                    bun.handleOom(list.append(allocator, css.css_properties.custom.TokenOrValue{ .token = value }));
                     break :brk list;
                 },
             },

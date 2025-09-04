@@ -175,7 +175,7 @@ pub fn crashHandler(
     if (bun.Environment.isDebug)
         bun.Output.disableScopedDebugWriter();
 
-    var trace_str_buf = std.BoundedArray(u8, 1024){};
+    var trace_str_buf = bun.BoundedArray(u8, 1024){};
 
     nosuspend switch (panic_stage) {
         0 => {
@@ -1434,7 +1434,7 @@ fn report(url: []const u8) void {
                 // .hStdOutput = bun.FD.stdout().native(),
                 // .hStdError = bun.FD.stderr().native(),
             };
-            var cmd_line = std.BoundedArray(u16, 4096){};
+            var cmd_line = bun.BoundedArray(u16, 4096){};
             cmd_line.appendSliceAssumeCapacity(std.unicode.utf8ToUtf16LeStringLiteral("powershell -ExecutionPolicy Bypass -Command \"try{Invoke-RestMethod -Uri '"));
             {
                 const encoded = bun.strings.convertUTF8toUTF16InBuffer(cmd_line.unusedCapacitySlice(), url);
@@ -1468,7 +1468,7 @@ fn report(url: []const u8) void {
                 bun.getcwd(&buf2) catch return,
                 "curl",
             ) orelse return;
-            var cmd_line = std.BoundedArray(u8, 4096){};
+            var cmd_line = bun.BoundedArray(u8, 4096){};
             cmd_line.appendSlice(url) catch return;
             cmd_line.appendSlice("/ack") catch return;
             cmd_line.append(0) catch return;
@@ -1866,7 +1866,7 @@ pub const js_bindings = struct {
 
     pub fn jsGetFeaturesAsVLQ(global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const bits = bun.analytics.packedFeatures();
-        var buf = std.BoundedArray(u8, 16){};
+        var buf = bun.BoundedArray(u8, 16){};
         writeU64AsTwoVLQs(buf.writer(), @bitCast(bits)) catch {
             // there is definitely enough space in the bounded array
             unreachable;

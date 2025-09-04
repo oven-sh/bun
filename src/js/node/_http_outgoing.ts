@@ -1,6 +1,6 @@
 // Hardcoded module "node:_http_outgoing"
 const EE = require("node:events");
-const Stream = require("node:stream");
+const { Stream } = require("internal/stream");
 const {
   kOutHeaders,
   utcDate,

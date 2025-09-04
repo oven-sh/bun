@@ -142,7 +142,7 @@ pub const ExternalModules = struct {
             }
         }
 
-        result.patterns = patterns.toOwnedSlice() catch bun.outOfMemory();
+        result.patterns = bun.handleOom(patterns.toOwnedSlice());
 
         return result;
     }
@@ -1242,6 +1242,7 @@ pub const JSX = struct {
         /// - tsconfig.json's `compilerOptions.jsx` (`react-jsx` or `react-jsxdev`)
         development: bool = true,
         parse: bool = true,
+        side_effects: bool = false,
 
         pub const ImportSource = struct {
             development: string = "react/jsx-dev-runtime",
@@ -1380,6 +1381,7 @@ pub const JSX = struct {
             }
 
             pragma.runtime = jsx.runtime;
+            pragma.side_effects = jsx.side_effects;
 
             if (jsx.import_source.len > 0) {
                 pragma.package_name = jsx.import_source;

@@ -150,7 +150,7 @@ public:
         if (!context) return false;
         auto* data = (uWS::HttpContextData<true>*)us_socket_context_ext(is_ssl, context);
         if (!data) return false;
-        return data->isAuthorized();
+        return data->flags.isAuthorized;
     }
     ~JSNodeHTTPServerSocket()
     {

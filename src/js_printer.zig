@@ -175,10 +175,7 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                 std.debug.assert(text[i] <= 0x7F);
                 break :brk text[i];
             },
-            .latin1 => brk: {
-                if (text[i] <= 0x7F) break :brk text[i];
-                break :brk strings.latin1ToCodepointAssumeNotASCII(text[i], i32);
-            },
+            .latin1 => text[i],
             .utf16 => brk: {
                 // TODO: if this is a part of a surrogate pair, we could parse the whole codepoint in order
                 // to emit it as a single \u{result} rather than two paired \uLOW\uHIGH.
@@ -1831,8 +1828,9 @@ fn NewPrinter(
         }
 
         pub inline fn printPure(p: *Printer) void {
-            if (Environment.allow_assert) assert(p.options.print_dce_annotations);
-            p.printWhitespacer(ws("/* @__PURE__ */ "));
+            if (p.options.print_dce_annotations) {
+                p.printWhitespacer(ws("/* @__PURE__ */ "));
+            }
         }
 
         pub fn printStringLiteralEString(p: *Printer, str: *E.String, allow_backtick: bool) void {
@@ -2734,12 +2732,12 @@ fn NewPrinter(
 
                             if (inlined_value) |value| {
                                 if (replaced.items.len == 0) {
-                                    replaced.appendSlice(e.parts[0..i]) catch bun.outOfMemory();
+                                    bun.handleOom(replaced.appendSlice(e.parts[0..i]));
                                 }
                                 part.value = value;
-                                replaced.append(part) catch bun.outOfMemory();
+                                bun.handleOom(replaced.append(part));
                             } else if (replaced.items.len > 0) {
-                                replaced.append(part) catch bun.outOfMemory();
+                                bun.handleOom(replaced.append(part));
                             }
                         }
 
@@ -3043,7 +3041,7 @@ fn NewPrinter(
                         }
 
                         // Only allocate heap memory on the stack for nested binary expressions
-                        p.binary_expression_stack.append(v) catch bun.outOfMemory();
+                        bun.handleOom(p.binary_expression_stack.append(v));
                         v = BinaryExpressionVisitor{
                             .e = left_binary.?,
                             .level = v.left_level,

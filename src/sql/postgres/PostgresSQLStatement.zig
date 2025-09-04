@@ -49,7 +49,7 @@ pub fn checkForDuplicateFields(this: *PostgresSQLStatement) void {
     var seen_numbers = std.ArrayList(u32).init(bun.default_allocator);
     defer seen_numbers.deinit();
     var seen_fields = bun.StringHashMap(void).init(bun.default_allocator);
-    seen_fields.ensureUnusedCapacity(@intCast(this.fields.len)) catch bun.outOfMemory();
+    bun.handleOom(seen_fields.ensureUnusedCapacity(@intCast(this.fields.len)));
     defer seen_fields.deinit();
 
     // iterate backwards
@@ -73,7 +73,7 @@ pub fn checkForDuplicateFields(this: *PostgresSQLStatement) void {
                     field.name_or_index = .duplicate;
                     flags.has_duplicate_columns = true;
                 } else {
-                    seen_numbers.append(index) catch bun.outOfMemory();
+                    bun.handleOom(seen_numbers.append(index));
                 }
 
                 flags.has_indexed_columns = true;
@@ -122,7 +122,7 @@ pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *jsc
             nonDuplicatedCount -= 1;
         }
     }
-    const ids = if (nonDuplicatedCount <= jsc.JSObject.maxInlineCapacity()) stack_ids[0..nonDuplicatedCount] else bun.default_allocator.alloc(jsc.JSObject.ExternColumnIdentifier, nonDuplicatedCount) catch bun.outOfMemory();
+    const ids = if (nonDuplicatedCount <= jsc.JSObject.maxInlineCapacity()) stack_ids[0..nonDuplicatedCount] else bun.handleOom(bun.default_allocator.alloc(jsc.JSObject.ExternColumnIdentifier, nonDuplicatedCount));
 
     var i: usize = 0;
     for (this.fields) |*field| {

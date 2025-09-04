@@ -28,6 +28,7 @@
 const EventEmitter = require("node:events");
 const { StringDecoder } = require("node:string_decoder");
 const { promisify } = require("internal/promisify");
+const { SafeStringIterator } = require("internal/primordials");
 
 const {
   validateFunction,
@@ -42,7 +43,7 @@ const {
 
 const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
 
-const PromiseReject = Promise.reject;
+const PromiseReject = Promise.$reject;
 
 var isWritable;
 
@@ -54,7 +55,6 @@ var debug = process.env.BUN_JS_DEBUG ? console.log : () => {};
 // ----------------------------------------------------------------------------
 
 const SymbolAsyncIterator = Symbol.asyncIterator;
-const SymbolIterator = Symbol.iterator;
 const SymbolFor = Symbol.for;
 const ArrayFrom = Array.from;
 const ArrayPrototypeFilter = Array.prototype.filter;
@@ -86,34 +86,9 @@ const MathCeil = Math.ceil;
 const MathFloor = Math.floor;
 const MathMax = Math.max;
 const DateNow = Date.now;
-const StringPrototype = String.prototype;
-const StringPrototypeSymbolIterator = StringPrototype[SymbolIterator];
-const StringIteratorPrototypeNext = StringPrototypeSymbolIterator.$call("").next;
-const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ObjectDefineProperties = Object.defineProperties;
 const ObjectFreeze = Object.freeze;
 const ObjectCreate = Object.create;
-
-var createSafeIterator = (factory, next) => {
-  class SafeIterator {
-    #iterator;
-    constructor(iterable) {
-      this.#iterator = factory.$call(iterable);
-    }
-    next() {
-      return next.$call(this.#iterator);
-    }
-    [SymbolIterator]() {
-      return this;
-    }
-  }
-  ObjectSetPrototypeOf(SafeIterator.prototype, null);
-  ObjectFreeze(SafeIterator.prototype);
-  ObjectFreeze(SafeIterator);
-  return SafeIterator;
-};
-
-var SafeStringIterator = createSafeIterator(StringPrototypeSymbolIterator, StringIteratorPrototypeNext);
 
 // ----------------------------------------------------------------------------
 // Section: "Internal" modules

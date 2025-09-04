@@ -33,7 +33,7 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                                 .names = bun.css.SmallList(bun.css.LayerName, 1).fromBabyListNoDeinit(layers.inner().*),
                                 .loc = bun.css.Location.dummy(),
                             },
-                        }) catch bun.outOfMemory();
+                        }) catch |err| bun.handleOom(err);
                     }
                     var ast = bun.css.BundlerStyleSheet{
                         .rules = rules,
@@ -53,7 +53,7 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                         entry.condition_import_records.push(
                             allocator,
                             bun.ImportRecord{ .kind = .at, .path = p.*, .range = Logger.Range{} },
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
 
                         // Handling a chain of nested conditions is complicated. We can't
                         // necessarily join them together because a) there may be multiple
@@ -82,7 +82,7 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                                     import_rule.conditionsMut().* = entry.conditions.at(j).*;
                                     rules.v.append(allocator, bun.css.BundlerCssRule{
                                         .import = import_rule,
-                                    }) catch bun.outOfMemory();
+                                    }) catch |err| bun.handleOom(err);
                                     break :rules rules;
                                 },
                                 .composes = .{},
@@ -107,7 +107,7 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                             )) {
                                 .result => |v| v,
                                 .err => |e| {
-                                    c.log.addErrorFmt(null, Loc.Empty, c.allocator(), "Error generating CSS for import: {}", .{e}) catch bun.outOfMemory();
+                                    bun.handleOom(c.log.addErrorFmt(null, Loc.Empty, c.allocator(), "Error generating CSS for import: {}", .{e}));
                                     continue;
                                 },
                             };
@@ -122,7 +122,7 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                         .kind = .at,
                         .path = p.*,
                         .range = Logger.Range.none,
-                    }) catch bun.outOfMemory();
+                    }) catch |err| bun.handleOom(err);
 
                     chunk.content.css.asts[i] = bun.css.BundlerStyleSheet{
                         .rules = rules: {
@@ -131,7 +131,7 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                             import_rule.conditionsMut().* = actual_conditions.*;
                             rules.v.append(allocator, bun.css.BundlerCssRule{
                                 .import = import_rule,
-                            }) catch bun.outOfMemory();
+                            }) catch |err| bun.handleOom(err);
                             break :rules rules;
                         },
                         .sources = .{},
@@ -221,7 +221,7 @@ fn wrapRulesWithConditions(
                             .loc = bun.css.Location.dummy(),
                         },
                     },
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
 
                 break :brk new_rules;
             };
@@ -242,7 +242,7 @@ fn wrapRulesWithConditions(
                             .rules = ast.rules,
                             .loc = bun.css.Location.dummy(),
                         },
-                    }) catch bun.outOfMemory();
+                    }) catch |err| bun.handleOom(err);
                     break :brk new_rules;
                 };
             }
@@ -259,7 +259,7 @@ fn wrapRulesWithConditions(
                         .rules = ast.rules,
                         .loc = bun.css.Location.dummy(),
                     },
-                }) catch bun.outOfMemory();
+                }) catch |err| bun.handleOom(err);
                 break :brk new_rules;
             };
         }

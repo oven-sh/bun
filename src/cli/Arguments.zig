@@ -71,6 +71,7 @@ pub const transpiler_params_ = [_]ParamType{
     clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
     clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
     clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
+    clap.parseParam("--jsx-side-effects                Treat JSX elements as having side effects (disable pure annotations)") catch unreachable,
     clap.parseParam("--ignore-dce-annotations          Ignore tree-shaking annotations such as @__PURE__") catch unreachable,
 };
 pub const runtime_params_ = [_]ParamType{
@@ -1120,6 +1121,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     const jsx_fragment = args.option("--jsx-fragment");
     const jsx_import_source = args.option("--jsx-import-source");
     const jsx_runtime = args.option("--jsx-runtime");
+    const jsx_side_effects = args.flag("--jsx-side-effects");
 
     if (cmd == .AutoCommand or cmd == .RunCommand) {
         // "run.silent" in bunfig.toml
@@ -1166,6 +1168,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 .import_source = (jsx_import_source orelse &default_import_source),
                 .runtime = if (jsx_runtime) |runtime| try resolve_jsx_runtime(runtime) else Api.JsxRuntime.automatic,
                 .development = false,
+                .side_effects = jsx_side_effects,
             };
         } else {
             opts.jsx = Api.Jsx{
@@ -1174,6 +1177,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 .import_source = (jsx_import_source orelse opts.jsx.?.import_source),
                 .runtime = if (jsx_runtime) |runtime| try resolve_jsx_runtime(runtime) else opts.jsx.?.runtime,
                 .development = false,
+                .side_effects = jsx_side_effects,
             };
         }
     }

@@ -298,24 +298,18 @@ public:
         return std::move(*this);
     }
 
-    /* Closes all idle sockets, does not close the listen socket. */
+    /** Closes all connections connected to this server which are not sending a request or waiting for a response. Does not close the listen socket. */
     TemplatedApp &&closeIdle() {
         auto context = (struct us_socket_context_t *)this->httpContext;
         struct us_socket_t *s = context->head_sockets;
-        struct us_socket_t **prev = &context->head_sockets;
         while (s) {
-            auto *data = HttpContext<SSL>::getSocketContextDataS(s);
-            data->closeAfterParsingHttp();
-            struct us_socket_t *nextS = s->next;
-
-            if (!data->isParsingHttp()) {
+            HttpResponseData<SSL> *httpResponseData = HttpResponse<SSL>::getHttpResponseDataS(s);
+            httpResponseData->shouldCloseOnceIdle = true;
+            struct us_socket_t *next = s->next;
+            if (httpResponseData->isIdle) {
                 us_socket_close(SSL, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
-                *prev = nextS;
-            } else {
-                prev = &s->next;
             }
-
-            s = nextS;
+            s = next;
         }
         return std::move(*this);
     }

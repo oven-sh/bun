@@ -189,7 +189,7 @@ pub const AnyRoute = union(enum) {
 
     pub fn htmlRouteFromJS(argument: jsc.JSValue, init_ctx: *ServerInitContext) bun.JSError!?AnyRoute {
         if (argument.as(HTMLBundle)) |html_bundle| {
-            const entry = init_ctx.dedupe_html_bundle_map.getOrPut(html_bundle) catch bun.outOfMemory();
+            const entry = bun.handleOom(init_ctx.dedupe_html_bundle_map.getOrPut(html_bundle));
             if (!entry.found_existing) {
                 entry.value_ptr.* = HTMLBundle.Route.init(html_bundle);
                 return .{ .html = entry.value_ptr.* };
@@ -366,7 +366,7 @@ const ServePlugins = struct {
         const plugin = bun.jsc.API.JSBundler.Plugin.create(global, .browser);
         var sfb = std.heap.stackFallback(@sizeOf(bun.String) * 4, bun.default_allocator);
         const alloc = sfb.get();
-        const bunstring_array = alloc.alloc(bun.String, plugin_list.len) catch bun.outOfMemory();
+        const bunstring_array = bun.handleOom(alloc.alloc(bun.String, plugin_list.len));
         defer alloc.free(bunstring_array);
         for (plugin_list, bunstring_array) |raw_plugin, *out| {
             out.* = bun.String.init(raw_plugin);
@@ -452,11 +452,11 @@ const ServePlugins = struct {
         this.state = .{ .loaded = plugin };
 
         for (html_bundle_routes.items) |route| {
-            route.onPluginsResolved(plugin) catch bun.outOfMemory();
+            bun.handleOom(route.onPluginsResolved(plugin));
             route.deref();
         }
         if (pending.dev_server) |server| {
-            server.onPluginsResolved(plugin) catch bun.outOfMemory();
+            bun.handleOom(server.onPluginsResolved(plugin));
         }
     }
 
@@ -482,11 +482,11 @@ const ServePlugins = struct {
         this.state = .err;
 
         for (html_bundle_routes.items) |route| {
-            route.onPluginsRejected() catch bun.outOfMemory();
+            bun.handleOom(route.onPluginsRejected());
             route.deref();
         }
         if (pending.dev_server) |server| {
-            server.onPluginsRejected() catch bun.outOfMemory();
+            bun.handleOom(server.onPluginsRejected());
         }
 
         Output.errGeneric("Failed to load plugins for Bun.serve:", .{});
@@ -593,7 +593,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         /// - .pending if `callback` was stored. It will call `onPluginsResolved` or `onPluginsRejected` later.
         pub fn getOrLoadPlugins(server: *ThisServer, callback: ServePlugins.Callback) ServePlugins.GetOrStartLoadResult {
             if (server.plugins) |p| {
-                return p.getOrStartLoad(server.globalThis, callback) catch bun.outOfMemory();
+                return p.getOrStartLoad(server.globalThis, callback) catch |err| switch (err) {
+                    error.JSError => std.debug.panic("unhandled exception from ServePlugins.getStartOrLoad", .{}),
+                    error.OutOfMemory => bun.outOfMemory(),
+                };
             }
             // no plugins
             return .{ .ready = null };
@@ -1076,7 +1079,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 if (this.vm.debugger) |*debugger| {
                     debugger.http_server_agent.notifyServerRoutesUpdated(
                         AnyServer.from(this),
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                 }
             }
         }
@@ -1197,7 +1200,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 existing_request = Request.init(
                     bun.String.cloneUTF8(url.href),
                     headers,
-                    this.vm.initRequestBodyValue(body) catch bun.outOfMemory(),
+                    bun.handleOom(this.vm.initRequestBodyValue(body)),
                     method,
                 );
             } else if (first_arg.as(Request)) |request_| {
@@ -1244,6 +1247,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub fn closeIdleConnections(this: *ThisServer, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             _ = globalObject;
             _ = callframe;
+            if (this.app == null) return .js_undefined;
             this.app.?.closeIdleConnections();
             return .js_undefined;
         }
@@ -2174,7 +2178,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 resp.onTimeout(*anyopaque, onTimeoutForIdleWarn, &did_send_idletimeout_warning_once);
             }
 
-            const ctx = this.request_pool_allocator.tryGet() catch bun.outOfMemory();
+            const ctx = bun.handleOom(this.request_pool_allocator.tryGet());
             ctx.create(this, req, resp, should_deinit_context, method);
             this.vm.jsc_vm.reportExtraMemory(@sizeOf(RequestContext));
             const body = this.vm.initRequestBodyValue(.{ .Null = {} }) catch unreachable;
@@ -2287,7 +2291,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
             this.pending_requests += 1;
             req.setYield(false);
-            var ctx = this.request_pool_allocator.tryGet() catch bun.outOfMemory();
+            var ctx = bun.handleOom(this.request_pool_allocator.tryGet());
             var should_deinit_context = false;
             ctx.create(this, req, resp, &should_deinit_context, null);
             var body = this.vm.initRequestBodyValue(.{ .Null = {} }) catch unreachable;
@@ -2405,7 +2409,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const json_string = std.fmt.allocPrint(bun.default_allocator, "{{ \"workspace\": {{ \"root\": {}, \"uuid\": \"{}\" }} }}", .{
                 bun.fmt.formatJSONStringUTF8(this.dev_server.?.root, .{}),
                 uuid,
-            }) catch bun.outOfMemory();
+            }) catch |err| bun.handleOom(err);
             defer bun.default_allocator.free(json_string);
 
             resp.writeStatus("200 OK");
@@ -2561,7 +2565,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         .html => |html_bundle_route| {
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *HTMLBundle.Route, html_bundle_route.data, entry.path, entry.method);
                             if (dev_server) |dev| {
-                                dev.html_router.put(dev.allocator(), entry.path, html_bundle_route.data) catch bun.outOfMemory();
+                                bun.handleOom(dev.html_router.put(dev.allocator(), entry.path, html_bundle_route.data));
                             }
                             needs_plugins = true;
                         },
@@ -2592,7 +2596,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             var has_dev_server_for_star_path = false;
             if (dev_server) |dev| {
                 // dev.setRoutes might register its own "/*" HTTP handler
-                has_dev_server_for_star_path = dev.setRoutes(this) catch bun.outOfMemory();
+                has_dev_server_for_star_path = bun.handleOom(dev.setRoutes(this));
                 if (has_dev_server_for_star_path) {
                     // Assume dev server "/*" covers all methods if it exists
                     star_methods_covered_by_user = .initFull();

@@ -1,3 +1,4 @@
+// Hardcoded module "node:_http_server"
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { Duplex, Stream } = require("node:stream");
 const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
@@ -193,7 +194,7 @@ function emitListeningNextTick(self, hostname, port) {
   }
 }
 
-function Server(options, callback) {
+function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
   EventEmitter.$call(this);
   this[kConnectionsCheckingInterval] = { _destroyed: false };
@@ -307,7 +308,7 @@ Server.prototype.closeIdleConnections = function () {
 };
 
 Server.prototype.close = function (optionalCallback?) {
-  const server: Bun.Server | undefined = this[serverSymbol];
+  const server = this[serverSymbol];
   if (!server) {
     if (typeof optionalCallback === "function") process.nextTick(optionalCallback, $ERR_SERVER_NOT_RUNNING());
     return;
@@ -467,7 +468,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
   {
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
     const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
-    const canUseInternalAssignSocket = ResponseClass.prototype.assignSocket === ServerResponse.prototype.assignSocket;
+    const canUseInternalAssignSocket = ResponseClass?.prototype.assignSocket === ServerResponse.prototype.assignSocket;
     let isHTTPS = false;
     let server = this;
 
@@ -1021,39 +1022,6 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 } as unknown as typeof import("node:net").Socket;
 
-function _normalizeArgs(args) {
-  let arr;
-
-  if (args.length === 0) {
-    arr = [{}, null];
-    // arr[normalizedArgsSymbol] = true;
-    return arr;
-  }
-
-  const arg0 = args[0];
-  let options: any = {};
-  if (typeof arg0 === "object" && arg0 !== null) {
-    // (options[...][, cb])
-    options = arg0;
-    // } else if (isPipeName(arg0)) {
-    // (path[...][, cb])
-    // options.path = arg0;
-  } else {
-    // ([port][, host][...][, cb])
-    options.port = arg0;
-    if (args.length > 1 && typeof args[1] === "string") {
-      options.host = args[1];
-    }
-  }
-
-  const cb = args[args.length - 1];
-  if (typeof cb !== "function") arr = [options, null];
-  else arr = [options, cb];
-
-  // arr[normalizedArgsSymbol] = true;
-  return arr;
-}
-
 function _writeHead(statusCode, reason, obj, response) {
   const originalStatusCode = statusCode;
   let hasContentLength = response.hasHeader("content-length");
@@ -1147,16 +1115,6 @@ function ServerResponse(req, options): void {
   this[Symbol.for("meghan.kind")] = "_http_server";
   OutgoingMessage.$call(this, { ...options, [kBunServer]: true });
 
-  // if (req.method === "HEAD") this._hasBody = false;
-  // this.req = req;
-  // this.sendDate = true;
-  // this._sent100 = false;
-  // this._expect_continue = false;
-
-  // if (req.httpVersionMajor < 1 || req.httpVersionMinor < 1) {
-  //   this.useChunkedEncodingByDefault = chunkExpression.test(req.headers.te);
-  //   this.shouldKeepAlive = false;
-  // }
   this.useChunkedEncodingByDefault = true;
 
   if ((this[kDeprecatedReplySymbol] = options?.[kDeprecatedReplySymbol])) {
@@ -1185,22 +1143,18 @@ function ServerResponse(req, options): void {
 
   this.statusCode = 200;
   this.statusMessage = undefined;
+  this.chunkedEncoding = false;
 }
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
 
-// FIXME:
 ServerResponse.prototype._removedConnection = false;
 
-// FIXME:
 ServerResponse.prototype._removedContLen = false;
 
-// FIXME:
 ServerResponse.prototype._hasBody = true;
 
-// FIXME:
 ServerResponse.prototype._ended = false;
 
-// FIXME:
 ServerResponse.prototype[kRejectNonStandardBodyWrites] = undefined;
 
 Object.defineProperty(ServerResponse.prototype, "headersSent", {
@@ -1363,7 +1317,6 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   return this;
 };
 
-// FIXME:
 Object.defineProperty(ServerResponse.prototype, "writable", {
   get() {
     return !this._ended || !hasServerResponseFinished(this);
@@ -1447,7 +1400,6 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   return true;
 };
 
-// FIXME:
 ServerResponse.prototype._callPendingCallbacks = function () {
   const originalLength = this[kPendingCallbacks].length;
 
@@ -1469,7 +1421,6 @@ ServerResponse.prototype._finish = function () {
 };
 
 ServerResponse.prototype.detachSocket = function (socket) {
-  // console.trace();
   if (socket._httpMessage === this) {
     socket[kCloseCallback] && (socket[kCloseCallback] = undefined);
     socket.removeListener("close", onServerResponseClose);
@@ -1551,27 +1502,15 @@ ServerResponse.prototype.assignSocket = function (socket) {
   this.emit("socket", socket);
 };
 
-// FIXME:
 Object.defineProperty(ServerResponse.prototype, "shouldKeepAlive", {
   get() {
     return this[kHandle]?.shouldKeepAlive ?? true;
   },
-  set(value) {
+  set(_value) {
     // throw new Error('not implemented');
   },
 });
 
-// FIXME:
-Object.defineProperty(ServerResponse.prototype, "chunkedEncoding", {
-  get() {
-    return false;
-  },
-  set(value) {
-    // throw new Error('not implemented');
-  },
-});
-
-// FIXME:
 ServerResponse.prototype.destroy = function (_err?: Error) {
   if (this.destroyed) return this;
   const handle = this[kHandle];
@@ -1584,7 +1523,6 @@ ServerResponse.prototype.destroy = function (_err?: Error) {
   return this;
 };
 
-// FIXME:
 ServerResponse.prototype.emit = function (event) {
   if (event === "close") {
     callCloseCallback(this);

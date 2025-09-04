@@ -49,7 +49,7 @@ pub fn start(this: *Export) Yield {
             keys.append(.{
                 .key = entry.key_ptr.*,
                 .value = entry.value_ptr.*,
-            }) catch bun.outOfMemory();
+            }) catch |err| bun.handleOom(err);
         }
 
         std.mem.sort(Entry, keys.items[0..], {}, Entry.compare);
@@ -61,7 +61,7 @@ pub fn start(this: *Export) Yield {
             }
             break :brk len;
         };
-        var buf = arena.allocator().alloc(u8, len) catch bun.outOfMemory();
+        var buf = bun.handleOom(arena.allocator().alloc(u8, len));
         {
             var i: usize = 0;
             for (keys.items) |entry| {

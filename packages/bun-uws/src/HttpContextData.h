@@ -64,7 +64,6 @@ private:
     OnSocketClosedCallback onSocketClosed = nullptr;
     OnClientErrorCallback onClientError = nullptr;
 
-    HttpFlags flags;
     uint64_t maxHeaderSize = 0; // 0 means no limit
 
     // TODO: SNI
@@ -74,18 +73,8 @@ private:
         filterHandlers.clear();
     }
 
-    public:
-    bool isAuthorized() const {
-        return flags.isAuthorized;
-    }
-
-    bool isParsingHttp() const {
-        return flags.isParsingHttp;
-    }
-
-    void closeAfterParsingHttp() {
-        flags.shouldCloseAfterParsingHttp = true;
-    }
+public:
+    HttpFlags flags;
 };
 
 }

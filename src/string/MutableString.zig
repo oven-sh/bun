@@ -241,17 +241,17 @@ pub inline fn lenI(self: *MutableString) i32 {
 }
 
 pub fn toOwnedSlice(self: *MutableString) []u8 {
-    return bun.handleOom(self.list.toOwnedSlice(self.allocator));
+    return bun.handleOom(self.list.toOwnedSlice(self.allocator)); // TODO
 }
 
 pub fn toDynamicOwned(self: *MutableString) DynamicOwned([]u8) {
-    return .fromRawOwned(self.toOwnedSlice(), self.allocator);
+    return .fromRawIn(self.toOwnedSlice(), self.allocator);
 }
 
 /// `self.allocator` must be `bun.default_allocator`.
 pub fn toDefaultOwned(self: *MutableString) Owned([]u8) {
     bun.safety.alloc.assertEq(self.allocator, bun.default_allocator);
-    return .fromRawOwned(self.toOwnedSlice());
+    return .fromRaw(self.toOwnedSlice());
 }
 
 pub fn slice(self: *MutableString) []u8 {

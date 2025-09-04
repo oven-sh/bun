@@ -1,7 +1,7 @@
 // Hardcoded module "node:tls"
 const { isArrayBufferView, isTypedArray } = require("node:util/types");
 const net = require("node:net");
-const { Duplex } = require("node:stream");
+const Duplex = require("internal/streams/duplex");
 const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray } = require("internal/tls");

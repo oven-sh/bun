@@ -243,6 +243,7 @@ private:
 
             /* Mark that we are inside the parser now */
             httpContextData->flags.isParsingHttp = true;
+            httpResponseData->isIdle = false;
             // clients need to know the cursor after http parse, not servers!
             // how far did we read then? we need to know to continue with websocket parsing data? or?
 
@@ -395,6 +396,7 @@ private:
                 /* Timeout on uncork failure */
                 auto [written, failed] = ((AsyncSocket<SSL> *) returnedData)->uncork();
                 if (written > 0 || failed) {
+                    httpResponseData->isIdle = true;
                     /* All Http sockets timeout by this, and this behavior match the one in HttpResponse::cork */
                     ((HttpResponse<SSL> *) s)->resetTimeout();
                 }

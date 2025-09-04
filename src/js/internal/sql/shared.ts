@@ -166,18 +166,30 @@ function parseSQLiteOptions(
   };
 
   let filename = filenameOrUrl || ":memory:";
+  let originalUrl = filename; // Keep the original URL for query parsing
 
   if (filename instanceof URL) {
+    originalUrl = filename.toString();
     filename = filename.toString();
   }
 
   let queryString: string | null = null;
-  if (typeof filename === "string") {
-    const queryIndex = filename.indexOf("?");
+  // Parse query string from the original URL before processing
+  if (typeof originalUrl === "string") {
+    const queryIndex = originalUrl.indexOf("?");
     if (queryIndex !== -1) {
-      queryString = filename.slice(queryIndex + 1);
-      filename = filename.slice(0, queryIndex);
+      queryString = originalUrl.slice(queryIndex + 1);
+      // Strip query from filename for processing
+      if (typeof filename === "string") {
+        filename = filename.slice(0, queryIndex);
+      }
     }
+  }
+
+  // Now parse the filename (this handles file:// URLs and other protocols)
+  const parsedFilename = parseDefinitelySqliteUrl(filename);
+  if (parsedFilename !== null) {
+    filename = parsedFilename;
   }
 
   // Empty filename defaults to :memory:
@@ -358,14 +370,6 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
   }
 
   if (options.adapter === "sqlite") {
-    if (resolvedUrl !== null) {
-      const parsed = parseDefinitelySqliteUrl(resolvedUrl);
-
-      if (parsed !== null) {
-        resolvedUrl = parsed;
-      }
-    }
-
     return [resolvedUrl, null, options as Bun.SQL.__internal.OptionsWithDefinedAdapter];
   }
 
@@ -373,7 +377,8 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
     const parsedPath = parseDefinitelySqliteUrl(resolvedUrl);
 
     if (parsedPath !== null) {
-      return [parsedPath, null, { ...options, adapter: "sqlite" }];
+      // Return the original URL (with query params) for SQLite parsing
+      return [resolvedUrl, null, { ...options, adapter: "sqlite" }];
     }
   }
 

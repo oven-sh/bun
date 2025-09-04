@@ -393,6 +393,11 @@ pub const HTTPVerboseLevel = enum {
     curl,
 };
 
+const HTTPUpgradeState = enum(u2) {
+    none = 0,
+    pending = 1,
+    upgraded = 2,
+};
 pub const Flags = packed struct(u16) {
     disable_timeout: bool = false,
     disable_keepalive: bool = false,
@@ -405,8 +410,7 @@ pub const Flags = packed struct(u16) {
     is_preconnect_only: bool = false,
     is_streaming_request_body: bool = false,
     defer_fail_until_connecting_is_complete: bool = false,
-    is_websockets: bool = false,
-    websocket_upgraded: bool = false,
+    upgrade_state: HTTPUpgradeState = .none,
     _padding: u3 = 0,
 };
 
@@ -595,8 +599,9 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
                 override_accept_encoding = true;
             },
             hashHeaderConst("Upgrade") => {
-                if (std.ascii.eqlIgnoreCase(this.headerStr(header_values[i]), "websocket")) {
-                    this.flags.is_websockets = true;
+                const value = this.headerStr(header_values[i]);
+                if (!std.ascii.eqlIgnoreCase(value, "h2") and !std.ascii.eqlIgnoreCase(value, "h2c")) {
+                    this.flags.upgrade_state = .pending;
                 }
             },
             hashHeaderConst(chunked_encoded_header.name) => {
@@ -1030,8 +1035,8 @@ pub fn writeToStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCo
     log("flushStream", .{});
     var stream = &this.state.original_request_body.stream;
     const stream_buffer = stream.buffer orelse return;
-    if (this.flags.is_websockets and !this.flags.websocket_upgraded) {
-        // cannot drain yet, websocket is waiting for upgrade
+    if (this.flags.upgrade_state == .pending) {
+        // cannot drain yet, upgrade is waiting for upgrade
         return;
     }
     const buffer = stream_buffer.acquire();
@@ -1378,14 +1383,13 @@ pub fn handleOnDataHeaders(
         to_read = to_read[@min(@as(usize, @intCast(response.bytes_read)), to_read.len)..];
 
         if (response.status_code == 101) {
-            if (!this.flags.is_websockets) {
+            if (this.flags.upgrade_state == .none) {
                 // we cannot upgrade to websocket because the client did not request it!
                 this.closeAndFail(error.UnrequestedUpgrade, is_ssl, socket);
                 return;
             }
             // special case for websocket upgrade
-            this.flags.is_websockets = true;
-            this.flags.websocket_upgraded = true;
+            this.flags.upgrade_state = .upgraded;
             if (this.signals.upgraded) |upgraded| {
                 upgraded.store(true, .monotonic);
             }
@@ -2448,7 +2452,7 @@ pub fn handleResponseMetadata(
         log("handleResponseMetadata: content_length is null and transfer_encoding {}", .{this.state.transfer_encoding});
     }
 
-    if (this.method.hasBody() and (content_length == null or content_length.? > 0 or !this.state.flags.allow_keepalive or this.state.transfer_encoding == .chunked or is_server_sent_events or this.flags.websocket_upgraded)) {
+    if (this.method.hasBody() and (content_length == null or content_length.? > 0 or !this.state.flags.allow_keepalive or this.state.transfer_encoding == .chunked or is_server_sent_events or this.flags.upgrade_state == .upgraded)) {
         return ShouldContinue.continue_streaming;
     } else {
         return ShouldContinue.finished;

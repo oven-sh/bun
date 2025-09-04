@@ -398,6 +398,7 @@ export {
   kDeferredTimeouts,
   kDeprecatedReplySymbol,
   kEmitState,
+  kEmptyBuffer,
   kEmptyObject,
   kFetchRequest,
   kHandle,
@@ -442,5 +443,4 @@ export {
   validateMsecs,
   webRequestOrResponse,
   webRequestOrResponseHasBodyValue,
-  kEmptyBuffer,
 };

@@ -5,7 +5,7 @@
 pub const ValkeyContext = @import("./ValkeyContext.zig");
 
 /// Connection flags to track Valkey client state
-pub const ConnectionFlags = packed struct(u9) {
+pub const ConnectionFlags = struct {
     // TODO(markovejnovic): I am not a huge fan of these flags. I would
     // consider refactoring them into an enumerated state machine, as that
     // feels significantly more natural compared to a bag of booleans.
@@ -683,30 +683,27 @@ pub const ValkeyClient = struct {
         if (this.flags.is_selecting_db_internal) {
             this.flags.is_selecting_db_internal = false;
 
-            switch (value.*) {
+            return switch (value.*) {
                 .Error => |err_str| {
                     this.fail(err_str, protocol.RedisError.InvalidCommand);
-                    return;
                 },
                 .SimpleString => |ok_str| {
-                    if (std.mem.eql(u8, ok_str, "OK")) {
-                        // SELECT was successful.
-                        debug("SELECT {d} successful", .{this.database});
-                        // Connection is now fully ready on the specified database.
-                        // If any commands were queued while waiting for SELECT, try to send them.
-                        this.sendNextCommand();
-                    } else {
+                    if (!std.mem.eql(u8, ok_str, "OK")) {
                         // SELECT returned something other than "OK"
                         this.fail("SELECT command failed with non-OK response", protocol.RedisError.InvalidResponse);
                         return;
                     }
+
+                    // SELECT was successful.
+                    debug("SELECT {d} successful", .{this.database});
+                    // Connection is now fully ready on the specified database.
+                    // If any commands were queued while waiting for SELECT, try to send them.
+                    this.sendNextCommand();
                 },
                 else => { // Unexpected response type for SELECT
                     this.fail("Received non-SELECT response while in the SELECT state.", protocol.RedisError.InvalidResponse);
-                    return;
                 },
-            }
-            return; // SELECT response handled, do not proceed to user command logic
+            };
         }
 
         // For regular commands, get the next command+promise pair from the queue

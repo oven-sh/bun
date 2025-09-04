@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 const __dirname = dirname(Bun.fileURLToPath(import.meta.url));
 
 export class SimpleRegistry {
+  private debugLogs: boolean;
   private server: Server | null = null;
   private port: number = 0;
   public requestedUrls: string[] = [];
@@ -21,6 +22,10 @@ export class SimpleRegistry {
     this.scannerBehavior = behavior === "none" ? "clean" : behavior;
   }
 
+  constructor(debugLogs: boolean) {
+    this.debugLogs = debugLogs;
+  }
+
   async start(): Promise<number> {
     const self = this;
 
@@ -31,7 +36,7 @@ export class SimpleRegistry {
         const pathname = url.pathname;
 
         self.requestedUrls.push(pathname);
-        console.error(`[REGISTRY] ${req.method} ${pathname}`);
+        if (self.debugLogs) console.error(`[REGISTRY] ${req.method} ${pathname}`);
 
         if (pathname.startsWith("/") && !pathname.includes(".tgz")) {
           const packageName = decodeURIComponent(pathname.slice(1));
@@ -126,7 +131,7 @@ export class SimpleRegistry {
         },
       });
     } catch (error) {
-      console.error(`Failed to serve tarball ${tarballPath}:`, error);
+      if (this.debugLogs) console.error(`Failed to serve tarball ${tarballPath}:`, error);
       return new Response("Tarball not found", { status: 404 });
     }
   }
@@ -152,8 +157,8 @@ export class SimpleRegistry {
 
 let registry: SimpleRegistry | null = null;
 
-export async function startRegistry(): Promise<string> {
-  registry = new SimpleRegistry();
+export async function startRegistry(debugLogs: boolean): Promise<string> {
+  registry = new SimpleRegistry(debugLogs);
   const port = await registry.start();
   return `http://localhost:${port}`;
 }

@@ -1,6 +1,5 @@
-import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, runBunInstall, tempDirWithFiles } from "harness";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { getRegistry, SimpleRegistry, startRegistry, stopRegistry } from "./simple-dummy-registry";
@@ -33,6 +32,8 @@ interface SecurityScannerTestOptions {
   hasLockfile: boolean;
   scannerSyncronouslyThrows: boolean;
 }
+
+const DO_TEST_DEBUG = process.env.SCANNER_TEST_DEBUG === "true";
 
 async function globEverything(dir: string) {
   return await Array.fromAsync(
@@ -154,17 +155,17 @@ registry = "${registryUrl}/"`,
 
   const shouldDoInitialInstall = hasExistingNodeModules || hasLockfile;
   if (hasExistingNodeModules || hasLockfile) {
-    console.log(redShellPrefix, `${bunExe()} install`);
-    await $`${bunExe()} install`.cwd(dir).env(bunEnv);
+    if (DO_TEST_DEBUG) console.log(redShellPrefix, `${bunExe()} install`);
+    await runBunInstall(bunEnv, dir);
   }
 
   if (shouldDoInitialInstall && !hasExistingNodeModules) {
-    console.log(redShellPrefix, `rm -rf ${dir}/node_modules`);
+    if (DO_TEST_DEBUG) console.log(redShellPrefix, `rm -rf ${dir}/node_modules`);
     await rm(join(dir, "node_modules"), { recursive: true });
   }
 
   if (shouldDoInitialInstall && !hasLockfile) {
-    console.log(redShellPrefix, `rm ${dir}/bun.lock`);
+    if (DO_TEST_DEBUG) console.log(redShellPrefix, `rm ${dir}/bun.lock`);
     await rm(join(dir, "bun.lock"));
   }
 
@@ -172,9 +173,11 @@ registry = "${registryUrl}/"`,
 
   const cmd = [bunExe(), command, ...args];
 
-  console.log(redDebugPrefix, "SETUP DONE");
-  console.log("-------------------------------- THE REAL TEST IS ABOUT TO HAPPEN --------------------------------");
-  console.log(redShellPrefix, cmd.join(" "));
+  if (DO_TEST_DEBUG) {
+    console.log(redDebugPrefix, "SETUP DONE");
+    console.log("-------------------------------- THE REAL TEST IS ABOUT TO HAPPEN --------------------------------");
+    console.log(redShellPrefix, cmd.join(" "));
+  }
 
   registry.clearRequestLog();
 
@@ -190,7 +193,7 @@ registry = "${registryUrl}/"
 scanner = "${scannerPath}"`,
   );
 
-  if (process.env.SCANNER_TEST_DEBUG) {
+  if (DO_TEST_DEBUG) {
     console.log(`[DEBUG] Test directory: ${dir}`);
     console.log(`[DEBUG] Command: ${cmd.join(" ")}`);
     console.log(`[DEBUG] Scanner type: ${scannerType}`);
@@ -212,10 +215,6 @@ scanner = "${scannerPath}"`,
     console.log("");
     console.log("To run the command manually:");
     console.log(`cd ${dir} && ${cmd.join(" ")}`);
-
-    if (process.env.SCANNER_TEST_DEBUG === "before") {
-      process.exit(1);
-    }
   }
 
   await using proc = Bun.spawn({
@@ -229,33 +228,38 @@ scanner = "${scannerPath}"`,
 
   let errAndOut = "";
 
-  const write = (chunk: Uint8Array<ArrayBuffer>, stream: NodeJS.WriteStream, decoder: TextDecoder) => {
-    const str = decoder.decode(chunk);
+  if (DO_TEST_DEBUG) {
+    const write = (chunk: Uint8Array<ArrayBuffer>, stream: NodeJS.WriteStream, decoder: TextDecoder) => {
+      const str = decoder.decode(chunk);
 
-    errAndOut += str;
+      errAndOut += str;
 
-    const lines = str.split("\n");
-    for (const line of lines) {
-      stream.write(redSubprocessPrefix);
-      stream.write(" ");
-      stream.write(line);
-      stream.write("\n");
-    }
-  };
+      const lines = str.split("\n");
+      for (const line of lines) {
+        stream.write(redSubprocessPrefix);
+        stream.write(" ");
+        stream.write(line);
+        stream.write("\n");
+      }
+    };
 
-  const outDecoder = new TextDecoder();
-  const stdoutWriter = new WritableStream<Uint8Array<ArrayBuffer>>({
-    write: chunk => write(chunk, process.stdout, outDecoder),
-    close: () => void process.stdout.write(outDecoder.decode()),
-  });
+    const outDecoder = new TextDecoder();
+    const stdoutWriter = new WritableStream<Uint8Array<ArrayBuffer>>({
+      write: chunk => write(chunk, process.stdout, outDecoder),
+      close: () => void process.stdout.write(outDecoder.decode()),
+    });
 
-  const errDecoder = new TextDecoder();
-  const stderrWriter = new WritableStream<Uint8Array<ArrayBuffer>>({
-    write: chunk => write(chunk, process.stderr, errDecoder),
-    close: () => void process.stderr.write(errDecoder.decode()),
-  });
+    const errDecoder = new TextDecoder();
+    const stderrWriter = new WritableStream<Uint8Array<ArrayBuffer>>({
+      write: chunk => write(chunk, process.stderr, errDecoder),
+      close: () => void process.stderr.write(errDecoder.decode()),
+    });
 
-  await Promise.all([proc.stdout.pipeTo(stdoutWriter), proc.stderr.pipeTo(stderrWriter)]);
+    await Promise.all([proc.stdout.pipeTo(stdoutWriter), proc.stderr.pipeTo(stderrWriter)]);
+  } else {
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+    errAndOut = stdout + stderr;
+  }
 
   const exitCode = await proc.exited;
 
@@ -276,7 +280,6 @@ scanner = "${scannerPath}"`,
   // If the scanner is from npm and there are no node modules when the test "starts"
   // then we should expect Bun to do the partial install first of all
   if (scannerType === "npm" && !hasExistingNodeModules) {
-    console.log("[TEST DEBUG] Checking for partial install messages");
     expect(errAndOut).toContain("Attempting to install security scanner from npm");
     expect(errAndOut).toContain("Security scanner installed successfully");
   }

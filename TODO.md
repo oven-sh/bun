@@ -322,6 +322,12 @@ Exited with code [1]
 
 # Code quality:
 
+- [ ] concurrent tests have an n^2 problem because each time a test completes it needs to loop over every test to advance.
+  - this shouldn't be necessary, it should be possible to step the current execution sequence and only check if we need to advance if the current sequence is done.
+  - or even keep a number of how many sequences are complete and only advance once that number is equal to the number of sequences
+  - if we have 1,000,000 concurrent tests, there is no need to be looping over all 1,000,000 every time any of them completes
+  - with the current n^2 behaviour, it is 2.13x slower to run 20,000 empty async concurrent tests than 1,000,000 empty async regular tests. that's 50x less tests taking twice as long to run.
+- [ ] consider a memory pool for describescope/executionentry. test if it improves performance.
 - [ ] consider making RefDataValue methods return the reason for failure rather than ?value. that way we can improve error messages. the reason could be a string or it could be a defined error set
 - [ ] expect_call_count/expect_assertions is confusing. rename to `expect_calls`, `assert_expect_calls`. or something.
 - [ ] instead of 'description orelse (unnamed)', let's have description default to 'unnamed' and not free it if it === the global that defines that
@@ -364,6 +370,8 @@ Exited with code [1]
   - this will help for the done callback, which could be called multiple times by the user. it can be stored as a js value and gc'd.
 
 # Follow-up:
+
+- [ ] limit the number of concurrent tests that run at once
 
 - [ ] looks like we don't need to use file_id anymore (remove `bun.jsc.Jest.Jest.runner.?.getOrPutFile(file_path).file_id;`, store the file path directly)
 - [ ] CallbackWithArguments is copied like 3 times which copies the arguments list 3 times

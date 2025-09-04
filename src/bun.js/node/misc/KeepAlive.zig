@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const jsc = bun.jsc;
-
 globalThis: *jsc.JSGlobalObject,
 keep_alive: bun.Async.KeepAlive,
 
@@ -29,3 +25,6 @@ pub fn jsUnref(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.
     this.keep_alive.unref(globalThis.bunVM());
     return .js_undefined;
 }
+
+const bun = @import("bun");
+const jsc = bun.jsc;

@@ -317,10 +317,10 @@ class PooledPostgresConnection {
     try {
       if (typeof password === "function") {
         password = password();
+      }
 
-        if (password && $isPromise(password)) {
-          password = await password;
-        }
+      if (password && $isPromise(password)) {
+        password = await password;
       }
 
       return createPostgresConnection(
@@ -334,7 +334,7 @@ class PooledPostgresConnection {
         // performance overhead if possible. It is only provided as the default for
         // backward compatibility, and is not recommended in secure deployments.
         sslMode || SSLMode.disable,
-        tls || false,
+        tls || null,
         query || "",
         path || "",
         onConnected,

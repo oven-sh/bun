@@ -736,13 +736,9 @@ function parseOptions(
     }
   }
 
-  if (sslMode !== SSLMode.disable && ((typeof tls === "object" && !tls.serverName) || typeof tls === "boolean")) {
+  if (sslMode !== SSLMode.disable && !tls?.serverName) {
     if (hostname) {
-      if (typeof tls === "object") {
-        tls = { ...tls, serverName: hostname };
-      } else {
-        tls = { serverName: hostname };
-      }
+      tls = { ...tls, serverName: hostname };
     } else if (tls) {
       tls = true;
     }
@@ -751,6 +747,7 @@ function parseOptions(
   if (tls && sslMode === SSLMode.disable) {
     sslMode = SSLMode.prefer;
   }
+
   port = Number(port);
 
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {

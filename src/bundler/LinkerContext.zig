@@ -401,29 +401,39 @@ pub const LinkerContext = struct {
             var changed = true;
             while (changed) {
                 changed = false;
-                var idx: u32 = 0;
+                var idx: usize = 0;
                 while (idx < this.graph.files.len) : (idx += 1) {
                     // Skip runtime
-                    if (idx == Index.runtime.get()) continue;
+                    if (idx == Index.runtime.get()) {
+                        continue;
+                    }
 
                     // Skip if not a JavaScript AST
-                    if (idx >= import_records_list.len) continue;
+                    if (idx >= import_records_list.len) {
+                        continue;
+                    }
 
                     // Skip CSS files
-                    if (css_asts[idx] != null) continue;
+                    if (css_asts[idx] != null) {
+                        continue;
+                    }
+
+                    if (flags[idx].is_async_or_has_async_dependency) {
+                        continue;
+                    }
 
                     const import_records = import_records_list[idx].slice();
                     for (import_records) |record| {
-                        if (Index.isValid(record.source_index) and record.kind == .stmt) {
-                            const dep_index = record.source_index.get();
-                            // If our dependency is async, we should be async too
-                            if (dep_index < flags.len and
-                                flags[dep_index].is_async_or_has_async_dependency and
-                                !flags[idx].is_async_or_has_async_dependency)
-                            {
-                                flags[idx].is_async_or_has_async_dependency = true;
-                                changed = true;
-                            }
+                        const dep_idx = record.source_index;
+                        if (Index.isInvalid(dep_idx) or dep_idx.get() >= flags.len or record.kind != .stmt) {
+                            continue;
+                        }
+
+                        // If our dependency is async, we should be async too
+                        if (flags[dep_idx.get()].is_async_or_has_async_dependency) {
+                            flags[idx].is_async_or_has_async_dependency = true;
+                            changed = true;
+                            break;
                         }
                     }
                 }
@@ -1191,13 +1201,25 @@ pub const LinkerContext = struct {
                 }
 
                 // Replace the statement with a call to "init()"
-                // Never use await here - __esm handles async internally
-                const value = Expr.init(E.Call, .{
-                    .target = Expr.initIdentifier(
-                        wrapper_ref,
-                        loc,
-                    ),
-                }, loc);
+                const value: Expr = brk: {
+                    const default = Expr.init(E.Call, .{
+                        .target = Expr.initIdentifier(
+                            wrapper_ref,
+                            loc,
+                        ),
+                    }, loc);
+
+                    if (other_flags.is_async_or_has_async_dependency) {
+                        // This currently evaluates sibling dependencies in serial instead of in
+                        // parallel, which is incorrect. This should be changed to store a promise
+                        // and await all stored promises after all imports but before any code.
+                        break :brk Expr.init(E.Await, .{
+                            .value = default,
+                        }, loc);
+                    }
+
+                    break :brk default;
+                };
 
                 try stmts.inside_wrapper_prefix.append(
                     Stmt.alloc(S.SExpr, .{

@@ -466,27 +466,53 @@ pub fn generateEntryPointTailJS(
                 },
                 else => {
                     if (flags.wrap == .esm and ast.wrapper_ref.isValid()) {
-                        // Never use await at module top level for ESM output
-                        // The __esm wrapper handles async internally
-                        // "init_foo();"
-                        stmts.append(
-                            Stmt.alloc(
-                                S.SExpr,
-                                .{
-                                    .value = Expr.init(
-                                        E.Call,
-                                        E.Call{
-                                            .target = Expr.initIdentifier(
-                                                ast.wrapper_ref,
-                                                Logger.Loc.Empty,
-                                            ),
-                                        },
-                                        Logger.Loc.Empty,
-                                    ),
-                                },
-                                Logger.Loc.Empty,
-                            ),
-                        ) catch unreachable;
+                        if (flags.is_async_or_has_async_dependency) {
+                            // "await init_foo();"
+                            stmts.append(
+                                Stmt.alloc(
+                                    S.SExpr,
+                                    .{
+                                        .value = Expr.init(
+                                            E.Await,
+                                            E.Await{
+                                                .value = Expr.init(
+                                                    E.Call,
+                                                    E.Call{
+                                                        .target = Expr.initIdentifier(
+                                                            ast.wrapper_ref,
+                                                            Logger.Loc.Empty,
+                                                        ),
+                                                    },
+                                                    Logger.Loc.Empty,
+                                                ),
+                                            },
+                                            Logger.Loc.Empty,
+                                        ),
+                                    },
+                                    Logger.Loc.Empty,
+                                ),
+                            ) catch unreachable;
+                        } else {
+                            // "init_foo();"
+                            stmts.append(
+                                Stmt.alloc(
+                                    S.SExpr,
+                                    .{
+                                        .value = Expr.init(
+                                            E.Call,
+                                            E.Call{
+                                                .target = Expr.initIdentifier(
+                                                    ast.wrapper_ref,
+                                                    Logger.Loc.Empty,
+                                                ),
+                                            },
+                                            Logger.Loc.Empty,
+                                        ),
+                                    },
+                                    Logger.Loc.Empty,
+                                ),
+                            ) catch unreachable;
+                        }
                     }
 
                     const sorted_and_filtered_export_aliases = c.graph.meta.items(.sorted_and_filtered_export_aliases)[source_index];

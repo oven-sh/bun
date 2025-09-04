@@ -44,9 +44,18 @@ pub const StandaloneModuleGraph = struct {
         };
     }
 
-    pub fn isBunStandaloneFilePath(str: []const u8) bool {
+    pub fn isBunStandaloneFilePathCanonicalized(str: []const u8) bool {
         return bun.strings.hasPrefixComptime(str, base_path) or
             (Environment.isWindows and bun.strings.hasPrefixComptime(str, base_public_path));
+    }
+
+    pub fn isBunStandaloneFilePath(str: []const u8) bool {
+        if (Environment.isWindows) {
+            // On Windows, remove NT path prefixes before checking
+            const canonicalized = strings.withoutNTPrefix(u8, str);
+            return isBunStandaloneFilePathCanonicalized(canonicalized);
+        }
+        return isBunStandaloneFilePathCanonicalized(str);
     }
 
     pub fn entryPoint(this: *const StandaloneModuleGraph) *File {

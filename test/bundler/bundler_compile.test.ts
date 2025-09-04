@@ -666,20 +666,69 @@ error: Hello World`,
     ],
   });
 
-  test(
-    "does not crash",
-    async () => {
-      const dir = tempDirWithFiles("bundler-compile-shadcn", {});
+  test("does not crash", async () => {
+    const dir = tempDirWithFiles("bundler-compile-shadcn", {
+      "frontend.tsx": `console.log("Hello, world!");`,
+      "index.html": `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bun + React</title>
+    <script type="module" src="./frontend.tsx" async></script>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
+        `,
+      "index.tsx": `import { serve } from "bun";
+import index from "./index.html";
 
-      // Step 1: Run bun init --react=shadcn in the tempdir
-      await Bun.$`${bunExe()} init --react=shadcn`.cwd(dir).env(bunEnv).throws(true);
+const server = serve({
+  routes: {
+    // Serve index.html for all unmatched routes.
+    "/*": index,
 
-      // Step 2: Run bun build with compile, minify, sourcemap, and bytecode
-      await Bun.$`${bunExe()} build ./src/index.tsx --compile --minify --sourcemap --bytecode`
-        .cwd(dir)
-        .env(bunEnv)
-        .throws(true);
+    "/api/hello": {
+      async GET(req) {
+        return Response.json({
+          message: "Hello, world!",
+          method: "GET",
+        });
+      },
+      async PUT(req) {
+        return Response.json({
+          message: "Hello, world!",
+          method: "PUT",
+        });
+      },
     },
-    60 * 1000,
-  );
+
+    "/api/hello/:name": async req => {
+      const name = req.params.name;
+      return Response.json({
+        message: "LOL",
+      });
+    },
+  },
+
+  development: process.env.NODE_ENV !== "production" && {
+    // Enable browser hot reloading in development
+    hmr: true,
+
+    // Echo console logs from the browser to the server
+    console: true,
+  },
+});
+
+`,
+    });
+
+    // Step 2: Run bun build with compile, minify, sourcemap, and bytecode
+    await Bun.$`${bunExe()} build ./index.tsx --compile --minify --sourcemap --bytecode`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(true);
+  });
 });

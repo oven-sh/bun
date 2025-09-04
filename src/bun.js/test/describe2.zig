@@ -609,7 +609,7 @@ pub const BaseScopeCfg = struct {
     self_concurrent: bool = false,
     self_mode: ScopeMode = .normal,
     self_only: bool = false,
-    test_id_for_debugger: u32 = 0,
+    test_id_for_debugger: i32 = 0,
     /// returns null if the other already has the value
     pub fn extend(this: BaseScopeCfg, other: BaseScopeCfg) ?BaseScopeCfg {
         var result = this;
@@ -643,7 +643,7 @@ pub const BaseScope = struct {
     only: enum { no, contains, yes },
     has_callback: bool,
     /// this value is 0 unless the debugger is active and the scope has a debugger id
-    test_id_for_debugger: u32,
+    test_id_for_debugger: i32,
     pub fn init(this: BaseScopeCfg, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, parent: ?*DescribeScope, has_callback: bool, allow_update_parent: bool) BaseScope {
         if (allow_update_parent) {
             if (this.self_only and parent != null) parent.?.markContainsOnly(); // TODO: this is a bad thing to have in an init function.

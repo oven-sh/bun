@@ -136,17 +136,17 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunT
 
     // handle test reporter agent for debugger
     const vm = globalThis.bunVM();
-    var test_id_for_debugger: u32 = 0;
+    var test_id_for_debugger: i32 = 0;
     if (vm.debugger) |*debugger| {
         if (debugger.test_reporter_agent.isEnabled()) {
             const globals = struct {
-                var max_test_id_for_debugger: u32 = 0;
+                var max_test_id_for_debugger: i32 = 0;
             };
             globals.max_test_id_for_debugger += 1;
             var name = bun.String.init(description orelse "(unnamed)");
             const parent = bunTest.collection.active_scope;
-            const parent_id = if (parent.base.test_id_for_debugger > 0) @as(i32, @intCast(parent.base.test_id_for_debugger)) else -1;
-            debugger.test_reporter_agent.reportTestFound(callFrame, @intCast(globals.max_test_id_for_debugger), &name, switch (this.mode) {
+            const parent_id = if (parent.base.test_id_for_debugger != 0) parent.base.test_id_for_debugger else -1;
+            debugger.test_reporter_agent.reportTestFound(callFrame, globals.max_test_id_for_debugger, &name, switch (this.mode) {
                 .describe => .describe,
                 .@"test" => .@"test",
             }, parent_id);

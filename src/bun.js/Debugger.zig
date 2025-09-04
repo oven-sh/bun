@@ -299,6 +299,7 @@ pub const TestReporterAgent = struct {
     handle: ?*Handle = null,
     const debug = Output.scoped(.TestReporterAgent, .visible);
 
+    /// this enum is kept in sync with c++ InspectorTestReporterAgent.cpp `enum class BunTestStatus`
     pub const TestStatus = enum(u8) {
         pass,
         fail,

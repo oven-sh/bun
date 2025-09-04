@@ -338,6 +338,16 @@ fn advanceSequence(this: *Execution, sequence: *ExecutionSequence) void {
 }
 fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     sequence.started_at = bun.timespec.now();
+
+    if (sequence.test_entry) |entry| {
+        if (entry.base.test_id_for_debugger != 0) {
+            if (jsc.VirtualMachine.get().debugger) |*debugger| {
+                if (debugger.test_reporter_agent.isEnabled()) {
+                    debugger.test_reporter_agent.reportTestStart(entry.base.test_id_for_debugger);
+                }
+            }
+        }
+    }
 }
 fn onEntryStarted(_: *Execution, entry: *ExecutionEntry) void {
     if (entry.timeout != std.math.maxInt(u32)) {
@@ -368,6 +378,29 @@ fn onSequenceCompleted(this: *Execution, sequence: *ExecutionSequence) void {
     const entries = sequence.entries(this);
     if (entries.len > 0 and (sequence.test_entry != null or sequence.result != .pass)) {
         test_command.CommandLineReporter.handleTestCompleted(this.bunTest(), sequence, sequence.test_entry orelse entries[0], elapsed_ns);
+    }
+
+    if (sequence.test_entry) |entry| {
+        if (entry.base.test_id_for_debugger != 0) {
+            if (jsc.VirtualMachine.get().debugger) |*debugger| {
+                if (debugger.test_reporter_agent.isEnabled()) {
+                    debugger.test_reporter_agent.reportTestEnd(entry.base.test_id_for_debugger, switch (sequence.result) {
+                        .pass => .pass,
+                        .fail => .fail,
+                        .skip => .skip,
+                        .fail_because_timeout => .timeout,
+                        .fail_because_timeout_with_done_callback => .timeout,
+                        .todo => .todo,
+                        .skipped_because_label => .skipped_because_label,
+                        .fail_because_failing_test_passed => .fail,
+                        .fail_because_todo_passed => .fail,
+                        .fail_because_expected_has_assertions => .fail,
+                        .fail_because_expected_assertion_count => .fail,
+                        .pending => .timeout,
+                    }, @floatFromInt(elapsed_ns));
+                }
+            }
+        }
     }
 }
 pub fn resetGroup(this: *Execution, group_index: usize) void {

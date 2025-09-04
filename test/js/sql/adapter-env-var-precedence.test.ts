@@ -131,12 +131,12 @@ describe("SQL adapter environment variable precedence", () => {
   });
 
   test.skipIf(isWindows)("should support unix:// with explicit adapter", () => {
-    const options = new SQL("unix:///tmp/mysql.sock", {
+    const options = new SQL("unix:///tmp/thisisacoolmysql.sock", {
       adapter: "mysql",
     });
 
     expect(options.options.adapter).toBe("mysql");
-    expect(options.options.path).toBe("/tmp/mysql.sock");
+    expect(options.options.path).toBe("/tmp/thisisacoolmysql.sock");
   });
 
   test("adapter-specific env vars should take precedence over generic ones", () => {
@@ -317,7 +317,7 @@ describe("SQL adapter environment variable precedence", () => {
 
     test.skipIf(isWindows)("should work with unix:// protocol and explicit adapter", () => {
       using sock = Bun.listen({
-        unix: "/tmp/mysql.sock",
+        unix: "/tmp/thisisacoolmysql.sock",
         socket: {
           data: console.log,
         },
@@ -325,7 +325,7 @@ describe("SQL adapter environment variable precedence", () => {
 
       const options = new SQL(`unix://${sock.unix}`, { adapter: "mysql" });
       expect(options.options.adapter).toBe("mysql");
-      expect(options.options.path).toBe("/tmp/mysql.sock");
+      expect(options.options.path).toBe("/tmp/thisisacoolmysql.sock");
     });
 
     test("should work with sqlite:// protocol and sqlite adapter", () => {

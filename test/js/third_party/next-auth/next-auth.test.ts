@@ -34,12 +34,16 @@ describe("next-auth", () => {
       try {
         const stat = require("node:fs").statSync("/tmp/mysql.sock");
         console.log(stat);
+      } catch (e) {
+        console.log("couldnt stat mysql.sock", e);
+      }
 
-        try {
-          const file = await Bun.file("/tmp/mysql.sock").arrayBuffer();
-          console.log(file);
-        } catch {}
-      } catch {}
+      try {
+        const file = await Bun.file("/tmp/mysql.sock").arrayBuffer();
+        console.log(file);
+      } catch (e) {
+        console.log("couldnt read mysql.sock", e);
+      }
 
       console.log(result.stdout);
       console.log(result.stderr);

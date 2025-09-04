@@ -253,6 +253,7 @@ src/bun.js/node/misc/KeepAlive.zig
 src/bun.js/node/net/BlockList.zig
 src/bun.js/node/node_assert_binding.zig
 src/bun.js/node/node_assert.zig
+src/bun.js/node/node_binding.zig
 src/bun.js/node/node_cluster_binding.zig
 src/bun.js/node/node_crypto_binding.zig
 src/bun.js/node/node_error_binding.zig

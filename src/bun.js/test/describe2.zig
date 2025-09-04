@@ -252,7 +252,10 @@ pub const BunTestFile = struct {
         return switch (this.phase) {
             .collection => .{ .collection = .{ .active_scope = this.collection.active_scope } },
             .execution => blk: {
-                const active_group = &this.execution.groups[this.execution.group_index];
+                const active_group = this.execution.activeGroup() orelse {
+                    bun.debugAssert(false); // should have switched phase if we're calling getCurrentStateData, but it could happen with re-entry maybe
+                    break :blk .{ .done = .{} };
+                };
                 const sequences = active_group.sequences(&this.execution);
                 if (sequences.len != 1) break :blk .{
                     .execution = .{

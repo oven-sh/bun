@@ -177,16 +177,18 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     });
 
     const testKeyUniquePerDb = crypto.randomUUID();
-    test.each([...Array(16).keys()].map((i) => DEFAULT_REDIS_URL + `/${i}`))
-        ("Connecting to database with url $url succeeds", async (url) => {
-      const client = new RedisClient(url);
+    test.each([...Array(16).keys()].map(i => DEFAULT_REDIS_URL + `/${i}`))(
+      "Connecting to database with url $url succeeds",
+      async url => {
+        const client = new RedisClient(url);
 
-      // Ensure the value is not in the database.
-      const testValue = await client.get(testKeyUniquePerDb);
-      expect(testValue).toBeNull();
+        // Ensure the value is not in the database.
+        const testValue = await client.get(testKeyUniquePerDb);
+        expect(testValue).toBeNull();
 
-      client.close();
-    });
+        client.close();
+      },
+    );
   });
 
   describe("Reconnections", () => {

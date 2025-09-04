@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { encodeTextFrame, encodeCloseFrame, decodeFrames, upgradeHeaders } from "./websocket.helpers";
+import { decodeFrames, encodeCloseFrame, encodeTextFrame, upgradeHeaders } from "./websocket.helpers";
 
 describe("fetch upgrade", () => {
   test("should upgrade to websocket", async () => {

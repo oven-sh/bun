@@ -179,18 +179,15 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     });
 
     const testKeyUniquePerDb = crypto.randomUUID();
-    test.each([...Array(16).keys()])(
-      "Connecting to database with url $url succeeds",
-      async (dbId: number) => {
-        const redis = createClient(ConnectionType.TCP, {}, dbId);
+    test.each([...Array(16).keys()])("Connecting to database with url $url succeeds", async (dbId: number) => {
+      const redis = createClient(ConnectionType.TCP, {}, dbId);
 
-        // Ensure the value is not in the database.
-        const testValue = await redis.get(testKeyUniquePerDb);
-        expect(testValue).toBeNull();
+      // Ensure the value is not in the database.
+      const testValue = await redis.get(testKeyUniquePerDb);
+      expect(testValue).toBeNull();
 
-        redis.close();
-      },
-    );
+      redis.close();
+    });
   });
 
   describe("Reconnections", () => {
@@ -210,7 +207,6 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       const valueAfterStop = await ctx.redis.get(TEST_KEY);
       expect(valueAfterStop).toBe(TEST_VALUE);
-
     });
   });
 });

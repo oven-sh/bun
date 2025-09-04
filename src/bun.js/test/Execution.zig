@@ -118,10 +118,10 @@ pub fn loadFromOrder(this: *Execution, order: *Order) bun.JSError!void {
     bun.assert(this.groups.len == 0);
     bun.assert(this.#sequences.len == 0);
     bun.assert(this.#entries.len == 0);
-    var allocator_safety = bun.safety.AllocPtr.init(this.bunTest().gpa);
-    allocator_safety.assertEq(order.groups.allocator);
-    allocator_safety.assertEq(order.sequences.allocator);
-    allocator_safety.assertEq(order.entries.allocator);
+    var alloc_safety = bun.safety.CheckedAllocator.init(this.bunTest().gpa);
+    alloc_safety.assertEq(order.groups.allocator);
+    alloc_safety.assertEq(order.sequences.allocator);
+    alloc_safety.assertEq(order.entries.allocator);
     this.groups = try order.groups.toOwnedSlice();
     this.#sequences = try order.sequences.toOwnedSlice();
     this.#entries = try order.entries.toOwnedSlice();

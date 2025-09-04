@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { decodeFrames, encodeCloseFrame, encodeTextFrame, upgradeHeaders } from "./websocket.helpers";
 import http from "http";
+import { decodeFrames, encodeCloseFrame, encodeTextFrame, upgradeHeaders } from "./websocket.helpers";
 describe("fetch upgrade", () => {
   test("should upgrade to websocket", async () => {
     const serverMessages: string[] = [];

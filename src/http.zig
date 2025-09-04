@@ -1070,9 +1070,9 @@ pub fn writeToStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCo
             stream_buffer.release();
             stream.detach();
             if (this.flags.upgrade_state == .upgraded) {
-                this.state.flags.received_last_chunk = true;
-                // upgraded connection will end when the body is done (no half-open connections)
-                this.progressUpdate(is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+                // for upgraded connections we need to shutdown the socket to signal the end of the connection
+                // otherwise the client will wait forever for the connection to be closed
+                socket.shutdown();
             }
         } else {
             // only report drain if we send everything and previous we had something to send

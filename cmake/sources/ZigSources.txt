@@ -928,6 +928,7 @@ src/sql/mysql/protocol/Query.zig
 src/sql/mysql/protocol/ResultSet.zig
 src/sql/mysql/protocol/ResultSetHeader.zig
 src/sql/mysql/protocol/Signature.zig
+src/sql/mysql/protocol/SSLRequest.zig
 src/sql/mysql/protocol/StackReader.zig
 src/sql/mysql/protocol/StmtPrepareOKPacket.zig
 src/sql/mysql/SSLMode.zig

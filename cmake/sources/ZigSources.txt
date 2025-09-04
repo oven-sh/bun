@@ -481,6 +481,7 @@ src/cli/pm_why_command.zig
 src/cli/publish_command.zig
 src/cli/remove_command.zig
 src/cli/run_command.zig
+src/cli/scan_command.zig
 src/cli/shell_completions.zig
 src/cli/test_command.zig
 src/cli/test/Scanner.zig

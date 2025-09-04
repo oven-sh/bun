@@ -6,6 +6,7 @@ pub fn installIsolatedPackages(
     command_ctx: Command.Context,
     install_root_dependencies: bool,
     workspace_filters: []const WorkspaceFilter,
+    packages_to_install: ?[]const PackageID,
 ) OOM!PackageInstall.Summary {
     bun.analytics.Features.isolated_bun_install += 1;
 
@@ -167,39 +168,65 @@ pub fn installIsolatedPackages(
                 Lockfile.DepSorter.isLessThan,
             );
 
-            peer_dep_ids.clearRetainingCapacity();
-            for (dep_ids_sort_buf.items) |dep_id| {
-                if (Tree.isFilteredDependencyOrWorkspace(
-                    dep_id,
-                    entry.pkg_id,
-                    workspace_filters,
-                    install_root_dependencies,
-                    manager,
-                    lockfile,
-                )) {
-                    continue;
+            queue_deps: {
+                if (packages_to_install) |packages| {
+                    if (node_id == .root) { // TODO: print an error when scanner is actually a dependency of a workspace (we should not support this)
+                        for (dep_ids_sort_buf.items) |dep_id| {
+                            const pkg_id = resolutions[dep_id];
+                            if (pkg_id == invalid_package_id) {
+                                continue;
+                            }
+
+                            for (packages) |package_to_install| {
+                                if (package_to_install == pkg_id) {
+                                    node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = dep_id, .pkg_id = pkg_id });
+                                    try node_queue.writeItem(.{
+                                        .parent_id = node_id,
+                                        .dep_id = dep_id,
+                                        .pkg_id = pkg_id,
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+                        break :queue_deps;
+                    }
                 }
 
-                const pkg_id = resolutions[dep_id];
-                const dep = dependencies[dep_id];
+                peer_dep_ids.clearRetainingCapacity();
+                for (dep_ids_sort_buf.items) |dep_id| {
+                    if (Tree.isFilteredDependencyOrWorkspace(
+                        dep_id,
+                        entry.pkg_id,
+                        workspace_filters,
+                        install_root_dependencies,
+                        manager,
+                        lockfile,
+                    )) {
+                        continue;
+                    }
 
-                // TODO: handle duplicate dependencies. should be similar logic
-                // like we have for dev dependencies in `hoistDependency`
+                    const pkg_id = resolutions[dep_id];
+                    const dep = dependencies[dep_id];
 
-                if (!dep.behavior.isPeer()) {
-                    // simple case:
-                    // - add it as a dependency
-                    // - queue it
-                    node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = dep_id, .pkg_id = pkg_id });
-                    try node_queue.writeItem(.{
-                        .parent_id = node_id,
-                        .dep_id = dep_id,
-                        .pkg_id = pkg_id,
-                    });
-                    continue;
+                    // TODO: handle duplicate dependencies. should be similar logic
+                    // like we have for dev dependencies in `hoistDependency`
+
+                    if (!dep.behavior.isPeer()) {
+                        // simple case:
+                        // - add it as a dependency
+                        // - queue it
+                        node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = dep_id, .pkg_id = pkg_id });
+                        try node_queue.writeItem(.{
+                            .parent_id = node_id,
+                            .dep_id = dep_id,
+                            .pkg_id = pkg_id,
+                        });
+                        continue;
+                    }
+
+                    try peer_dep_ids.append(dep_id);
                 }
-
-                try peer_dep_ids.append(dep_id);
             }
 
             next_peer: for (peer_dep_ids.items) |peer_dep_id| {
@@ -652,7 +679,6 @@ pub fn installIsolatedPackages(
 
         // add the pending task count upfront
         manager.incrementPendingTasks(@intCast(store.entries.len));
-
         for (0..store.entries.len) |_entry_id| {
             const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
 
@@ -805,6 +831,32 @@ pub fn installIsolatedPackages(
 
                     const dep_id = node_dep_ids[node_id.get()];
                     const dep = lockfile.buffers.dependencies.items[dep_id];
+
+                    // const should_install = should_install: {
+                    //     if (manager.options.do.prefetch_resolved_tarballs) break :should_install true;
+
+                    //     // we only want to consider this package for download if it's in the packages_to_install array
+                    //     if (packages_to_install) |_pkgs| {
+                    //         for (_pkgs) |pkg_to_install| {
+                    //             if (pkg_to_install == pkg_id) {
+                    //                 break :should_install true;
+                    //             }
+                    //         }
+                    //     } else {
+                    //         // If packages_to_install is null, we're doing a full install (not partial)
+                    //         // This happens after security scan passes - we need to install everything
+                    //         break :should_install true;
+                    //     }
+
+                    //     break :should_install false;
+                    // };
+
+                    // if (!should_install) {
+                    //     entry_steps[entry_id.get()].store(.done, .monotonic);
+                    //     installer.onTaskComplete(entry_id, .skipped);
+                    //     continue;
+                    // }
+
                     switch (pkg_res_tag) {
                         .npm => {
                             manager.enqueuePackageForDownload(
@@ -815,6 +867,7 @@ pub fn installIsolatedPackages(
                                 pkg_res.value.npm.url.slice(string_buf),
                                 ctx,
                                 patch_info.nameAndVersionHash(),
+                                packages_to_install != null,
                             ) catch |err| switch (err) {
                                 error.OutOfMemory => |oom| return oom,
                                 error.InvalidURL => {

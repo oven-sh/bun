@@ -349,6 +349,108 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
     });
   });
 
+  describe("Original Filename removal", () => {
+    test("Original Filename field should be empty", async () => {
+      const dir = tempDirWithFiles("windows-original-filename", {
+        "app.js": `console.log("Original filename test");`,
+      });
+
+      const outfile = join(dir, "test-original.exe");
+      await using _cleanup = cleanup(outfile);
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "--compile",
+          join(dir, "app.js"),
+          "--outfile",
+          outfile,
+          "--windows-title",
+          "Test Application",
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+
+      // Check that Original Filename is empty (not "bun.exe")
+      const getMetadata = (field: string) => {
+        try {
+          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
+            encoding: "utf8",
+          }).trim();
+        } catch {
+          return "";
+        }
+      };
+
+      const originalFilename = getMetadata("OriginalFilename");
+      expect(originalFilename).toBe("");
+      expect(originalFilename).not.toBe("bun.exe");
+    });
+
+    test("Original Filename should be empty even with all metadata set", async () => {
+      const dir = tempDirWithFiles("windows-original-filename-full", {
+        "app.js": `console.log("Full metadata test");`,
+      });
+
+      const outfile = join(dir, "full-metadata.exe");
+      await using _cleanup = cleanup(outfile);
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "--compile",
+          join(dir, "app.js"),
+          "--outfile",
+          outfile,
+          "--windows-title",
+          "Complete App",
+          "--windows-publisher",
+          "Test Publisher",
+          "--windows-version",
+          "5.4.3.2",
+          "--windows-description",
+          "Application with full metadata",
+          "--windows-copyright",
+          "© 2024 Test",
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+
+      const getMetadata = (field: string) => {
+        try {
+          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
+            encoding: "utf8",
+          }).trim();
+        } catch {
+          return "";
+        }
+      };
+
+      // Verify all custom metadata is set correctly
+      expect(getMetadata("ProductName")).toBe("Complete App");
+      expect(getMetadata("CompanyName")).toBe("Test Publisher");
+      expect(getMetadata("FileDescription")).toBe("Application with full metadata");
+      expect(getMetadata("ProductVersion")).toBe("5.4.3.2");
+      
+      // But Original Filename should still be empty
+      const originalFilename = getMetadata("OriginalFilename");
+      expect(originalFilename).toBe("");
+      expect(originalFilename).not.toBe("bun.exe");
+    });
+  });
+
   describe("Edge cases", () => {
     test("long strings in metadata", async () => {
       const dir = tempDirWithFiles("windows-long-strings", {

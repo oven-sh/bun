@@ -156,6 +156,27 @@ describe("junit reporter", () => {
         import { test, expect, describe } from "bun:test";
 
         describe("comprehensive test suite", () => {
+          describe.each([
+            [10, 5],
+            [20, 10]
+          ])("division suite %i / %i", (dividend, divisor) => {
+            test("should divide correctly", () => {
+              expect(dividend / divisor).toBe(dividend / divisor);
+            });
+          });
+
+          describe.if(true)("conditional describe that runs", () => {
+            test("nested test in conditional describe", () => {
+              expect(2 + 2).toBe(4);
+            });
+          });
+
+          describe.if(false)("conditional describe that skips", () => {
+            test("nested test that gets skipped", () => {
+              expect(2 + 2).toBe(4);
+            });
+          });
+
           test("basic passing test", () => {
             expect(1 + 1).toBe(2);
           });
@@ -217,27 +238,6 @@ describe("junit reporter", () => {
 
           test("should not be matched by filter", () => {
             expect(3 + 3).toBe(6);
-          });
-
-          describe.each([
-            [10, 5],
-            [20, 10]
-          ])("division suite %i / %i", (dividend, divisor) => {
-            test("should divide correctly", () => {
-              expect(dividend / divisor).toBe(dividend / divisor);
-            });
-          });
-
-          describe.if(true)("conditional describe that runs", () => {
-            test("nested test in conditional describe", () => {
-              expect(2 + 2).toBe(4);
-            });
-          });
-
-          describe.if(false)("conditional describe that skips", () => {
-            test("nested test that gets skipped", () => {
-              expect(2 + 2).toBe(4);
-            });
           });
         });
       `,

@@ -69,12 +69,6 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
     var args = try parseArguments(globalThis, callFrame, .{ .scope_functions = this }, bunTest, .{ .callback = callback_mode });
     defer args.deinit(bunTest.gpa);
 
-    switch (bunTest.phase) {
-        .collection => {}, // ok
-        .execution => return globalThis.throw("TODO: support calling {}() inside a test", .{this}),
-        .done => return globalThis.throw("Cannot call {}() after the test run has completed", .{this}),
-    }
-
     const line_no = switch (this.mode) {
         .@"test" => jsc.Jest.captureTestLineNumber(callFrame, globalThis),
         else => 0,
@@ -85,6 +79,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
     const final_default_timeout_ms = if (override_timeout_ms != std.math.maxInt(u32)) override_timeout_ms else default_timeout_ms;
 
     const callback_length = if (args.callback) |callback| try callback.getLength(globalThis) else 0;
+    const timeout = std.math.lossyCast(u32, args.options.timeout orelse @as(f64, @floatFromInt(final_default_timeout_ms)));
 
     if (this.each != .zero) {
         if (this.each.isUndefinedOrNull() or !this.each.isArray()) {
@@ -116,31 +111,89 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
             const formatted_label: ?[]const u8 = if (args.description) |desc| try jsc.Jest.formatLabel(globalThis, desc, if (callback) |*c| c.args.get() else &.{}, test_idx, bunTest.gpa) else null;
             defer if (formatted_label) |label| bunTest.gpa.free(label);
 
-            try this.enqueueDescribeOrTestCallback(bunTest, callback, formatted_label, .{
-                .line_no = line_no,
-                .timeout = std.math.lossyCast(u32, args.options.timeout orelse @as(f64, @floatFromInt(final_default_timeout_ms))),
-                .has_done_parameter = callback_length > (if (callback) |*c| c.args.get().len else 0),
-            });
+            try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, callback, formatted_label, line_no, timeout, callback_length);
         }
     } else {
         var callback: ?describe2.CallbackWithArgs = if (args.callback) |callback| .init(bunTest.gpa, callback, &.{}) else null;
         defer if (callback) |*cb| cb.deinit(bunTest.gpa);
 
-        try this.enqueueDescribeOrTestCallback(bunTest, callback, args.description, .{
-            .line_no = line_no,
-            .timeout = std.math.lossyCast(u32, args.options.timeout orelse @as(f64, @floatFromInt(final_default_timeout_ms))),
-            .has_done_parameter = callback_length > 0,
-        });
+        try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, callback, args.description, line_no, timeout, callback_length);
     }
 
     return .js_undefined;
 }
 
-fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunTestFile, callback: ?describe2.CallbackWithArgs, description: ?[]const u8, cfg: describe2.ExecutionEntryCfg) bun.JSError!void {
+fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunTestFile, globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, callback: ?describe2.CallbackWithArgs, description: ?[]const u8, line_no: u32, timeout: u32, callback_length: usize) bun.JSError!void {
+    groupLog.begin(@src());
+    defer groupLog.end();
+
+    // only allow in collection phase
+    switch (bunTest.phase) {
+        .collection => {}, // ok
+        .execution => return globalThis.throw("TODO: support calling {}() inside a test", .{this}),
+        .done => return globalThis.throw("Cannot call {}() after the test run has completed", .{this}),
+    }
+
+    // handle test reporter agent for debugger
+    const vm = globalThis.bunVM();
+    var test_id_for_debugger: u32 = 0;
+    if (vm.debugger) |*debugger| {
+        if (debugger.test_reporter_agent.isEnabled()) {
+            const globals = struct {
+                var max_test_id_for_debugger: u32 = 0;
+            };
+            globals.max_test_id_for_debugger += 1;
+            var name = bun.String.init(description orelse "(unnamed)");
+            const parent = bunTest.collection.active_scope;
+            const parent_id = if (parent.base.test_id_for_debugger > 0) @as(i32, @intCast(parent.base.test_id_for_debugger)) else -1;
+            debugger.test_reporter_agent.reportTestFound(callFrame, @intCast(globals.max_test_id_for_debugger), &name, switch (this.mode) {
+                .describe => .describe,
+                .@"test" => .@"test",
+            }, parent_id);
+            test_id_for_debugger = globals.max_test_id_for_debugger;
+        }
+    }
+    const has_done_parameter = if (callback) |*c| c.args.get().len > callback_length else false;
+
+    var base = this.cfg;
+    base.test_id_for_debugger = test_id_for_debugger;
+
     switch (this.mode) {
-        .describe => try bunTest.collection.enqueueDescribeCallback(callback, description, this.cfg),
+        .describe => {
+            const new_scope = try bunTest.collection.active_scope.appendDescribe(bunTest.gpa, description, this.cfg);
+            try bunTest.collection.enqueueDescribeCallback(new_scope, callback);
+        },
         .@"test" => {
-            try bunTest.collection.enqueueTestCallback(description, callback, cfg, this.cfg);
+
+            // check for filter match
+            var matches_filter = true;
+            if (bunTest.reporter) |reporter| if (reporter.jest.filter_regex) |filter_regex| {
+                bun.assert(bunTest.collection.filter_buffer.items.len == 0);
+                defer bunTest.collection.filter_buffer.clearRetainingCapacity();
+
+                var parent: ?*describe2.DescribeScope = bunTest.collection.active_scope;
+                while (parent) |scope| : (parent = scope.base.parent) {
+                    try bunTest.collection.filter_buffer.appendSlice(scope.base.name orelse "");
+                    try bunTest.collection.filter_buffer.append(' ');
+                }
+                try bunTest.collection.filter_buffer.appendSlice(description orelse "");
+
+                const str = bun.String.fromBytes(bunTest.collection.filter_buffer.items);
+                matches_filter = filter_regex.matches(str);
+            };
+
+            if (!matches_filter) {
+                base.self_mode = .filtered_out;
+            }
+
+            bun.assert(!bunTest.collection.locked);
+            groupLog.log("enqueueTestCallback / {s} / in scope: {s}", .{ description orelse "(unnamed)", bunTest.collection.active_scope.base.name orelse "(unnamed)" });
+
+            _ = try bunTest.collection.active_scope.appendTest(bunTest.gpa, description, if (matches_filter) callback else null, .{
+                .line_no = line_no,
+                .has_done_parameter = has_done_parameter,
+                .timeout = timeout,
+            }, base);
         },
     }
 }

@@ -29,6 +29,7 @@ pub fn init(gpa: std.mem.Allocator, bun_test_root: *describe2.BunTest) Collectio
         .mode = .normal,
         .only = .no,
         .has_callback = false,
+        .test_id_for_debugger = 0,
     });
 
     return .{
@@ -56,16 +57,15 @@ fn bunTest(this: *Collection) *BunTestFile {
     return @fieldParentPtr("collection", this);
 }
 
-pub fn enqueueDescribeCallback(this: *Collection, callback: ?describe2.CallbackWithArgs, name_not_owned: ?[]const u8, cfg: describe2.BaseScopeCfg) bun.JSError!void {
+pub fn enqueueDescribeCallback(this: *Collection, new_scope: *DescribeScope, callback: ?describe2.CallbackWithArgs) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
     bun.assert(!this.locked);
     const buntest = this.bunTest();
 
-    const new_scope = try this.active_scope.appendDescribe(buntest.gpa, name_not_owned, cfg);
     if (callback) |cb| {
-        group.log("enqueueDescribeCallback / {s} / in scope: {s}", .{ name_not_owned orelse "undefined", this.active_scope.base.name orelse "undefined" });
+        group.log("enqueueDescribeCallback / {s} / in scope: {s}", .{ new_scope.base.name orelse "(unnamed)", this.active_scope.base.name orelse "(unnamed)" });
 
         try this.current_scope_callback_queue.append(.{
             .active_scope = this.active_scope,
@@ -73,48 +73,6 @@ pub fn enqueueDescribeCallback(this: *Collection, callback: ?describe2.CallbackW
             .new_scope = new_scope,
         });
     }
-}
-
-pub fn enqueueTestCallback(this: *Collection, name_not_owned: ?[]const u8, callback: ?describe2.CallbackWithArgs, cfg: describe2.ExecutionEntryCfg, base_in: describe2.BaseScopeCfg) bun.JSError!void {
-    group.begin(@src());
-    defer group.end();
-
-    var base = base_in;
-
-    // check for filter match
-    var matches_filter = true;
-    if (this.bunTest().reporter) |reporter| if (reporter.jest.filter_regex) |filter_regex| {
-        bun.assert(this.filter_buffer.items.len == 0);
-        defer this.filter_buffer.clearRetainingCapacity();
-
-        var parent: ?*DescribeScope = this.active_scope;
-        while (parent) |scope| : (parent = scope.base.parent) {
-            try this.filter_buffer.appendSlice(scope.base.name orelse "");
-            try this.filter_buffer.append(' ');
-        }
-        try this.filter_buffer.appendSlice(name_not_owned orelse "");
-
-        const str = bun.String.fromBytes(this.filter_buffer.items);
-        matches_filter = filter_regex.matches(str);
-    };
-
-    if (!matches_filter) {
-        base.self_mode = .filtered_out;
-    }
-
-    bun.assert(!this.locked);
-    group.log("enqueueTestCallback / {s} / in scope: {s}", .{ name_not_owned orelse "undefined", this.active_scope.base.name orelse "undefined" });
-
-    _ = try this.active_scope.appendTest(this.bunTest().gpa, name_not_owned, if (matches_filter) callback else null, cfg, base);
-}
-pub fn enqueueHookCallback(this: *Collection, comptime tag: @Type(.enum_literal), callback: ?jsc.JSValue, cfg: describe2.ExecutionEntryCfg, base: describe2.BaseScopeCfg) bun.JSError!void {
-    group.begin(@src());
-    defer group.end();
-
-    bun.assert(!this.locked);
-    group.log("enqueueHookCallback / in scope: {s}", .{this.active_scope.base.name orelse "undefined"});
-
-    _ = try this.active_scope.appendHook(this.bunTest().gpa, tag, callback, cfg, base);
 }
 
 pub fn runOne(this: *Collection, globalThis: *jsc.JSGlobalObject, callback_queue: *describe2.CallbackQueue) bun.JSError!describe2.RunOneResult {

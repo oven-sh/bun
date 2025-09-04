@@ -62,7 +62,7 @@ pub const js_fns = struct {
 
                 switch (bunTest.phase) {
                     .collection => {
-                        try bunTest.collection.enqueueHookCallback(tag, callback, .{
+                        _ = try bunTest.collection.active_scope.appendHook(bunTest.gpa, tag, callback, .{
                             .line_no = 0,
                             .has_done_parameter = false,
                         }, .{});
@@ -94,6 +94,7 @@ pub const BunTest = struct {
             .mode = .normal,
             .only = .no,
             .has_callback = false,
+            .test_id_for_debugger = 0,
         });
         return .{
             .gpa = outer_gpa,
@@ -608,6 +609,7 @@ pub const BaseScopeCfg = struct {
     self_concurrent: bool = false,
     self_mode: ScopeMode = .normal,
     self_only: bool = false,
+    test_id_for_debugger: u32 = 0,
     /// returns null if the other already has the value
     pub fn extend(this: BaseScopeCfg, other: BaseScopeCfg) ?BaseScopeCfg {
         var result = this;
@@ -640,6 +642,8 @@ pub const BaseScope = struct {
     mode: ScopeMode,
     only: enum { no, contains, yes },
     has_callback: bool,
+    /// this value is 0 unless the debugger is active and the scope has a debugger id
+    test_id_for_debugger: u32,
     pub fn init(this: BaseScopeCfg, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, parent: ?*DescribeScope, has_callback: bool, allow_update_parent: bool) BaseScope {
         if (allow_update_parent) {
             if (this.self_only and parent != null) parent.?.markContainsOnly(); // TODO: this is a bad thing to have in an init function.
@@ -652,6 +656,7 @@ pub const BaseScope = struct {
             .mode = if (parent) |p| if (p.base.mode != .normal) p.base.mode else this.self_mode else this.self_mode,
             .only = if (this.self_only) .yes else .no,
             .has_callback = has_callback,
+            .test_id_for_debugger = this.test_id_for_debugger,
         };
     }
     pub fn deinit(this: BaseScope, gpa: std.mem.Allocator) void {

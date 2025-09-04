@@ -1033,6 +1033,9 @@ fn writeToStreamUsingBuffer(this: *HTTPClient, comptime is_ssl: bool, socket: Ne
 }
 pub fn writeToStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, data: []const u8) void {
     log("flushStream", .{});
+    if (this.state.original_request_body != .stream) {
+        return;
+    }
     var stream = &this.state.original_request_body.stream;
     const stream_buffer = stream.buffer orelse return;
     if (this.flags.upgrade_state == .pending) {
@@ -1399,7 +1402,7 @@ pub fn handleOnDataHeaders(
         }
 
         // handle the case where we have a 100 Continue
-        if (response.status_code >= 100 and response.status_code < 200) {
+        if (response.status_code >= 100 and response.status_code < 200 and to_read.len > 0) {
             log("information headers", .{});
             // we still can have the 200 OK in the same buffer sometimes
             // 1XX responses MUST NOT include a message-body, therefore we need to continue parsing

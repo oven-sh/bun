@@ -60,6 +60,8 @@ pub fn init(
 pub fn take(this: *@This()) std.ArrayList(options.OutputFile) {
     // TODO: should this return an error
     bun.assertf(this.total_insertions == this.output_files.items.len, "total_insertions ({d}) != output_files.items.len ({d})", .{ this.total_insertions, this.output_files.items.len });
+    // Set the length just in case so the list doesn't have undefined memory
+    this.output_files.items.len = this.total_insertions;
     const list = this.output_files;
     this.output_files = std.ArrayList(options.OutputFile).init(bun.default_allocator);
     return list;
@@ -78,21 +80,14 @@ pub fn calculateOutputFileListCapacity(c: *const bun.bundle_v2.LinkerContext, ch
     const bytecode_count = if (c.options.generate_bytecode_cache) bytecode_count: {
         var bytecode_count: usize = 0;
         for (chunks) |*chunk| {
-            // TODO: this was the original logic, but it seems like it is
-            //       incorrect / does unnecessary work? Leaving it here just in-case,
-            //       as it moved from a different file and is not git blame-able.
-            //
-            // const loader: Loader = if (chunk.entry_point.is_entry_point)
-            //     c.parse_graph.input_files.items(.loader)[
-            //         chunk.entry_point.source_index
-            //     ]
-            // else
-            //     .js;
-            // if (loader.isJavaScriptLike()) {
-            //     bytecode_count += 1;
-            // }
+            const loader: bun.options.Loader = if (chunk.entry_point.is_entry_point)
+                c.parse_graph.input_files.items(.loader)[
+                    chunk.entry_point.source_index
+                ]
+            else
+                .js;
 
-            if (chunk.content == .javascript) {
+            if (chunk.content == .javascript and loader.isJavaScriptLike()) {
                 bytecode_count += 1;
             }
         }

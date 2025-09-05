@@ -254,11 +254,14 @@ fn drainInternal(this: *@This()) void {
     defer event_loop.exit();
 
     this.flushData();
-
     if (!this.flags.has_backpressure) {
-        // no backpressure yet so pipeline more if possible and flush again
-        this.advance();
-        this.flushData();
+        if (this.tls_status == .message_sent) {
+            this.upgradeToTLS();
+        } else {
+            // no backpressure yet so pipeline more if possible and flush again
+            this.advance();
+            this.flushData();
+        }
     }
 }
 pub fn finalize(this: *MySQLConnection) void {
@@ -820,6 +823,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             return globalObject.throwValue(err.toJS(globalObject));
         }
 
+        debug("configured TLS context", .{});
         uws.NewSocketHandler(true).configure(tls_ctx.?, true, *@This(), SocketHandler(true));
     }
 
@@ -908,6 +912,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         };
 
         if (path.len > 0) {
+            debug("connecting to mysql with path", .{});
             ptr.socket = .{
                 .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false) catch |err| {
                     tls_config.deinit();
@@ -919,6 +924,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
                 },
             };
         } else {
+            debug("connecting to mysql with hostname", .{});
             ptr.socket = .{
                 .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
                     tls_config.deinit();
@@ -973,26 +979,49 @@ pub fn deinit(this: *MySQLConnection) void {
     bun.default_allocator.destroy(this);
 }
 
+pub fn upgradeToTLS(this: *MySQLConnection) void {
+    if (this.socket == .SocketTCP) {
+        const new_socket = this.socket.SocketTCP.socket.connected.upgrade(this.tls_ctx.?, this.tls_config.server_name) orelse {
+            this.fail("Failed to upgrade to TLS", error.AuthenticationFailed);
+            return;
+        };
+        this.socket = .{
+            .SocketTLS = .{
+                .socket = .{
+                    .connected = new_socket,
+                },
+            },
+        };
+    }
+}
+
 pub fn onOpen(this: *MySQLConnection, socket: Socket) void {
+    debug("onOpen", .{});
     this.setupMaxLifetimeTimerIfNecessary();
     this.resetConnectionTimeout();
     this.socket = socket;
-    this.setStatus(.handshaking);
+    if (socket == .SocketTCP) {
+        // when upgrading to TLS the onOpen callback will be called again and at this moment we dont wanna to change the status to handshaking
+        this.setStatus(.handshaking);
+    }
     this.poll_ref.ref(this.vm);
     this.updateHasPendingActivity();
 }
 
 pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
-    debug("onHandshake: {d} {d}", .{ success, ssl_error.error_no });
+    debug("onHandshake: {d} {d} {s}", .{ success, ssl_error.error_no, @tagName(this.ssl_mode) });
     const handshake_success = if (success == 1) true else false;
+    this.sequence_id = this.sequence_id +% 1;
     if (handshake_success) {
+        this.tls_status = .ssl_ok;
         if (this.tls_config.reject_unauthorized != 0) {
+            // follow the same rules as postgres
+            // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
             // only reject the connection if reject_unauthorized == true
             switch (this.ssl_mode) {
-                // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
-
                 .verify_ca, .verify_full => {
                     if (ssl_error.error_no != 0) {
+                        this.tls_status = .ssl_failed;
                         this.failWithJSValue(ssl_error.toJS(this.globalObject));
                         return;
                     }
@@ -1001,16 +1030,18 @@ pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_v
                     if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
                         const hostname = servername[0..bun.len(servername)];
                         if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
-                            this.failWithJSValue(ssl_error.toJS(this.globalObject));
+                            this.tls_status = .ssl_failed;
+                            return this.failWithJSValue(ssl_error.toJS(this.globalObject));
                         }
                     }
                 },
-                else => {
-                    return;
-                },
+                // require is the same as prefer
+                .require, .prefer, .disable => {},
             }
         }
+        this.sendHandshakeResponse() catch |err| this.failFmt(err, "Failed to send handshake response", .{});
     } else {
+        this.tls_status = .ssl_failed;
         // if we are here is because server rejected us, and the error_no is the cause of this
         // no matter if reject_unauthorized is false because we are disconnected by the server
         this.failWithJSValue(ssl_error.toJS(this.globalObject));
@@ -1186,6 +1217,36 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
     // Update status
     this.setStatus(.authenticating);
 
+    // https://dev.mysql.com/doc/dev/mysql-server/8.4.6/page_protocol_connection_phase_packets_protocol_ssl_request.html
+    if (this.capabilities.CLIENT_SSL) {
+        var response = SSLRequest{
+            .capability_flags = this.capabilities,
+            .max_packet_size = 0, //16777216,
+            .character_set = CharacterSet.default,
+            // bun always send connection attributes
+            .has_connection_attributes = true,
+        };
+        defer response.deinit();
+        try response.write(this.writer());
+        this.capabilities = response.capability_flags;
+        this.tls_status = .message_sent;
+        this.flushData();
+        if (!this.flags.has_backpressure) {
+            this.upgradeToTLS();
+        }
+        return;
+    }
+    if (this.tls_status != .none) {
+        this.tls_status = .ssl_not_available;
+
+        switch (this.ssl_mode) {
+            .verify_ca, .verify_full => {
+                return this.failFmt(error.AuthenticationFailed, "SSL is not available", .{});
+            },
+            // require is the same as prefer
+            .require, .prefer, .disable => {},
+        }
+    }
     // Send auth response
     try this.sendHandshakeResponse();
 }
@@ -1325,7 +1386,7 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
                                     debug("sending password TLS enabled", .{});
                                     // SSL mode is enabled, send password as is
                                     var packet = try this.writer().start(this.sequence_id);
-                                    try this.writer().write(this.password);
+                                    try this.writer().writeZ(this.password);
                                     try packet.end();
                                     this.flushData();
                                 }
@@ -1427,6 +1488,7 @@ pub fn handleCommand(this: *MySQLConnection, comptime Context: type, reader: New
 }
 
 pub fn sendHandshakeResponse(this: *MySQLConnection) AnyMySQLError.Error!void {
+    debug("sendHandshakeResponse", .{});
     // Only require password for caching_sha2_password when connecting for the first time
     if (this.auth_plugin) |plugin| {
         const requires_password = switch (plugin) {
@@ -1458,6 +1520,7 @@ pub fn sendHandshakeResponse(this: *MySQLConnection) AnyMySQLError.Error!void {
                 "",
         },
         .auth_response = .{ .empty = {} },
+        .sequence_id = this.sequence_id,
     };
     defer response.deinit();
 
@@ -1938,6 +2001,7 @@ const PacketHeader = @import("./protocol/PacketHeader.zig");
 const PreparedStatement = @import("./protocol/PreparedStatement.zig");
 const ResultSet = @import("./protocol/ResultSet.zig");
 const ResultSetHeader = @import("./protocol/ResultSetHeader.zig");
+const SSLRequest = @import("./protocol/SSLRequest.zig");
 const SocketMonitor = @import("../postgres/SocketMonitor.zig");
 const StackReader = @import("./protocol/StackReader.zig");
 const StmtPrepareOKPacket = @import("./protocol/StmtPrepareOKPacket.zig");

@@ -101,12 +101,12 @@ pub fn appendOrExtendConcurrentGroup(this: *Order, concurrent: bool, sequences_s
     defer this.previous_group_was_concurrent = concurrent;
     if (concurrent and this.groups.items.len > 0) {
         const previous_group = &this.groups.items[this.groups.items.len - 1];
-        if (this.previous_group_was_concurrent and previous_group.sequence_end == sequences_start) {
-            previous_group.sequence_end = sequences_end; // extend the previous group to include this sequence
-            return;
+        if (this.previous_group_was_concurrent) {
+            // extend the previous group to include this sequence
+            if (previous_group.tryExtend(sequences_start, sequences_end)) return;
         }
     }
-    try this.groups.append(.{ .sequence_start = sequences_start, .sequence_end = sequences_end }); // otherwise, add a new concurrentgroup to order
+    try this.groups.append(.init(sequences_start, sequences_end)); // otherwise, add a new concurrentgroup to order
 }
 
 const bun = @import("bun");

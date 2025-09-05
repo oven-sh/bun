@@ -43,7 +43,23 @@ group_index: usize,
 pub const ConcurrentGroup = struct {
     sequence_start: usize,
     sequence_end: usize,
-    executing: bool = false,
+    executing: bool,
+    remaining_incomplete_entries: usize,
+
+    pub fn init(sequence_start: usize, sequence_end: usize) ConcurrentGroup {
+        return .{
+            .sequence_start = sequence_start,
+            .sequence_end = sequence_end,
+            .executing = false,
+            .remaining_incomplete_entries = sequence_end - sequence_start,
+        };
+    }
+    pub fn tryExtend(this: *ConcurrentGroup, next_sequence_start: usize, next_sequence_end: usize) bool {
+        if (this.sequence_end != next_sequence_start) return false;
+        this.sequence_end = next_sequence_end;
+        this.remaining_incomplete_entries = this.sequence_end - this.sequence_start;
+        return true;
+    }
 
     pub fn sequences(this: ConcurrentGroup, execution: *Execution) []ExecutionSequence {
         return execution.#sequences[this.sequence_start..this.sequence_end];
@@ -64,7 +80,6 @@ pub const ExecutionSequence = struct {
         at_least_one,
         exact: u32,
     } = .not_set,
-    remaining_incomplete_entries: usize,
 
     pub fn init(start: usize, end: usize, test_entry: ?*ExecutionEntry) ExecutionSequence {
         return .{
@@ -72,7 +87,6 @@ pub const ExecutionSequence = struct {
             .entries_end = end,
             .index = 0,
             .test_entry = test_entry,
-            .remaining_incomplete_entries = end - start,
         };
     }
 

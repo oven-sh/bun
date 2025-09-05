@@ -1396,12 +1396,6 @@ pub const UV_E = struct {
     pub const NOEXEC = -uv.UV_ENOEXEC;
 };
 
-const bun = @import("bun");
-const std = @import("std");
-
-const Win32Error = bun.windows.Win32Error;
-const uv = bun.windows.libuv;
-
 export fn us_wsa_to_libuv_errno(code: c_int) c_int {
     return @intFromEnum(switch (@as(Win32Error, @enumFromInt(code))) {
         .SUCCESS => .SUCCESS,
@@ -1451,3 +1445,9 @@ export fn us_wsa_to_libuv_errno(code: c_int) c_int {
         else => bun.Output.panic("us_wsa_to_libuv_errno: unexpected code: {d}", .{code}),
     });
 }
+
+const bun = @import("bun");
+const std = @import("std");
+
+const Win32Error = bun.windows.Win32Error;
+const uv = bun.windows.libuv;

@@ -31,9 +31,7 @@ pub const export_cpp_apis = if (build_options.override_no_export_cpp_apis) false
 
 /// Whether or not to enable allocation tracking when the `AllocationScope`
 /// allocator is used.
-pub const enableAllocScopes = brk: {
-    break :brk isDebug or enable_asan;
-};
+pub const enableAllocScopes = isDebug or enable_asan;
 
 pub const build_options = @import("build_options");
 

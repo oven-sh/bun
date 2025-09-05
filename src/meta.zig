@@ -301,11 +301,10 @@ pub fn looksLikeListContainerType(comptime T: type) ?struct { list: ListContaine
             return .{ .list = .array_list, .child = std.meta.Child(tyinfo.@"struct".fields[0].type) };
 
         // Looks like babylist
-        if (tyinfo.@"struct".fields.len == 4 and
+        if (tyinfo.@"struct".fields.len == 3 and
             std.mem.eql(u8, tyinfo.@"struct".fields[0].name, "ptr") and
             std.mem.eql(u8, tyinfo.@"struct".fields[1].name, "len") and
-            std.mem.eql(u8, tyinfo.@"struct".fields[2].name, "cap") and
-            std.mem.eql(u8, tyinfo.@"struct".fields[3].name, "alloc_ptr"))
+            std.mem.eql(u8, tyinfo.@"struct".fields[2].name, "cap"))
             return .{ .list = .baby_list, .child = std.meta.Child(tyinfo.@"struct".fields[0].type) };
 
         // Looks like SmallList
@@ -338,7 +337,9 @@ pub fn SliceChild(comptime T: type) type {
 }
 
 /// userland implementation of https://github.com/ziglang/zig/issues/21879
-pub fn VoidFieldTypes(comptime T: type) type {
+pub fn useAllFields(comptime T: type, _: VoidFields(T)) void {}
+
+fn VoidFields(comptime T: type) type {
     const fields = @typeInfo(T).@"struct".fields;
     var new_fields = fields[0..fields.len].*;
     for (&new_fields) |*field| {

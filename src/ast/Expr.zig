@@ -474,7 +474,7 @@ pub inline fn isString(expr: *const Expr) bool {
 
 pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
     switch (expr.data) {
-        .e_string => |str| return str.string(allocator) catch bun.outOfMemory(),
+        .e_string => |str| return bun.handleOom(str.string(allocator)),
         else => return null,
     }
 }
@@ -3072,9 +3072,9 @@ pub const Data = union(Tag) {
             .e_null => jsc.JSValue.null,
             .e_undefined => .js_undefined,
             .e_boolean => |boolean| if (boolean.value)
-                jsc.JSValue.true
+                .true
             else
-                jsc.JSValue.false,
+                .false,
             .e_number => |e| e.toJS(),
             // .e_big_int => |e| e.toJS(ctx, exception),
 

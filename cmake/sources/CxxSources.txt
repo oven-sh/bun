@@ -87,6 +87,7 @@ src/bun.js/bindings/JSNodePerformanceHooksHistogramConstructor.cpp
 src/bun.js/bindings/JSNodePerformanceHooksHistogramPrototype.cpp
 src/bun.js/bindings/JSPropertyIterator.cpp
 src/bun.js/bindings/JSS3File.cpp
+src/bun.js/bindings/JSSecrets.cpp
 src/bun.js/bindings/JSSocketAddressDTO.cpp
 src/bun.js/bindings/JSStringDecoder.cpp
 src/bun.js/bindings/JSWrappingFunction.cpp
@@ -94,6 +95,7 @@ src/bun.js/bindings/JSX509Certificate.cpp
 src/bun.js/bindings/JSX509CertificateConstructor.cpp
 src/bun.js/bindings/JSX509CertificatePrototype.cpp
 src/bun.js/bindings/linux_perf_tracing.cpp
+src/bun.js/bindings/MarkedArgumentBufferBinding.cpp
 src/bun.js/bindings/MarkingConstraint.cpp
 src/bun.js/bindings/ModuleLoader.cpp
 src/bun.js/bindings/napi_external.cpp
@@ -188,11 +190,15 @@ src/bun.js/bindings/ProcessIdentifier.cpp
 src/bun.js/bindings/RegularExpression.cpp
 src/bun.js/bindings/S3Error.cpp
 src/bun.js/bindings/ScriptExecutionContext.cpp
+src/bun.js/bindings/SecretsDarwin.cpp
+src/bun.js/bindings/SecretsLinux.cpp
+src/bun.js/bindings/SecretsWindows.cpp
 src/bun.js/bindings/Serialization.cpp
 src/bun.js/bindings/ServerRouteList.cpp
 src/bun.js/bindings/spawn.cpp
 src/bun.js/bindings/SQLClient.cpp
 src/bun.js/bindings/sqlite/JSSQLStatement.cpp
+src/bun.js/bindings/StringBuilderBinding.cpp
 src/bun.js/bindings/stripANSI.cpp
 src/bun.js/bindings/Strong.cpp
 src/bun.js/bindings/TextCodec.cpp

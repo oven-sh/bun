@@ -71,6 +71,7 @@ pub const transpiler_params_ = [_]ParamType{
     clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
     clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
     clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
+    clap.parseParam("--jsx-side-effects                Treat JSX elements as having side effects (disable pure annotations)") catch unreachable,
     clap.parseParam("--ignore-dce-annotations          Ignore tree-shaking annotations such as @__PURE__") catch unreachable,
 };
 pub const runtime_params_ = [_]ParamType{
@@ -173,6 +174,11 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'.") catch unreachable,
     clap.parseParam("--windows-hide-console           When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable") catch unreachable,
     clap.parseParam("--windows-icon <STR>             When using --compile targeting Windows, assign an executable icon") catch unreachable,
+    clap.parseParam("--windows-title <STR>            When using --compile targeting Windows, set the executable product name") catch unreachable,
+    clap.parseParam("--windows-publisher <STR>        When using --compile targeting Windows, set the executable company name") catch unreachable,
+    clap.parseParam("--windows-version <STR>          When using --compile targeting Windows, set the executable version (e.g. 1.2.3.4)") catch unreachable,
+    clap.parseParam("--windows-description <STR>      When using --compile targeting Windows, set the executable description") catch unreachable,
+    clap.parseParam("--windows-copyright <STR>        When using --compile targeting Windows, set the executable copyright") catch unreachable,
 } ++ if (FeatureFlags.bake_debugging_features) [_]ParamType{
     clap.parseParam("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically") catch unreachable,
     clap.parseParam("--debug-no-minify                When --app is set, do not minify anything") catch unreachable,
@@ -906,7 +912,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("--windows-hide-console requires --compile", .{});
                 Global.crash();
             }
-            ctx.bundler_options.windows_hide_console = true;
+            ctx.bundler_options.windows.hide_console = true;
         }
         if (args.option("--windows-icon")) |path| {
             if (!Environment.isWindows) {
@@ -917,7 +923,62 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("--windows-icon requires --compile", .{});
                 Global.crash();
             }
-            ctx.bundler_options.windows_icon = path;
+            ctx.bundler_options.windows.icon = path;
+        }
+        if (args.option("--windows-title")) |title| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-title is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-title requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.title = title;
+        }
+        if (args.option("--windows-publisher")) |publisher| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-publisher is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-publisher requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.publisher = publisher;
+        }
+        if (args.option("--windows-version")) |version| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-version is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-version requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.version = version;
+        }
+        if (args.option("--windows-description")) |description| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-description is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-description requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.description = description;
+        }
+        if (args.option("--windows-copyright")) |copyright| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-copyright is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-copyright requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.copyright = copyright;
         }
 
         if (args.option("--outdir")) |outdir| {
@@ -1060,6 +1121,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     const jsx_fragment = args.option("--jsx-fragment");
     const jsx_import_source = args.option("--jsx-import-source");
     const jsx_runtime = args.option("--jsx-runtime");
+    const jsx_side_effects = args.flag("--jsx-side-effects");
 
     if (cmd == .AutoCommand or cmd == .RunCommand) {
         // "run.silent" in bunfig.toml
@@ -1106,6 +1168,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 .import_source = (jsx_import_source orelse &default_import_source),
                 .runtime = if (jsx_runtime) |runtime| try resolve_jsx_runtime(runtime) else Api.JsxRuntime.automatic,
                 .development = false,
+                .side_effects = jsx_side_effects,
             };
         } else {
             opts.jsx = Api.Jsx{
@@ -1114,6 +1177,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 .import_source = (jsx_import_source orelse opts.jsx.?.import_source),
                 .runtime = if (jsx_runtime) |runtime| try resolve_jsx_runtime(runtime) else opts.jsx.?.runtime,
                 .development = false,
+                .side_effects = jsx_side_effects,
             };
         }
     }

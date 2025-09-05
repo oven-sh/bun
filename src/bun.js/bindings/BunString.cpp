@@ -1,5 +1,6 @@
 
 
+#include "BunString.h"
 #include "helpers.h"
 #include "root.h"
 #include "headers-handwritten.h"
@@ -277,6 +278,71 @@ BunString toStringView(StringView view)
         BunStringTag::ZigString,
         { .zig = toZigString(view) }
     };
+}
+
+// We don't want to ban atomiziation for tiny strings that are potentially going
+// to appear as properties/identifiers in JS. So we should only do this for long
+// strings that are unlikely to ever be atomized.
+static constexpr unsigned int kMinCrossThreadShareableLength = 256;
+
+bool isCrossThreadShareable(const WTF::String& string)
+{
+    if (string.length() < kMinCrossThreadShareableLength)
+        return false;
+
+    const auto* impl = string.impl();
+
+    // 1) Never share AtomStringImpl/symbols - they have special thread-unsafe behavior
+    if (impl->isAtom() || impl->isSymbol())
+        return false;
+
+    // 2) Don't share slices
+    if (impl->bufferOwnership() == StringImpl::BufferSubstring)
+        return false;
+
+    return true;
+}
+
+Ref<WTF::StringImpl> toCrossThreadShareable(Ref<WTF::StringImpl> impl)
+{
+    if (impl->isAtom() || impl->isSymbol())
+        return impl->isolatedCopy();
+
+    if (impl->bufferOwnership() == StringImpl::BufferSubstring)
+        return impl->isolatedCopy();
+
+    if (impl->length() < kMinCrossThreadShareableLength)
+        return impl->isolatedCopy();
+
+    // 3) Ensure we won't lazily touch hash/flags on the consumer thread
+    // Force hash computation on this thread before sharing
+    impl->hash();
+    impl->setNeverAtomize();
+
+    return impl;
+}
+
+WTF::String toCrossThreadShareable(const WTF::String& string)
+{
+    if (string.length() < kMinCrossThreadShareableLength)
+        return string.isolatedCopy();
+
+    auto* impl = string.impl();
+
+    // 1) Never share AtomStringImpl/symbols - they have special thread-unsafe behavior
+    if (impl->isAtom() || impl->isSymbol())
+        return string.isolatedCopy();
+
+    // 2) Don't share slices
+    if (impl->bufferOwnership() == StringImpl::BufferSubstring)
+        return string.isolatedCopy();
+
+    // 3) Ensure we won't lazily touch hash/flags on the consumer thread
+    // Force hash computation on this thread before sharing
+    const_cast<StringImpl*>(impl)->hash();
+    const_cast<StringImpl*>(impl)->setNeverAtomize();
+
+    return string;
 }
 
 }
@@ -649,6 +715,21 @@ WTF::String BunString::toWTFString() const
     }
 
     return WTF::String();
+}
+
+void BunString::appendToBuilder(WTF::StringBuilder& builder) const
+{
+    if (this->tag == BunStringTag::WTFStringImpl) {
+        builder.append(this->impl.wtf);
+        return;
+    }
+
+    if (this->tag == BunStringTag::ZigString || this->tag == BunStringTag::StaticZigString) {
+        Zig::appendToBuilder(this->impl.zig, builder);
+        return;
+    }
+
+    // append nothing for BunStringTag::Dead and BunStringTag::Empty
 }
 
 WTF::String BunString::toWTFString(ZeroCopyTag) const

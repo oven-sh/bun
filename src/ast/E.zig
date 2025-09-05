@@ -434,7 +434,7 @@ pub const Number = struct {
 
         if (Environment.isNative) {
             var buf: [124]u8 = undefined;
-            return allocator.dupe(u8, bun.fmt.FormatDouble.dtoa(&buf, value)) catch bun.outOfMemory();
+            return bun.handleOom(allocator.dupe(u8, bun.fmt.FormatDouble.dtoa(&buf, value)));
         } else {
             // do not attempt to implement the spec here, it would be error prone.
         }
@@ -909,7 +909,7 @@ pub const String = struct {
         return if (bun.strings.isAllASCII(utf8))
             init(utf8)
         else
-            init(bun.strings.toUTF16AllocForReal(allocator, utf8, false, false) catch bun.outOfMemory());
+            init(bun.handleOom(bun.strings.toUTF16AllocForReal(allocator, utf8, false, false)));
     }
 
     pub fn slice8(this: *const String) []const u8 {
@@ -924,11 +924,11 @@ pub const String = struct {
 
     pub fn resolveRopeIfNeeded(this: *String, allocator: std.mem.Allocator) void {
         if (this.next == null or !this.isUTF8()) return;
-        var bytes = std.ArrayList(u8).initCapacity(allocator, this.rope_len) catch bun.outOfMemory();
+        var bytes = bun.handleOom(std.ArrayList(u8).initCapacity(allocator, this.rope_len));
         bytes.appendSliceAssumeCapacity(this.data);
         var str = this.next;
         while (str) |part| {
-            bytes.appendSlice(part.data) catch bun.outOfMemory();
+            bun.handleOom(bytes.appendSlice(part.data));
             str = part.next;
         }
         this.data = bytes.items;
@@ -937,7 +937,7 @@ pub const String = struct {
 
     pub fn slice(this: *String, allocator: std.mem.Allocator) []const u8 {
         this.resolveRopeIfNeeded(allocator);
-        return this.string(allocator) catch bun.outOfMemory();
+        return bun.handleOom(this.string(allocator));
     }
 
     pub var empty = String{};

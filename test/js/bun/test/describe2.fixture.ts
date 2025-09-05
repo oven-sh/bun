@@ -108,6 +108,12 @@ test.each([1, 2, 3])("LINE 70", item => console.log("LINE 70", item));
 test.if(true)("LINE 71", () => console.log("LINE 71"));
 test.skipIf(true)("LINE 72", () => console.log("LINE 72"));
 test.concurrent("LINE 74", () => console.log("LINE 74"));
+test.todo("failing todo passes", () => {
+  throw "this error is shown";
+});
+test.failing("failing failing passes", () => {
+  throw "this error is not shown";
+});
 
 // == timeout ==
 test("this test times out", () => Bun.sleep(100), 1);

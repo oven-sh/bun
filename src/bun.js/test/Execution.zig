@@ -126,10 +126,10 @@ pub const Result = enum {
         };
     }
 
-    fn switchPassAndFail(this: Result, failure: Result) Result {
+    fn switchPassAndFail(this: Result, pass: Result, failure: Result) Result {
         switch (this) {
             .pass => return failure,
-            .fail => return .pass,
+            .fail => return pass,
             else => return this, // note that this includes other fail reasons (eg fail_because_expected_has_assertions, fail_because_timeout).
         }
     }
@@ -422,8 +422,8 @@ fn onSequenceCompleted(this: *Execution, sequence: *ExecutionSequence) void {
         },
     }
     switch (sequence.entryMode()) {
-        .failing => sequence.result = sequence.result.switchPassAndFail(.fail_because_failing_test_passed),
-        .todo => sequence.result = sequence.result.switchPassAndFail(.fail_because_todo_passed),
+        .failing => sequence.result = sequence.result.switchPassAndFail(.pass, .fail_because_failing_test_passed),
+        .todo => sequence.result = sequence.result.switchPassAndFail(.todo, .fail_because_todo_passed),
         else => {},
     }
     const entries = sequence.entries(this);

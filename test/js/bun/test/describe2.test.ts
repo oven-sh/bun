@@ -47,6 +47,8 @@ test("describe/test", async () => {
     (pass) LINE 71
     (skip) LINE 72
     (pass) LINE 74
+    (todo) failing todo passes
+    (pass) failing failing passes
     (fail) this test times out
       ^ this test timed out.
     (fail) this test times out with done
@@ -64,13 +66,13 @@ test("describe/test", async () => {
     (pass) misattributed error
     (pass) passes because it catches the misattributed error
 
-     19 pass
+     20 pass
      2 skip
-     1 todo
+     2 todo
      6 fail
      1 error
      1 snapshots, 9 expect() calls
-    Ran 28 tests across 1 file."
+    Ran 30 tests across 1 file."
     ,
       "stdout": 
     "bun test <version> (<revision>)

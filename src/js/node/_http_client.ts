@@ -74,9 +74,13 @@ class WrappedSocket extends Duplex {
   #resolveNextRead: ((value: Uint8Array | null) => void) | null = null;
   #queue: { value: Buffer | null; cb: () => void }[] = [];
   #ended: boolean = false;
-  constructor(fetchBody: ReadableStream<Uint8Array> | null) {
+  #res: IncomingMessage;
+  emitClose: () => void;
+  constructor(fetchBody: ReadableStream<Uint8Array> | null, res: IncomingMessage, emitClose: () => void) {
     super();
     this.#fetchBody = fetchBody;
+    this.#res = res;
+    this.emitClose = emitClose;
   }
 
   #write(value, cb) {
@@ -93,6 +97,14 @@ class WrappedSocket extends Duplex {
     }
   }
 
+  #end() {
+    if (this.#ended) return;
+    this.#ended = true;
+    this.#res.complete = true;
+    this.#res._dump();
+    this.emitClose();
+  }
+
   async *[kWrappedSocketWritable]() {
     while (true) {
       if (this.#queue.length === 0) {
@@ -103,7 +115,7 @@ class WrappedSocket extends Duplex {
         this.#resolveNextRead = resolve;
         const value = await promise;
         if (value === null) {
-          this.#ended = true;
+          this.#end();
           break;
         }
         yield value;
@@ -114,7 +126,7 @@ class WrappedSocket extends Duplex {
           yield value;
           cb();
         } else {
-          this.#ended = true;
+          this.#end();
           cb();
           break;
         }
@@ -545,7 +557,7 @@ function ClientRequest(input, options, cb) {
               try {
                 if (isUpgrade) {
                   if (response.status === 101) {
-                    const socket = new WrappedSocket(response.body);
+                    const socket = new WrappedSocket(response.body, res, maybeEmitClose);
                     upgradedResponse(socket);
                     this.socket = socket;
                     this.emit("upgrade", res, socket, kEmptyBuffer);

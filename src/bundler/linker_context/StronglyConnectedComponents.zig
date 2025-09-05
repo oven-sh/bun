@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("root").bun;
-const Index = bun.ast.Index;
-
 /// Tarjan's strongly connected components algorithm for finding cycles in the dependency graph.
 /// This is more efficient than the while(changed) loop approach which has O(n²) or worse complexity.
 pub const StronglyConnectedComponents = struct {
@@ -198,3 +194,5 @@ pub const StronglyConnectedComponents = struct {
         }
     }
 };
+
+const std = @import("std");

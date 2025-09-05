@@ -404,13 +404,13 @@ pub const LinkerContext = struct {
                 import_records_list: []ImportRecord.List,
                 flags: []JSMeta.Flags,
                 css_asts: []?*bun.css.BundlerStyleSheet,
-                
+
                 // Single reusable buffer for neighbors to avoid per-file allocations
                 neighbors_buf: *std.ArrayList(u32),
 
                 pub fn getNeighbors(self: *@This(), node_idx: u32) []const u32 {
                     self.neighbors_buf.clearRetainingCapacity();
-                    
+
                     // Skip runtime
                     if (node_idx == Index.runtime.get()) return &.{};
 
@@ -428,7 +428,7 @@ pub const LinkerContext = struct {
                         }
                         self.neighbors_buf.append(dep_idx.get()) catch continue;
                     }
-                    
+
                     return self.neighbors_buf.items;
                 }
             };

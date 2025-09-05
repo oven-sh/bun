@@ -2,14 +2,13 @@ import { randomUUIDv7, RedisClient, sleep } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
 import {
   ConnectionType,
-  DEFAULT_REDIS_URL,
   createClient,
   ctx,
+  DEFAULT_REDIS_URL,
   expectType,
   isEnabled,
   randomCoinFlip,
 } from "./test-utils";
-import {c} from "cli/run/cjs-defineProperty-fixture.cjs";
 
 describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
   beforeEach(async () => {
@@ -572,11 +571,15 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       const subscriber = await connectedRedis();
 
       let messageCount1 = 0;
-      const listener1 = () => { messageCount1++; };
+      const listener1 = () => {
+        messageCount1++;
+      };
       await subscriber.subscribe(channel, listener1);
 
       let messageCount2 = 0;
-      const listener2 = () => { messageCount2++; };
+      const listener2 = () => {
+        messageCount2++;
+      };
       await subscriber.subscribe(channel, listener2);
 
       await redis.publish(channel, "message1");
@@ -670,7 +673,6 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       duplicate.close?.();
     });
-
 
     test("should allow duplicate to work independently from original", async () => {
       const redis = new RedisClient(DEFAULT_REDIS_URL);

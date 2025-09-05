@@ -125,10 +125,6 @@ public:
             }
         }
 
-        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER) {
-            allowContentLength = false;
-        }
-
         /* if write was called and there was previously no Content-Length header set */
         if (httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
 

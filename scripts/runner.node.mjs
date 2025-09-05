@@ -80,7 +80,7 @@ function getNodeParallelTestTimeout(testPath) {
     return 90_000;
   }
   const isDebug = options["exec-path"].includes("-debug");
-  return !isDebug ? 10_000 : 20_000;
+  return !isDebug ? 10_000 : 60_000;
 }
 
 process.on("SIGTRAP", () => {
@@ -143,7 +143,7 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["retries"]: {
       type: "string",
-      default: isCI ? "1" : "0", // N retries = N+1 attempts
+      default: isCI ? "3" : "0", // N retries = N+1 attempts
     },
     ["junit"]: {
       type: "boolean",

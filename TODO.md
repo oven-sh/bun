@@ -243,6 +243,7 @@ Exited with code [1]
 
 - [ ] test what happens running a file that uses describe() not in `bun test`. make sure it errors with the correct error. this might have regressed, if so, fix it.
 - [ ] make sure done callback is supported in hooks
+- [ ] add tests for re-entry in different scenerios (timeout, done callback, ...) using waitForPromise in expect()
 - [x] Add expect counts back
 - [x] add back expecting a test to have a certain number of expect calls
 - [x] add a test for done callback nexttick after

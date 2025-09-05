@@ -9,6 +9,7 @@ export default [
     configurable: false,
     JSType: "0b11101110",
     memoryCost: true,
+    hasPendingActivity: true,
     proto: {
       connected: {
         getter: "getConnected",
@@ -228,6 +229,6 @@ export default [
       punsubscribe: { fn: "punsubscribe" },
       pubsub: { fn: "pubsub" },
     },
-    values: ["onconnect", "onclose", "connectionPromise", "hello"],
+    values: ["onconnect", "onclose", "connectionPromise", "hello", "subscriptionCallbackMap"],
   }),
 ];

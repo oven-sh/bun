@@ -1,32 +1,31 @@
 pub const SubscriptionCtx = struct {
     const Self = @This();
 
-    _callback_map: jsc.JSValue, // map(channel -> array(callback))
+    _parent: *JSValkeyClient,
     original_enable_offline_queue: bool,
     original_enable_auto_pipelining: bool,
 
-    pub fn init(globalObject: *jsc.JSGlobalObject, enable_offline_queue: bool, enable_auto_pipelining: bool) Self {
+    const ParentJS = JSValkeyClient.js;
+
+    pub fn init(parent: *JSValkeyClient, enable_offline_queue: bool, enable_auto_pipelining: bool) Self {
+        const callback_map = jsc.JSMap.create(parent.globalObject);
+        ParentJS.gc.set(.subscriptionCallbackMap, parent.this_value.get(), parent.globalObject, callback_map.toJS(parent.globalObject));
+
         const self = Self{
-            ._callback_map = jsc.JSMap.create(globalObject),
+            ._parent = parent,
             .original_enable_offline_queue = enable_offline_queue,
             .original_enable_auto_pipelining = enable_auto_pipelining,
         };
-
-        // TODO(markovejnovic): Can we avoid having this protection?
-        // The map is unprotected during the subscription context deinitialization.
-        self._callback_map.protect();
-
         return self;
     }
 
     fn subscriptionCallbackMap(this: *Self) *jsc.JSMap {
-        return jsc.JSMap.fromJS(this._callback_map).?;
+        const value_js = ParentJS.gc.get(.subscriptionCallbackMap, this._parent.this_value.get()).?;
+        return jsc.JSMap.fromJS(value_js).?;
     }
 
-    /// Get the total number of channels that this subscription context is
-    /// subscribed to.
+    /// Get the total number of channels that this subscription context is subscribed to.
     pub fn subscriptionCount(this: *Self, globalObject: *jsc.JSGlobalObject) usize {
-        // TODO(markovejnovic): Implement this correctly.
         return this.subscriptionCallbackMap().size(globalObject);
     }
 
@@ -42,7 +41,9 @@ pub const SubscriptionCtx = struct {
         channelName: JSValue,
     ) void {
         const map = this.subscriptionCallbackMap();
-        _ = map.remove(globalObject, channelName);
+        if (map.remove(globalObject, channelName)) {
+            this._parent.channel_subscription_count -= 1;
+        }
     }
 
     /// Remove a specific receive handler.
@@ -77,6 +78,10 @@ pub const SubscriptionCtx = struct {
         // TODO(markovejnovic): I can't find a better way to do this... I generate a new array,
         // filtering out the callback we want to remove. This is woefully inefficient for large
         // sets (and surprisingly fast for small sets of callbacks).
+        //
+        // Perhaps there is an avenue to build a generic iterator pattern? @taylor.fish and I have
+        // briefly expressed a desire for this, and I promised her I would look into it, but at
+        // this moment have no proposal.
         var array_it = try existing.?.arrayIterator(globalObject);
         const updated_array = try jsc.JSArray.createEmpty(globalObject, 0);
         while (try array_it.next()) |iter| {
@@ -94,6 +99,8 @@ pub const SubscriptionCtx = struct {
         const new_length = (updated_array.arrayIterator(globalObject) catch unreachable).len;
         if (new_length != 0) {
             map.set(globalObject, channelName, updated_array);
+        } else {
+            this._parent.channel_subscription_count -= 1;
         }
 
         return new_length;
@@ -109,11 +116,13 @@ pub const SubscriptionCtx = struct {
         const map = this.subscriptionCallbackMap();
 
         var handlers_array: JSValue = undefined;
+        var is_new_channel = false;
         if (try map.get(globalObject, channelName)) |existing_handler_arr| {
             debug("Adding a new receive handler.", .{});
             if (existing_handler_arr.isUndefined()) {
                 // Create a new array if the existing_handler_arr is undefined/null
                 handlers_array = try jsc.JSArray.createEmpty(globalObject, 0);
+                is_new_channel = true;
             } else if (existing_handler_arr.isArray()) {
                 // Use the existing array
                 handlers_array = existing_handler_arr;
@@ -121,6 +130,7 @@ pub const SubscriptionCtx = struct {
         } else {
             // No existing_handler_arr exists, create a new array
             handlers_array = try jsc.JSArray.createEmpty(globalObject, 0);
+            is_new_channel = true;
         }
 
         // Append the new callback to the array
@@ -129,10 +139,10 @@ pub const SubscriptionCtx = struct {
         // Set the updated array back in the map
         map.set(globalObject, channelName, handlers_array);
 
-        // TODO(markovejnovic: Remove this debugging junk.
-        const array_readback = try map.get(globalObject, channelName);
-        const count = (try array_readback.?.arrayIterator(globalObject)).len;
-        debug("Now have {d} handlers for channel", .{count});
+        // Update subscription count if this is a new channel
+        if (is_new_channel) {
+            this._parent.channel_subscription_count += 1;
+        }
     }
 
     pub fn registerCallback(this: *Self, globalObject: *jsc.JSGlobalObject, eventString: JSValue, callback: JSValue) bun.JSError!void {
@@ -180,8 +190,14 @@ pub const SubscriptionCtx = struct {
         }
     }
 
-    pub fn deinit(self: *Self) void {
-        self._callback_map.unprotect();
+    pub fn deinit(this: *Self) void {
+        this._parent.channel_subscription_count = 0;
+        ParentJS.gc.set(
+            .subscriptionCallbackMap,
+            this._parent.this_value.get(),
+            this._parent.globalObject,
+            .js_undefined,
+        );
     }
 };
 
@@ -193,6 +209,7 @@ pub const JSValkeyClient = struct {
     poll_ref: bun.Async.KeepAlive = .{},
 
     _subscription_ctx: ?SubscriptionCtx,
+    channel_subscription_count: u32 = 0,
 
     timer: Timer.EventLoopTimer = .{
         .tag = .ValkeyConnectionTimeout,
@@ -226,6 +243,8 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn create(globalObject: *jsc.JSGlobalObject, arguments: []const JSValue) bun.JSError!*JSValkeyClient {
+        const this_allocator = bun.default_allocator;
+
         const vm = globalObject.bunVM();
         const url_str = if (arguments.len < 1 or arguments[0].isUndefined())
             if (vm.transpiler.env.get("REDIS_URL") orelse vm.transpiler.env.get("VALKEY_URL")) |url|
@@ -236,7 +255,7 @@ pub const JSValkeyClient = struct {
             try arguments[0].toBunString(globalObject);
         defer url_str.deref();
 
-        const url_utf8 = url_str.toUTF8WithoutRef(bun.default_allocator);
+        const url_utf8 = url_str.toUTF8WithoutRef(this_allocator);
         defer url_utf8.deinit();
         const url = bun.URL.parse(url_utf8.slice());
 
@@ -278,7 +297,7 @@ pub const JSValkeyClient = struct {
 
         var connection_strings: []u8 = &.{};
         errdefer {
-            bun.default_allocator.free(connection_strings);
+            this_allocator.free(connection_strings);
         }
 
         if (url.username.len > 0 or url.password.len > 0 or hostname.len > 0) {
@@ -286,11 +305,12 @@ pub const JSValkeyClient = struct {
             b.count(url.username);
             b.count(url.password);
             b.count(hostname);
-            try b.allocate(bun.default_allocator);
+            try b.allocate(this_allocator);
+            defer b.deinit(this_allocator);
             username = b.append(url.username);
             password = b.append(url.password);
             hostname = b.append(hostname);
-            connection_strings = b.allocatedSlice();
+            b.moveToSlice(&connection_strings);
         }
 
         const database = if (url.pathname.len > 0) std.fmt.parseInt(u32, url.pathname[1..], 10) catch 0 else 0;
@@ -311,10 +331,11 @@ pub const JSValkeyClient = struct {
                         },
                     },
                 },
+                .protocol = uri,
                 .username = username,
                 .password = password,
-                .in_flight = .init(bun.default_allocator),
-                .queue = .init(bun.default_allocator),
+                .in_flight = .init(this_allocator),
+                .queue = .init(this_allocator),
                 .status = .disconnected,
                 .connection_strings = connection_strings,
                 .socket = .{
@@ -325,7 +346,7 @@ pub const JSValkeyClient = struct {
                     },
                 },
                 .database = database,
-                .allocator = bun.default_allocator,
+                .allocator = this_allocator,
                 .flags = .{
                     .enable_auto_reconnect = options.enable_auto_reconnect,
                     .enable_offline_queue = options.enable_offline_queue,
@@ -341,27 +362,49 @@ pub const JSValkeyClient = struct {
 
     /// Clone this client while remaining in the initial disconnected state. This does not preserve
     /// the
-    pub fn cloneWithoutConnecting(this: *const JSValkeyClient) *JSValkeyClient {
+    pub fn cloneWithoutConnecting(this: *const JSValkeyClient) bun.OOM!*JSValkeyClient {
         const vm = this.globalObject.bunVM();
 
-        // Make a copy of connection_strings to avoid double-free
-        const connection_strings_copy: []u8 = if (this.client.connection_strings.len > 0) blk: {
-            const duped = bun.default_allocator.dupe(u8, this.client.connection_strings) catch break :blk &[0]u8{};
-            break :blk @constCast(duped);
-        } else &[0]u8{};
+        const relocate = struct {
+            // Given a slice within a window, move the slice to point to a new
+            // window, with the same offset relative to the window start.
+            fn slice(original: []const u8, old_base: [*]const u8, new_base: [*]const u8) []const u8 {
+                const offset = @intFromPtr(original.ptr) - @intFromPtr(old_base);
+                return new_base[offset..][0..original.len];
+            }
+        }.slice;
 
-        // TODO(marko): There's actually a leak on this.client.(address|username|password).
+        // Make a copy of connection_strings to avoid double-free
+        const connection_strings_copy = try this.client.allocator.dupe(u8, this.client.connection_strings);
+
+        // Note that there is no need to copy username, password and address since the copies live
+        // within the connection_strings buffer.
+        const base_ptr = this.client.connection_strings.ptr;
+        const new_base = connection_strings_copy.ptr;
+        const username = relocate(this.client.username, base_ptr, new_base);
+        const password = relocate(this.client.password, base_ptr, new_base);
+        const orig_hostname = this.client.address.hostname();
+        const hostname = relocate(orig_hostname, base_ptr, new_base);
 
         return JSValkeyClient.new(.{
             .ref_count = .init(),
             ._subscription_ctx = null,
             .client = .{
                 .vm = vm,
-                .address = this.client.address,
-                .username = this.client.username,
-                .password = this.client.password,
-                .in_flight = .init(bun.default_allocator),
-                .queue = .init(bun.default_allocator),
+                .address = switch (this.client.protocol) {
+                    .standalone_unix, .standalone_tls_unix => .{ .unix = hostname },
+                    else => .{
+                        .host = .{
+                            .host = hostname,
+                            .port = this.client.address.host.port,
+                        },
+                    },
+                },
+                .protocol = this.client.protocol,
+                .username = username,
+                .password = password,
+                .in_flight = .init(this.client.allocator),
+                .queue = .init(this.client.allocator),
                 .status = .disconnected,
                 .connection_strings = connection_strings_copy,
                 .socket = .{
@@ -372,7 +415,7 @@ pub const JSValkeyClient = struct {
                     },
                 },
                 .database = this.client.database,
-                .allocator = bun.default_allocator,
+                .allocator = this.client.allocator,
                 .flags = .{
                     // Because this starts in the disconnected state, we need to reset some flags.
                     .is_authenticated = false,
@@ -397,7 +440,6 @@ pub const JSValkeyClient = struct {
 
     pub fn getOrCreateSubscriptionCtxEnteringSubscriptionMode(
         this: *JSValkeyClient,
-        globalObject: *jsc.JSGlobalObject,
     ) *SubscriptionCtx {
         if (this._subscription_ctx) |*ctx| {
             // If we already have a subscription context, return it
@@ -406,7 +448,7 @@ pub const JSValkeyClient = struct {
 
         // Save the original flag values and create a new subscription context
         this._subscription_ctx = SubscriptionCtx.init(
-            globalObject,
+            this,
             this.client.flags.enable_offline_queue,
             this.client.flags.auto_pipelining,
         );
@@ -726,8 +768,6 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn onValkeySubscribe(this: *JSValkeyClient, value: *protocol.RESPValue) void {
-        // TODO(markovejnovic): Add another safety check to reason about the
-        // subscription state.
         if (!this.isSubscriber()) {
             debug("onSubscribe called but client is not in subscriber mode", .{});
             return;
@@ -740,8 +780,6 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn onValkeyUnsubscribe(this: *JSValkeyClient, value: *protocol.RESPValue) void {
-        // TODO(markovejnovic): Add another safety check to reason about the
-        // subscription state.
         if (!this.isSubscriber()) {
             debug("onUnsubscribe called but client is not in subscriber mode", .{});
             return;
@@ -879,6 +917,12 @@ pub const JSValkeyClient = struct {
                 &[_]JSValue{value},
             ) catch |e| globalObject.reportActiveExceptionAsUnhandled(e);
         }
+    }
+
+    pub fn hasPendingActivity(this: *JSValkeyClient) bool {
+        return this.client.hasAnyPendingCommands() or
+            this.channel_subscription_count > 0 or
+            (this.client.status != .connected and this.client.status != .disconnected);
     }
 
     pub fn finalize(this: *JSValkeyClient) void {

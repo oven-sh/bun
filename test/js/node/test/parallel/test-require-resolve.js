@@ -64,15 +64,14 @@ require(fixtures.path('resolve-paths', 'default', 'verify-paths.js'));
 
     // TODO(@jasnell): Remove once node:quic is no longer flagged
     if (mod === 'node:quic') return;
-    assert.strictEqual(require.resolve.paths(mod), null, `require.resolve.paths(${mod}) should return null`);
+    assert.strictEqual(require.resolve.paths(mod), null);
     if (!mod.startsWith('node:')) {
       try {
         require.resolve(`node:${mod}`);
       } catch (e) {
         return; // skip modules that don't support the node prefix, such as 'bun:ffi' -> 'node:bun:ffi'
       }
-
-      assert.strictEqual(require.resolve.paths(`node:${mod}`), null, `require.resolve.paths(node:${mod}) should return null`);
+      assert.strictEqual(require.resolve.paths(`node:${mod}`), null);
     }
   });
 

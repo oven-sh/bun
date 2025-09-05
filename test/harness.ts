@@ -13,6 +13,7 @@ import { readdir, readFile, readlink, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
+import { execSync } from "child_process";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -856,6 +857,24 @@ export function dockerExe(): string | null {
   return which("docker") || which("podman") || null;
 }
 
+export function isDockerEnabled(): boolean {
+  const dockerCLI = dockerExe();
+  if (!dockerCLI) {
+    return false;
+  }
+
+  // TODO: investigate why its not starting on Linux arm64
+  if ((isLinux && process.arch === "arm64") || isMacOS) {
+    return false;
+  }
+
+  try {
+    const info = execSync(`${dockerCLI} info`, { stdio: ["ignore", "pipe", "inherit"] });
+    return info.toString().indexOf("Server Version:") !== -1;
+  } catch {
+    return false;
+  }
+}
 export async function waitForPort(port: number, timeout: number = 60_000): Promise<void> {
   let deadline = Date.now() + Math.max(1, timeout);
   let error: unknown;
@@ -906,7 +925,7 @@ export async function describeWithContainer(
       return;
     }
     const { arch, platform } = process;
-    if ((archs && !archs?.includes(arch)) || platform === "win32") {
+    if ((archs && !archs?.includes(arch)) || platform === "win32" || platform === "darwin") {
       test.skip(`docker image is not supported on ${platform}/${arch}, skipped: ${image}`, () => {});
       return false;
     }

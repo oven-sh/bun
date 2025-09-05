@@ -653,6 +653,17 @@ pub const JSValue = enum(i64) {
         return jsNumberWithType(@TypeOf(number), number);
     }
 
+    pub fn jsBigInt(number: anytype) JSValue {
+        const Number = @TypeOf(number);
+        return switch (comptime Number) {
+            u64 => JSValue.fromUInt64NoTruncate(number),
+            i64 => JSValue.fromInt64NoTruncate(number),
+            i32 => JSValue.fromInt64NoTruncate(number),
+            u32 => JSValue.fromUInt64NoTruncate(number),
+            else => @compileError("Expected u64, i64, u32 or i32, got " ++ @typeName(Number)),
+        };
+    }
+
     pub inline fn jsTDZValue() JSValue {
         return bun.cpp.JSC__JSValue__jsTDZValue();
     }
@@ -1259,6 +1270,17 @@ pub const JSValue = enum(i64) {
     pub fn getObject(this: JSValue) ?*JSObject {
         return if (this.isObject()) this.uncheckedPtrCast(JSObject) else null;
     }
+
+    /// Unwraps Number, Boolean, String, and BigInt objects to their primitive forms.
+    pub fn unwrapBoxedPrimitive(this: JSValue, global: *JSGlobalObject) JSError!JSValue {
+        var scope: CatchScope = undefined;
+        scope.init(global, @src());
+        defer scope.deinit();
+        const result = JSC__JSValue__unwrapBoxedPrimitive(global, this);
+        try scope.returnIfException();
+        return result;
+    }
+    extern fn JSC__JSValue__unwrapBoxedPrimitive(*JSGlobalObject, JSValue) JSValue;
 
     extern fn JSC__JSValue__getPrototype(this: JSValue, globalObject: *JSGlobalObject) JSValue;
     pub fn getPrototype(this: JSValue, globalObject: *JSGlobalObject) JSValue {

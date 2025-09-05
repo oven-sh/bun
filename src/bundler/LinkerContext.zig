@@ -151,9 +151,7 @@ pub const LinkerContext = struct {
         pub fn computeQuotedSourceContents(this: *LinkerContext, _: std.mem.Allocator, source_index: Index.Int) void {
             debug("Computing Quoted Source Contents: {d}", .{source_index});
             const quoted_source_contents = &this.graph.files.items(.quoted_source_contents)[source_index];
-            if (quoted_source_contents.take()) |old| {
-                old.deinit();
-            }
+            quoted_source_contents.reset();
 
             const loader: options.Loader = this.parse_graph.input_files.items(.loader)[source_index];
             if (!loader.canHaveSourceMap()) {
@@ -163,7 +161,8 @@ pub const LinkerContext = struct {
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
             var mutable = MutableString.initEmpty(bun.default_allocator);
             bun.handleOom(js_printer.quoteForJSON(source.contents, &mutable, false));
-            quoted_source_contents.* = mutable.toDefaultOwned().toOptional();
+            var mutableOwned = mutable.toDefaultOwned();
+            quoted_source_contents.* = mutableOwned.toOptional();
         }
     };
 
@@ -304,7 +303,7 @@ pub const LinkerContext = struct {
 
             for (server_source_indices.slice()) |html_import| {
                 const source = &input_files[html_import];
-                const source_index = map.get(source.path.hashKey()) orelse {
+                const source_index = map.get(source.path.text) orelse {
                     @panic("Assertion failed: HTML import file not found in pathToSourceIndexMap");
                 };
 
@@ -797,12 +796,12 @@ pub const LinkerContext = struct {
         if (source_indices_for_contents.len > 0) {
             j.pushStatic("\n    ");
             j.pushStatic(
-                quoted_source_map_contents[source_indices_for_contents[0]].getConst() orelse "",
+                quoted_source_map_contents[source_indices_for_contents[0]].get() orelse "",
             );
 
             for (source_indices_for_contents[1..]) |index| {
                 j.pushStatic(",\n    ");
-                j.pushStatic(quoted_source_map_contents[index].getConst() orelse "");
+                j.pushStatic(quoted_source_map_contents[index].get() orelse "");
             }
         }
         j.pushStatic(

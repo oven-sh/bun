@@ -23,7 +23,7 @@ const {
 } = require("internal/streams/utils");
 
 const SymbolDispose = Symbol.dispose;
-const PromisePrototypeThen = Promise.prototype.then;
+const PromisePrototypeThen = $Promise.prototype.$then;
 
 let addAbortListener;
 

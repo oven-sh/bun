@@ -1,6 +1,6 @@
 const SymbolIterator = Symbol.iterator;
 const SymbolAsyncIterator = Symbol.asyncIterator;
-const PromisePrototypeThen = Promise.prototype.then;
+const PromisePrototypeThen = Promise.prototype.$then;
 
 function from(Readable, iterable, opts) {
   let iterator;
@@ -55,8 +55,8 @@ function from(Readable, iterable, opts) {
   readable._destroy = function (error, cb) {
     PromisePrototypeThen.$call(
       close(error),
-      () => process.nextTick(cb, error), // nextTick is here in case cb throws
-      e => process.nextTick(cb, e || error),
+      $isCallable(cb) ? () => process.nextTick(cb, error) : () => {}, // nextTick is here in case cb throws
+      $isCallable(cb) ? e => process.nextTick(cb, e || error) : () => {},
     );
   };
 

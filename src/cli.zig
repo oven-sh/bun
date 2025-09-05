@@ -414,7 +414,7 @@ pub const Command = struct {
 
             production: bool = false,
 
-            env_behavior: api.DotEnvBehavior = .load_all,
+            env_behavior: api.DotEnvBehavior = .load_all_without_inlining,
             env_prefix: []const u8 = "",
             elide_lines: ?usize = null,
             // Compile options

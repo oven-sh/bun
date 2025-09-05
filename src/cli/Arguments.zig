@@ -542,6 +542,12 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         opts.env_files = &[_][]const u8{};
         // Set bundler options to disable env loading
         ctx.bundler_options.env_behavior = Api.DotEnvBehavior.disable;
+    } else if (opts.env_files.len > 0) {
+        // If --env-file is explicitly provided, ensure env loading is enabled
+        // This overrides any bunfig.toml setting
+        if (ctx.bundler_options.env_behavior == Api.DotEnvBehavior.disable) {
+            ctx.bundler_options.env_behavior = Api.DotEnvBehavior.load_all_without_inlining;
+        }
     }
 
     if (args.flag("--preserve-symlinks")) {

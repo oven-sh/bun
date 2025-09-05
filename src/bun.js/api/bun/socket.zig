@@ -108,7 +108,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn doConnect(this: *This, connection: Listener.UnixOrHost) !void {
+        pub fn doConnect(this: *This, connection: Listener.UnixOrHost, error_: ?*i32) !void {
             bun.assert(this.socket_context != null);
             this.ref();
             errdefer this.deref();
@@ -121,6 +121,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                         this.socket_context.?,
                         this,
                         this.flags.allow_half_open,
+                        error_,
                     );
                 },
                 .unix => |u| {
@@ -129,10 +130,14 @@ pub fn NewSocket(comptime ssl: bool) type {
                         this.socket_context.?,
                         this,
                         this.flags.allow_half_open,
+                        error_,
                     );
                 },
                 .fd => |f| {
-                    const socket = This.Socket.fromFd(this.socket_context.?, f, This, this, null, false) orelse return error.ConnectionFailed;
+                    const socket = This.Socket.fromFd(this.socket_context.?, f, This, this, null, false) orelse {
+                        if (error_) |err| err.* = bun.sys.SystemErrno.ENOENT.to_uv_errno();
+                        return error.ConnectionFailed;
+                    };
                     this.onOpen(socket);
                 },
             }
@@ -235,7 +240,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
             this.ref();
             defer this.deref();
-            this.internalFlush();
+            this.internalFlush() catch return;
             log("onWritable buffered_data_for_node_net {d}", .{this.buffered_data_for_node_net.len});
             // is not writable if we have buffered data or if we are already detached
             if (this.buffered_data_for_node_net.len > 0 or this.socket.isDetached()) return;
@@ -299,15 +304,13 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
 
             bun.assert(errno >= 0);
-            var errno_: c_int = if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) @intFromEnum(bun.sys.SystemErrno.ENOENT) else @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
-            const code_ = if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED");
-            if (Environment.isWindows and errno_ == @intFromEnum(bun.sys.SystemErrno.ENOENT)) errno_ = @intFromEnum(bun.sys.SystemErrno.UV_ENOENT);
-            if (Environment.isWindows and errno_ == @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED)) errno_ = @intFromEnum(bun.sys.SystemErrno.UV_ECONNREFUSED);
+            const errno_: c_uint = @intCast(errno);
+            const code_ = bun.String.static(@tagName(@as(bun.sys.SystemErrno, @enumFromInt(errno))));
 
             const callback = handlers.onConnectError;
             const globalObject = handlers.globalObject;
             const err = jsc.SystemError{
-                .errno = -errno_,
+                .errno = errno_,
                 .message = bun.String.static("Failed to connect"),
                 .syscall = bun.String.static("connect"),
                 .code = code_,
@@ -894,9 +897,9 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return globalObject.throwValue(err.toErrorInstance(globalObject));
             }
 
-            const args = callframe.argumentsUndef(2);
+            const args = callframe.argumentsAsArray(2);
 
-            return switch (this.writeOrEndBuffered(globalObject, args.ptr[0], args.ptr[1], false)) {
+            return switch (this.writeOrEndBuffered(globalObject, args[0], args[1], false)) {
                 .fail => .zero,
                 .success => |result| if (@max(result.wrote, 0) == result.total) .true else .false,
             };
@@ -915,7 +918,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 .fail => .zero,
                 .success => |result| brk: {
                     if (result.wrote == result.total) {
-                        this.internalFlush();
+                        this.internalFlush() catch return .jsBoolean(false);
                     }
 
                     break :brk JSValue.jsBoolean(@as(usize, @max(result.wrote, 0)) == result.total);
@@ -983,7 +986,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 if (comptime !ssl and Environment.isPosix) {
                     // fast-ish path: use writev() to avoid cloning to another buffer.
                     if (this.socket.socket == .connected and buffer.slice().len > 0) {
-                        const rc = this.socket.socket.connected.write2(ssl, this.buffered_data_for_node_net.slice(), buffer.slice());
+                        const rc = this.socket.socket.connected.write2(ssl, this.buffered_data_for_node_net.slice(), buffer.slice(), null);
                         const written: usize = @intCast(@max(rc, 0));
                         const leftover = total_to_write -| written;
                         if (leftover == 0) {
@@ -1193,19 +1196,25 @@ pub fn NewSocket(comptime ssl: bool) type {
             return this.flags.is_active and this.flags.end_after_flush and !this.flags.empty_packet_pending and this.buffered_data_for_node_net.len == 0;
         }
 
-        fn internalFlush(this: *This) void {
+        fn internalFlush(this: *This) error{CalledOnError}!void {
             if (this.buffered_data_for_node_net.len > 0) {
-                const written: usize = @intCast(@max(this.socket.write(this.buffered_data_for_node_net.slice()), 0));
-                this.bytes_written += written;
-                if (written > 0) {
-                    if (this.buffered_data_for_node_net.len > written) {
-                        const remaining = this.buffered_data_for_node_net.slice()[written..];
-                        _ = bun.c.memmove(this.buffered_data_for_node_net.ptr, remaining.ptr, remaining.len);
-                        this.buffered_data_for_node_net.len = @truncate(remaining.len);
-                    } else {
-                        this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                        this.buffered_data_for_node_net = .{};
-                    }
+                switch (this.socket.writeMaybe(this.buffered_data_for_node_net.slice())) {
+                    .result => |written_| {
+                        const written: usize = @intCast(written_);
+                        this.bytes_written += written;
+                        if (this.buffered_data_for_node_net.len > written) {
+                            const remaining = this.buffered_data_for_node_net.slice()[written..];
+                            _ = bun.c.memmove(this.buffered_data_for_node_net.ptr, remaining.ptr, remaining.len);
+                            this.buffered_data_for_node_net.len = @truncate(remaining.len);
+                        } else {
+                            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+                            this.buffered_data_for_node_net = .{};
+                        }
+                    },
+                    .err => |err| {
+                        this.handleError(err.toSystemError().toErrorInstance(this.handlers.?.globalObject));
+                        return error.CalledOnError;
+                    },
                 }
             }
 
@@ -1219,7 +1228,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn flush(this: *This, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
             jsc.markBinding(@src());
-            this.internalFlush();
+            this.internalFlush() catch return .js_undefined;
             return .js_undefined;
         }
 
@@ -1267,7 +1276,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 .fail => .zero,
                 .success => |result| brk: {
                     if (result.wrote == result.total) {
-                        this.internalFlush();
+                        this.internalFlush() catch return .jsNumber(0);
                     }
                     break :brk JSValue.jsNumber(result.wrote);
                 },
@@ -1850,7 +1859,7 @@ pub const DuplexUpgradeContext = struct {
             }
         } else {
             if (this.tls) |tls| {
-                tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ECONNREFUSED));
+                tls.handleConnectError(bun.sys.SystemErrno.ECONNREFUSED.to_uv_errno());
             }
         }
     }
@@ -1883,7 +1892,7 @@ pub const DuplexUpgradeContext = struct {
                                 bun.outOfMemory();
                             },
                             else => {
-                                const errno = @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
+                                const errno = bun.sys.SystemErrno.ECONNREFUSED.to_uv_errno();
                                 if (this.tls) |tls| {
                                     const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
 

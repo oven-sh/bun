@@ -231,7 +231,7 @@ const SocketHandlers: SocketHandler = {
       callback(error);
     }
 
-    self.emit("error", error);
+    if (!self.destroyed) process.nextTick(destroyNT, self, error);
   },
   open(socket) {
     const self = socket.data;
@@ -477,7 +477,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     if (!data) return;
 
     if (data._hadError) return;
-    data._hadError = true;
     const bunTLS = this[bunTlsSymbol];
 
     if (typeof bunTLS === "function") {
@@ -501,7 +500,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       }
     }
     SocketHandlers.error(socket, error, true);
-    data.server.emit("clientError", error, data);
   },
   timeout(socket) {
     SocketHandlers.timeout(socket);

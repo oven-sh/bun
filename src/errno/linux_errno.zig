@@ -152,6 +152,10 @@ pub const SystemErrno = enum(u16) {
         if (code >= max) return null;
         return @enumFromInt(code);
     }
+
+    pub fn to_uv_errno(this: SystemErrno) c_int {
+        return @intFromEnum(this);
+    }
 };
 pub const UV_E = struct {
     pub const @"2BIG": i32 = @intFromEnum(SystemErrno.E2BIG);

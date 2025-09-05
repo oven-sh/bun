@@ -319,9 +319,10 @@ pub const UDPSocket = struct {
             this.closed = true;
             defer this.deinit();
             if (err != 0) {
-                const code = @tagName(bun.sys.SystemErrno.init(@as(c_int, @intCast(err))).?);
+                const err_ = bun.sys.SystemErrno.init(@as(c_int, @intCast(err))).?;
+                const code = @tagName(err_);
                 const sys_err = jsc.SystemError{
-                    .errno = err,
+                    .errno = @intFromEnum(err_),
                     .code = bun.String.static(code),
                     .message = bun.handleOom(bun.String.createFormat("bind {s} {s}", .{ code, config.hostname })),
                 };

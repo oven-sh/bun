@@ -289,12 +289,12 @@ struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_e
 }
 
 /* This is not available for SSL sockets as it makes no sense. */
-int us_socket_write2(int ssl, struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
+int us_socket_write2(int ssl, struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length, int *error) {
     if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s)) {
         return 0;
     }
 
-    int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
+    int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length, error);
     if (written != header_length + payload_length) {
         us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     }
@@ -357,7 +357,7 @@ void *us_connecting_socket_get_native_handle(int ssl, struct us_connecting_socke
     return (void *) (uintptr_t) -1;
 }
 
-int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length) {
+int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length, int *error) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
         return us_internal_ssl_socket_write((struct us_internal_ssl_socket_t *) s, data, length);
@@ -367,7 +367,7 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
         return 0;
     }
 
-    int written = bsd_send(us_poll_fd(&s->p), data, length);
+    int written = bsd_send(us_poll_fd(&s->p), data, length, error);
     if (written != length) {
         s->context->loop->data.last_write_failed = 1;
         us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
@@ -502,7 +502,7 @@ int us_socket_raw_write(int ssl, struct us_socket_t *s, const char *data, int le
     }
 #endif
  // non-TLS is always raw
- return us_socket_write(ssl, s, data, length);
+ return us_socket_write(ssl, s, data, length, NULL);
 }
 
 unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6)

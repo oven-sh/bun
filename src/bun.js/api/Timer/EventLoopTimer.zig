@@ -68,6 +68,7 @@ pub const Tag = if (Environment.isWindows) enum {
     DevServerMemoryVisualizerTick,
     AbortSignalTimeout,
     DateHeaderTimer,
+    EventLoopDelayMonitor,
 
     pub fn Type(comptime T: Tag) type {
         return switch (T) {
@@ -114,6 +115,7 @@ pub const Tag = if (Environment.isWindows) enum {
     DevServerMemoryVisualizerTick,
     AbortSignalTimeout,
     DateHeaderTimer,
+    EventLoopDelayMonitor,
 
     pub fn Type(comptime T: Tag) type {
         return switch (T) {
@@ -137,6 +139,7 @@ pub const Tag = if (Environment.isWindows) enum {
             => bun.bake.DevServer,
             .AbortSignalTimeout => jsc.WebCore.AbortSignal.Timeout,
             .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
+            .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
         };
     }
 };
@@ -211,6 +214,11 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) Arm {
         .DateHeaderTimer => {
             const date_header_timer = @as(*jsc.API.Timer.DateHeaderTimer, @fieldParentPtr("event_loop_timer", self));
             date_header_timer.run(vm);
+            return .disarm;
+        },
+        .EventLoopDelayMonitor => {
+            const monitor = @as(*jsc.API.Timer.EventLoopDelayMonitor, @fieldParentPtr("event_loop_timer", self));
+            monitor.onFire(vm);
             return .disarm;
         },
         inline else => |t| {

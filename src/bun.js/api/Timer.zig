@@ -30,6 +30,9 @@ pub const All = struct {
     epoch: u25 = 0,
     immediate_ref_count: i32 = 0,
     uv_idle: if (Environment.isWindows) uv.uv_idle_t else void = if (Environment.isWindows) std.mem.zeroes(uv.uv_idle_t),
+    
+    // Event loop delay monitoring (not exposed to JS)
+    event_loop_delay: EventLoopDelayMonitor = .{},
 
     // We split up the map here to avoid storing an extra "repeat" boolean
     maps: struct {
@@ -596,6 +599,8 @@ pub const ID = extern struct {
 pub const WTFTimer = @import("./Timer/WTFTimer.zig");
 
 pub const DateHeaderTimer = @import("./Timer/DateHeaderTimer.zig");
+
+pub const EventLoopDelayMonitor = @import("./Timer/EventLoopDelayMonitor.zig");
 
 pub const internal_bindings = struct {
     /// Node.js has some tests that check whether timers fire at the right time. They check this

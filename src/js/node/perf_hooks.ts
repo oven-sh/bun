@@ -13,6 +13,25 @@ const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp"
   figures: number,
 ) => import("node:perf_hooks").RecordableHistogram;
 
+// Private C++ bindings for event loop delay monitoring
+const cppMonitorEventLoopDelay = $newCppFunction(
+  "JSNodePerformanceHooksHistogram.cpp",
+  "jsFunction_monitorEventLoopDelay",
+  1,
+) as (resolution: number) => import("node:perf_hooks").RecordableHistogram;
+
+const cppEnableEventLoopDelay = $newCppFunction(
+  "JSNodePerformanceHooksHistogram.cpp",
+  "jsFunction_enableEventLoopDelay",
+  2,
+) as (histogram: import("node:perf_hooks").RecordableHistogram, resolution: number) => void;
+
+const cppDisableEventLoopDelay = $newCppFunction(
+  "JSNodePerformanceHooksHistogram.cpp",
+  "jsFunction_disableEventLoopDelay",
+  1,
+) as (histogram: import("node:perf_hooks").RecordableHistogram) => void;
+
 var {
   Performance,
   PerformanceEntry,
@@ -119,6 +138,74 @@ class PerformanceResourceTiming {
 }
 $toClass(PerformanceResourceTiming, "PerformanceResourceTiming", PerformanceEntry);
 
+// IntervalHistogram wrapper class for event loop delay monitoring
+class IntervalHistogram {
+  #histogram: import("node:perf_hooks").RecordableHistogram;
+  #resolution: number;
+  #enabled: boolean = false;
+
+  constructor(resolution: number) {
+    this.#resolution = resolution;
+    this.#histogram = cppMonitorEventLoopDelay(resolution);
+  }
+
+  enable() {
+    if (!this.#enabled) {
+      cppEnableEventLoopDelay(this.#histogram, this.#resolution);
+      this.#enabled = true;
+      return true;
+    }
+    return false;
+  }
+
+  disable() {
+    if (this.#enabled) {
+      cppDisableEventLoopDelay(this.#histogram);
+      this.#enabled = false;
+      return true;
+    }
+    return false;
+  }
+
+  reset() {
+    this.#histogram.reset();
+  }
+
+  get min() {
+    return this.#histogram.min;
+  }
+
+  get max() {
+    return this.#histogram.max;
+  }
+
+  get mean() {
+    return this.#histogram.mean;
+  }
+
+  get stddev() {
+    return this.#histogram.stddev;
+  }
+
+  get exceeds() {
+    return this.#histogram.exceeds;
+  }
+
+  get percentiles() {
+    return this.#histogram.percentiles;
+  }
+
+  percentile(p: number) {
+    if (typeof p !== 'number') {
+      throw new TypeError('percentile must be a number');
+    }
+    if (Number.isNaN(p) || p < 0 || p > 100) {
+      throw new RangeError('percentile must be between 0 and 100');
+    }
+    return this.#histogram.percentile(p);
+  }
+}
+
 export default {
   performance: {
     mark(_) {
@@ -178,8 +265,25 @@ export default {
   PerformanceObserver,
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
-  // TODO: node:perf_hooks.monitorEventLoopDelay -- https://github.com/oven-sh/bun/issues/17650
-  monitorEventLoopDelay: createFunctionThatMasqueradesAsUndefined("", 0),
+  monitorEventLoopDelay: function monitorEventLoopDelay(options?: { resolution?: number }) {
+    // If options is provided but is not an object (or is null), throw TypeError
+    if (arguments.length > 0 && (options === null || typeof options !== 'object' || Array.isArray(options))) {
+      throw new TypeError('options must be an object');
+    }
+    
+    const resolution = options?.resolution || 10;
+    
+    if (options?.resolution !== undefined) {
+      if (typeof options.resolution !== 'number' || Number.isNaN(options.resolution)) {
+        throw new TypeError('resolution must be a number');
+      }
+      if (options.resolution <= 0 || !Number.isFinite(options.resolution) || options.resolution > Number.MAX_SAFE_INTEGER) {
+        throw new RangeError('resolution must be a positive number');
+      }
+    }
+    
+    return new IntervalHistogram(Math.max(1, resolution));
+  },
   createHistogram: function createHistogram(options?: {
     lowest?: number | bigint;
     highest?: number | bigint;

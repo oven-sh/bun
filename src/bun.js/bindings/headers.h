@@ -729,8 +729,6 @@ BUN_DECLARE_HOST_FUNCTION(Bun__BodyValueBufferer__onResolveStream);
 
 #ifdef __cplusplus
 
-BUN_DECLARE_HOST_FUNCTION(Bun__TestScope__onReject);
-BUN_DECLARE_HOST_FUNCTION(Bun__TestScope__onResolve);
 BUN_DECLARE_HOST_FUNCTION(Bun__TestScope__Describe2__bunTestThen);
 BUN_DECLARE_HOST_FUNCTION(Bun__TestScope__Describe2__bunTestCatch);
 

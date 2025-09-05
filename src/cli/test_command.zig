@@ -1832,6 +1832,9 @@ pub const TestCommand = struct {
             const file_end = reporter.jest.files.len;
 
             {
+                _ = file_start;
+                _ = file_end;
+                _ = is_last;
                 bun.jsc.Jest.describe2.debug.group.begin(@src()); // TODO: remove this
                 defer bun.jsc.Jest.describe2.debug.group.end();
 
@@ -1860,48 +1863,6 @@ pub const TestCommand = struct {
                 vm.eventLoop().tickImmediateTasks(vm);
             }
 
-            for (file_start..file_end) |module_id| {
-                const module: *jest.DescribeScope = reporter.jest.files.items(.module_scope)[module_id];
-
-                vm.onUnhandledRejectionCtx = null;
-                vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
-                module.runTests(vm.global);
-                vm.eventLoop().tick();
-
-                var prev_unhandled_count = vm.unhandled_error_counter;
-                while (vm.active_tasks > 0) {
-                    if (!jest.Jest.runner.?.has_pending_tests) {
-                        jest.Jest.runner.?.drain();
-                    }
-                    vm.eventLoop().tick();
-
-                    while (jest.Jest.runner.?.has_pending_tests) {
-                        vm.eventLoop().autoTick();
-                        if (!jest.Jest.runner.?.has_pending_tests) break;
-                        vm.eventLoop().tick();
-                    } else {
-                        vm.eventLoop().tickImmediateTasks(vm);
-                    }
-
-                    while (prev_unhandled_count < vm.unhandled_error_counter) {
-                        vm.global.handleRejectedPromises();
-                        prev_unhandled_count = vm.unhandled_error_counter;
-                    }
-                }
-
-                vm.eventLoop().tickImmediateTasks(vm);
-
-                switch (vm.aggressive_garbage_collection) {
-                    .none => {},
-                    .mild => {
-                        _ = vm.global.vm().collectAsync();
-                    },
-                    .aggressive => {
-                        _ = vm.global.vm().runGC(false);
-                    },
-                }
-            }
-
             vm.global.handleRejectedPromises();
             if (repeat_index > 0) {
                 try vm.clearEntryPoint();
@@ -1917,14 +1878,6 @@ pub const TestCommand = struct {
             // Ensure these never linger across files.
             vm.auto_killer.clear();
             vm.auto_killer.disable();
-        }
-
-        if (is_last) {
-            if (jest.Jest.runner != null) {
-                if (jest.DescribeScope.runGlobalCallbacks(vm.global, .afterAll)) |err| {
-                    _ = vm.uncaughtException(vm.global, err, true);
-                }
-            }
         }
     }
 };

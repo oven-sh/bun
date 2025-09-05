@@ -38,6 +38,7 @@ pub fn dumpOrder(this: *Execution) bun.JSError!void {
 }
 
 pub const group = struct {
+    const log_enabled = bun.Environment.enable_logs;
     fn printIndent() void {
         std.io.getStdOut().writer().print("\x1b[90m", .{}) catch {};
         for (0..indent) |_| {
@@ -49,6 +50,7 @@ pub const group = struct {
     var last_was_start = false;
     var wants_quiet: ?bool = null;
     fn getWantsQuiet() bool {
+        if (!log_enabled) return true;
         if (wants_quiet) |v| return v;
         if (bun.getenvZ("WANTS_QUIET")) |val| {
             if (!std.mem.eql(u8, val, "0")) {
@@ -63,6 +65,7 @@ pub const group = struct {
         return beginMsg("\x1b[36m{s}\x1b[37m:\x1b[93m{d}\x1b[37m:\x1b[33m{d}\x1b[37m: \x1b[35m{s}\x1b[m", .{ pos.file, pos.line, pos.column, pos.fn_name });
     }
     pub fn beginMsg(comptime fmtt: []const u8, args: anytype) void {
+        if (!log_enabled) return;
         if (getWantsQuiet()) return;
         printIndent();
         std.io.getStdOut().writer().print("\x1b[32m++ \x1b[0m", .{}) catch {};
@@ -71,6 +74,7 @@ pub const group = struct {
         last_was_start = true;
     }
     pub fn end() void {
+        if (!log_enabled) return;
         if (getWantsQuiet()) return;
         indent -= 1;
         defer last_was_start = false;
@@ -79,6 +83,7 @@ pub const group = struct {
         std.io.getStdOut().writer().print("\x1b[32m{s}\x1b[m\n", .{if (last_was_start) "+-" else "--"}) catch {};
     }
     pub fn log(comptime fmtt: []const u8, args: anytype) void {
+        if (!log_enabled) return;
         if (getWantsQuiet()) return;
         printIndent();
         std.io.getStdOut().writer().print(fmtt ++ "\n", args) catch {};

@@ -433,6 +433,24 @@ pub const JSBundler = struct {
                 this.ignore_dce_annotations = flag;
             }
 
+            if (try config.getOptional(globalThis, "tsconfig", ZigString.Slice)) |slice| {
+                defer slice.deinit();
+                const cwd = globalThis.bunVM().transpiler.fs.top_level_dir;
+                const abs_path = bun.path.joinAbsStringZ(cwd, &[_]string{slice.slice()}, .auto);
+
+                const file_fd = bun.sys.open(abs_path, bun.O.RDONLY, 0);
+                if (file_fd == .err) {
+                    const err = file_fd.err;
+                    if (err.getErrno() == .NOENT) {
+                        return globalThis.throwInvalidArguments("Cannot find tsconfig file \"{s}\"", .{abs_path});
+                    }
+                    return globalThis.throwInvalidArguments("Cannot read tsconfig file \"{s}\": {s}", .{ abs_path, err.name() });
+                }
+                file_fd.result.close();
+
+                try this.tsconfig_override.appendSliceExact(abs_path);
+            }
+
             if (try config.getTruthy(globalThis, "conditions")) |conditions_value| {
                 if (conditions_value.isString()) {
                     var slice = try conditions_value.toSliceOrNull(globalThis);

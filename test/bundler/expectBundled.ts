@@ -213,6 +213,7 @@ export interface BundlerTestInput {
   unsupportedJSFeatures?: string[];
   /** if set to true or false, create or edit tsconfig.json to set compilerOptions.useDefineForClassFields */
   useDefineForClassFields?: boolean;
+  tsconfig?: string;
   sourceMap?: "inline" | "external" | "linked" | "none" | "linked";
   plugins?: BunPlugin[] | ((builder: PluginBuilder) => void | Promise<void>);
   install?: string[];
@@ -1064,6 +1065,7 @@ function expectBundled(
           splitting,
           target,
           bytecode,
+          tsconfig: opts.tsconfig ? path.join(root, opts.tsconfig) : undefined,
           publicPath,
           emitDCEAnnotations,
           ignoreDCEAnnotations,

@@ -938,6 +938,97 @@ export { greeting };`,
     }
   });
 
+  test("should resolve modules using baseUrl", async () => {
+    const dir = tempDirWithFiles("tsconfig-api-baseurl", {
+      "tsconfig.custom.json": `{
+        "compilerOptions": {
+          "baseUrl": "./src"
+        }
+      }`,
+      "src/utils/helper.ts": `export function helper() { return "helper function"; }`,
+      "src/components/main.ts": `
+        import { helper } from "utils/helper";
+        export const result = helper();
+      `,
+      "index.ts": `
+        import { result } from "./src/components/main";
+        console.log(result);
+      `,
+    });
+
+    try {
+      process.chdir(dir);
+      const result = await Bun.build({
+        entrypoints: ["./index.ts"],
+        tsconfig: "./tsconfig.custom.json",
+      });
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("helper function");
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
+  test("should work even when default tsconfig.json is present", async () => {
+    const dir = tempDirWithFiles("tsconfig-api-override-default", {
+      "tsconfig.json": `{
+          "compilerOptions": {
+            "baseUrl": "./wrong"
+          }
+        }`,
+      "tsconfig.custom.json": `{
+        "compilerOptions": {
+          "baseUrl": "./src"
+        }
+      }`,
+      "src/utils/helper.ts": `export function helper() { return "helper function"; }`,
+      "src/components/main.ts": `
+        import { helper } from "utils/helper";
+        export const result = helper();
+      `,
+      "index.ts": `
+        import { result } from "./src/components/main";
+        console.log(result);
+      `,
+    });
+
+    try {
+      process.chdir(dir);
+      const result = await Bun.build({
+        entrypoints: ["./index.ts"],
+        tsconfig: "./tsconfig.custom.json",
+      });
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      const output = await result.outputs[0].text();
+      expect(output).toContain("helper function");
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
+  test("should error when tsconfig file does not exist", async () => {
+    const dir = tempDirWithFiles("tsconfig-api-missing", {
+      "index.ts": `console.log("hello");`,
+    });
+
+    try {
+      process.chdir(dir);
+      expect(() =>
+        Bun.build({
+          entrypoints: ["./index.ts"],
+          tsconfig: "./does-not-exist.json",
+        }),
+      ).toThrow("Cannot find tsconfig file");
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+});
+
+describe("onEnd", () => {
   test("onEnd fires before promise resolves with throw: true", async () => {
     const dir = tempDirWithFiles("onend-throwonerror-true", {
       "index.ts": `

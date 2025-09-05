@@ -1808,6 +1808,10 @@ pub const BundleV2 = struct {
                         config.dir.sliceWithSentinel()
                     else
                         null,
+                    .tsconfig_override = if (config.tsconfig_override.list.items.len > 0)
+                        config.tsconfig_override.slice()
+                    else
+                        null,
                     .inject = &.{},
                     .external = config.external.keys(),
                     .main_fields = &.{},

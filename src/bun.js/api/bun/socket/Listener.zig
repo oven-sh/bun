@@ -437,7 +437,7 @@ pub fn stop(this: *Listener, _: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
 fn doStop(this: *Listener, force_close: bool) void {
     if (this.listener == .none) return;
     const listener = this.listener;
-    
+
     // Unlink Unix socket file BEFORE closing the socket to avoid race conditions
     // (same approach as libuv - see uv__pipe_close in deps/uv/src/unix/pipe.c)
     if (!Environment.isWindows) {
@@ -453,7 +453,7 @@ fn doStop(this: *Listener, force_close: bool) void {
             }
         }
     }
-    
+
     defer switch (listener) {
         .uws => |socket| socket.close(this.ssl),
         .namedPipe => |namedPipe| if (Environment.isWindows) namedPipe.closePipeAndDeinit(),

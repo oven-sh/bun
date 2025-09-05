@@ -3810,6 +3810,7 @@ pub fn moveFileZWithHandle(from_handle: bun.FileDescriptor, from_dir: bun.FileDe
             if (err.getErrno() == .XDEV) {
                 try copyFileZSlowWithHandle(from_handle, to_dir, destination).unwrap();
                 _ = unlinkat(from_dir, filename);
+                return;
             }
 
             return bun.errnoToZigErr(err.errno);

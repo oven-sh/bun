@@ -8,6 +8,10 @@ Bun reads the following files automatically (listed in order of increasing prece
 - `.env.production`, `.env.development`, `.env.test` (depending on value of `NODE_ENV`)
 - `.env.local`
 
+{% callout %}
+**Note:** When `NODE_ENV=test`, `.env.local` is **not** loaded. This ensures consistent test environments across different executions by preventing local overrides during testing. This behavior matches popular frameworks like [Next.js](https://nextjs.org/docs/pages/guides/environment-variables#test-environment-variables) and [Create React App](https://create-react-app.dev/docs/adding-custom-environment-variables/#what-other-env-files-can-be-used).
+{% /callout %}
+
 ```txt#.env
 FOO=hello
 BAR=world
@@ -33,7 +37,7 @@ $ $env:FOO="helloworld"; bun run dev
 
 {% details summary="Cross-platform solution with Windows" %}
 
-For a cross-platform solution, you can use [bun shell](https://bun.sh/docs/runtime/shell). For example, the `bun exec` command.
+For a cross-platform solution, you can use [bun shell](https://bun.com/docs/runtime/shell). For example, the `bun exec` command.
 
 ```sh
 $ bun exec 'FOO=helloworld bun run dev'

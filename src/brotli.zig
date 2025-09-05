@@ -1,10 +1,6 @@
-const bun = @import("bun");
-const std = @import("std");
 pub const c = @import("./deps/brotli_c.zig");
 const BrotliDecoder = c.BrotliDecoder;
 const BrotliEncoder = c.BrotliEncoder;
-
-const mimalloc = bun.Mimalloc;
 
 pub const BrotliAllocator = struct {
     pub fn alloc(_: ?*anyopaque, len: usize) callconv(.C) *anyopaque {
@@ -162,9 +158,11 @@ pub const BrotliReaderArrayList = struct {
                     }
                     this.state = .Inflating;
                     if (is_done) {
+                        // Stream is truncated - we're at EOF but decoder needs more data
                         this.state = .Error;
+                        return error.BrotliDecompressionError;
                     }
-
+                    // Not at EOF - we can retry with more data
                     return error.ShortRead;
                 },
                 .needs_more_output => {
@@ -282,3 +280,8 @@ pub const BrotliCompressionStream = struct {
         return this.writerContext(writable).writer();
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const mimalloc = bun.mimalloc;

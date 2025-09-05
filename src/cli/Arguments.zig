@@ -1,5 +1,3 @@
-const Arguments = @This();
-
 pub fn loader_resolver(in: string) !Api.Loader {
     const option_loader = options.Loader.fromString(in) orelse return error.InvalidLoader;
     return option_loader.toAPI();
@@ -73,6 +71,7 @@ pub const transpiler_params_ = [_]ParamType{
     clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
     clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
     clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
+    clap.parseParam("--jsx-side-effects                Treat JSX elements as having side effects (disable pure annotations)") catch unreachable,
     clap.parseParam("--ignore-dce-annotations          Ignore tree-shaking annotations such as @__PURE__") catch unreachable,
 };
 pub const runtime_params_ = [_]ParamType{
@@ -106,8 +105,11 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
     clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
     clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
+    clap.parseParam("--sql-preconnect                  Preconnect to PostgreSQL at startup") catch unreachable,
     clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
     clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"") catch unreachable,
+    clap.parseParam("--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)") catch unreachable,
+    clap.parseParam("--user-agent <STR>               Set the default User-Agent header for HTTP requests") catch unreachable,
 };
 
 pub const auto_or_run_params = [_]ParamType{
@@ -138,6 +140,7 @@ pub const bunx_commands = [_]ParamType{
 pub const build_only_params = [_]ParamType{
     clap.parseParam("--production                     Set NODE_ENV=production and enable minification") catch unreachable,
     clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production") catch unreachable,
+    clap.parseParam("--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv") catch unreachable,
     clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
     clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
     clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
@@ -171,6 +174,11 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'.") catch unreachable,
     clap.parseParam("--windows-hide-console           When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable") catch unreachable,
     clap.parseParam("--windows-icon <STR>             When using --compile targeting Windows, assign an executable icon") catch unreachable,
+    clap.parseParam("--windows-title <STR>            When using --compile targeting Windows, set the executable product name") catch unreachable,
+    clap.parseParam("--windows-publisher <STR>        When using --compile targeting Windows, set the executable company name") catch unreachable,
+    clap.parseParam("--windows-version <STR>          When using --compile targeting Windows, set the executable version (e.g. 1.2.3.4)") catch unreachable,
+    clap.parseParam("--windows-description <STR>      When using --compile targeting Windows, set the executable description") catch unreachable,
+    clap.parseParam("--windows-copyright <STR>        When using --compile targeting Windows, set the executable copyright") catch unreachable,
 } ++ if (FeatureFlags.bake_debugging_features) [_]ParamType{
     clap.parseParam("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically") catch unreachable,
     clap.parseParam("--debug-no-minify                When --app is set, do not minify anything") catch unreachable,
@@ -463,6 +471,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
         }
         if (args.option("--test-name-pattern")) |namePattern| {
+            ctx.test_options.test_filter_pattern = namePattern;
             const regex = RegularExpression.init(bun.String.fromBytes(namePattern), RegularExpression.Flags.none) catch {
                 Output.prettyErrorln(
                     "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",
@@ -516,7 +525,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     }
 
     opts.tsconfig_override = if (args.option("--tsconfig-override")) |ts|
-        (Arguments.readFile(allocator, cwd, ts) catch |err| fileReadError(err, Output.errorStream(), ts, "tsconfig.json"))
+        resolve_path.joinAbsString(cwd, &[_]string{ts}, .auto)
     else
         null;
 
@@ -587,6 +596,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.runtime_options.redis_preconnect = true;
         }
 
+        if (args.flag("--sql-preconnect")) {
+            ctx.runtime_options.sql_preconnect = true;
+        }
+
         if (args.flag("--no-addons")) {
             // used for disabling process.dlopen and
             // for disabling export condition "node-addons"
@@ -632,6 +645,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
         }
 
+        if (args.option("--user-agent")) |user_agent| {
+            bun.http.overridden_default_user_agent = user_agent;
+        }
+
         ctx.debug.offline_mode_setting = if (args.flag("--prefer-offline"))
             Bunfig.OfflineMode.offline
         else if (args.flag("--prefer-latest"))
@@ -667,6 +684,15 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.runtime_options.preconnect = args.options("--fetch-preconnect");
         ctx.runtime_options.expose_gc = args.flag("--expose-gc");
 
+        if (args.option("--console-depth")) |depth_str| {
+            const depth = std.fmt.parseInt(u16, depth_str, 10) catch {
+                Output.errGeneric("Invalid value for --console-depth: \"{s}\". Must be a positive integer\n", .{depth_str});
+                Global.exit(1);
+            };
+            // Treat depth=0 as maxInt(u16) for infinite depth
+            ctx.runtime_options.console_depth = if (depth == 0) std.math.maxInt(u16) else depth;
+        }
+
         if (args.option("--dns-result-order")) |order| {
             ctx.runtime_options.dns_result_order = order;
         }
@@ -679,7 +705,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .path_or_port = inspect_flag,
                 } };
 
-            bun.JSC.RuntimeTranspilerCache.is_disabled = true;
+            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         } else if (args.option("--inspect-wait")) |inspect_flag| {
             ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                 Command.Debugger{ .enable = .{
@@ -691,7 +717,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .wait_for_connection = true,
                 } };
 
-            bun.JSC.RuntimeTranspilerCache.is_disabled = true;
+            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         } else if (args.option("--inspect-brk")) |inspect_flag| {
             ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                 Command.Debugger{ .enable = .{
@@ -705,7 +731,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .set_breakpoint_on_first_line = true,
                 } };
 
-            bun.JSC.RuntimeTranspilerCache.is_disabled = true;
+            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         }
 
         if (args.flag("--no-deprecation")) {
@@ -867,6 +893,14 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.bundler_options.inline_entrypoint_import_meta_main = true;
         }
 
+        if (args.option("--compile-exec-argv")) |compile_exec_argv| {
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--compile-exec-argv requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.compile_exec_argv = compile_exec_argv;
+        }
+
         if (args.flag("--windows-hide-console")) {
             // --windows-hide-console technically doesnt depend on WinAPI, but since since --windows-icon
             // does, all of these customization options have been gated to windows-only
@@ -878,7 +912,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("--windows-hide-console requires --compile", .{});
                 Global.crash();
             }
-            ctx.bundler_options.windows_hide_console = true;
+            ctx.bundler_options.windows.hide_console = true;
         }
         if (args.option("--windows-icon")) |path| {
             if (!Environment.isWindows) {
@@ -889,7 +923,62 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("--windows-icon requires --compile", .{});
                 Global.crash();
             }
-            ctx.bundler_options.windows_icon = path;
+            ctx.bundler_options.windows.icon = path;
+        }
+        if (args.option("--windows-title")) |title| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-title is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-title requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.title = title;
+        }
+        if (args.option("--windows-publisher")) |publisher| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-publisher is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-publisher requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.publisher = publisher;
+        }
+        if (args.option("--windows-version")) |version| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-version is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-version requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.version = version;
+        }
+        if (args.option("--windows-description")) |description| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-description is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-description requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.description = description;
+        }
+        if (args.option("--windows-copyright")) |copyright| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-copyright is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-copyright requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.copyright = copyright;
         }
 
         if (args.option("--outdir")) |outdir| {
@@ -1032,6 +1121,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     const jsx_fragment = args.option("--jsx-fragment");
     const jsx_import_source = args.option("--jsx-import-source");
     const jsx_runtime = args.option("--jsx-runtime");
+    const jsx_side_effects = args.flag("--jsx-side-effects");
 
     if (cmd == .AutoCommand or cmd == .RunCommand) {
         // "run.silent" in bunfig.toml
@@ -1050,7 +1140,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
         if (opts.define) |define| {
             if (define.keys.len > 0)
-                bun.JSC.RuntimeTranspilerCache.is_disabled = true;
+                bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         }
     }
 
@@ -1078,6 +1168,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 .import_source = (jsx_import_source orelse &default_import_source),
                 .runtime = if (jsx_runtime) |runtime| try resolve_jsx_runtime(runtime) else Api.JsxRuntime.automatic,
                 .development = false,
+                .side_effects = jsx_side_effects,
             };
         } else {
             opts.jsx = Api.Jsx{
@@ -1086,6 +1177,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 .import_source = (jsx_import_source orelse opts.jsx.?.import_source),
                 .runtime = if (jsx_runtime) |runtime| try resolve_jsx_runtime(runtime) else opts.jsx.?.runtime,
                 .development = false,
+                .side_effects = jsx_side_effects,
             };
         }
     }
@@ -1158,28 +1250,31 @@ export var Bun__Node__ZeroFillBuffers = false;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
 
-const bun = @import("bun");
-const std = @import("std");
-const Environment = bun.Environment;
-const Api = bun.Schema.Api;
-const logger = bun.logger;
-const strings = bun.strings;
-const string = bun.string;
-const clap = bun.clap;
+const string = []const u8;
+
 const builtin = @import("builtin");
-const FeatureFlags = bun.FeatureFlags;
-const Command = CLI.Command;
-const Output = bun.Output;
-const Global = bun.Global;
-const debug_flags = CLI.debug_flags;
-const js_ast = bun.js_ast;
-const resolve_path = bun.path;
+const std = @import("std");
+
+const bun = @import("bun");
 const Bunfig = bun.Bunfig;
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const Global = bun.Global;
 const OOM = bun.OOM;
-const options = bun.options;
-const printVersionAndExit = CLI.printVersionAndExit;
-const printRevisionAndExit = CLI.printRevisionAndExit;
-const CLI = bun.CLI;
+const Output = bun.Output;
 const RegularExpression = bun.RegularExpression;
+const clap = bun.clap;
+const js_ast = bun.ast;
+const logger = bun.logger;
+const options = bun.options;
+const resolve_path = bun.path;
+const strings = bun.strings;
+const Api = bun.schema.api;
+
+const CLI = bun.cli;
+const Command = CLI.Command;
 const DefineColonList = CLI.DefineColonList;
 const LoaderColonList = CLI.LoaderColonList;
+const debug_flags = CLI.debug_flags;
+const printRevisionAndExit = CLI.printRevisionAndExit;
+const printVersionAndExit = CLI.printVersionAndExit;

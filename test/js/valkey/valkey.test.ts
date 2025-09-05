@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { ConnectionType, createClient, ctx, DEFAULT_REDIS_URL, expectType, isEnabled } from "./test-utils";
 
 describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     if (ctx.redis?.connected) {
       ctx.redis.close?.();
     }
     ctx.redis = createClient(ConnectionType.TCP);
+
+    await ctx.redis.send("FLUSHALL", ["SYNC"]);
   });
 
   describe("Basic Operations", () => {
@@ -174,6 +176,37 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       expect(async () => {
         await customRedis.get("test");
       }).toThrowErrorMatchingInlineSnapshot(`"WRONGPASS invalid username-password pair or user is disabled."`);
+    });
+
+    const testKeyUniquePerDb = crypto.randomUUID();
+    test.each([...Array(16).keys()])("Connecting to database with url $url succeeds", async (dbId: number) => {
+      const redis = createClient(ConnectionType.TCP, {}, dbId);
+
+      // Ensure the value is not in the database.
+      const testValue = await redis.get(testKeyUniquePerDb);
+      expect(testValue).toBeNull();
+
+      redis.close();
+    });
+  });
+
+  describe("Reconnections", () => {
+    test("should automatically reconnect after connection drop", async () => {
+      const TEST_KEY = "test-key";
+      const TEST_VALUE = "test-value";
+
+      const valueBeforeStart = await ctx.redis.get(TEST_KEY);
+      expect(valueBeforeStart).toBeNull();
+
+      // Set some value
+      await ctx.redis.set(TEST_KEY, TEST_VALUE);
+      const valueAfterSet = await ctx.redis.get(TEST_KEY);
+      expect(valueAfterSet).toBe(TEST_VALUE);
+
+      await ctx.restartServer();
+
+      const valueAfterStop = await ctx.redis.get(TEST_KEY);
+      expect(valueAfterStop).toBe(TEST_VALUE);
     });
   });
 });

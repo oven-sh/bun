@@ -31,8 +31,10 @@
 
 #include "config.h"
 #include "WebSocket.h"
+#include "WebSocketDeflate.h"
 #include "headers.h"
-// #include "Blob.h"
+#include "blob.h"
+#include "ZigGeneratedClasses.h"
 #include "CloseEvent.h"
 // #include "ContentSecurityPolicy.h"
 // #include "DOMWindow.h"
@@ -71,6 +73,7 @@
 
 #include "JSBuffer.h"
 #include "ErrorEvent.h"
+#include "WebSocketDeflate.h"
 
 // #if USE(WEB_THREAD)
 // #include "WebCoreThreadRun.h"
@@ -79,6 +82,22 @@
 namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSocket);
 extern "C" int Bun__getTLSRejectUnauthorizedValue();
+
+static ErrorEvent::Init createErrorEventInit(WebSocket& webSocket, const String& reason, JSC::JSGlobalObject* globalObject)
+{
+    ErrorEvent::Init eventInit = {};
+    if (reason.isEmpty()) {
+        eventInit.message = makeString("WebSocket connection to '"_s, webSocket.url().stringCenterEllipsizedToLength(), "' failed"_s);
+    } else {
+        eventInit.message = makeString("WebSocket connection to '"_s, webSocket.url().stringCenterEllipsizedToLength(), "' failed: "_s, reason);
+    }
+    eventInit.filename = String();
+    eventInit.bubbles = false;
+    eventInit.cancelable = false;
+    eventInit.colno = 0;
+    eventInit.error = JSC::createError(globalObject, eventInit.message);
+    return eventInit;
+}
 
 static size_t getFramingOverhead(size_t payloadSize)
 {
@@ -456,8 +475,13 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         if (auto* context = scriptExecutionContext()) {
             context->postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
-                protectedThis->dispatchEvent(Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
-                protectedThis->dispatchEvent(CloseEvent::create(false, 1006, "Failed to connect"_s));
+                auto* globalObject = context.jsGlobalObject();
+
+                auto eventInit = createErrorEventInit(protectedThis, "Failed to connect"_s, globalObject);
+                auto message = eventInit.message;
+                protectedThis->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTFMove(eventInit), EventIsTrusted::Yes));
+                protectedThis->dispatchEvent(CloseEvent::create(false, 1006, WTFMove(message)));
+
                 protectedThis->decPendingActivityCount();
             });
         }
@@ -541,22 +565,27 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
     return {};
 }
 
-// ExceptionOr<void> WebSocket::send(Blob& binaryData)
-// {
-// LOG(Network, "WebSocket %p send() Sending Blob '%s'", this, binaryData.url().stringCenterEllipsizedToLength().utf8().data());
-//     if (m_state == CONNECTING)
-//         return Exception { InvalidStateError };
-//     if (m_state == CLOSING || m_state == CLOSED) {
-//         unsigned payloadSize = static_cast<unsigned>(binaryData.size());
-//         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
-//         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
-//         return {};
-//     }
-//     m_bufferedAmount = saturateAdd(m_bufferedAmount, binaryData.size());
-//     ASSERT(m_channel);
-//     m_channel->send(binaryData);
-//     return {};
-// }
+WebCore::ExceptionOr<void> WebCore::WebSocket::send(WebCore::JSBlob* blob)
+{
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+    if (m_state == CLOSING || m_state == CLOSED) {
+        return {};
+    }
+
+    // Get the blob data and send it using existing binary data path
+    void* dataPtr = Blob__getDataPtr(JSC::JSValue::encode(blob));
+    size_t dataSize = Blob__getSize(JSC::JSValue::encode(blob));
+
+    if (dataPtr && dataSize > 0) {
+        this->sendWebSocketData(static_cast<const char*>(dataPtr), dataSize, Opcode::Binary);
+    } else {
+        // Send empty frame for empty blobs
+        this->sendWebSocketData(nullptr, 0, Opcode::Binary);
+    }
+
+    return {};
+}
 
 void WebSocket::sendWebSocketData(const char* baseAddress, size_t length, const Opcode op)
 {
@@ -934,10 +963,10 @@ String WebSocket::binaryType() const
 
 ExceptionOr<void> WebSocket::setBinaryType(const String& binaryType)
 {
-    // if (binaryType == "blob"_s) {
-    //     m_binaryType = BinaryType::Blob;
-    //     return {};
-    // }
+    if (binaryType == "blob"_s) {
+        m_binaryType = BinaryType::Blob;
+        return {};
+    }
     if (binaryType == "arraybuffer"_s) {
         m_binaryType = BinaryType::ArrayBuffer;
         return {};
@@ -1080,10 +1109,26 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
     //         inspector->didReceiveWebSocketFrame(WebSocketChannelInspector::createFrame(binaryData.data(), binaryData.size(), WebSocketFrame::OpCode::OpCodeBinary));
     // }
     switch (m_binaryType) {
-    // case BinaryType::Blob:
-    //     // FIXME: We just received the data from NetworkProcess, and are sending it back. This is inefficient.
-    //     dispatchEvent(MessageEvent::create(Blob::create(scriptExecutionContext(), WTFMove(binaryData), emptyString()), SecurityOrigin::create(m_url)->toString()));
-    //     break;
+    case BinaryType::Blob:
+        if (this->hasEventListeners(eventName)) {
+            // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
+            this->incPendingActivityCount();
+            RefPtr<Blob> blob = Blob::create(binaryData, scriptExecutionContext()->jsGlobalObject());
+            dispatchEvent(MessageEvent::create(eventName, blob.releaseNonNull(), m_url.string()));
+            this->decPendingActivityCount();
+            return;
+        }
+
+        if (auto* context = scriptExecutionContext()) {
+            RefPtr<Blob> blob = Blob::create(binaryData, context->jsGlobalObject());
+            context->postTask([this, name = eventName, blob = blob.releaseNonNull(), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+                ASSERT(scriptExecutionContext());
+                protectedThis->dispatchEvent(MessageEvent::create(name, blob, protectedThis->m_url.string()));
+                protectedThis->decPendingActivityCount();
+            });
+        }
+
+        break;
     case BinaryType::ArrayBuffer: {
         if (this->hasEventListeners(eventName)) {
             // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
@@ -1154,9 +1199,6 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
 
         break;
     }
-    case BinaryType::Blob: {
-        // TODO: Blob is not supported currently.
-    }
     }
     // });
 }
@@ -1169,17 +1211,11 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
         return;
     const bool wasConnecting = m_state == CONNECTING;
     m_state = CLOSED;
-    if (scriptExecutionContext()) {
+    if (auto* context = scriptExecutionContext()) {
         this->incPendingActivityCount();
         if (wasConnecting && isConnectionError) {
-            ErrorEvent::Init eventInit = {};
-            eventInit.message = makeString("WebSocket connection to '"_s, m_url.stringCenterEllipsizedToLength(), "' failed: "_s, reason);
-            eventInit.filename = String();
-            eventInit.bubbles = false;
-            eventInit.cancelable = false;
-            eventInit.colno = 0;
-            eventInit.error = {};
-            dispatchEvent(ErrorEvent::create(eventNames().errorEvent, eventInit, EventIsTrusted::Yes));
+            auto eventInit = createErrorEventInit(*this, reason, context->jsGlobalObject());
+            dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTFMove(eventInit), EventIsTrusted::Yes));
         }
         // https://html.spec.whatwg.org/multipage/web-sockets.html#feedback-from-the-protocol:concept-websocket-closed, we should synchronously fire a close event.
         dispatchEvent(CloseEvent::create(wasClean == CleanStatus::Clean, code, reason));
@@ -1258,22 +1294,44 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     this->disablePendingActivity();
 }
 
-void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize)
+void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params)
 {
     this->m_upgradeClient = nullptr;
+
+    // Set extensions if permessage-deflate was negotiated
+    if (deflate_params != nullptr) {
+        StringBuilder extensions;
+        extensions.append("permessage-deflate"_s);
+        if (deflate_params->server_no_context_takeover) {
+            extensions.append("; server_no_context_takeover"_s);
+        }
+        if (deflate_params->client_no_context_takeover) {
+            extensions.append("; client_no_context_takeover"_s);
+        }
+        if (deflate_params->server_max_window_bits != 15) {
+            extensions.append("; server_max_window_bits="_s);
+            extensions.append(String::number(deflate_params->server_max_window_bits));
+        }
+        if (deflate_params->client_max_window_bits != 15) {
+            extensions.append("; client_max_window_bits="_s);
+            extensions.append(String::number(deflate_params->client_max_window_bits));
+        }
+        this->m_extensions = extensions.toString();
+    }
+
     if (m_isSecure) {
         us_socket_context_t* ctx = (us_socket_context_t*)this->scriptExecutionContext()->connectedWebSocketContext<true, false>();
-        this->m_connectedWebSocket.clientSSL = Bun__WebSocketClientTLS__init(reinterpret_cast<CppWebSocket*>(this), socket, ctx, this->scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<unsigned char*>(bufferedData), bufferedDataSize);
+        this->m_connectedWebSocket.clientSSL = Bun__WebSocketClientTLS__init(reinterpret_cast<CppWebSocket*>(this), socket, ctx, this->scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<unsigned char*>(bufferedData), bufferedDataSize, deflate_params);
         this->m_connectedWebSocketKind = ConnectedWebSocketKind::ClientSSL;
     } else {
         us_socket_context_t* ctx = (us_socket_context_t*)this->scriptExecutionContext()->connectedWebSocketContext<false, false>();
-        this->m_connectedWebSocket.client = Bun__WebSocketClient__init(reinterpret_cast<CppWebSocket*>(this), socket, ctx, this->scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<unsigned char*>(bufferedData), bufferedDataSize);
+        this->m_connectedWebSocket.client = Bun__WebSocketClient__init(reinterpret_cast<CppWebSocket*>(this), socket, ctx, this->scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<unsigned char*>(bufferedData), bufferedDataSize, deflate_params);
         this->m_connectedWebSocketKind = ConnectedWebSocketKind::Client;
     }
 
     this->didConnect();
 }
-void WebSocket::didFailWithErrorCode(int32_t code)
+void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
 {
     // from new WebSocket() -> connect()
 
@@ -1281,148 +1339,141 @@ void WebSocket::didFailWithErrorCode(int32_t code)
         return;
 
     this->m_upgradeClient = nullptr;
+    if (this->m_connectedWebSocketKind == ConnectedWebSocketKind::ClientSSL) {
+        this->m_connectedWebSocket.clientSSL = nullptr;
+    } else if (this->m_connectedWebSocketKind == ConnectedWebSocketKind::Client) {
+        this->m_connectedWebSocket.client = nullptr;
+    }
     this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
-    this->m_connectedWebSocket.client = nullptr;
-
     switch (code) {
-    // cancel
-    case 0: {
+
+    case Bun::WebSocketErrorCode::cancel: {
+        didReceiveClose(CleanStatus::NotClean, 1000, "Connection cancelled"_s);
         break;
     }
-    // invalid_response
-    case 1: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid response"_s);
+    case Bun::WebSocketErrorCode::invalid_response: {
+        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid response"_s, true);
         break;
     }
-    // expected_101_status_code
-    case 2: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Expected 101 status code"_s);
+    case Bun::WebSocketErrorCode::expected_101_status_code: {
+        didReceiveClose(CleanStatus::NotClean, 1002, "Expected 101 status code"_s, true);
         break;
     }
-    // missing_upgrade_header
-    case 3: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Missing upgrade header"_s);
+    case Bun::WebSocketErrorCode::missing_upgrade_header: {
+        didReceiveClose(CleanStatus::NotClean, 1002, "Missing upgrade header"_s, true);
         break;
     }
-    // missing_connection_header
-    case 4: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Missing connection header"_s);
+    case Bun::WebSocketErrorCode::missing_connection_header: {
+        didReceiveClose(CleanStatus::NotClean, 1002, "Missing connection header"_s, true);
         break;
     }
-    // missing_websocket_accept_header
-    case 5: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Missing websocket accept header"_s);
+    case Bun::WebSocketErrorCode::missing_websocket_accept_header: {
+        didReceiveClose(CleanStatus::NotClean, 1002, "Missing websocket accept header"_s, true);
         break;
     }
-    // invalid_upgrade_header
-    case 6: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid upgrade header"_s);
+    case Bun::WebSocketErrorCode::invalid_upgrade_header: {
+        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid upgrade header"_s, true);
         break;
     }
-    // invalid_connection_header
-    case 7: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid connection header"_s);
+    case Bun::WebSocketErrorCode::invalid_connection_header: {
+        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid connection header"_s, true);
         break;
     }
-    // invalid_websocket_version
-    case 8: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid websocket version"_s);
+    case Bun::WebSocketErrorCode::invalid_websocket_version: {
+        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid websocket version"_s, true);
         break;
     }
-    // mismatch_websocket_accept_header
-    case 9: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Mismatch websocket accept header"_s);
+    case Bun::WebSocketErrorCode::mismatch_websocket_accept_header: {
+        didReceiveClose(CleanStatus::NotClean, 1002, "Mismatch websocket accept header"_s, true);
         break;
     }
-    // missing_client_protocol
-    case 10: {
+    case Bun::WebSocketErrorCode::missing_client_protocol: {
         didReceiveClose(CleanStatus::Clean, 1002, "Missing client protocol"_s);
         break;
     }
-    // mismatch_client_protocol
-    case 11: {
+    case Bun::WebSocketErrorCode::mismatch_client_protocol: {
         didReceiveClose(CleanStatus::Clean, 1002, "Mismatch client protocol"_s);
         break;
     }
-    // timeout
-    case 12: {
+    case Bun::WebSocketErrorCode::timeout: {
         didReceiveClose(CleanStatus::Clean, 1013, "Timeout"_s);
         break;
     }
-    // closed
-    case 13: {
+    case Bun::WebSocketErrorCode::closed: {
         didReceiveClose(CleanStatus::Clean, 1000, "Closed by client"_s);
         break;
     }
-    // failed_to_write
-    case 14: {
+    case Bun::WebSocketErrorCode::failed_to_write: {
         didReceiveClose(CleanStatus::NotClean, 1006, "Failed to write"_s);
         break;
     }
-    // failed_to_connect
-    case 15: {
+    case Bun::WebSocketErrorCode::failed_to_connect: {
         didReceiveClose(CleanStatus::NotClean, 1006, "Failed to connect"_s, true);
         break;
     }
-    // headers_too_large
-    case 16: {
-        didReceiveClose(CleanStatus::NotClean, 1007, "Headers too large"_s);
+    case Bun::WebSocketErrorCode::headers_too_large: {
+        didReceiveClose(CleanStatus::NotClean, 1007, "Headers too large"_s, true);
         break;
     }
-    // ended
-    case 17: {
-        didReceiveClose(CleanStatus::NotClean, 1006, "Connection ended"_s);
+    case Bun::WebSocketErrorCode::ended: {
+        didReceiveClose(CleanStatus::NotClean, 1006, "Connection ended"_s, true);
         break;
     }
 
-    // failed_to_allocate_memory
-    case 18: {
+    case Bun::WebSocketErrorCode::failed_to_allocate_memory: {
         didReceiveClose(CleanStatus::NotClean, 1001, "Failed to allocate memory"_s);
         break;
     }
-    // control_frame_is_fragmented
-    case 19: {
+    case Bun::WebSocketErrorCode::control_frame_is_fragmented: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - control frame is fragmented"_s);
         break;
     }
-    // invalid_control_frame
-    case 20: {
+    case Bun::WebSocketErrorCode::invalid_control_frame: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - invalid control frame"_s);
         break;
     }
-    // compression_unsupported
-    case 21: {
+    case Bun::WebSocketErrorCode::compression_unsupported: {
         didReceiveClose(CleanStatus::Clean, 1011, "Compression not implemented yet"_s);
         break;
     }
-    // unexpected_mask_from_server
-    case 22: {
+    case Bun::WebSocketErrorCode::unexpected_mask_from_server: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - unexpected mask from server"_s);
         break;
     }
-    // expected_control_frame
-    case 23: {
+    case Bun::WebSocketErrorCode::expected_control_frame: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - expected control frame"_s);
         break;
     }
-    // unsupported_control_frame
-    case 24: {
+    case Bun::WebSocketErrorCode::unsupported_control_frame: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - unsupported control frame"_s);
         break;
     }
-    // unexpected_opcode
-    case 25: {
+    case Bun::WebSocketErrorCode::unexpected_opcode: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - unexpected opcode"_s);
         break;
     }
-    // invalid_utf8
-    case 26: {
+    case Bun::WebSocketErrorCode::invalid_utf8: {
         didReceiveClose(CleanStatus::NotClean, 1003, "Server sent invalid UTF8"_s);
         break;
     }
-    // tls_handshake_failed
-    case 27: {
-        didReceiveClose(CleanStatus::NotClean, 1015, "TLS handshake failed"_s);
+    case Bun::WebSocketErrorCode::tls_handshake_failed: {
+        didReceiveClose(CleanStatus::NotClean, 1015, "TLS handshake failed"_s, true);
+        break;
+    }
+    case Bun::WebSocketErrorCode::message_too_big: {
+        didReceiveClose(CleanStatus::NotClean, 1009, "Message too big"_s);
+        break;
+    }
+    case Bun::WebSocketErrorCode::protocol_error: {
+        didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error"_s);
+        break;
+    }
+    case Bun::WebSocketErrorCode::compression_failed: {
+        didReceiveClose(CleanStatus::NotClean, 1002, "Compression failed"_s);
+        break;
+    }
+    case Bun::WebSocketErrorCode::invalid_compressed_data: {
+        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid compressed data"_s);
         break;
     }
     }
@@ -1452,11 +1503,11 @@ void WebSocket::updateHasPendingActivity()
 
 } // namespace WebCore
 
-extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t* socket, char* bufferedData, size_t len)
+extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t* socket, char* bufferedData, size_t len, const PerMessageDeflateParams* deflate_params)
 {
-    webSocket->didConnect(socket, bufferedData, len);
+    webSocket->didConnect(socket, bufferedData, len, deflate_params);
 }
-extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, int32_t errorCode)
+extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode)
 {
     webSocket->didFailWithErrorCode(errorCode);
 }
@@ -1500,4 +1551,58 @@ extern "C" void WebSocket__incrementPendingActivity(WebCore::WebSocket* webSocke
 extern "C" void WebSocket__decrementPendingActivity(WebCore::WebSocket* webSocket)
 {
     webSocket->decPendingActivityCount();
+}
+
+WebCore::ExceptionOr<void> WebCore::WebSocket::ping(WebCore::JSBlob* blob)
+{
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+    if (m_state == CLOSING || m_state == CLOSED) {
+        return {};
+    }
+
+    // Get the blob data and send it using existing binary data path
+    void* dataPtr = Blob__getDataPtr(JSC::JSValue::encode(blob));
+    size_t dataSize = Blob__getSize(JSC::JSValue::encode(blob));
+
+    if (dataPtr && dataSize > 0) {
+        this->sendWebSocketData(static_cast<const char*>(dataPtr), dataSize, Opcode::Ping);
+    } else {
+        // Send empty frame for empty blobs
+        this->sendWebSocketData(nullptr, 0, Opcode::Ping);
+    }
+
+    return {};
+}
+
+WebCore::ExceptionOr<void> WebCore::WebSocket::pong(WebCore::JSBlob* blob)
+{
+    if (m_state == CONNECTING)
+        return Exception { InvalidStateError };
+    if (m_state == CLOSING || m_state == CLOSED) {
+        return {};
+    }
+
+    // Get the blob data and send it using existing binary data path
+    void* dataPtr = Blob__getDataPtr(JSC::JSValue::encode(blob));
+    size_t dataSize = Blob__getSize(JSC::JSValue::encode(blob));
+
+    if (dataPtr && dataSize > 0) {
+        this->sendWebSocketData(static_cast<const char*>(dataPtr), dataSize, Opcode::Pong);
+    } else {
+        // Send empty frame for empty blobs
+        this->sendWebSocketData(nullptr, 0, Opcode::Pong);
+    }
+
+    return {};
+}
+
+void WebCore::WebSocket::setProtocol(const String& protocol)
+{
+    m_subprotocol = protocol;
+}
+
+extern "C" void WebSocket__setProtocol(WebCore::WebSocket* webSocket, BunString* protocol)
+{
+    webSocket->setProtocol(protocol->transferToWTFString());
 }

@@ -13,6 +13,7 @@ import { readdir, readFile, readlink, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
+import { execSync } from "child_process";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -23,6 +24,7 @@ export const isLinux = process.platform === "linux";
 export const isPosix = isMacOS || isLinux;
 export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
+export const isArm64 = process.arch === "arm64";
 export const isDebug = Bun.version.includes("debug");
 export const isCI = process.env.CI !== undefined;
 export const libcFamily: "glibc" | "musl" =
@@ -47,7 +49,7 @@ export const isBroken = isCI;
 export const isASAN = basename(process.execPath).includes("bun-asan");
 
 export const bunEnv: NodeJS.Dict<string> = {
-  ...(process.env as NodeJS.Dict<string>),
+  ...process.env,
   GITHUB_ACTIONS: "false",
   BUN_DEBUG_QUIET_LOGS: "1",
   NO_COLOR: "1",
@@ -64,7 +66,7 @@ export const bunEnv: NodeJS.Dict<string> = {
 const ciEnv = { ...bunEnv };
 
 if (isASAN) {
-  bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1";
+  bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1:disable_coredump=0";
 }
 
 if (isWindows) {
@@ -88,6 +90,7 @@ for (let key in bunEnv) {
   }
 }
 
+delete bunEnv.BUN_INSPECT_CONNECT_TO;
 delete bunEnv.NODE_ENV;
 
 if (isDebug) {
@@ -262,13 +265,31 @@ export function tempDirWithFiles(
   return base;
 }
 
+class DisposableString extends String {
+  [Symbol.dispose]() {
+    fs.rmSync(this + "", { recursive: true, force: true });
+  }
+  [Symbol.asyncDispose]() {
+    return fs.promises.rm(this + "", { recursive: true, force: true });
+  }
+}
+
+export function tempDir(
+  basename: string,
+  filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
+): DisposableString {
+  const base = tempDirWithFiles(basename, filesOrAbsolutePathToCopyFolderFrom);
+
+  return new DisposableString(base);
+}
+
 export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string): string {
   const base = tmpdirSync();
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return base;
 }
 
-export function bunRun(file: string, env?: Record<string, string> | NodeJS.ProcessEnv) {
+export function bunRun(file: string, env?: Record<string, string> | NodeJS.ProcessEnv, dump = false) {
   var path = require("path");
   const result = Bun.spawnSync([bunExe(), file], {
     cwd: path.dirname(file),
@@ -277,11 +298,21 @@ export function bunRun(file: string, env?: Record<string, string> | NodeJS.Proce
       NODE_ENV: undefined,
       ...env,
     },
+    stdin: "ignore",
+    stdout: !dump ? "pipe" : "inherit",
+    stderr: !dump ? "pipe" : "inherit",
   });
-  if (!result.success) throw new Error(result.stderr.toString("utf8"));
+  if (!result.success) {
+    if (dump) {
+      throw new Error(
+        "exited with code " + result.exitCode + (result.signalCode ? `signal: ${result.signalCode}` : ""),
+      );
+    }
+    throw new Error(String(result.stderr) + "\n" + String(result.stdout));
+  }
   return {
-    stdout: result.stdout.toString("utf8").trim(),
-    stderr: result.stderr.toString("utf8").trim(),
+    stdout: String(result.stdout ?? "").trim(),
+    stderr: String(result.stderr ?? "").trim(),
   };
 }
 
@@ -826,6 +857,24 @@ export function dockerExe(): string | null {
   return which("docker") || which("podman") || null;
 }
 
+export function isDockerEnabled(): boolean {
+  const dockerCLI = dockerExe();
+  if (!dockerCLI) {
+    return false;
+  }
+
+  // TODO: investigate why its not starting on Linux arm64
+  if ((isLinux && process.arch === "arm64") || isMacOS) {
+    return false;
+  }
+
+  try {
+    const info = execSync(`${dockerCLI} info`, { stdio: ["ignore", "pipe", "inherit"] });
+    return info.toString().indexOf("Server Version:") !== -1;
+  } catch {
+    return false;
+  }
+}
 export async function waitForPort(port: number, timeout: number = 60_000): Promise<void> {
   let deadline = Date.now() + Math.max(1, timeout);
   let error: unknown;
@@ -876,35 +925,43 @@ export async function describeWithContainer(
       return;
     }
     const { arch, platform } = process;
-    if ((archs && !archs?.includes(arch)) || platform === "win32") {
+    if ((archs && !archs?.includes(arch)) || platform === "win32" || platform === "darwin") {
       test.skip(`docker image is not supported on ${platform}/${arch}, skipped: ${image}`, () => {});
       return false;
     }
     let containerId: string;
     {
       const envs = Object.entries(env).map(([k, v]) => `-e${k}=${v}`);
-      const { exitCode, stdout, stderr } = Bun.spawnSync({
+      const { exitCode, stdout, stderr, signalCode } = Bun.spawnSync({
         cmd: [docker, "run", "--rm", "-dPit", ...envs, image, ...args],
         stdout: "pipe",
         stderr: "pipe",
       });
       if (exitCode !== 0) {
         process.stderr.write(stderr);
-        test.skip(`docker container for ${image} failed to start`, () => {});
+        test.skip(`docker container for ${image} failed to start (exit: ${exitCode})`, () => {});
+        return false;
+      }
+      if (signalCode) {
+        test.skip(`docker container for ${image} failed to start (signal: ${signalCode})`, () => {});
         return false;
       }
       containerId = stdout.toString("utf-8").trim();
     }
     let port: number;
     {
-      const { exitCode, stdout, stderr } = Bun.spawnSync({
+      const { exitCode, stdout, stderr, signalCode } = Bun.spawnSync({
         cmd: [docker, "port", containerId],
         stdout: "pipe",
         stderr: "pipe",
       });
       if (exitCode !== 0) {
         process.stderr.write(stderr);
-        test.skip(`docker container for ${image} failed to find a port`, () => {});
+        test.skip(`docker container for ${image} failed to find a port (exit: ${exitCode})`, () => {});
+        return false;
+      }
+      if (signalCode) {
+        test.skip(`docker container for ${image} failed to find a port (signal: ${signalCode})`, () => {});
         return false;
       }
       const [firstPort] = stdout
@@ -1125,22 +1182,22 @@ export function tmpdirSync(pattern: string = "bun.test."): string {
 }
 
 export async function runBunInstall(
-  env: NodeJS.ProcessEnv,
+  env: NodeJS.Dict<string>,
   cwd: string,
-  options?: {
+  options: {
     allowWarnings?: boolean;
     allowErrors?: boolean;
-    expectedExitCode?: number;
+    expectedExitCode?: number | null;
     savesLockfile?: boolean;
     production?: boolean;
     frozenLockfile?: boolean;
     saveTextLockfile?: boolean;
     packages?: string[];
     verbose?: boolean;
-  },
+  } = {},
 ) {
   const production = options?.production ?? false;
-  const args = production ? [bunExe(), "install", "--production"] : [bunExe(), "install"];
+  const args = [bunExe(), "install"];
   if (options?.packages) {
     args.push(...options.packages);
   }
@@ -1166,7 +1223,7 @@ export async function runBunInstall(
   });
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
-  let err = stderrForInstall(await new Response(stderr).text());
+  let err: string = stderrForInstall(await stderr.text());
   expect(err).not.toContain("panic:");
   if (!options?.allowErrors) {
     expect(err).not.toContain("error:");
@@ -1177,7 +1234,7 @@ export async function runBunInstall(
   if ((options?.savesLockfile ?? true) && !production && !options?.frozenLockfile) {
     expect(err).toContain("Saved lockfile");
   }
-  let out = await new Response(stdout).text();
+  let out: string = await stdout.text();
   expect(await exited).toBe(options?.expectedExitCode ?? 0);
   return { out, err, exited };
 }
@@ -1201,8 +1258,8 @@ export async function runBunUpdate(
     env,
   });
 
-  let err = await Bun.readableStreamToText(stderr);
-  let out = await Bun.readableStreamToText(stdout);
+  let err = await stderr.text();
+  let out = await stdout.text();
   let exitCode = await exited;
   if (exitCode !== 0) {
     console.log("stdout:", out);
@@ -1213,7 +1270,7 @@ export async function runBunUpdate(
   return { out: out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/), err, exitCode };
 }
 
-export async function pack(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]) {
+export async function pack(cwd: string, env: NodeJS.Dict<string>, ...args: string[]) {
   const { stdout, stderr, exited } = Bun.spawn({
     cmd: [bunExe(), "pm", "pack", ...args],
     cwd,
@@ -1223,13 +1280,13 @@ export async function pack(cwd: string, env: NodeJS.ProcessEnv, ...args: string[
     env,
   });
 
-  const err = await Bun.readableStreamToText(stderr);
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).not.toContain("warning:");
   expect(err).not.toContain("failed");
   expect(err).not.toContain("panic:");
 
-  const out = await Bun.readableStreamToText(stdout);
+  const out = await stdout.text();
 
   const exitCode = await exited;
   expect(exitCode).toBe(0);
@@ -1555,6 +1612,10 @@ export class VerdaccioRegistry {
       silent,
       // Prefer using a release build of Bun since it's faster
       execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
+      env: {
+        ...(bunEnv as any),
+        NODE_NO_WARNINGS: "1",
+      },
     });
 
     this.process.stderr?.on("data", data => {
@@ -1646,16 +1707,17 @@ export class VerdaccioRegistry {
 
   async writeBunfig(dir: string, opts: BunfigOpts = {}) {
     let bunfig = `
-    [install]
-    cache = "${join(dir, ".bun-cache")}"
-    `;
+[install]
+cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
+`;
     if ("saveTextLockfile" in opts) {
       bunfig += `saveTextLockfile = ${opts.saveTextLockfile}
-      `;
+`;
     }
     if (!opts.npm) {
-      bunfig += `registry = "${this.registryUrl()}"`;
+      bunfig += `registry = "${this.registryUrl()}"\n`;
     }
+    bunfig += `linker = "${opts.isolated ? "isolated" : "hoisted"}"\n`;
     await write(join(dir, "bunfig.toml"), bunfig);
   }
 }
@@ -1663,6 +1725,7 @@ export class VerdaccioRegistry {
 type BunfigOpts = {
   saveTextLockfile?: boolean;
   npm?: boolean;
+  isolated?: boolean;
 };
 
 export async function readdirSorted(path: string): Promise<string[]> {
@@ -1712,4 +1775,37 @@ export async function gunzipJsonRequest(req: Request) {
   const inflated = Bun.gunzipSync(buf);
   const body = JSON.parse(Buffer.from(inflated).toString("utf-8"));
   return body;
+}
+
+export function normalizeBunSnapshot(snapshot: string, optionalDir?: string) {
+  if (optionalDir) {
+    snapshot = snapshot
+      .replaceAll(fs.realpathSync.native(optionalDir).replaceAll("\\", "/"), "<dir>")
+      .replaceAll(optionalDir, "<dir>");
+  }
+
+  // Remove timestamps from test result lines that start with (pass), (fail), (skip), or (todo)
+  snapshot = snapshot.replace(/^((?:pass|fail|skip|todo)\) .+) \[[\d.]+\s?m?s\]$/gm, "$1");
+
+  return (
+    snapshot
+      .replaceAll("\r\n", "\n")
+      .replaceAll("\\", "/")
+      .replaceAll(fs.realpathSync.native(process.cwd()).replaceAll("\\", "/"), "<cwd>")
+      .replaceAll(fs.realpathSync.native(os.tmpdir()).replaceAll("\\", "/"), "<tmp>")
+      .replaceAll(fs.realpathSync.native(os.homedir()).replaceAll("\\", "/"), "<home>")
+      // look for [\d\d ms] or [\d\d s] with optional periods
+      .replace(/\s\[[\d.]+\s?m?s\]/gm, "")
+      .replace(/^\[[\d.]+\s?m?s\]/gm, "")
+      // line numbers in stack traces like at FunctionName (NN:NN)
+      // it must specifically look at the stacktrace format
+      .replace(/^\s+at (.*?)\(.*?:\d+(?::\d+)?\)/gm, "    at $1(file:NN:NN)")
+      // Handle version strings in error messages like "Bun v1.2.21+revision (platform arch)"
+      // This needs to come before the other version replacements
+      .replace(/Bun v[\d.]+(?:-[\w.]+)?(?:\+[\w]+)?(?:\s+\([^)]+\))?/g, "Bun v<bun-version>")
+      .replaceAll(Bun.version_with_sha, "<version> (<revision>)")
+      .replaceAll(Bun.version, "<bun-version>")
+      .replaceAll(Bun.revision, "<revision>")
+      .trim()
+  );
 }

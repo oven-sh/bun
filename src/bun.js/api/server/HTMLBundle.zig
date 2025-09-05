@@ -2,7 +2,7 @@
 //! HTML file, and can be passed to the `static` option in `Bun.serve`. The build
 //! is done lazily (state held in HTMLBundle.Route or DevServer.RouteBundle.HTML).
 pub const HTMLBundle = @This();
-pub const js = JSC.Codegen.JSHTMLBundle;
+pub const js = jsc.Codegen.JSHTMLBundle;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
@@ -34,7 +34,7 @@ fn deinit(this: *HTMLBundle) void {
     bun.destroy(this);
 }
 
-pub fn getIndex(this: *HTMLBundle, globalObject: *JSGlobalObject) JSValue {
+pub fn getIndex(this: *HTMLBundle, globalObject: *JSGlobalObject) bun.JSError!JSValue {
     return bun.String.createUTF8ForJS(globalObject, this.path);
 }
 
@@ -145,7 +145,7 @@ pub const Route = struct {
 
         if (server.config().isDevelopment()) {
             if (server.devServer()) |dev| {
-                dev.respondForHTMLBundle(this, req, resp) catch bun.outOfMemory();
+                bun.handleOom(dev.respondForHTMLBundle(this, req, resp));
                 return;
             }
 
@@ -163,7 +163,7 @@ pub const Route = struct {
             .pending => {
                 if (bun.Environment.enable_logs)
                     debug("onRequest: {s} - pending", .{req.url()});
-                this.scheduleBundle(server) catch bun.outOfMemory();
+                bun.handleOom(this.scheduleBundle(server));
                 continue :state this.state;
             },
             .building => {
@@ -182,7 +182,7 @@ pub const Route = struct {
                     .route = this,
                 });
 
-                this.pending_responses.append(bun.default_allocator, pending) catch bun.outOfMemory();
+                bun.handleOom(this.pending_responses.append(bun.default_allocator, pending));
 
                 this.ref();
                 resp.onAborted(*PendingResponse, PendingResponse.onAborted, pending);
@@ -216,7 +216,7 @@ pub const Route = struct {
         }
     }
 
-    pub fn onPluginsResolved(this: *Route, plugins: ?*JSC.API.JSBundler.Plugin) !void {
+    pub fn onPluginsResolved(this: *Route, plugins: ?*jsc.API.JSBundler.Plugin) !void {
         const global = this.bundle.data.global;
         const server = this.server.?;
         const development = server.config().development;
@@ -250,37 +250,37 @@ pub const Route = struct {
         config.target = .browser;
         const is_development = development.isDevelopment();
 
-        if (bun.CLI.Command.get().args.serve_minify_identifiers) |minify_identifiers| {
+        if (bun.cli.Command.get().args.serve_minify_identifiers) |minify_identifiers| {
             config.minify.identifiers = minify_identifiers;
         } else if (!is_development) {
             config.minify.identifiers = true;
         }
 
-        if (bun.CLI.Command.get().args.serve_minify_whitespace) |minify_whitespace| {
+        if (bun.cli.Command.get().args.serve_minify_whitespace) |minify_whitespace| {
             config.minify.whitespace = minify_whitespace;
         } else if (!is_development) {
             config.minify.whitespace = true;
         }
 
-        if (bun.CLI.Command.get().args.serve_minify_syntax) |minify_syntax| {
+        if (bun.cli.Command.get().args.serve_minify_syntax) |minify_syntax| {
             config.minify.syntax = minify_syntax;
         } else if (!is_development) {
             config.minify.syntax = true;
         }
 
-        if (bun.CLI.Command.get().args.serve_define) |define| {
+        if (bun.cli.Command.get().args.serve_define) |define| {
             bun.assert(define.keys.len == define.values.len);
             try config.define.map.ensureUnusedCapacity(define.keys.len);
             config.define.map.unmanaged.entries.len = define.keys.len;
             @memcpy(config.define.map.keys(), define.keys);
             for (config.define.map.values(), define.values) |*to, from| {
-                to.* = config.define.map.allocator.dupe(u8, from) catch bun.outOfMemory();
+                to.* = bun.handleOom(config.define.map.allocator.dupe(u8, from));
             }
             try config.define.map.reIndex();
         }
 
         if (!is_development) {
-            config.define.put("process.env.NODE_ENV", "\"production\"") catch bun.outOfMemory();
+            bun.handleOom(config.define.put("process.env.NODE_ENV", "\"production\""));
             config.jsx.development = false;
         } else {
             config.force_node_env = .development;
@@ -318,7 +318,7 @@ pub const Route = struct {
                 if (bun.Environment.enable_logs)
                     debug("onComplete: err - {s}", .{@errorName(err)});
                 this.state = .{ .err = bun.logger.Log.init(bun.default_allocator) };
-                completion_task.log.cloneToWithRecycled(&this.state.err, true) catch bun.outOfMemory();
+                bun.handleOom(completion_task.log.cloneToWithRecycled(&this.state.err, true));
 
                 if (this.server) |server| {
                     if (server.config().isDevelopment()) {
@@ -360,20 +360,26 @@ pub const Route = struct {
 
                 // Create static routes for each output file
                 for (output_files) |*output_file| {
-                    const blob = JSC.WebCore.Blob.Any{ .Blob = output_file.toBlob(bun.default_allocator, globalThis) catch bun.outOfMemory() };
+                    const blob = jsc.WebCore.Blob.Any{ .Blob = bun.handleOom(output_file.toBlob(bun.default_allocator, globalThis)) };
                     var headers = bun.http.Headers{ .allocator = bun.default_allocator };
                     const content_type = blob.Blob.contentTypeOrMimeType() orelse brk: {
                         bun.debugAssert(false); // should be populated by `output_file.toBlob`
                         break :brk output_file.loader.toMimeType(&.{}).value;
                     };
-                    headers.append("Content-Type", content_type) catch bun.outOfMemory();
+                    bun.handleOom(headers.append("Content-Type", content_type));
                     // Do not apply etags to html.
                     if (output_file.loader != .html and output_file.value == .buffer) {
                         var hashbuf: [64]u8 = undefined;
-                        const etag_str = std.fmt.bufPrint(&hashbuf, "{}", .{bun.fmt.hexIntLower(output_file.hash)}) catch bun.outOfMemory();
-                        headers.append("ETag", etag_str) catch bun.outOfMemory();
+                        const etag_str = std.fmt.bufPrint(
+                            &hashbuf,
+                            "{}",
+                            .{bun.fmt.hexIntLower(output_file.hash)},
+                        ) catch |err| switch (err) {
+                            error.NoSpaceLeft => unreachable,
+                        };
+                        bun.handleOom(headers.append("ETag", etag_str));
                         if (!server.config().isDevelopment() and (output_file.output_kind == .chunk))
-                            headers.append("Cache-Control", "public, max-age=31536000") catch bun.outOfMemory();
+                            bun.handleOom(headers.append("Cache-Control", "public, max-age=31536000"));
                     }
 
                     // Add a SourceMap header if we have a source map index
@@ -384,7 +390,7 @@ pub const Route = struct {
                             if (strings.hasPrefixComptime(route_path, "./") or strings.hasPrefixComptime(route_path, ".\\")) {
                                 route_path = route_path[1..];
                             }
-                            headers.append("SourceMap", route_path) catch bun.outOfMemory();
+                            bun.handleOom(headers.append("SourceMap", route_path));
                         }
                     }
 
@@ -410,14 +416,14 @@ pub const Route = struct {
                         route_path = route_path[1..];
                     }
 
-                    server.appendStaticRoute(route_path, .{ .static = static_route }, .any) catch bun.outOfMemory();
+                    bun.handleOom(server.appendStaticRoute(route_path, .{ .static = static_route }, .any));
                 }
 
                 const html_route: *StaticRoute = this_html_route orelse @panic("Internal assertion failure: HTML entry point not found in HTMLBundle.");
-                const html_route_clone = html_route.clone(globalThis) catch bun.outOfMemory();
+                const html_route_clone = bun.handleOom(html_route.clone(globalThis));
                 this.state = .{ .html = html_route_clone };
 
-                if (!(server.reloadStaticRoutes() catch bun.outOfMemory())) {
+                if (!bun.handleOom(server.reloadStaticRoutes())) {
                     // Server has shutdown, so it won't receive any new requests
                     // TODO: handle this case
                 }
@@ -504,17 +510,21 @@ pub const Route = struct {
     };
 };
 
-const bun = @import("bun");
-const std = @import("std");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSBundler = JSC.API.JSBundler;
-const HTTPResponse = bun.uws.AnyResponse;
-const uws = bun.uws;
-const AnyServer = JSC.API.AnyServer;
+const debug = bun.Output.scoped(.HTMLBundle, .hidden);
+
 const StaticRoute = @import("./StaticRoute.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const strings = bun.strings;
 const RefPtr = bun.ptr.RefPtr;
 
-const debug = bun.Output.scoped(.HTMLBundle, true);
-const strings = bun.strings;
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+
+const AnyServer = jsc.API.AnyServer;
+const JSBundler = jsc.API.JSBundler;
+
+const uws = bun.uws;
+const HTTPResponse = bun.uws.AnyResponse;

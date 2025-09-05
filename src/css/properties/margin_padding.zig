@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
 const Property = css.Property;
 const PropertyIdTag = css.PropertyIdTag;
@@ -684,34 +680,34 @@ pub fn NewSizeHandler(
                             .right = right.?,
                         },
                     ),
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             } else {
                 if (top) |t| {
                     dest.append(
                         context.allocator,
                         @unionInit(Property, @tagName(top_prop), t),
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                 }
 
                 if (bottom) |b| {
                     dest.append(
                         context.allocator,
                         @unionInit(Property, @tagName(bottom_prop), b),
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                 }
 
                 if (left) |b| {
                     dest.append(
                         context.allocator,
                         @unionInit(Property, @tagName(left_prop), b),
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                 }
 
                 if (right) |b| {
                     dest.append(
                         context.allocator,
                         @unionInit(Property, @tagName(right_prop), b),
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                 }
             }
 
@@ -808,13 +804,13 @@ pub fn NewSizeHandler(
                     Property,
                     @tagName(shorthand_property),
                     value,
-                )) catch bun.outOfMemory();
+                )) catch |err| bun.handleOom(err);
             } else {
                 if (start.* != null) {
-                    dest.append(context.allocator, start.*.?) catch bun.outOfMemory();
+                    bun.handleOom(dest.append(context.allocator, start.*.?));
                 }
                 if (end.* != null) {
-                    dest.append(context.allocator, end.*.?) catch bun.outOfMemory();
+                    bun.handleOom(dest.append(context.allocator, end.*.?));
                 }
             }
         }
@@ -837,16 +833,20 @@ pub fn NewSizeHandler(
                             @tagName(physical),
                             @field(v, @tagName(logical)),
                         ),
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                 } else if (v.* == .unparsed) {
                     dest.append(
                         context.allocator,
                         Property{
                             .unparsed = v.unparsed.withPropertyId(context.allocator, physical),
                         },
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                 }
             }
         }
     };
 }
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;

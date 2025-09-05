@@ -1,5 +1,6 @@
 //! This is just a wrapper around `bun.AllocationScope` that ensures that it is
 //! zero-cost in release builds.
+
 const AllocScope = @This();
 
 __scope: if (bun.Environment.enableAllocScopes) bun.AllocationScope else void,
@@ -20,7 +21,8 @@ pub fn endScope(this: *AllocScope) void {
 pub fn leakSlice(this: *AllocScope, memory: anytype) void {
     if (comptime bun.Environment.enableAllocScopes) {
         _ = @typeInfo(@TypeOf(memory)).pointer;
-        bun.assert(!this.__scope.trackExternalFree(memory, null));
+        this.__scope.trackExternalFree(memory, null) catch |err|
+            std.debug.panic("invalid free: {}", .{err});
     }
 }
 
@@ -37,5 +39,5 @@ pub inline fn allocator(this: *AllocScope) std.mem.Allocator {
     return bun.default_allocator;
 }
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");

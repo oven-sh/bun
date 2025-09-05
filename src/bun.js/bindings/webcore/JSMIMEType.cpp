@@ -560,6 +560,7 @@ JSC_DEFINE_HOST_FUNCTION(constructMIMEType, (JSGlobalObject * globalObject, Call
     auto* jsInputString = inputArg.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto inputString = jsInputString->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     // 2. Parse type and subtype
     String type, subtype;

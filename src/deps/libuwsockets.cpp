@@ -23,6 +23,11 @@ using TCPWebSocket = uWS::WebSocket<false, true, void *>;
 extern "C"
 {
 
+  void uws_loop_date_header_timer_update(us_loop_t *loop) {
+    uWS::LoopData *loopData = uWS::Loop::data(loop);
+    loopData->updateDate();
+  }
+
   uws_app_t *uws_create_app(int ssl, struct us_bun_socket_context_options_t options)
   {
     if (ssl)
@@ -372,6 +377,19 @@ extern "C"
     }
   }
 
+  void uws_app_close_idle(int ssl, uws_app_t *app)
+  {
+    if (ssl)
+    {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->closeIdle();
+    }
+    else
+    {
+      uWS::App *uwsApp = (uWS::App *)app;
+      uwsApp->closeIdle();
+    }
+  }
 
   void uws_app_set_on_clienterror(int ssl, uws_app_t *app, void (*handler)(void *user_data, int is_ssl, struct us_socket_t *rawSocket, uint8_t errorCode, char *rawPacket, int rawPacketLength), void *user_data)
   {
@@ -1272,7 +1290,7 @@ extern "C"
       auto *data = uwsRes->getHttpResponseData();
       data->offset = offset;
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
-      data->markDone();
+      data->markDone(uwsRes);
       uwsRes->resetTimeout();
     }
     else
@@ -1280,8 +1298,8 @@ extern "C"
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       auto *data = uwsRes->getHttpResponseData();
       data->offset = offset;
-      data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
-      data->markDone();
+      data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
+      data->markDone(uwsRes);
       uwsRes->resetTimeout();
     }
   }
@@ -1323,7 +1341,7 @@ extern "C"
         uwsRes->AsyncSocket<true>::write("\r\n", 2);
       }
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
-      data->markDone();
+      data->markDone(uwsRes);
       uwsRes->resetTimeout();
     }
     else
@@ -1345,7 +1363,7 @@ extern "C"
         uwsRes->AsyncSocket<false>::write("\r\n", 2);
       }
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
-      data->markDone();
+      data->markDone(uwsRes);
       uwsRes->resetTimeout();
     }
   }
@@ -1788,7 +1806,7 @@ __attribute__((callback (corker, ctx)))
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       uwsRes->flushHeaders();
     } else {
-      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res; 
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       uwsRes->flushHeaders();
     }
   }

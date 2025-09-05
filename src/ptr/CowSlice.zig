@@ -1,9 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-const Environment = bun.Environment;
-const AllocationScope = bun.AllocationScope;
-
 /// "Copy on write" slice. There are many instances when it is desired to re-use
 /// a slice, but doing so would make it unknown if that slice should be freed.
 /// This structure, in release builds, is the same size as `[]const T`, but
@@ -66,8 +60,10 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
         /// `data` is transferred into the returned string, and must be freed with
         /// `.deinit()` when the string and its borrows are done being used.
         pub fn initOwned(data: []T, allocator: Allocator) Self {
-            if (AllocationScope.downcast(allocator)) |scope|
+            if (allocation_scope.isInstance(allocator)) {
+                const scope = AllocationScope.Borrowed.downcast(allocator);
                 scope.assertOwned(data);
+            }
 
             return .{
                 .ptr = data.ptr,
@@ -273,7 +269,6 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
     };
 }
 
-const cow_str_assertions = Environment.isDebug;
 const DebugData = if (cow_str_assertions) struct {
     mutex: bun.Mutex = .{},
     allocator: Allocator,
@@ -312,3 +307,13 @@ test CowSlice {
     // borrow is uneffected by str being deinitialized
     try expectEqualStrings(borrow.slice(), "hello");
 }
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const Environment = bun.Environment;
+const cow_str_assertions = Environment.isDebug;
+
+const allocation_scope = bun.allocators.allocation_scope;
+const AllocationScope = allocation_scope.AllocationScope;

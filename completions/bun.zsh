@@ -261,6 +261,7 @@ _bun_pm_completion() {
             'hash-string\:"print the string used to hash the lockfile" '
             'hash-print\:"print the hash stored in the current lockfile" '
             'cache\:"print the path to the cache folder" '
+            'version\:"bump the version in package.json and create a git tag" '
         )
 
         _alternative "args:cmd3:(($sub_commands))"
@@ -298,6 +299,40 @@ _bun_pm_completion() {
                 '2: :->cmd2' \
                 $pmargs &&
                 ret=0
+
+            ;;
+        version)
+            version_args=(
+                "patch[increment patch version]"
+                "minor[increment minor version]"
+                "major[increment major version]"
+                "prepatch[increment patch version and add pre-release]"
+                "preminor[increment minor version and add pre-release]"
+                "premajor[increment major version and add pre-release]"
+                "prerelease[increment pre-release version]"
+                "from-git[use version from latest git tag]"
+            )
+
+            pmargs=(
+                "--no-git-tag-version[don't create a git commit and tag]"
+                "--allow-same-version[allow bumping to the same version]"
+                "-m[use the given message for the commit]:message"
+                "--message[use the given message for the commit]:message"
+                "--preid[identifier to prefix pre-release versions]:preid"
+            )
+
+            _arguments -s -C \
+                '1: :->cmd' \
+                '2: :->cmd2' \
+                '3: :->increment' \
+                $pmargs &&
+                ret=0
+
+            case $state in
+            increment)
+                _alternative "args:increment:(($version_args))"
+                ;;
+            esac
 
             ;;
         esac

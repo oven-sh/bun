@@ -1,27 +1,4 @@
-const std = @import("std");
-const Command = @import("../cli.zig").Command;
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
-const options = @import("../options.zig");
-
-const resolve_path = @import("../resolver/resolve_path.zig");
-const transpiler = bun.transpiler;
-
-const fs = @import("../fs.zig");
-const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
-
 pub const BuildCommand = struct {
-    const compile_define_keys = &.{
-        "process.platform",
-        "process.arch",
-        "process.versions.bun",
-    };
-
     pub fn exec(ctx: Command.Context, fetcher: ?*BundleV2.DependenciesScanner) !void {
         Global.configureAllocator(.{ .long_running = true });
         const allocator = ctx.allocator;
@@ -43,7 +20,9 @@ pub const BuildCommand = struct {
         const compile_target = &ctx.bundler_options.compile_target;
 
         if (ctx.bundler_options.compile) {
+            const compile_define_keys = compile_target.defineKeys();
             const compile_define_values = compile_target.defineValues();
+
             if (ctx.args.define) |*define| {
                 var keys = try std.ArrayList(string).initCapacity(bun.default_allocator, compile_define_keys.len + define.keys.len);
                 keys.appendSliceAssumeCapacity(compile_define_keys);
@@ -256,6 +235,7 @@ pub const BuildCommand = struct {
                     try options.Define.Data.fromInput(try options.stringHashMapFromArrays(
                         options.defines.RawDefines,
                         allocator,
+                        user_defines.keys.len + 4,
                         user_defines.keys,
                         user_defines.values,
                     ), ctx.args.drop, log, allocator)
@@ -263,6 +243,7 @@ pub const BuildCommand = struct {
                     null,
                 null,
                 this_transpiler.options.define.drop_debugger,
+                this_transpiler.options.dead_code_elimination and this_transpiler.options.minify_syntax,
             );
 
             try bun.bake.addImportMetaDefines(allocator, this_transpiler.options.define, .development, .server);
@@ -323,7 +304,7 @@ pub const BuildCommand = struct {
             break :brk (BundleV2.generateFromCLI(
                 &this_transpiler,
                 allocator,
-                bun.JSC.AnyEventLoop.init(ctx.allocator),
+                bun.jsc.AnyEventLoop.init(ctx.allocator),
                 ctx.debug.hot_reload == .watch,
                 &reachable_file_count,
                 &minify_duration,
@@ -345,7 +326,7 @@ pub const BuildCommand = struct {
         var had_err = false;
         dump: {
             defer Output.flush();
-            var writer = Output.writer();
+            var writer = Output.writerBuffered();
             var output_dir = this_transpiler.options.output_dir;
 
             const will_be_one_file =
@@ -441,7 +422,7 @@ pub const BuildCommand = struct {
                     }
                 }
 
-                try bun.StandaloneModuleGraph.toExecutable(
+                const result = bun.StandaloneModuleGraph.toExecutable(
                     compile_target,
                     allocator,
                     output_files,
@@ -450,9 +431,19 @@ pub const BuildCommand = struct {
                     outfile,
                     this_transpiler.env,
                     this_transpiler.options.output_format,
-                    ctx.bundler_options.windows_hide_console,
-                    ctx.bundler_options.windows_icon,
-                );
+                    ctx.bundler_options.windows,
+                    ctx.bundler_options.compile_exec_argv orelse "",
+                    null,
+                ) catch |err| {
+                    Output.printErrorln("failed to create executable: {s}", .{@errorName(err)});
+                    Global.exit(1);
+                };
+
+                if (result != .success) {
+                    Output.printErrorln("{s}", .{result.error_message});
+                    Global.exit(1);
+                }
+
                 const compiled_elapsed = @divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bundled_end)), @as(i64, std.time.ns_per_ms));
                 const compiled_elapsed_digit_count: isize = switch (compiled_elapsed) {
                     0...9 => 3,
@@ -484,13 +475,13 @@ pub const BuildCommand = struct {
             if (log.errors == 0) {
                 if (this_transpiler.options.transform_only) {
                     Output.prettyln("<green>Transpiled file in {d}ms<r>", .{
-                        @divFloor(std.time.nanoTimestamp() - bun.CLI.start_time, std.time.ns_per_ms),
+                        @divFloor(std.time.nanoTimestamp() - bun.cli.start_time, std.time.ns_per_ms),
                     });
                 } else {
                     Output.prettyln("<green>Bundled {d} module{s} in {d}ms<r>", .{
                         reachable_file_count,
                         if (reachable_file_count == 1) "" else "s",
-                        @divFloor(std.time.nanoTimestamp() - bun.CLI.start_time, std.time.ns_per_ms),
+                        @divFloor(std.time.nanoTimestamp() - bun.cli.start_time, std.time.ns_per_ms),
                     });
                 }
                 Output.prettyln("\n", .{});
@@ -577,7 +568,7 @@ fn exitOrWatch(code: u8, watch: bool) noreturn {
 fn printSummary(bundled_end: i128, minify_duration: u64, minified: bool, input_code_length: usize, reachable_file_count: usize, output_files: []const options.OutputFile) void {
     const padding_buf = [_]u8{' '} ** 16;
 
-    const bundle_until_now = @divTrunc(@as(i64, @truncate(bundled_end - bun.CLI.start_time)), @as(i64, std.time.ns_per_ms));
+    const bundle_until_now = @divTrunc(@as(i64, @truncate(bundled_end - bun.cli.start_time)), @as(i64, std.time.ns_per_ms));
 
     const bundle_elapsed = if (minified)
         bundle_until_now - @as(i64, @intCast(@as(u63, @truncate(minify_duration))))
@@ -643,3 +634,19 @@ fn printSummary(bundled_end: i128, minify_duration: u64, minified: bool, input_c
         },
     );
 }
+
+const string = []const u8;
+
+const fs = @import("../fs.zig");
+const options = @import("../options.zig");
+const resolve_path = @import("../resolver/resolve_path.zig");
+const std = @import("std");
+const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
+const Command = @import("../cli.zig").Command;
+
+const bun = @import("bun");
+const Global = bun.Global;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const strings = bun.strings;
+const transpiler = bun.transpiler;

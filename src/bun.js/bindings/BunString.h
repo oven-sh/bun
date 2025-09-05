@@ -55,4 +55,9 @@ public:
         return std::span(reinterpret_cast<const char*>(m_view.span8().data()), m_view.length());
     }
 };
+
+bool isCrossThreadShareable(const WTF::String& string);
+WTF::String toCrossThreadShareable(const WTF::String& string);
+Ref<WTF::StringImpl> toCrossThreadShareable(Ref<WTF::StringImpl> impl);
+
 }

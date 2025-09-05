@@ -1,8 +1,18 @@
-const std = @import("std");
+pub const c_allocator = basic.c_allocator;
+pub const z_allocator = basic.z_allocator;
+pub const freeWithoutSize = basic.freeWithoutSize;
+pub const mimalloc = @import("./allocators/mimalloc.zig");
+pub const MimallocArena = @import("./allocators/MimallocArena.zig");
 
-const Environment = @import("./env.zig");
-const bun = @import("bun");
-const OOM = bun.OOM;
+pub const allocation_scope = @import("./allocators/allocation_scope.zig");
+pub const AllocationScope = allocation_scope.AllocationScope;
+pub const AllocationScopeIn = allocation_scope.AllocationScopeIn;
+
+pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");
+pub const MaxHeapAllocator = @import("./allocators/MaxHeapAllocator.zig");
+pub const MemoryReportingAllocator = @import("./allocators/MemoryReportingAllocator.zig");
+pub const LinuxMemFdAllocator = @import("./allocators/LinuxMemFdAllocator.zig");
+pub const MaybeOwned = @import("./allocators/maybe_owned.zig").MaybeOwned;
 
 pub fn isSliceInBufferT(comptime T: type, slice: []const T, buffer: []const T) bool {
     return (@intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and
@@ -80,9 +90,14 @@ fn OverflowGroup(comptime Block: type) type {
         const max = 4095;
         const UsedSize = std.math.IntFittingRange(0, max + 1);
         const default_allocator = bun.default_allocator;
-        used: UsedSize = 0,
-        allocated: UsedSize = 0,
-        ptrs: [max]*Block = undefined,
+        used: UsedSize,
+        allocated: UsedSize,
+        ptrs: [max]*Block,
+
+        pub inline fn zero(this: *Overflow) void {
+            this.used = 0;
+            this.allocated = 0;
+        }
 
         pub fn tail(this: *Overflow) *Block {
             if (this.allocated > 0 and this.ptrs[this.used].isFull()) {
@@ -94,7 +109,7 @@ fn OverflowGroup(comptime Block: type) type {
 
             if (this.allocated <= this.used) {
                 this.ptrs[this.allocated] = default_allocator.create(Block) catch unreachable;
-                this.ptrs[this.allocated].* = Block{};
+                this.ptrs[this.allocated].zero();
                 this.allocated +%= 1;
             }
 
@@ -113,8 +128,12 @@ pub fn OverflowList(comptime ValueType: type, comptime count: comptime_int) type
         const SizeType = std.math.IntFittingRange(0, count);
 
         const Block = struct {
-            used: SizeType = 0,
-            items: [count]ValueType = undefined,
+            used: SizeType,
+            items: [count]ValueType,
+
+            pub inline fn zero(this: *Block) void {
+                this.used = 0;
+            }
 
             pub inline fn isFull(block: *const Block) bool {
                 return block.used >= @as(SizeType, count);
@@ -129,8 +148,13 @@ pub fn OverflowList(comptime ValueType: type, comptime count: comptime_int) type
             }
         };
         const Overflow = OverflowGroup(Block);
-        list: Overflow = Overflow{},
-        count: u31 = 0,
+        list: Overflow,
+        count: u31,
+
+        pub inline fn zero(this: *This) void {
+            this.list.zero();
+            this.count = 0;
+        }
 
         pub inline fn len(this: *const This) u31 {
             return this.count;
@@ -187,9 +211,17 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
     return struct {
         const ChunkSize = 256;
         const OverflowBlock = struct {
-            used: std.atomic.Value(u16) = std.atomic.Value(u16).init(0),
-            data: [ChunkSize]ValueType = undefined,
-            prev: ?*OverflowBlock = null,
+            used: std.atomic.Value(u16),
+            data: [ChunkSize]ValueType,
+            prev: ?*OverflowBlock,
+
+            pub inline fn zero(this: *OverflowBlock) void {
+                // Avoid struct initialization syntax.
+                // This makes Bun start about 1ms faster.
+                // https://github.com/ziglang/zig/issues/24313
+                this.used = std.atomic.Value(u16).init(0);
+                this.prev = null;
+            }
 
             pub fn append(this: *OverflowBlock, item: ValueType) !*ValueType {
                 const index = this.used.fetchAdd(1, .acq_rel);
@@ -199,15 +231,14 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
             }
         };
 
-        const Allocator = std.mem.Allocator;
         const Self = @This();
 
-        allocator: Allocator,
+        allocator: std.mem.Allocator,
         mutex: Mutex = .{},
-        head: *OverflowBlock = undefined,
-        tail: OverflowBlock = OverflowBlock{},
-        backing_buf: [count]ValueType = undefined,
-        used: u32 = 0,
+        head: *OverflowBlock,
+        tail: OverflowBlock,
+        backing_buf: [count]ValueType,
+        used: u32,
 
         pub var instance: *Self = undefined;
         pub var loaded = false;
@@ -218,12 +249,15 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
 
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!loaded) {
-                instance = bun.default_allocator.create(Self) catch bun.outOfMemory();
-                instance.* = Self{
-                    .allocator = allocator,
-                    .tail = OverflowBlock{},
-                };
+                instance = bun.handleOom(bun.default_allocator.create(Self));
+                // Avoid struct initialization syntax.
+                // This makes Bun start about 1ms faster.
+                // https://github.com/ziglang/zig/issues/24313
+                instance.allocator = allocator;
+                instance.mutex = .{};
+                instance.tail.zero();
                 instance.head = &instance.tail;
+                instance.used = 0;
                 loaded = true;
             }
 
@@ -242,7 +276,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
             instance.used += 1;
             return self.head.append(value) catch brk: {
                 var new_block = try self.allocator.create(OverflowBlock);
-                new_block.* = OverflowBlock{};
+                new_block.zero();
                 new_block.prev = self.head;
                 self.head = new_block;
                 break :brk self.head.append(value);
@@ -265,8 +299,6 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
     };
 }
 
-const Mutex = bun.Mutex;
-
 /// Append-only list.
 /// Stores an initial count in .bss section of the object file
 /// Overflows to heap when count is exceeded.
@@ -284,15 +316,14 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
 
     return struct {
         pub const Overflow = OverflowList([]const u8, count / 4);
-        const Allocator = std.mem.Allocator;
         const Self = @This();
 
-        backing_buf: [count * item_length]u8 = undefined,
-        backing_buf_used: u64 = undefined,
-        overflow_list: Overflow = Overflow{},
-        allocator: Allocator,
-        slice_buf: [count][]const u8 = undefined,
-        slice_buf_used: u16 = 0,
+        backing_buf: [count * item_length]u8,
+        backing_buf_used: u64,
+        overflow_list: Overflow,
+        allocator: std.mem.Allocator,
+        slice_buf: [count][]const u8,
+        slice_buf_used: u16,
         mutex: Mutex = .{},
         pub var instance: *Self = undefined;
         var loaded: bool = false;
@@ -304,11 +335,15 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
 
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!loaded) {
-                instance = bun.default_allocator.create(Self) catch bun.outOfMemory();
-                instance.* = Self{
-                    .allocator = allocator,
-                    .backing_buf_used = 0,
-                };
+                instance = bun.handleOom(bun.default_allocator.create(Self));
+                // Avoid struct initialization syntax.
+                // This makes Bun start about 1ms faster.
+                // https://github.com/ziglang/zig/issues/24313
+                instance.allocator = allocator;
+                instance.backing_buf_used = 0;
+                instance.slice_buf_used = 0;
+                instance.overflow_list.zero();
+                instance.mutex = .{};
                 loaded = true;
             }
 
@@ -464,16 +499,15 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
 pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_keys: bool, comptime estimated_key_length: usize, comptime remove_trailing_slashes: bool) type {
     const max_index = count - 1;
     const BSSMapType = struct {
-        const Allocator = std.mem.Allocator;
         const Self = @This();
         const Overflow = OverflowList(ValueType, count / 4);
 
         index: IndexMap,
-        overflow_list: Overflow = Overflow{},
-        allocator: Allocator,
+        overflow_list: Overflow,
+        allocator: std.mem.Allocator,
         mutex: Mutex = .{},
-        backing_buf: [count]ValueType = undefined,
-        backing_buf_used: u16 = 0,
+        backing_buf: [count]ValueType,
+        backing_buf_used: u16,
 
         pub var instance: *Self = undefined;
 
@@ -481,11 +515,15 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
 
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!loaded) {
-                instance = bun.default_allocator.create(Self) catch bun.outOfMemory();
-                instance.* = Self{
-                    .index = IndexMap{},
-                    .allocator = allocator,
-                };
+                // Avoid struct initialization syntax.
+                // This makes Bun start about 1ms faster.
+                // https://github.com/ziglang/zig/issues/24313
+                instance = bun.handleOom(bun.default_allocator.create(Self));
+                instance.index = IndexMap{};
+                instance.allocator = allocator;
+                instance.overflow_list.zero();
+                instance.backing_buf_used = 0;
+                instance.mutex = .{};
                 loaded = true;
             }
 
@@ -633,10 +671,13 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
 
         pub fn init(allocator: std.mem.Allocator) *Self {
             if (!instance_loaded) {
-                instance = bun.default_allocator.create(Self) catch bun.outOfMemory();
-                instance.* = Self{
-                    .map = BSSMapType.init(allocator),
-                };
+                instance = bun.handleOom(bun.default_allocator.create(Self));
+                // Avoid struct initialization syntax.
+                // This makes Bun start about 1ms faster.
+                // https://github.com/ziglang/zig/issues/24313
+                instance.map = BSSMapType.init(allocator);
+                instance.key_list_buffer_used = 0;
+                instance.key_list_overflow.zero();
                 instance_loaded = true;
             }
 
@@ -733,3 +774,128 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         }
     };
 }
+
+/// Checks whether `allocator` is the default allocator.
+pub fn isDefault(allocator: std.mem.Allocator) bool {
+    return allocator.vtable == c_allocator.vtable;
+}
+
+// The following functions operate on generic allocators. A generic allocator is a type that
+// satisfies the `GenericAllocator` interface:
+//
+// ```
+// const GenericAllocator = struct {
+//     // Required.
+//     pub fn allocator(self: Self) std.mem.Allocator;
+//
+//     // Optional, to allow default-initialization. `.{}` will also be tried.
+//     pub fn init() Self;
+//
+//     // Optional, if this allocator owns auxiliary resources that need to be deinitialized.
+//     pub fn deinit(self: *Self) void;
+//
+//     // Optional. Defining a borrowed type makes it clear who owns the allocator and prevents
+//     // `deinit` from being called twice.
+//     pub const Borrowed: type;
+//     pub fn borrow(self: Self) Borrowed;
+// };
+// ```
+//
+// Generic allocators must support being moved. They cannot contain self-references, and they cannot
+// serve allocations from a buffer that exists within the allocator itself (have your allocator type
+// contain a pointer to the buffer instead).
+//
+// As an exception, `std.mem.Allocator` is also treated as a generic allocator, and receives
+// special handling in the following functions to achieve this.
+
+/// Gets the `std.mem.Allocator` for a given generic allocator.
+pub fn asStd(allocator: anytype) std.mem.Allocator {
+    return if (comptime @TypeOf(allocator) == std.mem.Allocator)
+        allocator
+    else
+        allocator.allocator();
+}
+
+/// A borrowed version of an allocator.
+///
+/// Some allocators have a `deinit` method that would be invalid to call multiple times (e.g.,
+/// `AllocationScope` and `MimallocArena`).
+///
+/// If multiple structs or functions need access to the same allocator, we want to avoid simply
+/// passing the allocator by value, as this could easily lead to `deinit` being called multiple
+/// times if we forget who really owns the allocator.
+///
+/// Passing a pointer is not always a good approach, as this results in a performance penalty for
+/// zero-sized allocators, and adds another level of indirection in all cases.
+///
+/// This function allows allocators that have a concept of being "owned" to define a "borrowed"
+/// version of the allocator. If no such type is defined, it is assumed the allocator does not
+/// own any data, and `Borrowed(Allocator)` is simply the same as `Allocator`.
+pub fn Borrowed(comptime Allocator: type) type {
+    return if (comptime @hasDecl(Allocator, "Borrowed"))
+        Allocator.Borrowed
+    else
+        Allocator;
+}
+
+/// Borrows an allocator.
+///
+/// See `Borrowed` for the rationale.
+pub fn borrow(allocator: anytype) Borrowed(@TypeOf(allocator)) {
+    return if (comptime @hasDecl(@TypeOf(allocator), "Borrowed"))
+        allocator.borrow()
+    else
+        allocator;
+}
+
+/// A type that behaves like `?Allocator`. This function will either return `?Allocator` itself,
+/// or an optimized type that behaves like `?Allocator`.
+///
+/// Use `initNullable` and `unpackNullable` to work with the returned type.
+pub fn Nullable(comptime Allocator: type) type {
+    return if (comptime Allocator == std.mem.Allocator)
+        NullableAllocator
+    else if (comptime @hasDecl(Allocator, "Nullable"))
+        Allocator.Nullable
+    else
+        ?Allocator;
+}
+
+/// Creates a `Nullable(Allocator)` from an optional `Allocator`.
+pub fn initNullable(comptime Allocator: type, allocator: ?Allocator) Nullable(Allocator) {
+    return if (comptime Allocator == std.mem.Allocator or @hasDecl(Allocator, "Nullable"))
+        .init(allocator)
+    else
+        allocator;
+}
+
+/// Turns a `Nullable(Allocator)` back into an optional `Allocator`.
+pub fn unpackNullable(comptime Allocator: type, allocator: Nullable(Allocator)) ?Allocator {
+    return if (comptime Allocator == std.mem.Allocator or @hasDecl(Allocator, "Nullable"))
+        .get()
+    else
+        allocator;
+}
+
+/// The default allocator. This is a zero-sized type whose `allocator` method returns
+/// `bun.default_allocator`.
+///
+/// This type is a `GenericAllocator`; see `src/allocators.zig`.
+pub const Default = struct {
+    pub fn allocator(self: Default) std.mem.Allocator {
+        _ = self;
+        return c_allocator;
+    }
+};
+
+const basic = if (bun.use_mimalloc)
+    @import("./allocators/basic.zig")
+else
+    @import("./allocators/fallback.zig");
+
+const Environment = @import("./env.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const OOM = bun.OOM;
+const Mutex = bun.threading.Mutex;

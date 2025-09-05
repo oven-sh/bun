@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -17,7 +17,6 @@ describe("bundler", () => {
   itBundled("compile/HelloWorldWithProcessVersionsBun", {
     compile: true,
     files: {
-      [`/${process.platform}-${process.arch}.js`]: "module.exports = process.versions.bun;",
       "/entry.ts": /* js */ `
         process.exitCode = 1;
         process.versions.bun = "bun!";
@@ -26,8 +25,48 @@ describe("bundler", () => {
           process.exitCode = 0;
         }
       `,
+      [`/${process.platform}-${process.arch}.js`]: "module.exports = process.versions.bun;",
     },
     run: { exitCode: 0 },
+  });
+  itBundled("compile/HelloWorldWithProcessVersionsBunAPI", {
+    compile: true,
+    backend: "api",
+    outfile: "dist/out",
+    files: {
+      "/entry.ts": /* js */ `
+        import { foo } from "hello:world";
+        if (foo !== "bar") throw new Error("fail");
+        process.exitCode = 1;
+        process.versions.bun = "bun!";
+        if (process.versions.bun === "bun!") throw new Error("fail");
+        const another = require("./${process.platform}-${process.arch}.js").replaceAll("-debug", "");
+        if (another === "${Bun.version.replaceAll("-debug", "")}") {
+          process.exitCode = 0;
+        }
+      `,
+      [`/${process.platform}-${process.arch}.js`]: "module.exports = process.versions.bun;",
+    },
+    run: { exitCode: 0, stdout: "hello world" },
+    plugins: [
+      {
+        name: "hello-world",
+        setup(api) {
+          api.onResolve({ filter: /hello:world/, namespace: "file" }, args => {
+            return {
+              path: args.path,
+              namespace: "hello",
+            };
+          });
+          api.onLoad({ filter: /.*/, namespace: "hello" }, args => {
+            return {
+              contents: "export const foo = 'bar'; console.log('hello world');",
+              loader: "js",
+            };
+          });
+        },
+      },
+    ],
   });
   itBundled("compile/HelloWorldBytecode", {
     compile: true,
@@ -625,5 +664,71 @@ error: Hello World`,
         },
       },
     ],
+  });
+
+  test("does not crash", async () => {
+    const dir = tempDirWithFiles("bundler-compile-shadcn", {
+      "frontend.tsx": `console.log("Hello, world!");`,
+      "index.html": `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bun + React</title>
+    <script type="module" src="./frontend.tsx" async></script>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
+        `,
+      "index.tsx": `import { serve } from "bun";
+import index from "./index.html";
+
+const server = serve({
+  routes: {
+    // Serve index.html for all unmatched routes.
+    "/*": index,
+
+    "/api/hello": {
+      async GET(req) {
+        return Response.json({
+          message: "Hello, world!",
+          method: "GET",
+        });
+      },
+      async PUT(req) {
+        return Response.json({
+          message: "Hello, world!",
+          method: "PUT",
+        });
+      },
+    },
+
+    "/api/hello/:name": async req => {
+      const name = req.params.name;
+      return Response.json({
+        message: "LOL",
+      });
+    },
+  },
+
+  development: process.env.NODE_ENV !== "production" && {
+    // Enable browser hot reloading in development
+    hmr: true,
+
+    // Echo console logs from the browser to the server
+    console: true,
+  },
+});
+
+`,
+    });
+
+    // Step 2: Run bun build with compile, minify, sourcemap, and bytecode
+    await Bun.$`${bunExe()} build ./index.tsx --compile --minify --sourcemap --bytecode`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(true);
   });
 });

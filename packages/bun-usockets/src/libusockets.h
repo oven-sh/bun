@@ -262,6 +262,7 @@ enum create_bun_socket_error_t {
   CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE,
   CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE,
   CREATE_BUN_SOCKET_ERROR_INVALID_CA,
+  CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS,
 };
 
 struct us_socket_context_t *us_create_bun_ssl_socket_context(struct us_loop_t *loop,
@@ -419,9 +420,8 @@ struct us_poll_t *us_poll_resize(us_poll_r p, us_loop_r loop, unsigned int ext_s
 void *us_socket_get_native_handle(int ssl, us_socket_r s) nonnull_fn_decl;
 
 /* Write up to length bytes of data. Returns actual bytes written.
- * Will call the on_writable callback of active socket context on failure to write everything off in one go.
- * Set hint msg_more if you have more immediate data to write. */
-int us_socket_write(int ssl, us_socket_r s, const char * nonnull_arg data, int length, int msg_more) nonnull_fn_decl;
+ * Will call the on_writable callback of active socket context on failure to write everything off in one go. */
+int us_socket_write(int ssl, us_socket_r s, const char * nonnull_arg data, int length) nonnull_fn_decl;
 
 /* Special path for non-SSL sockets. Used to send header and payload in one go. Works like us_socket_write. */
 int us_socket_write2(int ssl, us_socket_r s, const char *header, int header_length, const char *payload, int payload_length) nonnull_fn_decl;
@@ -440,7 +440,7 @@ void *us_connecting_socket_ext(int ssl, struct us_connecting_socket_t *c) nonnul
 /* Return the socket context of this socket */
 struct us_socket_context_t *us_socket_context(int ssl, us_socket_r s) nonnull_fn_decl __attribute__((returns_nonnull));
 
-/* Withdraw any msg_more status and flush any pending data */
+/*  Flush any pending data */
 void us_socket_flush(int ssl, us_socket_r s) nonnull_fn_decl;
 
 /* Shuts down the connection by sending FIN and/or close_notify */
@@ -471,7 +471,7 @@ void us_socket_local_address(int ssl, us_socket_r s, char *nonnull_arg buf, int 
 struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR* fds);
 struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc);
 struct us_socket_t *us_socket_wrap_with_tls(int ssl, us_socket_r s, struct us_bun_socket_context_options_t options, struct us_socket_events_t events, int socket_ext_size);
-int us_socket_raw_write(int ssl, us_socket_r s, const char *data, int length, int msg_more);
+int us_socket_raw_write(int ssl, us_socket_r s, const char *data, int length);
 struct us_socket_t* us_socket_open(int ssl, struct us_socket_t * s, int is_client, char* ip, int ip_length);
 int us_raw_root_certs(struct us_cert_string_t**out);
 unsigned int us_get_remote_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);

@@ -2,12 +2,16 @@
 //
 // This file contains the core Valkey client implementation with protocol handling
 
-pub const ValkeyContext = @import("ValkeyContext.zig");
+pub const ValkeyContext = @import("./ValkeyContext.zig");
 
 /// Connection flags to track Valkey client state
-pub const ConnectionFlags = packed struct(u8) {
+pub const ConnectionFlags = struct {
+    // TODO(markovejnovic): I am not a huge fan of these flags. I would
+    // consider refactoring them into an enumerated state machine, as that
+    // feels significantly more natural compared to a bag of booleans.
     is_authenticated: bool = false,
     is_manually_closed: bool = false,
+    is_selecting_db_internal: bool = false,
     enable_offline_queue: bool = true,
     needs_to_open_socket: bool = true,
     enable_auto_reconnect: bool = true,
@@ -64,7 +68,7 @@ pub const Protocol = enum {
 pub const TLS = union(enum) {
     none,
     enabled,
-    custom: JSC.API.ServerConfig.SSLConfig,
+    custom: jsc.API.ServerConfig.SSLConfig,
 
     pub fn deinit(this: *TLS) void {
         switch (this.*) {
@@ -73,7 +77,7 @@ pub const TLS = union(enum) {
         }
     }
 
-    pub fn rejectUnauthorized(this: *const TLS, vm: *JSC.VirtualMachine) bool {
+    pub fn rejectUnauthorized(this: *const TLS, vm: *jsc.VirtualMachine) bool {
         return switch (this.*) {
             .custom => |*ssl_config| ssl_config.reject_unauthorized != 0,
             .enabled => vm.getTLSRejectUnauthorized(),
@@ -169,10 +173,10 @@ pub const ValkeyClient = struct {
     // Auto-pipelining
     auto_flusher: AutoFlusher = .{},
 
-    vm: *JSC.VirtualMachine,
+    vm: *jsc.VirtualMachine,
 
     /// Clean up resources used by the Valkey client
-    pub fn deinit(this: *@This(), globalObjectOrFinalizing: ?*JSC.JSGlobalObject) void {
+    pub fn deinit(this: *@This(), globalObjectOrFinalizing: ?*jsc.JSGlobalObject) void {
         var pending = this.in_flight;
         this.in_flight = .init(this.allocator);
         defer pending.deinit();
@@ -214,7 +218,7 @@ pub const ValkeyClient = struct {
     }
 
     // ** Auto-pipelining **
-    fn registerAutoFlusher(this: *ValkeyClient, vm: *JSC.VirtualMachine) void {
+    fn registerAutoFlusher(this: *ValkeyClient, vm: *jsc.VirtualMachine) void {
         if (!this.auto_flusher.registered) {
             AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(@This(), this, vm);
             this.auto_flusher.registered = true;
@@ -254,7 +258,7 @@ pub const ValkeyClient = struct {
                 this.in_flight.writeItem(.{
                     .meta = command.meta,
                     .promise = command.promise,
-                }) catch bun.outOfMemory();
+                }) catch |err| bun.handleOom(err);
 
                 total += 1;
                 total_bytelength += command.serialized_data.len;
@@ -262,9 +266,9 @@ pub const ValkeyClient = struct {
             break :brk to_process[0..total];
         };
 
-        this.write_buffer.byte_list.ensureUnusedCapacity(this.allocator, total_bytelength) catch bun.outOfMemory();
+        bun.handleOom(this.write_buffer.byte_list.ensureUnusedCapacity(this.allocator, total_bytelength));
         for (pipelineable_commands) |*command| {
-            this.write_buffer.write(this.allocator, command.serialized_data) catch bun.outOfMemory();
+            bun.handleOom(this.write_buffer.write(this.allocator, command.serialized_data));
             // Free the serialized data since we've copied it to the write buffer
             this.allocator.free(command.serialized_data);
         }
@@ -320,7 +324,7 @@ pub const ValkeyClient = struct {
     }
 
     /// Reject all pending commands with an error
-    fn rejectAllPendingCommands(pending_ptr: *Command.PromisePair.Queue, entries_ptr: *Command.Entry.Queue, globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator, jsvalue: JSC.JSValue) void {
+    fn rejectAllPendingCommands(pending_ptr: *Command.PromisePair.Queue, entries_ptr: *Command.Entry.Queue, globalThis: *jsc.JSGlobalObject, allocator: std.mem.Allocator, jsvalue: jsc.JSValue) void {
         var pending = pending_ptr.*;
         var entries = entries_ptr.*;
         defer pending.deinit();
@@ -346,7 +350,7 @@ pub const ValkeyClient = struct {
     pub fn flushData(this: *ValkeyClient) bool {
         const chunk = this.write_buffer.remaining();
         if (chunk.len == 0) return false;
-        const wrote = this.socket.write(chunk, false);
+        const wrote = this.socket.write(chunk);
         if (wrote > 0) {
             this.write_buffer.consume(@intCast(wrote));
         }
@@ -356,7 +360,7 @@ pub const ValkeyClient = struct {
     const DeferredFailure = struct {
         message: []const u8,
         err: protocol.RedisError,
-        globalThis: *JSC.JSGlobalObject,
+        globalThis: *jsc.JSGlobalObject,
         in_flight: Command.PromisePair.Queue,
         queue: Command.Entry.Queue,
 
@@ -372,8 +376,8 @@ pub const ValkeyClient = struct {
 
         pub fn enqueue(this: *DeferredFailure) void {
             debug("enqueueing deferred failure", .{});
-            const managed_task = JSC.ManagedTask.New(DeferredFailure, run).init(this);
-            JSC.VirtualMachine.get().eventLoop().enqueueTask(managed_task);
+            const managed_task = jsc.ManagedTask.New(DeferredFailure, run).init(this);
+            jsc.VirtualMachine.get().eventLoop().enqueueTask(managed_task);
         }
     };
 
@@ -388,7 +392,7 @@ pub const ValkeyClient = struct {
                 const vm = this.vm;
                 const deferred_failrue = bun.new(DeferredFailure, .{
                     // This memory is not owned by us.
-                    .message = bun.default_allocator.dupe(u8, message) catch bun.outOfMemory(),
+                    .message = bun.handleOom(bun.default_allocator.dupe(u8, message)),
 
                     .err = err,
                     .globalThis = vm.global,
@@ -408,11 +412,11 @@ pub const ValkeyClient = struct {
         this.failWithJSValue(globalThis, protocol.valkeyErrorToJS(globalThis, message, err));
     }
 
-    pub fn failWithJSValue(this: *ValkeyClient, globalThis: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) void {
+    pub fn failWithJSValue(this: *ValkeyClient, globalThis: *jsc.JSGlobalObject, jsvalue: jsc.JSValue) void {
         this.status = .failed;
         rejectAllPendingCommands(&this.in_flight, &this.queue, globalThis, this.allocator, jsvalue);
 
-        if (!this.flags.is_authenticated) {
+        if (!this.connectionReady()) {
             this.flags.is_manually_closed = true;
             this.close();
         }
@@ -460,13 +464,15 @@ pub const ValkeyClient = struct {
 
         this.status = .disconnected;
         this.flags.is_reconnecting = true;
+        this.flags.is_authenticated = false;
+        this.flags.is_selecting_db_internal = false;
 
         // Signal reconnect timer should be started
         this.onValkeyReconnect();
     }
 
     pub fn sendNextCommand(this: *ValkeyClient) void {
-        if (this.write_buffer.remaining().len == 0 and this.flags.is_authenticated) {
+        if (this.write_buffer.remaining().len == 0 and this.connectionReady()) {
             if (this.queue.readableLength() > 0) {
                 // Check the command at the head of the queue
                 const flags = &this.queue.peekItem(0).meta;
@@ -673,6 +679,33 @@ pub const ValkeyClient = struct {
             return;
         }
 
+        // Handle initial SELECT response
+        if (this.flags.is_selecting_db_internal) {
+            this.flags.is_selecting_db_internal = false;
+
+            return switch (value.*) {
+                .Error => |err_str| {
+                    this.fail(err_str, protocol.RedisError.InvalidCommand);
+                },
+                .SimpleString => |ok_str| {
+                    if (!std.mem.eql(u8, ok_str, "OK")) {
+                        // SELECT returned something other than "OK"
+                        this.fail("SELECT command failed with non-OK response", protocol.RedisError.InvalidResponse);
+                        return;
+                    }
+
+                    // SELECT was successful.
+                    debug("SELECT {d} successful", .{this.database});
+                    // Connection is now fully ready on the specified database.
+                    // If any commands were queued while waiting for SELECT, try to send them.
+                    this.sendNextCommand();
+                },
+                else => { // Unexpected response type for SELECT
+                    this.fail("Received non-SELECT response while in the SELECT state.", protocol.RedisError.InvalidResponse);
+                },
+            };
+        }
+
         // For regular commands, get the next command+promise pair from the queue
         var pair = this.in_flight.readItem() orelse {
             debug("Received response but no promise in queue", .{});
@@ -754,6 +787,7 @@ pub const ValkeyClient = struct {
                 this.fail("Failed to write SELECT command", err);
                 return;
             };
+            this.flags.is_selecting_db_internal = true;
         }
     }
 
@@ -769,6 +803,12 @@ pub const ValkeyClient = struct {
     fn start(this: *ValkeyClient) void {
         this.authenticate();
         _ = this.flushData();
+    }
+
+    /// Test whether we are ready to run "normal" RESP commands, such as
+    /// get/set, pub/sub, etc.
+    fn connectionReady(this: *const ValkeyClient) bool {
+        return this.flags.is_authenticated and !this.flags.is_selecting_db_internal;
     }
 
     /// Process queued commands in the offline queue
@@ -788,26 +828,26 @@ pub const ValkeyClient = struct {
         this.in_flight.writeItem(.{
             .meta = offline_cmd.meta,
             .promise = offline_cmd.promise,
-        }) catch bun.outOfMemory();
+        }) catch |err| bun.handleOom(err);
         const data = offline_cmd.serialized_data;
 
-        if (this.flags.is_authenticated and this.write_buffer.remaining().len == 0) {
+        if (this.connectionReady() and this.write_buffer.remaining().len == 0) {
             // Optimization: avoid cloning the data an extra time.
             defer this.allocator.free(data);
 
-            const wrote = this.socket.write(data, false);
+            const wrote = this.socket.write(data);
             const unwritten = data[@intCast(@max(wrote, 0))..];
 
             if (unwritten.len > 0) {
                 // Handle incomplete write.
-                this.write_buffer.write(this.allocator, unwritten) catch bun.outOfMemory();
+                bun.handleOom(this.write_buffer.write(this.allocator, unwritten));
             }
 
             return true;
         }
 
         // Write the pre-serialized data directly to the output buffer
-        _ = this.write(data) catch bun.outOfMemory();
+        _ = bun.handleOom(this.write(data));
         bun.default_allocator.free(data);
 
         return true;
@@ -833,7 +873,7 @@ pub const ValkeyClient = struct {
             // With auto pipelining, we can accept commands regardless of in_flight commands
             (!can_pipeline and this.in_flight.readableLength() > 0) or
             // We need authentication before processing commands
-            !this.flags.is_authenticated or
+            !this.connectionReady() or
             // Commands that don't support pipelining must wait for the entire queue to drain
             must_wait_for_queue or
             // If can pipeline, we can accept commands regardless of in_flight commands
@@ -869,7 +909,7 @@ pub const ValkeyClient = struct {
         _ = this.flushData();
     }
 
-    pub fn send(this: *ValkeyClient, globalThis: *JSC.JSGlobalObject, command: *const Command) !*JSC.JSPromise {
+    pub fn send(this: *ValkeyClient, globalThis: *jsc.JSGlobalObject, command: *const Command) !*jsc.JSPromise {
         var promise = Command.Promise.create(globalThis, command.meta);
 
         const js_promise = promise.promise.get();
@@ -937,7 +977,7 @@ pub const ValkeyClient = struct {
         return @fieldParentPtr("client", this);
     }
 
-    inline fn globalObject(this: *ValkeyClient) *JSC.JSGlobalObject {
+    inline fn globalObject(this: *ValkeyClient) *jsc.JSGlobalObject {
         return this.parent().globalObject;
     }
 
@@ -959,13 +999,14 @@ pub const ValkeyClient = struct {
 };
 
 // Auto-pipelining
-const AutoFlusher = JSC.WebCore.AutoFlusher;
 
-const JSValkeyClient = JSC.API.Valkey;
+const debug = bun.Output.scoped(.Redis, .visible);
 
-const JSC = bun.JSC;
+const protocol = @import("./valkey_protocol.zig");
 const std = @import("std");
+
 const bun = @import("bun");
-const protocol = @import("valkey_protocol.zig");
-const debug = bun.Output.scoped(.Redis, false);
+const jsc = bun.jsc;
 const uws = bun.uws;
+const AutoFlusher = jsc.WebCore.AutoFlusher;
+const JSValkeyClient = jsc.API.Valkey;

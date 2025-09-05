@@ -1,30 +1,8 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const FileDescriptor = bun.FileDescriptor;
-const FeatureFlags = bun.FeatureFlags;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const Mutex = bun.Mutex;
 const Fs = @This();
-const path_handler = @import("./resolver/resolve_path.zig");
-const PathString = bun.PathString;
-const allocators = bun.allocators;
-const OOM = bun.OOM;
-const FD = bun.FD;
 
-const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-const PathBuffer = bun.PathBuffer;
-const WPathBuffer = bun.WPathBuffer;
+pub const debug = Output.scoped(.fs, .hidden);
 
-pub const debug = Output.scoped(.fs, true);
-
-// pub const FilesystemImplementation = @import("fs_impl.zig");
+// pub const FilesystemImplementation = @import("./fs_impl.zig");
 
 pub const Preallocate = struct {
     pub const Counts = struct {
@@ -559,14 +537,14 @@ pub const FileSystem = struct {
                                 bun.default_allocator,
                                 "{s}\\Temp",
                                 .{strings.withoutTrailingSlash(windir)},
-                            ) catch bun.outOfMemory();
+                            ) catch |err| bun.handleOom(err);
                         }
 
                         if (bun.getenvZ("USERPROFILE")) |profile| {
                             var buf: bun.PathBuffer = undefined;
                             var parts = [_]string{"AppData\\Local\\Temp"};
                             const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
-                            break :brk bun.default_allocator.dupe(u8, out) catch bun.outOfMemory();
+                            break :brk bun.handleOom(bun.default_allocator.dupe(u8, out));
                         }
 
                         var tmp_buf: bun.PathBuffer = undefined;
@@ -576,7 +554,7 @@ pub const FileSystem = struct {
                             bun.default_allocator,
                             "{s}\\Windows\\Temp",
                             .{strings.withoutTrailingSlash(root)},
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     };
                     win_tempdir_cache = value;
                     return value;
@@ -624,7 +602,7 @@ pub const FileSystem = struct {
             var existing = this.entries.atIndex(index) orelse return null;
             if (existing.* == .entries) {
                 if (existing.entries.generation < generation) {
-                    var handle = bun.openDirForIteration(std.fs.cwd(), existing.entries.dir) catch |err| {
+                    var handle = bun.openDirForIteration(FD.cwd(), existing.entries.dir).unwrap() catch |err| {
                         existing.entries.data.clearAndFree(bun.fs_allocator);
 
                         return this.readDirectoryError(existing.entries.dir, err) catch unreachable;
@@ -636,7 +614,7 @@ pub const FileSystem = struct {
                         &existing.entries.data,
                         existing.entries.dir,
                         generation,
-                        handle,
+                        handle.stdDir(),
 
                         void,
                         void{},
@@ -982,7 +960,7 @@ pub const FileSystem = struct {
         ) !DirEntry {
             _ = fs;
 
-            var iter = bun.iterateDir(handle);
+            var iter = bun.iterateDir(.fromStdDir(handle));
             var dir = DirEntry.init(_dir, generation);
             const allocator = bun.fs_allocator;
             errdefer dir.deinit(allocator);
@@ -1110,7 +1088,7 @@ pub const FileSystem = struct {
             };
 
             if (comptime FeatureFlags.enable_entry_cache) {
-                const entries_ptr = in_place orelse bun.fs_allocator.create(DirEntry) catch bun.outOfMemory();
+                const entries_ptr = in_place orelse bun.handleOom(bun.fs_allocator.create(DirEntry));
                 if (in_place) |original| {
                     original.data.clearAndFree(bun.fs_allocator);
                 }
@@ -1382,10 +1360,10 @@ pub const FileSystem = struct {
             if (comptime bun.Environment.isWindows) {
                 var file = bun.sys.getFileAttributes(absolute_path_c) orelse return error.FileNotFound;
                 var depth: usize = 0;
-                const buf2: *bun.PathBuffer = bun.PathBufferPool.get();
-                defer bun.PathBufferPool.put(buf2);
-                const buf3: *bun.PathBuffer = bun.PathBufferPool.get();
-                defer bun.PathBufferPool.put(buf3);
+                const buf2: *bun.PathBuffer = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(buf2);
+                const buf3: *bun.PathBuffer = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(buf3);
 
                 var current_buf: *bun.PathBuffer = buf2;
                 var other_buf: *bun.PathBuffer = &outpath;
@@ -1806,6 +1784,14 @@ pub const Path = struct {
         }
     }
 
+    pub inline fn assertFilePathIsAbsolute(path: *const Path) void {
+        if (bun.Environment.ci_assert) {
+            if (path.isFile()) {
+                bun.assert(std.fs.path.isAbsolute(path.text));
+            }
+        }
+    }
+
     pub inline fn isPrettyPathPosix(path: *const Path) bool {
         if (!Environment.isWindows) return true;
         return bun.strings.indexOfChar(path.pretty, '\\') == null;
@@ -1972,6 +1958,30 @@ pub const Path = struct {
 // pub fn customRealpath(allocator: std.mem.Allocator, path: string) !string {
 //     var opened = try std.posix.open(path, if (Environment.isLinux) bun.O.PATH else bun.O.RDONLY, 0);
 //     defer std.posix.close(opened);
-
 // }
+
 pub const StatHash = @import("./fs/stat_hash.zig");
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const path_handler = @import("./resolver/resolve_path.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FD = bun.FD;
+const FeatureFlags = bun.FeatureFlags;
+const FileDescriptor = bun.FileDescriptor;
+const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
+const MutableString = bun.MutableString;
+const Mutex = bun.Mutex;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const PathBuffer = bun.PathBuffer;
+const PathString = bun.PathString;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const WPathBuffer = bun.WPathBuffer;
+const allocators = bun.allocators;
+const default_allocator = bun.default_allocator;
+const strings = bun.strings;

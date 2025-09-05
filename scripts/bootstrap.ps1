@@ -1,4 +1,4 @@
-# Version: 8
+# Version: 11
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on Windows 10 or newer with PowerShell.
 
@@ -240,11 +240,11 @@ function Install-Git {
 }
 
 function Install-NodeJs {
-  Install-Package nodejs -Command node -Version "22.9.0"
+  Install-Package nodejs -Command node -Version "24.3.0"
 }
 
 function Install-Bun {
-  Install-Package bun -Version "1.1.30"
+  Install-Package bun -Version "1.2.17"
 }
 
 function Install-Cygwin {
@@ -282,6 +282,8 @@ function Install-Build-Essentials {
     strawberryperl `
     mingw
   Install-Rust
+  # Needed to remap stack traces
+  Install-PdbAddr2line
   Install-Llvm
 }
 
@@ -340,6 +342,10 @@ function Install-Rust {
   Set-Env "CARGO_HOME" "$rustPath\cargo"
   Set-Env "RUSTUP_HOME" "$rustPath\rustup"
   Add-To-Path "$rustPath\cargo\bin"
+}
+
+function Install-PdbAddr2line {
+  Execute-Command cargo install --examples "pdb-addr2line@0.11.2"
 }
 
 function Install-Llvm {

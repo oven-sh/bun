@@ -134,7 +134,7 @@ test("verify we print error messages passed to done callbacks", () => {
 
     0 pass
     9 fail
-    Ran 9 tests across 1 files.
+    Ran 9 tests across 1 file.
     "
   `);
 });

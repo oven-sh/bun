@@ -1,47 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const strings = bun.strings;
-const FileSystem = bun.fs.FileSystem;
-const install = bun.install;
-const PackageManager = install.PackageManager;
-const Lockfile = install.Lockfile;
-const Command = bun.CLI.Command;
-const WorkspaceFilter = PackageManager.WorkspaceFilter;
-const PackageInstall = install.PackageInstall;
-const Progress = bun.Progress;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const ProgressStrings = PackageManager.ProgressStrings;
-const Bin = install.Bin;
-const PackageInstaller = PackageManager.PackageInstaller;
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
-const PackageID = install.PackageID;
-const invalid_package_id = install.invalid_package_id;
-const TreeContext = PackageInstaller.TreeContext;
-
-fn addDependenciesToSet(
-    names: *std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void),
-    lockfile: *Lockfile,
-    dependencies_slice: Lockfile.DependencySlice,
-) void {
-    const begin = dependencies_slice.off;
-    const end = begin +| dependencies_slice.len;
-    var dep_id = begin;
-    while (dep_id < end) : (dep_id += 1) {
-        const package_id = lockfile.buffers.resolutions.items[dep_id];
-        if (package_id == invalid_package_id) continue;
-
-        const dep = lockfile.buffers.dependencies.items[dep_id];
-        const entry = names.getOrPut(lockfile.allocator, @truncate(dep.name_hash)) catch bun.outOfMemory();
-        if (!entry.found_existing) {
-            const dependency_slice = lockfile.packages.items(.dependencies)[package_id];
-            addDependenciesToSet(names, lockfile, dependency_slice);
-        }
-    }
-}
-
 pub fn installHoistedPackages(
     this: *PackageManager,
     ctx: Command.Context,
@@ -49,6 +5,8 @@ pub fn installHoistedPackages(
     install_root_dependencies: bool,
     log_level: PackageManager.Options.LogLevel,
 ) !PackageInstall.Summary {
+    bun.analytics.Features.hoisted_bun_install += 1;
+
     const original_trees = this.lockfile.buffers.trees;
     const original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies;
 
@@ -182,35 +140,6 @@ pub fn installHoistedPackages(
             // to make mistakes harder
             var parts = this.lockfile.packages.slice();
 
-            const trusted_dependencies_from_update_requests: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void) = trusted_deps: {
-
-                // find all deps originating from --trust packages from cli
-                var set: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void) = .{};
-                if (this.options.do.trust_dependencies_from_args and this.lockfile.packages.len > 0) {
-                    const root_deps = parts.items(.dependencies)[this.root_package_id.get(this.lockfile, this.workspace_name_hash)];
-                    var dep_id = root_deps.off;
-                    const end = dep_id +| root_deps.len;
-                    while (dep_id < end) : (dep_id += 1) {
-                        const root_dep = this.lockfile.buffers.dependencies.items[dep_id];
-                        for (this.update_requests) |request| {
-                            if (request.matches(root_dep, this.lockfile.buffers.string_bytes.items)) {
-                                const package_id = this.lockfile.buffers.resolutions.items[dep_id];
-                                if (package_id == invalid_package_id) continue;
-
-                                const entry = set.getOrPut(this.lockfile.allocator, @truncate(root_dep.name_hash)) catch bun.outOfMemory();
-                                if (!entry.found_existing) {
-                                    const dependency_slice = parts.items(.dependencies)[package_id];
-                                    addDependenciesToSet(&set, this.lockfile, dependency_slice);
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                break :trusted_deps set;
-            };
-
             break :brk PackageInstaller{
                 .manager = this,
                 .options = &this.options,
@@ -247,7 +176,7 @@ pub fn installHoistedPackages(
                 .tree_ids_to_trees_the_id_depends_on = tree_ids_to_trees_the_id_depends_on,
                 .completed_trees = completed_trees,
                 .trees = trees: {
-                    const trees = this.allocator.alloc(TreeContext, this.lockfile.buffers.trees.items.len) catch bun.outOfMemory();
+                    const trees = bun.handleOom(this.allocator.alloc(TreeContext, this.lockfile.buffers.trees.items.len));
                     for (0..this.lockfile.buffers.trees.items.len) |i| {
                         trees[i] = .{
                             .binaries = Bin.PriorityQueue.init(this.allocator, .{
@@ -258,7 +187,7 @@ pub fn installHoistedPackages(
                     }
                     break :trees trees;
                 },
-                .trusted_dependencies_from_update_requests = trusted_dependencies_from_update_requests,
+                .trusted_dependencies_from_update_requests = this.findTrustedDependenciesFromUpdateRequests(),
                 .seen_bin_links = bun.StringHashMap(void).init(this.allocator),
             };
         };
@@ -298,7 +227,6 @@ pub fn installHoistedPackages(
                         &installer,
                         .{
                             .onExtract = PackageInstaller.installEnqueuedPackagesAfterExtraction,
-                            .onPatch = PackageInstaller.installEnqueuedPackagesImpl,
                             .onResolve = {},
                             .onPackageManifestError = {},
                             .onPackageDownloadError = {},
@@ -321,7 +249,6 @@ pub fn installHoistedPackages(
                 &installer,
                 .{
                     .onExtract = PackageInstaller.installEnqueuedPackagesAfterExtraction,
-                    .onPatch = PackageInstaller.installEnqueuedPackagesImpl,
                     .onResolve = {},
                     .onPackageManifestError = {},
                     .onPackageDownloadError = {},
@@ -348,7 +275,6 @@ pub fn installHoistedPackages(
                         closure.installer,
                         .{
                             .onExtract = PackageInstaller.installEnqueuedPackagesAfterExtraction,
-                            .onPatch = PackageInstaller.installEnqueuedPackagesImpl,
                             .onResolve = {},
                             .onPackageManifestError = {},
                             .onPackageDownloadError = {},
@@ -402,6 +328,7 @@ pub fn installHoistedPackages(
             installer.installAvailablePackages(log_level, force);
         }
 
+        // .monotonic is okay because this value is only accessed on this thread.
         this.finished_installing.store(true, .monotonic);
         if (log_level.showProgress()) {
             scripts_node.activate();
@@ -416,6 +343,7 @@ pub fn installHoistedPackages(
         installer.linkRemainingBins(log_level);
         installer.completeRemainingScripts(log_level);
 
+        // .monotonic is okay because this value is only accessed on this thread.
         while (this.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
             this.reportSlowLifecycleScripts();
 
@@ -429,3 +357,28 @@ pub fn installHoistedPackages(
 
     return summary;
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const Progress = bun.Progress;
+const strings = bun.strings;
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+const Command = bun.cli.Command;
+const FileSystem = bun.fs.FileSystem;
+
+const install = bun.install;
+const Bin = install.Bin;
+const Lockfile = install.Lockfile;
+const PackageID = install.PackageID;
+const PackageInstall = install.PackageInstall;
+
+const PackageManager = install.PackageManager;
+const ProgressStrings = PackageManager.ProgressStrings;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;
+
+const PackageInstaller = PackageManager.PackageInstaller;
+const TreeContext = PackageInstaller.TreeContext;

@@ -56,6 +56,11 @@ declare module "bun:test" {
      * Restore the previous value of mocks.
      */
     restore(): void;
+
+    /**
+     * Reset all mock function state (calls, results, etc.) without restoring their original implementation.
+     */
+    clearAllMocks(): void;
   };
 
   /**
@@ -147,10 +152,40 @@ declare module "bun:test" {
     type SpiedSetter<T> = JestMock.SpiedSetter<T>;
   }
 
+  /**
+   * Create a spy on an object property or method
+   */
   export function spyOn<T extends object, K extends keyof T>(
     obj: T,
     methodOrPropertyValue: K,
   ): Mock<Extract<T[K], (...args: any[]) => any>>;
+
+  /**
+   * Vitest-compatible mocking utilities
+   * Provides Vitest-style mocking API for easier migration from Vitest to Bun
+   */
+  export const vi: {
+    /**
+     * Create a mock function
+     */
+    fn: typeof jest.fn;
+    /**
+     * Create a spy on an object property or method
+     */
+    spyOn: typeof spyOn;
+    /**
+     * Mock a module
+     */
+    module: typeof mock.module;
+    /**
+     * Restore all mocks to their original implementation
+     */
+    restoreAllMocks: typeof jest.restoreAllMocks;
+    /**
+     * Clear all mock state (calls, results, etc.) without restoring original implementation
+     */
+    clearAllMocks: typeof jest.clearAllMocks;
+  };
 
   interface FunctionLike {
     readonly name: string;
@@ -257,6 +292,15 @@ declare module "bun:test" {
    * @param fn the function that defines the tests
    */
   export const describe: Describe;
+  /**
+   * Skips a group of related tests.
+   *
+   * This is equivalent to calling `describe.skip()`.
+   *
+   * @param label the label for the tests
+   * @param fn the function that defines the tests
+   */
+  export const xdescribe: Describe;
   /**
    * Runs a function, once, before all the tests.
    *
@@ -510,7 +554,17 @@ declare module "bun:test" {
    * @param fn the test function
    */
   export const test: Test;
-  export { test as it };
+  export { test as it, xtest as xit };
+
+  /**
+   * Skips a test.
+   *
+   * This is equivalent to calling `test.skip()`.
+   *
+   * @param label the label for the test
+   * @param fn the test function
+   */
+  export const xtest: Test;
 
   /**
    * Asserts that a value matches some criteria.
@@ -1185,14 +1239,6 @@ declare module "bun:test" {
      */
     toBeInstanceOf(value: unknown): void;
     /**
-     * Asserts that the expected value is an instance of value
-     *
-     * @example
-     * expect([]).toBeInstanceOf(Array);
-     * expect(null).toBeInstanceOf(Array); // fail
-     */
-    toBeInstanceOf(value: unknown): void;
-    /**
      * Asserts that a value is `undefined`.
      *
      * @example
@@ -1649,6 +1695,26 @@ declare module "bun:test" {
      * function threw an error, it will be considered a failure.
      */
     toHaveReturnedTimes(times: number): void;
+
+    /**
+     * Ensures that a mock function has returned a specific value.
+     * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
+     */
+    toHaveReturnedWith(expected: unknown): void;
+
+    /**
+     * Ensures that a mock function has returned a specific value on its last invocation.
+     * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
+     */
+    toHaveLastReturnedWith(expected: unknown): void;
+
+    /**
+     * Ensures that a mock function has returned a specific value on the nth invocation.
+     * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
+     * @param n The 1-based index of the function call
+     * @param expected The expected return value
+     */
+    toHaveNthReturnedWith(n: number, expected: unknown): void;
 
     /**
      * Ensures that a mock function is called.
@@ -2190,4 +2256,6 @@ declare module "bun:test" {
 
     export type UnknownFunction = (...args: unknown[]) => unknown;
   }
+
+  export const expectTypeOf: typeof import("./vendor/expect-type").expectTypeOf;
 }

@@ -14,14 +14,13 @@
  * This module aliases `globalThis.Bun`.
  */
 declare module "bun" {
-  type DistributedOmit<T, K extends PropertyKey> = T extends T ? Omit<T, K> : never;
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
   type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =
     | NodeJS.TypedArray<TArrayBuffer>
     | DataView<TArrayBuffer>;
   type BufferSource = NodeJS.TypedArray | DataView | ArrayBufferLike;
   type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
-  type XMLHttpRequestBodyInit = Blob | BufferSource | string | FormData | Iterable<Uint8Array>;
+  type XMLHttpRequestBodyInit = Blob | BufferSource | FormData | URLSearchParams | string;
   type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
   type ReadableStreamDefaultReadResult<T> =
     | ReadableStreamDefaultReadValueResult<T>
@@ -45,6 +44,7 @@ declare module "bun" {
   type DOMHighResTimeStamp = number;
   type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
   type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
+  type MaybePromise<T> = T | Promise<T>;
 
   namespace __internal {
     type LibDomIsLoaded = typeof globalThis extends { onabort: any } ? true : false;
@@ -67,38 +67,30 @@ declare module "bun" {
           ? T
           : Otherwise // Not defined in lib dom (or anywhere else), so no conflict. We can safely use our own definition
         : Otherwise; // Lib dom not loaded anyway, so no conflict. We can safely use our own definition
+
+    /**
+     * Like Omit, but correctly distributes over unions. Most useful for removing
+     * properties from union options objects, like {@link Bun.SQL.Options}
+     *
+     * @example
+     * ```ts
+     * type X = Bun.DistributedOmit<{type?: 'a', url?: string} | {type?: 'b', flag?: boolean}, "url">
+     * // `{type?: 'a'} | {type?: 'b', flag?: boolean}` (Omit applied to each union item instead of entire type)
+     *
+     * type X = Omit<{type?: 'a', url?: string} | {type?: 'b', flag?: boolean}, "url">;
+     * // `{type?: "a" | "b" | undefined}` (Missing `flag` property and no longer a union)
+     * ```
+     */
+    type DistributedOmit<T, K extends PropertyKey> = T extends T ? Omit<T, K> : never;
+
+    type KeysInBoth<A, B> = Extract<keyof A, keyof B>;
+    type MergeInner<A, B> = Omit<A, KeysInBoth<A, B>> &
+      Omit<B, KeysInBoth<A, B>> & {
+        [Key in KeysInBoth<A, B>]: A[Key] | B[Key];
+      };
+    type Merge<A, B> = MergeInner<A, B> & MergeInner<B, A>;
+    type DistributedMerge<T, Else = T> = T extends T ? Merge<T, Exclude<Else, T>> : never;
   }
-
-  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
-  type Platform =
-    | "aix"
-    | "android"
-    | "darwin"
-    | "freebsd"
-    | "haiku"
-    | "linux"
-    | "openbsd"
-    | "sunos"
-    | "win32"
-    | "cygwin"
-    | "netbsd";
-
-  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
-  type Architecture = "arm" | "arm64" | "ia32" | "mips" | "mipsel" | "ppc" | "ppc64" | "s390" | "s390x" | "x64";
-
-  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
-  type UncaughtExceptionListener = (error: Error, origin: UncaughtExceptionOrigin) => void;
-
-  /**
-   * Most of the time the unhandledRejection will be an Error, but this should not be relied upon
-   * as *anything* can be thrown/rejected, it is therefore unsafe to assume that the value is an Error.
-   *
-   * @deprecated This type is unused in Bun's types and might be removed in the near future
-   */
-  type UnhandledRejectionListener = (reason: unknown, promise: Promise<unknown>) => void;
-
-  /** @deprecated This type is unused in Bun's types and might be removed in the near future */
-  type MultipleResolveListener = (type: MultipleResolveType, promise: Promise<unknown>, value: unknown) => void;
 
   interface ErrorEventInit extends EventInit {
     colno?: number;
@@ -596,6 +588,23 @@ declare module "bun" {
   ): number;
 
   /**
+   * Remove ANSI escape codes from a string.
+   *
+   * @category Utilities
+   *
+   * @param input The string to remove ANSI escape codes from.
+   * @returns The string with ANSI escape codes removed.
+   *
+   * @example
+   * ```ts
+   * import { stripANSI } from "bun";
+   *
+   * console.log(stripANSI("\u001b[31mhello\u001b[39m")); // "hello"
+   * ```
+   */
+  function stripANSI(input: string): string;
+
+  /**
    * TOML related APIs
    */
   namespace TOML {
@@ -608,6 +617,65 @@ declare module "bun" {
      * @returns A JavaScript object
      */
     export function parse(input: string): object;
+  }
+
+  /**
+   * YAML related APIs
+   */
+  namespace YAML {
+    /**
+     * Parse a YAML string into a JavaScript value
+     *
+     * @category Utilities
+     *
+     * @param input The YAML string to parse
+     * @returns A JavaScript value
+     *
+     * @example
+     * ```ts
+     * import { YAML } from "bun";
+     *
+     * console.log(YAML.parse("123")) // 123
+     * console.log(YAML.parse("123")) // null
+     * console.log(YAML.parse("false")) // false
+     * console.log(YAML.parse("abc")) // "abc"
+     * console.log(YAML.parse("- abc")) // [ "abc" ]
+     * console.log(YAML.parse("abc: def")) // { "abc": "def" }
+     * ```
+     */
+    export function parse(input: string): unknown;
+
+    /**
+     * Convert a JavaScript value into a YAML string. Strings are double quoted if they contain keywords, non-printable or
+     * escaped characters, or if a YAML parser would parse them as numbers. Anchors and aliases are inferred from objects, allowing cycles.
+     *
+     * @category Utilities
+     *
+     * @param input The JavaScript value to stringify.
+     * @param replacer Currently not supported.
+     * @param space A number for how many spaces each level of indentation gets, or a string used as indentation. The number is clamped between 0 and 10, and the first 10 characters of the string are used.
+     * @returns A string containing the YAML document.
+     *
+     * @example
+     * ```ts
+     * import { YAML } from "bun";
+     *
+     * const input = {
+     *   abc: "def"
+     * };
+     * console.log(YAML.stringify(input));
+     * // # output
+     * // abc: def
+     *
+     * const cycle = {};
+     * cycle.obj = cycle;
+     * console.log(YAML.stringify(cycle));
+     * // # output
+     * // &root
+     * // obj:
+     * //   *root
+     */
+    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string;
   }
 
   /**
@@ -825,7 +893,7 @@ declare module "bun" {
     buffers: Array<ArrayBufferView | ArrayBufferLike>,
     maxLength: number,
     asUint8Array: true,
-  ): Uint8Array;
+  ): Uint8Array<ArrayBuffer>;
 
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
@@ -841,31 +909,6 @@ declare module "bun" {
   function readableStreamToArrayBuffer(
     stream: ReadableStream<ArrayBufferView | ArrayBufferLike>,
   ): Promise<ArrayBuffer> | ArrayBuffer;
-
-  /**
-   * Consume all data from a {@link ReadableStream} until it closes or errors.
-   *
-   * Concatenate the chunks into a single {@link ArrayBuffer}.
-   *
-   * Each chunk must be a TypedArray or an ArrayBuffer. If you need to support
-   * chunks of different types, consider {@link readableStreamToBlob}
-   *
-   * @param stream The stream to consume.
-   * @returns A promise that resolves with the concatenated chunks or the concatenated chunks as a {@link Uint8Array}.
-   */
-  function readableStreamToBytes(
-    stream: ReadableStream<ArrayBufferView | ArrayBufferLike>,
-  ): Promise<Uint8Array> | Uint8Array;
-
-  /**
-   * Consume all data from a {@link ReadableStream} until it closes or errors.
-   *
-   * Concatenate the chunks into a single {@link Blob}.
-   *
-   * @param stream The stream to consume.
-   * @returns A promise that resolves with the concatenated chunks as a {@link Blob}.
-   */
-  function readableStreamToBlob(stream: ReadableStream): Promise<Blob>;
 
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
@@ -898,26 +941,6 @@ declare module "bun" {
     stream: ReadableStream<string | NodeJS.TypedArray | ArrayBufferView>,
     multipartBoundaryExcludingDashes?: string | NodeJS.TypedArray | ArrayBufferView,
   ): Promise<FormData>;
-
-  /**
-   * Consume all data from a {@link ReadableStream} until it closes or errors.
-   *
-   * Concatenate the chunks into a single string. Chunks must be a TypedArray or an ArrayBuffer. If you need to support chunks of different types, consider {@link readableStreamToBlob}.
-   *
-   * @param stream The stream to consume.
-   * @returns A promise that resolves with the concatenated chunks as a {@link String}.
-   */
-  function readableStreamToText(stream: ReadableStream): Promise<string>;
-
-  /**
-   * Consume all data from a {@link ReadableStream} until it closes or errors.
-   *
-   * Concatenate the chunks into a single string and parse as JSON. Chunks must be a TypedArray or an ArrayBuffer. If you need to support chunks of different types, consider {@link readableStreamToBlob}.
-   *
-   * @param stream The stream to consume.
-   * @returns A promise that resolves with the concatenated chunks as a {@link String}.
-   */
-  function readableStreamToJSON(stream: ReadableStream): Promise<any>;
 
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
@@ -1018,8 +1041,8 @@ declare module "bun" {
      *
      * This API might change later to separate Uint8ArraySink and ArrayBufferSink
      */
-    flush(): number | Uint8Array | ArrayBuffer;
-    end(): ArrayBuffer | Uint8Array;
+    flush(): number | Uint8Array<ArrayBuffer> | ArrayBuffer;
+    end(): ArrayBuffer | Uint8Array<ArrayBuffer>;
   }
 
   /** DNS Related APIs */
@@ -1242,9 +1265,9 @@ declare module "bun" {
      */
     writer(options?: { highWaterMark?: number }): FileSink;
 
-    readonly readable: ReadableStream;
-
-    // TODO: writable: WritableStream;
+    // TODO
+    // readonly readable: ReadableStream<Uint8Array>;
+    // readonly writable: WritableStream<Uint8Array>;
 
     /**
      * A UNIX timestamp indicating when the file was last modified.
@@ -1303,465 +1326,21 @@ declare module "bun" {
     stat(): Promise<import("node:fs").Stats>;
   }
 
-  /**
-   * Configuration options for SQL client connection and behavior
-   *  @example
-   * const config: SQLOptions = {
-   *   host: 'localhost',
-   *   port: 5432,
-   *   user: 'dbuser',
-   *   password: 'secretpass',
-   *   database: 'myapp',
-   *   idleTimeout: 30,
-   *   max: 20,
-   *   onconnect: (client) => {
-   *     console.log('Connected to database');
-   *   }
-   * };
-   */
-
-  interface SQLOptions {
-    /** Connection URL (can be string or URL object) */
-    url?: URL | string;
-    /** Database server hostname */
-    host?: string;
-    /** Database server hostname (alias for host) */
-    hostname?: string;
-    /** Database server port number */
-    port?: number | string;
-    /** Database user for authentication */
-    username?: string;
-    /** Database user for authentication (alias for username) */
-    user?: string;
-    /** Database password for authentication */
-    password?: string | (() => Promise<string>);
-    /** Database password for authentication (alias for password) */
-    pass?: string | (() => Promise<string>);
-    /** Name of the database to connect to */
-    database?: string;
-    /** Name of the database to connect to (alias for database) */
-    db?: string;
-    /** Database adapter/driver to use */
-    adapter?: string;
-    /** Maximum time in seconds to wait for connection to become available */
-    idleTimeout?: number;
-    /** Maximum time in seconds to wait for connection to become available (alias for idleTimeout) */
-    idle_timeout?: number;
-    /** Maximum time in seconds to wait when establishing a connection */
-    connectionTimeout?: number;
-    /** Maximum time in seconds to wait when establishing a connection (alias for connectionTimeout) */
-    connection_timeout?: number;
-    /** Maximum lifetime in seconds of a connection */
-    maxLifetime?: number;
-    /** Maximum lifetime in seconds of a connection (alias for maxLifetime) */
-    max_lifetime?: number;
-    /** Whether to use TLS/SSL for the connection */
-    tls?: TLSOptions | boolean;
-    /** Whether to use TLS/SSL for the connection (alias for tls) */
-    ssl?: TLSOptions | boolean;
-    /** Callback function executed when a connection is established */
-    onconnect?: (client: SQL) => void;
-    /** Callback function executed when a connection is closed */
-    onclose?: (client: SQL) => void;
-    /** Maximum number of connections in the pool */
-    max?: number;
-    /** By default values outside i32 range are returned as strings. If this is true, values outside i32 range are returned as BigInts. */
-    bigint?: boolean;
-    /** Automatic creation of prepared statements, defaults to true */
-    prepare?: boolean;
-  }
-
-  /**
-   * Represents a SQL query that can be executed, with additional control methods
-   * Extends Promise to allow for async/await usage
-   */
-  interface SQLQuery<T = any> extends Promise<T> {
-    /** Indicates if the query is currently executing */
-    active: boolean;
-
-    /** Indicates if the query has been cancelled */
-    cancelled: boolean;
-
-    /** Cancels the executing query */
-    cancel(): SQLQuery<T>;
-
-    /** Execute as a simple query, no parameters are allowed but can execute multiple commands separated by semicolons */
-    simple(): SQLQuery<T>;
-
-    /** Executes the query */
-    execute(): SQLQuery<T>;
-
-    /** Returns the raw query result */
-    raw(): SQLQuery<T>;
-
-    /** Returns only the values from the query result */
-    values(): SQLQuery<T>;
-  }
-
-  /**
-   * Callback function type for transaction contexts
-   * @param sql Function to execute SQL queries within the transaction
-   */
-  type SQLTransactionContextCallback = (sql: TransactionSQL) => Promise<any> | Array<SQLQuery>;
-  /**
-   * Callback function type for savepoint contexts
-   * @param sql Function to execute SQL queries within the savepoint
-   */
-  type SQLSavepointContextCallback = (sql: SavepointSQL) => Promise<any> | Array<SQLQuery>;
-
-  /**
-   * Main SQL client interface providing connection and transaction management
-   */
-  interface SQL {
-    /**
-     * Executes a SQL query using template literals
-     * @example
-     * ```ts
-     * const [user] = await sql`select * from users where id = ${1}`;
-     * ```
-     */
-    (strings: string[] | TemplateStringsArray, ...values: any[]): SQLQuery;
-
-    /**
-     * Helper function for inserting an object into a query
-     *
-     * @example
-     * ```ts
-     * // Insert an object
-     * const result = await sql`insert into users ${sql(users)} RETURNING *`;
-     *
-     * // Or pick specific columns
-     * const result = await sql`insert into users ${sql(users, "id", "name")} RETURNING *`;
-     *
-     * // Or a single object
-     * const result = await sql`insert into users ${sql(user)} RETURNING *`;
-     * ```
-     */
-    <T extends { [Key in PropertyKey]: unknown }>(obj: T | T[] | readonly T[], ...columns: (keyof T)[]): SQLQuery;
-
-    /**
-     * Helper function for inserting any serializable value into a query
-     *
-     * @example
-     * ```ts
-     * const result = await sql`SELECT * FROM users WHERE id IN ${sql([1, 2, 3])}`;
-     * ```
-     */
-    (obj: unknown): SQLQuery;
-
-    /**
-     * Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
-     *
-     * @param name - The name of the distributed transaction
-     *
-     * @example
-     * ```ts
-     * await sql.commitDistributed("my_distributed_transaction");
-     * ```
-     */
-    commitDistributed(name: string): Promise<void>;
-
-    /**
-     * Rolls back a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
-     *
-     * @param name - The name of the distributed transaction
-     *
-     * @example
-     * ```ts
-     * await sql.rollbackDistributed("my_distributed_transaction");
-     * ```
-     */
-    rollbackDistributed(name: string): Promise<void>;
-
-    /** Waits for the database connection to be established
-     *
-     * @example
-     * ```ts
-     * await sql.connect();
-     * ```
-     */
-    connect(): Promise<SQL>;
-
-    /**
-     * Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
-     *
-     * @param options - The options for the close
-     *
-     * @example
-     * ```ts
-     * await sql.close({ timeout: 1 });
-     * ```
-     */
-    close(options?: { timeout?: number }): Promise<void>;
-
-    /**
-     * Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
-     * This is an alias of {@link SQL.close}
-     *
-     * @param options - The options for the close
-     *
-     * @example
-     * ```ts
-     * await sql.end({ timeout: 1 });
-     * ```
-     */
-    end(options?: { timeout?: number }): Promise<void>;
-
-    /**
-     * Flushes any pending operations
-     *
-     * @example
-     * ```ts
-     * sql.flush();
-     * ```
-     */
-    flush(): void;
-
-    /**
-     * The reserve method pulls out a connection from the pool, and returns a client that wraps the single connection.
-     * This can be used for running queries on an isolated connection.
-     * Calling reserve in a reserved Sql will return a new reserved connection,  not the same connection (behavior matches postgres package).
-     *
-     * @example
-     * ```ts
-     * const reserved = await sql.reserve();
-     * await reserved`select * from users`;
-     * await reserved.release();
-     * // with in a production scenario would be something more like
-     * const reserved = await sql.reserve();
-     * try {
-     *   // ... queries
-     * } finally {
-     *   await reserved.release();
-     * }
-     *
-     * // Bun supports Symbol.dispose and Symbol.asyncDispose
-     * {
-     *  // always release after context (safer)
-     *  using reserved = await sql.reserve()
-     *  await reserved`select * from users`
-     * }
-     * ```
-     */
-    reserve(): Promise<ReservedSQL>;
-    /** Begins a new transaction
-     * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.begin will resolve with the returned value from the callback function.
-     * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
-     * @example
-     * const [user, account] = await sql.begin(async sql => {
-     *   const [user] = await sql`
-     *     insert into users (
-     *       name
-     *     ) values (
-     *       'Murray'
-     *     )
-     *     returning *
-     *   `
-     *   const [account] = await sql`
-     *     insert into accounts (
-     *       user_id
-     *     ) values (
-     *       ${ user.user_id }
-     *     )
-     *     returning *
-     *   `
-     *   return [user, account]
-     * })
-     */
-    begin(fn: SQLTransactionContextCallback): Promise<any>;
-    /** Begins a new transaction with options
-     * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.begin will resolve with the returned value from the callback function.
-     * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
-     * @example
-     * const [user, account] = await sql.begin("read write", async sql => {
-     *   const [user] = await sql`
-     *     insert into users (
-     *       name
-     *     ) values (
-     *       'Murray'
-     *     )
-     *     returning *
-     *   `
-     *   const [account] = await sql`
-     *     insert into accounts (
-     *       user_id
-     *     ) values (
-     *       ${ user.user_id }
-     *     )
-     *     returning *
-     *   `
-     *   return [user, account]
-     * })
-     */
-    begin(options: string, fn: SQLTransactionContextCallback): Promise<any>;
-    /** Alternative method to begin a transaction
-     * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.transaction will resolve with the returned value from the callback function.
-     * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
-     * @alias begin
-     * @example
-     * const [user, account] = await sql.transaction(async sql => {
-     *   const [user] = await sql`
-     *     insert into users (
-     *       name
-     *     ) values (
-     *       'Murray'
-     *     )
-     *     returning *
-     *   `
-     *   const [account] = await sql`
-     *     insert into accounts (
-     *       user_id
-     *     ) values (
-     *       ${ user.user_id }
-     *     )
-     *     returning *
-     *   `
-     *   return [user, account]
-     * })
-     */
-    transaction(fn: SQLTransactionContextCallback): Promise<any>;
-    /** Alternative method to begin a transaction with options
-     * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.transaction will resolve with the returned value from the callback function.
-     * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
-     * @alias begin
-     * @example
-     * const [user, account] = await sql.transaction("read write", async sql => {
-     *   const [user] = await sql`
-     *     insert into users (
-     *       name
-     *     ) values (
-     *       'Murray'
-     *     )
-     *     returning *
-     *   `
-     *   const [account] = await sql`
-     *     insert into accounts (
-     *       user_id
-     *     ) values (
-     *       ${ user.user_id }
-     *     )
-     *     returning *
-     *   `
-     *   return [user, account]
-     * })
-     */
-    transaction(options: string, fn: SQLTransactionContextCallback): Promise<any>;
-    /** Begins a distributed transaction
-     * Also know as Two-Phase Commit, in a distributed transaction, Phase 1 involves the coordinator preparing nodes by ensuring data is written and ready to commit, while Phase 2 finalizes with nodes committing or rolling back based on the coordinator's decision, ensuring durability and releasing locks.
-     * In PostgreSQL and MySQL distributed transactions persist beyond the original session, allowing privileged users or coordinators to commit/rollback them, ensuring support for distributed transactions, recovery, and administrative tasks.
-     * beginDistributed will automatic rollback if any exception are not caught, and you can commit and rollback later if everything goes well.
-     * PostgreSQL natively supports distributed transactions using PREPARE TRANSACTION, while MySQL uses XA Transactions, and MSSQL also supports distributed/XA transactions. However, in MSSQL, distributed transactions are tied to the original session, the DTC coordinator, and the specific connection.
-     * These transactions are automatically committed or rolled back following the same rules as regular transactions, with no option for manual intervention from other sessions, in MSSQL distributed transactions are used to coordinate transactions using Linked Servers.
-     * @example
-     * await sql.beginDistributed("numbers", async sql => {
-     *   await sql`create table if not exists numbers (a int)`;
-     *   await sql`insert into numbers values(1)`;
-     * });
-     * // later you can call
-     * await sql.commitDistributed("numbers");
-     * // or await sql.rollbackDistributed("numbers");
-     */
-    beginDistributed(name: string, fn: SQLTransactionContextCallback): Promise<any>;
-    /** Alternative method to begin a distributed transaction
-     * @alias beginDistributed
-     */
-    distributed(name: string, fn: SQLTransactionContextCallback): Promise<any>;
-    /**If you know what you're doing, you can use unsafe to pass any string you'd like.
-     * Please note that this can lead to SQL injection if you're not careful.
-     * You can also nest sql.unsafe within a safe sql expression. This is useful if only part of your fraction has unsafe elements.
-     * @example
-     * const result = await sql.unsafe(`select ${danger} from users where id = ${dragons}`)
-     */
-    unsafe(string: string, values?: any[]): SQLQuery;
-    /**
-     * Reads a file and uses the contents as a query.
-     * Optional parameters can be used if the file includes $1, $2, etc
-     * @example
-     * const result = await sql.file("query.sql", [1, 2, 3]);
-     */
-    file(filename: string, values?: any[]): SQLQuery;
-
-    /** Current client options */
-    options: SQLOptions;
-
-    [Symbol.asyncDispose](): Promise<any>;
-  }
-  const SQL: {
-    /**
-     * Creates a new SQL client instance
-     *
-     * @param connectionString - The connection string for the SQL client
-     *
-     * @example
-     * ```ts
-     * const sql = new SQL("postgres://localhost:5432/mydb");
-     * const sql = new SQL(new URL("postgres://localhost:5432/mydb"));
-     * ```
-     */
-    new (connectionString: string | URL): SQL;
-
-    /**
-     * Creates a new SQL client instance with options
-     *
-     * @param connectionString - The connection string for the SQL client
-     * @param options - The options for the SQL client
-     *
-     * @example
-     * ```ts
-     * const sql = new SQL("postgres://localhost:5432/mydb", { idleTimeout: 1000 });
-     * ```
-     */
-    new (connectionString: string | URL, options: Omit<SQLOptions, "url">): SQL;
-
-    /**
-     * Creates a new SQL client instance with options
-     *
-     * @param options - The options for the SQL client
-     *
-     * @example
-     * ```ts
-     * const sql = new SQL({ url: "postgres://localhost:5432/mydb", idleTimeout: 1000 });
-     * ```
-     */
-    new (options?: SQLOptions): SQL;
-  };
-
-  /**
-   * Represents a reserved connection from the connection pool
-   * Extends SQL with additional release functionality
-   */
-  interface ReservedSQL extends SQL {
-    /** Releases the client back to the connection pool */
-    release(): void;
-    [Symbol.dispose](): void;
-  }
-
-  /**
-   * Represents a client within a transaction context
-   * Extends SQL with savepoint functionality
-   */
-  interface TransactionSQL extends SQL {
-    /** Creates a savepoint within the current transaction */
-    savepoint(name: string, fn: SQLSavepointContextCallback): Promise<any>;
-    savepoint(fn: SQLSavepointContextCallback): Promise<any>;
-  }
-  /**
-   * Represents a savepoint within a transaction
-   */
-  interface SavepointSQL extends SQL {}
-
   type CSRFAlgorithm = "blake2b256" | "blake2b512" | "sha256" | "sha384" | "sha512" | "sha512-256";
+
   interface CSRFGenerateOptions {
     /**
      * The number of milliseconds until the token expires. 0 means the token never expires.
      * @default 24 * 60 * 60 * 1000 (24 hours)
      */
     expiresIn?: number;
+
     /**
      * The encoding of the token.
      * @default "base64url"
      */
     encoding?: "base64" | "base64url" | "hex";
+
     /**
      * The algorithm to use for the token.
      * @default "sha256"
@@ -1774,36 +1353,25 @@ declare module "bun" {
      * The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
      */
     secret?: string;
+
     /**
      * The encoding of the token.
      * @default "base64url"
      */
     encoding?: "base64" | "base64url" | "hex";
+
     /**
      * The algorithm to use for the token.
      * @default "sha256"
      */
     algorithm?: CSRFAlgorithm;
+
     /**
      * The number of milliseconds until the token expires. 0 means the token never expires.
      * @default 24 * 60 * 60 * 1000 (24 hours)
      */
     maxAge?: number;
   }
-
-  /**
-   * SQL client
-   *
-   * @category Database
-   */
-  const sql: SQL;
-
-  /**
-   * SQL client for PostgreSQL
-   *
-   * @category Database
-   */
-  const postgres: SQL;
 
   /**
    * Generate and verify CSRF tokens
@@ -2119,16 +1687,34 @@ declare module "bun" {
     kind: ImportKind;
   }
 
+  namespace Build {
+    type Architecture = "x64" | "arm64";
+    type Libc = "glibc" | "musl";
+    type SIMD = "baseline" | "modern";
+    type Target =
+      | `bun-darwin-${Architecture}`
+      | `bun-darwin-x64-${SIMD}`
+      | `bun-linux-${Architecture}`
+      | `bun-linux-${Architecture}-${Libc}`
+      | "bun-windows-x64"
+      | `bun-windows-x64-${SIMD}`
+      | `bun-linux-x64-${SIMD}-${Libc}`;
+  }
+
   /**
-   * @see [Bun.build API docs](https://bun.sh/docs/bundler#api)
+   * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
    */
-  interface BuildConfig {
-    entrypoints: string[]; // list of file path
-    outdir?: string; // output directory
+  interface BuildConfigBase {
+    /**
+     * List of entrypoints, usually file paths
+     */
+    entrypoints: string[];
+
     /**
      * @default "browser"
      */
     target?: Target; // default: "browser"
+
     /**
      * Output module format. Top-level await is only supported for `"esm"`.
      *
@@ -2162,7 +1748,6 @@ declare module "bun" {
           asset?: string;
         }; // | string;
     root?: string; // project root
-    splitting?: boolean; // default true, enable code splitting
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
     external?: string[];
@@ -2293,19 +1878,102 @@ declare module "bun" {
     drop?: string[];
 
     /**
-     * When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
-     * When set to `false`, the `success` property of the returned object will be `false` when a build failure happens.
-     * This defaults to `true`.
+     * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
+     * - When set to `false`, returns a {@link BuildOutput} with `{success: false}`
+     *
+     * @default true
      */
     throw?: boolean;
+
+    /**
+     * Custom tsconfig.json file path to use for path resolution.
+     * Equivalent to `--tsconfig-override` in the CLI.
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   tsconfig: './custom-tsconfig.json'
+     * });
+     * ```
+     */
+    tsconfig?: string;
+
+    outdir?: string;
   }
+
+  interface CompileBuildOptions {
+    target?: Bun.Build.Target;
+    execArgv?: string[];
+    executablePath?: string;
+    outfile?: string;
+    windows?: {
+      hideConsole?: boolean;
+      icon?: string;
+      title?: string;
+      publisher?: string;
+      version?: string;
+      description?: string;
+      copyright?: string;
+    };
+  }
+
+  // Compile build config - uses outfile for executable output
+  interface CompileBuildConfig extends BuildConfigBase {
+    /**
+     * Create a standalone executable
+     *
+     * When `true`, creates an executable for the current platform.
+     * When a target string, creates an executable for that platform.
+     *
+     * @example
+     * ```ts
+     * // Create executable for current platform
+     * await Bun.build({
+     *   entrypoints: ['./app.js'],
+     *   compile: {
+     *     target: 'linux-x64',
+     *   },
+     *   outfile: './my-app'
+     * });
+     *
+     * // Cross-compile for Linux x64
+     * await Bun.build({
+     *   entrypoints: ['./app.js'],
+     *   compile: 'linux-x64',
+     *   outfile: './my-app'
+     * });
+     * ```
+     */
+    compile: boolean | Bun.Build.Target | CompileBuildOptions;
+
+    /**
+     * Splitting is not currently supported with `.compile`
+     */
+    splitting?: never;
+  }
+
+  interface NormalBuildConfig extends BuildConfigBase {
+    /**
+     * Enable code splitting
+     *
+     * This does not currently work with {@link CompileBuildConfig.compile `compile`}
+     *
+     * @default true
+     */
+    splitting?: boolean;
+  }
+
+  /**
+   * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
+   */
+  type BuildConfig = CompileBuildConfig | NormalBuildConfig;
 
   /**
    * Hash and verify passwords using argon2 or bcrypt
    *
    * These are fast APIs that can run in a worker thread if used asynchronously.
    *
-   * @see [Bun.password API docs](https://bun.sh/guides/util/hash-a-password)
+   * @see [Bun.password API docs](https://bun.com/guides/util/hash-a-password)
    *
    * @category Security
    */
@@ -2341,7 +2009,7 @@ declare module "bun" {
    * Password hashing functions are necessarily slow, and this object will
    * automatically run in a worker thread.
    *
-   * @see [Bun.password API docs](https://bun.sh/guides/util/hash-a-password)
+   * @see [Bun.password API docs](https://bun.com/guides/util/hash-a-password)
    *
    * The underlying implementation of these functions are provided by the Zig
    * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
@@ -2536,6 +2204,287 @@ declare module "bun" {
        */
       algorithm?: Password.AlgorithmLabel | Password.Argon2Algorithm | Password.BCryptAlgorithm,
     ): string;
+  };
+
+  /**
+   * Securely store and retrieve sensitive credentials using the operating system's native credential storage.
+   *
+   * Uses platform-specific secure storage:
+   * - **macOS**: Keychain Services
+   * - **Linux**: libsecret (GNOME Keyring, KWallet, etc.)
+   * - **Windows**: Windows Credential Manager
+   *
+   * @category Security
+   *
+   * @example
+   * ```ts
+   * import { secrets } from "bun";
+   *
+   * // Store a credential
+   * await secrets.set({
+   *   service: "my-cli-tool",
+   *   name: "github-token",
+   *   value: "ghp_xxxxxxxxxxxxxxxxxxxx"
+   * });
+   *
+   * // Retrieve a credential
+   * const token = await secrets.get({
+   *   service: "my-cli-tool",
+   *   name: "github-token"
+   * });
+   *
+   * if (token) {
+   *   console.log("Token found:", token);
+   * } else {
+   *   console.log("Token not found");
+   * }
+   *
+   * // Delete a credential
+   * const deleted = await secrets.delete({
+   *   service: "my-cli-tool",
+   *   name: "github-token"
+   * });
+   * console.log("Deleted:", deleted); // true if deleted, false if not found
+   * ```
+   *
+   * @example
+   * ```ts
+   * // Replace plaintext config files
+   * import { secrets } from "bun";
+   *
+   * // Instead of storing in ~/.npmrc
+   * await secrets.set({
+   *   service: "npm-registry",
+   *   name: "https://registry.npmjs.org",
+   *   value: "npm_xxxxxxxxxxxxxxxxxxxx"
+   * });
+   *
+   * // Instead of storing in ~/.aws/credentials
+   * await secrets.set({
+   *   service: "aws-cli",
+   *   name: "default",
+   *   value: process.env.AWS_SECRET_ACCESS_KEY
+   * });
+   *
+   * // Load at runtime with fallback
+   * const apiKey = await secrets.get({
+   *   service: "my-app",
+   *   name: "api-key"
+   * }) || process.env.API_KEY;
+   * ```
+   */
+  const secrets: {
+    /**
+     * Retrieve a stored credential from the operating system's secure storage.
+     *
+     * @param options - The service and name identifying the credential
+     * @returns The stored credential value, or null if not found
+     *
+     * @example
+     * ```ts
+     * const password = await Bun.secrets.get({
+     *   service: "my-database",
+     *   name: "admin"
+     * });
+     *
+     * if (password) {
+     *   await connectToDatabase(password);
+     * }
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Check multiple possible locations
+     * const token =
+     *   await Bun.secrets.get({ service: "github", name: "token" }) ||
+     *   await Bun.secrets.get({ service: "gh-cli", name: "github.com" }) ||
+     *   process.env.GITHUB_TOKEN;
+     * ```
+     */
+    get(options: {
+      /**
+       * The service or application name.
+       *
+       * Use a unique identifier for your application to avoid conflicts.
+       * Consider using reverse domain notation for production apps (e.g., "com.example.myapp").
+       */
+      service: string;
+
+      /**
+       * The account name, username, or resource identifier.
+       *
+       * This identifies the specific credential within the service.
+       * Common patterns include usernames, email addresses, or resource URLs.
+       */
+      name: string;
+    }): Promise<string | null>;
+
+    /**
+     * Store or update a credential in the operating system's secure storage.
+     *
+     * If a credential already exists for the given service/name combination, it will be replaced.
+     * The credential is encrypted by the operating system and only accessible to the current user.
+     *
+     * @param options - The service and name identifying the credential
+     * @param value - The secret value to store (e.g., password, API key, token)
+     *
+     * @example
+     * ```ts
+     * // Store an API key
+     * await Bun.secrets.set({
+     *   service: "openai-api",
+     *   name: "production",
+     *   value: "sk-proj-xxxxxxxxxxxxxxxxxxxx"
+     * });
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Update an existing credential
+     * const newPassword = generateSecurePassword();
+     * await Bun.secrets.set({
+     *   service: "email-server",
+     *   name: "admin@example.com",
+     *   value: newPassword
+     * });
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Store credentials from environment variables
+     * if (process.env.DATABASE_PASSWORD) {
+     *   await Bun.secrets.set({
+     *     service: "postgres",
+     *     name: "production",
+     *     value: process.env.DATABASE_PASSWORD
+     *   });
+     *   delete process.env.DATABASE_PASSWORD; // Remove from memory
+     * }
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Delete a credential using empty string (equivalent to delete())
+     * await Bun.secrets.set({
+     *   service: "my-service",
+     *   name: "api-key",
+     *   value: "" // Empty string deletes the credential
+     * });
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Store credential with unrestricted access for CI environments
+     * await Bun.secrets.set({
+     *   service: "github-actions",
+     *   name: "deploy-token",
+     *   value: process.env.DEPLOY_TOKEN,
+     *   allowUnrestrictedAccess: true // Allows access without user interaction on macOS
+     * });
+     * ```
+     */
+    set(options: {
+      /**
+       * The service or application name.
+       *
+       * Use a unique identifier for your application to avoid conflicts.
+       * Consider using reverse domain notation for production apps (e.g., "com.example.myapp").
+       */
+      service: string;
+
+      /**
+       * The account name, username, or resource identifier.
+       *
+       * This identifies the specific credential within the service.
+       * Common patterns include usernames, email addresses, or resource URLs.
+       */
+      name: string;
+
+      /**
+       * The secret value to store.
+       *
+       * This should be a sensitive credential like a password, API key, or token.
+       * The value is encrypted by the operating system before storage.
+       *
+       * Note: To delete a credential, use the delete() method or pass an empty string.
+       * An empty string value will delete the credential if it exists.
+       */
+      value: string;
+
+      /**
+       * Allow unrestricted access to stored credentials on macOS.
+       *
+       * When true, allows all applications to access this keychain item without user interaction.
+       * This is useful for CI environments but reduces security.
+       *
+       * @default false
+       * @platform macOS - Only affects macOS keychain behavior. Ignored on other platforms.
+       */
+      allowUnrestrictedAccess?: boolean;
+    }): Promise<void>;
+
+    /**
+     * Delete a stored credential from the operating system's secure storage.
+     *
+     * @param options - The service and name identifying the credential
+     * @returns true if a credential was deleted, false if not found
+     *
+     * @example
+     * ```ts
+     * // Delete a single credential
+     * const deleted = await Bun.secrets.delete({
+     *   service: "my-app",
+     *   name: "api-key"
+     * });
+     *
+     * if (deleted) {
+     *   console.log("Credential removed successfully");
+     * } else {
+     *   console.log("Credential was not found");
+     * }
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Clean up multiple credentials
+     * const services = ["github", "npm", "docker"];
+     * for (const service of services) {
+     *   await Bun.secrets.delete({
+     *     service,
+     *     name: "token"
+     *   });
+     * }
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Clean up on uninstall
+     * if (process.argv.includes("--uninstall")) {
+     *   const deleted = await Bun.secrets.delete({
+     *     service: "my-cli-tool",
+     *     name: "config"
+     *   });
+     *   process.exit(deleted ? 0 : 1);
+     * }
+     * ```
+     */
+    delete(options: {
+      /**
+       * The service or application name.
+       *
+       * Use a unique identifier for your application to avoid conflicts.
+       * Consider using reverse domain notation for production apps (e.g., "com.example.myapp").
+       */
+      service: string;
+
+      /**
+       * The account name, username, or resource identifier.
+       *
+       * This identifies the specific credential within the service.
+       * Common patterns include usernames, email addresses, or resource URLs.
+       */
+      name: string;
+    }): Promise<boolean>;
   };
 
   /**
@@ -3296,7 +3245,13 @@ declare module "bun" {
       [K in HTTPMethod]?: RouteHandlerWithWebSocketUpgrade<T>;
     };
 
-    type RouteValue<T extends string> = Response | false | RouteHandler<T> | RouteHandlerObject<T>;
+    type RouteValue<T extends string> =
+      | Response
+      | false
+      | RouteHandler<T>
+      | RouteHandlerObject<T>
+      | HTMLBundle
+      | BunFile;
     type RouteValueWithWebSocketUpgrade<T extends string> =
       | RouteValue<T>
       | RouteHandlerWithWebSocketUpgrade<T>
@@ -3449,7 +3404,7 @@ declare module "bun" {
 
     /**
      * If set, the HTTP server will listen on a unix socket instead of a port.
-     * (Cannot be used with hostname+port)
+     * (Cannot use unix with port + hostname)
      */
     unix?: never;
 
@@ -3472,9 +3427,21 @@ declare module "bun" {
   interface UnixServeOptions extends GenericServeOptions {
     /**
      * If set, the HTTP server will listen on a unix socket instead of a port.
-     * (Cannot be used with hostname+port)
      */
     unix: string;
+
+    /**
+     * If set, the HTTP server will listen on this port
+     * (Cannot use port with unix)
+     */
+    port?: never;
+
+    /**
+     * If set, the HTTP server will listen on this hostname
+     * (Cannot use hostname with unix)
+     */
+    hostname?: never;
+
     /**
      * Handle HTTP requests
      *
@@ -3879,6 +3846,11 @@ declare module "bun" {
    * @category HTTP & Networking
    */
   interface Server extends Disposable {
+    /*
+     * Closes all connections connected to this server which are not sending a request or waiting for a response. Does not close the listen socket.
+     */
+    closeIdleConnections(): void;
+
     /**
      * Stop listening to prevent new connections from being accepted.
      *
@@ -4152,11 +4124,11 @@ declare module "bun" {
    * The type of options that can be passed to {@link serve}, with support for `routes` and a safer requirement for `fetch`
    */
   type ServeFunctionOptions<T, R extends { [K in keyof R]: RouterTypes.RouteValue<Extract<K, string>> }> =
-    | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "fetch"> & {
+    | (__internal.DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "fetch"> & {
         routes: R;
         fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
       })
-    | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "routes"> & {
+    | (__internal.DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "routes"> & {
         routes?: never;
         fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
       })
@@ -4402,7 +4374,7 @@ declare module "bun" {
    *
    * @param path The path to the file as a byte buffer (the buffer is copied) if the path starts with `s3://` it will behave like {@link S3File}
    */
-  function file(path: ArrayBufferLike | Uint8Array, options?: BlobPropertyBag): BunFile;
+  function file(path: ArrayBufferLike | Uint8Array<ArrayBuffer>, options?: BlobPropertyBag): BunFile;
 
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
@@ -4425,7 +4397,7 @@ declare module "bun" {
    *
    * This can be 3.5x faster than `new Uint8Array(size)`, but if you send uninitialized memory to your users (even unintentionally), it can potentially leak anything recently in memory.
    */
-  function allocUnsafe(size: number): Uint8Array;
+  function allocUnsafe(size: number): Uint8Array<ArrayBuffer>;
 
   /**
    * Options for `Bun.inspect`
@@ -4708,7 +4680,7 @@ declare module "bun" {
    *
    * To close the file, set the array to `null` and it will be garbage collected eventually.
    */
-  function mmap(path: PathLike, opts?: MMapOptions): Uint8Array;
+  function mmap(path: PathLike, opts?: MMapOptions): Uint8Array<ArrayBuffer>;
 
   /**
    * Write to stdout
@@ -4738,8 +4710,8 @@ declare module "bun" {
     | { r: number; g: number; b: number; a?: number }
     | [number, number, number]
     | [number, number, number, number]
-    | Uint8Array
-    | Uint8ClampedArray
+    | Uint8Array<ArrayBuffer>
+    | Uint8ClampedArray<ArrayBuffer>
     | Float32Array
     | Float64Array
     | string
@@ -4862,7 +4834,7 @@ declare module "bun" {
      *
      * **The input buffer must not be garbage collected**. That means you will need to hold on to it for the duration of the string's lifetime.
      */
-    function arrayBufferToString(buffer: Uint8Array | ArrayBufferLike): string;
+    function arrayBufferToString(buffer: Uint8Array<ArrayBuffer> | ArrayBufferLike): string;
 
     /**
      * Cast bytes to a `String` without copying. This is the fastest way to get a `String` from a `Uint16Array`
@@ -5411,9 +5383,9 @@ declare module "bun" {
    * @returns The output buffer with the compressed data
    */
   function deflateSync(
-    data: Uint8Array | string | ArrayBuffer,
+    data: Uint8Array<ArrayBuffer> | string | ArrayBuffer,
     options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
-  ): Uint8Array;
+  ): Uint8Array<ArrayBuffer>;
   /**
    * Compresses a chunk of data with `zlib` GZIP algorithm.
    * @param data The buffer of data to compress
@@ -5421,27 +5393,27 @@ declare module "bun" {
    * @returns The output buffer with the compressed data
    */
   function gzipSync(
-    data: Uint8Array | string | ArrayBuffer,
+    data: Uint8Array<ArrayBuffer> | string | ArrayBuffer,
     options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
-  ): Uint8Array;
+  ): Uint8Array<ArrayBuffer>;
   /**
    * Decompresses a chunk of data with `zlib` INFLATE algorithm.
    * @param data The buffer of data to decompress
    * @returns The output buffer with the decompressed data
    */
   function inflateSync(
-    data: Uint8Array | string | ArrayBuffer,
+    data: Uint8Array<ArrayBuffer> | string | ArrayBuffer,
     options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
-  ): Uint8Array;
+  ): Uint8Array<ArrayBuffer>;
   /**
    * Decompresses a chunk of data with `zlib` GUNZIP algorithm.
    * @param data The buffer of data to decompress
    * @returns The output buffer with the decompressed data
    */
   function gunzipSync(
-    data: Uint8Array | string | ArrayBuffer,
+    data: Uint8Array<ArrayBuffer> | string | ArrayBuffer,
     options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
-  ): Uint8Array;
+  ): Uint8Array<ArrayBuffer>;
 
   /**
    * Compresses a chunk of data with the Zstandard (zstd) compression algorithm.
@@ -5499,7 +5471,7 @@ declare module "bun" {
      */
     | "browser";
 
-  /** https://bun.sh/docs/bundler/loaders */
+  /** https://bun.com/docs/bundler/loaders */
   type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css" | "html";
 
   interface PluginConstraints {
@@ -5599,6 +5571,12 @@ declare module "bun" {
   type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | void;
   type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
   type OnStartCallback = () => void | Promise<void>;
+  type OnEndCallback = (result: BuildOutput) => void | Promise<void>;
+  type OnBeforeParseCallback = {
+    napiModule: unknown;
+    symbol: string;
+    external?: unknown | undefined;
+  };
 
   interface OnResolveArgs {
     /**
@@ -5676,14 +5654,26 @@ declare module "bun" {
      * @returns `this` for method chaining
      */
     onStart(callback: OnStartCallback): this;
-    onBeforeParse(
-      constraints: PluginConstraints,
-      callback: {
-        napiModule: unknown;
-        symbol: string;
-        external?: unknown | undefined;
-      },
-    ): this;
+    /**
+     * Register a callback which will be invoked when bundling ends. This is
+     * called after all modules have been bundled and the build is complete.
+     *
+     * @example
+     * ```ts
+     * const plugin: Bun.BunPlugin = {
+     *   name: "my-plugin",
+     *   setup(builder) {
+     *     builder.onEnd((result) => {
+     *       console.log("bundle just finished!!", result);
+     *     });
+     *   },
+     * };
+     * ```
+     *
+     * @returns `this` for method chaining
+     */
+    onEnd(callback: OnEndCallback): this;
+    onBeforeParse(constraints: PluginConstraints, callback: OnBeforeParseCallback): this;
     /**
      * Register a callback to load imports with a specific import specifier
      * @param constraints The constraints to apply the plugin to
@@ -5859,7 +5849,7 @@ declare module "bun" {
   const isMainThread: boolean;
 
   /**
-   * Used when importing an HTML file at runtime.
+   * Used when importing an HTML file at runtime or at build time.
    *
    * @example
    *
@@ -5867,10 +5857,34 @@ declare module "bun" {
    * import app from "./index.html";
    * ```
    *
-   * Bun.build support for this isn't imlpemented yet.
    */
+
   interface HTMLBundle {
     index: string;
+
+    /** Array of generated output files with metadata. This only exists when built ahead of time with `Bun.build` or `bun build` */
+    files?: Array<{
+      /** Original source file path. */
+      input?: string;
+      /** Generated output file path (with content hash, if included in naming) */
+      path: string;
+      /** File type/loader used (js, css, html, file, etc.) */
+      loader: Loader;
+      /** Whether this file is an entry point */
+      isEntry: boolean;
+      /** HTTP headers including ETag and Content-Type */
+      headers: {
+        /** ETag for caching */
+        etag: string;
+        /** MIME type with charset */
+        "content-type": string;
+
+        /**
+         * Additional headers may be added in the future.
+         */
+        [key: string]: string;
+      };
+    }>;
   }
 
   /**
@@ -6394,7 +6408,7 @@ declare module "bun" {
   interface BinaryTypeList {
     arraybuffer: ArrayBuffer;
     buffer: Buffer;
-    uint8array: Uint8Array;
+    uint8array: Uint8Array<ArrayBuffer>;
     // TODO: DataView
     // dataview: DataView;
   }
@@ -6572,6 +6586,7 @@ declare module "bun" {
      * The unix socket to listen on or connect to
      */
     unix: string;
+
     /**
      * TLS Configuration with which to create the socket
      */
@@ -6965,10 +6980,8 @@ declare module "bun" {
       maxBuffer?: number;
     }
 
-    type ReadableIO = ReadableStream<Uint8Array> | number | undefined;
-
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
-      ? ReadableStream<Uint8Array>
+      ? ReadableStream<Uint8Array<ArrayBuffer>>
       : X extends BunFile | ArrayBufferView | number
         ? number
         : undefined;
@@ -7292,10 +7305,11 @@ declare module "bun" {
    * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
    */
   function spawnSync<
+    const In extends SpawnOptions.Writable = "ignore",
     const Out extends SpawnOptions.Readable = "pipe",
-    const Err extends SpawnOptions.Readable = "inherit",
+    const Err extends SpawnOptions.Readable = "pipe",
   >(
-    options: SpawnOptions.OptionsObject<"ignore", Out, Err> & {
+    options: SpawnOptions.OptionsObject<In, Out, Err> & {
       /**
        * The command to run
        *
@@ -7327,8 +7341,9 @@ declare module "bun" {
    * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
    */
   function spawnSync<
+    const In extends SpawnOptions.Writable = "ignore",
     const Out extends SpawnOptions.Readable = "pipe",
-    const Err extends SpawnOptions.Readable = "inherit",
+    const Err extends SpawnOptions.Readable = "pipe",
   >(
     /**
      * The command to run
@@ -7345,7 +7360,7 @@ declare module "bun" {
      * ```
      */
     cmds: string[],
-    options?: SpawnOptions.OptionsObject<"ignore", Out, Err>,
+    options?: SpawnOptions.OptionsObject<In, Out, Err>,
   ): SyncSubprocess<Out, Err>;
 
   /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */
@@ -7682,6 +7697,56 @@ declare module "bun" {
   ): Buffer;
 
   /**
+   * Generate a UUIDv5, which is a name-based UUID based on the SHA-1 hash of a namespace UUID and a name.
+   *
+   * @param name The name to use for the UUID
+   * @param namespace The namespace to use for the UUID
+   * @param encoding The encoding to use for the UUID
+   *
+   *
+   * @example
+   * ```js
+   * import { randomUUIDv5 } from "bun";
+   * const uuid = randomUUIDv5("www.example.com", "dns");
+   * console.log(uuid); // "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+   * ```
+   *
+   * ```js
+   * import { randomUUIDv5 } from "bun";
+   * const uuid = randomUUIDv5("www.example.com", "url");
+   * console.log(uuid); // "6ba7b811-9dad-11d1-80b4-00c04fd430c8"
+   * ```
+   */
+  function randomUUIDv5(
+    name: string | BufferSource,
+    namespace: string | BufferSource | "dns" | "url" | "oid" | "x500",
+    /**
+     * @default "hex"
+     */
+    encoding?: "hex" | "base64" | "base64url",
+  ): string;
+
+  /**
+   * Generate a UUIDv5 as a Buffer
+   *
+   * @param name The name to use for the UUID
+   * @param namespace The namespace to use for the UUID
+   * @param encoding The encoding to use for the UUID
+   *
+   * @example
+   * ```js
+   * import { randomUUIDv5 } from "bun";
+   * const uuid = randomUUIDv5("www.example.com", "url", "buffer");
+   * console.log(uuid); // <Buffer 6b a7 b8 11 9d ad 11 d1 80 b4 00 c0 4f d4 30 c8>
+   * ```
+   */
+  function randomUUIDv5(
+    name: string | BufferSource,
+    namespace: string | BufferSource | "dns" | "url" | "oid" | "x500",
+    encoding: "buffer",
+  ): Buffer;
+
+  /**
    * Types for `bun.lock`
    */
   type BunLockFile = {
@@ -7689,15 +7754,15 @@ declare module "bun" {
     workspaces: {
       [workspace: string]: BunLockFileWorkspacePackage;
     };
-    /** @see https://bun.sh/docs/install/overrides */
+    /** @see https://bun.com/docs/install/overrides */
     overrides?: Record<string, string>;
-    /** @see https://bun.sh/docs/install/patch */
+    /** @see https://bun.com/docs/install/patch */
     patchedDependencies?: Record<string, string>;
-    /** @see https://bun.sh/docs/install/lifecycle#trusteddependencies */
+    /** @see https://bun.com/docs/install/lifecycle#trusteddependencies */
     trustedDependencies?: string[];
-    /** @see https://bun.sh/docs/install/catalogs */
+    /** @see https://bun.com/docs/install/catalogs */
     catalog?: Record<string, string>;
-    /** @see https://bun.sh/docs/install/catalogs */
+    /** @see https://bun.com/docs/install/catalogs */
     catalogs?: Record<string, Record<string, string>>;
 
     /**

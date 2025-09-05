@@ -1,3 +1,5 @@
+const Mv = @This();
+
 opts: Opts = .{},
 args: struct {
     sources: []const [*:0]const u8 = &[_][*:0]const u8{},
@@ -76,7 +78,7 @@ pub const ShellMvBatchedTask = struct {
     err: ?Syscall.Error = null,
 
     task: ShellTask(@This(), runFromThreadPool, runFromMainThread, debug),
-    event_loop: JSC.EventLoopHandle,
+    event_loop: jsc.EventLoopHandle,
 
     pub fn runFromThreadPool(this: *@This()) void {
         // Moving multiple entries into a directory
@@ -118,7 +120,7 @@ pub const ShellMvBatchedTask = struct {
                     ResolvePath.basename(src),
                 }, .auto);
 
-                this.err = e.withPath(bun.default_allocator.dupeZ(u8, target_path[0..]) catch bun.outOfMemory());
+                this.err = e.withPath(bun.handleOom(bun.default_allocator.dupeZ(u8, target_path[0..])));
                 return false;
             },
             else => {},
@@ -201,7 +203,7 @@ pub fn next(this: *Mv) Yield {
                             .target = this.args.target,
                             .task = .{
                                 .event_loop = this.bltn().parentCmd().base.eventLoop(),
-                                .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.bltn().parentCmd().base.eventLoop()),
+                                .concurrent_task = jsc.EventLoopTask.fromEventLoop(this.bltn().parentCmd().base.eventLoop()),
                             },
                         },
                         .state = .running,
@@ -255,7 +257,7 @@ pub fn next(this: *Mv) Yield {
 
                 this.args.target_fd = maybe_fd;
                 const cwd_fd = this.bltn().parentCmd().base.shell.cwd_fd;
-                const tasks = this.bltn().arena.allocator().alloc(ShellMvBatchedTask, task_count) catch bun.outOfMemory();
+                const tasks = bun.handleOom(this.bltn().arena.allocator().alloc(ShellMvBatchedTask, task_count));
                 // Initialize tasks
                 {
                     var i: usize = 0;
@@ -274,7 +276,7 @@ pub fn next(this: *Mv) Yield {
                             .error_signal = undefined,
                             .task = .{
                                 .event_loop = this.bltn().parentCmd().base.eventLoop(),
-                                .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.bltn().parentCmd().base.eventLoop()),
+                                .concurrent_task = jsc.EventLoopTask.fromEventLoop(this.bltn().parentCmd().base.eventLoop()),
                             },
                             .event_loop = this.bltn().parentCmd().base.eventLoop(),
                         };
@@ -311,7 +313,7 @@ pub fn next(this: *Mv) Yield {
     }
 }
 
-pub fn onIOWriterChunk(this: *Mv, _: usize, e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Mv, _: usize, e: ?jsc.SystemError) Yield {
     defer if (e) |err| err.deref();
     switch (this.state) {
         .waiting_write_err => {
@@ -483,24 +485,27 @@ pub inline fn bltn(this: *Mv) *Builtin {
 }
 
 // --
-const debug = bun.Output.scoped(.ShellCat, true);
-const Mv = @This();
+const debug = bun.Output.scoped(.ShellCat, .hidden);
 
-const Syscall = bun.sys;
-const ShellTask = interpreter.ShellTask;
-const assert = bun.assert;
 const std = @import("std");
-const bun = @import("bun");
-const shell = bun.shell;
-const Yield = shell.Yield;
-const ExitCode = shell.ExitCode;
-const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
 
 const interpreter = @import("../interpreter.zig");
 const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const Result = Interpreter.Builtin.Result;
 const ParseError = interpreter.ParseError;
 const ShellSyscall = interpreter.ShellSyscall;
+const ShellTask = interpreter.ShellTask;
+
+const Builtin = Interpreter.Builtin;
+const Result = Interpreter.Builtin.Result;
+
+const bun = @import("bun");
 const ResolvePath = bun.path;
+const assert = bun.assert;
+const jsc = bun.jsc;
+
+const shell = bun.shell;
+const ExitCode = shell.ExitCode;
+const Yield = shell.Yield;
+
+const Syscall = bun.sys;
+const Maybe = bun.sys.Maybe;

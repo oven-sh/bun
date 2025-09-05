@@ -16,8 +16,8 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
     defer arena.deinit();
 
     // Also generate the cross-chunk binding code
-    var cross_chunk_prefix: []u8 = &.{};
-    var cross_chunk_suffix: []u8 = &.{};
+    var cross_chunk_prefix: js_printer.PrintResult = undefined;
+    var cross_chunk_suffix: js_printer.PrintResult = undefined;
 
     var runtime_scope: *Scope = &c.graph.ast.items(.module_scope)[c.graph.files.items(.input_file)[Index.runtime.value].get()];
     var runtime_members = &runtime_scope.members;
@@ -68,7 +68,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             },
             chunk.renamer,
             false,
-        ).result.code;
+        );
         cross_chunk_suffix = js_printer.print(
             worker.allocator,
             c.resolver.opts.target,
@@ -81,7 +81,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             },
             chunk.renamer,
             false,
-        ).result.code;
+        );
     }
 
     // Generate the exports for the entry point, if there are any
@@ -107,6 +107,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             .input = chunk.unique_key,
         },
     };
+    errdefer j.deinit();
     const output_format = c.options.output_format;
 
     var line_offset: bun.sourcemap.LineColumnOffset.Optional = if (c.options.source_maps != .none) .{ .value = .{} } else .{ .null = {} };
@@ -119,7 +120,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
     // Start with the hashbang if there is one. This must be done before the
     // banner because it only works if it's literally the first character.
     if (chunk.isEntryPoint()) {
-        const is_bun = ctx.c.graph.ast.items(.target)[chunk.entry_point.source_index].isBun();
+        const is_bun = c.graph.ast.items(.target)[chunk.entry_point.source_index].isBun();
         const hashbang = c.graph.ast.items(.hashbang)[chunk.entry_point.source_index];
 
         if (hashbang.len > 0) {
@@ -199,17 +200,17 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
         else => {}, // no wrapper
     }
 
-    if (cross_chunk_prefix.len > 0) {
+    if (cross_chunk_prefix.result.code.len > 0) {
         newline_before_comment = true;
-        line_offset.advance(cross_chunk_prefix);
-        j.push(cross_chunk_prefix, bun.default_allocator);
+        line_offset.advance(cross_chunk_prefix.result.code);
+        j.push(cross_chunk_prefix.result.code, worker.allocator);
     }
 
     // Concatenate the generated JavaScript chunks together
     var prev_filename_comment: Index.Int = 0;
 
     var compile_results_for_source_map: std.MultiArrayList(CompileResultForSourceMap) = .{};
-    compile_results_for_source_map.setCapacity(worker.allocator, compile_results.len) catch bun.outOfMemory();
+    bun.handleOom(compile_results_for_source_map.setCapacity(worker.allocator, compile_results.len));
 
     const show_comments = c.options.mode == .bundle and
         !c.options.minify_whitespace;
@@ -322,16 +323,16 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
         // Stick the entry point tail at the end of the file. Deliberately don't
         // include any source mapping information for this because it's automatically
         // generated and doesn't correspond to a location in the input file.
-        j.push(tail_code, bun.default_allocator);
+        j.push(tail_code, worker.allocator);
     }
 
     // Put the cross-chunk suffix inside the IIFE
-    if (cross_chunk_suffix.len > 0) {
+    if (cross_chunk_suffix.result.code.len > 0) {
         if (newline_before_comment) {
             j.pushStatic("\n");
         }
 
-        j.push(cross_chunk_suffix, bun.default_allocator);
+        j.push(cross_chunk_suffix.result.code, worker.allocator);
     }
 
     switch (output_format) {
@@ -354,7 +355,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             {
                 const input = c.parse_graph.input_files.items(.source)[chunk.entry_point.source_index].path;
                 var buf = MutableString.initEmpty(worker.allocator);
-                js_printer.quoteForJSONBuffer(input.pretty, &buf, true) catch bun.outOfMemory();
+                bun.handleOom(js_printer.quoteForJSON(input.pretty, &buf, true));
                 const str = buf.slice(); // worker.allocator is an arena
                 j.pushStatic(str);
                 line_offset.advance(str);
@@ -813,9 +814,9 @@ pub fn generateEntryPointTailJS(
         return .{
             .javascript = .{
                 .source_index = source_index,
-                .result = .{ .result = .{
-                    .code = "",
-                } },
+                .result = .{
+                    .result = .{ .code = "" },
+                },
             },
         };
     }
@@ -859,43 +860,40 @@ pub fn generateEntryPointTailJS(
     };
 }
 
-const bun = @import("bun");
-const strings = bun.strings;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const Index = bun.bundle_v2.Index;
-const ImportRecord = bun.ImportRecord;
-const Part = bun.bundle_v2.Part;
 const std = @import("std");
 
-const JSMeta = bun.bundle_v2.JSMeta;
-const JSAst = bun.bundle_v2.JSAst;
-const js_ast = bun.bundle_v2.js_ast;
-const Ref = bun.bundle_v2.js_ast.Ref;
-const ResolvedExports = bun.bundle_v2.ResolvedExports;
+const bun = @import("bun");
+const ImportRecord = bun.ImportRecord;
 const Logger = bun.logger;
-const RefImportData = bun.bundle_v2.RefImportData;
+const MutableString = bun.MutableString;
+const StringJoiner = bun.StringJoiner;
 const options = bun.options;
+const strings = bun.strings;
+
+const Chunk = bun.bundle_v2.Chunk;
+const CompileResult = bun.bundle_v2.CompileResult;
+const CompileResultForSourceMap = bun.bundle_v2.CompileResultForSourceMap;
+const Fs = bun.bundle_v2.Fs;
+const Index = bun.bundle_v2.Index;
+const JSAst = bun.bundle_v2.JSAst;
+const JSMeta = bun.bundle_v2.JSMeta;
+const Part = bun.bundle_v2.Part;
+const RefImportData = bun.bundle_v2.RefImportData;
+const ResolvedExports = bun.bundle_v2.ResolvedExports;
+const ThreadPool = bun.bundle_v2.ThreadPool;
 const js_printer = bun.bundle_v2.js_printer;
 const renamer = bun.bundle_v2.renamer;
-const Chunk = bun.bundle_v2.Chunk;
 
-const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
-const S = js_ast.S;
-const G = js_ast.G;
-const B = js_ast.B;
-
-const Binding = js_ast.Binding;
-
+const LinkerContext = bun.bundle_v2.LinkerContext;
 const GenerateChunkCtx = bun.bundle_v2.LinkerContext.GenerateChunkCtx;
-const ThreadPool = bun.bundle_v2.ThreadPool;
 
+const js_ast = bun.bundle_v2.js_ast;
+const B = js_ast.B;
+const Binding = js_ast.Binding;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const G = js_ast.G;
+const Ref = bun.bundle_v2.js_ast.Ref;
+const S = js_ast.S;
 const Scope = js_ast.Scope;
-const Fs = bun.bundle_v2.Fs;
-const CompileResult = bun.bundle_v2.CompileResult;
-const StringJoiner = bun.StringJoiner;
-
-const CompileResultForSourceMap = bun.bundle_v2.CompileResultForSourceMap;
-
-const MutableString = bun.MutableString;
+const Stmt = js_ast.Stmt;

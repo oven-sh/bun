@@ -42,9 +42,9 @@ broadcast_console_log_from_browser_to_server_for_bake: bool = false,
 /// If HMR is not enabled, then this field is ignored.
 enable_chrome_devtools_automatic_workspace_folders: bool = true,
 
-onError: JSC.JSValue = JSC.JSValue.zero,
-onRequest: JSC.JSValue = JSC.JSValue.zero,
-onNodeHTTPRequest: JSC.JSValue = JSC.JSValue.zero,
+onError: jsc.JSValue = jsc.JSValue.zero,
+onRequest: jsc.JSValue = jsc.JSValue.zero,
+onNodeHTTPRequest: jsc.JSValue = jsc.JSValue.zero,
 
 websocket: ?WebSocketServerContext = null,
 
@@ -325,7 +325,7 @@ pub fn getUsocketsOptions(this: *const ServerConfig) i32 {
     return out;
 }
 
-fn validateRouteName(global: *JSC.JSGlobalObject, path: []const u8) !void {
+fn validateRouteName(global: *jsc.JSGlobalObject, path: []const u8) !void {
     // Already validated by the caller
     bun.debugAssert(path.len > 0 and path[0] == '/');
 
@@ -346,7 +346,7 @@ fn validateRouteName(global: *JSC.JSGlobalObject, path: []const u8) !void {
             );
         }
 
-        const entry = duped_route_names.getOrPut(route_name) catch bun.outOfMemory();
+        const entry = bun.handleOom(duped_route_names.getOrPut(route_name));
         if (entry.found_existing) {
             return global.throwTODO(
                 \\Support for duplicate route parameter names is not yet implemented.
@@ -361,7 +361,7 @@ fn validateRouteName(global: *JSC.JSGlobalObject, path: []const u8) !void {
 
 pub const SSLConfig = @import("./SSLConfig.zig");
 
-fn getRoutesObject(global: *JSC.JSGlobalObject, arg: JSC.JSValue) bun.JSError!?JSC.JSValue {
+fn getRoutesObject(global: *jsc.JSGlobalObject, arg: jsc.JSValue) bun.JSError!?jsc.JSValue {
     inline for (.{ "routes", "static" }) |key| {
         if (try arg.get(global, key)) |routes| {
             // https://github.com/oven-sh/bun/issues/17568
@@ -381,9 +381,9 @@ pub const FromJSOptions = struct {
 };
 
 pub fn fromJS(
-    global: *JSC.JSGlobalObject,
+    global: *jsc.JSGlobalObject,
     args: *ServerConfig,
-    arguments: *JSC.CallFrame.ArgumentsSlice,
+    arguments: *jsc.CallFrame.ArgumentsSlice,
     opts: FromJSOptions,
 ) bun.JSError!void {
     const vm = arguments.vm;
@@ -495,12 +495,12 @@ pub fn fromJS(
                     \\    "/path3/:param1/:param2": (req) => new Response("Hello")
                     \\  }
                     \\
-                    \\Learn more at https://bun.sh/docs/api/http
+                    \\Learn more at https://bun.com/docs/api/http
                 , .{});
             };
             args.had_routes_object = true;
 
-            var iter = try JSC.JSPropertyIterator(.{
+            var iter = try jsc.JSPropertyIterator(.{
                 .skip_empty_name = true,
                 .include_value = true,
             }).init(global, static_obj);
@@ -533,10 +533,10 @@ pub fn fromJS(
             }
 
             while (try iter.next()) |key| {
-                const path, const is_ascii = key.toOwnedSliceReturningAllASCII(bun.default_allocator) catch bun.outOfMemory();
+                const path, const is_ascii = bun.handleOom(key.toOwnedSliceReturningAllASCII(bun.default_allocator));
                 errdefer bun.default_allocator.free(path);
 
-                const value: JSC.JSValue = iter.value;
+                const value: jsc.JSValue = iter.value;
 
                 if (value.isUndefined()) {
                     continue;
@@ -551,9 +551,9 @@ pub fn fromJS(
                 }
 
                 if (value == .false) {
-                    const duped = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory();
+                    const duped = bun.handleOom(bun.default_allocator.dupeZ(u8, path));
                     defer bun.default_allocator.free(path);
-                    args.negative_routes.append(duped) catch bun.outOfMemory();
+                    bun.handleOom(args.negative_routes.append(duped));
                     continue;
                 }
 
@@ -561,11 +561,11 @@ pub fn fromJS(
                     try validateRouteName(global, path);
                     args.user_routes_to_build.append(.{
                         .route = .{
-                            .path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(),
+                            .path = bun.handleOom(bun.default_allocator.dupeZ(u8, path)),
                             .method = .any,
                         },
                         .callback = .create(value.withAsyncContextIfNeeded(global), global),
-                    }) catch bun.outOfMemory();
+                    }) catch |err| bun.handleOom(err);
                     bun.default_allocator.free(path);
                     continue;
                 } else if (value.isObject()) {
@@ -591,20 +591,20 @@ pub fn fromJS(
                             if (function.isCallable()) {
                                 args.user_routes_to_build.append(.{
                                     .route = .{
-                                        .path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(),
+                                        .path = bun.handleOom(bun.default_allocator.dupeZ(u8, path)),
                                         .method = .{ .specific = method },
                                     },
                                     .callback = .create(function.withAsyncContextIfNeeded(global), global),
-                                }) catch bun.outOfMemory();
+                                }) catch |err| bun.handleOom(err);
                             } else if (try AnyRoute.fromJS(global, path, function, init_ctx)) |html_route| {
                                 var method_set = bun.http.Method.Set.initEmpty();
                                 method_set.insert(method);
 
                                 args.static_routes.append(.{
-                                    .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
+                                    .path = bun.handleOom(bun.default_allocator.dupe(u8, path)),
                                     .route = html_route,
                                     .method = .{ .method = method_set },
-                                }) catch bun.outOfMemory();
+                                }) catch |err| bun.handleOom(err);
                             }
                         }
                     }
@@ -651,7 +651,7 @@ pub fn fromJS(
                         \\});
                         \\```
                         \\
-                        \\See https://bun.sh/docs/api/http for more information.
+                        \\See https://bun.com/docs/api/http for more information.
                     ,
                         .{},
                     );
@@ -659,7 +659,7 @@ pub fn fromJS(
                 args.static_routes.append(.{
                     .path = path,
                     .route = route,
-                }) catch bun.outOfMemory();
+                }) catch |err| bun.handleOom(err);
             }
 
             // When HTML bundles are provided, ensure DevServer options are ready
@@ -752,7 +752,7 @@ pub fn fromJS(
             args.address.tcp.port = @as(
                 u16,
                 @intCast(@min(
-                    @max(0, port_.coerce(i32, global)),
+                    @max(0, try port_.coerce(i32, global)),
                     std.math.maxInt(u16),
                 )),
             );
@@ -836,17 +836,17 @@ pub fn fromJS(
         }
 
         if (try arg.get(global, "reusePort")) |dev| {
-            args.reuse_port = dev.coerce(bool, global);
+            args.reuse_port = dev.toBoolean();
         }
         if (global.hasException()) return error.JSError;
 
         if (try arg.get(global, "ipv6Only")) |dev| {
-            args.ipv6_only = dev.coerce(bool, global);
+            args.ipv6_only = dev.toBoolean();
         }
         if (global.hasException()) return error.JSError;
 
         if (try arg.get(global, "inspector")) |inspector| {
-            args.inspector = inspector.coerce(bool, global);
+            args.inspector = inspector.toBoolean();
 
             if (args.inspector and args.development == .production) {
                 return global.throwInvalidArguments("Cannot enable inspector in production. Please set development: true in Bun.serve()", .{});
@@ -904,7 +904,7 @@ pub fn fromJS(
                 \\       return new Response("Hello")
                 \\     }
                 \\
-                \\Learn more at https://bun.sh/docs/api/http
+                \\Learn more at https://bun.com/docs/api/http
             , .{});
         } else {
             if (global.hasException()) return error.JSError;
@@ -915,31 +915,32 @@ pub fn fromJS(
                 args.ssl_config = null;
             } else if (tls.jsType().isArray()) {
                 var value_iter = try tls.arrayIterator(global);
-                if (value_iter.len == 1) {
-                    return global.throwInvalidArguments("tls option expects at least 1 tls object", .{});
-                }
-                while (try value_iter.next()) |item| {
-                    var ssl_config = try SSLConfig.fromJS(vm, global, item) orelse {
-                        if (global.hasException()) {
-                            return error.JSError;
-                        }
+                if (value_iter.len == 0) {
+                    // Empty TLS array means no TLS - this is valid
+                } else {
+                    while (try value_iter.next()) |item| {
+                        var ssl_config = try SSLConfig.fromJS(vm, global, item) orelse {
+                            if (global.hasException()) {
+                                return error.JSError;
+                            }
 
-                        // Backwards-compatibility; we ignored empty tls objects.
-                        continue;
-                    };
+                            // Backwards-compatibility; we ignored empty tls objects.
+                            continue;
+                        };
 
-                    if (args.ssl_config == null) {
-                        args.ssl_config = ssl_config;
-                    } else {
-                        if (ssl_config.server_name == null or std.mem.span(ssl_config.server_name).len == 0) {
-                            defer ssl_config.deinit();
-                            return global.throwInvalidArguments("SNI tls object must have a serverName", .{});
-                        }
-                        if (args.sni == null) {
-                            args.sni = bun.BabyList(SSLConfig).initCapacity(bun.default_allocator, value_iter.len - 1) catch bun.outOfMemory();
-                        }
+                        if (args.ssl_config == null) {
+                            args.ssl_config = ssl_config;
+                        } else {
+                            if (ssl_config.server_name == null or std.mem.span(ssl_config.server_name).len == 0) {
+                                defer ssl_config.deinit();
+                                return global.throwInvalidArguments("SNI tls object must have a serverName", .{});
+                            }
+                            if (args.sni == null) {
+                                args.sni = bun.handleOom(bun.BabyList(SSLConfig).initCapacity(bun.default_allocator, value_iter.len - 1));
+                            }
 
-                        args.sni.?.push(bun.default_allocator, ssl_config) catch bun.outOfMemory();
+                            bun.handleOom(args.sni.?.push(bun.default_allocator, ssl_config));
+                        }
                     }
                 }
             } else {
@@ -1072,7 +1073,7 @@ pub fn fromJS(
 
 const UserRouteBuilder = struct {
     route: ServerConfig.RouteDeclaration,
-    callback: JSC.Strong.Optional = .empty,
+    callback: jsc.Strong.Optional = .empty,
 
     pub fn deinit(this: *UserRouteBuilder) void {
         this.route.deinit();
@@ -1080,16 +1081,18 @@ const UserRouteBuilder = struct {
     }
 };
 
-const std = @import("std");
-const bun = @import("bun");
-const strings = bun.strings;
-const URL = bun.URL;
-const JSC = bun.JSC;
-const JSError = bun.JSError;
-const assert = bun.assert;
 const string = []const u8;
+
 const WebSocketServerContext = @import("./WebSocketServerContext.zig");
-const AnyRoute = @import("../server.zig").AnyRoute;
+const std = @import("std");
+
+const bun = @import("bun");
 const HTTP = bun.http;
+const JSError = bun.JSError;
+const URL = bun.URL;
+const assert = bun.assert;
+const jsc = bun.jsc;
+const strings = bun.strings;
 const uws = bun.uws;
-const AnyServer = JSC.API.AnyServer;
+const AnyRoute = bun.api.server.AnyRoute;
+const AnyServer = jsc.API.AnyServer;

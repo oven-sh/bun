@@ -1,4 +1,4 @@
-Bun's fast native bundler is now in beta. It can be used via the `bun build` CLI command or the `Bun.build()` JavaScript API.
+Bun's fast native bundler can be used via the `bun build` CLI command or the `Bun.build()` JavaScript API.
 
 {% codetabs group="a" %}
 
@@ -147,7 +147,7 @@ $ bun build ./index.tsx --outdir ./out --watch
 
 ## Content types
 
-Like the Bun runtime, the bundler supports an array of file types out of the box. The following table breaks down the bundler's set of standard "loaders". Refer to [Bundler > File types](https://bun.sh/docs/runtime/loaders) for full documentation.
+Like the Bun runtime, the bundler supports an array of file types out of the box. The following table breaks down the bundler's set of standard "loaders". Refer to [Bundler > File types](https://bun.com/docs/runtime/loaders) for full documentation.
 
 {% table %}
 
@@ -220,11 +220,11 @@ console.log(logo);
 The exact behavior of the file loader is also impacted by [`naming`](#naming) and [`publicPath`](#publicpath).
 {% /callout %}
 
-Refer to the [Bundler > Loaders](https://bun.sh/docs/bundler/loaders#file) page for more complete documentation on the file loader.
+Refer to the [Bundler > Loaders](https://bun.com/docs/bundler/loaders#file) page for more complete documentation on the file loader.
 
 ### Plugins
 
-The behavior described in this table can be overridden or extended with [plugins](https://bun.sh/docs/bundler/plugins). Refer to the [Bundler > Loaders](https://bun.sh/docs/bundler/plugins) page for complete documentation.
+The behavior described in this table can be overridden or extended with [plugins](https://bun.com/docs/bundler/plugins). Refer to the [Bundler > Loaders](https://bun.com/docs/bundler/plugins) page for complete documentation.
 
 ## API
 
@@ -484,7 +484,7 @@ n/a
 
 {% /codetabs %}
 
-Bun implements a universal plugin system for both Bun's runtime and bundler. Refer to the [plugin documentation](https://bun.sh/docs/bundler/plugins) for complete documentation.
+Bun implements a universal plugin system for both Bun's runtime and bundler. Refer to the [plugin documentation](https://bun.com/docs/bundler/plugins) for complete documentation.
 
 <!-- ### `manifest`
 
@@ -1102,7 +1102,7 @@ A prefix to be appended to any import paths in bundled code.
 
 In many cases, generated bundles will contain no `import` statements. After all, the goal of bundling is to combine all of the code into a single file. However there are a number of cases with the generated bundles will contain `import` statements.
 
-- **Asset imports** — When importing an unrecognized file type like `*.svg`, the bundler defers to the [`file` loader](https://bun.sh/docs/bundler/loaders#file), which copies the file into `outdir` as is. The import is converted into a variable
+- **Asset imports** — When importing an unrecognized file type like `*.svg`, the bundler defers to the [`file` loader](https://bun.com/docs/bundler/loaders#file), which copies the file into `outdir` as is. The import is converted into a variable
 - **External modules** — Files and modules can be marked as [`external`](#external), in which case they will not be included in the bundle. Instead, the `import` statement will be left in the final bundle.
 - **Chunking**. When [`splitting`](#splitting) is enabled, the bundler may generate separate "chunk" files that represent code that is shared among multiple entrypoints.
 
@@ -1178,7 +1178,7 @@ $ bun build ./index.tsx --outdir ./out --define 'STRING="value"' --define "neste
 
 ### `loader`
 
-A map of file extensions to [built-in loader names](https://bun.sh/docs/bundler/loaders#built-in-loaders). This can be used to quickly customize how certain files are loaded.
+A map of file extensions to [built-in loader names](https://bun.com/docs/bundler/loaders#built-in-loaders). This can be used to quickly customize how certain files are loaded.
 
 {% codetabs %}
 
@@ -1259,6 +1259,33 @@ $ bun build ./index.tsx --outdir ./out --drop=console --drop=debugger --drop=any
 
 {% /codetabs %}
 
+### `throw`
+
+Controls error handling behavior when the build fails. When set to `true` (default), the returned promise rejects with an `AggregateError`. When set to `false`, the promise resolves with a `BuildOutput` object where `success` is `false`.
+
+```ts#JavaScript
+// Default behavior: throws on error
+try {
+  await Bun.build({
+    entrypoints: ['./index.tsx'],
+    throw: true, // default
+  });
+} catch (error) {
+  // Handle AggregateError
+  console.error("Build failed:", error);
+}
+
+// Alternative: handle errors via success property
+const result = await Bun.build({
+  entrypoints: ['./index.tsx'],
+  throw: false,
+});
+
+if (!result.success) {
+  console.error("Build failed with errors:", result.logs);
+}
+```
+
 ## Outputs
 
 The `Bun.build` function returns a `Promise<BuildOutput>`, defined as:
@@ -1310,7 +1337,7 @@ Each artifact also contains the following properties:
 ---
 
 - `loader`
-- The loader was used to interpret the file. See [Bundler > Loaders](https://bun.sh/docs/bundler/loaders) to see how Bun maps file extensions to the appropriate built-in loader.
+- The loader was used to interpret the file. See [Bundler > Loaders](https://bun.com/docs/bundler/loaders) to see how Bun maps file extensions to the appropriate built-in loader.
 
 ---
 
@@ -1394,7 +1421,7 @@ $ bun build ./cli.tsx --outfile mycli --compile
 $ ./mycli
 ```
 
-Refer to [Bundler > Executables](https://bun.sh/docs/bundler/executables) for complete documentation.
+Refer to [Bundler > Executables](https://bun.com/docs/bundler/executables) for complete documentation.
 
 ## Logs and errors
 
@@ -1569,8 +1596,7 @@ interface BuildConfig {
    * When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
    * When set to `false`, the `success` property of the returned object will be `false` when a build failure happens.
    *
-   * This defaults to `false` in Bun 1.1 and will change to `true` in Bun 1.2
-   * as most usage of `Bun.build` forgets to check for errors.
+   * This defaults to `true`.
    */
   throw?: boolean;
 }

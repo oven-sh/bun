@@ -43,6 +43,7 @@ const assert = require('assert');
 {
   const server = http.createServer((request, response) => {
     // Since chunk parsing failed, none of this should be called
+
     request.on('data', common.mustNotCall());
     request.on('end', common.mustNotCall());
   });

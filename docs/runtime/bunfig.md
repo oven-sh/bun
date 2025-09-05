@@ -94,6 +94,7 @@ Bun supports the following loaders:
 - `file`
 - `json`
 - `toml`
+- `yaml`
 - `wasm`
 - `napi`
 - `base64`
@@ -107,6 +108,21 @@ The `telemetry` field permit to enable/disable the analytics records. Bun record
 ```toml
 telemetry = false
 ```
+
+### `console`
+
+Configure console output behavior.
+
+#### `console.depth`
+
+Set the default depth for `console.log()` object inspection. Default `2`.
+
+```toml
+[console]
+depth = 3
+```
+
+This controls how deeply nested objects are displayed in console output. Higher values show more nested properties but may produce verbose output for complex objects. This setting can be overridden by the `--console-depth` CLI flag.
 
 ## Test runner
 
@@ -178,6 +194,24 @@ Whether to skip test files when computing coverage statistics. Default `false`.
 ```toml
 [test]
 coverageSkipTestFiles = false
+```
+
+### `test.coveragePathIgnorePatterns`
+
+Exclude specific files or file patterns from coverage reports using glob patterns. Can be a single string pattern or an array of patterns.
+
+```toml
+[test]
+# Single pattern
+coveragePathIgnorePatterns = "**/*.spec.ts"
+
+# Multiple patterns
+coveragePathIgnorePatterns = [
+  "**/*.spec.ts",
+  "**/*.test.ts",
+  "src/utils/**",
+  "*.config.js"
+]
 ```
 
 ### `test.coverageReporter`
@@ -353,6 +387,8 @@ dryRun = false
 
 To configure the directory where Bun puts globally installed packages.
 
+Environment variable: `BUN_INSTALL_GLOBAL_DIR`
+
 ```toml
 [install]
 # where `bun install --global` installs packages
@@ -362,6 +398,8 @@ globalDir = "~/.bun/install/global"
 ### `install.globalBinDir`
 
 To configure the directory where Bun installs globally installed binaries and CLIs.
+
+Environment variable: `BUN_INSTALL_BIN`
 
 ```toml
 # where globally-installed package bins are linked
@@ -458,6 +496,62 @@ Whether to generate a non-Bun lockfile alongside `bun.lock`. (A `bun.lock` will 
 [install.lockfile]
 print = "yarn"
 ```
+
+### `install.security.scanner`
+
+Configure a security scanner to scan packages for vulnerabilities before installation.
+
+First, install a security scanner from npm:
+
+```bash
+$ bun add -d @acme/bun-security-scanner
+```
+
+Then configure it in your `bunfig.toml`:
+
+```toml
+[install.security]
+scanner = "@acme/bun-security-scanner"
+```
+
+When a security scanner is configured:
+
+- Auto-install is automatically disabled for security
+- Packages are scanned before installation
+- Installation is cancelled if fatal issues are found
+- Security warnings are displayed during installation
+
+Learn more about [using and writing security scanners](/docs/install/security).
+
+### `install.linker`
+
+Configure the default linker strategy. Default `"hoisted"`.
+
+For complete documentation refer to [Package manager > Isolated installs](https://bun.com/docs/install/isolated).
+
+```toml
+[install]
+linker = "hoisted"
+```
+
+Valid values are:
+
+{% table %}
+
+- Value
+- Description
+
+---
+
+- `"hoisted"`
+- Link dependencies in a shared `node_modules` directory.
+
+---
+
+- `"isolated"`
+- Link dependencies inside each package installation.
+
+{% /table %}
 
 <!-- ## Debugging -->
 

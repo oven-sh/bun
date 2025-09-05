@@ -86,7 +86,7 @@ fn do(this: *@This()) Yield {
     defer arena.deinit();
 
     while (if (this.increment > 0) current <= this._end else current >= this._end) : (current += this.increment) {
-        const str = std.fmt.allocPrint(arena.allocator(), "{d}", .{current}) catch bun.outOfMemory();
+        const str = bun.handleOom(std.fmt.allocPrint(arena.allocator(), "{d}", .{current}));
         defer _ = arena.reset(.retain_capacity);
         _ = this.print(str);
         _ = this.print(this.separator);
@@ -102,14 +102,14 @@ fn do(this: *@This()) Yield {
 
 fn print(this: *@This(), msg: []const u8) void {
     if (this.bltn().stdout.needsIO() != null) {
-        this.buf.appendSlice(bun.default_allocator, msg) catch bun.outOfMemory();
+        bun.handleOom(this.buf.appendSlice(bun.default_allocator, msg));
         return;
     }
     _ = this.bltn().writeNoIO(.stdout, msg);
     return;
 }
 
-pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *@This(), _: usize, maybe_e: ?jsc.SystemError) Yield {
     if (maybe_e) |e| {
         defer e.deref();
         this.state = .err;
@@ -133,10 +133,13 @@ pub inline fn bltn(this: *@This()) *Builtin {
 }
 
 // --
-const bun = @import("bun");
-const Yield = bun.shell.Yield;
+
 const interpreter = @import("../interpreter.zig");
+const std = @import("std");
+
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
-const JSC = bun.JSC;
-const std = @import("std");
+
+const bun = @import("bun");
+const jsc = bun.jsc;
+const Yield = bun.shell.Yield;

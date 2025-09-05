@@ -1,13 +1,12 @@
 const Graph = @This();
 
 pool: *ThreadPool,
-heap: ThreadlocalArena = .{},
-/// This allocator is thread-local to the Bundler thread
-/// .allocator == .heap.allocator()
-allocator: std.mem.Allocator = undefined,
+heap: ThreadLocalArena,
 
 /// Mapping user-specified entry points to their Source Index
 entry_points: std.ArrayListUnmanaged(Index) = .{},
+/// Maps entry point source indices to their original specifiers (for virtual entries resolved by plugins)
+entry_point_original_names: IndexStringMap = .{},
 /// Every source index has an associated InputFile
 input_files: MultiArrayList(InputFile) = .{},
 /// Every source index has an associated Ast
@@ -35,7 +34,7 @@ pending_items: u32 = 0,
 deferred_pending: u32 = 0,
 
 /// A map of build targets to their corresponding module graphs.
-build_graphs: std.EnumArray(options.Target, PathToSourceIndexMap) = .initFill(.{}),
+build_graphs: std.EnumArray(options.Target, PathToSourceIndexMap),
 
 /// When Server Components is enabled, this holds a list of all boundary
 /// files. This happens for all files with a "use <side>" directive.
@@ -63,8 +62,14 @@ additional_output_files: std.ArrayListUnmanaged(options.OutputFile) = .{},
 kit_referenced_server_data: bool,
 kit_referenced_client_data: bool,
 
+/// Do any input_files have a secondary_path.len > 0?
+///
+/// Helps skip a loop.
+has_any_secondary_paths: bool = false,
+
 pub const InputFile = struct {
     source: Logger.Source,
+    secondary_path: []const u8 = "",
     loader: options.Loader = options.Loader.file,
     side_effects: _resolver.SideEffects,
     allocator: std.mem.Allocator = bun.default_allocator,
@@ -98,27 +103,31 @@ pub fn drainDeferredTasks(this: *Graph, transpiler: *BundleV2) bool {
     return false;
 }
 
-const bun = @import("bun");
-const string = bun.string;
-const default_allocator = bun.default_allocator;
+pub const Ref = bun.ast.Ref;
 
-const std = @import("std");
+pub const Index = bun.ast.Index;
+
+const string = []const u8;
+
+const IndexStringMap = @import("./IndexStringMap.zig");
 const Logger = @import("../logger.zig");
-const options = @import("../options.zig");
-const js_ast = @import("../js_ast.zig");
-pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
-const BabyList = @import("../baby_list.zig").BabyList;
 const _resolver = @import("../resolver/resolver.zig");
-const allocators = @import("../allocators.zig");
+const std = @import("std");
 
-const JSAst = js_ast.BundledAst;
+const options = @import("../options.zig");
 const Loader = options.Loader;
-pub const Index = @import("../ast/base.zig").Index;
+
+const bun = @import("bun");
 const MultiArrayList = bun.MultiArrayList;
-const ThreadPool = bun.bundle_v2.ThreadPool;
+const BabyList = bun.collections.BabyList;
+const ThreadLocalArena = bun.allocators.MimallocArena;
+
+const js_ast = bun.ast;
+const JSAst = js_ast.BundledAst;
+const ServerComponentBoundary = js_ast.ServerComponentBoundary;
+
+const AdditionalFile = bun.bundle_v2.AdditionalFile;
+const BundleV2 = bun.bundle_v2.BundleV2;
 const ParseTask = bun.bundle_v2.ParseTask;
 const PathToSourceIndexMap = bun.bundle_v2.PathToSourceIndexMap;
-const ServerComponentBoundary = js_ast.ServerComponentBoundary;
-const BundleV2 = bun.bundle_v2.BundleV2;
-const AdditionalFile = bun.bundle_v2.AdditionalFile;
+const ThreadPool = bun.bundle_v2.ThreadPool;

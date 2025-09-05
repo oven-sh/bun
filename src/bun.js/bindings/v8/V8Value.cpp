@@ -71,6 +71,20 @@ Maybe<uint32_t> Value::Uint32Value(Local<Context> context) const
     return Nothing<uint32_t>();
 }
 
+bool Value::StrictEquals(Local<Value> that) const
+{
+    JSC::JSValue thisValue = localToJSValue();
+    JSC::JSValue thatValue = that->localToJSValue();
+    auto* globalObject = v8::Isolate::GetCurrent()->globalObject();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    bool result = JSC::JSValue::strictEqual(globalObject, thisValue, thatValue);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    return result;
+}
+
 bool Value::FullIsTrue() const
 {
     return localToJSValue().isTrue();

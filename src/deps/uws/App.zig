@@ -43,9 +43,14 @@ pub fn NewApp(comptime ssl: bool) type {
             return c.uws_app_close(ssl_flag, @as(*uws_app_s, @ptrCast(this)));
         }
 
+        pub fn closeIdleConnections(this: *ThisApp) void {
+            return c.uws_app_close_idle(ssl_flag, @as(*uws_app_s, @ptrCast(this)));
+        }
+
         pub fn create(opts: BunSocketContextOptions) ?*ThisApp {
             return @ptrCast(c.uws_create_app(ssl_flag, opts));
         }
+
         pub fn destroy(app: *ThisApp) void {
             return c.uws_app_destroy(ssl_flag, @as(*uws_app_s, @ptrCast(app)));
         }
@@ -393,6 +398,7 @@ pub const c = struct {
     pub const uws_missing_server_handler = ?*const fn ([*c]const u8, ?*anyopaque) callconv(.C) void;
 
     pub extern fn uws_app_close(ssl: i32, app: *uws_app_s) void;
+    pub extern fn uws_app_close_idle(ssl: i32, app: *uws_app_s) void;
     pub extern fn uws_app_set_on_clienterror(ssl: c_int, app: *uws_app_s, handler: *const fn (*anyopaque, c_int, *us_socket_t, u8, ?[*]u8, c_int) callconv(.C) void, user_data: *anyopaque) void;
     pub extern fn uws_create_app(ssl: i32, options: BunSocketContextOptions) ?*uws_app_t;
     pub extern fn uws_app_destroy(ssl: i32, app: *uws_app_t) void;
@@ -450,10 +456,11 @@ pub const c = struct {
 };
 
 const bun = @import("bun");
+
 const uws = bun.uws;
-const Request = bun.uws.Request;
-const Opcode = bun.uws.Opcode;
-const WebSocketBehavior = bun.uws.WebSocketBehavior;
 const ListenSocket = bun.uws.ListenSocket;
+const Opcode = bun.uws.Opcode;
+const Request = bun.uws.Request;
+const WebSocketBehavior = bun.uws.WebSocketBehavior;
 const us_socket_t = bun.uws.us_socket_t;
 const BunSocketContextOptions = bun.uws.SocketContext.BunSocketContextOptions;

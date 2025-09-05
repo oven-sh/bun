@@ -2,16 +2,7 @@
 //!
 //! If an API can be implemented on multiple platforms,
 //! it does not belong in this namespace.
-const bun = @import("bun");
-const builtin = @import("builtin");
-const Output = bun.Output;
-const windows = std.os.windows;
-const w = std.os.windows;
-const win32 = windows;
-const log = bun.sys.syslog;
-const Maybe = bun.sys.Maybe;
 
-const c = bun.c;
 pub const ntdll = windows.ntdll;
 pub const kernel32 = windows.kernel32;
 pub const GetLastError = kernel32.GetLastError;
@@ -89,9 +80,6 @@ pub const nt_object_prefix_u8 = [4]u8{ '\\', '?', '?', '\\' };
 pub const nt_unc_object_prefix_u8 = [8]u8{ '\\', '?', '?', '\\', 'U', 'N', 'C', '\\' };
 pub const long_path_prefix_u8 = [4]u8{ '\\', '\\', '?', '\\' };
 
-const std = @import("std");
-const Environment = bun.Environment;
-
 pub const PathBuffer = if (Environment.isWindows) bun.PathBuffer else void;
 pub const WPathBuffer = if (Environment.isWindows) bun.WPathBuffer else void;
 
@@ -162,8 +150,6 @@ pub extern "kernel32" fn SetCurrentDirectoryW(
 ) callconv(windows.WINAPI) win32.BOOL;
 pub const SetCurrentDirectory = SetCurrentDirectoryW;
 pub extern "ntdll" fn RtlNtStatusToDosError(win32.NTSTATUS) callconv(windows.WINAPI) Win32Error;
-
-const SystemErrno = bun.sys.SystemErrno;
 
 // This was originally copied from Zig's standard library
 /// Codes are from https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/18d8fbe8-a967-4f1c-ae50-99ca8e491d2d
@@ -3232,7 +3218,7 @@ pub const INPUT_RECORD = extern struct {
 };
 
 fn Bun__UVSignalHandle__init(
-    global: *bun.JSC.JSGlobalObject,
+    global: *bun.jsc.JSGlobalObject,
     signal_num: i32,
     callback: *const fn (sig: *libuv.uv_signal_t, num: c_int) callconv(.C) void,
 ) callconv(.C) ?*libuv.uv_signal_t {
@@ -3288,7 +3274,7 @@ pub fn userUniqueId() u32 {
         return 0;
     }
     const name = buf[0..size];
-    bun.Output.scoped(.windowsUserUniqueId, false)("username: {}", .{bun.fmt.utf16(name)});
+    bun.Output.scoped(.windowsUserUniqueId, .visible)("username: {}", .{bun.fmt.utf16(name)});
     return bun.hash32(std.mem.sliceAsBytes(name));
 }
 
@@ -3506,7 +3492,7 @@ const FILE_DISPOSITION_ON_CLOSE: ULONG = 0x00000008;
 const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: ULONG = 0x00000010;
 
 // Copy-paste of the standard library function except without unreachable.
-pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.JSC.Maybe(void) {
+pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.sys.Maybe(void) {
     const create_options_flags: ULONG = if (options.remove_dir)
         FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT
     else
@@ -3549,7 +3535,7 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.JS
         0,
     );
     bun.sys.syslog("NtCreateFile({}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
-    if (bun.JSC.Maybe(void).errnoSys(rc, .open)) |err| {
+    if (bun.sys.Maybe(void).errnoSys(rc, .open)) |err| {
         return err;
     }
     defer _ = bun.windows.CloseHandle(tmp_handle);
@@ -3576,7 +3562,7 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.JS
     );
     bun.sys.syslog("NtSetInformationFile({}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
     switch (rc) {
-        .SUCCESS => return .{ .result = {} },
+        .SUCCESS => return .success,
         // INVALID_PARAMETER here means that the filesystem does not support FileDispositionInformationEx
         .INVALID_PARAMETER => {},
         // For all other statuses, fall down to the switch below to handle them.
@@ -3598,11 +3584,11 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.JS
         );
         bun.sys.syslog("NtSetInformationFile({}, DELETE) = {}", .{ bun.fmt.fmtPath(u16, sub_path_w, .{}), rc });
     }
-    if (bun.JSC.Maybe(void).errnoSys(rc, .NtSetInformationFile)) |err| {
+    if (bun.sys.Maybe(void).errnoSys(rc, .NtSetInformationFile)) |err| {
         return err;
     }
 
-    return .{ .result = {} };
+    return .success;
 }
 
 pub const EXCEPTION_CONTINUE_EXECUTION = -1;
@@ -3658,6 +3644,15 @@ pub fn editWin32BinarySubsystem(fd: bun.sys.File, subsystem: Subsystem) !void {
 
 pub const rescle = struct {
     extern fn rescle__setIcon([*:0]const u16, [*:0]const u16) c_int;
+    extern fn rescle__setWindowsMetadata(
+        [*:0]const u16, // exe_path
+        ?[*:0]const u16, // icon_path (nullable)
+        ?[*:0]const u16, // title (nullable)
+        ?[*:0]const u16, // publisher (nullable)
+        ?[*:0]const u16, // version (nullable)
+        ?[*:0]const u16, // description (nullable)
+        ?[*:0]const u16, // copyright (nullable)
+    ) c_int;
 
     pub fn setIcon(exe_path: [*:0]const u16, icon: [*:0]const u16) !void {
         comptime bun.assert(bun.Environment.isWindows);
@@ -3665,6 +3660,97 @@ pub const rescle = struct {
         return switch (status) {
             0 => {},
             else => error.IconEditError,
+        };
+    }
+
+    pub fn setWindowsMetadata(
+        exe_path: [*:0]const u16,
+        icon: ?[]const u8,
+        title: ?[]const u8,
+        publisher: ?[]const u8,
+        version: ?[]const u8,
+        description: ?[]const u8,
+        copyright: ?[]const u8,
+    ) !void {
+        comptime bun.assert(bun.Environment.isWindows);
+
+        // Validate version string format if provided
+        if (version) |v| {
+            // Empty version string is invalid
+            if (v.len == 0) {
+                return error.InvalidVersionFormat;
+            }
+
+            // Basic validation: check format and ranges
+            var parts_count: u32 = 0;
+            var iter = std.mem.tokenizeAny(u8, v, ".");
+            while (iter.next()) |part| : (parts_count += 1) {
+                if (parts_count >= 4) {
+                    return error.InvalidVersionFormat;
+                }
+                const num = std.fmt.parseInt(u16, part, 10) catch {
+                    return error.InvalidVersionFormat;
+                };
+                // u16 already ensures value is 0-65535
+                _ = num;
+            }
+            if (parts_count == 0) {
+                return error.InvalidVersionFormat;
+            }
+        }
+
+        // Allocate UTF-16 strings
+        const allocator = bun.default_allocator;
+
+        // Icon is a path, so use toWPathNormalized with proper buffer handling
+        var icon_buf: bun.OSPathBuffer = undefined;
+        const icon_w = if (icon) |i| brk: {
+            const path_w = bun.strings.toWPathNormalized(&icon_buf, i);
+            // toWPathNormalized returns a slice into icon_buf, need to null-terminate it
+            const buf_u16 = bun.reinterpretSlice(u16, &icon_buf);
+            buf_u16[path_w.len] = 0;
+            break :brk buf_u16[0..path_w.len :0];
+        } else null;
+
+        const title_w = if (title) |t| try bun.strings.toUTF16AllocForReal(allocator, t, false, true) else null;
+        defer if (title_w) |tw| allocator.free(tw);
+
+        const publisher_w = if (publisher) |p| try bun.strings.toUTF16AllocForReal(allocator, p, false, true) else null;
+        defer if (publisher_w) |pw| allocator.free(pw);
+
+        const version_w = if (version) |v| try bun.strings.toUTF16AllocForReal(allocator, v, false, true) else null;
+        defer if (version_w) |vw| allocator.free(vw);
+
+        const description_w = if (description) |d| try bun.strings.toUTF16AllocForReal(allocator, d, false, true) else null;
+        defer if (description_w) |dw| allocator.free(dw);
+
+        const copyright_w = if (copyright) |cr| try bun.strings.toUTF16AllocForReal(allocator, cr, false, true) else null;
+        defer if (copyright_w) |cw| allocator.free(cw);
+
+        const status = rescle__setWindowsMetadata(
+            exe_path,
+            if (icon_w) |iw| iw.ptr else null,
+            if (title_w) |tw| tw.ptr else null,
+            if (publisher_w) |pw| pw.ptr else null,
+            if (version_w) |vw| vw.ptr else null,
+            if (description_w) |dw| dw.ptr else null,
+            if (copyright_w) |cw| cw.ptr else null,
+        );
+        return switch (status) {
+            0 => {},
+            -1 => error.FailedToLoadExecutable,
+            -2 => error.FailedToSetIcon,
+            -3 => error.FailedToSetProductName,
+            -4 => error.FailedToSetCompanyName,
+            -5 => error.FailedToSetDescription,
+            -6 => error.FailedToSetCopyright,
+            -7 => error.FailedToSetFileVersion,
+            -8 => error.FailedToSetProductVersion,
+            -9 => error.FailedToSetFileVersionString,
+            -10 => error.FailedToSetProductVersionString,
+            -11 => error.InvalidVersionFormat,
+            -12 => error.FailedToCommit,
+            else => error.WindowsMetadataEditError,
         };
     }
 };
@@ -3916,9 +4002,9 @@ pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
     log("deleteOpenedFile({}) = {s}", .{ fd, @tagName(rc) });
 
     return if (rc == .SUCCESS)
-        Maybe(void).success
+        .success
     else
-        Maybe(void).errno(rc, .NtSetInformationFile);
+        .errno(rc, .NtSetInformationFile);
 }
 
 /// With an open file source_fd, move it into the directory new_dir_fd with the name new_path_w.
@@ -3979,9 +4065,9 @@ pub fn moveOpenedFileAt(
     }
 
     return if (rc == .SUCCESS)
-        Maybe(void).success
+        .success
     else
-        Maybe(void).errno(rc, .NtSetInformationFile);
+        .errno(rc, .NtSetInformationFile);
 }
 
 /// Same as moveOpenedFileAt but allows new_path to be a path relative to new_dir_fd.
@@ -4057,3 +4143,19 @@ pub fn renameAtW(
 
     return moveOpenedFileAt(src_fd, new_dir_fd, new_path_w, replace_if_exists);
 }
+
+const builtin = @import("builtin");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const c = bun.c;
+
+const Maybe = bun.sys.Maybe;
+const SystemErrno = bun.sys.SystemErrno;
+const log = bun.sys.syslog;
+
+const w = std.os.windows;
+const win32 = windows;
+const windows = std.os.windows;

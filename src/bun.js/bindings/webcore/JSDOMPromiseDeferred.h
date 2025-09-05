@@ -68,7 +68,12 @@ public:
         ASSERT(globalObject());
         JSC::JSGlobalObject* lexicalGlobalObject = globalObject();
         JSC::JSLockHolder locker(lexicalGlobalObject);
-        resolve(*lexicalGlobalObject, toJS<IDLType>(*lexicalGlobalObject, *globalObject(), std::forward<typename IDLType::ParameterType>(value)));
+        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto value_js = toJS<IDLType>(*lexicalGlobalObject, *globalObject(), std::forward<typename IDLType::ParameterType>(value));
+        RETURN_IF_EXCEPTION(scope, );
+        resolve(*lexicalGlobalObject, value_js);
+        RETURN_IF_EXCEPTION(scope, );
     }
 
     void resolveWithJSValue(JSC::JSValue resolution)
@@ -208,7 +213,7 @@ private:
 };
 
 class DOMPromiseDeferredBase {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DOMPromiseDeferredBase);
 
 public:
     DOMPromiseDeferredBase(Ref<DeferredPromise>&& genericPromise)

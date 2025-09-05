@@ -69,6 +69,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSGlobalObject * lexicalGlobalObject, C
     auto sigBuf = ArrayBuffer::createUninitialized(result.size(), 1);
     memcpy(sigBuf->data(), result.data(), result.size());
     auto* signature = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(sigBuf), 0, result.size());
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(signature);
 }
 
@@ -198,8 +199,8 @@ extern "C" void Bun__SignJobCtx__runFromJS(SignJobCtx* ctx, JSGlobalObject* glob
 }
 void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
 {
-    VM& vm = lexicalGlobalObject->vm();
-    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     switch (m_mode) {
     case Mode::Sign: {
@@ -214,6 +215,7 @@ void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback
         auto sigBuf = ArrayBuffer::createUninitialized(m_signResult->size(), 1);
         memcpy(sigBuf->data(), m_signResult->data(), m_signResult->size());
         auto* signature = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(sigBuf), 0, m_signResult->size());
+        RETURN_IF_EXCEPTION(scope, );
 
         Bun__EventLoop__runCallback2(
             lexicalGlobalObject,
@@ -346,6 +348,50 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         if (!digest) {
             ERR::CRYPTO_INVALID_DIGEST(scope, globalObject, algorithmView);
             return {};
+        }
+    } else {
+        // OpenSSL v3 Default Digest Behavior for RSA Keys
+        // ================================================
+        // When Node.js calls crypto.sign() or crypto.verify() with a null/undefined algorithm,
+        // it passes NULL to OpenSSL's EVP_DigestSignInit/EVP_DigestVerifyInit functions.
+        //
+        // OpenSSL v3 then automatically provides a default digest for RSA keys through the
+        // following mechanism:
+        //
+        // 1. In crypto/evp/m_sigver.c:215-220 (do_sigver_init function):
+        //    When mdname is NULL and type is NULL, OpenSSL calls:
+        //    evp_keymgmt_util_get_deflt_digest_name(tmp_keymgmt, provkey, locmdname, sizeof(locmdname))
+        //
+        // 2. In crypto/evp/keymgmt_lib.c:533-571 (evp_keymgmt_util_get_deflt_digest_name function):
+        //    This queries the key management provider for OSSL_PKEY_PARAM_DEFAULT_DIGEST
+        //
+        // 3. In providers/implementations/keymgmt/rsa_kmgmt.c:
+        //    - Line 54: #define RSA_DEFAULT_MD "SHA256"
+        //    - Lines 351-355: For RSA keys (non-PSS), it returns RSA_DEFAULT_MD ("SHA256")
+        //      if ((p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_DEFAULT_DIGEST)) != NULL
+        //          && (rsa_type != RSA_FLAG_TYPE_RSASSAPSS
+        //              || ossl_rsa_pss_params_30_is_unrestricted(pss_params))) {
+        //          if (!OSSL_PARAM_set_utf8_string(p, RSA_DEFAULT_MD))
+        //              return 0;
+        //      }
+        //
+        // BoringSSL Difference:
+        // =====================
+        // BoringSSL (used by Bun) does not have this automatic default mechanism.
+        // When NULL is passed as the digest to EVP_DigestVerifyInit for RSA keys,
+        // BoringSSL returns error 0x06000077 (NO_DEFAULT_DIGEST).
+        //
+        // This Fix:
+        // =========
+        // To achieve Node.js/OpenSSL compatibility, we explicitly set SHA256 as the
+        // default digest for RSA keys when no algorithm is specified, matching the
+        // OpenSSL behavior documented above.
+        //
+        // For Ed25519/Ed448 keys (one-shot variants), we intentionally leave digest
+        // as null since these algorithms perform their own hashing internally and
+        // don't require a separate digest algorithm.
+        if (keyObject.asymmetricKey().isRsaVariant()) {
+            digest = Digest::FromName("SHA256"_s);
         }
     }
 

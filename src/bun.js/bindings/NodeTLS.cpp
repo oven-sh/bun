@@ -69,7 +69,20 @@ JSC_DEFINE_HOST_FUNCTION(getExtraCACertificates, (JSC::JSGlobalObject * globalOb
         BIO_free(bio);
     }
 
-    return JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates)));
+}
+
+extern "C" JSC::EncodedJSValue Bun__getTLSDefaultCiphers(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+extern "C" JSC::EncodedJSValue Bun__setTLSDefaultCiphers(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+
+JSC_DEFINE_HOST_FUNCTION(getDefaultCiphers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return Bun__getTLSDefaultCiphers(globalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(setDefaultCiphers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return Bun__setTLSDefaultCiphers(globalObject, callFrame);
 }
 
 } // namespace Bun

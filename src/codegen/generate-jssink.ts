@@ -162,8 +162,8 @@ function header() {
                 static size_t memoryCost(void* sinkPtr);
 
                 void* m_sinkPtr;
-                mutable WriteBarrier<JSC::Unknown> m_onPull;
-                mutable WriteBarrier<JSC::Unknown> m_onClose;
+                mutable WriteBarrier<JSC::JSObject> m_onPull;
+                mutable WriteBarrier<JSC::JSObject> m_onClose;
                 mutable JSC::Weak<JSObject> m_weakReadableStream;
 
                 uintptr_t m_onDestroy { 0 };
@@ -446,6 +446,7 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
     }
 
     controller->detach();
+    RETURN_IF_EXCEPTION(scope, {});
     ${name}__close(lexicalGlobalObject, ptr);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -459,7 +460,7 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
     WebCore::${controller}* controller = JSC::jsDynamicCast<WebCore::${controller}*>(callFrame->thisValue());
     if (!controller) {
         scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${controller}"_s));
-        return JSC::JSValue::encode(JSC::jsUndefined());
+        return {};
     }
 
     void *ptr = controller->wrapped();
@@ -468,6 +469,7 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
     }
 
     controller->detach();
+    RETURN_IF_EXCEPTION(scope, {});
     return ${name}__endWithSink(ptr, lexicalGlobalObject);
 }
 
@@ -513,6 +515,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
     }
 
     sink->detach();
+    RETURN_IF_EXCEPTION(scope, {});
     ${name}__close(lexicalGlobalObject, ptr);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -825,8 +828,16 @@ DEFINE_VISIT_CHILDREN(${className});
 
 void ${controller}::start(JSC::JSGlobalObject *globalObject, JSC::JSValue readableStream, JSC::JSValue onPull, JSC::JSValue onClose) {
     this->m_weakReadableStream = JSC::Weak<JSC::JSObject>(readableStream.getObject());
-    this->m_onPull.set(globalObject->vm(), this, onPull);
-    this->m_onClose.set(globalObject->vm(), this, onClose);
+    if (onPull) {
+        if (auto* object = onPull.getObject()) {
+            this->m_onPull.set(globalObject->vm(), this, object);
+        }
+    }
+    if (onClose) {
+        if (auto* object = onClose.getObject()) {
+            this->m_onClose.set(globalObject->vm(), this, object);
+        }
+    }
 }
 
 void ${className}::destroy(JSCell* cell)

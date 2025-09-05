@@ -153,30 +153,36 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     Vector<JSC::Strong<JSC::JSObject>> transferList;
 
     if (JSObject* optionsObject = JSC::jsDynamicCast<JSC::JSObject*>(argument1.value())) {
-        if (auto nameValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->name)) {
+        auto nameValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->name);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (nameValue) {
             if (nameValue.isString()) {
                 options.name = nameValue.toWTFString(lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(throwScope, {});
             }
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
 
-        if (auto miniModeValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "smol"_s))) {
+        auto miniModeValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "smol"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (miniModeValue) {
             options.mini = miniModeValue.toBoolean(lexicalGlobalObject);
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
 
-        if (auto ref = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "ref"_s))) {
+        auto ref = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "ref"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (ref) {
             options.unref = !ref.toBoolean(lexicalGlobalObject);
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
 
-        if (auto eval = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "eval"_s))) {
+        auto eval = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "eval"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (eval) {
             options.evalMode = eval.toBoolean(lexicalGlobalObject);
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
 
-        if (auto preloadModulesValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "preload"_s))) {
+        auto preloadModulesValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "preload"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (preloadModulesValue) {
             if (!preloadModulesValue.isUndefinedOrNull()) {
                 if (preloadModulesValue.isString()) {
                     auto str = preloadModulesValue.toWTFString(lexicalGlobalObject);
@@ -201,13 +207,16 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         }
 
         workerData = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "workerData"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
         if (!workerData) {
             workerData = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "data"_s));
+            RETURN_IF_EXCEPTION(throwScope, {});
             if (!workerData) workerData = jsUndefined();
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
 
-        if (JSValue transferListValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "transferList"_s))) {
+        auto transferListValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "transferList"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (transferListValue) {
             if (transferListValue.isObject()) {
                 JSC::JSObject* transferListObject = transferListValue.getObject();
                 if (auto* transferListArray = jsDynamicCast<JSC::JSArray*>(transferListObject)) {
@@ -217,6 +226,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
                         }
                         return true;
                     });
+                    RETURN_IF_EXCEPTION(throwScope, {});
                 }
             }
         }
@@ -262,7 +272,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         // string for Symbols instead of throwing like JSValue::toString does.
         // may throw an exception!
         auto coerceToIsolatedString = [lexicalGlobalObject](JSValue v) -> String {
-            String original = v.isSymbol() ? asSymbol(v)->descriptiveString() : v.toWTFString(lexicalGlobalObject);
+            String original = v.isSymbol() ? asSymbol(v)->tryGetDescriptiveString().value_or(String()) : v.toWTFString(lexicalGlobalObject);
             return original.isolatedCopy();
         };
 
@@ -277,6 +287,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
                 RETURN_IF_EXCEPTION(scope, );
                 options.argv.append(str);
             });
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
 
         JSValue execArgvValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "execArgv"_s));
@@ -307,7 +318,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*lexicalGlobalObject, valueToTransfer, WTFMove(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (serialized.hasException()) {
         WebCore::propagateException(*lexicalGlobalObject, throwScope, serialized.releaseException());
-        return encodedJSValue();
+        RELEASE_AND_RETURN(throwScope, {});
     }
 
     Vector<TransferredMessagePort> transferredPorts;
@@ -316,7 +327,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         auto disentangleResult = MessagePort::disentanglePorts(WTFMove(ports));
         if (disentangleResult.hasException()) {
             WebCore::propagateException(*lexicalGlobalObject, throwScope, disentangleResult.releaseException());
-            return encodedJSValue();
+            RELEASE_AND_RETURN(throwScope, {});
         }
         transferredPorts = disentangleResult.releaseReturnValue();
     }
@@ -574,7 +585,9 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_postMessage2Body(JSC
     StructuredSerializeOptions options;
     if (optionsValue.isObject()) {
         JSObject* optionsObject = asObject(optionsValue);
-        if (auto transferListValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "transfer"_s))) {
+        auto transferListValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "transfer"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (transferListValue) {
             auto transferList = convert<IDLSequence<IDLObject>>(*lexicalGlobalObject, transferListValue);
             RETURN_IF_EXCEPTION(throwScope, {});
             options.transfer = WTFMove(transferList);

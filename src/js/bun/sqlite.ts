@@ -4,10 +4,10 @@ import type * as SqliteTypes from "bun:sqlite";
 const kSafeIntegersFlag = 1 << 1;
 const kStrictFlag = 1 << 2;
 
-var defineProperties = Object.defineProperties;
-var toStringTag = Symbol.toStringTag;
-var isArray = Array.isArray;
-var isTypedArray = ArrayBuffer.isView;
+const defineProperties = Object.defineProperties;
+const toStringTag = Symbol.toStringTag;
+const isArray = Array.isArray;
+const isTypedArray = ArrayBuffer.isView;
 
 let internalFieldTuple;
 
@@ -94,12 +94,41 @@ const constants = {
   SQLITE_FCNTL_RESET_CACHE: 42,
 };
 
-var SQL;
+// This is interface is the JS equivalent of what JSSQLStatement.cpp defines
+interface CppSQLStatement {
+  run: (...args: TODO[]) => TODO;
+  get: (...args: TODO[]) => TODO;
+  all: (...args: TODO[]) => TODO;
+  iterate: (...args: TODO[]) => TODO;
+  as: (...args: TODO[]) => TODO;
+  values: (...args: TODO[]) => TODO;
+  raw: (...args: TODO[]) => TODO;
+  finalize: (...args: TODO[]) => TODO;
+  toString: (...args: TODO[]) => TODO;
+  columns: string[];
+  columnsCount: number;
+  paramsCount: number;
+  columnTypes: string[];
+  declaredTypes: (string | null)[];
+  safeIntegers: boolean;
+}
 
-var controllers;
+interface CppSQL {
+  open(filename: string, flags: number, db: Database): TODO;
+  isInTransaction(handle: TODO): boolean;
+  loadExtension(handle: TODO, name: string, entryPoint: string): void;
+  serialize(handle: TODO, name: string): Buffer;
+  deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, openFlags: number, deserializeFlags: number): TODO;
+  fcntl(handle: TODO, ...args: TODO[]): TODO;
+  close(handle: TODO, throwOnError: boolean): void;
+  setCustomSQLite(path: string): void;
+}
+
+let SQL: CppSQL;
+let controllers: WeakMap<Database, any> | undefined;
 
 class Statement {
-  constructor(raw) {
+  constructor(raw: CppSQLStatement) {
     this.#raw = raw;
 
     switch (raw.paramsCount) {
@@ -108,6 +137,7 @@ class Statement {
         this.all = this.#allNoArgs;
         this.iterate = this.#iterateNoArgs;
         this.values = this.#valuesNoArgs;
+        this.raw = this.#rawNoArgs;
         this.run = this.#runNoArgs;
         break;
       }
@@ -116,18 +146,20 @@ class Statement {
         this.all = this.#all;
         this.iterate = this.#iterate;
         this.values = this.#values;
+        this.raw = this.#rawValues;
         this.run = this.#run;
         break;
       }
     }
   }
 
-  #raw;
+  #raw: CppSQLStatement;
 
   get: SqliteTypes.Statement["get"];
   all: SqliteTypes.Statement["all"];
   iterate: SqliteTypes.Statement["iterate"];
   values: SqliteTypes.Statement["values"];
+  raw: SqliteTypes.Statement["raw"];
   run: SqliteTypes.Statement["run"];
   isFinalized = false;
 
@@ -170,6 +202,10 @@ class Statement {
     return this.#raw.values();
   }
 
+  #rawNoArgs() {
+    return this.#raw.raw();
+  }
+
   #runNoArgs() {
     this.#raw.run(internalFieldTuple);
 
@@ -191,7 +227,6 @@ class Statement {
     return this;
   }
 
-  // eslint-disable-next-line no-unused-private-class-members
   #get(...args) {
     if (args.length === 0) return this.#getNoArgs();
     var arg0 = args[0];
@@ -204,7 +239,6 @@ class Statement {
       : this.#raw.get(...args);
   }
 
-  // eslint-disable-next-line no-unused-private-class-members
   #all(...args) {
     if (args.length === 0) return this.#allNoArgs();
     var arg0 = args[0];
@@ -217,7 +251,6 @@ class Statement {
       : this.#raw.all(...args);
   }
 
-  // eslint-disable-next-line no-unused-private-class-members
   *#iterate(...args) {
     if (args.length === 0) return yield* this.#iterateNoArgs();
     var arg0 = args[0];
@@ -234,7 +267,6 @@ class Statement {
     }
   }
 
-  // eslint-disable-next-line no-unused-private-class-members
   #values(...args) {
     if (args.length === 0) return this.#valuesNoArgs();
     var arg0 = args[0];
@@ -247,7 +279,18 @@ class Statement {
       : this.#raw.values(...args);
   }
 
-  // eslint-disable-next-line no-unused-private-class-members
+  #rawValues(...args) {
+    if (args.length === 0) return this.#rawNoArgs();
+    var arg0 = args[0];
+    // ["foo"] => ["foo"]
+    // ("foo") => ["foo"]
+    // (Uint8Array(1024)) => [Uint8Array]
+    // (123) => [123]
+    return !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
+      ? this.#raw.raw(args)
+      : this.#raw.raw(...args);
+  }
+
   #run(...args) {
     if (args.length === 0) {
       this.#runNoArgs();
@@ -295,9 +338,13 @@ class Statement {
   }
 }
 
-var cachedCount = Symbol.for("Bun.Database.cache.count");
-class Database {
-  constructor(filenameGiven, options) {
+const cachedCount = Symbol.for("Bun.Database.cache.count");
+
+class Database implements SqliteTypes.Database {
+  constructor(
+    filenameGiven: string | undefined | NodeJS.TypedArray | Buffer<ArrayBufferLike>,
+    options?: SqliteTypes.DatabaseOptions | number,
+  ) {
     if (typeof filenameGiven === "undefined") {
     } else if (typeof filenameGiven !== "string") {
       if (isTypedArray(filenameGiven)) {
@@ -398,11 +445,11 @@ class Database {
     return SQL.loadExtension(this.#handle, name, entryPoint);
   }
 
-  serialize(optionalName) {
+  serialize(optionalName?: string) {
     return SQL.serialize(this.#handle, optionalName || "main");
   }
 
-  static #deserialize(serialized, openFlags, deserializeFlags) {
+  static #deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, openFlags: number, deserializeFlags: number) {
     if (!SQL) {
       initializeSQL();
     }
@@ -411,7 +458,7 @@ class Database {
   }
 
   static deserialize(
-    serialized,
+    serialized: NodeJS.TypedArray | ArrayBufferLike,
     options: boolean | { readonly?: boolean; strict?: boolean; safeIntegers?: boolean } = false,
   ) {
     if (typeof options === "boolean") {
@@ -476,7 +523,7 @@ class Database {
     return createChangesObject();
   }
 
-  prepare(query, params, flags) {
+  prepare(query: string, params: any[] | undefined, flags: number = 0) {
     return new Statement(SQL.prepare(this.#handle, query, params, flags || 0, this.#internalFlags));
   }
 

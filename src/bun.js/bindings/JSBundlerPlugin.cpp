@@ -162,6 +162,7 @@ public:
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onLoadFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onResolveFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> setupFunction;
+
     JSC::JSGlobalObject* m_globalObject;
 
 private:
@@ -505,7 +506,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const
 
     call(globalObject, function, callData, plugin, arguments);
 
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         auto exception = scope.exception();
         scope.clearException();
         if (!plugin->plugin.tombstoned) {
@@ -579,7 +580,7 @@ extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* glob
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolvePluginsForServe(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedPlugins, JSC::EncodedJSValue encodedBunfigFolder)
 {
     auto& vm = plugin->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* loadAndResolvePluginsForServeBuiltinFn = JSC::JSFunction::create(vm, plugin->globalObject(), WebCore::bundlerPluginLoadAndResolvePluginsForServeCodeGenerator(vm), plugin->globalObject());
 
@@ -594,7 +595,7 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolvePluginsForServe(Bu
     arguments.append(JSValue::decode(encodedBunfigFolder));
     arguments.append(runSetupFn);
 
-    return JSC::JSValue::encode(JSC::profiledCall(plugin->globalObject(), ProfilingReason::API, loadAndResolvePluginsForServeBuiltinFn, callData, plugin, arguments));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::profiledCall(plugin->globalObject(), ProfilingReason::API, loadAndResolvePluginsForServeBuiltinFn, callData, plugin, arguments)));
 }
 
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
@@ -606,7 +607,7 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     JSC::EncodedJSValue encodedIsBake)
 {
     auto& vm = plugin->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* setupFunction = jsCast<JSFunction*>(plugin->setupFunction.get(plugin));
     if (!setupFunction) [[unlikely]]
@@ -624,7 +625,10 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     arguments.append(JSValue::decode(encodedIsBake));
     auto* lexicalGlobalObject = jsCast<JSFunction*>(JSValue::decode(encodedSetupFunction))->globalObject();
 
-    return JSC::JSValue::encode(JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, setupFunction, callData, plugin, arguments));
+    auto result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, setupFunction, callData, plugin, arguments);
+    RETURN_IF_EXCEPTION(scope, {}); // should be able to use RELEASE_AND_RETURN, no? observed it returning undefined with exception active
+
+    return JSValue::encode(result);
 }
 
 extern "C" void JSBundlerPlugin__setConfig(Bun::JSBundlerPlugin* plugin, void* config)
@@ -648,6 +652,34 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
 extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)
 {
     plugin->plugin.tombstone();
+}
+
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedBuildPromise, JSC::EncodedJSValue encodedBuildResult, JSC::EncodedJSValue encodedRejection)
+{
+    auto& vm = plugin->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = plugin->globalObject();
+
+    // TODO: have a prototype for JSBundlerPlugin that this is put on instead of re-creating the function on each usage
+    auto* runOnEndCallbacksFn = JSC::JSFunction::create(vm, globalObject,
+        WebCore::bundlerPluginRunOnEndCallbacksCodeGenerator(vm), globalObject);
+
+    JSC::CallData callData = JSC::getCallData(runOnEndCallbacksFn);
+    if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
+        return JSValue::encode(jsUndefined());
+    }
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(JSValue::decode(encodedBuildPromise));
+    arguments.append(JSValue::decode(encodedBuildResult));
+    arguments.append(JSValue::decode(encodedRejection));
+
+    // TODO: use AsyncContextFrame?
+    auto result
+        = JSC::profiledCall(globalObject, ProfilingReason::API, runOnEndCallbacksFn, callData, plugin, arguments);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return JSValue::encode(result);
 }
 
 extern "C" int JSBundlerPlugin__callOnBeforeParsePlugins(

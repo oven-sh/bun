@@ -1,10 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
-
-const ArrayList = std.ArrayListUnmanaged;
 
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -318,12 +312,12 @@ pub const FontFamily = union(enum) {
         while (input.tryParse(css.Parser.expectIdent, .{}).asValue()) |ident| {
             if (string == null) {
                 string = ArrayList(u8){};
-                string.?.appendSlice(stralloc, value) catch bun.outOfMemory();
+                bun.handleOom(string.?.appendSlice(stralloc, value));
             }
 
             if (string) |*s| {
-                s.append(stralloc, ' ') catch bun.outOfMemory();
-                s.appendSlice(stralloc, ident) catch bun.outOfMemory();
+                bun.handleOom(s.append(stralloc, ' '));
+                bun.handleOom(s.appendSlice(stralloc, ident));
             }
         }
 
@@ -358,7 +352,7 @@ pub const FontFamily = union(enum) {
                         if (first) {
                             first = false;
                         } else {
-                            id.append(dest.allocator, ' ') catch bun.outOfMemory();
+                            bun.handleOom(id.append(dest.allocator, ' '));
                         }
                         const dest_id = id.writer(dest.allocator);
                         css.serializer.serializeIdentifier(slice, dest_id) catch return dest.addFmtError();
@@ -872,7 +866,7 @@ pub const FontHandler = struct {
                 if (isFontProperty(val.property_id)) {
                     this.flush(dest, context);
                     bun.bits.insert(FontProperty, &this.flushed_properties, FontProperty.tryFromPropertyId(val.property_id).?);
-                    dest.append(context.allocator, property.*) catch bun.outOfMemory();
+                    bun.handleOom(dest.append(context.allocator, property.*));
                 } else {
                     return false;
                 }
@@ -911,7 +905,7 @@ pub const FontHandler = struct {
     }
 
     fn push(self: *FontHandler, d: *css.DeclarationList, ctx: *css.PropertyHandlerContext, comptime prop: []const u8, val: anytype) void {
-        d.append(ctx.allocator, @unionInit(css.Property, prop, val)) catch bun.outOfMemory();
+        bun.handleOom(d.append(ctx.allocator, @unionInit(css.Property, prop, val)));
         var insertion: FontProperty = .{};
         if (comptime std.mem.eql(u8, prop, "font")) {
             insertion = FontProperty.FONT;
@@ -950,7 +944,7 @@ pub const FontHandler = struct {
 
                 var i: usize = 0;
                 while (i < f.len) {
-                    const gop = seen.getOrPut(alloc, f.at(i).*) catch bun.outOfMemory();
+                    const gop = bun.handleOom(seen.getOrPut(alloc, f.at(i).*));
                     if (gop.found_existing) {
                         _ = f.orderedRemove(i);
                     } else {
@@ -1034,7 +1028,7 @@ inline fn compatibleFontFamily(allocator: std.mem.Allocator, _family: ?bun.BabyL
         for (families.sliceConst(), 0..) |v, i| {
             if (v.eql(&SYSTEM_UI)) {
                 for (DEFAULT_SYSTEM_FONTS, 0..) |name, j| {
-                    families.insert(allocator, i + j + 1, .{ .family_name = name }) catch bun.outOfMemory();
+                    bun.handleOom(families.insert(allocator, i + j + 1, .{ .family_name = name }));
                 }
                 break;
             }
@@ -1058,3 +1052,9 @@ inline fn isFontProperty(property_id: css.PropertyId) bool {
         else => false,
     };
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

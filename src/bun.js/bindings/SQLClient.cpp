@@ -64,6 +64,7 @@ typedef union DataCellValue {
     double number;
     int32_t integer;
     int64_t bigint;
+    uint64_t unsigned_bigint;
     uint8_t boolean;
     double date;
     double date_with_time_zone;
@@ -90,6 +91,7 @@ enum class DataCellTag : uint8_t {
     TypedArray = 11,
     Raw = 12,
     UnsignedInteger = 13,
+    UnsignedBigint = 14,
 };
 
 enum class BunResultMode : uint8_t {
@@ -126,6 +128,8 @@ public:
 
 static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCell& cell)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     switch (cell.tag) {
     case DataCellTag::Null:
         return jsNull();
@@ -134,9 +138,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         Zig::GlobalObject* zigGlobal = jsCast<Zig::GlobalObject*>(globalObject);
         auto* subclassStructure = zigGlobal->JSBufferSubclassStructure();
         auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, cell.value.raw.length);
-        if (uint8Array == nullptr) [[unlikely]] {
-            return {};
-        }
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (cell.value.raw.length > 0) {
             memcpy(uint8Array->vector(), reinterpret_cast<void*>(cell.value.raw.ptr), cell.value.raw.length);
@@ -161,6 +163,9 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
     case DataCellTag::Bigint:
         return JSC::JSBigInt::createFrom(globalObject, cell.value.bigint);
         break;
+    case DataCellTag::UnsignedBigint:
+        return JSC::JSBigInt::createFrom(globalObject, cell.value.unsigned_bigint);
+        break;
     case DataCellTag::Boolean:
         return jsBoolean(cell.value.boolean);
         break;
@@ -173,9 +178,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         Zig::GlobalObject* zigGlobal = jsCast<Zig::GlobalObject*>(globalObject);
         auto* subclassStructure = zigGlobal->JSBufferSubclassStructure();
         auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, cell.value.bytea[1]);
-        if (uint8Array == nullptr) [[unlikely]] {
-            return {};
-        }
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (cell.value.bytea[1] > 0) {
             memcpy(uint8Array->vector(), reinterpret_cast<void*>(cell.value.bytea[0]), cell.value.bytea[1]);
@@ -210,9 +213,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         switch (type) {
         case JSC::JSType::Int32ArrayType: {
             JSC::JSInt32Array* array = JSC::JSInt32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeInt32>(), length);
-            if (array == nullptr) [[unlikely]] {
-                return {};
-            }
+            RETURN_IF_EXCEPTION(scope, {});
 
             if (length > 0) {
                 memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * sizeof(int32_t));
@@ -222,9 +223,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         }
         case JSC::JSType::Uint32ArrayType: {
             JSC::JSUint32Array* array = JSC::JSUint32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeUint32>(), length);
-            if (array == nullptr) [[unlikely]] {
-                return {};
-            }
+            RETURN_IF_EXCEPTION(scope, {});
 
             if (length > 0) {
                 memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * sizeof(uint32_t));
@@ -233,9 +232,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         }
         case JSC::JSType::Int16ArrayType: {
             JSC::JSInt16Array* array = JSC::JSInt16Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeInt16>(), length);
-            if (array == nullptr) [[unlikely]] {
-                return {};
-            }
+            RETURN_IF_EXCEPTION(scope, {});
 
             if (length > 0) {
                 memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * sizeof(int16_t));
@@ -245,9 +242,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         }
         case JSC::JSType::Uint16ArrayType: {
             JSC::JSUint16Array* array = JSC::JSUint16Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeUint16>(), length);
-            if (array == nullptr) [[unlikely]] {
-                return {};
-            }
+            RETURN_IF_EXCEPTION(scope, {});
 
             if (length > 0) {
                 memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * sizeof(uint16_t));
@@ -256,9 +251,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         }
         case JSC::JSType::Float16ArrayType: {
             JSC::JSFloat16Array* array = JSC::JSFloat16Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeFloat16>(), length);
-            if (array == nullptr) [[unlikely]] {
-                return {};
-            }
+            RETURN_IF_EXCEPTION(scope, {});
 
             if (length > 0) {
                 memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * 2); // sizeof(float16_t)
@@ -267,9 +260,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         }
         case JSC::JSType::Float32ArrayType: {
             JSC::JSFloat32Array* array = JSC::JSFloat32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeFloat32>(), length);
-            if (array == nullptr) [[unlikely]] {
-                return {};
-            }
+            RETURN_IF_EXCEPTION(scope, {});
 
             if (length > 0) {
                 memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * sizeof(float));
@@ -278,9 +269,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         }
         case JSC::JSType::Float64ArrayType: {
             JSC::JSFloat64Array* array = JSC::JSFloat64Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeFloat64>(), length);
-            if (array == nullptr) [[unlikely]] {
-                return {};
-            }
+            RETURN_IF_EXCEPTION(scope, {});
 
             if (length > 0) {
                 memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * sizeof(double));
@@ -333,7 +322,6 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                 ASSERT(!cell.isIndexedColumn());
                 ASSERT(cell.isNamedColumn());
                 if (names.has_value()) {
-
                     auto name = names.value()[i];
                     object->putDirect(vm, Identifier::fromString(vm, name.name.toWTFString()), value);
 
@@ -498,4 +486,56 @@ extern "C" void JSC__putDirectOffset(JSC::VM* vm, JSC::EncodedJSValue object, ui
     JSValue::decode(object).getObject()->putDirectOffset(*vm, offset, JSValue::decode(value));
 }
 extern "C" uint32_t JSC__JSObject__maxInlineCapacity = JSC::JSFinalObject::maxInlineCapacity;
+
+// PostgreSQL time formatting helpers - following WebKit's pattern
+extern "C" size_t Postgres__formatTime(int64_t microseconds, char* buffer, size_t bufferSize)
+{
+    // Convert microseconds since midnight to time components
+    int64_t totalSeconds = microseconds / 1000000;
+
+    int hours = static_cast<int>(totalSeconds / 3600);
+    int minutes = static_cast<int>((totalSeconds % 3600) / 60);
+    int seconds = static_cast<int>(totalSeconds % 60);
+
+    // Format following SQL standard time format
+    int charactersWritten = snprintf(buffer, bufferSize, "%02d:%02d:%02d", hours, minutes, seconds);
+
+    // Add fractional seconds if present (PostgreSQL supports microsecond precision)
+    if (microseconds % 1000000 != 0) {
+        // PostgreSQL displays fractional seconds only when non-zero
+        int us = microseconds % 1000000;
+        charactersWritten = snprintf(buffer, bufferSize, "%02d:%02d:%02d.%06d",
+            hours, minutes, seconds, us);
+        // Trim trailing zeros for cleaner output
+        while (buffer[charactersWritten - 1] == '0')
+            charactersWritten--;
+        if (buffer[charactersWritten - 1] == '.')
+            charactersWritten--;
+        buffer[charactersWritten] = '\0';
+    }
+
+    ASSERT(charactersWritten > 0 && static_cast<unsigned>(charactersWritten) < bufferSize);
+    return charactersWritten;
+}
+
+extern "C" size_t Postgres__formatTimeTz(int64_t microseconds, int32_t tzOffsetSeconds, char* buffer, size_t bufferSize)
+{
+    // Format time part first
+    size_t timeLen = Postgres__formatTime(microseconds, buffer, bufferSize);
+
+    // PostgreSQL convention: negative offset means positive UTC offset
+    // Add timezone in ±HH or ±HH:MM format
+    int tzHours = abs(tzOffsetSeconds) / 3600;
+    int tzMinutes = (abs(tzOffsetSeconds) % 3600) / 60;
+
+    int tzLen = snprintf(buffer + timeLen, bufferSize - timeLen, "%c%02d",
+        tzOffsetSeconds <= 0 ? '+' : '-', tzHours);
+
+    if (tzMinutes != 0) {
+        tzLen = snprintf(buffer + timeLen, bufferSize - timeLen, "%c%02d:%02d",
+            tzOffsetSeconds <= 0 ? '+' : '-', tzHours, tzMinutes);
+    }
+
+    return timeLen + tzLen;
+}
 }

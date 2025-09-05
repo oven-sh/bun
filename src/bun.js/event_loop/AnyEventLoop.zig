@@ -1,5 +1,5 @@
 /// Useful for code that may need an event loop and could be used from either JavaScript or directly without JavaScript.
-/// Unlike JSC.EventLoopHandle, this owns the event loop when it's not a JavaScript event loop.
+/// Unlike jsc.EventLoopHandle, this owns the event loop when it's not a JavaScript event loop.
 pub const AnyEventLoop = union(EventLoopKind) {
     js: *EventLoop,
     mini: MiniEventLoop,
@@ -98,7 +98,7 @@ pub const AnyEventLoop = union(EventLoopKind) {
                 // const TaskType = AnyTask.New(Context, Callback);
                 // @field(ctx, field) = TaskType.init(ctx);
                 // var concurrent = bun.default_allocator.create(ConcurrentTask) catch unreachable;
-                // _ = concurrent.from(JSC.Task.init(&@field(ctx, field)));
+                // _ = concurrent.from(jsc.Task.init(&@field(ctx, field)));
                 // concurrent.auto_delete = true;
                 // this.virtual_machine.jsc.enqueueTaskConcurrent(concurrent);
             },
@@ -110,12 +110,14 @@ pub const AnyEventLoop = union(EventLoopKind) {
 };
 
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
 const Async = bun.Async;
-const Task = JSC.Task;
-const MiniEventLoop = JSC.MiniEventLoop;
-const AnyTaskWithExtraContext = JSC.AnyTaskWithExtraContext;
 const uws = bun.uws;
-const EventLoop = JSC.EventLoop;
-const EventLoopKind = JSC.EventLoopKind;
+
+const jsc = bun.jsc;
+const AnyTaskWithExtraContext = jsc.AnyTaskWithExtraContext;
+const EventLoop = jsc.EventLoop;
+const EventLoopKind = jsc.EventLoopKind;
+const MiniEventLoop = jsc.MiniEventLoop;
+const Task = jsc.Task;

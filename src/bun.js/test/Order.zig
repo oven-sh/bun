@@ -30,7 +30,7 @@ pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry) bun.JSEr
         try this.entries.append(entry); // add entry to sequence
         const entries_end = this.entries.items.len;
         const sequences_start = this.sequences.items.len;
-        try this.sequences.append(.{ .entries_start = entries_start, .entries_end = entries_end, .index = 0, .test_entry = null }); // add sequence to concurrentgroup
+        try this.sequences.append(.init(entries_start, entries_end, null)); // add sequence to concurrentgroup
         const sequences_end = this.sequences.items.len;
         try appendOrExtendConcurrentGroup(this, false, sequences_start, sequences_end); // add a new concurrent group. note that beforeAll/afterAll are never concurrent.
     }
@@ -92,7 +92,7 @@ pub fn generateOrderTest(this: *Order, current: *ExecutionEntry) bun.JSError!voi
     // add these as a single sequence
     const entries_end = this.entries.items.len;
     const sequences_start = this.sequences.items.len;
-    try this.sequences.append(.{ .entries_start = entries_start, .entries_end = entries_end, .index = 0, .test_entry = current }); // add sequence to concurrentgroup
+    try this.sequences.append(.init(entries_start, entries_end, current)); // add sequence to concurrentgroup
     const sequences_end = this.sequences.items.len;
     try appendOrExtendConcurrentGroup(this, current.base.concurrent, sequences_start, sequences_end); // add or extend the concurrent group
 }

@@ -64,6 +64,17 @@ pub const ExecutionSequence = struct {
         at_least_one,
         exact: u32,
     } = .not_set,
+    remaining_incomplete_entries: usize,
+
+    pub fn init(start: usize, end: usize, test_entry: ?*ExecutionEntry) ExecutionSequence {
+        return .{
+            .entries_start = start,
+            .entries_end = end,
+            .index = 0,
+            .test_entry = test_entry,
+            .remaining_incomplete_entries = end - start,
+        };
+    }
 
     fn entryMode(this: ExecutionSequence) describe2.ScopeMode {
         if (this.test_entry) |entry| return entry.base.mode;
@@ -417,11 +428,7 @@ pub fn resetSequence(this: *Execution, sequence: *ExecutionSequence) void {
     bun.assert(!sequence.executing);
     if (sequence.result.isPass(.pending_is_pass)) {
         // passed or pending; run again
-        sequence.index = 0;
-        sequence.result = .pending;
-        sequence.expect_call_count = 0;
-        sequence.expect_assertions = .not_set;
-        sequence.started_at = .epoch;
+        sequence.* = .init(sequence.entries_start, sequence.entries_end, sequence.test_entry);
     } else {
         // already failed or skipped; don't run again
         sequence.index = sequence.entries(this).len;

@@ -305,14 +305,12 @@ Exited with code [1]
 - [ ] make sure DoneCallback class can finalize, same as above
 - [ ] see about caching ScopeFunctions by value maybe?
 - [x] add back repeating failure/skip messages at the end of the test print
-- [ ] make sure failure exits with code 1
+- [x] make sure failure exits with code 1
 - [ ] `test("rerun me", () => { console.log("run one time!"); });` `--rerun-each=3`. works 1, no message 2, fails 3
-- [ ] status printing support failures and other modes
+- [x] status printing support failures and other modes
 - [ ] make BunTest into a gc object so you can't deinit it while a .then() is still active
-- [ ] add back gc cleaning up an unused callback. need to identify when the callback will never be used again and swap it with null.
 - [ ] add tests & pass existing tests
-- [ ] add gc test (test that items referenced by a test callback are freed after the test is executed)
-- [ ] add back associating uncaught exceptions with the active test
+- [x] add back associating uncaught exceptions with the active test
 - [x] `test.concurrent.only()`
 - [x] `test.skip.only.concurrent()`. basically we need to make it a class that contains the options.
 - [ ] move the testing files into being real behaviour tests
@@ -320,8 +318,8 @@ Exited with code [1]
 - [ ] replace asserts with runtime throws or debug-only asserts (waitForPromise breaks many expectations)
 - [ ] check the todo list in https://linear.app/oven/issue/ENG-20152/new-buntest, confirm it fixes all those issues (or doesn't make them worse). add reproductions
 - [ ] look in file:///Users/pfg/Dev/Node/bun-coverage/coverage-html/src/bun.js/test/jest.zig.gcov.html and find things to remove
-- [ ] remove describe/test functions in jest.zig
-- [ ] remove DescribeScope/TestScope in jest.zig
+- [x] remove describe/test functions in jest.zig
+- [x] remove DescribeScope/TestScope in jest.zig
 - [ ] remove TestId stuff
 - [ ] remove TODO.md
 
@@ -392,6 +390,8 @@ Exited with code [1]
 - [ ] support test() inside test()
 - [ ] add a warning message when a test resolves after it times out
 - [ ] note interesting behaviour if DoneCallback gets garbage collected and then after that, the promise resolves, then the test will complete. but in the other order, it won't. interesting.
+- [ ] add back gc cleaning up unused callbacks. need to identify when the callback will never be used again and swap it with null.
+  - [ ] add gc test (test that items referenced by a test callback are freed after the test is executed)
 
 If this doesn't land:
 

@@ -65,14 +65,24 @@ test("describe/test", async () => {
     (pass) another test
     (pass) misattributed error
     (pass) passes because it catches the misattributed error
+    (pass) hooks > test1
+    (pass) hooks > test2
 
-     20 pass
+    2 tests skipped:
+
+
+    2 tests todo:
+
+
+    6 tests failed:
+
+     22 pass
      2 skip
      2 todo
      6 fail
      1 error
      1 snapshots, 9 expect() calls
-    Ran 30 tests across 1 file."
+    Ran 32 tests across 1 file."
     ,
       "stdout": 
     "bun test <version> (<revision>)
@@ -122,7 +132,21 @@ test("describe/test", async () => {
     LINE 74
     adding: 1 + 2 = 3
     adding: 2 + 3 = 5
-    adding: 3 + 4 = 7"
+    adding: 3 + 4 = 7
+    beforeAll1
+    beforeAll2
+    beforeEach1
+    beforeEach2
+    test1
+    afterEach1
+    afterEach2
+    beforeEach1
+    beforeEach2
+    test2
+    afterEach1
+    afterEach2
+    afterAll1
+    afterAll2"
     ,
     }
   `);

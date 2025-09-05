@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, beforeAll, beforeEach, afterEach, afterAll } from "bun:test";
 
 console.log("enter");
 
@@ -169,6 +169,42 @@ test("misattributed error", () => {
 });
 test.failing("passes because it catches the misattributed error", done => {
   setTimeout(done, 50);
+});
+
+// === hooks ===
+describe("hooks", () => {
+  beforeAll(() => {
+    console.log("beforeAll1");
+  });
+  beforeEach(async () => {
+    console.log("beforeEach1");
+  });
+  afterAll(done => {
+    console.log("afterAll1");
+    done();
+  });
+  afterEach(done => {
+    console.log("afterEach1");
+    Promise.resolve().then(done);
+  });
+  afterEach(() => {
+    console.log("afterEach2");
+  });
+  afterAll(() => {
+    console.log("afterAll2");
+  });
+  beforeAll(async () => {
+    console.log("beforeAll2");
+  });
+  beforeEach(() => {
+    console.log("beforeEach2");
+  });
+  test("test1", () => {
+    console.log("test1");
+  });
+  test("test2", () => {
+    console.log("test2");
+  });
 });
 
 console.log("exit");

@@ -467,6 +467,18 @@ declare module "bun:test" {
      */
     todoIf(condition: boolean): Test<T>;
     /**
+     * Marks this test as failing, if `condition` is true.
+     *
+     * @param condition if the test should be marked as failing
+     */
+    failingIf(condition: boolean): Test<T>;
+    /**
+     * Runs the test concurrently with other concurrent tests, if `condition` is true.
+     *
+     * @param condition if the test should run concurrently
+     */
+    concurrentIf(condition: boolean): Test<T>;
+    /**
      * Returns a function that runs for each item in `table`.
      *
      * @param table Array of Arrays with the arguments that are passed into the test fn for each row.

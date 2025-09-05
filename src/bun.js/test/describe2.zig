@@ -49,13 +49,15 @@ pub const js_fns = struct {
                     return globalThis.throw("beforeAll/beforeEach/afterEach/afterAll() expects a function as the first argument", .{});
                 }
 
+                const has_done_parameter = try callback.getLength(globalThis) > 0;
+
                 const bunTestRoot = try getActiveTestRoot(globalThis, .{ .signature = .{ .str = @tagName(tag) ++ "()" }, .allow_in_preload = true });
                 const bunTest = bunTestRoot.getActiveFileUnlessInPreload(globalThis.bunVM()) orelse {
                     group.log("genericHook in preload", .{});
 
                     _ = try bunTestRoot.hook_scope.appendHook(bunTestRoot.gpa, tag, callback, .{
                         .line_no = 0,
-                        .has_done_parameter = false,
+                        .has_done_parameter = has_done_parameter,
                     }, .{});
                     return .js_undefined;
                 };
@@ -64,7 +66,7 @@ pub const js_fns = struct {
                     .collection => {
                         _ = try bunTest.collection.active_scope.appendHook(bunTest.gpa, tag, callback, .{
                             .line_no = 0,
-                            .has_done_parameter = false,
+                            .has_done_parameter = has_done_parameter,
                         }, .{});
 
                         return .js_undefined;

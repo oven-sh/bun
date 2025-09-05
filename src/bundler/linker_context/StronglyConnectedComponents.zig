@@ -1,3 +1,7 @@
+const std = @import("std");
+const bun = @import("root").bun;
+const Index = bun.ast.Index;
+
 /// Tarjan's strongly connected components algorithm for finding cycles in the dependency graph.
 /// This is more efficient than the while(changed) loop approach which has O(n²) or worse complexity.
 pub const StronglyConnectedComponents = struct {
@@ -38,7 +42,7 @@ pub const StronglyConnectedComponents = struct {
     pub fn findSCCs(
         self: *StronglyConnectedComponents,
         comptime EdgeIterator: type,
-        edges: EdgeIterator,
+        edges: *EdgeIterator,
         node_count: usize,
     ) !void {
         // Initialize all nodes
@@ -57,7 +61,7 @@ pub const StronglyConnectedComponents = struct {
     fn strongConnect(
         self: *StronglyConnectedComponents,
         comptime EdgeIterator: type,
-        edges: EdgeIterator,
+        edges: *EdgeIterator,
         v: u32,
     ) !void {
         // Set the depth index for v to the smallest unused index
@@ -93,7 +97,7 @@ pub const StronglyConnectedComponents = struct {
             }
 
             // Store the SCC (only if it has more than 1 element or is a self-loop)
-            if (scc.items.len > 1 or self.hasSelfLoop(edges, v)) {
+            if (scc.items.len > 1 or self.hasSelfLoop(EdgeIterator, edges, v)) {
                 try self.sccs.append(try scc.toOwnedSlice());
             } else {
                 scc.deinit();
@@ -101,7 +105,7 @@ pub const StronglyConnectedComponents = struct {
         }
     }
 
-    fn hasSelfLoop(self: *StronglyConnectedComponents, edges: anytype, node: u32) bool {
+    fn hasSelfLoop(self: *StronglyConnectedComponents, comptime EdgeIteratorType: type, edges: *EdgeIteratorType, node: u32) bool {
         _ = self;
         const neighbors = edges.getNeighbors(node);
         for (neighbors) |neighbor| {
@@ -116,7 +120,7 @@ pub const StronglyConnectedComponents = struct {
         comptime FlagType: type,
         flags: []FlagType,
         comptime EdgeIterator: type,
-        edges: EdgeIterator,
+        edges: *EdgeIterator,
     ) void {
         // Process SCCs in reverse order (topological order)
         var i: usize = self.sccs.items.len;
@@ -194,5 +198,3 @@ pub const StronglyConnectedComponents = struct {
         }
     }
 };
-
-const std = @import("std");

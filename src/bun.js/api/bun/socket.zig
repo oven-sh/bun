@@ -918,7 +918,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 .fail => .zero,
                 .success => |result| brk: {
                     if (result.wrote == result.total) {
-                        this.internalFlush() catch return .jsBoolean(false);
+                        this.internalFlush() catch return .false;
                     }
 
                     break :brk JSValue.jsBoolean(@as(usize, @max(result.wrote, 0)) == result.total);

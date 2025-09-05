@@ -421,10 +421,10 @@ void *us_socket_get_native_handle(int ssl, us_socket_r s) nonnull_fn_decl;
 
 /* Write up to length bytes of data. Returns actual bytes written.
  * Will call the on_writable callback of active socket context on failure to write everything off in one go. */
-int us_socket_write(int ssl, us_socket_r s, const char * nonnull_arg data, int length, int *error) nonnull_fn_decl;
+int us_socket_write(int ssl, us_socket_r s, const char * nonnull_arg data, int length, int *error);
 
 /* Special path for non-SSL sockets. Used to send header and payload in one go. Works like us_socket_write. */
-int us_socket_write2(int ssl, us_socket_r s, const char *header, int header_length, const char *payload, int payload_length, int *error) nonnull_fn_decl;
+int us_socket_write2(int ssl, us_socket_r s, const char * nonnull_arg header, int header_length, const char * nonnull_arg payload, int payload_length, int *error);
 
 /* Set a low precision, high performance timer on a socket. A socket can only have one single active timer
  * at any given point in time. Will remove any such pre set timer */

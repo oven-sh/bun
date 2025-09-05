@@ -62,6 +62,8 @@ pub const Run = struct {
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
+        b.options.env.behavior = ctx.bundler_options.env_behavior;
+        b.options.env.prefix = ctx.bundler_options.env_prefix;
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
@@ -134,6 +136,8 @@ pub const Run = struct {
             try @import("./bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
             null,
         );
+        bundle.options.env.behavior = ctx.bundler_options.env_behavior;
+        bundle.options.env.prefix = ctx.bundler_options.env_prefix;
         try bundle.runEnvLoader(false);
         const mini = jsc.MiniEventLoop.initGlobal(bundle.env);
         mini.top_level_dir = ctx.args.absolute_working_dir orelse "";
@@ -210,10 +214,10 @@ pub const Run = struct {
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
+        b.options.env.behavior = ctx.bundler_options.env_behavior;
+        b.options.env.prefix = ctx.bundler_options.env_prefix;
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
-
-        b.options.env.behavior = .load_all_without_inlining;
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
 
         switch (ctx.debug.macros) {

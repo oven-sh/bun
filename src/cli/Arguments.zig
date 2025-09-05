@@ -42,6 +42,7 @@ pub const ParamType = clap.Param(clap.Help);
 
 pub const base_params_ = (if (Environment.show_crash_trace) debug_params else [_]ParamType{}) ++ [_]ParamType{
     clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
+    clap.parseParam("--no-env                          Disable loading of environment variables from .env files") catch unreachable,
     clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
     clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
     clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
@@ -534,6 +535,14 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     // opts.inject = args.options("--inject");
     opts.env_files = args.options("--env-file");
     opts.extension_order = args.options("--extension-order");
+    
+    // Handle --no-env flag to disable .env file loading
+    if (args.flag("--no-env")) {
+        // Clear any env files to signal no env loading
+        opts.env_files = &[_][]const u8{};
+        // Set bundler options to disable env loading
+        ctx.bundler_options.env_behavior = Api.DotEnvBehavior.disable;
+    }
 
     if (args.flag("--preserve-symlinks")) {
         opts.preserve_symlinks = true;

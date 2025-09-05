@@ -191,6 +191,25 @@ pub const Bunfig = struct {
                 this.bunfig.origin = try expr.data.e_string.string(allocator);
             }
 
+            // Support for env configuration in bunfig.toml
+            if (json.get("env")) |env_expr| {
+                if (env_expr.get("file")) |file_expr| {
+                    switch (file_expr.data) {
+                        .e_boolean => |boolean| {
+                            if (!boolean.value) {
+                                // env.file = false disables .env file loading
+                                this.ctx.bundler_options.env_behavior = api.DotEnvBehavior.disable;
+                            }
+                        },
+                        .e_null => {
+                            // env.file = null also disables .env file loading
+                            this.ctx.bundler_options.env_behavior = api.DotEnvBehavior.disable;
+                        },
+                        else => {},
+                    }
+                }
+            }
+
             if (comptime cmd == .RunCommand or cmd == .AutoCommand) {
                 if (json.get("serve")) |expr| {
                     if (expr.get("port")) |port| {

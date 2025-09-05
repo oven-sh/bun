@@ -1,3 +1,5 @@
+const std = @import("std");
+
 /// Tarjan's strongly connected components algorithm for finding cycles in the dependency graph.
 /// This is more efficient than the while(changed) loop approach which has O(n²) or worse complexity.
 pub const StronglyConnectedComponents = struct {
@@ -68,7 +70,12 @@ pub const StronglyConnectedComponents = struct {
         self.nodes[v].on_stack = true;
 
         // Consider successors of v
-        const neighbors = edges.getNeighbors(v);
+        // Create a copy of neighbors to avoid use-after-poison when the buffer is reused in recursive calls
+        const neighbors_slice = edges.getNeighbors(v);
+        const neighbors = try self.allocator.alloc(u32, neighbors_slice.len);
+        defer self.allocator.free(neighbors);
+        @memcpy(neighbors, neighbors_slice);
+        
         for (neighbors) |w| {
             if (self.nodes[w].index == std.math.maxInt(u32)) {
                 // Successor w has not yet been visited; recurse on it
@@ -194,5 +201,3 @@ pub const StronglyConnectedComponents = struct {
         }
     }
 };
-
-const std = @import("std");

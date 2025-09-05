@@ -93,6 +93,7 @@ pub const Tag = if (Environment.isWindows) enum {
             => bun.bake.DevServer,
             .AbortSignalTimeout => jsc.WebCore.AbortSignal.Timeout,
             .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
+            .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
         };
     }
 } else enum {

@@ -242,7 +242,7 @@ Exited with code [1]
 # Complete before merge:
 
 - [x] test what happens running a file that uses describe() not in `bun test`. make sure it errors with the correct error. this might have regressed, if so, fix it.
-- [ ] make sure done callback is supported in hooks
+- [x] make sure done callback is supported in hooks
 - [ ] add tests for re-entry in different scenerios (timeout, done callback, ...) using waitForPromise in expect()
 - [x] Add expect counts back
 - [x] add back expecting a test to have a certain number of expect calls
@@ -255,12 +255,11 @@ Exited with code [1]
     - should we advance the sequence in this case or end it completely? not sure. see what vitest/jest do when beforeAll/afterAll exceed the test timeout
   - After this, start the next timer with the new first incomplete test timeout time
 - [x] make sure junit works
-- [ ] support having both a done callback and a promise result
+- [x] support having both a done callback and a promise result
 - [x] support expect counter
-- [ ] decide if beforeEach/beforeAll/afterEach/afterAll should skip executing the test and when. do we match existing behaviour, jest, vitest, or diverge? what does existing behaviour/jest/vitest do?
 - [x] support `expect.assertions()` in non-concurrent tests
 - [x] test behaviour of `expect.assertions()` in concurrent tests
-- [ ] test what happens when done callback is called after the test fails to timeout, or promise resolves after. make sure we match existing behaviour
+- [x] test what happens when done callback is called after the test fails to timeout, or promise resolves after. make sure we match existing behaviour
 - [ ] validate junit output does not regress (make sure the generated xml files are identical to existing behaviour)
 - [x] finalize describe call order. ideally `A[B, C], D[E, F[G]]` will run in normal order rather than `A, D, B, C, E, F, G`
 - [x] sometimes error messages aren't printing!
@@ -277,6 +276,7 @@ Exited with code [1]
 - [x] test error.SnapshotInConcurrentGroup
 - [ ] validate uses of sequence.entry_index (entry_index can be >= entries_end)
 - [ ] decide on beforeAll/beforeEach behaviour
+  - decide if beforeEach/beforeAll/afterEach/afterAll should skip executing the test and when. do we match existing behaviour, jest, vitest, or diverge? what does existing behaviour/jest/vitest do?
   - these are all tested flat, not sure if it changes with describe()
   - none
     - jest: beforeAll1 beforeAll2 beforeEach1 beforeEach2 test1 afterEach1 afterEach2 beforeEach1 beforeEach2 test1 afterEach1 afterEach2 afterAll1 afterAll2
@@ -291,9 +291,9 @@ Exited with code [1]
     - jest: beforeAll1 beforeAll2 beforeEach1 beforeEach2 test1 <b>afterEach1</b> afterEach2 beforeEach1 beforeEach2 test1 <b>afterEach1</b> afterEach2 afterAll1 afterAll2
     - bun: beforeAll1 beforeAll2 beforeEach1 beforeEach2 test1 <b>afterEach1</b> <s>afterEach2</s> beforeEach1 beforeEach2 test1 <b>afterEach1</b> <s>afterEach2</s> afterAll1 afterAll2
 - [x] make the summary work again
-- [ ] when a timeout triggers on a funciton with a done callback because the done callback was never called, note in the error that the function must call the done callback
+- [x] when a timeout triggers on a function with a done callback because the done callback was never called, note in the error that the function must call the done callback
   - [ ] there should be an issue that this can close
-- [ ] support the default per-test timeout
+- [x] support the default per-test timeout
 - [ ] add retry/run-multiple-times back
 - [ ] test passing bad values to describe()/test()
 - [x] report expect counts per-test

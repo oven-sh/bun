@@ -268,6 +268,7 @@ declare module "bun" {
 
       /**
        * Whether to use TLS/SSL for the connection (alias for tls)
+       * @deprecated Prefer {@link tls}
        * @default false
        */
       ssl?: TLSOptions | boolean | undefined;

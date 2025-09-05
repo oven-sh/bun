@@ -833,7 +833,8 @@ pub const CommandLineReporter = struct {
         defer output_buf.deinit(buntest.gpa);
 
         const initial_length = output_buf.items.len;
-        var writer = output_buf.writer(buntest.gpa);
+        const base_writer = output_buf.writer(buntest.gpa);
+        var writer = base_writer;
 
         switch (sequence.result) {
             inline else => |result| {
@@ -845,9 +846,17 @@ pub const CommandLineReporter = struct {
         }
 
         const output_writer = Output.errorWriter(); // unbuffered. buffered is errorWriterBuffered() / Output.flush()
-        output_writer.writeAll(output_buf.items[initial_length..]) catch {};
+        bun.handleOom(output_writer.writeAll(output_buf.items[initial_length..]));
 
         var this: *CommandLineReporter = buntest.reporter orelse return; // command line reporter is missing! uh oh!
+
+        switch (sequence.result.basicResult()) {
+            .skip => bun.handleOom(this.skips_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
+            .todo => bun.handleOom(this.todos_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
+            .fail => bun.handleOom(this.failures_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
+            .pass, .pending => {},
+        }
+
         switch (sequence.result) {
             .pending => {},
             .pass => this.summary().pass += 1,

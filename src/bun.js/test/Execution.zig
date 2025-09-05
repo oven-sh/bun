@@ -109,14 +109,31 @@ pub const Result = enum {
     pass,
     fail,
     skip,
+    skipped_because_label,
     todo,
     fail_because_timeout,
     fail_because_timeout_with_done_callback,
-    skipped_because_label,
     fail_because_failing_test_passed,
     fail_because_todo_passed,
     fail_because_expected_has_assertions,
     fail_because_expected_assertion_count,
+
+    pub const Basic = enum {
+        pending,
+        pass,
+        fail,
+        skip,
+        todo,
+    };
+    pub fn basicResult(this: Result) Basic {
+        return switch (this) {
+            .pending => .pending,
+            .pass => .pass,
+            .fail, .fail_because_timeout, .fail_because_timeout_with_done_callback, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => .fail,
+            .skip, .skipped_because_label => .skip,
+            .todo => .todo,
+        };
+    }
 
     pub fn isPass(this: Result, pending_is: enum { pending_is_pass, pending_is_fail }) bool {
         return switch (this) {

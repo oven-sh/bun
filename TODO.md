@@ -304,7 +304,7 @@ Exited with code [1]
   - currently, it never calls its finalize method because it no longer extends from finalize
 - [ ] make sure DoneCallback class can finalize, same as above
 - [ ] see about caching ScopeFunctions by value maybe?
-- [ ] add back repeating failure/skip messages at the end of the test print
+- [x] add back repeating failure/skip messages at the end of the test print
 - [ ] make sure failure exits with code 1
 - [ ] `test("rerun me", () => { console.log("run one time!"); });` `--rerun-each=3`. works 1, no message 2, fails 3
 - [ ] status printing support failures and other modes

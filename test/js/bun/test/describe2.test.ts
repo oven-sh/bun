@@ -95,12 +95,26 @@ test("describe/test", async () => {
     (fail) done parameter > second call of done callback still triggers error
 
     2 tests skipped:
+    (skip) LINE 67
+    (skip) LINE 72
 
 
     2 tests todo:
+    (todo) LINE 69
+    (todo) failing todo passes
 
 
     7 tests failed:
+    (fail) actual tests > more functions called after delayed done
+    (fail) concurrent describe 1 > snapshot in concurrent group
+    (fail) LINE 68
+      ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
+    (fail) this test times out
+      ^ this test timed out.
+    (fail) this test times out with done
+      ^ this test timed out before the done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
+    (fail) expect.assertions
+    (fail) done parameter > second call of done callback still triggers error
 
      31 pass
      2 skip

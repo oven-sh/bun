@@ -433,7 +433,15 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     const fsinstance = try bun.fs.FileSystem.init(null);
 
     // these things are leaked because we are going to exit
-    var filter_instance = try FilterArg.FilterSet.init(ctx.allocator, ctx.filters, fsinstance.top_level_dir);
+    // When --workspaces is set, we want to match all workspace packages
+    // Otherwise use the provided filters
+    var filters_to_use = ctx.filters;
+    if (ctx.workspaces) {
+        // Use "*" as filter to match all packages in the workspace
+        filters_to_use = &[_][]const u8{"*"};
+    }
+    
+    var filter_instance = try FilterArg.FilterSet.init(ctx.allocator, filters_to_use, fsinstance.top_level_dir);
     var patterns = std.ArrayList([]u8).init(ctx.allocator);
 
     // Find package.json at workspace root
@@ -452,6 +460,11 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     while (try package_json_iter.next()) |package_json_path| {
         const dirpath = std.fs.path.dirname(package_json_path) orelse Global.crash();
         const path = bun.strings.withoutTrailingSlash(dirpath);
+
+        // When using --workspaces, skip the root package to prevent recursion
+        if (ctx.workspaces and strings.eql(path, resolve_root)) {
+            continue;
+        }
 
         const pkgjson = bun.PackageJSON.parse(&this_transpiler.resolver, dirpath, .invalid, null, .include_scripts, .main) orelse {
             Output.warn("Failed to read package.json\n", .{});
@@ -500,7 +513,15 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     }
 
     if (scripts.items.len == 0) {
-        Output.prettyErrorln("<r><red>error<r>: No packages matched the filter", .{});
+        if (ctx.if_present) {
+            // Exit silently with success when --if-present is set
+            Global.exit(0);
+        }
+        if (ctx.workspaces) {
+            Output.prettyErrorln("<r><red>error<r>: No workspace packages have script \"{s}\"", .{script_name});
+        } else {
+            Output.prettyErrorln("<r><red>error<r>: No packages matched the filter", .{});
+        }
         Global.exit(1);
     }
 
@@ -649,6 +670,7 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
 const transpiler = bun.transpiler;
+const strings = bun.strings;
 
 const CLI = bun.cli;
 const Command = CLI.Command;

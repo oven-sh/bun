@@ -4,6 +4,7 @@ pub const LinkerContext = struct {
 
     pub const OutputFileListBuilder = @import("./linker_context/OutputFileListBuilder.zig");
     pub const StaticRouteVisitor = @import("./linker_context/StaticRouteVisitor.zig");
+    pub const StronglyConnectedComponents = @import("./linker_context/StronglyConnectedComponents.zig").StronglyConnectedComponents;
 
     parse_graph: *Graph = undefined,
     graph: LinkerGraph = undefined,
@@ -390,53 +391,69 @@ pub const LinkerContext = struct {
             }
         }
 
-        // Second pass: propagate async flag through cycles
-        // Keep iterating until no changes are made
+        // Second pass: propagate async flag through cycles using strongly connected components
+        // This is more efficient than the while(changed) approach: O(V + E) instead of O(V²) or worse
         {
             const import_records_list: []ImportRecord.List = this.graph.ast.items(.import_records);
             const flags: []JSMeta.Flags = this.graph.meta.items(.flags);
             const css_asts: []?*bun.css.BundlerStyleSheet = this.graph.ast.items(.css);
 
-            var changed = true;
-            while (changed) {
-                changed = false;
-                var idx: usize = 0;
-                while (idx < this.graph.files.len) : (idx += 1) {
-                    // Skip runtime
-                    if (idx == Index.runtime.get()) {
+            // Pre-compute adjacency list for better performance
+            var adjacency_list = try this.allocator().alloc(std.ArrayList(u32), this.graph.files.len);
+            defer {
+                for (adjacency_list) |*list| {
+                    list.deinit();
+                }
+                this.allocator().free(adjacency_list);
+            }
+
+            for (adjacency_list) |*list| {
+                list.* = std.ArrayList(u32).init(this.allocator());
+            }
+
+            // Build adjacency list
+            for (0..this.graph.files.len) |idx| {
+                // Skip runtime
+                if (idx == Index.runtime.get()) continue;
+
+                // Skip if not a JavaScript AST
+                if (idx >= import_records_list.len) continue;
+
+                // Skip CSS files
+                if (css_asts[idx] != null) continue;
+
+                const import_records = import_records_list[idx].slice();
+                for (import_records) |*record| {
+                    const dep_idx = record.source_index;
+                    if (Index.isInvalid(dep_idx) or dep_idx.get() >= flags.len or record.kind != .stmt) {
                         continue;
                     }
-
-                    // Skip if not a JavaScript AST
-                    if (idx >= import_records_list.len) {
-                        continue;
-                    }
-
-                    // Skip CSS files
-                    if (css_asts[idx] != null) {
-                        continue;
-                    }
-
-                    if (flags[idx].is_async_or_has_async_dependency) {
-                        continue;
-                    }
-
-                    const import_records = import_records_list[idx].slice();
-                    for (import_records) |*record| {
-                        const dep_idx = record.source_index;
-                        if (Index.isInvalid(dep_idx) or dep_idx.get() >= flags.len or record.kind != .stmt) {
-                            continue;
-                        }
-
-                        // If our dependency is async, we should be async too
-                        if (flags[dep_idx.get()].is_async_or_has_async_dependency) {
-                            flags[idx].is_async_or_has_async_dependency = true;
-                            changed = true;
-                            break;
-                        }
-                    }
+                    try adjacency_list[idx].append(dep_idx.get());
                 }
             }
+
+            // Create an edge iterator for the dependency graph
+            const EdgeIterator = struct {
+                adjacency_list: []std.ArrayList(u32),
+
+                pub fn getNeighbors(self: @This(), node_idx: u32) []const u32 {
+                    if (node_idx >= self.adjacency_list.len) return &.{};
+                    return self.adjacency_list[node_idx].items;
+                }
+            };
+
+            const edge_iterator = EdgeIterator{
+                .adjacency_list = adjacency_list,
+            };
+
+            var scc = try StronglyConnectedComponents.init(this.allocator(), this.graph.files.len);
+            defer scc.deinit();
+
+            // Find all strongly connected components
+            try scc.findSCCs(EdgeIterator, edge_iterator, this.graph.files.len);
+
+            // Propagate async flags in topological order
+            scc.propagateAsyncInTopologicalOrder(JSMeta.Flags, flags, EdgeIterator, edge_iterator);
         }
 
         try this.scanImportsAndExports();

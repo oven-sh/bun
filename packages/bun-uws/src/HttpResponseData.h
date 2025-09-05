@@ -87,6 +87,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         HTTP_CONNECTION_CLOSE = 16, // used
         HTTP_WROTE_CONTENT_LENGTH_HEADER = 32, // used
         HTTP_WROTE_DATE_HEADER = 64, // used
+        HTTP_WROTE_TRANSFER_ENCODING_HEADER = 128, // used
     };
 
     /* Shared context pointer */

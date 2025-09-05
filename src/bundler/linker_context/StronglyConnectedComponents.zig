@@ -1,24 +1,20 @@
-const std = @import("std");
-const bun = @import("root").bun;
-const Index = bun.ast.Index;
-
 /// Tarjan's strongly connected components algorithm for finding cycles in the dependency graph.
 /// This is more efficient than the while(changed) loop approach which has O(n²) or worse complexity.
 pub const StronglyConnectedComponents = struct {
     allocator: std.mem.Allocator,
-    
+
     // Node information for Tarjan's algorithm
     nodes: []Node,
     stack: std.ArrayList(u32),
     index_counter: u32,
     sccs: std.ArrayList([]u32),
-    
+
     pub const Node = struct {
         index: u32 = std.math.maxInt(u32),
         lowlink: u32 = std.math.maxInt(u32),
         on_stack: bool = false,
     };
-    
+
     pub fn init(allocator: std.mem.Allocator, node_count: usize) !StronglyConnectedComponents {
         return .{
             .allocator = allocator,
@@ -28,7 +24,7 @@ pub const StronglyConnectedComponents = struct {
             .sccs = std.ArrayList([]u32).init(allocator),
         };
     }
-    
+
     pub fn deinit(self: *StronglyConnectedComponents) void {
         self.allocator.free(self.nodes);
         self.stack.deinit();
@@ -37,7 +33,7 @@ pub const StronglyConnectedComponents = struct {
         }
         self.sccs.deinit();
     }
-    
+
     /// Find all strongly connected components using Tarjan's algorithm
     pub fn findSCCs(
         self: *StronglyConnectedComponents,
@@ -49,7 +45,7 @@ pub const StronglyConnectedComponents = struct {
         for (0..node_count) |i| {
             self.nodes[i] = .{};
         }
-        
+
         // Visit each unvisited node
         for (0..node_count) |v| {
             if (self.nodes[v].index == std.math.maxInt(u32)) {
@@ -57,7 +53,7 @@ pub const StronglyConnectedComponents = struct {
             }
         }
     }
-    
+
     fn strongConnect(
         self: *StronglyConnectedComponents,
         comptime EdgeIterator: type,
@@ -70,7 +66,7 @@ pub const StronglyConnectedComponents = struct {
         self.index_counter += 1;
         try self.stack.append(v);
         self.nodes[v].on_stack = true;
-        
+
         // Consider successors of v
         const neighbors = edges.getNeighbors(v);
         for (neighbors) |w| {
@@ -83,11 +79,11 @@ pub const StronglyConnectedComponents = struct {
                 self.nodes[v].lowlink = @min(self.nodes[v].lowlink, self.nodes[w].index);
             }
         }
-        
+
         // If v is a root node, pop the stack and print an SCC
         if (self.nodes[v].lowlink == self.nodes[v].index) {
             var scc = std.ArrayList(u32).init(self.allocator);
-            
+
             // Pop nodes from stack until we reach v
             while (self.stack.items.len > 0) {
                 const w = self.stack.pop() orelse break;
@@ -95,7 +91,7 @@ pub const StronglyConnectedComponents = struct {
                 try scc.append(w);
                 if (w == v) break;
             }
-            
+
             // Store the SCC (only if it has more than 1 element or is a self-loop)
             if (scc.items.len > 1 or self.hasSelfLoop(edges, v)) {
                 try self.sccs.append(try scc.toOwnedSlice());
@@ -104,7 +100,7 @@ pub const StronglyConnectedComponents = struct {
             }
         }
     }
-    
+
     fn hasSelfLoop(self: *StronglyConnectedComponents, edges: anytype, node: u32) bool {
         _ = self;
         const neighbors = edges.getNeighbors(node);
@@ -113,7 +109,7 @@ pub const StronglyConnectedComponents = struct {
         }
         return false;
     }
-    
+
     /// Process SCCs in topological order for async propagation
     pub fn propagateAsyncInTopologicalOrder(
         self: *StronglyConnectedComponents,
@@ -127,7 +123,7 @@ pub const StronglyConnectedComponents = struct {
         while (i > 0) {
             i -= 1;
             const scc = self.sccs.items[i];
-            
+
             // Check if any node in the SCC has async or any dependency has async
             var has_async = false;
             for (scc) |node_idx| {
@@ -135,7 +131,7 @@ pub const StronglyConnectedComponents = struct {
                     has_async = true;
                     break;
                 }
-                
+
                 // Check dependencies outside the SCC
                 const neighbors = edges.getNeighbors(node_idx);
                 for (neighbors) |neighbor| {
@@ -148,7 +144,7 @@ pub const StronglyConnectedComponents = struct {
                         }
                     }
                     if (in_same_scc) continue;
-                    
+
                     if (flags[neighbor].is_async_or_has_async_dependency) {
                         has_async = true;
                         break;
@@ -156,7 +152,7 @@ pub const StronglyConnectedComponents = struct {
                 }
                 if (has_async) break;
             }
-            
+
             // If any node has async, mark all nodes in SCC as async
             if (has_async) {
                 for (scc) |node_idx| {
@@ -164,16 +160,16 @@ pub const StronglyConnectedComponents = struct {
                 }
             }
         }
-        
+
         // Final pass: propagate async from dependencies for non-SCC nodes
         // Process in reverse topological order (from leaves to roots)
         var node_idx: usize = flags.len;
         while (node_idx > 0) {
             node_idx -= 1;
-            
+
             // Skip if already async
             if (flags[node_idx].is_async_or_has_async_dependency) continue;
-            
+
             // Check if this node is in any SCC (already processed)
             var in_scc = false;
             for (self.sccs.items) |scc| {
@@ -186,7 +182,7 @@ pub const StronglyConnectedComponents = struct {
                 if (in_scc) break;
             }
             if (in_scc) continue;
-            
+
             // Check dependencies
             const neighbors = edges.getNeighbors(@intCast(node_idx));
             for (neighbors) |neighbor| {
@@ -198,3 +194,5 @@ pub const StronglyConnectedComponents = struct {
         }
     }
 };
+
+const std = @import("std");

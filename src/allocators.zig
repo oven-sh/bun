@@ -340,9 +340,9 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
                 // This makes Bun start about 1ms faster.
                 // https://github.com/ziglang/zig/issues/24313
                 instance.allocator = allocator;
-                instance.backing_buf = undefined;  // BSS array doesn't need initialization
+                instance.backing_buf = undefined; // BSS array doesn't need initialization
                 instance.backing_buf_used = 0;
-                instance.slice_buf = undefined;     // BSS array doesn't need initialization  
+                instance.slice_buf = undefined; // BSS array doesn't need initialization
                 instance.slice_buf_used = 0;
                 instance.overflow_list = .{
                     .list = .{

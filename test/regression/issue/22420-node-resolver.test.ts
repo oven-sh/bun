@@ -1,12 +1,12 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDir, normalizeBunSnapshot } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 test("issue #22420 - no segfault in BSSStringList when resolving modules in node mode", async () => {
   // This test simulates the conditions that trigger the crash:
   // 1. Create a complex node_modules structure
   // 2. Run bun in node mode (simulating npx behavior)
   // 3. Trigger module resolution that causes directory scanning
-  
+
   using dir = tempDir("issue-22420-resolver", {
     "package.json": JSON.stringify({
       name: "test-22420",
@@ -64,11 +64,7 @@ test("issue #22420 - no segfault in BSSStringList when resolving modules in node
     stdout: "pipe",
   });
 
-  const [stdout1, stderr1, exitCode1] = await Promise.all([
-    proc1.stdout.text(),
-    proc1.stderr.text(),
-    proc1.exited,
-  ]);
+  const [stdout1, stderr1, exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
 
   expect(exitCode1).toBe(0);
   expect(normalizeBunSnapshot(stdout1, dir)).toMatchInlineSnapshot(`"Resolution completed without crash"`);
@@ -82,11 +78,7 @@ test("issue #22420 - no segfault in BSSStringList when resolving modules in node
     stdout: "pipe",
   });
 
-  const [stdout2, stderr2, exitCode2] = await Promise.all([
-    proc2.stdout.text(),
-    proc2.stderr.text(),
-    proc2.exited,
-  ]);
+  const [stdout2, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
 
   // Should not crash
   expect(exitCode2).toBe(0);

@@ -1,3 +1,5 @@
+loc diff: `git diff (git merge-base origin/main HEAD) HEAD --numstat --shortstat -- ":!test" ":!*.ts" ":!*.js" ":!TODO.md"`
+
 # New features:
 
 ## Concurrent tests

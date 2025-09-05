@@ -96,6 +96,17 @@ class WrappedSocket extends Duplex {
       this.#queue.push({ value, cb });
     }
   }
+  setNoDelay() {
+    return this;
+  }
+
+  setKeepAlive() {
+    return this;
+  }
+
+  setTimeout() {
+    return this;
+  }
 
   #end() {
     if (this.#ended) return;

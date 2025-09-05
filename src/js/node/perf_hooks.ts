@@ -1,5 +1,6 @@
 // Hardcoded module "node:perf_hooks"
 const { throwNotImplemented } = require("internal/shared");
+const { validateObject, validateNumber, validateInteger } = require("internal/validators");
 
 const createFunctionThatMasqueradesAsUndefined = $newCppFunction(
   "ZigGlobalObject.cpp",
@@ -15,19 +16,19 @@ const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp"
 
 // Private C++ bindings for event loop delay monitoring
 const cppMonitorEventLoopDelay = $newCppFunction(
-  "JSNodePerformanceHooksHistogram.cpp",
+  "JSNodePerformanceHooksHistogramPrototype.cpp",
   "jsFunction_monitorEventLoopDelay",
   1,
 ) as (resolution: number) => import("node:perf_hooks").RecordableHistogram;
 
 const cppEnableEventLoopDelay = $newCppFunction(
-  "JSNodePerformanceHooksHistogram.cpp",
+  "JSNodePerformanceHooksHistogramPrototype.cpp",
   "jsFunction_enableEventLoopDelay",
   2,
 ) as (histogram: import("node:perf_hooks").RecordableHistogram, resolution: number) => void;
 
 const cppDisableEventLoopDelay = $newCppFunction(
-  "JSNodePerformanceHooksHistogram.cpp",
+  "JSNodePerformanceHooksHistogramPrototype.cpp",
   "jsFunction_disableEventLoopDelay",
   1,
 ) as (histogram: import("node:perf_hooks").RecordableHistogram) => void;
@@ -196,12 +197,7 @@ class IntervalHistogram {
   }
 
   percentile(p: number) {
-    if (typeof p !== "number") {
-      throw new TypeError("percentile must be a number");
-    }
-    if (Number.isNaN(p) || p < 0 || p > 100) {
-      throw new RangeError("percentile must be between 0 and 100");
-    }
+    validateNumber(p, "percentile", 0, 100);
     return this.#histogram.percentile(p);
   }
 }
@@ -266,27 +262,17 @@ export default {
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
   monitorEventLoopDelay: function monitorEventLoopDelay(options?: { resolution?: number }) {
-    // If options is provided but is not an object (or is null), throw TypeError
-    if (arguments.length > 0 && (options === null || typeof options !== "object" || Array.isArray(options))) {
-      throw new TypeError("options must be an object");
+    if (arguments.length > 0) {
+      validateObject(options, "options");
     }
 
-    const resolution = options?.resolution || 10;
-
+    let resolution = 10;
     if (options?.resolution !== undefined) {
-      if (typeof options.resolution !== "number" || Number.isNaN(options.resolution)) {
-        throw new TypeError("resolution must be a number");
-      }
-      if (
-        options.resolution <= 0 ||
-        !Number.isFinite(options.resolution) ||
-        options.resolution > Number.MAX_SAFE_INTEGER
-      ) {
-        throw new RangeError("resolution must be a positive number");
-      }
+      validateInteger(options.resolution, "options.resolution", 1);
+      resolution = options.resolution;
     }
 
-    return new IntervalHistogram(Math.max(1, resolution));
+    return new IntervalHistogram(resolution);
   },
   createHistogram: function createHistogram(options?: {
     lowest?: number | bigint;

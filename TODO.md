@@ -391,6 +391,7 @@ Exited with code [1]
 - [ ] m_terminationException in timeouts
 - [ ] support test() inside test()
 - [ ] add a warning message when a test resolves after it times out
+- [ ] note interesting behaviour if DoneCallback gets garbage collected and then after that, the promise resolves, then the test will complete. but in the other order, it won't. interesting.
 
 If this doesn't land:
 

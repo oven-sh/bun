@@ -67,6 +67,32 @@ test("describe/test", async () => {
     (pass) passes because it catches the misattributed error
     (pass) hooks > test1
     (pass) hooks > test2
+    (pass) done parameter > instant done
+    (pass) done parameter > delayed done
+    (pass) done parameter > done combined with promise > done combined with promise, promise resolves first
+    (pass) done parameter > done combined with promise > done combined with promise, done resolves first
+
+    # Unhandled error between tests
+    -------------------------------
+    error: completion is not 2
+    completion is not 2
+    -------------------------------
+
+    (pass) done parameter > done combined with promise > fails when completion is not incremented
+    (pass) done parameter > done combined with promise error conditions > both error and done resolves first
+    (pass) done parameter > done combined with promise error conditions > both error and promise resolves first
+    (pass) done parameter > done combined with promise error conditions > done errors only
+    (pass) done parameter > done combined with promise error conditions > promise errors only
+    258 |       throw "promise error";
+    259 |     });
+    260 |   });
+    261 |   test("second call of done callback still triggers error", done => {
+    262 |     done();
+    263 |     done("uh oh!");
+              ^
+    error: uh oh!
+        at <anonymous> (file:NN:NN)
+    (fail) done parameter > second call of done callback still triggers error
 
     2 tests skipped:
 
@@ -74,15 +100,15 @@ test("describe/test", async () => {
     2 tests todo:
 
 
-    6 tests failed:
+    7 tests failed:
 
-     22 pass
+     31 pass
      2 skip
      2 todo
-     6 fail
-     1 error
+     7 fail
+     2 errors
      1 snapshots, 9 expect() calls
-    Ran 32 tests across 1 file."
+    Ran 42 tests across 1 file."
     ,
       "stdout": 
     "bun test <version> (<revision>)

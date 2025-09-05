@@ -207,4 +207,61 @@ describe("hooks", () => {
   });
 });
 
+// === done parameter ===
+describe("done parameter", () => {
+  test("instant done", done => {
+    done();
+  });
+  test("delayed done", done => {
+    setTimeout(() => {
+      done();
+    }, 1);
+  });
+  describe("done combined with promise", () => {
+    let completion = 0;
+    beforeEach(() => (completion = 0));
+    afterEach(() => {
+      if (completion != 2) throw "completion is not 2";
+    });
+    test("done combined with promise, promise resolves first", async done => {
+      setTimeout(() => {
+        completion += 1;
+        done();
+      }, 200);
+      await Bun.sleep(50);
+      completion += 1;
+    });
+    test("done combined with promise, done resolves first", async done => {
+      setTimeout(() => {
+        completion += 1;
+        done();
+      }, 50);
+      await Bun.sleep(200);
+      completion += 1;
+    });
+    test("fails when completion is not incremented", () => {});
+  });
+  describe("done combined with promise error conditions", () => {
+    test.failing("both error and done resolves first", async done => {
+      done("test error");
+      throw "promise error";
+    });
+    test.failing("both error and promise resolves first", async done => {
+      setTimeout(() => done("done error"), 10);
+      throw "promise error";
+    });
+    test.failing("done errors only", async done => {
+      done("done error");
+    });
+    test.failing("promise errors only", async done => {
+      setTimeout(() => done(), 10);
+      throw "promise error";
+    });
+  });
+  test("second call of done callback still triggers error", done => {
+    done();
+    done("uh oh!");
+  });
+});
+
 console.log("exit");

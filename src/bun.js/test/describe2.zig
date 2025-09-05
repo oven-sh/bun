@@ -242,15 +242,25 @@ pub const BunTestFile = struct {
     pub const RefData = struct {
         buntest: *BunTestFile,
         phase: RefDataValue,
+        ref_count: RefCount,
+        const RefCount = bun.ptr.RefCount(RefData, "ref_count", #destroy, .{});
 
-        pub fn destroy(this: *RefData) void {
+        pub const deref = RefCount.deref;
+        pub fn dupe(this: *RefData) *RefData {
+            RefCount.ref(this);
+            return this;
+        }
+        pub fn hasOneRef(this: *RefData) bool {
+            return this.ref_count.hasOneRef();
+        }
+        fn #destroy(this: *RefData) void {
             group.begin(@src());
             defer group.end();
             group.log("refData: {}", .{this.phase});
 
             const buntest = this.buntest;
-            // buntest.gpa.destroy(this); // need to destroy the RefDataValue before unref'ing the buntest because it may free the allocator
-            // TODO: use buntest.gpa to destroy the RefDataValue. this can't be done right now because RefData is stored in expect which needs BunTestFile to be ref-counted
+            // buntest.gpa.destroy(this); // need to destroy the RefData before unref'ing the buntest because it may free the allocator
+            // TODO: use buntest.gpa to destroy the RefData. this can't be done right now because RefData is stored in expect which needs BunTestFile to be ref-counted
             bun.destroy(this);
             _ = buntest;
             // TODO: unref buntest here
@@ -297,6 +307,7 @@ pub const BunTestFile = struct {
         return bun.new(RefData, .{
             .buntest = this,
             .phase = phase,
+            .ref_count = .init(),
         });
     }
 
@@ -310,11 +321,15 @@ pub const BunTestFile = struct {
         const result, const this_ptr = callframe.argumentsAsArray(2);
 
         const refdata: *RefData = this_ptr.asPromisePtr(RefData);
-        defer refdata.destroy();
+        defer refdata.deref();
+        const has_one_ref = refdata.ref_count.hasOneRef();
         const this = refdata.buntest;
 
         if (is_catch) {
             this.onUncaughtException(globalThis, result, true, refdata.phase);
+        }
+        if (!has_one_ref) {
+            return group.log("bunTestThenOrCatch -> refdata has multiple refs; don't add result until the last ref", .{});
         }
 
         this.addResult(refdata.phase);
@@ -328,13 +343,12 @@ pub const BunTestFile = struct {
         try bunTestThenOrCatch(globalThis, callframe, true);
         return .js_undefined;
     }
-    pub fn bunTestDoneCallback(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, err_arg: jsc.JSValue, data: RefDataValue) bun.JSError!void {
+    pub fn bunTestDoneCallback(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, data: RefDataValue, has_one_ref: bool) bun.JSError!void {
         group.begin(@src());
         defer group.end();
 
-        const is_catch = !err_arg.isEmptyOrUndefinedOrNull();
-        if (is_catch) {
-            this.onUncaughtException(globalThis, err_arg, true, data);
+        if (!has_one_ref) {
+            return group.log("bunTestDoneCallback -> refdata has multiple refs; don't add result until the last ref", .{});
         }
 
         this.addResult(data);
@@ -475,7 +489,7 @@ pub const BunTestFile = struct {
         var done_callback: ?jsc.JSValue = null;
         if (cfg.done_parameter) {
             group.log("callTestCallback -> appending done callback param: data {}", .{cfg.data});
-            done_callback = DoneCallback.create(globalThis, this, cfg.data);
+            done_callback = DoneCallback.create(globalThis);
             args.append(this.gpa, done_callback.?);
         }
 
@@ -485,19 +499,28 @@ pub const BunTestFile = struct {
             break :blk null;
         };
 
-        if (done_callback) |_| {
-            if (result != null and result.?.asPromise() != null) {
-                // jest throws an error here but unfortunately bun waits for both
-                @panic("TODO: support waiting for both the promise and the done callback");
-            }
-            // completed asynchronously
-            group.log("callTestCallback -> wait for done callback", .{});
-            return;
+        var dcb_ref: ?*RefData = null;
+        if (done_callback) |dcb| {
+            if (DoneCallback.fromJS(dcb)) |dcb_data| {
+                if (dcb_data.called) {
+                    // done callback already called; add result immediately
+                } else {
+                    dcb_ref = this.ref(cfg.data);
+                    dcb_data.ref = dcb_ref;
+                }
+            } else bun.debugAssert(false); // this should be unreachable, we create DoneCallback above
         }
 
         if (result != null and result.?.asPromise() != null) {
             group.log("callTestCallback -> promise: data {}", .{cfg.data});
-            result.?.then(globalThis, this.ref(cfg.data), bunTestThen, bunTestCatch);
+            const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else this.ref(cfg.data);
+            result.?.then(globalThis, this_ref, bunTestThen, bunTestCatch);
+            return;
+        }
+
+        if (dcb_ref) |_| {
+            // completed asynchronously
+            group.log("callTestCallback -> wait for done callback", .{});
             return;
         }
 

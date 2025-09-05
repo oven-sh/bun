@@ -322,7 +322,7 @@ pub const Expect = struct {
         this: *Expect,
     ) callconv(.C) void {
         this.custom_label.deref();
-        if (this.parent) |parent| parent.destroy();
+        if (this.parent) |parent| parent.deref();
         VirtualMachine.get().allocator.destroy(this);
     }
 

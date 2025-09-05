@@ -234,9 +234,8 @@ public:
     JSC::JSValue HTTPSResponseSinkPrototype() const { return m_JSHTTPSResponseSinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableHTTPSResponseSinkControllerPrototype() const { return m_JSHTTPSResponseControllerPrototype.getInitializedOnMainThread(this); }
 
+    JSC::JSObject* JSBakeResponseConstructor() const { return m_JSBakeResponseClassStructure.constructorInitializedOnMainThread(this); }
     JSC::Structure* JSBakeResponseStructure() const { return m_JSBakeResponseClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* JSBakeResponseConstructor() { return m_JSBakeResponseClassStructure.constructorInitializedOnMainThread(this); }
-    JSC::JSValue JSBakeResponsePrototype() const { return m_JSBakeResponseClassStructure.prototypeInitializedOnMainThread(this); }
 
     JSC::Structure* NetworkSinkStructure() const { return m_JSNetworkSinkClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* NetworkSink() { return m_JSNetworkSinkClassStructure.constructorInitializedOnMainThread(this); }

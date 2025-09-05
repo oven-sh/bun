@@ -281,6 +281,16 @@ using namespace JSC;
     macro(writer) \
     macro(writing) \
     macro(written) \
+    macro($$typeof) \
+    macro(type) \
+    macro(key) \
+    macro(props) \
+    macro(validated) \
+    macro(_store) \
+    macro(_owner) \
+    macro(_debugInfo) \
+    macro(_debugStack) \
+    macro(_debugTask) \
     BUN_ADDITIONAL_BUILTIN_NAMES(macro)
 // --- END of BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME ---
 

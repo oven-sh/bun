@@ -23,9 +23,6 @@
 
 namespace Bun {
 
-static JSC_DECLARE_HOST_FUNCTION(jsBakeResponseConstructorRender);
-static JSC_DECLARE_HOST_FUNCTION(jsBakeResponseConstructorRedirect);
-
 static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetSymbolFor);
 static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetType);
 static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetKey);
@@ -36,36 +33,114 @@ static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugInfo);
 static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugStack);
 static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugTask);
 
-extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructForSSR(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::EncodedJSValue);
+extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructForSSR(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::EncodedJSValue, int*);
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructError(JSC::JSGlobalObject*, JSC::CallFrame*) SYSV_ABI;
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructJSON(JSC::JSGlobalObject*, JSC::CallFrame*) SYSV_ABI;
+extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructRender(JSC::JSGlobalObject*, JSC::CallFrame*) SYSV_ABI;
+extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructRedirect(JSC::JSGlobalObject*, JSC::CallFrame*) SYSV_ABI;
 extern JSC_CALLCONV size_t Response__estimatedSize(void* ptr);
+
+bool isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)
+{
+
+    auto& vm = JSC::getVM(globalObject);
+
+    // React does this:
+    // export const REACT_LEGACY_ELEMENT_TYPE: symbol = Symbol.for('react.element');
+    // export const REACT_ELEMENT_TYPE: symbol = renameElementSymbol
+    //   ? Symbol.for('react.transitional.element')
+    //   : REACT_LEGACY_ELEMENT_TYPE;
+
+    // TODO: cache these, i cri everytim
+    auto react_legacy_element_symbol = JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.element"_s));
+    auto react_element_symbol = JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.transitional.element"_s));
+
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+
+    // TODO: primitive values (strings, numbers, booleans, null, undefined) are also valid
+    if (value.isObject()) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        JSC::JSObject* object = value.getObject();
+        auto typeofProperty = JSC::Identifier::fromString(vm, "$$typeof"_s);
+        JSC::JSValue typeofValue = object->get(globalObject, typeofProperty);
+        RETURN_IF_EXCEPTION(scope, false);
+
+        if (typeofValue.isSymbol() && (typeofValue == react_legacy_element_symbol || typeofValue == react_element_symbol)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+extern "C" bool JSC__JSValue__isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)
+{
+    return isJSXElement(JSValue0, globalObject);
+}
+
+extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES Response__createForSSR(Zig::GlobalObject* globalObject, void* ptr, uint8_t kind)
+{
+    Structure* structure = globalObject->JSBakeResponseStructure();
+    printf("Creating JSBakeResponse for kind: %d\n", kind);
+
+    JSBakeResponse* instance = JSBakeResponse::create(globalObject->vm(), globalObject, structure, ptr);
+
+    if (kind == JSBakeResponseKind::Render) {
+        instance->kind(JSBakeResponseKind::Render);
+    } else if (kind == JSBakeResponseKind::Redirect) {
+        instance->kind(JSBakeResponseKind::Redirect);
+    } else {
+        // Should not be called with JSBakeResponseKind::Regular or anything
+        // else
+        UNREACHABLE();
+    }
+
+    instance->setToThrow(globalObject, globalObject->vm());
+
+    return JSValue::encode(instance);
+}
 
 static const HashTableValue JSBakeResponseConstructorTableValues[] = {
     { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponseClass__constructError, 0 } },
     { "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponseClass__constructJSON, 0 } },
 
-    { "render"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBakeResponseConstructorRender, 1 } },
-    { "redirect"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBakeResponseConstructorRedirect, 1 } },
+    { "redirect"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponseClass__constructRedirect, 0 } },
+    { "render"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponseClass__constructRender, 0 } }
 
 };
 
-static const HashTableValue JSBakeResponsePrototypeTableValues[] = {
-    { "$$typeof"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsBakeResponsePrototypeGetSymbolFor, nullptr } },
-    { "type"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsBakeResponsePrototypeGetType, nullptr } },
-    { "key"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsBakeResponsePrototypeGetKey, nullptr } },
-    { "props"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsBakeResponsePrototypeGetProps, nullptr } },
-    { "_store"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsBakeResponsePrototypeGetStore, nullptr } },
-    { "_owner"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsBakeResponsePrototypeGetOwner, nullptr } },
-    { "_debugInfo"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsBakeResponsePrototypeGetDebugInfo, nullptr } },
-    { "_debugStack"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsBakeResponsePrototypeGetDebugStack, nullptr } },
-    { "_debugTask"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsBakeResponsePrototypeGetDebugTask, nullptr } }
-};
-
-JSBakeResponse* JSBakeResponse::create(JSC::VM& vm, JSC::Structure* structure, void* ctx)
+JSBakeResponse* JSBakeResponse::create(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::Structure* structure, void* ctx)
 {
     JSBakeResponse* ptr = new (NotNull, JSC::allocateCell<JSBakeResponse>(vm)) JSBakeResponse(vm, structure, ctx);
     ptr->finishCreation(vm);
+
+    auto builtinNames = WebCore::builtinNames(vm);
+
+    // $$typeof = Symbol.for("react.transitional.element")
+    ptr->putDirect(vm, builtinNames.$$typeofPublicName(), JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.transitional.element"_s)), 0);
+    // type = false
+    ptr->putDirect(vm, builtinNames.typePublicName(), JSC::jsNull(), 0);
+    // key = null
+    ptr->putDirect(vm, builtinNames.keyPublicName(), JSC::jsNull(), 0);
+    // props = {}
+    ptr->putDirect(vm, builtinNames.propsPublicName(), JSC::constructEmptyObject(globalObject), 0);
+
+    // _store = { _validated: 0 }
+    JSObject* storeObject = JSC::constructEmptyObject(globalObject);
+    auto validatedIdent = JSC::Identifier::fromString(vm, "validated"_s);
+    storeObject->putDirect(vm, builtinNames.validatedPublicName(), jsNumber(0), 0);
+    ptr->putDirect(vm, builtinNames._storePublicName(), storeObject, 0);
+
+    // _owner = null
+    ptr->putDirect(vm, builtinNames._ownerPublicName(), JSC::jsNull(), 0);
+    // _debugInfo = null
+    ptr->putDirect(vm, builtinNames._debugInfoPublicName(), JSC::jsNull(), 0);
+    // _debugStack = null
+    ptr->putDirect(vm, builtinNames._debugStackPublicName(), JSC::jsNull(), 0);
+    // _debugTask = null
+    ptr->putDirect(vm, builtinNames._debugTaskPublicName(), JSC::jsNull(), 0);
+
     return ptr;
 }
 
@@ -103,47 +178,6 @@ void JSBakeResponse::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSBakeResponse);
 
-class JSBakeResponsePrototype final : public JSNonFinalObject {
-public:
-    using Base = JSNonFinalObject;
-
-    static JSBakeResponsePrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        auto* ptr = new (NotNull, JSC::allocateCell<JSBakeResponsePrototype>(vm)) JSBakeResponsePrototype(vm, structure);
-        ptr->finishCreation(vm, globalObject);
-        return ptr;
-    }
-
-    static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        auto* structure = Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), NonArray);
-        structure->setMayBePrototype(true);
-        return structure;
-    }
-
-    DECLARE_INFO;
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBakeResponsePrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-
-private:
-    JSBakeResponsePrototype(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
-    {
-        Base::finishCreation(vm);
-        reifyStaticProperties(vm, JSBakeResponse::info(), JSBakeResponsePrototypeTableValues, *this);
-        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
-    }
-};
-
 JSC_DECLARE_HOST_FUNCTION(callBakeResponse);
 JSC_DECLARE_HOST_FUNCTION(constructBakeResponse);
 
@@ -159,8 +193,8 @@ public:
         return constructor;
     }
 
-    // DECLARE_INFO;
-    DECLARE_EXPORT_INFO;
+    DECLARE_INFO;
+    // DECLARE_EXPORT_INFO;
 
     // Must be defined for each specialization class.
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
@@ -169,7 +203,7 @@ public:
         JSC::VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSObject* newTarget = asObject(callFrame->newTarget());
-        auto* constructor = globalObject->JSResponseConstructor();
+        auto* constructor = globalObject->JSBakeResponseConstructor();
         Structure* structure = globalObject->JSBakeResponseStructure();
         if (constructor != newTarget) [[unlikely]] {
             auto* functionGlobalObject = defaultGlobalObject(
@@ -180,15 +214,22 @@ public:
             RETURN_IF_EXCEPTION(scope, {});
         }
 
-        JSBakeResponse* instance = JSBakeResponse::create(vm, structure, nullptr);
+        JSBakeResponse* instance = JSBakeResponse::create(vm, globalObject, structure, nullptr);
 
-        void* ptr = ResponseClass__constructForSSR(globalObject, callFrame, JSValue::encode(instance));
+        int arg_was_jsx = 0;
+        void* ptr = ResponseClass__constructForSSR(globalObject, callFrame, JSValue::encode(instance), &arg_was_jsx);
         if (scope.exception()) [[unlikely]] {
             ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new SSRResponse() allocated memory without checking for exceptions.");
             return JSValue::encode(JSC::jsUndefined());
         }
 
         instance->m_ctx = ptr;
+
+        if (arg_was_jsx == 1 && callFrame->argumentCount() > 0) {
+            JSValue arg = callFrame->argument(0);
+            JSValue responseOptions = callFrame->argumentCount() > 1 ? callFrame->argument(1) : JSC::jsUndefined();
+            instance->wrapInnerComponent(globalObject, vm, arg, responseOptions);
+        }
 
         auto size = Response__estimatedSize(ptr);
         vm.heap.reportExtraMemoryAllocated(instance, size);
@@ -204,9 +245,9 @@ public:
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         Structure* structure = globalObject->JSBakeResponseStructure();
-        JSBakeResponse* instance = JSBakeResponse::create(vm, structure, nullptr);
+        JSBakeResponse* instance = JSBakeResponse::create(vm, globalObject, structure, nullptr);
 
-        void* ptr = ResponseClass__constructForSSR(globalObject, callFrame, JSValue::encode(instance));
+        void* ptr = ResponseClass__constructForSSR(globalObject, callFrame, JSValue::encode(instance), nullptr);
         if (scope.exception()) [[unlikely]] {
             ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new SSRResponse() allocated memory without checking for exceptions.");
             return JSValue::encode(JSC::jsUndefined());
@@ -247,130 +288,32 @@ private:
     }
 };
 
-const JSC::ClassInfo JSBakeResponsePrototype::s_info = { "SSRResponse"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBakeResponsePrototype) };
-const JSC::ClassInfo JSBakeResponse::s_info = { "SSRResponse"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBakeResponse) };
-const JSC::ClassInfo JSBakeResponseConstructor::s_info = { "SSRResponse"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBakeResponseConstructor) };
+const JSC::ClassInfo JSBakeResponse::s_info = { "SSRResponse"_s, &JSResponse::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBakeResponse) };
+const JSC::ClassInfo JSBakeResponseConstructor::s_info = { ""_s, &JSC::InternalFunction::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBakeResponseConstructor) };
 
-JSC_DEFINE_CUSTOM_GETTER(jsBakeResponsePrototypeGetSymbolFor, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+Structure* createJSBakeResponseStructure(JSC::VM& vm, Zig::GlobalObject* globalObject, JSObject* prototype)
 {
-    JSBakeResponse* response = jsDynamicCast<JSBakeResponse*>(JSValue::decode(thisValue));
-    if (!response)
-        return JSValue::encode(jsUndefined());
 
-    auto& vm = globalObject->vm();
-    auto symbolKey = "react.transitional.element"_s;
-    return JSValue::encode(JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey(symbolKey)));
-}
+    auto structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, 0), JSBakeResponse::info(), NonArray, 0);
 
-JSC_DEFINE_CUSTOM_GETTER(jsBakeResponsePrototypeGetType, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    JSBakeResponse* response = jsDynamicCast<JSBakeResponse*>(JSValue::decode(thisValue));
-    if (!response)
-        return JSValue::encode(jsUndefined());
+    // Unfortunately we cannot use structure->addPropertyTransition as it does
+    // not with with JSC::JSNonFinalObject
 
-    printf("m_ctx: %p\n", response->m_ctx);
-
-    // auto& type = response->type();
-    // auto typeValue = type.get();
-    // return JSValue::encode(typeValue);
-    String wtfstring = "Hello"_s;
-    auto* jsstring = JSC::jsString(globalObject->vm(), wtfstring);
-    return JSValue::encode(jsstring);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsBakeResponsePrototypeGetKey, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    return JSValue::encode(jsNull());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsBakeResponsePrototypeGetProps, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    JSBakeResponse* response = jsDynamicCast<JSBakeResponse*>(JSValue::decode(thisValue));
-    if (!response)
-        return JSValue::encode(jsUndefined());
-
-    return JSValue::encode(JSC::constructEmptyObject(globalObject));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsBakeResponsePrototypeGetStore, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    JSBakeResponse* response = jsDynamicCast<JSBakeResponse*>(JSValue::decode(thisValue));
-    if (!response)
-        return JSValue::encode(jsUndefined());
-
-    auto& vm = globalObject->vm();
-    JSObject* storeObject = JSC::constructEmptyObject(globalObject);
-    auto validatedIdent = JSC::Identifier::fromString(vm, "validated"_s);
-    storeObject->putDirect(vm, validatedIdent, jsNumber(0), 0);
-    return JSValue::encode(storeObject);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsBakeResponsePrototypeGetOwner, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    return JSValue::encode(jsNull());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugInfo, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    return JSValue::encode(jsNull());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugStack, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    return JSValue::encode(jsNull());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugTask, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    return JSValue::encode(jsNull());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsBakeResponseConstructorRender, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsBakeResponseConstructorRedirect, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(callBakeResponse, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = globalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    throwScope.throwException(globalObject, createTypeError(globalObject, "BakeResponse constructor cannot be called as a function"_s));
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(constructBakeResponse, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = globalObject->vm();
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-
-    auto* structure = createJSBakeResponseStructure(vm, zigGlobalObject);
-
-    return JSValue::encode(JSBakeResponse::create(vm, structure, nullptr));
+    return structure;
 }
 
 void setupJSBakeResponseClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
     auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(init.global);
-    auto* prototypeStructure = JSBakeResponsePrototype::createStructure(init.vm, init.global, zigGlobal->JSResponsePrototype());
-    auto* prototype = JSBakeResponsePrototype::create(init.vm, init.global, prototypeStructure);
+    auto* prototype = JSC::constructEmptyObject(zigGlobal, zigGlobal->JSResponsePrototype());
 
     auto* constructorStructure = JSBakeResponseConstructor::createStructure(init.vm, init.global, init.global->functionPrototype());
     auto* constructor = JSBakeResponseConstructor::create(init.vm, constructorStructure, prototype);
 
-    auto* structure = JSBakeResponse::createStructure(init.vm, init.global, prototype);
+    auto* structure = createJSBakeResponseStructure(init.vm, zigGlobal, prototype);
     init.setPrototype(prototype);
     init.setStructure(structure);
     init.setConstructor(constructor);
-}
-
-Structure* createJSBakeResponseStructure(JSC::VM& vm, Zig::GlobalObject* globalObject)
-{
-    return globalObject->JSBakeResponseStructure();
 }
 
 } // namespace Bun

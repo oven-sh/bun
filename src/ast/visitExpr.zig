@@ -93,6 +93,11 @@ pub fn VisitExpr(
                 }
 
                 // Transform Response -> BakeResponse for server-side code
+                // TODO: this does the incorrect thing in this case:
+                // ```
+                // const Response = 'ooga booga!'
+                // console.log(Response)
+                // ```
                 if (p.options.features.server_components.isServerSide() and
                     bun.strings.eqlComptime(name, "Response"))
                 {
@@ -100,6 +105,8 @@ pub fn VisitExpr(
                     const bake_response_result = p.findSymbol(expr.loc, "SSRResponse") catch unreachable;
                     e_.ref = bake_response_result.ref;
                     e_.must_keep_due_to_with_stmt = bake_response_result.is_inside_with_scope;
+
+                    std.debug.print("{s}: Response -> SSRResponse\n", .{p.source.path.pretty});
 
                     // Handle the rest of the identifier processing with the new ref
                     return p.handleIdentifier(expr.loc, e_, "SSRResponse", IdentifierOpts{

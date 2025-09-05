@@ -8,14 +8,24 @@ namespace Bun {
 using namespace JSC;
 using namespace WebCore;
 
+enum JSBakeResponseKind : uint8_t {
+    Regular = 0,
+    Redirect = 1,
+    Render = 2,
+};
+
 class JSBakeResponse : public JSResponse {
 public:
     using Base = JSResponse;
 
-    static JSBakeResponse* create(JSC::VM& vm, JSC::Structure* structure, void* ctx);
+    DECLARE_VISIT_CHILDREN;
+    DECLARE_INFO;
+
+    static JSBakeResponse* create(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::Structure* structure, void* ctx);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
-    // JSC::Strong<JSC::Unknown>& type() { return m_type; }
+    JSBakeResponseKind kind() const { return m_kind; }
+    void kind(JSBakeResponseKind kind) { m_kind = kind; }
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -29,17 +39,54 @@ public:
 
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
 
-    DECLARE_VISIT_CHILDREN;
-    DECLARE_INFO;
+    void setToThrow(JSC::JSGlobalObject* globalObject, JSC::VM& vm)
+    {
+        JSC::JSFunction* wrapComponentFn = JSC::JSFunction::create(vm, globalObject, bakeSSRResponseWrapComponentCodeGenerator(vm), globalObject);
+
+        JSC::MarkedArgumentBuffer args;
+        // component
+        args.append(jsUndefined());
+        // responseObject
+        args.append(this);
+        // responseOptions
+        args.append(jsUndefined());
+        // kind
+        args.append(JSC::jsNumber(static_cast<unsigned char>(this->kind())));
+
+        auto callData = JSC::getCallData(wrapComponentFn);
+        JSC::JSValue wrappedComponent = JSC::call(globalObject, wrapComponentFn, callData, JSC::jsUndefined(), args);
+
+        this->putDirect(vm, WebCore::builtinNames(vm).typePublicName(), wrappedComponent, 0);
+    }
+
+    void wrapInnerComponent(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSValue component, JSValue responseOptions)
+    {
+        this->kind(JSBakeResponseKind::Regular);
+        JSC::JSFunction* wrapComponentFn = JSC::JSFunction::create(vm, globalObject, bakeSSRResponseWrapComponentCodeGenerator(vm), globalObject);
+
+        JSC::MarkedArgumentBuffer args;
+        // component
+        args.append(component);
+        // responseObject
+        args.append(this);
+        // responseOptions
+        args.append(responseOptions);
+        // kind
+        args.append(JSC::jsNumber(static_cast<unsigned char>(JSBakeResponseKind::Regular)));
+
+        auto callData = JSC::getCallData(wrapComponentFn);
+        JSC::JSValue wrappedComponent = JSC::call(globalObject, wrapComponentFn, callData, JSC::jsUndefined(), args);
+
+        this->putDirect(vm, WebCore::builtinNames(vm).typePublicName(), wrappedComponent, 0);
+    }
 
 private:
     JSBakeResponse(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr);
     void finishCreation(JSC::VM& vm);
 
-    // JSC::Strong<JSC::Unknown> m_type;
+    JSBakeResponseKind m_kind;
 };
 
-JSC::Structure* createJSBakeResponseStructure(JSC::VM&, Zig::GlobalObject*);
 void setupJSBakeResponseClassStructure(JSC::LazyClassStructure::Initializer& init);
 
 } // namespace Bun

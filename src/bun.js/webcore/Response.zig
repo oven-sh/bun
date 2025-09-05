@@ -66,6 +66,21 @@ pub fn toJS(this: *Response, globalObject: *JSGlobalObject) JSValue {
     return js.toJSUnchecked(globalObject, this);
 }
 
+/// Corresponds to `JSBakeResponseKind` in
+/// `src/bun.js/bindings/JSBakeResponse.h`
+const SSRKind = enum(u8) {
+    regular = 0,
+    redirect = 1,
+    render = 2,
+};
+
+extern "C" fn Response__createForSSR(globalObject: *JSGlobalObject, this: *Response, kind: SSRKind) JSValue;
+
+pub fn toJSForSSR(this: *Response, globalObject: *JSGlobalObject, kind: SSRKind) JSValue {
+    this.calculateEstimatedByteSize();
+    return Response__createForSSR(globalObject, this, kind);
+}
+
 pub fn getBodyValue(
     this: *Response,
 ) *Body.Value {
@@ -515,25 +530,19 @@ pub fn constructRedirect(
     try headers_ref.put(.Location, url_string_slice.slice(), globalThis);
     const ptr = bun.new(Response, response);
 
-    const response_js = ptr.toJS(globalThis);
-
-    // Check if dev_server_async_local_storage is set (indicating we're in Bun dev server)
     const vm = globalThis.bunVM();
+    // Check if dev_server_async_local_storage is set (indicating we're in Bun dev server)
     if (vm.dev_server_async_local_storage.get()) |async_local_storage| {
-        // Mark this as a redirect Response that should be handled specially
-        // when used in a React component
-        const redirect_marker = ZigString.init("__bun_redirect__").toJS(globalThis);
-
-        // Transform the Response to act as a React element with special redirect handling
-        // Pass "redirect" as the third parameter to indicate this is a redirect
-        const redirect_flag = ZigString.init("redirect").toJS(globalThis);
         try assertStreamingDisabled(globalThis, async_local_storage, "Response.redirect");
-        try JSValue.transformToReactElementWithOptions(response_js, redirect_marker, redirect_flag, globalThis);
+        return ptr.toJSForSSR(globalThis, .redirect);
     }
+
+    const response_js = ptr.toJS(globalThis);
 
     return response_js;
 }
 
+/// This function is only available on JSBakeResponse
 pub fn constructRender(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
@@ -582,24 +591,8 @@ pub fn constructRender(
         },
     });
 
-    const response_js = response.toJS(globalThis);
+    const response_js = response.toJSForSSR(globalThis, .render);
     response_js.ensureStillAlive();
-
-    // Store the render path and params on the response for later use
-    // When React tries to render this component, we'll check for these and throw RenderAbortError
-    response_js.put(globalThis, "__renderPath", path_arg);
-    const params_arg = if (arguments.len >= 2) arguments.ptr[1] else JSValue.jsNull();
-    response_js.put(globalThis, "__renderParams", params_arg);
-
-    // TODO: this is terrible
-    // Create a simple wrapper function that will be called by React
-    // This needs to be handled specially in transformToReactElementWithOptions
-    // We'll pass a special marker as the component to indicate this is a render redirect
-    const render_marker = ZigString.init("__bun_render_redirect__").toJS(globalThis);
-
-    // Transform the Response to act as a React element
-    // The C++ code will need to check for this special marker
-    try JSValue.transformToReactElementWithOptions(response_js, render_marker, params_arg, globalThis);
 
     return response_js;
 }
@@ -624,11 +617,11 @@ pub fn constructError(
 }
 
 pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_value: jsc.JSValue) bun.JSError!*Response {
-    return constructorImpl(globalThis, callframe, this_value, false);
+    return constructorImpl(globalThis, callframe, this_value, null);
 }
 
-pub fn ResponseClass__constructForSSR(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, thisValue: jsc.JSValue) callconv(jsc.conv) ?*anyopaque {
-    return @as(*Response, Response.constructor(globalObject, callFrame, thisValue) catch |err| switch (err) {
+pub fn ResponseClass__constructForSSR(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, thisValue: jsc.JSValue, bake_ssr_has_jsx: ?*c_int) callconv(jsc.conv) ?*anyopaque {
+    return @as(*Response, Response.constructorForSSR(globalObject, callFrame, thisValue, bake_ssr_has_jsx) catch |err| switch (err) {
         error.JSError => return null,
         error.OutOfMemory => {
             globalObject.throwOutOfMemory() catch {};
@@ -641,11 +634,11 @@ comptime {
     @export(&ResponseClass__constructForSSR, .{ .name = "ResponseClass__constructForSSR" });
 }
 
-pub fn constructorForSSR(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_value: jsc.JSValue) bun.JSError!*Response {
-    return constructorImpl(globalThis, callframe, this_value);
+pub fn constructorForSSR(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_value: jsc.JSValue, bake_ssr_has_jsx: ?*c_int) bun.JSError!*Response {
+    return constructorImpl(globalThis, callframe, this_value, bake_ssr_has_jsx);
 }
 
-pub fn constructorImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_value: jsc.JSValue, bake_ssr_response_enabled: bool) bun.JSError!*Response {
+pub fn constructorImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_value: jsc.JSValue, bake_ssr_has_jsx: ?*c_int) bun.JSError!*Response {
     var arguments = callframe.argumentsAsArray(2);
 
     if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
@@ -683,7 +676,15 @@ pub fn constructorImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFram
 
         // Special case for bake: allow `return new Response(<jsx> ... </jsx>, { ... }`
         // inside of a react component
-        if (bake_ssr_response_enabled and globalThis.allowJSXInResponseConstructor()) {
+        if (bake_ssr_has_jsx != null) {
+            bake_ssr_has_jsx.?.* = 0;
+            if (globalThis.allowJSXInResponseConstructor() and try arguments[0].isJSXElement(globalThis)) {
+                const vm = globalThis.bunVM();
+                if (vm.dev_server_async_local_storage.get()) |async_local_storage| {
+                    try assertStreamingDisabled(globalThis, async_local_storage, "new Response(<jsx />, { ... })");
+                }
+                bake_ssr_has_jsx.?.* = 1;
+            }
             _ = this_value;
             // const arg = arguments[0];
             // // Check if it's a JSX element (object with $$typeof)
@@ -695,7 +696,7 @@ pub fn constructorImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFram
 
             //     // Pass the response options (arguments[1]) to transformToReactElement
             //     // so it can store them for later use when the component is rendered
-            //     const responseOptions = if (arguments[1].isObject()) arguments[1] else .js_undefined;
+            //     const responseOptions = if (arguments[1].isObject()) adirectrguments[1] else .js_undefined;
             //     try JSValue.transformToReactElementWithOptions(this_value, arg, responseOptions, globalThis);
             // }
         }

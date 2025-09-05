@@ -1,6 +1,5 @@
-import { test, expect, describe } from "bun:test";
-import { Database } from "bun:sqlite";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("SQLite custom loading", () => {
   test("default SQLite loads successfully", () => {
@@ -12,14 +11,14 @@ describe("SQLite custom loading", () => {
       console.log(result.version);
       db.close();
     `;
-    
+
     const proc = Bun.spawnSync({
       cmd: [bunExe(), "-e", code],
       env: bunEnv,
       stderr: "pipe",
       stdout: "pipe",
     });
-    
+
     expect(proc.exitCode).toBe(0);
     expect(proc.stdout.toString().trim()).toMatch(/^\d+\.\d+\.\d+$/);
   });
@@ -39,14 +38,14 @@ describe("SQLite custom loading", () => {
         console.log("SUCCESS");
       }
     `;
-    
+
     const proc = Bun.spawnSync({
       cmd: [bunExe(), "-e", code],
       env: bunEnv,
       stderr: "pipe",
       stdout: "pipe",
     });
-    
+
     expect(proc.exitCode).toBe(0);
     expect(proc.stdout.toString().trim()).toBe("SUCCESS");
   });
@@ -83,14 +82,14 @@ describe("SQLite custom loading", () => {
         console.log("NO_LIBRARY");
       }
     `;
-    
+
     const proc = Bun.spawnSync({
       cmd: [bunExe(), "-e", code],
       env: bunEnv,
       stderr: "pipe",
       stdout: "pipe",
     });
-    
+
     expect(proc.exitCode).toBe(0);
     const output = proc.stdout.toString().trim();
     if (output === "NO_LIBRARY") {

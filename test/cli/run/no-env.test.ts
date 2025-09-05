@@ -3,8 +3,8 @@ import { $ } from "bun";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
-describe("--no-env flag", () => {
-  test("should not load .env files when --no-env is specified", async () => {
+describe("--no-env-file flag", () => {
+  test("should not load .env files when --no-env-file is specified", async () => {
     using dir = tempDir("test-no-env", {
       ".env": "TEST_VAR=from_env_file",
       ".env.local": "LOCAL_VAR=from_local_file",
@@ -19,7 +19,7 @@ describe("--no-env flag", () => {
       `,
     });
 
-    // Test without --no-env (should load .env files)
+    // Test without --no-env-file (should load .env files)
     await using proc1 = Bun.spawn({
       cmd: [bunExe(), "index.js"],
       env: { ...bunEnv, PROCESS_VAR: "from_process" },
@@ -41,9 +41,9 @@ describe("--no-env flag", () => {
     expect(result1.DEV_VAR).toBe("from_dev_file");
     expect(result1.PROCESS_VAR).toBe("from_process");
 
-    // Test with --no-env (should NOT load .env files)
+    // Test with --no-env-file (should NOT load .env files)
     await using proc2 = Bun.spawn({
-      cmd: [bunExe(), "--no-env", "index.js"],
+      cmd: [bunExe(), "--no-env-file", "index.js"],
       env: { ...bunEnv, PROCESS_VAR: "from_process" },
       cwd: String(dir),
       stderr: "pipe",
@@ -64,17 +64,17 @@ describe("--no-env flag", () => {
     expect(result2.PROCESS_VAR).toBe("from_process"); // Process env should still work
   });
 
-  test("--no-env should override --env-file", async () => {
-    using dir = tempDir("test-no-env-override", {
+  test("--no-env-file should override --env-file", async () => {
+    using dir = tempDir("test-no-env-file-override", {
       ".env.custom": "CUSTOM_VAR=from_custom_file",
       "index.js": `
         console.log(process.env.CUSTOM_VAR || 'undefined');
       `,
     });
 
-    // Test with both --env-file and --no-env
+    // Test with both --env-file and --no-env-file
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--env-file=.env.custom", "--no-env", "index.js"],
+      cmd: [bunExe(), "--env-file=.env.custom", "--no-env-file", "index.js"],
       env: bunEnv,
       cwd: String(dir),
       stderr: "pipe",
@@ -91,8 +91,8 @@ describe("--no-env flag", () => {
     expect(stdout.trim()).toBe("undefined");
   });
 
-  test("--no-env with bun test", async () => {
-    using dir = tempDir("test-no-env-test", {
+  test("--no-env-file with bun test", async () => {
+    using dir = tempDir("test-no-env-file-test", {
       ".env": "TEST_VAR=from_env_file",
       "test.test.js": `
         import { test, expect } from "bun:test";
@@ -105,7 +105,7 @@ describe("--no-env flag", () => {
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--no-env", "test", "test.test.js"],
+      cmd: [bunExe(), "--no-env-file", "test", "test.test.js"],
       env: { ...bunEnv, PROCESS_VAR: "from_process" },
       cwd: String(dir),
       stderr: "pipe",
@@ -122,8 +122,8 @@ describe("--no-env flag", () => {
     expect(stdout).toContain("1 pass");
   });
 
-  test("--no-env with bun run script", async () => {
-    using dir = tempDir("test-no-env-run", {
+  test("--no-env-file with bun run script", async () => {
+    using dir = tempDir("test-no-env-file-run", {
       ".env": "TEST_VAR=from_env_file",
       "package.json": JSON.stringify({
         scripts: {
@@ -133,7 +133,7 @@ describe("--no-env flag", () => {
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--no-env", "run", "test"],
+      cmd: [bunExe(), "--no-env-file", "run", "test"],
       env: bunEnv,
       cwd: String(dir),
       stderr: "pipe",

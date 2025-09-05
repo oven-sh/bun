@@ -109,6 +109,15 @@ The `telemetry` field permit to enable/disable the analytics records. Bun record
 telemetry = false
 ```
 
+### `env.file`
+
+Disable automatic `.env` file loading.
+
+```toml
+[env]
+file = false
+```
+
 ### `console`
 
 Configure console output behavior.

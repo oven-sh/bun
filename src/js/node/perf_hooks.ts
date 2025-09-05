@@ -196,11 +196,11 @@ class IntervalHistogram {
   }
 
   percentile(p: number) {
-    if (typeof p !== 'number') {
-      throw new TypeError('percentile must be a number');
+    if (typeof p !== "number") {
+      throw new TypeError("percentile must be a number");
     }
     if (Number.isNaN(p) || p < 0 || p > 100) {
-      throw new RangeError('percentile must be between 0 and 100');
+      throw new RangeError("percentile must be between 0 and 100");
     }
     return this.#histogram.percentile(p);
   }
@@ -267,21 +267,25 @@ export default {
   PerformanceNodeTiming,
   monitorEventLoopDelay: function monitorEventLoopDelay(options?: { resolution?: number }) {
     // If options is provided but is not an object (or is null), throw TypeError
-    if (arguments.length > 0 && (options === null || typeof options !== 'object' || Array.isArray(options))) {
-      throw new TypeError('options must be an object');
+    if (arguments.length > 0 && (options === null || typeof options !== "object" || Array.isArray(options))) {
+      throw new TypeError("options must be an object");
     }
-    
+
     const resolution = options?.resolution || 10;
-    
+
     if (options?.resolution !== undefined) {
-      if (typeof options.resolution !== 'number' || Number.isNaN(options.resolution)) {
-        throw new TypeError('resolution must be a number');
+      if (typeof options.resolution !== "number" || Number.isNaN(options.resolution)) {
+        throw new TypeError("resolution must be a number");
       }
-      if (options.resolution <= 0 || !Number.isFinite(options.resolution) || options.resolution > Number.MAX_SAFE_INTEGER) {
-        throw new RangeError('resolution must be a positive number');
+      if (
+        options.resolution <= 0 ||
+        !Number.isFinite(options.resolution) ||
+        options.resolution > Number.MAX_SAFE_INTEGER
+      ) {
+        throw new RangeError("resolution must be a positive number");
       }
     }
-    
+
     return new IntervalHistogram(Math.max(1, resolution));
   },
   createHistogram: function createHistogram(options?: {

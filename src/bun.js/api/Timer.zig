@@ -30,7 +30,7 @@ pub const All = struct {
     epoch: u25 = 0,
     immediate_ref_count: i32 = 0,
     uv_idle: if (Environment.isWindows) uv.uv_idle_t else void = if (Environment.isWindows) std.mem.zeroes(uv.uv_idle_t),
-    
+
     // Event loop delay monitoring (not exposed to JS)
     event_loop_delay: EventLoopDelayMonitor = .{},
 

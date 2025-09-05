@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { monitorEventLoopDelay } from "perf_hooks";
 
 describe("monitorEventLoopDelay", () => {
@@ -42,38 +42,38 @@ describe("monitorEventLoopDelay", () => {
   test("should record delays when enabled", async () => {
     const histogram = monitorEventLoopDelay({ resolution: 10 });
     histogram.enable();
-    
+
     // Create some event loop delay
     const start = Date.now();
     while (Date.now() - start < 50) {
       // Busy loop to create delay
     }
-    
+
     // Wait for a timer tick
     await new Promise(resolve => setTimeout(resolve, 20));
-    
+
     // Check that we recorded some delays
     expect(histogram.min).toBeGreaterThanOrEqual(0);
     expect(histogram.max).toBeGreaterThan(0);
     expect(histogram.mean).toBeGreaterThan(0);
-    
+
     histogram.disable();
   });
 
   test("should calculate percentiles", async () => {
     const histogram = monitorEventLoopDelay({ resolution: 10 });
     histogram.enable();
-    
+
     // Create some delays
     await new Promise(resolve => setTimeout(resolve, 50));
-    
+
     const p50 = histogram.percentile(50);
     const p99 = histogram.percentile(99);
-    
+
     expect(p50).toBeNumber();
     expect(p99).toBeNumber();
     expect(p99).toBeGreaterThanOrEqual(p50);
-    
+
     histogram.disable();
   });
 
@@ -85,10 +85,10 @@ describe("monitorEventLoopDelay", () => {
   test("should handle multiple histograms", () => {
     const h1 = monitorEventLoopDelay({ resolution: 10 });
     const h2 = monitorEventLoopDelay({ resolution: 20 });
-    
+
     h1.enable();
     h2.enable();
-    
+
     expect(h1.disable()).toBe(true);
     expect(h2.disable()).toBe(true);
   });

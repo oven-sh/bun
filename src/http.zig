@@ -1031,6 +1031,7 @@ fn writeToStreamUsingBuffer(this: *HTTPClient, comptime is_ssl: bool, socket: Ne
     // no data to send so we are done
     return false;
 }
+
 pub fn writeToStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, data: []const u8) void {
     log("flushStream", .{});
     if (this.state.original_request_body != .stream) {
@@ -1048,6 +1049,11 @@ pub fn writeToStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCo
         // nothing is buffered and the stream is done so we just release and detach
         stream_buffer.release();
         stream.detach();
+        if (this.flags.upgrade_state == .upgraded) {
+            // for upgraded connections we need to shutdown the socket to signal the end of the connection
+            // otherwise the client will wait forever for the connection to be closed
+            socket.shutdown();
+        }
         return;
     }
 

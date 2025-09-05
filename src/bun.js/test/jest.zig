@@ -62,7 +62,6 @@ const CurrentFile = struct {
 
 pub const TestRunner = struct {
     current_file: CurrentFile = CurrentFile{},
-    tests: TestRunner.Test.List = .{},
     log: *logger.Log,
     files: File.List = .{},
     index: File.Map = File.Map{},
@@ -88,7 +87,6 @@ pub const TestRunner = struct {
 
     // Used for --test-name-pattern to reduce allocations
     filter_regex: ?*RegularExpression,
-    filter_buffer: MutableString,
 
     unhandled_errors_between_tests: u32 = 0,
     summary: Summary = Summary{},

@@ -1279,7 +1279,6 @@ pub const TestCommand = struct {
                 .only = ctx.test_options.only,
                 .bail = ctx.test_options.bail,
                 .filter_regex = ctx.test_options.test_filter_regex,
-                .filter_buffer = bun.MutableString.init(ctx.allocator, 0) catch unreachable,
                 .snapshots = Snapshots{
                     .allocator = ctx.allocator,
                     .update_snapshots = ctx.test_options.update_snapshots,

@@ -422,7 +422,7 @@ pub const LinkerContext = struct {
                     }
 
                     const import_records = import_records_list[idx].slice();
-                    for (import_records) |record| {
+                    for (import_records) |*record| {
                         const dep_idx = record.source_index;
                         if (Index.isInvalid(dep_idx) or dep_idx.get() >= flags.len or record.kind != .stmt) {
                             continue;

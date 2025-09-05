@@ -194,7 +194,7 @@ fn advanceSequencesInGroup(this: *Execution, group: *ConcurrentGroup, callback_q
     var final_status: AdvanceStatus = .done;
     for (group.sequences(this), 0..) |*sequence, sequence_index| {
         while (true) {
-            const sequence_status = try this.advanceSequenceInGroup(sequence, sequence_index, callback_queue, now);
+            const sequence_status = try this.advanceSequenceInGroup(sequence, group, sequence_index, callback_queue, now);
             switch (sequence_status) {
                 .done => {},
                 .execute => |exec| {
@@ -220,7 +220,7 @@ const AdvanceSequenceStatus = union(enum) {
     /// the item completed immediately; advance to the next item
     again,
 };
-fn advanceSequenceInGroup(this: *Execution, sequence: *ExecutionSequence, sequence_index: usize, callback_queue: *describe2.CallbackQueue, now: bun.timespec) !AdvanceSequenceStatus {
+fn advanceSequenceInGroup(this: *Execution, sequence: *ExecutionSequence, group: *ConcurrentGroup, sequence_index: usize, callback_queue: *describe2.CallbackQueue, now: bun.timespec) !AdvanceSequenceStatus {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -232,7 +232,7 @@ fn advanceSequenceInGroup(this: *Execution, sequence: *ExecutionSequence, sequen
         if (!active_entry.timespec.eql(&.epoch) and active_entry.timespec.order(&now) == .lt) {
             // timed out
             sequence.result = if (active_entry.has_done_parameter) .fail_because_timeout_with_done_callback else .fail_because_timeout;
-            this.advanceSequence(sequence);
+            this.advanceSequence(sequence, group);
             return .again;
         }
         groupLog.log("runOne: can't advance; already executing", .{});
@@ -285,7 +285,7 @@ fn advanceSequenceInGroup(this: *Execution, sequence: *ExecutionSequence, sequen
                 bun.debugAssert(false);
             },
         }
-        this.advanceSequence(sequence);
+        this.advanceSequence(sequence, group);
         return .again;
     }
 }
@@ -301,15 +301,15 @@ pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, _: ?jsc.JSValue
 
     bun.assert(this.group_index < this.groups.len);
 
-    const sequence = this.getCurrentAndValidExecutionSequence(data) orelse {
+    const sequence, const group = this.getCurrentAndValidExecutionSequence(data) orelse {
         groupLog.log("runOneCompleted: the data is outdated, invalid, or did not know the sequence", .{});
         return;
     };
 
     bun.assert(sequence.index < sequence.entries(this).len);
-    this.advanceSequence(sequence);
+    this.advanceSequence(sequence, group);
 }
-fn getCurrentAndValidExecutionSequence(this: *Execution, data: describe2.BunTestFile.RefDataValue) ?*ExecutionSequence {
+fn getCurrentAndValidExecutionSequence(this: *Execution, data: describe2.BunTestFile.RefDataValue) ?struct { *ExecutionSequence, *ConcurrentGroup } {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -327,6 +327,10 @@ fn getCurrentAndValidExecutionSequence(this: *Execution, data: describe2.BunTest
         groupLog.log("runOneCompleted: the data is for a different group", .{});
         return null;
     }
+    const group = data.group(this.bunTest()) orelse {
+        groupLog.log("runOneCompleted: the data did not know the group", .{});
+        return null;
+    };
     const sequence = data.sequence(this.bunTest()) orelse {
         groupLog.log("runOneCompleted: the data did not know the sequence", .{});
         return null;
@@ -340,9 +344,9 @@ fn getCurrentAndValidExecutionSequence(this: *Execution, data: describe2.BunTest
         return null;
     }
     groupLog.log("runOneCompleted: the data is valid and current", .{});
-    return sequence;
+    return .{ sequence, group };
 }
-fn advanceSequence(this: *Execution, sequence: *ExecutionSequence) void {
+fn advanceSequence(this: *Execution, sequence: *ExecutionSequence, group: *ConcurrentGroup) void {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -355,7 +359,12 @@ fn advanceSequence(this: *Execution, sequence: *ExecutionSequence) void {
         this.onSequenceCompleted(sequence);
         sequence.remaining_repeat_count -= 1;
         if (sequence.remaining_repeat_count <= 0) {
-            // no repeats left; wait for group completion
+            // no repeats left; indicate completion
+            if (group.remaining_incomplete_entries == 0) {
+                bun.debugAssert(false); // remaining_incomplete_entries should never go below 0
+                return;
+            }
+            group.remaining_incomplete_entries -= 1;
         } else {
             this.resetSequence(sequence);
         }
@@ -428,16 +437,6 @@ fn onSequenceCompleted(this: *Execution, sequence: *ExecutionSequence) void {
         }
     }
 }
-pub fn resetGroup(this: *Execution, group_index: usize) void {
-    groupLog.begin(@src());
-    defer groupLog.end();
-
-    const group = this.groups[group_index];
-    bun.assert(!group.executing);
-    for (group.sequences(this)) |*sequence| {
-        this.resetSequence(sequence);
-    }
-}
 pub fn resetSequence(this: *Execution, sequence: *ExecutionSequence) void {
     bun.assert(!sequence.executing);
     if (sequence.result.isPass(.pending_is_pass)) {
@@ -453,7 +452,8 @@ pub fn handleUncaughtException(this: *Execution, user_data: describe2.BunTestFil
     groupLog.begin(@src());
     defer groupLog.end();
 
-    const sequence = this.getCurrentAndValidExecutionSequence(user_data) orelse return .show_unhandled_error_between_tests;
+    const sequence, const group = this.getCurrentAndValidExecutionSequence(user_data) orelse return .show_unhandled_error_between_tests;
+    _ = group;
 
     if (sequence.activeEntry(this) != sequence.test_entry) {
         // error in a hook

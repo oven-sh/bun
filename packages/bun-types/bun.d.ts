@@ -3846,6 +3846,11 @@ declare module "bun" {
    * @category HTTP & Networking
    */
   interface Server extends Disposable {
+    /*
+     * Closes all connections connected to this server which are not sending a request or waiting for a response. Does not close the listen socket.
+     */
+    closeIdleConnections(): void;
+
     /**
      * Stop listening to prevent new connections from being accepted.
      *

@@ -216,12 +216,14 @@ static const char* dlerror()
 #define dlsym GetProcAddress
 #endif
 
+#include <string>
+
 #if OS(WINDOWS)
-static const char* sqlite3_lib_path = "sqlite3.dll";
+static std::string sqlite3_lib_path = "sqlite3.dll";
 #elif OS(DARWIN)
-static const char* sqlite3_lib_path = "libsqlite3.dylib";
+static std::string sqlite3_lib_path = "libsqlite3.dylib";
 #else
-static const char* sqlite3_lib_path = "libsqlite3.so";
+static std::string sqlite3_lib_path = "libsqlite3.so";
 #endif
 
 static HMODULE sqlite3_handle = nullptr;
@@ -247,9 +249,9 @@ static int lazyLoadSQLite()
     // If we get here on Linux, we're switching to dynamic loading
 #endif
 #if OS(WINDOWS)
-    sqlite3_handle = LoadLibraryA(sqlite3_lib_path);
+    sqlite3_handle = LoadLibraryA(sqlite3_lib_path.c_str());
 #else
-    sqlite3_handle = dlopen(sqlite3_lib_path, RTLD_LAZY);
+    sqlite3_handle = dlopen(sqlite3_lib_path.c_str(), RTLD_LAZY);
 #endif
 
     if (!sqlite3_handle) {

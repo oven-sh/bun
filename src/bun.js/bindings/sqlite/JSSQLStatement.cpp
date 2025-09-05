@@ -1122,8 +1122,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
 
     // Mark that we want to use dynamic loading
     use_static_sqlite = false;
-    sqlite3_lib_path = sqliteStrValue.toWTFString(lexicalGlobalObject).utf8().data();
+    auto pathString = sqliteStrValue.toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    sqlite3_lib_path = std::string(pathString.utf8().data());
 
     if (lazyLoadSQLite() == -1) {
         sqlite3_handle = nullptr;

@@ -9,12 +9,17 @@ pub const JSMap = opaque {
         return bun.cpp.JSC__JSMap__set(this, globalObject, key, value);
     }
 
-    pub fn get_(this: *JSMap, globalObject: *JSGlobalObject, key: JSValue) JSValue {
-        return bun.cpp.JSC__JSMap__get_(this, globalObject, key);
-    }
+    extern fn JSC__JSMap__get(*JSMap, *JSGlobalObject, JSValue) JSValue;
 
-    pub fn get(this: *JSMap, globalObject: *JSGlobalObject, key: JSValue) ?JSValue {
-        const value = get_(this, globalObject, key);
+    pub fn get(this: *JSMap, globalObject: *JSGlobalObject, key: JSValue) bun.JSError!?JSValue {
+        var scope: jsc.CatchScope = undefined;
+        scope.init(globalObject, @src());
+        defer scope.deinit();
+
+        const value = JSC__JSMap__get(this, globalObject, key);
+
+        try scope.returnIfException();
+
         if (value == .zero) {
             return null;
         }

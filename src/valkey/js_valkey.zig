@@ -59,7 +59,7 @@ pub const SubscriptionCtx = struct {
     ) !?usize {
         const map = this.subscriptionCallbackMap();
 
-        const existing = map.get(globalObject, channelName);
+        const existing = try map.get(globalObject, channelName);
 
         if (existing == null) {
             // Could not find the channel, nothing to remove.
@@ -109,7 +109,7 @@ pub const SubscriptionCtx = struct {
         const map = this.subscriptionCallbackMap();
 
         var handlers_array: JSValue = undefined;
-        if (map.get(globalObject, channelName)) |existing_handler_arr| {
+        if (try map.get(globalObject, channelName)) |existing_handler_arr| {
             debug("Adding a new receive handler.", .{});
             if (existing_handler_arr.isUndefined()) {
                 // Create a new array if the existing_handler_arr is undefined/null
@@ -130,7 +130,7 @@ pub const SubscriptionCtx = struct {
         map.set(globalObject, channelName, handlers_array);
 
         // TODO(markovejnovic: Remove this debugging junk.
-        const array_readback = map.get(globalObject, channelName);
+        const array_readback = try map.get(globalObject, channelName);
         const count = (try array_readback.?.arrayIterator(globalObject)).len;
         debug("Now have {d} handlers for channel", .{count});
     }
@@ -140,7 +140,7 @@ pub const SubscriptionCtx = struct {
     }
 
     pub fn getCallbacks(this: *Self, globalObject: *jsc.JSGlobalObject, channelName: JSValue) bun.JSError!?JSValue {
-        const result = this.subscriptionCallbackMap().get(globalObject, channelName);
+        const result = try this.subscriptionCallbackMap().get(globalObject, channelName);
         if (result) |r| {
             if (r.isUndefinedOrNull()) {
                 return null;

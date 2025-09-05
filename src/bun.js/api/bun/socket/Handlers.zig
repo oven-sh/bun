@@ -278,7 +278,7 @@ pub const SocketConfig = struct {
             if (try opts.getStringish(globalObject, "unix")) |unix_socket| {
                 defer unix_socket.deref();
 
-                hostname_or_unix = try unix_socket.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator);
+                hostname_or_unix = unix_socket.toUTF8(bun.default_allocator);
 
                 if (strings.hasPrefixComptime(hostname_or_unix.slice(), "file://") or strings.hasPrefixComptime(hostname_or_unix.slice(), "unix://") or strings.hasPrefixComptime(hostname_or_unix.slice(), "sock://")) {
                     // The memory allocator relies on the pointer address to
@@ -313,6 +313,7 @@ pub const SocketConfig = struct {
                 defer hostname.deref();
 
                 var port_value = try opts.get(globalObject, "port") orelse JSValue.zero;
+                hostname_or_unix.deinit();
                 hostname_or_unix = try hostname.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator);
 
                 if (port_value.isEmptyOrUndefinedOrNull() and hostname_or_unix.len > 0) {

@@ -36,24 +36,30 @@ pub fn setData(this: *Listener, globalObject: *jsc.JSGlobalObject, value: jsc.JS
 }
 
 pub const UnixOrHost = union(enum) {
-    unix: []const u8,
+    unix: ZigString.Slice,
     host: struct {
-        host: []const u8,
+        host: ZigString.Slice,
         port: u16,
+
+        pub fn deinit(this: *@This()) void {
+            this.host.deinit();
+        }
     },
     fd: bun.FileDescriptor,
 
-    pub fn clone(this: UnixOrHost) UnixOrHost {
-        switch (this) {
-            .unix => |u| {
+    pub const empty: UnixOrHost = .{ .unix = .empty };
+
+    pub fn clone(this: *const UnixOrHost) UnixOrHost {
+        switch (this.*) {
+            .unix => |*u| {
                 return .{
-                    .unix = bun.handleOom(bun.default_allocator.dupe(u8, u)),
+                    .unix = u.toOwned(bun.default_allocator) catch |e| bun.handleOom(e),
                 };
             },
-            .host => |h| {
+            .host => |*h| {
                 return .{
                     .host = .{
-                        .host = bun.handleOom(bun.default_allocator.dupe(u8, h.host)),
+                        .host = h.host.toOwned(bun.default_allocator) catch |e| bun.handleOom(e),
                         .port = this.host.port,
                     },
                 };
@@ -62,13 +68,13 @@ pub const UnixOrHost = union(enum) {
         }
     }
 
-    pub fn deinit(this: UnixOrHost) void {
-        switch (this) {
-            .unix => |u| {
-                bun.default_allocator.free(u);
+    pub fn deinit(this: *UnixOrHost) void {
+        switch (this.*) {
+            .unix => |*u| {
+                u.deinit();
             },
-            .host => |h| {
-                bun.default_allocator.free(h.host);
+            .host => |*h| {
+                h.deinit();
             },
             .fd => {}, // this is an integer
         }
@@ -113,6 +119,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
     var socket_config = try SocketConfig.fromJS(vm, opts, globalObject, true);
 
     var hostname_or_unix = socket_config.hostname_or_unix;
+    defer hostname_or_unix.deinit();
     const port = socket_config.port;
     var ssl = socket_config.ssl;
     var handlers = socket_config.handlers;
@@ -127,9 +134,11 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
         if (port == null) {
             // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
             const slice = hostname_or_unix.slice();
-            var buf: bun.PathBuffer = undefined;
+            var buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
             if (normalizePipeName(slice, buf[0..])) |pipe_name| {
-                const connection: Listener.UnixOrHost = .{ .unix = bun.handleOom(hostname_or_unix.cloneIfNeeded(bun.default_allocator)).slice() };
+                const connection: Listener.UnixOrHost = .{ .unix = hostname_or_unix };
+                hostname_or_unix = .empty;
                 if (ssl_enabled) {
                     if (ssl.?.protos) |p| {
                         protos = p[0..ssl.?.protos_len];
@@ -187,7 +196,6 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
         var err = globalObject.createErrorInstance("Failed to listen on {s}:{d}", .{ hostname_or_unix.slice(), port orelse 0 });
         defer {
             socket_config.handlers.unprotect();
-            hostname_or_unix.deinit();
         }
 
         const errno = @intFromEnum(bun.sys.getErrno(@as(c_int, -1)));
@@ -242,15 +250,18 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
     }
 
     var connection: Listener.UnixOrHost = if (port) |port_| .{
-        .host = .{ .host = bun.handleOom(hostname_or_unix.cloneIfNeeded(bun.default_allocator)).slice(), .port = port_ },
+        .host = .{ .host = hostname_or_unix, .port = port_ },
     } else if (socket_config.fd) |fd| .{ .fd = fd } else .{
-        .unix = bun.handleOom(hostname_or_unix.cloneIfNeeded(bun.default_allocator)).slice(),
+        .unix = hostname_or_unix,
     };
+    hostname_or_unix = .empty;
+    defer connection.deinit();
+
     var errno: c_int = 0;
     const listen_socket: *uws.ListenSocket = brk: {
         switch (connection) {
             .host => |c| {
-                const host = bun.handleOom(bun.default_allocator.dupeZ(u8, c.host));
+                const host = bun.handleOom(bun.default_allocator.dupeZ(u8, c.host.slice()));
                 defer bun.default_allocator.free(host);
 
                 const socket = socket_context.listen(ssl_enabled, host.ptr, c.port, socket_flags, 8, &errno);
@@ -261,7 +272,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
                 break :brk socket;
             },
             .unix => |u| {
-                const host = bun.handleOom(bun.default_allocator.dupeZ(u8, u));
+                const host = bun.handleOom(bun.default_allocator.dupeZ(u8, u.slice()));
                 defer bun.default_allocator.free(host);
                 break :brk socket_context.listenUnix(ssl_enabled, host, host.len, socket_flags, 8, &errno);
             },
@@ -278,7 +289,6 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
         }
     } orelse {
         defer {
-            hostname_or_unix.deinit();
             socket_context.free(ssl_enabled);
         }
 
@@ -298,7 +308,11 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
 
     var socket = Listener{
         .handlers = handlers,
-        .connection = connection,
+        .connection = brk: {
+            const old = connection;
+            connection = .empty;
+            break :brk old;
+        },
         .ssl = ssl_enabled,
         .socket_context = socket_context,
         .listener = .{ .uws = listen_socket },
@@ -444,11 +458,11 @@ fn doStop(this: *Listener, force_close: bool) void {
         if (this.connection == .unix) {
             const path = this.connection.unix;
             // Don't unlink abstract sockets (those starting with '\0')
-            if (path.len > 0 and path[0] != 0) {
+            if (path.slice().len > 0 and path.slice()[0] != 0) {
                 const path_buf = bun.path_buffer_pool.get();
                 defer bun.path_buffer_pool.put(path_buf);
-                @memcpy(path_buf.ptr[0..path.len], path);
-                path_buf.ptr[path.len] = 0;
+                @memcpy(path_buf.ptr[0..path.slice().len], path.slice());
+                path_buf.ptr[path.slice().len] = 0;
                 _ = bun.sys.unlink(path_buf.ptr[0..path.len :0]);
             }
         }
@@ -531,14 +545,14 @@ pub fn getUnix(this: *Listener, globalObject: *jsc.JSGlobalObject) JSValue {
         return .js_undefined;
     }
 
-    return ZigString.init(this.connection.unix).withEncoding().toJS(globalObject);
+    return this.connection.unix.toZigString().withEncoding().toJS(globalObject);
 }
 
 pub fn getHostname(this: *Listener, globalObject: *jsc.JSGlobalObject) JSValue {
     if (this.connection != .host) {
         return .js_undefined;
     }
-    return ZigString.init(this.connection.host.host).withEncoding().toJS(globalObject);
+    return this.connection.host.host.toZigString().withEncoding().toJS(globalObject);
 }
 
 pub fn getPort(this: *Listener, _: *jsc.JSGlobalObject) JSValue {
@@ -577,6 +591,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
     const socket_config = try SocketConfig.fromJS(vm, opts, globalObject, false);
 
     var hostname_or_unix = socket_config.hostname_or_unix;
+    defer hostname_or_unix.deinit();
     const port = socket_config.port;
     var ssl = socket_config.ssl;
     var handlers = socket_config.handlers;
@@ -596,20 +611,25 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 break :blk .{ .fd = fd };
             }
         }
+        defer {
+            hostname_or_unix = .empty;
+        }
         if (port) |_| {
-            break :blk .{ .host = .{ .host = bun.handleOom(hostname_or_unix.cloneIfNeeded(bun.default_allocator)).slice(), .port = port.? } };
+            break :blk .{ .host = .{ .host = hostname_or_unix, .port = port.? } };
         }
 
-        break :blk .{ .unix = bun.handleOom(hostname_or_unix.cloneIfNeeded(bun.default_allocator)).slice() };
+        break :blk .{ .unix = hostname_or_unix };
     };
+    defer connection.deinit();
 
     if (Environment.isWindows) {
-        var buf: bun.PathBuffer = undefined;
+        var buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(buf);
         var pipe_name: ?[]const u8 = null;
         const isNamedPipe = switch (connection) {
             // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
             .unix => |slice| brk: {
-                pipe_name = normalizePipeName(slice, buf[0..]);
+                pipe_name = normalizePipeName(slice.slice(), buf[0..]);
                 break :brk (pipe_name != null);
             },
             .fd => |fd| brk: {
@@ -664,17 +684,19 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                     .server_name = server_name,
                     .socket_context = null,
                 });
+                connection = .empty;
                 TLSSocket.js.dataSetCached(tls.getThisValue(globalObject), globalObject, default_data);
                 tls.poll_ref.ref(handlers.vm);
                 tls.ref();
-                if (connection == .unix) {
+
+                if (tls.connection.? == .unix) {
                     const named_pipe = WindowsNamedPipeContext.connect(globalObject, pipe_name.?, ssl, .{ .tls = tls }) catch {
                         return promise_value;
                     };
                     tls.socket = TLSSocket.Socket.fromNamedPipe(named_pipe);
                 } else {
                     // fd
-                    const named_pipe = WindowsNamedPipeContext.open(globalObject, connection.fd, ssl, .{ .tls = tls }) catch {
+                    const named_pipe = WindowsNamedPipeContext.open(globalObject, tls.connection.?.fd, ssl, .{ .tls = tls }) catch {
                         return promise_value;
                     };
                     tls.socket = TLSSocket.Socket.fromNamedPipe(named_pipe);
@@ -736,7 +758,6 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
             .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
         };
         handlers.unprotect();
-        connection.deinit();
         return globalObject.throwValue(err.toErrorInstance(globalObject));
     };
 
@@ -786,10 +807,11 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 .server_name = server_name,
                 .socket_context = socket_context, // owns the socket context
             });
+            connection = .empty;
             socket.ref();
             SocketType.js.dataSetCached(socket.getThisValue(globalObject), globalObject, default_data);
             socket.flags.allow_half_open = socket_config.allowHalfOpen;
-            socket.doConnect(connection) catch {
+            socket.doConnect(&socket.connection.?) catch {
                 socket.handleConnectError(@intFromEnum(if (port == null) bun.sys.SystemErrno.ENOENT else bun.sys.SystemErrno.ECONNREFUSED));
                 return promise_value;
             };
@@ -949,7 +971,9 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
             const slice_z = path[0 .. path.len - 1 :0];
             this.uvPipe.listenNamedPipe(slice_z, backlog, this, onClientConnect).unwrap() catch return error.FailedToBindPipe;
         } else {
-            var path_buf: bun.PathBuffer = undefined;
+            var path_buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(path_buf);
+
             // we need to null terminate the path
             const len = @min(path.len, path_buf.len - 1);
 

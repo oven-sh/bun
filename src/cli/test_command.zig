@@ -1828,6 +1828,7 @@ pub const TestCommand = struct {
                 const buntest = describe2Root.active_file.?;
 
                 // Automatically execute describe2 tests
+                buntest.addResult(.start);
                 try buntest.run(vm.global);
 
                 // Process event loop while describe2 tests are running

@@ -75,9 +75,31 @@ pub fn enqueueDescribeCallback(this: *Collection, new_scope: *DescribeScope, cal
     }
 }
 
-pub fn runOne(this: *Collection, globalThis: *jsc.JSGlobalObject, callback_queue: *describe2.CallbackQueue) bun.JSError!describe2.RunOneResult {
+pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, _: ?jsc.JSValue, data: describe2.BunTestFile.RefDataValue) bun.JSError!void {
     group.begin(@src());
     defer group.end();
+
+    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+    defer formatter.deinit();
+
+    const prev_scope: *DescribeScope = switch (data) {
+        .collection => this.active_scope,
+        else => {
+            bun.assert(false); // this probably can't happen
+            return;
+        },
+    };
+
+    group.log("collection:runOneCompleted reset scope back from {s}", .{this.active_scope.base.name orelse "undefined"});
+    this.active_scope = prev_scope;
+    group.log("collection:runOneCompleted reset scope back to {s}", .{this.active_scope.base.name orelse "undefined"});
+}
+
+pub fn step(this: *Collection, globalThis: *jsc.JSGlobalObject, data: describe2.BunTestFile.RefDataValue) bun.JSError!describe2.StepResult {
+    group.begin(@src());
+    defer group.end();
+
+    if (data != .start) try this.runOneCompleted(globalThis, null, data);
 
     const buntest = this.bunTest();
 
@@ -114,33 +136,15 @@ pub fn runOne(this: *Collection, globalThis: *jsc.JSGlobalObject, callback_queue
         this.active_scope = new_scope;
         group.log("collection:runOne set scope to {s}", .{this.active_scope.base.name orelse "undefined"});
 
-        try callback_queue.append(.{ .callback = callback.dupe(buntest.gpa), .done_parameter = false, .data = .{
+        try buntest.runTestCallback(globalThis, .{ .callback = callback.dupe(buntest.gpa), .done_parameter = false, .data = .{
             .collection = .{
                 .active_scope = previous_scope,
             },
         } });
-        return .{ .execute = .{} };
+
+        return .{ .waiting = .{} };
     }
-    return .done;
-}
-pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, _: ?jsc.JSValue, data: describe2.BunTestFile.RefDataValue) bun.JSError!void {
-    group.begin(@src());
-    defer group.end();
-
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
-
-    const prev_scope: *DescribeScope = switch (data) {
-        .collection => this.active_scope,
-        else => {
-            bun.assert(false); // this probably can't happen
-            return;
-        },
-    };
-
-    group.log("collection:runOneCompleted reset scope back from {s}", .{this.active_scope.base.name orelse "undefined"});
-    this.active_scope = prev_scope;
-    group.log("collection:runOneCompleted reset scope back to {s}", .{this.active_scope.base.name orelse "undefined"});
+    return .complete;
 }
 
 pub fn handleUncaughtException(this: *Collection, _: describe2.BunTestFile.RefDataValue) describe2.HandleUncaughtExceptionResult {

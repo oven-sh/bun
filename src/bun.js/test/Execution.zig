@@ -169,39 +169,56 @@ fn bunTest(this: *Execution) *BunTestFile {
     return @fieldParentPtr("execution", this);
 }
 
-pub fn runOne(this: *Execution, _: *jsc.JSGlobalObject, callback_queue: *describe2.CallbackQueue) bun.JSError!describe2.RunOneResult {
+pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
+    groupLog.begin(@src());
+    defer groupLog.end();
+    // TODO: implement me
+    this.bunTest().addResult(.start); // good enough for now
+    _ = globalThis;
+}
+
+pub fn step(this: *Execution, globalThis: *jsc.JSGlobalObject, data: describe2.BunTestFile.RefDataValue) bun.JSError!describe2.StepResult {
+    groupLog.begin(@src());
+    defer groupLog.end();
+
+    if (data != .start) try this.runOneCompleted(globalThis, null, data);
+    const result = try this.runOne(globalThis);
+
+    return result;
+}
+
+pub fn runOne(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!describe2.StepResult {
     groupLog.begin(@src());
     defer groupLog.end();
 
     const now = bun.timespec.now();
 
     while (true) {
-        const group = this.activeGroup() orelse return .done;
+        const group = this.activeGroup() orelse return .complete;
         group.executing = true;
 
         // loop over items in the group and advance their execution
 
-        const status = try this.advanceSequencesInGroup(group, callback_queue, now);
+        const status = try this.advanceSequencesInGroup(globalThis, group, now);
         switch (status) {
-            .execute => |exec| return .{ .execute = .{ .timeout = exec.timeout } },
+            .execute => |exec| return .{ .waiting = .{ .timeout = exec.timeout } },
             .done => {},
         }
         this.group_index += 1;
     }
 }
 const AdvanceStatus = union(enum) { done, execute: struct { timeout: bun.timespec = .epoch } };
-fn advanceSequencesInGroup(this: *Execution, group: *ConcurrentGroup, callback_queue: *describe2.CallbackQueue, now: bun.timespec) !AdvanceStatus {
+fn advanceSequencesInGroup(this: *Execution, globalThis: *jsc.JSGlobalObject, group: *ConcurrentGroup, now: bun.timespec) !AdvanceStatus {
     var final_status: AdvanceStatus = .done;
     for (group.sequences(this), 0..) |*sequence, sequence_index| {
         while (true) {
-            const sequence_status = try this.advanceSequenceInGroup(sequence, group, sequence_index, callback_queue, now);
+            const sequence_status = try this.advanceSequenceInGroup(globalThis, sequence, group, sequence_index, now);
             switch (sequence_status) {
                 .done => {},
                 .execute => |exec| {
                     const prev_timeout: bun.timespec = if (final_status == .execute) final_status.execute.timeout else .epoch;
                     const this_timeout = exec.timeout;
-                    const final_timeout = if (prev_timeout.eql(&.epoch)) this_timeout else if (this_timeout.eql(&.epoch)) prev_timeout else bun.timespec.min(prev_timeout, this_timeout);
-                    final_status = .{ .execute = .{ .timeout = final_timeout } };
+                    final_status = .{ .execute = .{ .timeout = prev_timeout.minIgnoreEpoch(this_timeout) } };
                 },
                 .again => continue,
             }
@@ -220,7 +237,7 @@ const AdvanceSequenceStatus = union(enum) {
     /// the item completed immediately; advance to the next item
     again,
 };
-fn advanceSequenceInGroup(this: *Execution, sequence: *ExecutionSequence, group: *ConcurrentGroup, sequence_index: usize, callback_queue: *describe2.CallbackQueue, now: bun.timespec) !AdvanceSequenceStatus {
+fn advanceSequenceInGroup(this: *Execution, globalThis: *jsc.JSGlobalObject, sequence: *ExecutionSequence, group: *ConcurrentGroup, sequence_index: usize, now: bun.timespec) !AdvanceSequenceStatus {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -267,7 +284,7 @@ fn advanceSequenceInGroup(this: *Execution, sequence: *ExecutionSequence, group:
         };
         groupLog.log("runSequence queued callback: {}", .{callback_data});
 
-        try callback_queue.append(.{ .callback = cb.dupe(this.bunTest().gpa), .done_parameter = next_item.has_done_parameter, .data = callback_data });
+        try this.bunTest().runTestCallback(globalThis, .{ .callback = cb.dupe(this.bunTest().gpa), .done_parameter = next_item.has_done_parameter, .data = callback_data });
         return .{ .execute = .{ .timeout = next_item.timespec } };
     } else {
         switch (next_item.base.mode) {

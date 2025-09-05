@@ -3384,6 +3384,15 @@ pub const timespec = extern struct {
     pub fn max(a: timespec, b: timespec) timespec {
         return if (a.order(&b) == .gt) a else b;
     }
+    pub fn orderIgnoreEpoch(a: timespec, b: timespec) std.math.Order {
+        if (a.eql(&b)) return .eq;
+        if (a.eql(&.epoch)) return .gt;
+        if (b.eql(&.epoch)) return .lt;
+        return a.order(&b);
+    }
+    pub fn minIgnoreEpoch(a: timespec, b: timespec) timespec {
+        return if (a.orderIgnoreEpoch(b) == .lt) a else b;
+    }
 };
 
 pub const UUID = @import("./bun.js/uuid.zig");

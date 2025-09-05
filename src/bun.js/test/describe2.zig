@@ -146,6 +146,7 @@ pub const BunTestFile = struct {
     /// null if the runner has moved on to the next file
     reporter: ?*test_command.CommandLineReporter,
     timer: bun.api.Timer.EventLoopTimer = .{ .next = .epoch, .tag = .BunTestFile },
+    result_queue: ResultQueue,
 
     phase: enum {
         collection,
@@ -171,6 +172,7 @@ pub const BunTestFile = struct {
             .collection = .init(gpa, bunTest),
             .execution = .init(gpa),
             .reporter = reporter,
+            .result_queue = .init(gpa),
         };
     }
     pub fn deinit(this: *BunTestFile) void {
@@ -185,6 +187,7 @@ pub const BunTestFile = struct {
         this.done_promise.deinit();
         this.execution.deinit();
         this.collection.deinit();
+        this.result_queue.deinit();
         const backing = this.allocation_scope.parent();
         this.allocation_scope.deinit();
         // TODO: consider making a StrongScope to ensure jsc.Strong values are deinitialized, or requiring a gpa for a strong that is used in asan builds for safety?
@@ -192,6 +195,7 @@ pub const BunTestFile = struct {
     }
 
     pub const RefDataValue = union(enum) {
+        start,
         collection: struct {
             active_scope: *DescribeScope,
         },
@@ -224,6 +228,7 @@ pub const BunTestFile = struct {
 
         pub fn format(this: *const RefDataValue, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             switch (this.*) {
+                .start => try writer.print("start", .{}),
                 .collection => try writer.print("collection: active_scope={?s}", .{this.collection.active_scope.base.name}),
                 .execution => if (this.execution.entry_data) |entry_data| {
                     try writer.print("execution: group_index={d},sequence_index={d},entry_index={d},remaining_repeat_count={d}", .{ this.execution.group_index, entry_data.sequence_index, entry_data.entry_index, entry_data.remaining_repeat_count });
@@ -310,7 +315,7 @@ pub const BunTestFile = struct {
             this.onUncaughtException(globalThis, result, true, refdata.phase);
         }
 
-        try this.runOneCompleted(globalThis, if (is_catch) null else result, refdata.phase);
+        this.addResult(refdata.phase);
         try this.run(globalThis);
     }
     fn bunTestThen(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -326,12 +331,11 @@ pub const BunTestFile = struct {
         defer group.end();
 
         const is_catch = !err_arg.isEmptyOrUndefinedOrNull();
-
         if (is_catch) {
             this.onUncaughtException(globalThis, err_arg, true, data);
         }
 
-        try this.runOneCompleted(globalThis, if (is_catch) null else err_arg, data);
+        this.addResult(data);
         try this.run(globalThis);
     }
     pub fn bunTestTimeoutCallback(this: *BunTestFile, _: *const bun.timespec, vm: *jsc.VirtualMachine) bun.api.Timer.EventLoopTimer.Arm {
@@ -339,79 +343,67 @@ pub const BunTestFile = struct {
         defer group.end();
         this.timer.next = .epoch;
         this.timer.state = .PENDING;
+
+        switch (this.phase) {
+            .collection => {},
+            .execution => this.execution.handleTimeout(vm.global) catch |e| {
+                this.onUncaughtException(vm.global, vm.global.takeError(e), false, .done);
+            },
+            .done => {},
+        }
         this.run(vm.global) catch |e| {
             this.onUncaughtException(vm.global, vm.global.takeError(e), false, .done);
         };
-        return .disarm;
+
+        return .disarm; // this won't disable the timer if .run() re-arms it
+    }
+
+    pub fn addResult(this: *BunTestFile, result: RefDataValue) void {
+        bun.handleOom(this.result_queue.writeItem(result));
     }
 
     pub fn run(this: *BunTestFile, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
         group.begin(@src());
         defer group.end();
 
-        if (this.in_run_loop) return; // already running. this can happen because of waitForPromise. the promise will resolve inside the waitForPromise and call run() from bunTestThenOrCatch.
+        if (this.in_run_loop) return; // already running. this can happen because of waitForPromise.
         this.in_run_loop = true;
         defer this.in_run_loop = false;
 
-        var callback_queue: CallbackQueue = .init(this.gpa);
-        defer callback_queue.deinit();
+        var min_timeout: bun.timespec = .epoch;
 
-        while (true) {
-            defer callback_queue.clearRetainingCapacity();
-            defer for (callback_queue.items) |*item| item.deinit(this.gpa);
-
-            const status = switch (this.phase) {
-                .collection => try this.collection.runOne(globalThis, &callback_queue),
-                .execution => try this.execution.runOne(globalThis, &callback_queue),
-                .done => .done,
+        while (this.result_queue.readItem()) |result| {
+            const step_result: StepResult = switch (this.phase) {
+                .collection => try this.collection.step(globalThis, result),
+                .execution => try this.execution.step(globalThis, result),
+                .done => .complete,
             };
-            group.log("-> runOne status: {s}", .{@tagName(status)});
-            if (status != .execute) {
-                group.log("-> advancing", .{});
-                bun.assert(callback_queue.items.len == 0);
-                if (try this._advance(globalThis) == .exit) {
-                    return;
-                } else {
-                    continue;
-                }
+            switch (step_result) {
+                .waiting => |waiting| {
+                    min_timeout = bun.timespec.minIgnoreEpoch(min_timeout, waiting.timeout);
+                },
+                .complete => {
+                    if (try this._advance(globalThis) == .exit) return;
+                    this.addResult(.start);
+                },
             }
-
-            const timeout = status.execute.timeout;
-
-            group.log("-> timeout: {}", .{timeout});
-            if (!this.timer.next.eql(&timeout)) {
-                // timer is not yet set; set timer
-                if (!this.timer.next.eql(&.epoch)) {
-                    globalThis.bunVM().timer.remove(&this.timer);
-                }
-                this.timer.next = timeout;
-                if (!this.timer.next.eql(&.epoch)) {
-                    globalThis.bunVM().timer.insert(&this.timer);
-                }
-            }
-
-            // if one says continue_async and two say continue_sync then you continue_sync
-            // if two say continue_async then you continue_async
-            // if there are zero then you continue_sync
-            group.log("-> executing", .{});
-            var final_result: CallNowResult = .continue_async;
-            for (callback_queue.items) |entry| {
-                const result = try this._callTestCallbackNow(globalThis, entry);
-                group.log("callTestCallbackNow -> {s}", .{@tagName(result)});
-                switch (result) {
-                    .continue_sync => final_result = .continue_sync,
-                    .continue_async => {},
-                }
-            }
-
-            group.log("-> final_result: {s}", .{@tagName(final_result)});
-            switch (final_result) {
-                .continue_sync => continue,
-                .continue_async => return,
-            }
-            comptime unreachable;
         }
-        comptime unreachable;
+
+        group.log("-> timeout: {} {}, {s}", .{ min_timeout, this.timer.next, @tagName(min_timeout.orderIgnoreEpoch(this.timer.next)) });
+        // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
+        if (min_timeout.orderIgnoreEpoch(this.timer.next) == .lt) {
+            group.log("-> setting timer to {}", .{min_timeout});
+            if (!this.timer.next.eql(&.epoch)) {
+                group.log("-> removing existing timer", .{});
+                globalThis.bunVM().timer.remove(&this.timer);
+            }
+            this.timer.next = min_timeout;
+            if (!this.timer.next.eql(&.epoch)) {
+                group.log("-> inserting timer", .{});
+                globalThis.bunVM().timer.insert(&this.timer);
+            }
+            group.log("-> timer set", .{});
+        }
     }
 
     fn _advance(this: *BunTestFile, globalThis: *jsc.JSGlobalObject) bun.JSError!enum { cont, exit } {
@@ -465,20 +457,8 @@ pub const BunTestFile = struct {
         }
     }
 
-    fn runOneCompleted(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, result_value: ?jsc.JSValue, data: RefDataValue) bun.JSError!void {
-        group.log("runOneCompleted: phase: {}", .{this.phase});
-        switch (this.phase) {
-            .collection => try this.collection.runOneCompleted(globalThis, result_value, data),
-            .execution => try this.execution.runOneCompleted(globalThis, result_value, data),
-            .done => bun.debugAssert(false),
-        }
-    }
-
-    const CallNowResult = enum {
-        continue_sync,
-        continue_async,
-    };
-    fn _callTestCallbackNow(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, cfg: CallbackEntry) bun.JSError!CallNowResult {
+    /// if sync, the result is queued and appended later
+    pub fn runTestCallback(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, cfg: CallbackEntry) bun.JSError!void {
         group.begin(@src());
         defer group.end();
 
@@ -510,18 +490,18 @@ pub const BunTestFile = struct {
             }
             // completed asynchronously
             group.log("callTestCallback -> wait for done callback", .{});
-            return .continue_async;
+            return;
         }
 
         if (result != null and result.?.asPromise() != null) {
             group.log("callTestCallback -> promise: data {}", .{cfg.data});
             result.?.then(globalThis, this.ref(cfg.data), bunTestThen, bunTestCatch);
-            return .continue_async;
+            return;
         }
 
         group.log("callTestCallback -> sync", .{});
-        try this.runOneCompleted(globalThis, result, cfg.data);
-        return .continue_sync;
+        this.addResult(cfg.data);
+        return;
     }
 
     /// called from the uncaught exception handler, or if a test callback rejects or throws an error
@@ -563,7 +543,11 @@ pub const BunTestFile = struct {
 
 pub const HandleUncaughtExceptionResult = enum { hide_error, show_handled_error, show_unhandled_error_between_tests, show_unhandled_error_in_describe };
 
-pub const CallbackQueue = std.ArrayList(CallbackEntry);
+pub const ResultQueue = bun.LinearFifo(BunTestFile.RefDataValue, .Dynamic);
+pub const StepResult = union(enum) {
+    waiting: struct { timeout: bun.timespec = .epoch },
+    complete,
+};
 
 pub const CallbackEntry = struct {
     callback: CallbackWithArgs,

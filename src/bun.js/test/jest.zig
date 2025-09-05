@@ -74,10 +74,8 @@ pub const TestRunner = struct {
     allocator: std.mem.Allocator,
 
     drainer: jsc.AnyTask = undefined,
-    queue: std.fifo.LinearFifo(*TestRunnerTask, .{ .Dynamic = {} }) = std.fifo.LinearFifo(*TestRunnerTask, .{ .Dynamic = {} }).init(default_allocator),
 
     has_pending_tests: bool = false,
-    pending_test: ?*TestRunnerTask = null,
 
     snapshots: Snapshots,
 
@@ -86,11 +84,6 @@ pub const TestRunner = struct {
     // from `setDefaultTimeout() or jest.setTimeout()`
     default_timeout_override: u32 = std.math.maxInt(u32),
 
-    event_loop_timer: bun.api.Timer.EventLoopTimer = .{
-        .next = .epoch,
-        .tag = .TestRunner,
-    },
-    active_test_for_timeout: ?TestRunner.Test.ID = null,
     test_options: *const bun.cli.Command.TestOptions = undefined,
 
     global_callbacks: struct {
@@ -125,48 +118,8 @@ pub const TestRunner = struct {
         }
     };
 
-    pub fn onTestTimeout(this: *TestRunner, now: *const bun.timespec, vm: *VirtualMachine) void {
-        _ = vm; // autofix
-        this.event_loop_timer.state = .FIRED;
-
-        if (this.pending_test) |pending_test| {
-            if (!pending_test.reported and (this.active_test_for_timeout orelse return) == pending_test.test_id) {
-                pending_test.timeout(now);
-            }
-        }
-    }
-
     pub fn hasTestFilter(this: *const TestRunner) bool {
         return this.filter_regex != null;
-    }
-
-    pub fn setTimeout(
-        this: *TestRunner,
-        milliseconds: u32,
-        test_id: TestRunner.Test.ID,
-    ) void {
-        this.active_test_for_timeout = test_id;
-
-        if (milliseconds > 0) {
-            this.scheduleTimeout(milliseconds);
-        }
-    }
-
-    pub fn scheduleTimeout(this: *TestRunner, milliseconds: u32) void {
-        const then = bun.timespec.msFromNow(@intCast(milliseconds));
-        const vm = jsc.VirtualMachine.get();
-
-        this.event_loop_timer.tag = .TestRunner;
-        if (this.event_loop_timer.state == .ACTIVE) {
-            vm.timer.remove(&this.event_loop_timer);
-        }
-
-        this.event_loop_timer.next = then;
-        vm.timer.insert(&this.event_loop_timer);
-    }
-
-    pub fn enqueue(this: *TestRunner, task: *TestRunnerTask) void {
-        this.queue.writeItem(task) catch unreachable;
     }
 
     pub fn runNextTest(this: *TestRunner) void {
@@ -451,26 +404,7 @@ pub const Jest = struct {
     }
 };
 
-pub const TestRunnerTask = struct {
-    test_id: TestRunner.Test.ID,
-    test_id_for_debugger: TestRunner.Test.ID,
-    globalThis: *JSGlobalObject,
-    source_file_path: string = "",
-    needs_before_each: bool = true,
-    ref: jsc.Ref = jsc.Ref.init(),
-
-    done_callback_state: AsyncState = .none,
-    promise_state: AsyncState = .none,
-    sync_state: AsyncState = .none,
-    reported: bool = false,
-    started_at: bun.timespec,
-
-    pub const AsyncState = enum {
-        none,
-        pending,
-        fulfilled,
-    };
-
+pub const on_unhandled_rejection = struct {
     pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, globalObject: *JSGlobalObject, rejection: JSValue) void {
         if (Jest.runner != null and Jest.runner.?.describe2Root.active_file != null) {
             var active_file = Jest.runner.?.describe2Root.active_file.?;
@@ -479,68 +413,6 @@ pub const TestRunnerTask = struct {
 
         jsc_vm.last_reported_error_for_dedupe = .zero;
         jsc_vm.runErrorHandlerWithDedupe(rejection, jsc_vm.onUnhandledRejectionExceptionList);
-    }
-
-    pub fn checkAssertionsCounter(_: *Result) void {}
-
-    pub fn run(_: *TestRunnerTask) bool {
-        return false;
-    }
-
-    pub fn timeout(this: *TestRunnerTask, now: *const bun.timespec) void {
-        if (comptime Environment.allow_assert) assert(!this.reported);
-        const elapsed = now.duration(&this.started_at).ms();
-        this.ref.unref(this.globalThis.bunVM());
-        this.globalThis.requestTermination();
-        this.handleResult(.{ .timeout = {} }, .{ .timeout = @intCast(@max(elapsed, 0)) });
-    }
-
-    const ResultType = union(enum) {
-        promise: void,
-        callback: void,
-        sync: void,
-        timeout: u64,
-        unhandledRejection: void,
-    };
-
-    pub fn handleResult(this: *TestRunnerTask, result: Result, from: ResultType) void {
-        var result_copy = result;
-        this.handleResultPtr(&result_copy, from);
-    }
-
-    fn continueRunningTestsAfterMicrotasksRun(this: *TestRunnerTask) void {
-        if (this.ref.has)
-            // Drain microtasks one more time.
-            // But don't hang forever.
-            // We report the test failure before that task is run.
-            this.globalThis.bunVM().enqueueTask(jsc.ManagedTask.New(@This(), deinit).init(this));
-    }
-
-    pub fn handleResultPtr(this: *TestRunnerTask, result: *Result, from: ResultType) void {
-        _ = this;
-        _ = result;
-        _ = from;
-    }
-
-    fn deinit(this: *TestRunnerTask) void {
-        const vm = jsc.VirtualMachine.get();
-        if (vm.onUnhandledRejectionCtx) |ctx| {
-            if (ctx == @as(*anyopaque, @ptrCast(this))) {
-                vm.onUnhandledRejectionCtx = null;
-            }
-        }
-
-        this.ref.unref(vm);
-
-        // there is a double free here involving async before/after callbacks
-        //
-        // Fortunately:
-        //
-        // - TestRunnerTask doesn't use much memory.
-        // - we don't have watch mode yet.
-        //
-        // TODO: fix this bug
-        // default_allocator.destroy(this);
     }
 };
 

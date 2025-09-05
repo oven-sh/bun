@@ -1785,7 +1785,7 @@ pub const TestCommand = struct {
         const repeat_count = reporter.repeat_count;
         var repeat_index: u32 = 0;
         vm.onUnhandledRejectionCtx = null;
-        vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
+        vm.onUnhandledRejection = jest.on_unhandled_rejection.onUnhandledRejection;
 
         while (repeat_index < repeat_count) : (repeat_index += 1) {
             bun.jsc.Jest.describe2.debug.group.begin(@src()); // TODO: remove this

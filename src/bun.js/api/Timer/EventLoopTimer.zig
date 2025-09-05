@@ -51,7 +51,6 @@ pub const Tag = if (Environment.isWindows) enum {
     TimerCallback,
     TimeoutObject,
     ImmediateObject,
-    TestRunner,
     StatWatcherScheduler,
     UpgradedDuplex,
     DNSResolver,
@@ -75,7 +74,6 @@ pub const Tag = if (Environment.isWindows) enum {
             .TimerCallback => TimerCallback,
             .TimeoutObject => TimeoutObject,
             .ImmediateObject => ImmediateObject,
-            .TestRunner => jsc.Jest.TestRunner,
             .StatWatcherScheduler => StatWatcherScheduler,
             .UpgradedDuplex => uws.UpgradedDuplex,
             .DNSResolver => DNSResolver,
@@ -100,7 +98,6 @@ pub const Tag = if (Environment.isWindows) enum {
     TimerCallback,
     TimeoutObject,
     ImmediateObject,
-    TestRunner,
     StatWatcherScheduler,
     UpgradedDuplex,
     WTFTimer,
@@ -123,7 +120,6 @@ pub const Tag = if (Environment.isWindows) enum {
             .TimerCallback => TimerCallback,
             .TimeoutObject => TimeoutObject,
             .ImmediateObject => ImmediateObject,
-            .TestRunner => jsc.Jest.TestRunner,
             .StatWatcherScheduler => StatWatcherScheduler,
             .UpgradedDuplex => uws.UpgradedDuplex,
             .WTFTimer => WTFTimer,
@@ -244,11 +240,6 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) Arm {
                 if (comptime t.Type() == uws.WindowsNamedPipe) {
                     return container.onTimeout();
                 }
-            }
-
-            if (comptime t.Type() == jsc.Jest.TestRunner) {
-                container.onTestTimeout(now, vm);
-                return .disarm;
             }
 
             if (comptime t.Type() == DNSResolver) {

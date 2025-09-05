@@ -1273,7 +1273,6 @@ pub const TestCommand = struct {
         reporter.* = CommandLineReporter{
             .jest = TestRunner{
                 .allocator = ctx.allocator,
-                .log = ctx.log,
                 .default_timeout_ms = ctx.test_options.default_timeout_ms,
                 .run_todo = ctx.test_options.run_todo,
                 .only = ctx.test_options.only,

@@ -62,7 +62,6 @@ const CurrentFile = struct {
 
 pub const TestRunner = struct {
     current_file: CurrentFile = CurrentFile{},
-    log: *logger.Log,
     files: File.List = .{},
     index: File.Map = File.Map{},
     only: bool = false,
@@ -134,34 +133,6 @@ pub const TestRunner = struct {
 
 pub const Jest = struct {
     pub var runner: ?*TestRunner = null;
-
-    fn globalHook(comptime name: string) jsc.JSHostFnZig {
-        return struct {
-            pub fn appendGlobalFunctionCallback(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-                const the_runner = runner orelse {
-                    return globalThis.throw("Cannot use " ++ name ++ "() outside of the test runner. Run \"bun test\" to run tests.", .{});
-                };
-
-                const arguments = callframe.arguments_old(2);
-                if (arguments.len < 1) {
-                    return globalThis.throwNotEnoughArguments("callback", 1, arguments.len);
-                }
-
-                const function = arguments.ptr[0];
-                if (function.isEmptyOrUndefinedOrNull() or !function.isCallable()) {
-                    return globalThis.throwInvalidArgumentType(name, "callback", "function");
-                }
-
-                if (try function.getLength(globalThis) > 0) {
-                    return globalThis.throw("done() callback is not implemented in global hooks yet. Please make your function take no arguments", .{});
-                }
-
-                function.protect();
-                @field(the_runner.global_callbacks, name).append(bun.default_allocator, function) catch unreachable;
-                return .js_undefined;
-            }
-        }.appendGlobalFunctionCallback;
-    }
 
     pub fn Bun__Jest__createTestModuleObject(globalObject: *JSGlobalObject) callconv(.C) JSValue {
         return createTestModule(globalObject);
@@ -328,73 +299,6 @@ pub const on_unhandled_rejection = struct {
     }
 };
 
-pub const Result = union(TestRunner.Test.Status) {
-    pending: void,
-    pass: u32, // assertion count
-    fail: u32,
-    skip: void,
-    todo: void,
-    timeout: void,
-    skipped_because_label: void,
-    fail_because_failing_test_passed: u32,
-    fail_because_todo_passed: u32,
-    fail_because_expected_has_assertions: void,
-    fail_because_expected_assertion_count: Counter,
-
-    pub fn isSkipped(this: *const Result) bool {
-        return switch (this.*) {
-            .skip, .skipped_because_label => true,
-            .todo => !Jest.runner.?.test_options.run_todo,
-            else => false,
-        };
-    }
-
-    pub fn isFailure(this: *const Result) bool {
-        return this.* == .fail or this.* == .timeout or this.* == .fail_because_expected_has_assertions or this.* == .fail_because_expected_assertion_count;
-    }
-
-    pub fn forceTODO(this: Result, is_todo: bool) Result {
-        if (is_todo and this == .pass)
-            return .{ .fail_because_todo_passed = this.pass };
-
-        if (is_todo and (this == .fail or this == .timeout)) {
-            return .{ .todo = {} };
-        }
-        return this;
-    }
-};
-
-inline fn createIfScope(
-    globalThis: *JSGlobalObject,
-    callframe: *CallFrame,
-    comptime property: [:0]const u8,
-    comptime signature: string,
-    comptime Scope: type,
-    comptime tag: Tag,
-) bun.JSError!JSValue {
-    const arguments = callframe.arguments_old(1);
-    const args = arguments.slice();
-
-    if (args.len == 0) {
-        return globalThis.throwPretty("{s} expects a condition", .{signature});
-    }
-
-    const name = ZigString.static(property);
-    const value = args[0].toBoolean();
-
-    const truthy_falsey = comptime switch (tag) {
-        .pass => .{ Scope.skip, Scope.call },
-        .fail => @compileError("unreachable"),
-        .only => @compileError("unreachable"),
-        .skipped_because_label, .skip => .{ Scope.call, Scope.skip },
-        .todo => .{ Scope.call, Scope.todo },
-    };
-
-    switch (@intFromBool(value)) {
-        inline else => |index| return jsc.host_fn.NewFunction(globalThis, name, 2, truthy_falsey[index], false),
-    }
-}
-
 fn consumeArg(
     globalThis: *JSGlobalObject,
     should_write: bool,
@@ -520,20 +424,10 @@ pub fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []
     return list.toOwnedSlice();
 }
 
-fn callJSFunctionForTestRunner(vm: *jsc.VirtualMachine, globalObject: *JSGlobalObject, function: JSValue, args: []const JSValue) JSValue {
-    vm.eventLoop().enter();
-    defer vm.eventLoop().exit();
-
-    globalObject.clearTerminationException(); // TODO this is sus
-    return function.call(globalObject, .js_undefined, args) catch |err| globalObject.takeException(err);
-}
-
-extern fn Bun__CallFrame__getLineNumber(callframe: *jsc.CallFrame, globalObject: *jsc.JSGlobalObject) u32;
-
 pub fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObject) u32 {
     if (Jest.runner) |runner| {
         if (runner.test_options.file_reporter == .junit) {
-            return Bun__CallFrame__getLineNumber(callframe, globalThis);
+            return bun.cpp.Bun__CallFrame__getLineNumber(callframe, globalThis);
         }
     }
     return 0;

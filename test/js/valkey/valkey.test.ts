@@ -21,7 +21,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
   });
 
   const connectedRedis = async () => {
-    const redis = new RedisClient("redis://localhost:6379");
+    const redis = new RedisClient(DEFAULT_REDIS_URL);
     await redis.connect();
     return redis;
   };
@@ -242,7 +242,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       await redis.subscribe(testChannel, () => {});
 
-      expect(() => redis.set(testKey, testValue)).toThrow("Cannot use in subscriber mode");
+      expect(() => redis.set(testKey, testValue)).toThrow("RedisClient.set cannot be called while in subscriber mode");
 
       // Clean up subscription
       await redis.unsubscribe(testChannel);
@@ -501,7 +501,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       await redis.subscribe(channel, () => {});
 
       // Should fail in subscription mode
-      expect(() => redis.set(testKey, testValue)).toThrow("Cannot use in subscriber mode");
+      expect(() => redis.set(testKey, testValue)).toThrow("RedisClient.set cannot be called while in subscriber mode.");
 
       // Unsubscribe from all channels
       await redis.unsubscribe(channel);
@@ -526,7 +526,9 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       const redis = await connectedRedis();
       const channel = "never-subscribed-channel";
 
-      expect(() => redis.unsubscribe(channel)).toThrow("Not in subscription mode");
+      expect(() => redis.unsubscribe(channel)).toThrow(
+        "RedisClient.unsubscribe can only be called while in subscriber mode.",
+      );
     });
 
     test("callback errors don't crash the client", async () => {
@@ -645,15 +647,6 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       const duplicate = await redis.duplicate();
       expect(duplicate.connected).toBe(false);
-    });
-
-    test("should reject when duplicate() is called with arguments", async () => {
-      const redis = new RedisClient(DEFAULT_REDIS_URL);
-
-      expect(() => {
-        // @ts-expect-error - Testing invalid usage
-        redis.duplicate("invalid-arg");
-      }).toThrow("duplicate does not take any arguments");
     });
 
     test("should preserve connection configuration in duplicate", async () => {

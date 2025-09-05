@@ -116,6 +116,13 @@ pub const Address = union(enum) {
         port: u16,
     },
 
+    pub fn hostname(this: Address) []const u8 {
+        return switch (this) {
+            .unix => |unix_addr| return unix_addr,
+            .host => |h| return h.host,
+        };
+    }
+
     pub fn connect(this: *const Address, client: *ValkeyClient, ctx: *bun.uws.SocketContext, is_tls: bool) !uws.AnySocket {
         switch (is_tls) {
             inline else => |tls| {
@@ -165,6 +172,7 @@ pub const ValkeyClient = struct {
     username: []const u8 = "",
     database: u32 = 0,
     address: Address,
+    protocol: Protocol,
 
     connection_strings: []u8 = &.{},
 
@@ -221,6 +229,8 @@ pub const ValkeyClient = struct {
         }
 
         this.allocator.free(this.connection_strings);
+        // Note there is no need to deallocate username, password and hostname since they are
+        // within the this.connection_strings buffer.
         this.write_buffer.deinit(this.allocator);
         this.read_buffer.deinit(this.allocator);
         this.tls.deinit();
@@ -623,7 +633,9 @@ pub const ValkeyClient = struct {
         // If the loop finishes, the entire 'data' was processed without needing the buffer.
     }
 
-    fn handleSubscribeResponse(this: *ValkeyClient, value: *protocol.RESPValue, pair: *ValkeyCommand.PromisePair) ?void {
+    /// Try handling this response as a subscriber-state response.
+    /// Returns `handled` if we handled it, `fallthrough` if we did not.
+    fn handleSubscribeResponse(this: *ValkeyClient, value: *protocol.RESPValue, pair: *ValkeyCommand.PromisePair) enum { handled, fallthrough } {
         // Resolve the promise with the potentially transformed value
         var promise_ptr = &pair.promise;
         const globalThis = this.globalObject();
@@ -633,26 +645,24 @@ pub const ValkeyClient = struct {
         loop.enter();
         defer loop.exit();
 
-        switch (value.*) {
+        return switch (value.*) {
             .Error => {
-                promise_ptr.reject(
-                    globalThis,
-                    value.toJS(globalThis) catch |inner| globalThis.takeError(inner),
-                );
+                promise_ptr.reject(globalThis, value.toJS(globalThis));
+                return .handled;
             },
             .Push => |push| {
                 const p = this.parent();
-                const subs_ctx = p.getOrCreateSubscriptionCtxEnteringSubscriptionMode(globalThis);
+                const subs_ctx = p.getOrCreateSubscriptionCtxEnteringSubscriptionMode();
                 const sub_count = subs_ctx.subscriptionCount(globalThis);
 
                 if (std.mem.eql(u8, push.kind, "subscribe")) {
                     this.onValkeySubscribe(value);
-                    promise_ptr.promise.resolve(globalThis, jsc.JSValue.jsNumber(sub_count));
-                    return;
+                    promise_ptr.promise.resolve(globalThis, .jsNumber(sub_count));
+                    return .handled;
                 } else if (std.mem.eql(u8, push.kind, "unsubscribe")) {
                     this.onValkeyUnsubscribe(value);
-                    promise_ptr.promise.resolve(globalThis, jsc.JSValue.js_undefined);
-                    return;
+                    promise_ptr.promise.resolve(globalThis, .js_undefined);
+                    return .handled;
                 } else {
                     // We should rarely reach this point. If we're guaranteed to be handling a subscribe/unsubscribe,
                     // then this is an unexpected path.
@@ -661,15 +671,15 @@ pub const ValkeyClient = struct {
                         "Push message is not a subscription message.",
                         protocol.RedisError.InvalidResponseType,
                     );
-                    return;
+                    return .handled;
                 }
             },
             else => {
                 // This may be a regular command response. Let's pass it down
                 // to the next handler.
-                return null;
+                return .fallthrough;
             },
-        }
+        };
     }
 
     fn handleHelloResponse(this: *ValkeyClient, value: *protocol.RESPValue) void {
@@ -770,7 +780,7 @@ pub const ValkeyClient = struct {
         // We handle subscriptions specially because they are not regular
         // commands and their failure will potentially cause the client to drop
         // out of subscriber mode.
-        if (this.cParent().isSubscriber()) {
+        if (this.parent().isSubscriber()) {
             debug("This client is a subscriber. Handling as subscriber...", .{});
 
             // There are multiple different commands we may receive in
@@ -780,8 +790,7 @@ pub const ValkeyClient = struct {
             // associated promise.
             if (pair_maybe) |*pair| {
                 debug("There is a request in flight. Handling as a subscribe request...", .{});
-                const res = this.handleSubscribeResponse(value, pair);
-                if (res != null) {
+                if (this.handleSubscribeResponse(value, pair) == .handled) {
                     return;
                 }
             }
@@ -1089,10 +1098,6 @@ pub const ValkeyClient = struct {
     }
 
     inline fn parent(this: *ValkeyClient) *JSValkeyClient {
-        return @fieldParentPtr("client", this);
-    }
-
-    inline fn cParent(this: *const ValkeyClient) *const JSValkeyClient {
         return @fieldParentPtr("client", this);
     }
 

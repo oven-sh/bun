@@ -650,6 +650,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         .scan_pass_result = ScanPassResult.init(bun.default_allocator),
     });
     errdefer {
+        this.config.log.deinit();
         this.arena.deinit();
         this.ref_count.clearWithoutDestructor();
         bun.destroy(this);

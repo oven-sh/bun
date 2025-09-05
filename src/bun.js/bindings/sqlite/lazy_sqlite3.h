@@ -1,7 +1,7 @@
 #pragma once
 
 #include "root.h"
-#include "sqlite3.h"
+#include "sqlite3_local.h"
 
 #if !OS(WINDOWS)
 #include <dlfcn.h>
@@ -148,10 +148,15 @@ static lazy_sqlite3_bind_parameter_name_type lazy_sqlite3_bind_parameter_name;
 static lazy_sqlite3_total_changes_type lazy_sqlite3_total_changes;
 static lazy_sqlite3_last_insert_rowid_type lazy_sqlite3_last_insert_rowid;
 
+#if LAZY_LOAD_SQLITE
+// Only redefine if we're using lazy loading from the start (macOS)
 #define sqlite3_bind_blob lazy_sqlite3_bind_blob
 #define sqlite3_bind_double lazy_sqlite3_bind_double
 #define sqlite3_bind_int lazy_sqlite3_bind_int
 #define sqlite3_bind_int64 lazy_sqlite3_bind_int64
+#endif
+
+#if LAZY_LOAD_SQLITE
 #define sqlite3_bind_null lazy_sqlite3_bind_null
 #define sqlite3_bind_parameter_count lazy_sqlite3_bind_parameter_count
 #define sqlite3_bind_parameter_index lazy_sqlite3_bind_parameter_index
@@ -199,6 +204,7 @@ static lazy_sqlite3_last_insert_rowid_type lazy_sqlite3_last_insert_rowid;
 #define sqlite3_bind_parameter_name lazy_sqlite3_bind_parameter_name
 #define sqlite3_total_changes lazy_sqlite3_total_changes
 #define sqlite3_last_insert_rowid lazy_sqlite3_last_insert_rowid
+#endif
 
 #if !OS(WINDOWS)
 #define HMODULE void*
@@ -215,15 +221,31 @@ static const char* sqlite3_lib_path = "sqlite3.dll";
 #elif OS(DARWIN)
 static const char* sqlite3_lib_path = "libsqlite3.dylib";
 #else
-static const char* sqlite3_lib_path = "sqlite3";
+static const char* sqlite3_lib_path = "libsqlite3.so";
 #endif
 
 static HMODULE sqlite3_handle = nullptr;
+#if OS(DARWIN)
+static bool use_static_sqlite = false; // Use dynamic linking by default on macOS
+#else
+static bool use_static_sqlite = true; // Use static linking by default on Linux/Windows
+#endif
 
 static int lazyLoadSQLite()
 {
     if (sqlite3_handle)
         return 0;
+        
+#if !LAZY_LOAD_SQLITE
+    // On Linux with static linking by default
+    if (use_static_sqlite) {
+        // We're using static linking - nothing to do, functions are used directly
+        // Mark as loaded to prevent reloading
+        sqlite3_handle = (HMODULE)1; // Use a non-null value to indicate static loading
+        return 0;
+    }
+    // If we get here on Linux, we're switching to dynamic loading
+#endif
 #if OS(WINDOWS)
     sqlite3_handle = LoadLibraryA(sqlite3_lib_path);
 #else

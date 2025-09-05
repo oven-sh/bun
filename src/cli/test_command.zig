@@ -376,7 +376,7 @@ pub const JunitReporter = struct {
 
     pub fn writeTestCase(
         this: *JunitReporter,
-        status: TestRunner.Test.Status,
+        status: bun.jsc.Jest.describe2.Execution.Result,
         file: string,
         name: string,
         class_name: string,
@@ -508,7 +508,7 @@ pub const JunitReporter = struct {
                 try this.contents.appendSlice(bun.default_allocator, indent);
                 try this.contents.appendSlice(bun.default_allocator, "</testcase>\n");
             },
-            .timeout => {
+            .fail_because_timeout, .fail_because_timeout_with_done_callback => {
                 if (this.suite_stack.items.len > 0) {
                     this.suite_stack.items[this.suite_stack.items.len - 1].metrics.failures += 1;
                 }
@@ -818,20 +818,7 @@ pub const CommandLineReporter = struct {
                         }
                     }
 
-                    const converted_status: TestRunner.Test.Status = switch (status) {
-                        .pending => .pending,
-                        .pass => .pass,
-                        .fail => .fail,
-                        .skip => .skip,
-                        .todo => .todo,
-                        .fail_because_timeout, .fail_because_timeout_with_done_callback => .timeout,
-                        .skipped_because_label => .skipped_because_label,
-                        .fail_because_failing_test_passed => .fail_because_failing_test_passed,
-                        .fail_because_todo_passed => .fail_because_todo_passed,
-                        .fail_because_expected_has_assertions => .fail_because_expected_has_assertions,
-                        .fail_because_expected_assertion_count => .fail_because_expected_assertion_count,
-                    };
-                    bun.handleOom(junit.writeTestCase(converted_status, filename, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns, line_number));
+                    bun.handleOom(junit.writeTestCase(status, filename, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns, line_number));
                 },
             }
         };

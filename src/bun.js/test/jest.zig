@@ -86,13 +86,6 @@ pub const TestRunner = struct {
 
     test_options: *const bun.cli.Command.TestOptions = undefined,
 
-    global_callbacks: struct {
-        beforeAll: std.ArrayListUnmanaged(JSValue) = .{},
-        beforeEach: std.ArrayListUnmanaged(JSValue) = .{},
-        afterEach: std.ArrayListUnmanaged(JSValue) = .{},
-        afterAll: std.ArrayListUnmanaged(JSValue) = .{},
-    } = .{},
-
     // Used for --test-name-pattern to reduce allocations
     filter_regex: ?*RegularExpression,
     filter_buffer: MutableString,
@@ -101,8 +94,6 @@ pub const TestRunner = struct {
     summary: Summary = Summary{},
 
     describe2Root: describe2.BunTest,
-
-    pub const Drainer = jsc.AnyTask.New(TestRunner, drain);
 
     pub const Summary = struct {
         pass: u32 = 0,
@@ -120,59 +111,6 @@ pub const TestRunner = struct {
 
     pub fn hasTestFilter(this: *const TestRunner) bool {
         return this.filter_regex != null;
-    }
-
-    pub fn runNextTest(this: *TestRunner) void {
-        this.has_pending_tests = false;
-        this.pending_test = null;
-
-        const vm = jsc.VirtualMachine.get();
-        vm.auto_killer.clear();
-        vm.auto_killer.disable();
-
-        // disable idling
-        vm.wakeup();
-    }
-
-    pub fn drain(this: *TestRunner) void {
-        if (this.pending_test != null) return;
-
-        if (this.queue.readItem()) |task| {
-            this.pending_test = task;
-            this.has_pending_tests = true;
-            if (!task.run()) {
-                this.has_pending_tests = false;
-                this.pending_test = null;
-            }
-        }
-    }
-
-    pub fn setOnly(this: *TestRunner) void {
-        if (this.only) {
-            return;
-        }
-        this.only = true;
-
-        const list = this.queue.readableSlice(0);
-        for (list) |task| {
-            task.deinit();
-        }
-        this.queue.count = 0;
-        this.queue.head = 0;
-
-        this.tests.shrinkRetainingCapacity(0);
-        _ = string;
-        if (true) @panic("TODO: removed this.callback.onUpdateCount(this.callback, 0, 0)");
-    }
-
-    pub fn addTestCount(this: *TestRunner, count: u32) u32 {
-        this.tests.ensureUnusedCapacity(this.allocator, count) catch unreachable;
-        const start = @as(Test.ID, @truncate(this.tests.len));
-        this.tests.len += count;
-        const statuses = this.tests.items(.status)[start..][0..count];
-        @memset(statuses, Test.Status.pending);
-        if (true) @panic("TODO: removed onUpdateCount(this.callback, count, count + start)");
-        return start;
     }
 
     pub fn getOrPutFile(this: *TestRunner, file_path: string) struct { file_id: File.ID } {
@@ -193,30 +131,6 @@ pub const TestRunner = struct {
         pub const List = std.MultiArrayList(File);
         pub const ID = u32;
         pub const Map = std.ArrayHashMapUnmanaged(u32, u32, ArrayIdentityContext, false);
-    };
-
-    pub const Test = struct {
-        status: Status = Status.pending,
-        line_number: u32 = 0,
-
-        pub const ID = u32;
-        pub const null_id: ID = std.math.maxInt(Test.ID);
-        pub const List = std.MultiArrayList(Test);
-
-        pub const Status = enum(u4) {
-            pending,
-            pass,
-            fail,
-            skip,
-            todo,
-            timeout,
-            skipped_because_label,
-            /// A test marked as `.failing()` actually passed
-            fail_because_failing_test_passed,
-            fail_because_todo_passed,
-            fail_because_expected_has_assertions,
-            fail_because_expected_assertion_count,
-        };
     };
 };
 

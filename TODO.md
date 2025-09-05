@@ -323,6 +323,7 @@ Exited with code [1]
 
 # Code quality:
 
+- [ ] consider modifying the junit reporter to print the whole describe tree rather than exploring the execution tree (if that's what it's doing? either way it needs to include tests that are filtered out)
 - [ ] concurrent tests have an n^2 problem because each time a test completes it needs to loop over every test to advance.
   - this shouldn't be necessary, it should be possible to step the current execution sequence and only check if we need to advance if the current sequence is done.
   - or even keep a number of how many sequences are complete and only advance once that number is equal to the number of sequences

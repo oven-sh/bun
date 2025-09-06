@@ -8,6 +8,7 @@ export default [
     configurable: false,
     klass: {},
     JSType: "0b11101110",
+    inheritsFromError: true,
     proto: {
       message: {
         getter: "getMessage",

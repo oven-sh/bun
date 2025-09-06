@@ -449,6 +449,50 @@ pub const File = struct {
     pub const List = MultiArrayList(File);
 };
 
+pub fn propagateAsyncDependencies(this: *LinkerGraph) !void {
+    const State = struct {
+        visited: bun.collections.AutoBitSet,
+        import_records: []const ImportRecord.List,
+        flags: []JSMeta.Flags,
+
+        pub fn visitAll(self: *@This()) void {
+            for (0..self.import_records.len) |i| {
+                self.visit(i);
+            }
+        }
+
+        pub fn visit(self: *@This(), index: usize) void {
+            if (self.visited.isSet(index)) return;
+            self.visited.set(index);
+            if (self.flags[index].is_async_or_has_async_dependency) return;
+
+            for (self.import_records[index].slice()) |import_record| {
+                switch (import_record.kind) {
+                    .stmt, .require, .dynamic, .require_resolve => {},
+                    else => continue,
+                }
+
+                const import_index: usize = import_record.source_index.get();
+                if (import_index >= self.import_records.len) continue;
+                self.visit(import_index);
+
+                if (self.flags[import_index].is_async_or_has_async_dependency) {
+                    self.flags[index].is_async_or_has_async_dependency = true;
+                    break;
+                }
+            }
+        }
+    };
+
+    var state: State = .{
+        .visited = try .initEmpty(bun.default_allocator, this.ast.len),
+        .import_records = this.ast.items(.import_records),
+        .flags = this.meta.items(.flags),
+    };
+    defer state.visited.deinit(bun.default_allocator);
+    state.visitAll();
+}
+
 const string = []const u8;
 
 const std = @import("std");

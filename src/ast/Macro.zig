@@ -579,8 +579,55 @@ pub const Runner = struct {
                     out.* = value;
                 }
             },
-            .e_template => {
-                @panic("TODO: support template literals in macros");
+            .e_template => |template| {
+                // For tagged template literals, the first argument is an array of template strings
+                // followed by the interpolated values as separate arguments
+                const parts_count = template.parts.len;
+                const total_args = 1 + parts_count + @as(usize, @intFromBool(javascript_object != .zero));
+                js_args = try allocator.alloc(jsc.JSValue, total_args);
+                js_processed_args_len = total_args;
+
+                var template_strings = try allocator.alloc(jsc.JSValue, parts_count + 1);
+                defer allocator.free(template_strings);
+
+                var head_str = switch (template.head) {
+                    .cooked => |str| str,
+                    .raw => |raw| E.String.init(raw),
+                };
+                template_strings[0] = try head_str.toJS(allocator, globalObject);
+                template_strings[0].protect();
+
+                for (template.parts, 1..) |part, i| {
+                    var tail_str = switch (part.tail) {
+                        .cooked => |str| str,
+                        .raw => |raw| E.String.init(raw),
+                    };
+                    template_strings[i] = try tail_str.toJS(allocator, globalObject);
+                    template_strings[i].protect();
+                }
+
+                js_args[0] = try jsc.JSArray.create(globalObject, template_strings);
+                js_args[0].protect();
+
+                for (template_strings) |str| {
+                    str.unprotect();
+                }
+
+                for (template.parts, 0..) |part, i| {
+                    const expr = part.value;
+                    const value = expr.toJS(
+                        allocator,
+                        globalObject,
+                    ) catch |e| {
+                        for (js_args[0 .. i + 1]) |arg| {
+                            arg.unprotect();
+                        }
+                        js_processed_args_len = i + 1;
+                        return e;
+                    };
+                    value.protect();
+                    js_args[i + 1] = value;
+                }
             },
             else => {
                 @panic("Unexpected caller type");

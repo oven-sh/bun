@@ -92,31 +92,6 @@ pub fn VisitExpr(
                     p.markStrictModeFeature(.reserved_word, js_lexer.rangeOfIdentifier(p.source, expr.loc), name) catch unreachable;
                 }
 
-                // Transform Response -> BakeResponse for server-side code
-                // TODO: this does the incorrect thing in this case:
-                // ```
-                // const Response = 'ooga booga!'
-                // console.log(Response)
-                // ```
-                if (p.options.features.server_components.isServerSide() and
-                    bun.strings.eqlComptime(name, "Response"))
-                {
-                    // Find or create BakeResponse identifier
-                    const bake_response_result = p.findSymbol(expr.loc, "SSRResponse") catch unreachable;
-                    e_.ref = bake_response_result.ref;
-                    e_.must_keep_due_to_with_stmt = bake_response_result.is_inside_with_scope;
-
-                    std.debug.print("{s}: Response -> SSRResponse\n", .{p.source.path.pretty});
-
-                    // Handle the rest of the identifier processing with the new ref
-                    return p.handleIdentifier(expr.loc, e_, "SSRResponse", IdentifierOpts{
-                        .assign_target = in.assign_target,
-                        .is_delete_target = is_delete_target,
-                        .is_call_target = @as(Expr.Tag, p.call_target) == .e_identifier and expr.data.e_identifier.ref.eql(p.call_target.e_identifier.ref),
-                        .was_originally_identifier = true,
-                    });
-                }
-
                 const result = p.findSymbol(expr.loc, name) catch unreachable;
 
                 e_.must_keep_due_to_with_stmt = result.is_inside_with_scope;

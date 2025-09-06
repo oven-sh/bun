@@ -76,7 +76,6 @@ server_exports = {
 
     const [pageModule, ...layouts] = await Promise.all(routeModules.map(loadExports));
 
-    const mode = pageModule.mode;
     let requestWithCookies = req;
 
     let storeValue: RequestContext = {

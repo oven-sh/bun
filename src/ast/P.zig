@@ -170,6 +170,22 @@ pub fn NewParser_(
         dirname_ref: Ref = Ref.None,
         import_meta_ref: Ref = Ref.None,
         hmr_api_ref: Ref = Ref.None,
+
+        /// For SSR we rewrite `Response` -> `SSRResponse`
+        ///
+        /// We create a `Response` symbol upfront so we don't accidentally
+        /// collide with variables declared by the user, i.e. we want to avoid
+        /// rewriting `Response` in this scenario:
+        ///
+        /// ```js
+        /// export function MyPage() {
+        ///   const Response = 'lmao!';
+        ///   return new Response(<h1>uh oh</h1>, { status: 200 });
+        /// }
+        /// ```
+        response_ref: Ref = Ref.None,
+        ssr_response_ref: Ref = Ref.None,
+
         scopes_in_order_visitor_index: usize = 0,
         has_classic_runtime_warned: bool = false,
         macro_call_count: MacroCallCountType = 0,
@@ -2009,6 +2025,17 @@ pub fn NewParser_(
                 // TODO: these wrapping modes.
                 .wrap_anon_server_functions => {},
                 .wrap_exports_for_server_reference => {},
+            }
+
+            // Server-side components:
+            // Declare upfront the symbols for "Response" and "SSRResponse",
+            // later we'll link "Response" -> "SSRResponse"
+            switch (p.options.features.server_components) {
+                .none, .client_side => {},
+                else => {
+                    p.response_ref = try p.declareGeneratedSymbol(.class, "Response");
+                    p.ssr_response_ref = try p.declareGeneratedSymbol(.class, "SSRResponse");
+                },
             }
 
             if (p.options.features.hot_module_reloading) {
@@ -6085,6 +6112,14 @@ pub fn NewParser_(
 
             const bundling = p.options.bundle;
             var parts_end: usize = @as(usize, @intFromBool(bundling));
+
+            if (!p.response_ref.isNull() and !p.ssr_response_ref.isNull()) {
+                const response_symbol = &p.symbols.items[p.response_ref.innerIndex()];
+                // if it has a link it means that the user declared a variable named `Response`
+                if (!response_symbol.hasLink()) {
+                    response_symbol.link = p.ssr_response_ref;
+                }
+            }
 
             // When bundling with HMR, we need every module to be just a
             // single part, as we later wrap each module into a function,

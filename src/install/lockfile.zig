@@ -1040,7 +1040,7 @@ pub const Printer = struct {
         };
 
         try env_loader.loadProcess();
-        try env_loader.load(entries_option.entries, &[_][]u8{}, .production, false);
+        try env_loader.loadRuntime(entries_option.entries, &[_][]u8{}, env_loader.getSuffixFromEnv(), false);
         var log = logger.Log.init(allocator);
         try options.load(
             allocator,

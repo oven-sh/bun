@@ -241,6 +241,7 @@ Exited with code [1]
 
 # Complete before merge:
 
+- [ ] add back vm.auto_killer.kill() https://github.com/oven-sh/bun/blob/973fa98796a3be79b48f0d078485b5833d956593/src/bun.js/test/jest.zig#L1690
 - [x] test what happens running a file that uses describe() not in `bun test`. make sure it errors with the correct error. this might have regressed, if so, fix it.
 - [x] make sure done callback is supported in hooks
 - [ ] add tests for re-entry in different scenerios (timeout, done callback, ...) using waitForPromise in expect()
@@ -318,6 +319,7 @@ Exited with code [1]
 - [ ] replace asserts with runtime throws or debug-only asserts (waitForPromise breaks many expectations)
 - [ ] check the todo list in https://linear.app/oven/issue/ENG-20152/new-buntest, confirm it fixes all those issues (or doesn't make them worse). add reproductions
 - [ ] look in file:///Users/pfg/Dev/Node/bun-coverage/coverage-html/src/bun.js/test/jest.zig.gcov.html and find things to remove
+- [ ] disable the logs by default
 - [x] remove describe/test functions in jest.zig
 - [x] remove DescribeScope/TestScope in jest.zig
 - [ ] remove TestId stuff
@@ -331,6 +333,7 @@ Exited with code [1]
   - or even keep a number of how many sequences are complete and only advance once that number is equal to the number of sequences
   - if we have 1,000,000 concurrent tests, there is no need to be looping over all 1,000,000 every time any of them completes
   - with the current n^2 behaviour, it is 2.13x slower to run 20,000 empty async concurrent tests than 1,000,000 empty async regular tests. that's 50x less tests taking twice as long to run.
+  - now that we have the new thing this can be fixed. fix it.
 - [ ] consider a memory pool for describescope/executionentry. test if it improves performance.
 - [ ] consider making RefDataValue methods return the reason for failure rather than ?value. that way we can improve error messages. the reason could be a string or it could be a defined error set
 - [ ] expect_call_count/expect_assertions is confusing. rename to `expect_calls`, `assert_expect_calls`. or something.

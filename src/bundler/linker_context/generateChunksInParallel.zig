@@ -436,35 +436,46 @@ pub fn generateChunksInParallel(
 
                         defer source_provider_url.deref();
 
-                        if (jsc.CachedBytecode.generate(c.options.output_format, code_result.buffer, &source_provider_url)) |result| {
-                            const bytecode, const cached_bytecode = result;
-                            const source_provider_url_str = source_provider_url.toSlice(bun.default_allocator);
-                            defer source_provider_url_str.deinit();
-                            debug("Bytecode cache generated {s}: {}", .{ source_provider_url_str.slice(), bun.fmt.size(bytecode.len, .{ .space_between_number_and_unit = true }) });
-                            @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
-                            fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
+                        switch (jsc.CachedBytecode.generate(c.options.output_format, code_result.buffer, &source_provider_url)) {
+                            .result => |result| {
+                                const bytecode = result.bytecode;
+                                const cached_bytecode = result.cached_bytecode;
+                                const source_provider_url_str = source_provider_url.toSlice(bun.default_allocator);
+                                defer source_provider_url_str.deinit();
+                                debug("Bytecode cache generated {s}: {}", .{ source_provider_url_str.slice(), bun.fmt.size(bytecode.len, .{ .space_between_number_and_unit = true }) });
+                                @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
+                                fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
 
-                            break :brk options.OutputFile.init(.{
-                                .output_path = bun.handleOom(bun.default_allocator.dupe(u8, source_provider_url_str.slice())),
-                                .input_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path})),
-                                .input_loader = .js,
-                                .hash = if (chunk.template.placeholder.hash != null) bun.hash(bytecode) else null,
-                                .output_kind = .bytecode,
-                                .loader = .file,
-                                .size = @as(u32, @truncate(bytecode.len)),
-                                .display_size = @as(u32, @truncate(bytecode.len)),
-                                .data = .{
-                                    .buffer = .{ .data = bytecode, .allocator = cached_bytecode.allocator() },
-                                },
-                                .side = .server,
-                                .entry_point_index = null,
-                                .is_executable = false,
-                            });
-                        } else {
-                            // an error
-                            c.log.addErrorFmt(null, .none, bun.default_allocator, "Failed to generate bytecode for {s}", .{
-                                chunk.final_rel_path,
-                            }) catch |err| bun.handleOom(err);
+                                break :brk options.OutputFile.init(.{
+                                    .output_path = bun.handleOom(bun.default_allocator.dupe(u8, source_provider_url_str.slice())),
+                                    .input_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path})),
+                                    .input_loader = .js,
+                                    .hash = if (chunk.template.placeholder.hash != null) bun.hash(bytecode) else null,
+                                    .output_kind = .bytecode,
+                                    .loader = .file,
+                                    .size = @as(u32, @truncate(bytecode.len)),
+                                    .display_size = @as(u32, @truncate(bytecode.len)),
+                                    .data = .{
+                                        .buffer = .{ .data = bytecode, .allocator = cached_bytecode.allocator() },
+                                    },
+                                    .side = .server,
+                                    .entry_point_index = null,
+                                    .is_executable = false,
+                                });
+                            },
+                            .err => |err| {
+                                defer err.message.deref();
+                                // an error
+                                if (err.loc == .none) {
+                                    try c.log.addErrorFmt(null, .none, bun.default_allocator, "Failed to generate bytecode for {s}", .{chunk.final_rel_path});
+                                } else {
+                                    const message = err.message.toSlice(bun.default_allocator);
+                                    defer message.deinit();
+
+                                    const source = &Logger.Source.initPathString(chunk.final_rel_path, code_result.buffer);
+                                    try c.log.addErrorFmt(source, err.loc, bun.default_allocator, "Failed to generate bytecode: {s}", .{message.slice()});
+                                }
+                            },
                         }
                     }
                 }
@@ -542,6 +553,10 @@ pub fn generateChunksInParallel(
         }
 
         output_files.insertAdditionalOutputFiles(c.parse_graph.additional_output_files.items);
+    }
+
+    if (c.log.hasErrors()) {
+        return error.BuildFailed;
     }
 
     return output_files.take();

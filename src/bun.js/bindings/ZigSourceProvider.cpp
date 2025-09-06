@@ -168,7 +168,7 @@ static JSC::VM& getVMForBytecodeCache()
     return *vmForBytecodeCache;
 }
 
-extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProviderURL, const LChar* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
+extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProviderURL, const LChar* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, int32_t* errorLoc, BunString* errorMessage)
 {
     std::span<const LChar> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
     JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
@@ -182,8 +182,15 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProv
 
     ParserError parserError;
     UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = JSC::recursivelyGenerateUnlinkedCodeBlockForModuleProgram(vm, sourceCode, lexicallyScopedFeatures, scriptMode, {}, parserError, evalContextType);
-    if (parserError.isValid())
+    if (parserError.isValid()) {
+        if (errorLoc) {
+            *errorLoc = parserError.token().m_startPosition.offset;
+        }
+        if (errorMessage) {
+            *errorMessage = Bun::toStringRef(parserError.message());
+        }
         return false;
+    }
     if (!unlinkedCodeBlock)
         return false;
 
@@ -201,7 +208,7 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProv
     return true;
 }
 
-extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* sourceProviderURL, const LChar* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
+extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* sourceProviderURL, const LChar* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, int32_t* errorLoc, BunString* errorMessage)
 {
     std::span<const LChar> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
 
@@ -215,8 +222,15 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* s
 
     ParserError parserError;
     UnlinkedProgramCodeBlock* unlinkedCodeBlock = JSC::recursivelyGenerateUnlinkedCodeBlockForProgram(vm, sourceCode, lexicallyScopedFeatures, scriptMode, {}, parserError, evalContextType);
-    if (parserError.isValid())
+    if (parserError.isValid()) {
+        if (errorLoc) {
+            *errorLoc = parserError.token().m_startPosition.offset;
+        }
+        if (errorMessage) {
+            *errorMessage = Bun::toStringRef(parserError.message());
+        }
         return false;
+    }
     if (!unlinkedCodeBlock)
         return false;
 

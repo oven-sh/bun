@@ -859,6 +859,12 @@ pub const JSValue = enum(i64) {
     pub inline fn isNull(this: JSValue) bool {
         return this == .null;
     }
+    pub inline fn isEmptyOrUndefined(this: JSValue) bool {
+        return switch (this) {
+            .zero, .js_undefined => true,
+            else => false,
+        };
+    }
     pub inline fn isEmptyOrUndefinedOrNull(this: JSValue) bool {
         return switch (@intFromEnum(this)) {
             0, 0xa, 0x2 => true,

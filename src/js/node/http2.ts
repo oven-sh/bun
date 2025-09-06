@@ -2967,8 +2967,11 @@ class ServerHttp2Session extends Http2Session {
 
   settings(settings: Settings, callback) {
     this.#pendingSettingsAck = true;
+    if (callback) {
+      validateFunction(callback, "callback");
+    }
     this.#parser?.settings(settings);
-    if (typeof callback === "function") {
+    if (callback) {
       const start = Date.now();
       this.once("localSettings", () => {
         callback(null, this.#localSettings, Date.now() - start);
@@ -3405,8 +3408,11 @@ class ClientHttp2Session extends Http2Session {
 
   settings(settings: Settings, callback) {
     this.#pendingSettingsAck = true;
+    if (callback) {
+      validateFunction(callback, "callback");
+    }
     this.#parser?.settings(settings);
-    if (typeof callback === "function") {
+    if (callback) {
       const start = Date.now();
       this.once("localSettings", () => {
         callback(null, this.#localSettings, Date.now() - start);

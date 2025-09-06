@@ -166,6 +166,7 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
     clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
     clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
+    clap.parseParam("--global-name <STR>              Global variable name for IIFE bundles (IIFE only; must be a valid JS identifier)") catch unreachable,
     clap.parseParam("--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS") catch unreachable,
     clap.parseParam("--dump-environment-variables") catch unreachable,
     clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
@@ -1021,6 +1022,22 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
                 Global.exit(1);
             }
+        }
+
+        if (args.option("--global-name")) |global_name| {
+            // --global-name is only valid with --format=iife
+            if (ctx.bundler_options.output_format != .iife) {
+                Output.errGeneric("--global-name can only be used with --format=iife", .{});
+                Global.exit(1);
+            }
+
+            // Validate that the provided name is a valid JavaScript identifier
+            if (!bun.js_lexer.isIdentifier(global_name)) {
+                Output.errGeneric("--global-name must be a valid JavaScript identifier, got: {s}", .{global_name});
+                Global.exit(1);
+            }
+
+            ctx.bundler_options.global_name = global_name;
         }
 
         if (args.flag("--splitting")) {

@@ -222,11 +222,12 @@ export default [
       zrank: { fn: "zrank" },
       zrevrank: { fn: "zrevrank" },
       subscribe: { fn: "subscribe" },
+      duplicate: { fn: "duplicate" },
       psubscribe: { fn: "psubscribe" },
       unsubscribe: { fn: "unsubscribe" },
       punsubscribe: { fn: "punsubscribe" },
       pubsub: { fn: "pubsub" },
     },
-    values: ["onconnect", "onclose", "connectionPromise", "hello"],
+    values: ["onconnect", "onclose", "connectionPromise", "hello", "subscriptionCallbackMap"],
   }),
 ];

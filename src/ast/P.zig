@@ -6115,7 +6115,9 @@ pub fn NewParser_(
 
             if (!p.response_ref.isNull() and !p.ssr_response_ref.isNull()) {
                 const response_symbol = &p.symbols.items[p.response_ref.innerIndex()];
-                // if it has a link it means that the user declared a variable named `Response`
+                // If it has a link it means that the user somehow declared a
+                // variable named `Response` in the top-level scope, don't link
+                // it to SSRResponse
                 if (!response_symbol.hasLink()) {
                     response_symbol.link = p.ssr_response_ref;
                 }

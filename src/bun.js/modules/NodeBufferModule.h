@@ -10,6 +10,10 @@
 #include "wtf/SIMDUTF.h"
 #include <limits>
 
+namespace WebCore {
+    extern JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_transcode);
+}
+
 namespace Zig {
 using namespace WebCore;
 using namespace JSC;
@@ -202,7 +206,8 @@ DEFINE_NATIVE_MODULE(NodeBuffer)
     put(atobI, atobV);
     put(btoaI, btoaV);
 
-    auto* transcode = InternalFunction::createFunctionThatMasqueradesAsUndefined(vm, globalObject, 1, "transcode"_s, jsFunctionNotImplemented);
+    // Use the real transcode implementation from JSBuffer
+    auto* transcode = JSC::JSFunction::create(vm, globalObject, 3, "transcode"_s, WebCore::jsBufferConstructorFunction_transcode, ImplementationVisibility::Public, NoIntrinsic, WebCore::jsBufferConstructorFunction_transcode);
 
     put(JSC::Identifier::fromString(vm, "transcode"_s), transcode);
 

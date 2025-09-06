@@ -438,7 +438,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     var filters_to_use = ctx.filters;
     if (ctx.workspaces) {
         // Use "*" as filter to match all packages in the workspace
-        filters_to_use = &[_][]const u8{"*"};
+        filters_to_use = &.{"*"};
     }
     
     var filter_instance = try FilterArg.FilterSet.init(ctx.allocator, filters_to_use, fsinstance.top_level_dir);

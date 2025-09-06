@@ -1,11 +1,10 @@
 import { expect, test } from "bun:test";
-import { isWindows } from "harness";
 import { randomBytes } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-test.skipIf(isWindows)("Unix domain socket file should be cleaned up when listener.stop() is called", () => {
+test("Unix domain socket file should be cleaned up when listener.stop() is called", () => {
   // Generate a random socket path to avoid conflicts
   const socketPath = join(tmpdir(), `bun_test_${randomBytes(8).toString("hex")}.sock`);
 
@@ -34,7 +33,7 @@ test.skipIf(isWindows)("Unix domain socket file should be cleaned up when listen
   expect(existsSync(socketPath)).toBe(false);
 });
 
-test.skipIf(isWindows)("Unix domain socket file should be cleaned up when listener.stop(true) is called", () => {
+test("Unix domain socket file should be cleaned up when listener.stop(true) is called", () => {
   // Generate a random socket path
   const socketPath = join(tmpdir(), `bun_test_${randomBytes(8).toString("hex")}.sock`);
 
@@ -63,7 +62,7 @@ test.skipIf(isWindows)("Unix domain socket file should be cleaned up when listen
   expect(existsSync(socketPath)).toBe(false);
 });
 
-test.skipIf(isWindows)("Abstract Unix domain sockets should not leave files (start with null byte)", () => {
+test("Abstract Unix domain sockets should not leave files (start with null byte)", () => {
   // Abstract sockets start with a null byte and don't create filesystem entries
   const abstractPath = "\0bun_test_abstract_" + randomBytes(8).toString("hex");
 
@@ -85,9 +84,9 @@ test.skipIf(isWindows)("Abstract Unix domain sockets should not leave files (sta
   expect(true).toBe(true);
 });
 
-test.skipIf(isWindows)("Multiple Unix sockets cleanup", () => {
-  const sockets = [];
-  const paths = [];
+test("Multiple Unix sockets cleanup", () => {
+  const sockets: Array<Bun.UnixSocketListener<undefined>> = [];
+  const paths: string[] = [];
 
   // Create multiple Unix socket listeners
   for (let i = 0; i < 3; i++) {
@@ -125,7 +124,7 @@ test.skipIf(isWindows)("Multiple Unix sockets cleanup", () => {
   }
 });
 
-test.skipIf(isWindows)("Unix socket cleanup with active connections", async () => {
+test("Unix socket cleanup with active connections", async () => {
   const socketPath = join(tmpdir(), `bun_test_active_${randomBytes(8).toString("hex")}.sock`);
 
   // Clean up any existing socket file
@@ -133,21 +132,17 @@ test.skipIf(isWindows)("Unix socket cleanup with active connections", async () =
     unlinkSync(socketPath);
   }
 
-  let serverSocket = null;
   let connectionReceived = false;
 
-  // Create a Unix socket listener
   const listener = Bun.listen({
     unix: socketPath,
     socket: {
       open(socket) {
-        serverSocket = socket;
         connectionReceived = true;
       },
       data(socket, data) {
         socket.write(data);
       },
-      close(socket) {},
     },
   });
 
@@ -176,4 +171,5 @@ test.skipIf(isWindows)("Unix socket cleanup with active connections", async () =
 
   // Verify the socket file was cleaned up even with active connections
   expect(existsSync(socketPath)).toBe(false);
+  await client.close().catch(() => {});
 });

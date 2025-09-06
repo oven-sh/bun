@@ -440,17 +440,15 @@ fn doStop(this: *Listener, force_close: bool) void {
 
     // Unlink Unix socket file BEFORE closing the socket to avoid race conditions
     // (same approach as libuv - see uv__pipe_close in deps/uv/src/unix/pipe.c)
-    if (!Environment.isWindows) {
-        if (this.connection == .unix) {
-            const path = this.connection.unix;
-            // Don't unlink abstract sockets (those starting with '\0')
-            if (path.len > 0 and path[0] != 0) {
-                const path_buf = bun.path_buffer_pool.get();
-                defer bun.path_buffer_pool.put(path_buf);
-                @memcpy(path_buf.ptr[0..path.len], path);
-                path_buf.ptr[path.len] = 0;
-                _ = bun.sys.unlink(path_buf.ptr[0..path.len :0]);
-            }
+    if (this.connection == .unix) {
+        const path = this.connection.unix;
+        // Don't unlink abstract sockets (those starting with '\0')
+        if (path.len > 0 and path[0] != 0) {
+            const path_buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(path_buf);
+            @memcpy(path_buf.ptr[0..path.len], path);
+            path_buf.ptr[path.len] = 0;
+            _ = bun.sys.unlink(path_buf.ptr[0..path.len :0]);
         }
     }
 

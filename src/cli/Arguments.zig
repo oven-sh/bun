@@ -535,7 +535,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     // opts.inject = args.options("--inject");
     opts.env_files = args.options("--env-file");
     opts.extension_order = args.options("--extension-order");
-    
+
     // Handle --no-env-file flag to disable .env file loading
     if (args.flag("--no-env-file")) {
         // Clear any env files to signal no env loading

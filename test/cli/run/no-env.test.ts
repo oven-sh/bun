@@ -1,7 +1,5 @@
-import { expect, test, describe } from "bun:test";
-import { $ } from "bun";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "path";
 
 describe("--no-env-file flag", () => {
   test("should not load .env files when --no-env-file is specified", async () => {
@@ -28,11 +26,7 @@ describe("--no-env-file flag", () => {
       stdout: "pipe",
     });
 
-    const [stdout1, stderr1, exitCode1] = await Promise.all([
-      proc1.stdout.text(),
-      proc1.stderr.text(),
-      proc1.exited,
-    ]);
+    const [stdout1, stderr1, exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
 
     expect(exitCode1).toBe(0);
     const result1 = JSON.parse(stdout1);
@@ -50,11 +44,7 @@ describe("--no-env-file flag", () => {
       stdout: "pipe",
     });
 
-    const [stdout2, stderr2, exitCode2] = await Promise.all([
-      proc2.stdout.text(),
-      proc2.stderr.text(),
-      proc2.exited,
-    ]);
+    const [stdout2, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
 
     expect(exitCode2).toBe(0);
     const result2 = JSON.parse(stdout2);
@@ -81,11 +71,7 @@ describe("--no-env-file flag", () => {
       stdout: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout.trim()).toBe("undefined");
@@ -112,11 +98,7 @@ describe("--no-env-file flag", () => {
       stdout: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout).toContain("1 pass");
@@ -140,11 +122,7 @@ describe("--no-env-file flag", () => {
       stdout: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout.trim()).toBe("undefined");
@@ -177,11 +155,7 @@ file = false
       stdout: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     const result = JSON.parse(stdout);
@@ -210,11 +184,7 @@ file = false
       stdout: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout.trim()).toBe("from_custom_file");
@@ -240,11 +210,7 @@ file = false
       stdout: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout.trim()).toBe("undefined");
@@ -274,11 +240,7 @@ file = false
       stdout: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout).toContain("1 pass");

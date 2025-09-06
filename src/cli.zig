@@ -433,7 +433,7 @@ pub const Command = struct {
                 .allocator = allocator,
             };
             global_cli_ctx = &context_data;
-            
+
             // Set appropriate default env_behavior based on command
             // Build command uses .disable as default (env vars handled via define mechanism)
             // Run/Test/other commands use .load_all_without_inlining as default

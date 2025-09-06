@@ -146,7 +146,7 @@ static double toPercentile(JSC::ThrowScope& scope, JSGlobalObject* globalObject,
     Bun::V::validateNumber(scope, globalObject, value, "percentile"_s, jsNumber(0), jsNumber(100));
     RETURN_IF_EXCEPTION(scope, {});
 
-    // TODO: ®ewrite validateNumber to return the validated value.
+    // TODO: rewrite validateNumber to return the validated value.
     double percentile = value.toNumber(globalObject);
     scope.assertNoException();
     if (percentile <= 0 || percentile > 100 || std::isnan(percentile)) {

@@ -1,5 +1,5 @@
 // Internal module for monitorEventLoopDelay implementation
-const { validateObject, validateInteger, validateNumber } = require("internal/validators");
+const { validateObject, validateInteger } = require("internal/validators");
 
 // Private C++ bindings for event loop delay monitoring
 const cppMonitorEventLoopDelay = $newCppFunction(

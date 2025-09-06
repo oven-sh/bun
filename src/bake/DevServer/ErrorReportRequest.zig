@@ -225,17 +225,19 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
         .browser_url = .init(browser_url),
     };
 
-    const stderr = Output.errorWriterBuffered();
-    defer Output.flush();
-    switch (Output.enable_ansi_colors_stderr) {
-        inline else => |ansi_colors| ctx.dev.vm.printExternallyRemappedZigException(
-            &exception,
-            null,
-            @TypeOf(stderr),
-            stderr,
-            true,
-            ansi_colors,
-        ) catch {},
+    if (ctx.dev.enable_uncaught_exception_reporting_from_browser_to_terminal) {
+        const stderr = Output.errorWriterBuffered();
+        defer Output.flush();
+        switch (Output.enable_ansi_colors_stderr) {
+            inline else => |ansi_colors| ctx.dev.vm.printExternallyRemappedZigException(
+                &exception,
+                null,
+                @TypeOf(stderr),
+                stderr,
+                true,
+                ansi_colors,
+            ) catch {},
+        }
     }
 
     var out: std.ArrayList(u8) = .init(ctx.dev.allocator());

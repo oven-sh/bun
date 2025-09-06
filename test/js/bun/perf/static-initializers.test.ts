@@ -60,10 +60,12 @@ describe("static initializers", () => {
       .filter(line => line.includes("running initializer") && line.includes(bunExe()));
 
     // On both architectures, we have one initializer "__GLOBAL__sub_I_static.c".
-    // On x86_64, we also have one from ___cpu_indicator_init due to our CPU feature detection.
+    // On x86_64 macOS:
+    // - we also have one from ___cpu_indicator_init due to our CPU feature detection.
+    // - SQLite3's function callbacks
     expect(
       bunInitializers.length,
       `Do not add static initializers to Bun. Static initializers are called when Bun starts up, regardless of whether you use the variables or not. This makes Bun slower.`,
-    ).toBe(process.arch === "arm64" ? 1 : 2);
+    ).toBe(process.arch === "arm64" ? 1 : 3);
   });
 });

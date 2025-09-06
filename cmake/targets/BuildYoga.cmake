@@ -1,0 +1,26 @@
+register_repository(
+  NAME
+    yoga
+  REPOSITORY
+    facebook/yoga
+  COMMIT
+    dc2581f229cb05c7d2af8dee37b2ee0b59fd5326
+)
+
+register_cmake_command(
+  TARGET
+    yoga
+  TARGETS
+    yogacore
+  ARGS
+    -DBUILD_SHARED_LIBS=OFF
+    -DYOGA_BUILD_TESTS=OFF
+    -DYOGA_BUILD_SAMPLES=OFF
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+  LIB_PATH
+    yoga
+  LIBRARIES
+    yogacore
+  INCLUDES
+    .
+)

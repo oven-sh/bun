@@ -7,6 +7,7 @@ const os = require('os');
 const {
   monitorEventLoopDelay
 } = require('perf_hooks');
+const sleep = typeof Bun === 'object' ? Bun.sleepSync : require('internal/util').sleep;
 
 {
   const histogram = monitorEventLoopDelay();
@@ -59,16 +60,7 @@ const {
     m = m * 2;
   }
   function spinAWhile() {
-    if (globalThis.Bun) {
-      Bun.sleepSync(1000);
-    } else {
-      // In Node.js, this test would use internal/util's sleep
-      // For compatibility, we'll use a busy wait
-      const start = Date.now();
-      while (Date.now() - start < 1000) {
-        // Busy wait
-      }
-    }
+    sleep(1000);
     if (--m > 0) {
       setTimeout(spinAWhile, common.platformTimeout(500));
     } else {

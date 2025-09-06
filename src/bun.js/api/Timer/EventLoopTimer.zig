@@ -219,7 +219,7 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) Arm {
         },
         .EventLoopDelayMonitor => {
             const monitor = @as(*jsc.API.Timer.EventLoopDelayMonitor, @fieldParentPtr("event_loop_timer", self));
-            monitor.onFire(vm);
+            monitor.onFire(vm, now);
             return .disarm;
         },
         inline else => |t| {

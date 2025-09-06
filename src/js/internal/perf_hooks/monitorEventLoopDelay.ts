@@ -21,80 +21,52 @@ const cppDisableEventLoopDelay = $newCppFunction(
 ) as (histogram: import("node:perf_hooks").RecordableHistogram) => void;
 
 // IntervalHistogram wrapper class for event loop delay monitoring
-class IntervalHistogram {
-  #histogram: import("node:perf_hooks").RecordableHistogram;
-  #resolution: number;
-  #enabled: boolean = false;
 
-  constructor(resolution: number) {
-    this.#resolution = resolution;
-    this.#histogram = cppMonitorEventLoopDelay(resolution);
-  }
+let eventLoopDelayHistogram: import("node:perf_hooks").RecordableHistogram | undefined;
+let enabled = false;
+let resolution = 10;
 
-  enable() {
-    if (!this.#enabled) {
-      cppEnableEventLoopDelay(this.#histogram, this.#resolution);
-      this.#enabled = true;
-      return true;
-    }
+function enable() {
+  if (enabled) {
     return false;
   }
 
-  disable() {
-    if (this.#enabled) {
-      cppDisableEventLoopDelay(this.#histogram);
-      this.#enabled = false;
-      return true;
-    }
+  enabled = true;
+  cppEnableEventLoopDelay(eventLoopDelayHistogram!, resolution);
+  return true;
+}
+
+function disable() {
+  if (!enabled) {
     return false;
   }
 
-  reset() {
-    this.#histogram.reset();
-  }
-
-  get min() {
-    return this.#histogram.min;
-  }
-
-  get max() {
-    return this.#histogram.max;
-  }
-
-  get mean() {
-    return this.#histogram.mean;
-  }
-
-  get stddev() {
-    return this.#histogram.stddev;
-  }
-
-  get exceeds() {
-    return this.#histogram.exceeds;
-  }
-
-  get percentiles() {
-    return this.#histogram.percentiles;
-  }
-
-  percentile(p: number) {
-    validateNumber(p, "percentile");
-    return this.#histogram.percentile(p);
-  }
+  enabled = false;
+  cppDisableEventLoopDelay(eventLoopDelayHistogram!);
+  return true;
 }
 
 function monitorEventLoopDelay(options?: { resolution?: number }) {
+  console.log("monitorEventLoopDelay", options);
   if (options !== undefined) {
     validateObject(options, "options");
   }
 
-  let resolution = 10;
-  if (options?.resolution !== undefined) {
-    validateInteger(options.resolution, "options.resolution", 1);
-    resolution = options.resolution;
+  resolution = 10;
+  let resolutionOption = options?.resolution;
+  if (typeof resolutionOption !== "undefined") {
+    validateInteger(resolutionOption, "options.resolution", 1);
+    resolution = resolutionOption;
   }
 
-  return new IntervalHistogram(resolution);
+  if (!eventLoopDelayHistogram) {
+    eventLoopDelayHistogram = cppMonitorEventLoopDelay(resolution);
+    $putByValDirect(eventLoopDelayHistogram, "enable", enable);
+    $putByValDirect(eventLoopDelayHistogram, "disable", disable);
+    $putByValDirect(eventLoopDelayHistogram, Symbol.dispose, disable);
+  }
+
+  return eventLoopDelayHistogram;
 }
 
 export default monitorEventLoopDelay;

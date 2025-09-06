@@ -1,5 +1,6 @@
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
+#include "NodeValidator.h"
 #include "root.h"
 
 #include "JSNodePerformanceHooksHistogramPrototype.h"
@@ -140,6 +141,16 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncReset, (JSGloba
     return JSValue::encode(jsUndefined());
 }
 
+static double toPercentile(JSC::ThrowScope& scope, JSGlobalObject* globalObject, JSValue value)
+{
+    Bun::V::validateNumber(scope, globalObject, value, "percentile"_s, jsNumber(0), jsNumber(100));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // TODO: ®ewrite validateNumber to return the validated value.
+    double percentile = value.toNumber(globalObject);
+    scope.assertNoException();
+    return percentile;
+}
 JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentile, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -156,12 +167,8 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentile, (JS
         return {};
     }
 
-    double percentile = callFrame->uncheckedArgument(0).toNumber(globalObject);
+    double percentile = toPercentile(scope, globalObject, callFrame->uncheckedArgument(0));
     RETURN_IF_EXCEPTION(scope, {});
-    if (percentile <= 0 || percentile > 100 || std::isnan(percentile)) {
-        Bun::ERR::OUT_OF_RANGE(scope, globalObject, "percentile"_s, "> 0 && <= 100"_s, jsNumber(percentile));
-        return {};
-    }
 
     return JSValue::encode(jsNumber(static_cast<double>(thisObject->getPercentile(percentile))));
 }
@@ -182,12 +189,8 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentileBigIn
         return {};
     }
 
-    double percentile = callFrame->uncheckedArgument(0).toNumber(globalObject);
+    double percentile = toPercentile(scope, globalObject, callFrame->uncheckedArgument(0));
     RETURN_IF_EXCEPTION(scope, {});
-    if (percentile <= 0 || percentile > 100 || std::isnan(percentile)) {
-        Bun::ERR::OUT_OF_RANGE(scope, globalObject, "percentile"_s, "> 0 && <= 100"_s, jsNumber(percentile));
-        return {};
-    }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getPercentile(percentile))));
 }

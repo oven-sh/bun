@@ -12,7 +12,7 @@ enabled: bool = false,
 pub fn enable(this: *EventLoopDelayMonitor, vm: *VirtualMachine, histogram: *anyopaque, resolution_ms: i32) void {
     this.js_histogram = histogram;
     this.resolution_ms = resolution_ms;
-    this.last_fire_ns = bun.timespec.now().ns();
+
     this.enabled = true;
 
     // Schedule timer
@@ -33,10 +33,12 @@ pub fn isEnabled(this: *const EventLoopDelayMonitor) bool {
     return this.enabled and this.js_histogram != null;
 }
 
-pub fn onFire(this: *EventLoopDelayMonitor, vm: *VirtualMachine) void {
-    if (!this.enabled or this.js_histogram == null) return;
+pub fn onFire(this: *EventLoopDelayMonitor, vm: *VirtualMachine, now: *const bun.timespec) void {
+    if (!this.enabled or this.js_histogram == null) {
+        return;
+    }
 
-    const now_ns = bun.timespec.now().ns();
+    const now_ns = now.ns();
     if (this.last_fire_ns > 0) {
         const expected_ns = @as(u64, @intCast(this.resolution_ms)) * 1_000_000;
         const actual_ns = now_ns - this.last_fire_ns;
@@ -50,7 +52,6 @@ pub fn onFire(this: *EventLoopDelayMonitor, vm: *VirtualMachine) void {
     this.last_fire_ns = now_ns;
 
     // Reschedule
-    const now = bun.timespec.now();
     this.event_loop_timer.next = now.addMs(@intCast(this.resolution_ms));
     vm.timer.insert(&this.event_loop_timer);
 }

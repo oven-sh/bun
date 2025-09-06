@@ -1,20 +1,11 @@
 // Hardcoded module "node:perf_hooks"
 const { throwNotImplemented } = require("internal/shared");
 
-const createFunctionThatMasqueradesAsUndefined = $newCppFunction(
-  "ZigGlobalObject.cpp",
-  "jsFunctionCreateFunctionThatMasqueradesAsUndefined",
-  2,
-);
-
 const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp", "jsFunction_createHistogram", 3) as (
   min: number,
   max: number,
   figures: number,
 ) => import("node:perf_hooks").RecordableHistogram;
-
-// Import monitorEventLoopDelay implementation
-const monitorEventLoopDelayImpl = require("internal/perf_hooks/monitorEventLoopDelay");
 
 var {
   Performance,
@@ -182,7 +173,8 @@ export default {
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
   monitorEventLoopDelay: function monitorEventLoopDelay(options?: { resolution?: number }) {
-    return monitorEventLoopDelayImpl(options);
+    const impl = require("internal/perf_hooks/monitorEventLoopDelay");
+    return impl(options);
   },
   createHistogram: function createHistogram(options?: {
     lowest?: number | bigint;

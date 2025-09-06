@@ -38,7 +38,7 @@ typedef const char* (*lazy_sqlite3_column_name_type)(sqlite3_stmt*, int N);
 typedef const char* (*lazy_sqlite3_errmsg_type)(sqlite3*);
 typedef int (*lazy_sqlite3_extended_errcode_type)(sqlite3*);
 typedef int (*lazy_sqlite3_error_offset_type)(sqlite3*);
-typedef int64_t (*lazy_sqlite3_memory_used_type)();
+typedef sqlite3_int64 (*lazy_sqlite3_memory_used_type)();
 typedef const char* (*lazy_sqlite3_errstr_type)(int);
 typedef char* (*lazy_sqlite3_expanded_sql_type)(sqlite3_stmt* pStmt);
 typedef int (*lazy_sqlite3_finalize_type)(sqlite3_stmt* pStmt);
@@ -93,70 +93,125 @@ typedef int (*lazy_sqlite3_deserialize_type)(
 typedef int (*lazy_sqlite3_stmt_readonly_type)(sqlite3_stmt* pStmt);
 typedef int (*lazy_sqlite3_stmt_busy_type)(sqlite3_stmt* pStmt);
 typedef int (*lazy_sqlite3_compileoption_used_type)(const char* zOptName);
-typedef int64_t (*lazy_sqlite3_last_insert_rowid_type)(sqlite3* db);
-
-static lazy_sqlite3_bind_blob_type lazy_sqlite3_bind_blob;
-static lazy_sqlite3_bind_double_type lazy_sqlite3_bind_double;
-static lazy_sqlite3_bind_int_type lazy_sqlite3_bind_int;
-static lazy_sqlite3_bind_int64_type lazy_sqlite3_bind_int64;
-static lazy_sqlite3_bind_null_type lazy_sqlite3_bind_null;
-static lazy_sqlite3_bind_parameter_count_type lazy_sqlite3_bind_parameter_count;
-static lazy_sqlite3_bind_parameter_index_type lazy_sqlite3_bind_parameter_index;
-static lazy_sqlite3_bind_text_type lazy_sqlite3_bind_text;
-static lazy_sqlite3_bind_text16_type lazy_sqlite3_bind_text16;
-static lazy_sqlite3_changes_type lazy_sqlite3_changes;
-static lazy_sqlite3_clear_bindings_type lazy_sqlite3_clear_bindings;
-static lazy_sqlite3_close_v2_type lazy_sqlite3_close_v2;
-static lazy_sqlite3_close_type lazy_sqlite3_close;
-static lazy_sqlite3_file_control_type lazy_sqlite3_file_control;
-static lazy_sqlite3_column_blob_type lazy_sqlite3_column_blob;
-static lazy_sqlite3_column_bytes_type lazy_sqlite3_column_bytes;
-static lazy_sqlite3_column_bytes16_type lazy_sqlite3_column_bytes16;
-static lazy_sqlite3_column_count_type lazy_sqlite3_column_count;
-static lazy_sqlite3_column_decltype_type lazy_sqlite3_column_decltype;
-static lazy_sqlite3_column_double_type lazy_sqlite3_column_double;
-static lazy_sqlite3_column_int_type lazy_sqlite3_column_int;
-static lazy_sqlite3_column_int64_type lazy_sqlite3_column_int64;
-static lazy_sqlite3_column_name_type lazy_sqlite3_column_name;
-static lazy_sqlite3_column_text_type lazy_sqlite3_column_text;
-static lazy_sqlite3_column_type_type lazy_sqlite3_column_type;
-static lazy_sqlite3_errmsg_type lazy_sqlite3_errmsg;
-static lazy_sqlite3_errstr_type lazy_sqlite3_errstr;
-static lazy_sqlite3_expanded_sql_type lazy_sqlite3_expanded_sql;
-static lazy_sqlite3_finalize_type lazy_sqlite3_finalize;
-static lazy_sqlite3_free_type lazy_sqlite3_free;
-static lazy_sqlite3_get_autocommit_type lazy_sqlite3_get_autocommit;
-static lazy_sqlite3_open_v2_type lazy_sqlite3_open_v2;
-static lazy_sqlite3_prepare_v3_type lazy_sqlite3_prepare_v3;
-static lazy_sqlite3_prepare16_v3_type lazy_sqlite3_prepare16_v3;
-static lazy_sqlite3_reset_type lazy_sqlite3_reset;
-static lazy_sqlite3_step_type lazy_sqlite3_step;
-static lazy_sqlite3_db_config_type lazy_sqlite3_db_config;
-static lazy_sqlite3_load_extension_type lazy_sqlite3_load_extension;
-static lazy_sqlite3_malloc64_type lazy_sqlite3_malloc64;
-static lazy_sqlite3_serialize_type lazy_sqlite3_serialize;
-static lazy_sqlite3_deserialize_type lazy_sqlite3_deserialize;
-static lazy_sqlite3_stmt_readonly_type lazy_sqlite3_stmt_readonly;
-static lazy_sqlite3_stmt_busy_type lazy_sqlite3_stmt_busy;
-static lazy_sqlite3_compileoption_used_type lazy_sqlite3_compileoption_used;
-static lazy_sqlite3_config_type lazy_sqlite3_config;
-static lazy_sqlite3_extended_result_codes_type lazy_sqlite3_extended_result_codes;
-static lazy_sqlite3_extended_errcode_type lazy_sqlite3_extended_errcode;
-static lazy_sqlite3_error_offset_type lazy_sqlite3_error_offset;
-static lazy_sqlite3_memory_used_type lazy_sqlite3_memory_used;
-static lazy_sqlite3_bind_parameter_name_type lazy_sqlite3_bind_parameter_name;
-static lazy_sqlite3_total_changes_type lazy_sqlite3_total_changes;
-static lazy_sqlite3_last_insert_rowid_type lazy_sqlite3_last_insert_rowid;
+typedef sqlite3_int64 (*lazy_sqlite3_last_insert_rowid_type)(sqlite3* db);
 
 #if LAZY_LOAD_SQLITE
-// Only redefine if we're using lazy loading from the start (macOS)
+// On macOS: start with null pointers that will be dynamically loaded
+static lazy_sqlite3_bind_blob_type lazy_sqlite3_bind_blob = nullptr;
+static lazy_sqlite3_bind_double_type lazy_sqlite3_bind_double = nullptr;
+static lazy_sqlite3_bind_int_type lazy_sqlite3_bind_int = nullptr;
+static lazy_sqlite3_bind_int64_type lazy_sqlite3_bind_int64 = nullptr;
+static lazy_sqlite3_bind_null_type lazy_sqlite3_bind_null = nullptr;
+static lazy_sqlite3_bind_parameter_count_type lazy_sqlite3_bind_parameter_count = nullptr;
+static lazy_sqlite3_bind_parameter_index_type lazy_sqlite3_bind_parameter_index = nullptr;
+static lazy_sqlite3_bind_text_type lazy_sqlite3_bind_text = nullptr;
+static lazy_sqlite3_bind_text16_type lazy_sqlite3_bind_text16 = nullptr;
+static lazy_sqlite3_changes_type lazy_sqlite3_changes = nullptr;
+static lazy_sqlite3_clear_bindings_type lazy_sqlite3_clear_bindings = nullptr;
+static lazy_sqlite3_close_v2_type lazy_sqlite3_close_v2 = nullptr;
+static lazy_sqlite3_close_type lazy_sqlite3_close = nullptr;
+static lazy_sqlite3_file_control_type lazy_sqlite3_file_control = nullptr;
+static lazy_sqlite3_column_blob_type lazy_sqlite3_column_blob = nullptr;
+static lazy_sqlite3_column_bytes_type lazy_sqlite3_column_bytes = nullptr;
+static lazy_sqlite3_column_bytes16_type lazy_sqlite3_column_bytes16 = nullptr;
+static lazy_sqlite3_column_count_type lazy_sqlite3_column_count = nullptr;
+static lazy_sqlite3_column_decltype_type lazy_sqlite3_column_decltype = nullptr;
+static lazy_sqlite3_column_double_type lazy_sqlite3_column_double = nullptr;
+static lazy_sqlite3_column_int_type lazy_sqlite3_column_int = nullptr;
+static lazy_sqlite3_column_int64_type lazy_sqlite3_column_int64 = nullptr;
+static lazy_sqlite3_column_name_type lazy_sqlite3_column_name = nullptr;
+static lazy_sqlite3_column_text_type lazy_sqlite3_column_text = nullptr;
+static lazy_sqlite3_column_type_type lazy_sqlite3_column_type = nullptr;
+static lazy_sqlite3_errmsg_type lazy_sqlite3_errmsg = nullptr;
+static lazy_sqlite3_errstr_type lazy_sqlite3_errstr = nullptr;
+static lazy_sqlite3_expanded_sql_type lazy_sqlite3_expanded_sql = nullptr;
+static lazy_sqlite3_finalize_type lazy_sqlite3_finalize = nullptr;
+static lazy_sqlite3_free_type lazy_sqlite3_free = nullptr;
+static lazy_sqlite3_get_autocommit_type lazy_sqlite3_get_autocommit = nullptr;
+static lazy_sqlite3_open_v2_type lazy_sqlite3_open_v2 = nullptr;
+static lazy_sqlite3_prepare_v3_type lazy_sqlite3_prepare_v3 = nullptr;
+static lazy_sqlite3_prepare16_v3_type lazy_sqlite3_prepare16_v3 = nullptr;
+static lazy_sqlite3_reset_type lazy_sqlite3_reset = nullptr;
+static lazy_sqlite3_step_type lazy_sqlite3_step = nullptr;
+static lazy_sqlite3_db_config_type lazy_sqlite3_db_config = nullptr;
+static lazy_sqlite3_load_extension_type lazy_sqlite3_load_extension = nullptr;
+static lazy_sqlite3_malloc64_type lazy_sqlite3_malloc64 = nullptr;
+static lazy_sqlite3_serialize_type lazy_sqlite3_serialize = nullptr;
+static lazy_sqlite3_deserialize_type lazy_sqlite3_deserialize = nullptr;
+static lazy_sqlite3_stmt_readonly_type lazy_sqlite3_stmt_readonly = nullptr;
+static lazy_sqlite3_stmt_busy_type lazy_sqlite3_stmt_busy = nullptr;
+static lazy_sqlite3_compileoption_used_type lazy_sqlite3_compileoption_used = nullptr;
+static lazy_sqlite3_config_type lazy_sqlite3_config = nullptr;
+static lazy_sqlite3_extended_result_codes_type lazy_sqlite3_extended_result_codes = nullptr;
+static lazy_sqlite3_extended_errcode_type lazy_sqlite3_extended_errcode = nullptr;
+static lazy_sqlite3_error_offset_type lazy_sqlite3_error_offset = nullptr;
+static lazy_sqlite3_memory_used_type lazy_sqlite3_memory_used = nullptr;
+static lazy_sqlite3_bind_parameter_name_type lazy_sqlite3_bind_parameter_name = nullptr;
+static lazy_sqlite3_total_changes_type lazy_sqlite3_total_changes = nullptr;
+static lazy_sqlite3_last_insert_rowid_type lazy_sqlite3_last_insert_rowid = nullptr;
+#else
+// On Linux: statically initialize to actual SQLite functions
+static lazy_sqlite3_bind_blob_type lazy_sqlite3_bind_blob = sqlite3_bind_blob;
+static lazy_sqlite3_bind_double_type lazy_sqlite3_bind_double = sqlite3_bind_double;
+static lazy_sqlite3_bind_int_type lazy_sqlite3_bind_int = sqlite3_bind_int;
+static lazy_sqlite3_bind_int64_type lazy_sqlite3_bind_int64 = sqlite3_bind_int64;
+static lazy_sqlite3_bind_null_type lazy_sqlite3_bind_null = sqlite3_bind_null;
+static lazy_sqlite3_bind_parameter_count_type lazy_sqlite3_bind_parameter_count = sqlite3_bind_parameter_count;
+static lazy_sqlite3_bind_parameter_index_type lazy_sqlite3_bind_parameter_index = sqlite3_bind_parameter_index;
+static lazy_sqlite3_bind_text_type lazy_sqlite3_bind_text = sqlite3_bind_text;
+static lazy_sqlite3_bind_text16_type lazy_sqlite3_bind_text16 = sqlite3_bind_text16;
+static lazy_sqlite3_changes_type lazy_sqlite3_changes = sqlite3_changes;
+static lazy_sqlite3_clear_bindings_type lazy_sqlite3_clear_bindings = sqlite3_clear_bindings;
+static lazy_sqlite3_close_v2_type lazy_sqlite3_close_v2 = sqlite3_close_v2;
+static lazy_sqlite3_close_type lazy_sqlite3_close = sqlite3_close;
+static lazy_sqlite3_file_control_type lazy_sqlite3_file_control = sqlite3_file_control;
+static lazy_sqlite3_column_blob_type lazy_sqlite3_column_blob = sqlite3_column_blob;
+static lazy_sqlite3_column_bytes_type lazy_sqlite3_column_bytes = sqlite3_column_bytes;
+static lazy_sqlite3_column_bytes16_type lazy_sqlite3_column_bytes16 = sqlite3_column_bytes16;
+static lazy_sqlite3_column_count_type lazy_sqlite3_column_count = sqlite3_column_count;
+static lazy_sqlite3_column_decltype_type lazy_sqlite3_column_decltype = sqlite3_column_decltype;
+static lazy_sqlite3_column_double_type lazy_sqlite3_column_double = sqlite3_column_double;
+static lazy_sqlite3_column_int_type lazy_sqlite3_column_int = sqlite3_column_int;
+static lazy_sqlite3_column_int64_type lazy_sqlite3_column_int64 = sqlite3_column_int64;
+static lazy_sqlite3_column_name_type lazy_sqlite3_column_name = sqlite3_column_name;
+static lazy_sqlite3_column_text_type lazy_sqlite3_column_text = sqlite3_column_text;
+static lazy_sqlite3_column_type_type lazy_sqlite3_column_type = sqlite3_column_type;
+static lazy_sqlite3_errmsg_type lazy_sqlite3_errmsg = sqlite3_errmsg;
+static lazy_sqlite3_errstr_type lazy_sqlite3_errstr = sqlite3_errstr;
+static lazy_sqlite3_expanded_sql_type lazy_sqlite3_expanded_sql = sqlite3_expanded_sql;
+static lazy_sqlite3_finalize_type lazy_sqlite3_finalize = sqlite3_finalize;
+static lazy_sqlite3_free_type lazy_sqlite3_free = sqlite3_free;
+static lazy_sqlite3_get_autocommit_type lazy_sqlite3_get_autocommit = sqlite3_get_autocommit;
+static lazy_sqlite3_open_v2_type lazy_sqlite3_open_v2 = sqlite3_open_v2;
+static lazy_sqlite3_prepare_v3_type lazy_sqlite3_prepare_v3 = sqlite3_prepare_v3;
+static lazy_sqlite3_prepare16_v3_type lazy_sqlite3_prepare16_v3 = sqlite3_prepare16_v3;
+static lazy_sqlite3_reset_type lazy_sqlite3_reset = sqlite3_reset;
+static lazy_sqlite3_step_type lazy_sqlite3_step = sqlite3_step;
+static lazy_sqlite3_db_config_type lazy_sqlite3_db_config = sqlite3_db_config;
+static lazy_sqlite3_load_extension_type lazy_sqlite3_load_extension = sqlite3_load_extension;
+static lazy_sqlite3_malloc64_type lazy_sqlite3_malloc64 = sqlite3_malloc64;
+static lazy_sqlite3_serialize_type lazy_sqlite3_serialize = sqlite3_serialize;
+static lazy_sqlite3_deserialize_type lazy_sqlite3_deserialize = sqlite3_deserialize;
+static lazy_sqlite3_stmt_readonly_type lazy_sqlite3_stmt_readonly = sqlite3_stmt_readonly;
+static lazy_sqlite3_stmt_busy_type lazy_sqlite3_stmt_busy = sqlite3_stmt_busy;
+static lazy_sqlite3_compileoption_used_type lazy_sqlite3_compileoption_used = sqlite3_compileoption_used;
+static lazy_sqlite3_config_type lazy_sqlite3_config = sqlite3_config;
+static lazy_sqlite3_extended_result_codes_type lazy_sqlite3_extended_result_codes = sqlite3_extended_result_codes;
+static lazy_sqlite3_extended_errcode_type lazy_sqlite3_extended_errcode = sqlite3_extended_errcode;
+static lazy_sqlite3_error_offset_type lazy_sqlite3_error_offset = sqlite3_error_offset;
+static lazy_sqlite3_memory_used_type lazy_sqlite3_memory_used = sqlite3_memory_used;
+static lazy_sqlite3_bind_parameter_name_type lazy_sqlite3_bind_parameter_name = sqlite3_bind_parameter_name;
+static lazy_sqlite3_total_changes_type lazy_sqlite3_total_changes = sqlite3_total_changes;
+static lazy_sqlite3_last_insert_rowid_type lazy_sqlite3_last_insert_rowid = sqlite3_last_insert_rowid;
+#endif
+
+// Always redirect through function pointers for consistent behavior
+// On macOS: pointers loaded from dylib
+// On Linux: pointers initialized to static symbols (or dylib if setCustomSQLite used)
 #define sqlite3_bind_blob lazy_sqlite3_bind_blob
 #define sqlite3_bind_double lazy_sqlite3_bind_double
 #define sqlite3_bind_int lazy_sqlite3_bind_int
 #define sqlite3_bind_int64 lazy_sqlite3_bind_int64
-#endif
-
-#if LAZY_LOAD_SQLITE
 #define sqlite3_bind_null lazy_sqlite3_bind_null
 #define sqlite3_bind_parameter_count lazy_sqlite3_bind_parameter_count
 #define sqlite3_bind_parameter_index lazy_sqlite3_bind_parameter_index
@@ -204,7 +259,6 @@ static lazy_sqlite3_last_insert_rowid_type lazy_sqlite3_last_insert_rowid;
 #define sqlite3_bind_parameter_name lazy_sqlite3_bind_parameter_name
 #define sqlite3_total_changes lazy_sqlite3_total_changes
 #define sqlite3_last_insert_rowid lazy_sqlite3_last_insert_rowid
-#endif
 
 #if !OS(WINDOWS)
 #define HMODULE void*
@@ -241,12 +295,12 @@ static int lazyLoadSQLite()
 #if !LAZY_LOAD_SQLITE
     // On Linux with static linking by default
     if (use_static_sqlite) {
-        // We're using static linking - nothing to do, functions are used directly
-        // Mark as loaded to prevent reloading
+        // Function pointers are already statically initialized to SQLite functions
+        // Just mark as loaded to prevent reloading
         sqlite3_handle = (HMODULE)1; // Use a non-null value to indicate static loading
         return 0;
     }
-    // If we get here on Linux, we're switching to dynamic loading
+    // If we get here on Linux, we're switching to dynamic loading via setCustomSQLite
 #endif
 #if OS(WINDOWS)
     sqlite3_handle = LoadLibraryA(sqlite3_lib_path.c_str());
@@ -329,7 +383,7 @@ static int lazyLoadSQLite()
     }
 
     if (!lazy_sqlite3_memory_used) {
-        lazy_sqlite3_memory_used = []() -> int64_t {
+        lazy_sqlite3_memory_used = []() -> sqlite3_int64 {
             return 0;
         };
     }

@@ -602,7 +602,7 @@ pub const CommandLineReporter = struct {
 
     fn printTestLine(
         comptime status: describe2.Execution.Result,
-        buntest: *describe2.BunTestFile,
+        buntest: *describe2.BunTest,
         sequence: *describe2.Execution.ExecutionSequence,
         test_entry: *describe2.ExecutionEntry,
         elapsed_ns: u64,
@@ -828,7 +828,7 @@ pub const CommandLineReporter = struct {
         return &this.jest.summary;
     }
 
-    pub fn handleTestCompleted(buntest: *describe2.BunTestFile, sequence: *describe2.Execution.ExecutionSequence, test_entry: *describe2.ExecutionEntry, elapsed_ns: u64) void {
+    pub fn handleTestCompleted(buntest: *describe2.BunTest, sequence: *describe2.Execution.ExecutionSequence, test_entry: *describe2.ExecutionEntry, elapsed_ns: u64) void {
         var output_buf: std.ArrayListUnmanaged(u8) = .empty; // TODO: save skips and fails in skips_to_repeat_buf and fails_to_repeat_buf
         defer output_buf.deinit(buntest.gpa);
 

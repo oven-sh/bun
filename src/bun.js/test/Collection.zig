@@ -18,7 +18,7 @@ const QueuedDescribe = struct {
     }
 };
 
-pub fn init(gpa: std.mem.Allocator, bun_test_root: *describe2.BunTest) Collection {
+pub fn init(gpa: std.mem.Allocator, bun_test_root: *describe2.BunTestRoot) Collection {
     group.begin(@src());
     defer group.end();
 
@@ -53,7 +53,7 @@ pub fn deinit(this: *Collection) void {
     this.filter_buffer.deinit();
 }
 
-fn bunTest(this: *Collection) *BunTestFile {
+fn bunTest(this: *Collection) *BunTest {
     return @fieldParentPtr("collection", this);
 }
 
@@ -75,7 +75,7 @@ pub fn enqueueDescribeCallback(this: *Collection, new_scope: *DescribeScope, cal
     }
 }
 
-pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, _: ?jsc.JSValue, data: describe2.BunTestFile.RefDataValue) bun.JSError!void {
+pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, _: ?jsc.JSValue, data: describe2.BunTest.RefDataValue) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
@@ -95,7 +95,7 @@ pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, _: ?j
     group.log("collection:runOneCompleted reset scope back to {s}", .{this.active_scope.base.name orelse "undefined"});
 }
 
-pub fn step(this: *Collection, globalThis: *jsc.JSGlobalObject, data: describe2.BunTestFile.RefDataValue) bun.JSError!describe2.StepResult {
+pub fn step(this: *Collection, globalThis: *jsc.JSGlobalObject, data: describe2.BunTest.RefDataValue) bun.JSError!describe2.StepResult {
     group.begin(@src());
     defer group.end();
 
@@ -147,7 +147,7 @@ pub fn step(this: *Collection, globalThis: *jsc.JSGlobalObject, data: describe2.
     return .complete;
 }
 
-pub fn handleUncaughtException(this: *Collection, _: describe2.BunTestFile.RefDataValue) describe2.HandleUncaughtExceptionResult {
+pub fn handleUncaughtException(this: *Collection, _: describe2.BunTest.RefDataValue) describe2.HandleUncaughtExceptionResult {
     group.begin(@src());
     defer group.end();
 
@@ -162,7 +162,7 @@ const bun = @import("bun");
 const jsc = bun.jsc;
 
 const describe2 = jsc.Jest.describe2;
-const BunTestFile = describe2.BunTestFile;
+const BunTest = describe2.BunTest;
 const Collection = describe2.Collection;
 const DescribeScope = describe2.DescribeScope;
 const group = describe2.debug.group;

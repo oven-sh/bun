@@ -22,7 +22,7 @@ pub const Expect = struct {
     pub const fromJSDirect = js.fromJSDirect;
 
     flags: Flags = .{},
-    parent: ?*bun.jsc.Jest.describe2.BunTestFile.RefData,
+    parent: ?*bun.jsc.Jest.describe2.BunTest.RefData,
     custom_label: bun.String = bun.String.empty,
 
     pub const TestScope = struct {
@@ -30,7 +30,7 @@ pub const Expect = struct {
         describe: *DescribeScope,
     };
 
-    pub fn bunTest(_: *const Expect) ?*bun.jsc.Jest.describe2.BunTestFile {
+    pub fn bunTest(_: *const Expect) ?*bun.jsc.Jest.describe2.BunTest {
         const runner = bun.jsc.Jest.Jest.runner orelse return null;
         return runner.describe2Root.active_file orelse return null;
     }

@@ -37,7 +37,7 @@
 
 groups: []ConcurrentGroup,
 #sequences: []ExecutionSequence,
-/// the entries themselves are owned by BunTestFile, which owns Execution.
+/// the entries themselves are owned by BunTest, which owns Execution.
 #entries: []const *ExecutionEntry,
 group_index: usize,
 
@@ -183,7 +183,7 @@ pub fn loadFromOrder(this: *Execution, order: *Order) bun.JSError!void {
     this.#entries = try order.entries.toOwnedSlice();
 }
 
-fn bunTest(this: *Execution) *BunTestFile {
+fn bunTest(this: *Execution) *BunTest {
     return @fieldParentPtr("execution", this);
 }
 
@@ -195,7 +195,7 @@ pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSEr
     _ = globalThis;
 }
 
-pub fn step(this: *Execution, globalThis: *jsc.JSGlobalObject, data: describe2.BunTestFile.RefDataValue) bun.JSError!describe2.StepResult {
+pub fn step(this: *Execution, globalThis: *jsc.JSGlobalObject, data: describe2.BunTest.RefDataValue) bun.JSError!describe2.StepResult {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -290,7 +290,7 @@ fn advanceSequenceInGroup(this: *Execution, globalThis: *jsc.JSGlobalObject, seq
     if (next_item.callback) |cb| {
         groupLog.log("runSequence queued callback", .{});
 
-        const callback_data: describe2.BunTestFile.RefDataValue = .{
+        const callback_data: describe2.BunTest.RefDataValue = .{
             .execution = .{
                 .group_index = this.group_index,
                 .entry_data = .{
@@ -328,7 +328,7 @@ pub fn activeGroup(this: *Execution) ?*ConcurrentGroup {
     if (this.group_index >= this.groups.len) return null;
     return &this.groups[this.group_index];
 }
-pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, _: ?jsc.JSValue, data: describe2.BunTestFile.RefDataValue) bun.JSError!void {
+pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, _: ?jsc.JSValue, data: describe2.BunTest.RefDataValue) bun.JSError!void {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -344,7 +344,7 @@ pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, _: ?jsc.JSValue
     bun.assert(sequence.index < sequence.entries(this).len);
     this.advanceSequence(sequence, group);
 }
-fn getCurrentAndValidExecutionSequence(this: *Execution, data: describe2.BunTestFile.RefDataValue) ?struct { *ExecutionSequence, *ConcurrentGroup } {
+fn getCurrentAndValidExecutionSequence(this: *Execution, data: describe2.BunTest.RefDataValue) ?struct { *ExecutionSequence, *ConcurrentGroup } {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -483,7 +483,7 @@ pub fn resetSequence(this: *Execution, sequence: *ExecutionSequence) void {
     }
 }
 
-pub fn handleUncaughtException(this: *Execution, user_data: describe2.BunTestFile.RefDataValue) describe2.HandleUncaughtExceptionResult {
+pub fn handleUncaughtException(this: *Execution, user_data: describe2.BunTest.RefDataValue) describe2.HandleUncaughtExceptionResult {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -513,7 +513,7 @@ const bun = @import("bun");
 const jsc = bun.jsc;
 
 const describe2 = jsc.Jest.describe2;
-const BunTestFile = describe2.BunTestFile;
+const BunTest = describe2.BunTest;
 const Execution = describe2.Execution;
 const ExecutionEntry = describe2.ExecutionEntry;
 const Order = describe2.Order;

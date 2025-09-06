@@ -1,4 +1,4 @@
-pub fn getActive() ?*BunTestFile {
+pub fn getActive() ?*BunTest {
     const runner = bun.jsc.Jest.Jest.runner orelse return null;
     return runner.describe2Root.active_file orelse return null;
 }
@@ -17,7 +17,7 @@ pub const js_fns = struct {
         }
     };
     const GetActiveCfg = struct { signature: Signature, allow_in_preload: bool };
-    fn getActiveTestRoot(globalThis: *jsc.JSGlobalObject, cfg: GetActiveCfg) bun.JSError!*BunTest {
+    fn getActiveTestRoot(globalThis: *jsc.JSGlobalObject, cfg: GetActiveCfg) bun.JSError!*BunTestRoot {
         if (bun.jsc.Jest.Jest.runner == null) {
             return globalThis.throw("Cannot use {s} outside of the test runner. Run \"bun test\" to run tests.", .{cfg.signature});
         }
@@ -28,7 +28,7 @@ pub const js_fns = struct {
         }
         return bunTestRoot;
     }
-    pub fn getActive(globalThis: *jsc.JSGlobalObject, cfg: GetActiveCfg) bun.JSError!*BunTestFile {
+    pub fn getActive(globalThis: *jsc.JSGlobalObject, cfg: GetActiveCfg) bun.JSError!*BunTest {
         const bunTestRoot = try getActiveTestRoot(globalThis, cfg);
         const bunTest = bunTestRoot.active_file orelse {
             return globalThis.throw("Cannot use {s} outside of a test file.", .{cfg.signature});
@@ -81,13 +81,13 @@ pub const js_fns = struct {
     }
 };
 
-pub const BunTest = struct {
+pub const BunTestRoot = struct {
     gpa: std.mem.Allocator,
-    active_file: ?*BunTestFile,
+    active_file: ?*BunTest,
 
     hook_scope: *DescribeScope,
 
-    pub fn init(outer_gpa: std.mem.Allocator) BunTest {
+    pub fn init(outer_gpa: std.mem.Allocator) BunTestRoot {
         const gpa = outer_gpa;
         const hook_scope = DescribeScope.create(gpa, .{
             .parent = null,
@@ -104,20 +104,20 @@ pub const BunTest = struct {
             .hook_scope = hook_scope,
         };
     }
-    pub fn deinit(this: *BunTest) void {
+    pub fn deinit(this: *BunTestRoot) void {
         bun.assert(this.hook_scope.entries.items.len == 0); // entries must not be appended to the hook_scope
         this.hook_scope.destroy(this.gpa);
         bun.assert(this.active_file == null);
     }
 
-    pub fn enterFile(this: *BunTest, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter) void {
+    pub fn enterFile(this: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter) void {
         group.begin(@src());
         defer group.end();
 
         bun.assert(this.active_file == null);
-        this.active_file = bun.create(this.gpa, BunTestFile, .init(this.gpa, this, file_id, reporter));
+        this.active_file = bun.create(this.gpa, BunTest, .init(this.gpa, this, file_id, reporter));
     }
-    pub fn exitFile(this: *BunTest) void {
+    pub fn exitFile(this: *BunTestRoot) void {
         group.begin(@src());
         defer group.end();
 
@@ -127,7 +127,7 @@ pub const BunTest = struct {
         this.gpa.destroy(this.active_file.?);
         this.active_file = null;
     }
-    pub fn getActiveFileUnlessInPreload(this: *BunTest, vm: *jsc.VirtualMachine) ?*BunTestFile {
+    pub fn getActiveFileUnlessInPreload(this: *BunTestRoot, vm: *jsc.VirtualMachine) ?*BunTest {
         if (vm.is_in_preload) {
             return null;
         }
@@ -135,11 +135,11 @@ pub const BunTest = struct {
     }
 };
 
-pub const BunTestFile = struct {
+pub const BunTest = struct {
     // const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
     // ref_count: RefCount, // TODO: add ref count & hide the deinit function (deinit->deinitFromUnref())
 
-    buntest: *BunTest,
+    buntest: *BunTestRoot,
     in_run_loop: bool,
     allocation_scope: *bun.AllocationScope,
     gpa: std.mem.Allocator,
@@ -147,7 +147,7 @@ pub const BunTestFile = struct {
     file_id: jsc.Jest.TestRunner.File.ID,
     /// null if the runner has moved on to the next file
     reporter: ?*test_command.CommandLineReporter,
-    timer: bun.api.Timer.EventLoopTimer = .{ .next = .epoch, .tag = .BunTestFile },
+    timer: bun.api.Timer.EventLoopTimer = .{ .next = .epoch, .tag = .BunTest },
     result_queue: ResultQueue,
 
     phase: enum {
@@ -158,7 +158,7 @@ pub const BunTestFile = struct {
     collection: Collection,
     execution: Execution,
 
-    pub fn init(outer_gpa: std.mem.Allocator, bunTest: *BunTest, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter) BunTestFile {
+    pub fn init(outer_gpa: std.mem.Allocator, bunTest: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter) BunTest {
         group.begin(@src());
         defer group.end();
 
@@ -177,12 +177,12 @@ pub const BunTestFile = struct {
             .result_queue = .init(gpa),
         };
     }
-    pub fn deinit(this: *BunTestFile) void {
+    pub fn deinit(this: *BunTest) void {
         group.begin(@src());
         defer group.end();
 
         if (this.timer.state == .ACTIVE) {
-            // must remove an active timer to prevent UAF (if the timer were to trigger after BunTestFile deinit)
+            // must remove an active timer to prevent UAF (if the timer were to trigger after BunTest deinit)
             bun.jsc.VirtualMachine.get().timer.remove(&this.timer);
         }
 
@@ -211,17 +211,17 @@ pub const BunTestFile = struct {
         },
         done: struct {},
 
-        pub fn group(this: *const RefDataValue, buntest: *BunTestFile) ?*Execution.ConcurrentGroup {
+        pub fn group(this: *const RefDataValue, buntest: *BunTest) ?*Execution.ConcurrentGroup {
             if (this.* != .execution) return null;
             return &buntest.execution.groups[this.execution.group_index];
         }
-        pub fn sequence(this: *const RefDataValue, buntest: *BunTestFile) ?*Execution.ExecutionSequence {
+        pub fn sequence(this: *const RefDataValue, buntest: *BunTest) ?*Execution.ExecutionSequence {
             if (this.* != .execution) return null;
             const group_item = this.group(buntest) orelse return null;
             const entry_data = this.execution.entry_data orelse return null;
             return &group_item.sequences(&buntest.execution)[entry_data.sequence_index];
         }
-        pub fn entry(this: *const RefDataValue, buntest: *BunTestFile) ?*ExecutionEntry {
+        pub fn entry(this: *const RefDataValue, buntest: *BunTest) ?*ExecutionEntry {
             if (this.* != .execution) return null;
             const sequence_item = this.sequence(buntest) orelse return null;
             const entry_data = this.execution.entry_data orelse return null;
@@ -240,7 +240,7 @@ pub const BunTestFile = struct {
         }
     };
     pub const RefData = struct {
-        buntest: *BunTestFile,
+        buntest: *BunTest,
         phase: RefDataValue,
         ref_count: RefCount,
         const RefCount = bun.ptr.RefCount(RefData, "ref_count", #destroy, .{});
@@ -260,13 +260,13 @@ pub const BunTestFile = struct {
 
             const buntest = this.buntest;
             // buntest.gpa.destroy(this); // need to destroy the RefData before unref'ing the buntest because it may free the allocator
-            // TODO: use buntest.gpa to destroy the RefData. this can't be done right now because RefData is stored in expect which needs BunTestFile to be ref-counted
+            // TODO: use buntest.gpa to destroy the RefData. this can't be done right now because RefData is stored in expect which needs BunTest to be ref-counted
             bun.destroy(this);
             _ = buntest;
             // TODO: unref buntest here
         }
     };
-    pub fn getCurrentStateData(this: *BunTestFile) RefDataValue {
+    pub fn getCurrentStateData(this: *BunTest) RefDataValue {
         return switch (this.phase) {
             .collection => .{ .collection = .{ .active_scope = this.collection.active_scope } },
             .execution => blk: {
@@ -297,13 +297,13 @@ pub const BunTestFile = struct {
             .done => .{ .done = .{} },
         };
     }
-    pub fn ref(this: *BunTestFile, phase: RefDataValue) *RefData {
+    pub fn ref(this: *BunTest, phase: RefDataValue) *RefData {
         group.begin(@src());
         defer group.end();
         group.log("ref: {}", .{phase});
 
         // TODO this.ref()
-        // TODO: allocate with bun.create(this.gpa). this can't be done right now because RefData is stored in expect which needs BunTestFile to be ref-counted
+        // TODO: allocate with bun.create(this.gpa). this can't be done right now because RefData is stored in expect which needs BunTest to be ref-counted
         return bun.new(RefData, .{
             .buntest = this,
             .phase = phase,
@@ -343,7 +343,7 @@ pub const BunTestFile = struct {
         try bunTestThenOrCatch(globalThis, callframe, true);
         return .js_undefined;
     }
-    pub fn bunTestDoneCallback(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, data: RefDataValue, has_one_ref: bool) bun.JSError!void {
+    pub fn bunTestDoneCallback(this: *BunTest, globalThis: *jsc.JSGlobalObject, data: RefDataValue, has_one_ref: bool) bun.JSError!void {
         group.begin(@src());
         defer group.end();
 
@@ -354,7 +354,7 @@ pub const BunTestFile = struct {
         this.addResult(data);
         try this.run(globalThis);
     }
-    pub fn bunTestTimeoutCallback(this: *BunTestFile, _: *const bun.timespec, vm: *jsc.VirtualMachine) bun.api.Timer.EventLoopTimer.Arm {
+    pub fn bunTestTimeoutCallback(this: *BunTest, _: *const bun.timespec, vm: *jsc.VirtualMachine) bun.api.Timer.EventLoopTimer.Arm {
         group.begin(@src());
         defer group.end();
         this.timer.next = .epoch;
@@ -374,11 +374,11 @@ pub const BunTestFile = struct {
         return .disarm; // this won't disable the timer if .run() re-arms it
     }
 
-    pub fn addResult(this: *BunTestFile, result: RefDataValue) void {
+    pub fn addResult(this: *BunTest, result: RefDataValue) void {
         bun.handleOom(this.result_queue.writeItem(result));
     }
 
-    pub fn run(this: *BunTestFile, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
+    pub fn run(this: *BunTest, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
         group.begin(@src());
         defer group.end();
 
@@ -422,7 +422,7 @@ pub const BunTestFile = struct {
         }
     }
 
-    fn _advance(this: *BunTestFile, globalThis: *jsc.JSGlobalObject) bun.JSError!enum { cont, exit } {
+    fn _advance(this: *BunTest, globalThis: *jsc.JSGlobalObject) bun.JSError!enum { cont, exit } {
         group.begin(@src());
         defer group.end();
         group.log("advance from {s}", .{@tagName(this.phase)});
@@ -474,7 +474,7 @@ pub const BunTestFile = struct {
     }
 
     /// if sync, the result is queued and appended later
-    pub fn runTestCallback(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, cfg: CallbackEntry) bun.JSError!void {
+    pub fn runTestCallback(this: *BunTest, globalThis: *jsc.JSGlobalObject, cfg: CallbackEntry) bun.JSError!void {
         group.begin(@src());
         defer group.end();
 
@@ -530,7 +530,7 @@ pub const BunTestFile = struct {
     }
 
     /// called from the uncaught exception handler, or if a test callback rejects or throws an error
-    pub fn onUncaughtException(this: *BunTestFile, globalThis: *jsc.JSGlobalObject, result: jsc.JSValue, is_rejection: bool, user_data: RefDataValue) void {
+    pub fn onUncaughtException(this: *BunTest, globalThis: *jsc.JSGlobalObject, result: jsc.JSValue, is_rejection: bool, user_data: RefDataValue) void {
         group.begin(@src());
         defer group.end();
 
@@ -568,7 +568,7 @@ pub const BunTestFile = struct {
 
 pub const HandleUncaughtExceptionResult = enum { hide_error, show_handled_error, show_unhandled_error_between_tests, show_unhandled_error_in_describe };
 
-pub const ResultQueue = bun.LinearFifo(BunTestFile.RefDataValue, .Dynamic);
+pub const ResultQueue = bun.LinearFifo(BunTest.RefDataValue, .Dynamic);
 pub const StepResult = union(enum) {
     waiting: struct { timeout: bun.timespec = .epoch },
     complete,
@@ -577,8 +577,8 @@ pub const StepResult = union(enum) {
 pub const CallbackEntry = struct {
     callback: CallbackWithArgs,
     done_parameter: bool,
-    data: BunTestFile.RefDataValue,
-    pub fn init(gpa: std.mem.Allocator, callback: CallbackWithArgs, done_parameter: bool, data: BunTestFile.RefDataValue) CallbackEntry {
+    data: BunTest.RefDataValue,
+    pub fn init(gpa: std.mem.Allocator, callback: CallbackWithArgs, done_parameter: bool, data: BunTest.RefDataValue) CallbackEntry {
         return .{
             .callback = callback.dupe(gpa),
             .done_parameter = done_parameter,

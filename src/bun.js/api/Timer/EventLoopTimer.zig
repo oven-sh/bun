@@ -67,7 +67,7 @@ pub const Tag = if (Environment.isWindows) enum {
     DevServerMemoryVisualizerTick,
     AbortSignalTimeout,
     DateHeaderTimer,
-    BunTestFile,
+    BunTest,
 
     pub fn Type(comptime T: Tag) type {
         return switch (T) {
@@ -91,7 +91,7 @@ pub const Tag = if (Environment.isWindows) enum {
             => bun.bake.DevServer,
             .AbortSignalTimeout => jsc.WebCore.AbortSignal.Timeout,
             .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
-            .BunTestFile => jsc.Jest.describe2.BunTestFile,
+            .BunTest => jsc.Jest.describe2.BunTest,
         };
     }
 } else enum {
@@ -113,7 +113,7 @@ pub const Tag = if (Environment.isWindows) enum {
     DevServerMemoryVisualizerTick,
     AbortSignalTimeout,
     DateHeaderTimer,
-    BunTestFile,
+    BunTest,
 
     pub fn Type(comptime T: Tag) type {
         return switch (T) {
@@ -136,7 +136,7 @@ pub const Tag = if (Environment.isWindows) enum {
             => bun.bake.DevServer,
             .AbortSignalTimeout => jsc.WebCore.AbortSignal.Timeout,
             .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
-            .BunTestFile => jsc.Jest.describe2.BunTestFile,
+            .BunTest => jsc.Jest.describe2.BunTest,
         };
     }
 };
@@ -213,8 +213,8 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) Arm {
             date_header_timer.run(vm);
             return .disarm;
         },
-        .BunTestFile => {
-            const container: *jsc.Jest.describe2.BunTestFile = @fieldParentPtr("timer", self);
+        .BunTest => {
+            const container: *jsc.Jest.describe2.BunTest = @fieldParentPtr("timer", self);
             return container.bunTestTimeoutCallback(now, vm);
         },
         inline else => |t| {

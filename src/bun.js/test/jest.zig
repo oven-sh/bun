@@ -90,7 +90,7 @@ pub const TestRunner = struct {
     unhandled_errors_between_tests: u32 = 0,
     summary: Summary = Summary{},
 
-    describe2Root: describe2.BunTest,
+    describe2Root: describe2.BunTestRoot,
 
     pub const Summary = struct {
         pass: u32 = 0,

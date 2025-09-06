@@ -123,7 +123,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
     return .js_undefined;
 }
 
-fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunTestFile, globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, callback: ?describe2.CallbackWithArgs, description: ?[]const u8, line_no: u32, timeout: u32, callback_length: usize) bun.JSError!void {
+fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunTest, globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, callback: ?describe2.CallbackWithArgs, description: ?[]const u8, line_no: u32, timeout: u32, callback_length: usize) bun.JSError!void {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -275,7 +275,7 @@ fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, descr
     return try gpa.dupe(u8, slice.slice());
 }
 
-pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, bunTest: *BunTestFile, cfg: struct { callback: CallbackMode }) bun.JSError!ParseArgumentsResult {
+pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, bunTest: *BunTest, cfg: struct { callback: CallbackMode }) bun.JSError!ParseArgumentsResult {
     var a1, var a2, var a3 = callframe.argumentsAsArray(3);
 
     if (a1.isFunction()) {
@@ -385,7 +385,7 @@ const VirtualMachine = jsc.VirtualMachine;
 const Strong = jsc.Strong.Safe;
 
 const describe2 = jsc.Jest.describe2;
-const BunTestFile = describe2.BunTestFile;
+const BunTest = describe2.BunTest;
 const ScopeFunctions = describe2.ScopeFunctions;
 const groupLog = describe2.debug.group;
 const Signature = describe2.js_fns.Signature;

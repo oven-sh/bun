@@ -1,9 +1,9 @@
 /// value = not called yet. null = done already called, no-op.
-ref: ?*describe2.BunTestFile.RefData,
+ref: ?*describe2.BunTest.RefData,
 called: bool = false,
 
 const DoneCallbackTask = struct {
-    ref: *describe2.BunTestFile.RefData,
+    ref: *describe2.BunTest.RefData,
     globalThis: *JSGlobalObject,
 
     pub fn call(this: *DoneCallbackTask) void {
@@ -87,6 +87,6 @@ const VirtualMachine = jsc.VirtualMachine;
 const Strong = jsc.Strong.Safe;
 
 const describe2 = jsc.Jest.describe2;
-const BunTestFile = describe2.BunTestFile;
+const BunTest = describe2.BunTest;
 const DoneCallback = describe2.DoneCallback;
 const groupLog = describe2.debug.group;

@@ -440,7 +440,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         // Use "*" as filter to match all packages in the workspace
         filters_to_use = &.{"*"};
     }
-    
+
     var filter_instance = try FilterArg.FilterSet.init(ctx.allocator, filters_to_use, fsinstance.top_level_dir);
     var patterns = std.ArrayList([]u8).init(ctx.allocator);
 
@@ -478,8 +478,15 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
 
         const PATH = try RunCommand.configurePathForRunWithPackageJsonDir(ctx, dirpath, &this_transpiler, null, dirpath, ctx.debug.run_in_bun);
 
-        for (&[3][]const u8{ pre_script_name, script_name, post_script_name }) |name| {
-            const original_content = pkgscripts.get(name) orelse continue;
+        for (&[3][]const u8{ pre_script_name, script_name, post_script_name }, 0..) |name, i| {
+            const original_content = pkgscripts.get(name) orelse {
+                if (i == 1 and ctx.workspaces and !ctx.if_present) {
+                    Output.errGeneric("Missing '{s}' script at '{s}'", .{ script_name, path });
+                    Global.exit(1);
+                }
+
+                continue;
+            };
 
             var copy_script_capacity: usize = original_content.len;
             for (ctx.passthrough) |part| copy_script_capacity += 1 + part.len;

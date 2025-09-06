@@ -72,6 +72,7 @@ Several Bun CLI flags can be used with `bun test` to modify its behavior:
 - `--tsconfig-override`: Uses a different tsconfig
 - `--conditions`: Sets package.json conditions for module resolution
 - `--env-file`: Loads environment variables for tests
+- `--no-env-file`: Disables loading of `.env` files
 
 ### Installation-related Flags
 

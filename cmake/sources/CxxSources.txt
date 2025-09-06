@@ -384,6 +384,7 @@ src/bun.js/bindings/webcore/MessagePortChannelRegistry.cpp
 src/bun.js/bindings/webcore/NetworkLoadMetrics.cpp
 src/bun.js/bindings/webcore/Performance.cpp
 src/bun.js/bindings/webcore/PerformanceEntry.cpp
+src/bun.js/bindings/webcore/PerformanceFunctionTiming.cpp
 src/bun.js/bindings/webcore/PerformanceMark.cpp
 src/bun.js/bindings/webcore/PerformanceMeasure.cpp
 src/bun.js/bindings/webcore/PerformanceObserver.cpp

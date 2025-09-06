@@ -150,7 +150,8 @@ Vector<String> PerformanceObserver::supportedEntryTypes(ScriptExecutionContext& 
     Vector<String> entryTypes = {
         "mark"_s,
         "measure"_s,
-        "resource"_s
+        "resource"_s,
+        "function"_s
     };
 
     // if (context.settingsValues().performanceNavigationTimingAPIEnabled)

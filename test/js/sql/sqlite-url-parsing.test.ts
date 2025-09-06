@@ -22,7 +22,7 @@ describe("SQLite URL Parsing Matrix", () => {
     { input: "test@symbol.db", expected: "test@symbol.db", name: "@ in filename" },
     { input: "test&amp.db", expected: "test&amp.db", name: "ampersand in filename" },
     { input: "test%20encoded.db", expected: "test%20encoded.db", name: "percent encoding" },
-    { input: "", expected: "", name: "empty path" },
+    { input: "", expected: ":memory:", name: "empty path" },
   ] as const;
 
   const testMatrix = protocols
@@ -66,6 +66,10 @@ describe("SQLite URL Parsing Matrix", () => {
           } catch {
             // Not a valid file:// URL, so implementation just strips the prefix
             expected = testCase.url.slice(7); // "file://".length
+          }
+          // Empty filename should default to :memory:
+          if (expected === "") {
+            expected = ":memory:";
           }
           expect(filename).toBe(expected);
         } else {

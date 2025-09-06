@@ -292,8 +292,6 @@ class PooledMySQLConnection {
       connectionTimeout = 30 * 1000,
       maxLifetime = 0,
       prepare = true,
-
-      // @ts-expect-error path is currently removed from the types
       path,
     } = options;
 
@@ -302,10 +300,10 @@ class PooledMySQLConnection {
     try {
       if (typeof password === "function") {
         password = password();
+      }
 
-        if (password && $isPromise(password)) {
-          password = await password;
-        }
+      if (password && $isPromise(password)) {
+        password = await password;
       }
 
       return createMySQLConnection(

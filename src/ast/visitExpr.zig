@@ -804,6 +804,7 @@ pub fn VisitExpr(
                                                     E.Unary{
                                                         .op = e_.op,
                                                         .value = comma.right,
+                                                        .flags = e_.flags,
                                                     },
                                                     comma.right.loc,
                                                 ),

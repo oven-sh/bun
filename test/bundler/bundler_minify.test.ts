@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { normalizeBunSnapshot } from "harness";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -688,6 +689,38 @@ describe("bundler", () => {
     },
     run: {
       stdout: "foo\ntrue\ntrue\ndisabled_for_development",
+    },
+  });
+
+  itBundled("minify/TypeofUndefinedOptimization", {
+    files: {
+      "/entry.js": /* js */ `
+        // Test all equality operators with typeof undefined
+        console.log(typeof x !== 'undefined');
+        console.log(typeof x != 'undefined'); 
+        console.log('undefined' !== typeof x);
+        console.log('undefined' != typeof x);
+        
+        console.log(typeof x === 'undefined');
+        console.log(typeof x == 'undefined');
+        console.log('undefined' === typeof x);
+        console.log('undefined' == typeof x);
+        
+        // These should not be optimized
+        console.log(typeof x === 'string');
+        console.log(x === 'undefined');
+        console.log('undefined' === y);
+        console.log(typeof x === 'undefinedx');
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const file = api.readFile("out.js");
+      expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(
+        `"console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x==="string");console.log(x==="undefined");console.log(y==="undefined");console.log(typeof x==="undefinedx");"`,
+      );
     },
   });
 });

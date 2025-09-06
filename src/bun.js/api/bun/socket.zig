@@ -108,24 +108,24 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn doConnect(this: *This, connection: Listener.UnixOrHost) !void {
+        pub fn doConnect(this: *This, connection: *const Listener.UnixOrHost) !void {
             bun.assert(this.socket_context != null);
             this.ref();
             errdefer this.deref();
 
-            switch (connection) {
-                .host => |c| {
+            switch (connection.*) {
+                .host => |*c| {
                     this.socket = try This.Socket.connectAnon(
-                        c.host,
+                        c.host.slice(),
                         c.port,
                         this.socket_context.?,
                         this,
                         this.flags.allow_half_open,
                     );
                 },
-                .unix => |u| {
+                .unix => |*u| {
                     this.socket = try This.Socket.connectUnixAnon(
-                        u,
+                        u.slice(),
                         this.socket_context.?,
                         this,
                         this.flags.allow_half_open,
@@ -426,7 +426,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                             if (connection == .host) {
                                 const host = connection.host.host;
                                 if (host.len > 0) {
-                                    const host__ = bun.handleOom(default_allocator.dupeZ(u8, host));
+                                    const host__ = bun.handleOom(default_allocator.dupeZ(u8, host.slice()));
                                     defer default_allocator.free(host__);
                                     ssl_ptr.setHostname(host__);
                                 }
@@ -599,7 +599,7 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn onClose(this: *This, _: Socket, err: c_int, _: ?*anyopaque) void {
             jsc.markBinding(@src());
             const handlers = this.getHandlers();
-            log("onClose {s}", .{if (handlers.is_server) "S" else "C"});
+            log("onClose {s} {?}", .{ if (handlers.is_server) "S" else "C", this.connection });
             this.detachNativeCallback();
             this.socket.detach();
             defer this.deref();
@@ -1309,9 +1309,9 @@ pub fn NewSocket(comptime ssl: bool) type {
                 default_allocator.free(server_name);
             }
 
-            if (this.connection) |connection| {
-                this.connection = null;
+            if (this.connection) |*connection| {
                 connection.deinit();
+                this.connection = null;
             }
             if (this.socket_context) |socket_context| {
                 this.socket_context = null;

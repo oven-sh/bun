@@ -240,7 +240,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
             this.ref();
             defer this.deref();
-            this.internalFlush() catch return;
+            this.internalFlush(false) catch return;
             log("onWritable buffered_data_for_node_net {d}", .{this.buffered_data_for_node_net.len});
             // is not writable if we have buffered data or if we are already detached
             if (this.buffered_data_for_node_net.len > 0 or this.socket.isDetached()) return;
@@ -860,9 +860,9 @@ pub fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsNumber(this.socket.remotePort());
         }
 
-        pub fn writeMaybeCorked(this: *This, buffer: []const u8) i32 {
+        pub fn writeMaybeCorked(this: *This, buffer: []const u8) bun.Maybe(i32, bun.sys.Error) {
             if (this.socket.isShutdown() or this.socket.isClosed()) {
-                return -1;
+                return .initResult(-1);
             }
 
             // we don't cork yet but we might later
@@ -873,15 +873,21 @@ pub fn NewSocket(comptime ssl: bool) type {
                     const uwrote: usize = @intCast(@max(res, 0));
                     this.bytes_written += uwrote;
                     log("write({d}) = {d}", .{ buffer.len, res });
-                    return res;
+                    return .initResult(res);
                 }
             }
 
-            const res = this.socket.write(buffer);
+            const res = switch (this.socket.writeMaybe(buffer)) {
+                .result => |result| result,
+                .err => |err| {
+                    if (err.errno == bun.sys.SystemErrno.EPIPE.to_uv_errno()) this.closeAndDetach(.normal);
+                    return .initErr(err);
+                },
+            };
             const uwrote: usize = @intCast(@max(res, 0));
             this.bytes_written += uwrote;
             log("write({d}) = {d}", .{ buffer.len, res });
-            return res;
+            return .initResult(res);
         }
 
         pub fn writeBuffered(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -918,7 +924,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 .fail => .zero,
                 .success => |result| brk: {
                     if (result.wrote == result.total) {
-                        this.internalFlush() catch return .false;
+                        this.internalFlush(true) catch return .false;
                     }
 
                     break :brk JSValue.jsBoolean(@as(usize, @max(result.wrote, 0)) == result.total);
@@ -1016,7 +1022,10 @@ pub fn NewSocket(comptime ssl: bool) type {
 
                 // slower-path: clone the data, do one write.
                 bun.handleOom(this.buffered_data_for_node_net.append(bun.default_allocator, buffer.slice()));
-                const rc = this.writeMaybeCorked(this.buffered_data_for_node_net.slice());
+                const rc = switch (this.writeMaybeCorked(this.buffered_data_for_node_net.slice())) {
+                    .result => |result| result,
+                    .err => 0,
+                };
                 if (rc > 0) {
                     const wrote: usize = @intCast(@max(rc, 0));
                     // did we write everything?
@@ -1164,7 +1173,10 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return .{ .success = .{} };
             }
             log("writeOrEnd {d}", .{bytes.len});
-            const wrote = this.writeMaybeCorked(bytes);
+            const wrote = switch (this.writeMaybeCorked(bytes)) {
+                .result => |result| result,
+                .err => 0,
+            };
             const uwrote: usize = @intCast(@max(wrote, 0));
             if (buffer_unwritten_data) {
                 const remaining = bytes[uwrote..];
@@ -1196,7 +1208,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             return this.flags.is_active and this.flags.end_after_flush and !this.flags.empty_packet_pending and this.buffered_data_for_node_net.len == 0;
         }
 
-        fn internalFlush(this: *This) error{CalledOnError}!void {
+        fn internalFlush(this: *This, is_end: bool) error{CalledOnError}!void {
             if (this.buffered_data_for_node_net.len > 0) {
                 switch (this.socket.writeMaybe(this.buffered_data_for_node_net.slice())) {
                     .result => |written_| {
@@ -1212,8 +1224,10 @@ pub fn NewSocket(comptime ssl: bool) type {
                         }
                     },
                     .err => |err| {
-                        this.handleError(err.toSystemError().toErrorInstance(this.handlers.?.globalObject));
-                        return error.CalledOnError;
+                        if (!is_end) {
+                            this.handleError(err.toSystemError().toErrorInstance(this.handlers.?.globalObject));
+                            return error.CalledOnError;
+                        }
                     },
                 }
             }
@@ -1228,7 +1242,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn flush(this: *This, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
             jsc.markBinding(@src());
-            this.internalFlush() catch return .js_undefined;
+            this.internalFlush(false) catch return .js_undefined;
             return .js_undefined;
         }
 
@@ -1276,7 +1290,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 .fail => .zero,
                 .success => |result| brk: {
                     if (result.wrote == result.total) {
-                        this.internalFlush() catch return .jsNumber(0);
+                        this.internalFlush(true) catch return .jsNumber(0);
                     }
                     break :brk JSValue.jsNumber(result.wrote);
                 },

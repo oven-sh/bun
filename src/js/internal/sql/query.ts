@@ -315,7 +315,11 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
     this.#runAsyncAndCatch();
 
-    return super.finally.$apply(this, arguments);
+    if (arguments.length === 0) {
+      return super.finally();
+    }
+
+    return super.finally(_onfinally);
   }
 }
 

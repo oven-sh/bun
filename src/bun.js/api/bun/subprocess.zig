@@ -1392,7 +1392,7 @@ pub fn spawnMaybeSync(
             else
                 "";
             var systemerror = bun.sys.Error.fromCode(if (err == error.EMFILE) .MFILE else .NFILE, .posix_spawn).withPath(display_path).toSystemError();
-            systemerror.errno = if (err == error.EMFILE) -bun.sys.UV_E.MFILE else -bun.sys.UV_E.NFILE;
+            systemerror.errno = if (err == error.EMFILE) bun.sys.UV_E.MFILE else bun.sys.UV_E.NFILE;
             return globalThis.throwValue(systemerror.toErrorInstance(globalThis));
         },
         else => {
@@ -1410,7 +1410,7 @@ pub fn spawnMaybeSync(
                         "";
                     if (display_path.len > 0) {
                         var systemerror = err.withPath(display_path).toSystemError();
-                        if (errno == .NOENT) systemerror.errno = -bun.sys.UV_E.NOENT;
+                        if (errno == .NOENT) systemerror.errno = bun.sys.UV_E.NOENT;
                         return globalThis.throwValue(systemerror.toErrorInstance(globalThis));
                     }
                 },
@@ -1530,12 +1530,7 @@ pub fn spawnMaybeSync(
     var posix_ipc_info: if (Environment.isPosix) IPC.Socket else void = undefined;
     if (Environment.isPosix and !is_sync) {
         if (maybe_ipc_mode) |mode| {
-            if (uws.us_socket_t.fromFd(
-                jsc_vm.rareData().spawnIPCContext(jsc_vm),
-                @sizeOf(*IPC.SendQueue),
-                posix_ipc_fd.cast(),
-                1,
-            )) |socket| {
+            if (uws.us_socket_t.fromFd(jsc_vm.rareData().spawnIPCContext(jsc_vm), @sizeOf(*IPC.SendQueue), posix_ipc_fd.cast(), 1)) |socket| {
                 subprocess.ipc_data = .init(mode, .{ .subprocess = subprocess }, .uninitialized);
                 posix_ipc_info = IPC.Socket.from(socket);
             }
@@ -1747,7 +1742,7 @@ fn throwCommandNotFound(globalThis: *jsc.JSGlobalObject, command: []const u8) bu
     const err = jsc.SystemError{
         .message = bun.handleOom(bun.String.createFormat("Executable not found in $PATH: \"{s}\"", .{command})),
         .code = bun.String.static("ENOENT"),
-        .errno = -bun.sys.UV_E.NOENT,
+        .errno = bun.sys.UV_E.NOENT,
         .path = bun.String.cloneUTF8(command),
     };
     return globalThis.throwValue(err.toErrorInstance(globalThis));

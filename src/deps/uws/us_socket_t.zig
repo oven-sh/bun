@@ -127,9 +127,17 @@ pub const us_socket_t = opaque {
     }
 
     pub fn write(this: *us_socket_t, ssl: bool, data: []const u8) i32 {
-        const rc = c.us_socket_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len));
+        const rc = c.us_socket_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len), null);
         debug("us_socket_write({d}, {d}) = {d}", .{ @intFromPtr(this), data.len, rc });
         return rc;
+    }
+
+    pub fn writeMaybe(this: *us_socket_t, ssl: bool, data: []const u8) bun.Maybe(i32, bun.sys.Error) {
+        var error_: u32 = 0;
+        const rc = c.us_socket_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len), &error_);
+        debug("us_socket_write({d}, {d}) = {d}", .{ @intFromPtr(this), data.len, rc });
+        if (error_ > 0) return .initErr(.fromCodeInt(error_, .write));
+        return .initResult(rc);
     }
 
     pub fn writeFd(this: *us_socket_t, data: []const u8, file_descriptor: bun.FD) i32 {
@@ -139,8 +147,8 @@ pub const us_socket_t = opaque {
         return rc;
     }
 
-    pub fn write2(this: *us_socket_t, ssl: bool, first: []const u8, second: []const u8) i32 {
-        const rc = c.us_socket_write2(@intFromBool(ssl), this, first.ptr, first.len, second.ptr, second.len);
+    pub fn write2(this: *us_socket_t, ssl: bool, first: []const u8, second: []const u8, error_: ?*u32) i32 {
+        const rc = c.us_socket_write2(@intFromBool(ssl), this, first.ptr, first.len, second.ptr, second.len, error_);
         debug("us_socket_write2({d}, {d}, {d}) = {d}", .{ @intFromPtr(this), first.len, second.len, rc });
         return rc;
     }
@@ -198,9 +206,9 @@ pub const c = struct {
     pub extern fn us_socket_ext(ssl: i32, s: ?*us_socket_t) ?*anyopaque; // nullish to be safe
     pub extern fn us_socket_context(ssl: i32, s: ?*us_socket_t) ?*SocketContext;
 
-    pub extern fn us_socket_write(ssl: i32, s: ?*us_socket_t, data: [*c]const u8, length: i32) i32;
+    pub extern fn us_socket_write(ssl: i32, s: ?*us_socket_t, data: [*c]const u8, length: i32, error_: ?*u32) i32;
     pub extern fn us_socket_ipc_write_fd(s: ?*us_socket_t, data: [*c]const u8, length: i32, fd: i32) i32;
-    pub extern fn us_socket_write2(ssl: i32, *us_socket_t, header: ?[*]const u8, len: usize, payload: ?[*]const u8, usize) i32;
+    pub extern fn us_socket_write2(ssl: i32, *us_socket_t, header: ?[*]const u8, usize, payload: ?[*]const u8, usize, error_: ?*u32) i32;
     pub extern fn us_socket_raw_write(ssl: i32, s: ?*us_socket_t, data: [*c]const u8, length: i32) i32;
     pub extern fn us_socket_flush(ssl: i32, s: ?*us_socket_t) void;
 
@@ -218,12 +226,7 @@ pub const c = struct {
     pub extern fn us_socket_get_fd(s: ?*us_socket_t) uws.LIBUS_SOCKET_DESCRIPTOR;
     pub extern fn us_socket_verify_error(ssl: i32, context: *us_socket_t) uws.us_bun_verify_error_t;
     pub extern fn us_socket_upgrade_to_tls(s: *us_socket_t, new_context: *SocketContext, sni: ?[*:0]const u8) ?*us_socket_t;
-    pub extern fn us_socket_from_fd(
-        ctx: *SocketContext,
-        ext_size: c_int,
-        fd: uws.LIBUS_SOCKET_DESCRIPTOR,
-        is_ipc: c_int,
-    ) ?*us_socket_t;
+    pub extern fn us_socket_from_fd(ctx: *SocketContext, ext_size: c_int, fd: uws.LIBUS_SOCKET_DESCRIPTOR, is_ipc: c_int) ?*us_socket_t;
     pub extern fn us_socket_get_error(ssl: i32, s: *uws.us_socket_t) c_int;
     pub extern fn us_socket_is_established(ssl: i32, s: *uws.us_socket_t) i32;
 };

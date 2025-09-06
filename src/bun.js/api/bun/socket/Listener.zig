@@ -772,8 +772,11 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
             socket.ref();
             SocketType.js.dataSetCached(socket.getThisValue(globalObject), globalObject, default_data);
             socket.flags.allow_half_open = socket_config.allowHalfOpen;
-            socket.doConnect(connection) catch {
-                socket.handleConnectError(@intFromEnum(if (port == null) bun.sys.SystemErrno.ENOENT else bun.sys.SystemErrno.ECONNREFUSED));
+            var error_: i32 = 0;
+            socket.doConnect(connection, &error_) catch {
+                bun.assert(error_ > 0);
+                if (Environment.isWindows and port == null and error_ == bun.sys.SystemErrno.ECONNREFUSED.to_uv_errno()) error_ = bun.sys.SystemErrno.ENOENT.to_uv_errno(); //TODO: use better WSA api
+                socket.handleConnectError(error_);
                 return promise_value;
             };
 

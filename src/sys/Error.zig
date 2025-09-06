@@ -217,7 +217,7 @@ pub fn msg(this: Error) ?[]const u8 {
 pub fn toShellSystemError(this: Error) SystemError {
     @setEvalBranchQuota(1_000_000);
     var err = SystemError{
-        .errno = @as(c_int, this.errno) * -1,
+        .errno = this.errno,
         .syscall = bun.String.static(@tagName(this.syscall)),
         .message = .empty,
     };
@@ -253,7 +253,7 @@ pub fn toShellSystemError(this: Error) SystemError {
 /// Use this whenever the error will be sent to JavaScript instead of the shell variant above.
 pub fn toSystemError(this: Error) SystemError {
     var err = SystemError{
-        .errno = -%@as(c_int, this.errno),
+        .errno = this.errno,
         .syscall = bun.String.static(@tagName(this.syscall)),
         .message = .empty,
     };

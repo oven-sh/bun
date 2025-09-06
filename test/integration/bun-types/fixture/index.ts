@@ -455,3 +455,9 @@ Bun.serve({
     cert,
   },
 });
+
+const signal = AbortSignal.timeout(1000);
+expectType(signal).is<AbortSignal>();
+expectType(signal.aborted).is<boolean>();
+
+expectType(RegExp.escape("foo.bar")).is<string>();

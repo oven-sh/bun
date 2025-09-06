@@ -53,6 +53,7 @@ const Socket = net.Socket;
 const EventEmitter = require("node:events");
 const { Duplex } = Stream;
 const { SafeArrayIterator, SafeSet } = require("internal/primordials");
+const { promisify } = require("internal/promisify");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ObjectAssign = Object.assign;
@@ -3922,6 +3923,19 @@ function getDefaultSettings() {
   // return default settings
   return getUnpackedSettings();
 }
+
+Object.defineProperty(connect, promisify.custom, {
+  __proto__: null,
+  value: function (authority, options) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const server = connect(authority, options, () => {
+      server.removeListener("error", reject);
+      return resolve(server);
+    });
+    server.once("error", reject);
+    return promise;
+  },
+});
 
 export default {
   constants,

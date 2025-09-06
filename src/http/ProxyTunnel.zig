@@ -195,7 +195,7 @@ pub fn write(this: *HTTPClient, encoded_data: []const u8) void {
     if (this.proxy_tunnel) |proxy| {
         // Preserve TLS record ordering: if any encrypted bytes are buffered,
         // enqueue new bytes and flush them in FIFO via onWritable.
-        if (proxy.write_buffer.slice().len > 0) {
+        if(proxy.write_buffer.isNotEmpty()) {
             bun.handleOom(proxy.write_buffer.write(encoded_data));
             return;
         }

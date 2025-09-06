@@ -241,7 +241,7 @@ pub const Result = struct {
         pub fn logErrorMsg(m: *DebugMeta, log: *logger.Log, _source: ?*const logger.Source, r: logger.Range, comptime fmt: string, args: anytype) !void {
             if (_source != null and m.suggestion_message.len > 0) {
                 const suggestion_range = if (m.suggestion_range == .end)
-                    logger.Range{ .loc = logger.Loc{ .start = r.endI() - 1 } }
+                    logger.Range{ .loc = .from(r.endI() - 1) }
                 else
                     r;
                 const data = logger.rangeData(_source.?, suggestion_range, m.suggestion_message);
@@ -319,7 +319,7 @@ pub const DebugLogs = struct {
             d.notes.allocator.free(_text);
         }
 
-        d.notes.append(logger.rangeData(null, logger.Range.None, text)) catch unreachable;
+        d.notes.append(logger.rangeData(null, .none, text)) catch unreachable;
     }
 
     pub fn addNoteFmt(d: *DebugLogs, comptime fmt: string, args: anytype) void {
@@ -607,9 +607,9 @@ pub const Resolver = struct {
     pub fn flushDebugLogs(r: *ThisResolver, flush_mode: DebugLogs.FlushMode) !void {
         if (r.debug_logs) |*debug| {
             if (flush_mode == DebugLogs.FlushMode.fail) {
-                try r.log.addRangeDebugWithNotes(null, logger.Range{ .loc = logger.Loc{} }, debug.what, try debug.notes.toOwnedSlice());
+                try r.log.addRangeDebugWithNotes(null, logger.Range{ .loc = .none }, debug.what, try debug.notes.toOwnedSlice());
             } else if (@intFromEnum(r.log.level) <= @intFromEnum(logger.Log.Level.verbose)) {
-                try r.log.addVerboseWithNotes(null, logger.Loc.Empty, debug.what, try debug.notes.toOwnedSlice());
+                try r.log.addVerboseWithNotes(null, .none, debug.what, try debug.notes.toOwnedSlice());
             }
         }
     }
@@ -2208,7 +2208,7 @@ pub const Resolver = struct {
             // TODO: handle this error better
             r.log.addErrorFmt(
                 null,
-                logger.Loc.Empty,
+                .none,
                 r.allocator,
                 "Unable to open directory: {s}",
                 .{bun.asByteSlice(@errorName(err))},
@@ -2853,7 +2853,7 @@ pub const Resolver = struct {
 
                             r.log.addErrorFmt(
                                 null,
-                                logger.Loc{},
+                                .none,
                                 r.allocator,
                                 "Cannot read directory \"{s}\": {s}",
                                 .{
@@ -3796,7 +3796,7 @@ pub const Resolver = struct {
             if (dir_entry.err.original_err != error.ENOENT) {
                 r.log.addErrorFmt(
                     null,
-                    logger.Loc.Empty,
+                    .none,
                     r.allocator,
                     "Cannot read directory \"{s}\": {s}",
                     .{
@@ -4182,9 +4182,9 @@ pub const Resolver = struct {
                 ) catch |err| brk: {
                     const pretty = tsconfigpath;
                     if (err == error.ENOENT or err == error.FileNotFound) {
-                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot find tsconfig file {}", .{bun.fmt.QuotedFormatter{ .text = pretty }}) catch {};
+                        r.log.addErrorFmt(null, .none, r.allocator, "Cannot find tsconfig file {}", .{bun.fmt.QuotedFormatter{ .text = pretty }}) catch {};
                     } else if (err != error.ParseErrorAlreadyLogged and err != error.IsDir and err != error.EISDIR) {
-                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file {}: {s}", .{ bun.fmt.QuotedFormatter{ .text = pretty }, @errorName(err) }) catch {};
+                        r.log.addErrorFmt(null, .none, r.allocator, "Cannot read file {}: {s}", .{ bun.fmt.QuotedFormatter{ .text = pretty }, @errorName(err) }) catch {};
                     }
                     break :brk null;
                 };
@@ -4196,7 +4196,7 @@ pub const Resolver = struct {
                         const ts_dir_name = Dirname.dirname(current.abs_path);
                         const abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, current.extends }, .auto);
                         const parent_config_maybe = r.parseTSConfig(abs_path, bun.invalid_fd) catch |err| {
-                            r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {}", .{
+                            r.log.addDebugFmt(null, .none, r.allocator, "{s} loading tsconfig.json extends {}", .{
                                 @errorName(err),
                                 bun.fmt.QuotedFormatter{
                                     .text = abs_path,

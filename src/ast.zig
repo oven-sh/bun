@@ -61,7 +61,7 @@ pub const AssignTarget = enum(u2) {
 };
 
 pub const LocRef = struct {
-    loc: logger.Loc = logger.Loc.Empty,
+    loc: logger.Loc = .none,
 
     // TODO: remove this optional and make Ref a function getter
     // That will make this struct 128 bits instead of 192 bits and we can remove some heap allocations
@@ -121,7 +121,7 @@ pub const ClauseItem = struct {
     /// For exports: `export { foo as bar }` - "bar" is the alias
     /// For re-exports: `export { foo as bar } from 'path'` - "bar" is the alias
     alias: string,
-    alias_loc: logger.Loc = logger.Loc.Empty,
+    alias_loc: logger.Loc = .none,
     /// Reference to the actual symbol being imported/exported.
     /// For imports: `import { foo as bar }` - ref to the symbol representing "foo" from the source module
     /// For exports: `export { foo as bar }` - ref to the local symbol "foo"

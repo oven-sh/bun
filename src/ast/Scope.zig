@@ -74,7 +74,7 @@ pub const Member = struct {
     loc: logger.Loc,
 
     pub fn eql(a: Member, b: Member) bool {
-        return @call(bun.callmod_inline, Ref.eql, .{ a.ref, b.ref }) and a.loc.start == b.loc.start;
+        return @call(bun.callmod_inline, Ref.eql, .{ a.ref, b.ref }) and a.loc == b.loc;
     }
 };
 

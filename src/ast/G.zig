@@ -24,12 +24,12 @@ pub const ExportStarAlias = struct {
 };
 
 pub const Class = struct {
-    class_keyword: logger.Range = logger.Range.None,
+    class_keyword: logger.Range = .none,
     ts_decorators: ExprNodeList = ExprNodeList{},
     class_name: ?LocRef = null,
     extends: ?ExprNodeIndex = null,
-    body_loc: logger.Loc = logger.Loc.Empty,
-    close_brace_loc: logger.Loc = logger.Loc.Empty,
+    body_loc: logger.Loc = .none,
+    close_brace_loc: logger.Loc = .none,
     properties: []Property = &([_]Property{}),
     has_decorators: bool = false,
 
@@ -157,11 +157,11 @@ pub const FnBody = struct {
 
 pub const Fn = struct {
     name: ?LocRef = null,
-    open_parens_loc: logger.Loc = logger.Loc.Empty,
+    open_parens_loc: logger.Loc = .none,
     args: []Arg = &.{},
     // This was originally nullable, but doing so I believe caused a miscompilation
     // Specifically, the body was always null.
-    body: FnBody = .{ .loc = logger.Loc.Empty, .stmts = &.{} },
+    body: FnBody = .{ .loc = .none, .stmts = &.{} },
     arguments_ref: ?Ref = null,
 
     flags: Flags.Function.Set = Flags.Function.None,

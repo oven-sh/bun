@@ -857,31 +857,31 @@ pub const PublishCommand = struct {
             .key = Expr.init(
                 E.String,
                 .{ .data = "integrity" },
-                logger.Loc.Empty,
+                .none,
             ),
             .value = Expr.init(
                 E.String,
                 .{ .data = try std.fmt.allocPrint(allocator, "{}", .{bun.fmt.integrity(integrity, .full)}) },
-                logger.Loc.Empty,
+                .none,
             ),
         };
         dist_props[1] = .{
             .key = Expr.init(
                 E.String,
                 .{ .data = "shasum" },
-                logger.Loc.Empty,
+                .none,
             ),
             .value = Expr.init(
                 E.String,
                 .{ .data = try std.fmt.allocPrint(allocator, "{s}", .{std.fmt.bytesToHex(shasum, .lower)}) },
-                logger.Loc.Empty,
+                .none,
             ),
         };
         dist_props[2] = .{
             .key = Expr.init(
                 E.String,
                 .{ .data = "tarball" },
-                logger.Loc.Empty,
+                .none,
             ),
             .value = Expr.init(
                 E.String,
@@ -894,14 +894,14 @@ pub const PublishCommand = struct {
                         Pack.fmtTarballFilename(package_name, package_version, .raw),
                     }),
                 },
-                logger.Loc.Empty,
+                .none,
             ),
         };
 
         try json.set(allocator, "dist", Expr.init(
             E.Object,
             .{ .properties = G.Property.List.init(dist_props) },
-            logger.Loc.Empty,
+            .none,
         ));
 
         {
@@ -976,12 +976,12 @@ pub const PublishCommand = struct {
                         .key = Expr.init(
                             E.String,
                             .{ .data = package_name },
-                            logger.Loc.Empty,
+                            .none,
                         ),
                         .value = Expr.init(
                             E.String,
                             .{ .data = try allocator.dupe(u8, normalized) },
-                            logger.Loc.Empty,
+                            .none,
                         ),
                     });
 
@@ -990,7 +990,7 @@ pub const PublishCommand = struct {
                         .{
                             .properties = G.Property.List.fromList(bin_props),
                         },
-                        logger.Loc.Empty,
+                        .none,
                     );
                 },
                 .e_object => |bin_obj| {
@@ -1052,12 +1052,12 @@ pub const PublishCommand = struct {
                             .key = Expr.init(
                                 E.String,
                                 .{ .data = key },
-                                logger.Loc.Empty,
+                                .none,
                             ),
                             .value = Expr.init(
                                 E.String,
                                 .{ .data = value },
-                                logger.Loc.Empty,
+                                .none,
                             ),
                         });
                     }
@@ -1065,7 +1065,7 @@ pub const PublishCommand = struct {
                     json.data.e_object.properties.ptr[bin_query.i].value = Expr.init(
                         E.Object,
                         .{ .properties = G.Property.List.fromList(bin_props) },
-                        logger.Loc.Empty,
+                        .none,
                     );
                 },
                 else => {},
@@ -1135,12 +1135,12 @@ pub const PublishCommand = struct {
                             .key = Expr.init(
                                 E.String,
                                 .{ .data = std.fs.path.basenamePosix(subpath) },
-                                logger.Loc.Empty,
+                                .none,
                             ),
                             .value = Expr.init(
                                 E.String,
                                 .{ .data = subpath },
-                                logger.Loc.Empty,
+                                .none,
                             ),
                         });
 
@@ -1153,7 +1153,7 @@ pub const PublishCommand = struct {
                     }
                 }
 
-                try json.set(allocator, "bin", Expr.init(E.Object, .{ .properties = G.Property.List.fromList(bin_props) }, logger.Loc.Empty));
+                try json.set(allocator, "bin", Expr.init(E.Object, .{ .properties = G.Property.List.fromList(bin_props) }, .none));
             }
         }
 

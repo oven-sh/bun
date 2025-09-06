@@ -11,7 +11,7 @@ pub fn Symbols(
         }
 
         pub fn findSymbolWithRecordUsage(noalias p: *P, loc: logger.Loc, name: string, comptime record_usage: bool) !FindSymbolResult {
-            var declare_loc: logger.Loc = logger.Loc.Empty;
+            var declare_loc: logger.Loc = .none;
             var is_inside_with_scope = false;
             // This function can show up in profiling.
             // That's part of why we do this.

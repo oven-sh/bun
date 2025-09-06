@@ -211,7 +211,7 @@ const TestAnalyzer = struct {
                                 };
                                 try this.string_buffer.appendSlice(str.data);
                                 try this.items.append(api.TestResponseItem{
-                                    .byte_offset = expr.loc.start,
+                                    .byte_offset = expr.loc.get(),
                                     .kind = if (call.target.isRef(parser.jest.describe)) api.TestKind.describe_fn else .test_fn,
                                     .label = ptr,
                                 });
@@ -236,7 +236,7 @@ const TestAnalyzer = struct {
                                     };
                                     try this.string_buffer.appendSlice(str.data);
                                     try this.items.append(api.TestResponseItem{
-                                        .byte_offset = expr.loc.start,
+                                        .byte_offset = expr.loc.get(),
                                         .kind = if (target.isRef(parser.jest.describe)) api.TestKind.describe_fn else .test_fn,
                                         .label = ptr,
                                     });

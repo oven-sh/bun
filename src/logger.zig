@@ -40,33 +40,28 @@ pub const Kind = enum(u8) {
     }
 };
 
-// Do not mark these as packed
-// https://github.com/ziglang/zig/issues/15715
-pub const Loc = struct {
-    start: i32 = -1,
+pub const Loc = enum(i32) {
+    none = -1,
+    _,
 
-    pub inline fn toNullable(loc: Loc) ?Loc {
-        return if (loc.start == -1) null else loc;
+    pub fn get(loc: Loc) i32 {
+        return @intFromEnum(loc);
     }
 
-    pub const toUsize = i;
-
-    pub inline fn i(self: *const Loc) usize {
-        return @as(usize, @intCast(@max(self.start, 0)));
+    pub fn getUsize(loc: Loc) usize {
+        return @intCast(@max(0, loc.get()));
     }
 
-    pub const Empty = Loc{ .start = -1 };
-
-    pub inline fn eql(loc: Loc, other: Loc) bool {
-        return loc.start == other.start;
+    pub fn from(loc: i32) Loc {
+        return @enumFromInt(loc);
     }
 
-    pub inline fn isEmpty(this: Loc) bool {
-        return eql(this, Empty);
+    pub fn add(loc: Loc, n: i32) Loc {
+        return @enumFromInt(@intFromEnum(loc) + n);
     }
 
-    pub fn jsonStringify(self: *const Loc, writer: anytype) !void {
-        return try writer.write(self.start);
+    pub fn max(l: Loc, r: Loc) Loc {
+        return @enumFromInt(@max(@intFromEnum(l), @intFromEnum(r)));
     }
 };
 
@@ -183,11 +178,11 @@ pub const Location = struct {
             return Location{
                 .file = source.path.text,
                 .namespace = source.path.namespace,
-                .line = usize2Loc(data.line_count).start,
-                .column = usize2Loc(data.column_count).start,
+                .line = @intCast(data.line_count),
+                .column = @intCast(data.column_count),
                 .length = if (r.len > -1) @as(u32, @intCast(r.len)) else 1,
                 .line_text = std.mem.trimLeft(u8, full_line, "\n\r"),
-                .offset = @as(usize, @intCast(@max(r.loc.start, 0))),
+                .offset = @as(usize, @intCast(@max(r.loc.get(), 0))),
             };
         }
         return null;
@@ -569,36 +564,34 @@ pub const Msg = struct {
 // Do not mark these as packed
 // https://github.com/ziglang/zig/issues/15715
 pub const Range = struct {
-    loc: Loc = Loc.Empty,
+    loc: Loc = .none,
     len: i32 = 0,
 
-    /// Deprecated: use .none
-    pub const None = none;
-    pub const none = Range{ .loc = Loc.Empty, .len = 0 };
+    pub const none: Range = .{ .loc = .none, .len = 0 };
 
     pub fn in(this: Range, buf: []const u8) []const u8 {
-        if (this.loc.start < 0 or this.len <= 0) return "";
-        const slice = buf[@as(usize, @intCast(this.loc.start))..];
+        if (this.loc.get() < 0 or this.len <= 0) return "";
+        const slice = buf[@as(usize, @intCast(this.loc.get()))..];
         return slice[0..@min(@as(usize, @intCast(this.len)), buf.len)];
     }
 
     pub fn contains(this: Range, k: i32) bool {
-        return k >= this.loc.start and k < this.loc.start + this.len;
+        return k >= this.loc.get() and k < this.loc.get() + this.len;
     }
 
     pub fn isEmpty(r: *const Range) bool {
-        return r.len == 0 and r.loc.start == Loc.Empty.start;
+        return r.len == 0 and r.loc == .none;
     }
 
     pub fn end(self: *const Range) Loc {
-        return Loc{ .start = self.loc.start + self.len };
+        return self.loc.add(self.len);
     }
     pub fn endI(self: *const Range) usize {
-        return std.math.lossyCast(usize, self.loc.start + self.len);
+        return std.math.lossyCast(usize, self.loc.get() + self.len);
     }
 
     pub fn jsonStringify(self: *const Range, writer: anytype) !void {
-        return try writer.write([2]i32{ self.loc.start, self.len + self.loc.start });
+        return try writer.write([2]i32{ self.loc.get(), self.len + self.loc.get() });
     }
 };
 
@@ -999,12 +992,12 @@ pub const Log = struct {
     // Use a bun.sys.Error's message in addition to some extra context.
     pub fn addSysError(log: *Log, alloc: std.mem.Allocator, e: bun.sys.Error, comptime fmt: string, args: anytype) OOM!void {
         const tag_name, const sys_errno = e.getErrorCodeTagName() orelse {
-            try log.addErrorFmt(null, Loc.Empty, alloc, fmt, args);
+            try log.addErrorFmt(null, .none, alloc, fmt, args);
             return;
         };
         try log.addErrorFmt(
             null,
-            Loc.Empty,
+            .none,
             alloc,
             "{s}: " ++ fmt,
             .{bun.sys.coreutils_error_map.get(sys_errno) orelse tag_name} ++ args,
@@ -1016,11 +1009,11 @@ pub const Log = struct {
         log.errors += 1;
 
         var notes = try allocator.alloc(Data, 1);
-        notes[0] = rangeData(null, Range.None, try allocPrint(allocator, noteFmt, args));
+        notes[0] = rangeData(null, .none, try allocPrint(allocator, noteFmt, args));
 
         try log.addMsg(.{
             .kind = .err,
-            .data = rangeData(null, Range.None, @errorName(err)),
+            .data = rangeData(null, .none, @errorName(err)),
             .notes = notes,
         });
     }
@@ -1198,7 +1191,7 @@ pub const Log = struct {
 
         try log.addMsg(.{
             .kind = .warn,
-            .data = rangeData(null, Range.None, warn),
+            .data = rangeData(null, .none, warn),
             .notes = notes,
         });
     }
@@ -1256,7 +1249,7 @@ pub const Log = struct {
 
     const AddErrorOptions = struct {
         source: ?*const Source = null,
-        loc: Loc = Loc.Empty,
+        loc: Loc = .none,
         len: i32 = 0,
         redact_sensitive_information: bool = false,
     };
@@ -1346,10 +1339,6 @@ pub const Log = struct {
     }
 };
 
-pub inline fn usize2Loc(loc: usize) Loc {
-    return Loc{ .start = @as(i32, @intCast(loc)) };
-}
-
 pub const Source = struct {
     path: fs.Path,
 
@@ -1427,28 +1416,29 @@ pub const Source = struct {
     }
 
     pub fn textForRange(self: *const Source, r: Range) string {
-        return self.contents[r.loc.i()..r.endI()];
+        return self.contents[r.loc.getUsize()..r.endI()];
     }
 
     pub fn rangeOfOperatorBefore(self: *const Source, loc: Loc, op: string) Range {
-        const text = self.contents[0..loc.i()];
+        const text = self.contents[0..loc.getUsize()];
         const index = strings.index(text, op);
         if (index >= 0) {
-            return Range{ .loc = Loc{
-                .start = loc.start + index,
-            }, .len = @as(i32, @intCast(op.len)) };
+            return .{
+                .loc = loc.add(index),
+                .len = @intCast(op.len),
+            };
         }
 
         return Range{ .loc = loc };
     }
 
     pub fn rangeOfString(self: *const Source, loc: Loc) Range {
-        if (loc.start < 0) return Range.None;
+        if (loc.get() < 0) return .none;
 
-        const text = self.contents[loc.i()..];
+        const text = self.contents[@as(usize, @intCast(loc.get()))..];
 
         if (text.len == 0) {
-            return Range.None;
+            return .none;
         }
 
         const quote = text[0];
@@ -1471,22 +1461,10 @@ pub const Source = struct {
         return Range{ .loc = loc, .len = 0 };
     }
 
-    pub fn rangeOfOperatorAfter(self: *const Source, loc: Loc, op: string) Range {
-        const text = self.contents[loc.i()..];
-        const index = strings.index(text, op);
-        if (index >= 0) {
-            return Range{ .loc = Loc{
-                .start = loc.start + index,
-            }, .len = op.len };
-        }
-
-        return Range{ .loc = loc };
-    }
-
     pub fn initErrorPosition(self: *const Source, offset_loc: Loc) ErrorPosition {
-        bun.assert(!offset_loc.isEmpty());
+        bun.assert(offset_loc != .none);
         var prev_code_point: i32 = 0;
-        const offset: usize = @min(@as(usize, @intCast(offset_loc.start)), @max(self.contents.len, 1) - 1);
+        const offset: usize = @min(@as(usize, @intCast(offset_loc.get())), @max(self.contents.len, 1) - 1);
 
         const contents = self.contents;
 

@@ -15,7 +15,7 @@ pub const Parser = struct {
         return .{
             .logger = bun.logger.Log.init(allocator),
             .src = src,
-            .out = Expr.init(E.Object, E.Object{}, Loc.Empty),
+            .out = Expr.init(E.Object, E.Object{}, .none),
             .source = bun.logger.Source.initPathString(path, src),
             .arena = std.heap.ArenaAllocator.init(allocator),
             .env = env,
@@ -156,18 +156,18 @@ pub const Parser = struct {
                         @intCast(line_offset + @as(i32, @intCast(eq_sign_idx)) + 1),
                         .value,
                     );
-                    break :brk Expr.init(E.String, E.String{ .data = "" }, Loc.Empty);
+                    break :brk Expr.init(E.String, E.String{ .data = "" }, .none);
                 }
-                break :brk Expr.init(E.Boolean, E.Boolean{ .value = true }, Loc.Empty);
+                break :brk Expr.init(E.Boolean, E.Boolean{ .value = true }, .none);
             };
 
             const value: Expr = switch (value_raw.data) {
                 .e_string => |s| if (bun.strings.eqlComptime(s.data, "true"))
-                    Expr.init(E.Boolean, E.Boolean{ .value = true }, Loc.Empty)
+                    Expr.init(E.Boolean, E.Boolean{ .value = true }, .none)
                 else if (bun.strings.eqlComptime(s.data, "false"))
-                    Expr.init(E.Boolean, E.Boolean{ .value = false }, Loc.Empty)
+                    Expr.init(E.Boolean, E.Boolean{ .value = false }, .none)
                 else if (bun.strings.eqlComptime(s.data, "null"))
-                    Expr.init(E.Null, E.Null{}, Loc.Empty)
+                    Expr.init(E.Null, E.Null{}, .none)
                 else
                     value_raw,
                 else => value_raw,
@@ -178,10 +178,10 @@ pub const Parser = struct {
                     if (val.data != .e_array) {
                         var arr = E.Array{};
                         try arr.push(arena_allocator, val);
-                        try head.put(arena_allocator, key, Expr.init(E.Array, arr, Loc.Empty));
+                        try head.put(arena_allocator, key, Expr.init(E.Array, arr, .none));
                     }
                 } else {
-                    try head.put(arena_allocator, key, Expr.init(E.Array, E.Array{}, Loc.Empty));
+                    try head.put(arena_allocator, key, Expr.init(E.Array, E.Array{}, .none));
                 }
             }
 
@@ -231,7 +231,7 @@ pub const Parser = struct {
             };
 
             if (json_val.asString(arena_allocator)) |str| {
-                if (comptime usage == .value) return Expr.init(E.String, E.String.init(str), Loc{ .start = @intCast(offset) });
+                if (comptime usage == .value) return Expr.init(E.String, E.String.init(str), .from(@intCast(offset)));
                 if (comptime usage == .section) return strToRope(ropealloc, str);
                 return str;
             }
@@ -365,13 +365,13 @@ pub const Parser = struct {
                     return rope.?;
                 },
                 .value => {
-                    if (!did_any_escape) return Expr.init(E.String, E.String.init(val[0..]), Loc{ .start = offset });
+                    if (!did_any_escape) return Expr.init(E.String, E.String.init(val[0..]), .from(offset));
                     if (unesc.items.len <= STACK_BUF_SIZE) return Expr.init(
                         E.String,
                         E.String.init(try arena_allocator.dupe(u8, unesc.items[0..])),
-                        Loc{ .start = offset },
+                        .from(offset),
                     );
-                    return Expr.init(E.String, E.String.init(unesc.items[0..]), Loc{ .start = offset });
+                    return Expr.init(E.String, E.String.init(unesc.items[0..]), .from(offset));
                 },
                 .key => {
                     const thestr: []const u8 = thestr: {
@@ -383,7 +383,7 @@ pub const Parser = struct {
                 },
             }
         }
-        if (comptime usage == .value) return Expr.init(E.String, E.String.init(val[0..]), Loc{ .start = offset });
+        if (comptime usage == .value) return Expr.init(E.String, E.String.init(val[0..]), .from(offset));
         if (comptime usage == .key) return val[0..];
         return strToRope(ropealloc, val[0..]);
     }
@@ -432,7 +432,7 @@ pub const Parser = struct {
     fn singleStrRope(ropealloc: Allocator, str: []const u8) OOM!*Rope {
         const rope = try ropealloc.create(Rope);
         rope.* = .{
-            .head = Expr.init(E.String, E.String.init(str), Loc.Empty),
+            .head = Expr.init(E.String, E.String.init(str), .none),
         };
         return rope;
     }
@@ -444,7 +444,7 @@ pub const Parser = struct {
     fn commitRopePart(this: *Parser, arena_allocator: Allocator, ropealloc: Allocator, unesc: *std.ArrayList(u8), existing_rope: *?*Rope) OOM!void {
         _ = this; // autofix
         const slice = try arena_allocator.dupe(u8, unesc.items[0..]);
-        const expr = Expr.init(E.String, E.String{ .data = slice }, Loc.Empty);
+        const expr = Expr.init(E.String, E.String{ .data = slice }, .none);
         if (existing_rope.*) |_r| {
             const r: *Rope = _r;
             _ = try r.append(expr, ropealloc);
@@ -461,25 +461,25 @@ pub const Parser = struct {
         var dot_idx = nextDot(key) orelse {
             const rope = try ropealloc.create(Rope);
             rope.* = .{
-                .head = Expr.init(E.String, E.String.init(key), Loc.Empty),
+                .head = Expr.init(E.String, E.String.init(key), .none),
             };
             return rope;
         };
         var rope = try ropealloc.create(Rope);
         const head = rope;
         rope.* = .{
-            .head = Expr.init(E.String, E.String.init(key[0..dot_idx]), Loc.Empty),
+            .head = Expr.init(E.String, E.String.init(key[0..dot_idx]), .none),
             .next = null,
         };
 
         while (dot_idx + 1 < key.len) {
             const next_dot_idx = dot_idx + 1 + (nextDot(key[dot_idx + 1 ..]) orelse {
                 const rest = key[dot_idx + 1 ..];
-                rope = try rope.append(Expr.init(E.String, E.String.init(rest), Loc.Empty), ropealloc);
+                rope = try rope.append(Expr.init(E.String, E.String.init(rest), .none), ropealloc);
                 break;
             });
             const part = key[dot_idx + 1 .. next_dot_idx];
-            rope = try rope.append(Expr.init(E.String, E.String.init(part), Loc.Empty), ropealloc);
+            rope = try rope.append(Expr.init(E.String, E.String.init(part), .none), ropealloc);
             dot_idx = next_dot_idx;
         }
 

@@ -281,14 +281,14 @@ fn getEmptyCSSAST(
     allocator: std.mem.Allocator,
     source: *const Logger.Source,
 ) !JSAst {
-    const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
+    const root = Expr.init(E.Object, E.Object{}, .from(0));
     var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
     ast.css = bun.create(allocator, bun.css.BundlerStyleSheet, bun.css.BundlerStyleSheet.empty(allocator));
     return ast;
 }
 
 fn getEmptyAST(log: *Logger.Log, transpiler: *Transpiler, opts: js_parser.Parser.Options, allocator: std.mem.Allocator, source: *const Logger.Source, comptime RootType: type) !JSAst {
-    const root = Expr.init(RootType, RootType{}, Logger.Loc.Empty);
+    const root = Expr.init(RootType, RootType{}, .none);
     return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
 }
 
@@ -335,7 +335,7 @@ fn getAST(
         .json, .jsonc => |v| {
             const trace = bun.perf.trace("Bundler.ParseJSON");
             defer trace.end();
-            const root = (try resolver.caches.json.parseJSON(log, source, allocator, if (v == .jsonc) .jsonc else .json, true)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
+            const root = (try resolver.caches.json.parseJSON(log, source, allocator, if (v == .jsonc) .jsonc else .json, true)) orelse Expr.init(E.Object, E.Object{}, .none);
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
         },
         .toml => {
@@ -363,7 +363,7 @@ fn getAST(
         .text => {
             const root = Expr.init(E.String, E.String{
                 .data = source.contents,
-            }, Logger.Loc{ .start = 0 });
+            }, .from(0));
             var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
             ast.addUrlForCss(allocator, source, "text/plain", null);
             return ast;
@@ -373,7 +373,7 @@ fn getAST(
             if (!transpiler.options.target.isBun()) {
                 log.addError(
                     source,
-                    Logger.Loc.Empty,
+                    .none,
                     "To use the \"sqlite\" loader, set target to \"bun\"",
                 ) catch |err| bun.handleOom(err);
                 return error.ParserError;
@@ -399,39 +399,39 @@ fn getAST(
             //
             const import_path = Expr.init(E.String, E.String{
                 .data = path_to_use,
-            }, Logger.Loc{ .start = 0 });
+            }, .from(0));
 
-            const import_meta = Expr.init(E.ImportMeta, E.ImportMeta{}, Logger.Loc{ .start = 0 });
+            const import_meta = Expr.init(E.ImportMeta, E.ImportMeta{}, .from(0));
             const require_property = Expr.init(E.Dot, E.Dot{
                 .target = import_meta,
-                .name_loc = Logger.Loc.Empty,
+                .name_loc = .none,
                 .name = "require",
-            }, Logger.Loc{ .start = 0 });
+            }, .from(0));
             const require_args = allocator.alloc(Expr, 2) catch unreachable;
             require_args[0] = import_path;
             const object_properties = allocator.alloc(G.Property, 1) catch unreachable;
             object_properties[0] = G.Property{
                 .key = Expr.init(E.String, E.String{
                     .data = "type",
-                }, Logger.Loc{ .start = 0 }),
+                }, .from(0)),
                 .value = Expr.init(E.String, E.String{
                     .data = "sqlite",
-                }, Logger.Loc{ .start = 0 }),
+                }, .from(0)),
             };
             require_args[1] = Expr.init(E.Object, E.Object{
                 .properties = G.Property.List.init(object_properties),
                 .is_single_line = true,
-            }, Logger.Loc{ .start = 0 });
+            }, .from(0));
             const require_call = Expr.init(E.Call, E.Call{
                 .target = require_property,
                 .args = BabyList(Expr).init(require_args),
-            }, Logger.Loc{ .start = 0 });
+            }, .from(0));
 
             const root = Expr.init(E.Dot, E.Dot{
                 .target = require_call,
-                .name_loc = Logger.Loc.Empty,
+                .name_loc = .none,
                 .name = "db",
-            }, Logger.Loc{ .start = 0 });
+            }, .from(0));
 
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
         },
@@ -440,7 +440,7 @@ fn getAST(
             if (transpiler.options.target == .browser) {
                 log.addError(
                     source,
-                    Logger.Loc.Empty,
+                    .none,
                     "Loading .node files won't work in the browser. Make sure to set target to \"bun\" or \"node\"",
                 ) catch |err| bun.handleOom(err);
                 return error.ParserError;
@@ -453,15 +453,15 @@ fn getAST(
             //
             const import_path = Expr.init(E.String, E.String{
                 .data = unique_key,
-            }, Logger.Loc{ .start = 0 });
+            }, .from(0));
 
             const require_args = allocator.alloc(Expr, 1) catch unreachable;
             require_args[0] = import_path;
 
             const root = Expr.init(E.Call, E.Call{
-                .target = .{ .data = .{ .e_require_call_target = {} }, .loc = .{ .start = 0 } },
+                .target = .{ .data = .{ .e_require_call_target = {} }, .loc = .from(0) },
                 .args = BabyList(Expr).init(require_args),
-            }, Logger.Loc{ .start = 0 });
+            }, .from(0));
 
             unique_key_for_additional_file.* = .{
                 .key = unique_key,
@@ -481,7 +481,7 @@ fn getAST(
                 transpiler.options.define,
                 opts,
                 log,
-                Expr.init(E.Missing, E.Missing{}, Logger.Loc.Empty),
+                Expr.init(E.Missing, E.Missing{}, .none),
                 source,
                 "",
             )).?;
@@ -571,7 +571,7 @@ fn getAST(
                 _ = has_any_css_locals.fetchAdd(1, .monotonic);
             }
             // If this is a css module, the final exports object wil be set in `generateCodeForLazyExport`.
-            const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
+            const root = Expr.init(E.Object, E.Object{}, .from(0));
             const css_ast_heap = bun.create(allocator, bun.css.BundlerStyleSheet, css_ast);
             var ast = JSAst.init((try js_parser.newLazyExportASTImpl(allocator, transpiler.options.define, opts, &temp_log, root, source, "", extra.symbols)).?);
             ast.css = css_ast_heap;
@@ -610,7 +610,7 @@ fn getAST(
                     "{any}A{d:0>8}",
                     .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() },
                 );
-            const root = Expr.init(E.String, .{ .data = unique_key }, .{ .start = 0 });
+            const root = Expr.init(E.String, .{ .data = unique_key }, .from(0));
             unique_key_for_additional_file.* = .{
                 .key = unique_key,
                 .content_hash = content_hash,
@@ -673,7 +673,7 @@ fn getCodeForParseTaskWithoutPlugins(
                     error.ENOENT, error.FileNotFound => {
                         log.addErrorFmt(
                             source,
-                            Logger.Loc.Empty,
+                            .none,
                             allocator,
                             "File not found {}",
                             .{bun.fmt.quote(file_path.text)},
@@ -683,7 +683,7 @@ fn getCodeForParseTaskWithoutPlugins(
                     else => {
                         log.addErrorFmt(
                             source,
-                            Logger.Loc.Empty,
+                            .none,
                             allocator,
                             "{s} reading file: {}",
                             .{ @errorName(err), bun.fmt.quote(file_path.text) },

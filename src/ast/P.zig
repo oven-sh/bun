@@ -150,15 +150,15 @@ pub fn NewParser_(
         latest_return_had_semicolon: bool = false,
         has_import_meta: bool = false,
         has_es_module_syntax: bool = false,
-        top_level_await_keyword: logger.Range = logger.Range.None,
+        top_level_await_keyword: logger.Range = .none,
         fn_or_arrow_data_parse: FnOrArrowDataParse = FnOrArrowDataParse{},
         fn_or_arrow_data_visit: FnOrArrowDataVisit = FnOrArrowDataVisit{},
         fn_only_data_visit: FnOnlyDataVisit = FnOnlyDataVisit{},
         allocated_names: List(string) = .{},
         // allocated_names: ListManaged(string) = ListManaged(string).init(bun.default_allocator),
         // allocated_names_pool: ?*AllocatedNamesPool.Node = null,
-        latest_arrow_arg_loc: logger.Loc = logger.Loc.Empty,
-        forbid_suffix_after_as_loc: logger.Loc = logger.Loc.Empty,
+        latest_arrow_arg_loc: logger.Loc = .none,
+        forbid_suffix_after_as_loc: logger.Loc = .none,
         current_scope: *js_ast.Scope = undefined,
         scopes_for_current_part: List(*js_ast.Scope) = .{},
         symbols: ListManaged(js_ast.Symbol) = undefined,
@@ -284,9 +284,9 @@ pub fn NewParser_(
         import_symbol_property_uses: SymbolPropertyUseMap = .{},
 
         // These are for handling ES6 imports and exports
-        esm_import_keyword: logger.Range = logger.Range.None,
-        esm_export_keyword: logger.Range = logger.Range.None,
-        enclosing_class_keyword: logger.Range = logger.Range.None,
+        esm_import_keyword: logger.Range = .none,
+        esm_export_keyword: logger.Range = .none,
+        enclosing_class_keyword: logger.Range = .none,
         import_items_for_namespace: std.AutoHashMapUnmanaged(Ref, ImportItemForNamespaceMap) = .{},
         is_import_item: RefMap = .{},
         named_imports: NamedImportsType,
@@ -327,7 +327,7 @@ pub fn NewParser_(
         delete_target: Expr.Data,
         loop_body: Stmt.Data,
         module_scope: *js_ast.Scope = undefined,
-        module_scope_directive_loc: logger.Loc = .{},
+        module_scope_directive_loc: logger.Loc = .none,
         is_control_flow_dead: bool = false,
 
         /// We must be careful to avoid revisiting nodes that have scopes.
@@ -429,7 +429,7 @@ pub fn NewParser_(
         //     AssignmentExpression
         //     Expression , AssignmentExpression
         //
-        after_arrow_body_loc: logger.Loc = logger.Loc.Empty,
+        after_arrow_body_loc: logger.Loc = .none,
         import_transposer: ImportTransposer,
         require_transposer: RequireTransposer,
         require_resolve_transposer: RequireResolveTransposer,
@@ -1231,7 +1231,7 @@ pub fn NewParser_(
             comptime is_internal: bool,
         ) anyerror!void {
             const allocator = p.allocator;
-            const import_record_i = p.addImportRecordByRange(.stmt, logger.Range.None, import_path);
+            const import_record_i = p.addImportRecordByRange(.stmt, .none, import_path);
             var import_record: *ImportRecord = &p.import_records.items[import_record_i];
             if (comptime is_internal)
                 import_record.path.namespace = "runtime";
@@ -1257,8 +1257,8 @@ pub fn NewParser_(
                 clause_item.* = js_ast.ClauseItem{
                     .alias = alias_name,
                     .original_name = alias_name,
-                    .alias_loc = logger.Loc{},
-                    .name = LocRef{ .ref = ref, .loc = logger.Loc{} },
+                    .alias_loc = .none,
+                    .name = LocRef{ .ref = ref, .loc = .none },
                 };
                 declared_symbols.appendAssumeCapacity(.{ .ref = ref, .is_top_level = true });
 
@@ -1277,7 +1277,7 @@ pub fn NewParser_(
                 try p.is_import_item.put(allocator, ref, {});
                 try p.named_imports.put(allocator, ref, js_ast.NamedImport{
                     .alias = alias_name,
-                    .alias_loc = logger.Loc{},
+                    .alias_loc = .none,
                     .namespace_ref = namespace_ref,
                     .import_record_index = import_record_i,
                 });
@@ -1290,7 +1290,7 @@ pub fn NewParser_(
                     .import_record_index = import_record_i,
                     .is_single_line = true,
                 },
-                logger.Loc{},
+                .none,
             );
             if (additional_stmt) |add| {
                 stmts[1] = add;
@@ -1343,7 +1343,7 @@ pub fn NewParser_(
             // already a CommonJS module, and it will actually be more efficient
             // at runtime this way.
             const allocator = p.allocator;
-            const import_record_index = p.addImportRecordByRange(.stmt, logger.Range.None, import_path);
+            const import_record_index = p.addImportRecordByRange(.stmt, .none, import_path);
 
             const Item = if (hot_module_reloading) B.Object.Property else js_ast.ClauseItem;
 
@@ -1365,20 +1365,20 @@ pub fn NewParser_(
             for (clauses) |entry| {
                 if (entry.enabled) {
                     items.appendAssumeCapacity(if (hot_module_reloading) .{
-                        .key = p.newExpr(E.String{ .data = entry.name }, logger.Loc.Empty),
-                        .value = p.b(B.Identifier{ .ref = entry.ref }, logger.Loc.Empty),
+                        .key = p.newExpr(E.String{ .data = entry.name }, .none),
+                        .value = p.b(B.Identifier{ .ref = entry.ref }, .none),
                     } else .{
                         .alias = entry.name,
                         .original_name = entry.name,
-                        .alias_loc = logger.Loc{},
-                        .name = LocRef{ .ref = entry.ref, .loc = logger.Loc{} },
+                        .alias_loc = .none,
+                        .name = LocRef{ .ref = entry.ref, .loc = .none },
                     });
                     declared_symbols.appendAssumeCapacity(.{ .ref = entry.ref, .is_top_level = true });
                     try p.module_scope.generated.push(allocator, entry.ref);
                     try p.is_import_item.put(allocator, entry.ref, {});
                     try p.named_imports.put(allocator, entry.ref, .{
                         .alias = entry.name,
-                        .alias_loc = logger.Loc.Empty,
+                        .alias_loc = .none,
                         .namespace_ref = namespace_ref,
                         .import_record_index = import_record_index,
                     });
@@ -1391,10 +1391,10 @@ pub fn NewParser_(
                     .decls = try Decl.List.fromSlice(p.allocator, &.{.{
                         .binding = p.b(B.Object{
                             .properties = items.items,
-                        }, logger.Loc.Empty),
+                        }, .none),
                         .value = p.newExpr(E.RequireString{
                             .import_record_index = import_record_index,
-                        }, logger.Loc.Empty),
+                        }, .none),
                     }}),
                 }
             else
@@ -1403,7 +1403,7 @@ pub fn NewParser_(
                     .items = items.items,
                     .import_record_index = import_record_index,
                     .is_single_line = false,
-                }, logger.Loc.Empty);
+                }, .none);
 
             try parts.append(.{
                 .stmts = stmts,
@@ -2022,7 +2022,7 @@ pub fn NewParser_(
         fn ensureRequireSymbol(p: *P) void {
             if (p.runtime_imports.__require != null) return;
             const static_symbol = generatedSymbolName("__require");
-            p.runtime_imports.__require = bun.handleOom(declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static_symbol, true));
+            p.runtime_imports.__require = bun.handleOom(declareSymbolMaybeGenerated(p, .other, .none, static_symbol, true));
             p.runtime_imports.put("__require", p.runtime_imports.__require.?);
         }
 
@@ -2231,7 +2231,7 @@ pub fn NewParser_(
 
             // Sanity-check that the scopes generated by the first and second passes match
             if (bun.Environment.allow_assert and
-                order.loc.start != loc.start or order.scope.kind != kind)
+                order.loc != loc or order.scope.kind != kind)
             {
                 p.log.level = .verbose;
 
@@ -2281,11 +2281,11 @@ pub fn NewParser_(
                     }
 
                     if (p.scopes_in_order.items[last_i]) |prev_scope| {
-                        if (prev_scope.loc.start >= loc.start) {
+                        if (prev_scope.loc.get() >= loc.get()) {
                             p.log.level = .verbose;
                             bun.handleOom(p.log.addDebugFmt(p.source, prev_scope.loc, p.allocator, "Previous Scope", .{}));
                             bun.handleOom(p.log.addDebugFmt(p.source, loc, p.allocator, "Next Scope", .{}));
-                            p.panic("Scope location {d} must be greater than {d}", .{ loc.start, prev_scope.loc.start });
+                            p.panic("Scope location {d} must be greater than {d}", .{ loc.get(), prev_scope.loc.get() });
                         }
                     }
                 }
@@ -2477,7 +2477,7 @@ pub fn NewParser_(
             }
 
             if (errors.invalid_expr_after_question) |r| {
-                p.log.addRangeErrorFmt(p.source, r, p.allocator, "Unexpected {s}", .{p.source.contents[r.loc.i()..r.endI()]}) catch unreachable;
+                p.log.addRangeErrorFmt(p.source, r, p.allocator, "Unexpected {s}", .{p.source.contents[r.loc.getUsize()..r.endI()]}) catch unreachable;
             }
 
             // if (errors.array_spread_feature) |err| {
@@ -2991,7 +2991,7 @@ pub fn NewParser_(
             const scope = p.current_scope;
             if (p.isStrictMode()) {
                 var why: string = "";
-                var where: logger.Range = logger.Range.None;
+                var where: logger.Range = .none;
                 switch (scope.strict_mode) {
                     .implicit_strict_mode_import => {
                         where = p.esm_import_keyword;
@@ -3059,7 +3059,7 @@ pub fn NewParser_(
             const ref = try p.newSymbol(kind, name);
 
             if (member == null) {
-                try p.module_scope.members.put(p.allocator, name, Scope.Member{ .ref = ref, .loc = logger.Loc.Empty });
+                try p.module_scope.members.put(p.allocator, name, Scope.Member{ .ref = ref, .loc = .none });
                 return ref;
             }
 
@@ -3074,10 +3074,10 @@ pub fn NewParser_(
         fn declareGeneratedSymbol(p: *P, kind: Symbol.Kind, comptime name: string) !Ref {
             // The bundler runs the renamer, so it is ok to not append a hash
             if (p.options.bundle) {
-                return try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, name, true);
+                return try declareSymbolMaybeGenerated(p, kind, .none, name, true);
             }
 
-            return try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, generatedSymbolName(name), true);
+            return try declareSymbolMaybeGenerated(p, kind, .none, generatedSymbolName(name), true);
         }
 
         pub fn declareSymbol(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string) !Ref {
@@ -3324,7 +3324,7 @@ pub fn NewParser_(
             // panic during visit pass leaves the lexer at the end, which
             // would make this location absolutely useless.
             const location = loc orelse p.lexer.loc();
-            if (location.start < p.lexer.source.contents.len and !location.isEmpty()) {
+            if (location.get() < p.lexer.source.contents.len and location != .none) {
                 p.log.addRangeErrorFmt(
                     p.source,
                     .{ .loc = location },
@@ -3691,14 +3691,14 @@ pub fn NewParser_(
                 bun.assert(p.options.features.allow_runtime);
 
                 p.ensureRequireSymbol();
-                p.recordUsage(p.runtimeIdentifierRef(logger.Loc.Empty, "__require"));
+                p.recordUsage(p.runtimeIdentifierRef(.none, "__require"));
             }
         }
 
         pub fn ignoreUsageOfRuntimeRequire(p: *P) void {
             if (p.options.features.auto_polyfill_require) {
                 bun.assert(p.runtime_imports.__require != null);
-                p.ignoreUsage(p.runtimeIdentifierRef(logger.Loc.Empty, "__require"));
+                p.ignoreUsage(p.runtimeIdentifierRef(.none, "__require"));
                 p.symbols.items[p.require_ref.innerIndex()].use_count_estimate -|= 1;
             }
         }
@@ -4740,7 +4740,7 @@ pub fn NewParser_(
                                         {
                                             // design:type
                                             var args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                            args[0] = p.newExpr(E.String{ .data = "design:type" }, logger.Loc.Empty);
+                                            args[0] = p.newExpr(E.String{ .data = "design:type" }, .none);
                                             args[1] = p.serializeMetadata(prop.ts_metadata) catch unreachable;
                                             array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
                                         }
@@ -4749,7 +4749,7 @@ pub fn NewParser_(
                                             if (prop.value) |prop_value| {
                                                 {
                                                     var args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                                    args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, logger.Loc.Empty);
+                                                    args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, .none);
 
                                                     const method_args = prop_value.data.e_function.func.args;
                                                     const args_array = p.allocator.alloc(Expr, method_args.len) catch unreachable;
@@ -4757,13 +4757,13 @@ pub fn NewParser_(
                                                         entry.* = p.serializeMetadata(method_arg.ts_metadata) catch unreachable;
                                                     }
 
-                                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(args_array) }, logger.Loc.Empty);
+                                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(args_array) }, .none);
 
                                                     array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
                                                 }
                                                 {
                                                     var args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                                    args[0] = p.newExpr(E.String{ .data = "design:returntype" }, logger.Loc.Empty);
+                                                    args[0] = p.newExpr(E.String{ .data = "design:returntype" }, .none);
                                                     args[1] = p.serializeMetadata(prop_value.data.e_function.func.return_ts_metadata) catch unreachable;
                                                     array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
                                                 }
@@ -4775,14 +4775,14 @@ pub fn NewParser_(
                                         if (prop.value) |prop_value| {
                                             {
                                                 var args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                                args[0] = p.newExpr(E.String{ .data = "design:type" }, logger.Loc.Empty);
+                                                args[0] = p.newExpr(E.String{ .data = "design:type" }, .none);
                                                 args[1] = p.serializeMetadata(prop_value.data.e_function.func.return_ts_metadata) catch unreachable;
                                                 array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
                                             }
                                             {
                                                 var args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                                args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, logger.Loc.Empty);
-                                                args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(&[_]Expr{}) }, logger.Loc.Empty);
+                                                args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, .none);
+                                                args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(&[_]Expr{}) }, .none);
                                                 array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
                                             }
                                         }
@@ -4795,20 +4795,20 @@ pub fn NewParser_(
                                             const method_args = prop_value.data.e_function.func.args;
                                             {
                                                 var args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                                args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, logger.Loc.Empty);
+                                                args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, .none);
 
                                                 const args_array = p.allocator.alloc(Expr, method_args.len) catch unreachable;
                                                 for (args_array, method_args) |*entry, method_arg| {
                                                     entry.* = p.serializeMetadata(method_arg.ts_metadata) catch unreachable;
                                                 }
 
-                                                args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(args_array) }, logger.Loc.Empty);
+                                                args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(args_array) }, .none);
 
                                                 array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
                                             }
                                             if (method_args.len >= 1) {
                                                 var args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                                args[0] = p.newExpr(E.String{ .data = "design:type" }, logger.Loc.Empty);
+                                                args[0] = p.newExpr(E.String{ .data = "design:type" }, .none);
                                                 args[1] = p.serializeMetadata(method_args[0].ts_metadata) catch unreachable;
                                                 array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
                                             }
@@ -4897,7 +4897,7 @@ pub fn NewParser_(
                                 .key = p.newExpr(E.String{ .data = "constructor" }, stmt.loc),
                                 .value = p.newExpr(E.Function{ .func = G.Fn{
                                     .name = null,
-                                    .open_parens_loc = logger.Loc.Empty,
+                                    .open_parens_loc = .none,
                                     .args = &[_]Arg{},
                                     .body = .{ .loc = stmt.loc, .stmts = constructor_stmts.items },
                                     .flags = Flags.Function.init(.{}),
@@ -4939,7 +4939,7 @@ pub fn NewParser_(
                             if (constructor_function != null) {
                                 // design:paramtypes
                                 var args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, logger.Loc.Empty);
+                                args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, .none);
 
                                 const constructor_args = constructor_function.?.func.args;
                                 if (constructor_args.len > 0) {
@@ -4949,9 +4949,9 @@ pub fn NewParser_(
                                         param_array[i] = p.serializeMetadata(constructor_arg.ts_metadata) catch unreachable;
                                     }
 
-                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(param_array) }, logger.Loc.Empty);
+                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(param_array) }, .none);
                                 } else {
-                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(&[_]Expr{}) }, logger.Loc.Empty);
+                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(&[_]Expr{}) }, .none);
                                 }
 
                                 array.append(p.callRuntime(stmt.loc, "__legacyMetadataTS", args)) catch unreachable;
@@ -4988,9 +4988,9 @@ pub fn NewParser_(
                 .m_object,
                 => p.newExpr(
                     E.Identifier{
-                        .ref = (p.findSymbol(logger.Loc.Empty, "Object") catch unreachable).ref,
+                        .ref = (p.findSymbol(.none, "Object") catch unreachable).ref,
                     },
-                    logger.Loc.Empty,
+                    .none,
                 ),
 
                 .m_never,
@@ -4999,63 +4999,63 @@ pub fn NewParser_(
                 .m_void,
                 => p.newExpr(
                     E.Undefined{},
-                    logger.Loc.Empty,
+                    .none,
                 ),
 
                 .m_string => p.newExpr(
                     E.Identifier{
-                        .ref = (p.findSymbol(logger.Loc.Empty, "String") catch unreachable).ref,
+                        .ref = (p.findSymbol(.none, "String") catch unreachable).ref,
                     },
-                    logger.Loc.Empty,
+                    .none,
                 ),
                 .m_number => p.newExpr(
                     E.Identifier{
-                        .ref = (p.findSymbol(logger.Loc.Empty, "Number") catch unreachable).ref,
+                        .ref = (p.findSymbol(.none, "Number") catch unreachable).ref,
                     },
-                    logger.Loc.Empty,
+                    .none,
                 ),
                 .m_function => p.newExpr(
                     E.Identifier{
-                        .ref = (p.findSymbol(logger.Loc.Empty, "Function") catch unreachable).ref,
+                        .ref = (p.findSymbol(.none, "Function") catch unreachable).ref,
                     },
-                    logger.Loc.Empty,
+                    .none,
                 ),
                 .m_boolean => p.newExpr(
                     E.Identifier{
-                        .ref = (p.findSymbol(logger.Loc.Empty, "Boolean") catch unreachable).ref,
+                        .ref = (p.findSymbol(.none, "Boolean") catch unreachable).ref,
                     },
-                    logger.Loc.Empty,
+                    .none,
                 ),
                 .m_array => p.newExpr(
                     E.Identifier{
-                        .ref = (p.findSymbol(logger.Loc.Empty, "Array") catch unreachable).ref,
+                        .ref = (p.findSymbol(.none, "Array") catch unreachable).ref,
                     },
-                    logger.Loc.Empty,
+                    .none,
                 ),
 
                 .m_bigint => p.maybeDefinedHelper(
                     p.newExpr(
                         E.Identifier{
-                            .ref = (p.findSymbol(logger.Loc.Empty, "BigInt") catch unreachable).ref,
+                            .ref = (p.findSymbol(.none, "BigInt") catch unreachable).ref,
                         },
-                        logger.Loc.Empty,
+                        .none,
                     ),
                 ),
 
                 .m_symbol => p.maybeDefinedHelper(
                     p.newExpr(
                         E.Identifier{
-                            .ref = (p.findSymbol(logger.Loc.Empty, "Symbol") catch unreachable).ref,
+                            .ref = (p.findSymbol(.none, "Symbol") catch unreachable).ref,
                         },
-                        logger.Loc.Empty,
+                        .none,
                     ),
                 ),
 
                 .m_promise => p.newExpr(
                     E.Identifier{
-                        .ref = (p.findSymbol(logger.Loc.Empty, "Promise") catch unreachable).ref,
+                        .ref = (p.findSymbol(.none, "Promise") catch unreachable).ref,
                     },
-                    logger.Loc.Empty,
+                    .none,
                 ),
 
                 .m_identifier => |ref| {
@@ -5065,13 +5065,13 @@ pub fn NewParser_(
                             E.ImportIdentifier{
                                 .ref = ref,
                             },
-                            logger.Loc.Empty,
+                            .none,
                         ));
                     }
 
                     return p.maybeDefinedHelper(p.newExpr(
                         E.Identifier{ .ref = ref },
-                        logger.Loc.Empty,
+                        .none,
                     ));
                 },
 
@@ -5083,10 +5083,10 @@ pub fn NewParser_(
                     var dots = p.newExpr(
                         E.Dot{
                             .name = p.loadNameFromRef(refs.items[refs.items.len - 1]),
-                            .name_loc = logger.Loc.Empty,
+                            .name_loc = .none,
                             .target = undefined,
                         },
-                        logger.Loc.Empty,
+                        .none,
                     );
 
                     var current_expr = &dots.data.e_dot.target;
@@ -5094,9 +5094,9 @@ pub fn NewParser_(
                     while (i > 0) {
                         current_expr.* = p.newExpr(E.Dot{
                             .name = p.loadNameFromRef(refs.items[i]),
-                            .name_loc = logger.Loc.Empty,
+                            .name_loc = .none,
                             .target = undefined,
-                        }, logger.Loc.Empty);
+                        }, .none);
                         current_expr = &current_expr.data.e_dot.target;
                         i -= 1;
                     }
@@ -5106,14 +5106,14 @@ pub fn NewParser_(
                             E.ImportIdentifier{
                                 .ref = refs.items[0],
                             },
-                            logger.Loc.Empty,
+                            .none,
                         );
                     } else {
                         current_expr.* = p.newExpr(
                             E.Identifier{
                                 .ref = refs.items[0],
                             },
-                            logger.Loc.Empty,
+                            .none,
                         );
                     }
 
@@ -5126,7 +5126,7 @@ pub fn NewParser_(
                             .right = try p.checkIfDefinedHelper(current_dot),
                             .left = undefined,
                         },
-                        logger.Loc.Empty,
+                        .none,
                     );
 
                     if (i < refs.items.len - 2) {
@@ -5141,7 +5141,7 @@ pub fn NewParser_(
                                 .right = try p.checkIfDefinedHelper(current_dot),
                                 .left = undefined,
                             },
-                            logger.Loc.Empty,
+                            .none,
                         );
 
                         current_expr = &current_expr.data.e_binary.left;
@@ -5157,14 +5157,14 @@ pub fn NewParser_(
                         E.If{
                             .yes = p.newExpr(
                                 E.Identifier{
-                                    .ref = (p.findSymbol(logger.Loc.Empty, "Object") catch unreachable).ref,
+                                    .ref = (p.findSymbol(.none, "Object") catch unreachable).ref,
                                 },
-                                logger.Loc.Empty,
+                                .none,
                             ),
                             .no = dots,
                             .test_ = maybe_defined_dots,
                         },
-                        logger.Loc.Empty,
+                        .none,
                     );
 
                     return root;
@@ -5538,7 +5538,7 @@ pub fn NewParser_(
 
             pub fn init(p: *P) !LowerUsingDeclarationsContext {
                 return LowerUsingDeclarationsContext{
-                    .first_using_loc = logger.Loc.Empty,
+                    .first_using_loc = .none,
                     .stack_ref = p.generateTempRef("__stack"),
                     .has_await_using = false,
                 };
@@ -5550,7 +5550,7 @@ pub fn NewParser_(
                         .s_local => |local| {
                             if (!local.kind.isUsing()) continue;
 
-                            if (ctx.first_using_loc.isEmpty()) {
+                            if (ctx.first_using_loc == .none) {
                                 ctx.first_using_loc = stmt.loc;
                             }
                             if (local.kind == .k_await_using) {
@@ -5873,7 +5873,7 @@ pub fn NewParser_(
             bun.assert(p.current_scope == p.module_scope);
 
             // $RefreshReg$(component, "file.ts:Original Name")
-            const loc = logger.Loc.Empty;
+            const loc = .none;
             try stmts.append(p.s(S.SExpr{ .value = p.newExpr(E.Call{
                 .target = Expr.initIdentifier(p.react_refresh.register_ref, loc),
                 .args = try ExprNodeList.fromSlice(p.allocator, &.{
@@ -5907,7 +5907,7 @@ pub fn NewParser_(
                     p.source.path.pretty
                 else
                     bun.todoPanic(@src(), "TODO: unique_key here", .{}),
-            }, logger.Loc.Empty);
+            }, .none);
 
             // registerClientReference(
             //   Comp,
@@ -5915,13 +5915,13 @@ pub fn NewParser_(
             //   "Comp"
             // );
             return p.newExpr(E.Call{
-                .target = Expr.initIdentifier(p.server_components_wrap_ref, logger.Loc.Empty),
+                .target = Expr.initIdentifier(p.server_components_wrap_ref, .none),
                 .args = js_ast.ExprNodeList.fromSlice(p.allocator, &.{
                     val,
                     module_path,
-                    p.newExpr(E.String{ .data = original_name }, logger.Loc.Empty),
+                    p.newExpr(E.String{ .data = original_name }, .none),
                 }) catch |err| bun.handleOom(err),
-            }, logger.Loc.Empty);
+            }, .none);
         }
 
         pub fn handleReactRefreshHookCall(p: *P, hook_call: *E.Call, original_name: []const u8) void {
@@ -5979,7 +5979,7 @@ pub fn NewParser_(
                     if (!gop.found_existing) {
                         gop.value_ptr.* = .{
                             .data = @unionInit(Expr.Data, @tagName(tag), id),
-                            .loc = .Empty,
+                            .loc = .none,
                         };
                     }
                 },
@@ -6010,7 +6010,7 @@ pub fn NewParser_(
                 bun.copy(Stmt, stmts.items[1..], stmts.items[0 .. stmts.items.len - 1]);
             }
 
-            const loc = logger.Loc.Empty;
+            const loc = .none;
             const prepended_stmt = p.s(S.SExpr{ .value = p.newExpr(E.Call{
                 .target = Expr.initIdentifier(hook.signature_cb, loc),
             }, loc) }, loc);
@@ -6018,7 +6018,7 @@ pub fn NewParser_(
         }
 
         pub fn getReactRefreshHookSignalDecl(p: *P, signal_cb_ref: Ref) Stmt {
-            const loc = logger.Loc.Empty;
+            const loc = .none;
             p.react_refresh.latest_signature_ref = signal_cb_ref;
             // var s_ = $RefreshSig$();
             return p.s(S.Local{ .decls = G.Decl.List.fromSlice(p.allocator, &.{.{
@@ -6030,7 +6030,7 @@ pub fn NewParser_(
         }
 
         pub fn getReactRefreshHookSignalInit(p: *P, ctx: *ReactRefresh.HookContext, function_with_hook_calls: Expr) Expr {
-            const loc = logger.Loc.Empty;
+            const loc = .none;
 
             const final = ctx.hasher.final();
             const hash_data = bun.handleOom(p.allocator.alloc(u8, comptime bun.base64.encodeLenFromSize(@sizeOf(@TypeOf(final)))));
@@ -6200,15 +6200,15 @@ pub fn NewParser_(
                 //  which is then called in `evaluateCommonJSModuleOnce`
                 var args = bun.handleOom(allocator.alloc(Arg, 5 + @as(usize, @intFromBool(p.has_import_meta))));
                 args[0..5].* = .{
-                    Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) },
-                    Arg{ .binding = p.b(B.Identifier{ .ref = p.require_ref }, logger.Loc.Empty) },
-                    Arg{ .binding = p.b(B.Identifier{ .ref = p.module_ref }, logger.Loc.Empty) },
-                    Arg{ .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty) },
-                    Arg{ .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty) },
+                    Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, .none) },
+                    Arg{ .binding = p.b(B.Identifier{ .ref = p.require_ref }, .none) },
+                    Arg{ .binding = p.b(B.Identifier{ .ref = p.module_ref }, .none) },
+                    Arg{ .binding = p.b(B.Identifier{ .ref = p.filename_ref }, .none) },
+                    Arg{ .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, .none) },
                 };
                 if (p.has_import_meta) {
                     p.import_meta_ref = bun.handleOom(p.newSymbol(.other, "$Bun_import_meta"));
-                    args[5] = Arg{ .binding = p.b(B.Identifier{ .ref = p.import_meta_ref }, logger.Loc.Empty) };
+                    args[5] = Arg{ .binding = p.b(B.Identifier{ .ref = p.import_meta_ref }, .none) };
                 }
 
                 var total_stmts_count: usize = 0;
@@ -6248,13 +6248,13 @@ pub fn NewParser_(
                     E.Function{
                         .func = G.Fn{
                             .name = null,
-                            .open_parens_loc = logger.Loc.Empty,
+                            .open_parens_loc = .none,
                             .args = args,
-                            .body = .{ .loc = logger.Loc.Empty, .stmts = stmts_to_copy },
+                            .body = .{ .loc = .none, .stmts = stmts_to_copy },
                             .flags = Flags.Function.init(.{ .is_export = false }),
                         },
                     },
-                    logger.Loc.Empty,
+                    .none,
                 );
 
                 var top_level_stmts = bun.handleOom(p.allocator.alloc(Stmt, 1));
@@ -6262,7 +6262,7 @@ pub fn NewParser_(
                     S.SExpr{
                         .value = wrapper,
                     },
-                    logger.Loc.Empty,
+                    .none,
                 );
 
                 try parts.ensureUnusedCapacity(1);

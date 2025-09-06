@@ -458,7 +458,7 @@ pub const ByteRangeMapping = struct {
                 const has_executed = block.hasExecuted or block.executionCount > 0;
 
                 for (min..max) |byte_offset| {
-                    const new_line_index = LineOffsetTable.findIndex(line_starts, .{ .start = @intCast(byte_offset) }) orelse continue;
+                    const new_line_index = LineOffsetTable.findIndex(line_starts, .from(@intCast(byte_offset))) orelse continue;
                     const line_start_byte_offset = line_starts[new_line_index];
                     if (line_start_byte_offset >= byte_offset) {
                         continue;
@@ -495,7 +495,7 @@ pub const ByteRangeMapping = struct {
                 var max_line: u32 = 0;
 
                 for (min..max) |byte_offset| {
-                    const new_line_index = LineOffsetTable.findIndex(line_starts, .{ .start = @intCast(byte_offset) }) orelse continue;
+                    const new_line_index = LineOffsetTable.findIndex(line_starts, .from(@intCast(byte_offset))) orelse continue;
                     const line_start_byte_offset = line_starts[new_line_index];
                     if (line_start_byte_offset >= byte_offset) {
                         continue;
@@ -547,7 +547,7 @@ pub const ByteRangeMapping = struct {
                 const has_executed = block.hasExecuted or block.executionCount > 0;
 
                 for (min..max) |byte_offset| {
-                    const new_line_index = LineOffsetTable.findIndex(line_starts, .{ .start = @intCast(byte_offset) }) orelse continue;
+                    const new_line_index = LineOffsetTable.findIndex(line_starts, .from(@intCast(byte_offset))) orelse continue;
                     const line_start_byte_offset = line_starts[new_line_index];
                     if (line_start_byte_offset >= byte_offset) {
                         continue;
@@ -590,7 +590,7 @@ pub const ByteRangeMapping = struct {
                 var max_line: u32 = 0;
 
                 for (min..max) |byte_offset| {
-                    const new_line_index = LineOffsetTable.findIndex(line_starts, .{ .start = @intCast(byte_offset) }) orelse continue;
+                    const new_line_index = LineOffsetTable.findIndex(line_starts, .from(@intCast(byte_offset))) orelse continue;
                     const line_start_byte_offset = line_starts[new_line_index];
                     if (line_start_byte_offset >= byte_offset) {
                         continue;

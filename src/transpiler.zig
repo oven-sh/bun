@@ -376,7 +376,7 @@ pub const Transpiler = struct {
                 }
             }
 
-            bun.handleOom(transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }));
+            bun.handleOom(transpiler.log.addErrorFmt(null, .none, transpiler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }));
             return err;
         };
     }
@@ -687,7 +687,7 @@ pub const Transpiler = struct {
                     false,
                     null,
                 ) catch |err| {
-                    transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), file_path.pretty }) catch {};
+                    transpiler.log.addErrorFmt(null, .none, transpiler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), file_path.pretty }) catch {};
                     return null;
                 };
                 var opts = bun.css.ParserOptions.default(alloc, transpiler.log);
@@ -708,12 +708,12 @@ pub const Transpiler = struct {
                 )) {
                     .result => |v| v,
                     .err => |e| {
-                        transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} parsing", .{e}) catch unreachable;
+                        transpiler.log.addErrorFmt(null, .none, transpiler.allocator, "{} parsing", .{e}) catch unreachable;
                         return null;
                     },
                 };
                 if (sheet.minify(alloc, bun.css.MinifyOptions.default(), &extra).asErr()) |e| {
-                    bun.handleOom(transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while minifying", .{e.kind}));
+                    bun.handleOom(transpiler.log.addErrorFmt(null, .none, transpiler.allocator, "{} while minifying", .{e.kind}));
                     return null;
                 }
                 const symbols = bun.ast.Symbol.Map{};
@@ -729,7 +729,7 @@ pub const Transpiler = struct {
                 )) {
                     .result => |v| v,
                     .err => |e| {
-                        bun.handleOom(transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while printing", .{e}));
+                        bun.handleOom(transpiler.log.addErrorFmt(null, .none, transpiler.allocator, "{} while printing", .{e}));
                         return null;
                     },
                 };
@@ -1015,11 +1015,11 @@ pub const Transpiler = struct {
 
             if (strings.startsWith(path.text, "data:")) {
                 const data_url = DataURL.parseWithoutCheck(path.text) catch |err| {
-                    transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} parsing data url \"{s}\"", .{ @errorName(err), path.text }) catch {};
+                    transpiler.log.addErrorFmt(null, .none, transpiler.allocator, "{s} parsing data url \"{s}\"", .{ @errorName(err), path.text }) catch {};
                     return null;
                 };
                 const body = data_url.decodeData(this_parse.allocator) catch |err| {
-                    transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} decoding data \"{s}\"", .{ @errorName(err), path.text }) catch {};
+                    transpiler.log.addErrorFmt(null, .none, transpiler.allocator, "{s} decoding data \"{s}\"", .{ @errorName(err), path.text }) catch {};
                     return null;
                 };
                 break :brk logger.Source.initPathString(path.text, body);
@@ -1033,7 +1033,7 @@ pub const Transpiler = struct {
                 use_shared_buffer,
                 file_descriptor,
             ) catch |err| {
-                transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), path.text }) catch {};
+                transpiler.log.addErrorFmt(null, .none, transpiler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), path.text }) catch {};
                 return null;
             };
             input_fd = entry.fd;
@@ -1189,7 +1189,7 @@ pub const Transpiler = struct {
                 const parts = brk: {
                     if (this_parse.keep_json_and_toml_as_one_statement) {
                         var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
-                        stmts[0] = js_ast.Stmt.allocate(allocator, js_ast.S.SExpr, js_ast.S.SExpr{ .value = expr }, logger.Loc{ .start = 0 });
+                        stmts[0] = js_ast.Stmt.allocate(allocator, js_ast.S.SExpr, js_ast.S.SExpr{ .value = expr }, .from(0));
                         var parts_ = allocator.alloc(js_ast.Part, 1) catch unreachable;
                         parts_[0] = js_ast.Part{ .stmts = stmts };
                         break :brk parts_;
@@ -1247,9 +1247,7 @@ pub const Transpiler = struct {
                                     .decls = js_ast.G.Decl.List.init(decls[0..count]),
                                     .kind = .k_var,
                                 },
-                                logger.Loc{
-                                    .start = 0,
-                                },
+                                .from(0),
                             );
                             stmts[1] = js_ast.Stmt.alloc(
                                 js_ast.S.ExportClause,
@@ -1257,22 +1255,18 @@ pub const Transpiler = struct {
                                     .items = export_clauses[0..count],
                                     .is_single_line = false,
                                 },
-                                logger.Loc{
-                                    .start = 0,
-                                },
+                                .from(0),
                             );
                             stmts[2] = js_ast.Stmt.alloc(
                                 js_ast.S.ExportDefault,
                                 js_ast.S.ExportDefault{
                                     .value = js_ast.StmtOrExpr{ .expr = expr },
                                     .default_name = js_ast.LocRef{
-                                        .loc = logger.Loc{},
+                                        .loc = .none,
                                         .ref = Ref.None,
                                     },
                                 },
-                                logger.Loc{
-                                    .start = 0,
-                                },
+                                .from(0),
                             );
 
                             var parts_ = allocator.alloc(js_ast.Part, 1) catch unreachable;
@@ -1286,10 +1280,10 @@ pub const Transpiler = struct {
                         stmts[0] = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                             .value = js_ast.StmtOrExpr{ .expr = expr },
                             .default_name = js_ast.LocRef{
-                                .loc = logger.Loc{},
+                                .loc = .none,
                                 .ref = Ref.None,
                             },
-                        }, logger.Loc{ .start = 0 });
+                        }, .from(0));
 
                         var parts_ = allocator.alloc(js_ast.Part, 1) catch unreachable;
                         parts_[0] = js_ast.Part{ .stmts = stmts };
@@ -1310,14 +1304,14 @@ pub const Transpiler = struct {
             .text => {
                 const expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
                     .data = source.contents,
-                }, logger.Loc.Empty);
+                }, .none);
                 const stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                     .value = js_ast.StmtOrExpr{ .expr = expr },
                     .default_name = js_ast.LocRef{
-                        .loc = logger.Loc{},
+                        .loc = .none,
                         .ref = Ref.None,
                     },
-                }, logger.Loc{ .start = 0 });
+                }, .from(0));
                 var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
                 stmts[0] = stmt;
                 var parts = allocator.alloc(js_ast.Part, 1) catch unreachable;
@@ -1335,7 +1329,7 @@ pub const Transpiler = struct {
                     if (!source.isWebAssembly()) {
                         transpiler.log.addErrorFmt(
                             null,
-                            logger.Loc.Empty,
+                            .none,
                             transpiler.allocator,
                             "Invalid wasm file \"{s}\" (missing magic header)",
                             .{path.text},

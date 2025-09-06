@@ -81,7 +81,7 @@ pub fn callback(task: *ThreadPool.Task) void {
                 bun.handleOom(pt.apply());
                 if (pt.callback.apply.logger.errors > 0) {
                     defer pt.callback.apply.logger.deinit();
-                    // this.log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "failed to apply patch: {}", .{e}) catch unreachable;
+                    // this.log.addErrorFmt(null, .none, bun.default_allocator, "failed to apply patch: {}", .{e}) catch unreachable;
                     pt.callback.apply.logger.print(Output.errorWriter()) catch {};
                 }
             }
@@ -125,7 +125,7 @@ pub fn callback(task: *ThreadPool.Task) void {
                     return;
                 },
                 .not_found => {
-                    this.log.addErrorFmt(null, logger.Loc.Empty, allocator, "404 - GET {s}", .{
+                    this.log.addErrorFmt(null, .none, allocator, "404 - GET {s}", .{
                         this.request.package_manifest.name.slice(),
                     }) catch unreachable;
                     this.status = Status.fail;

@@ -42,7 +42,7 @@ pub fn loadEnv(allocator: std.mem.Allocator, logger: *Log, env: *DotEnv.Loader) 
         const max = std.fmt.parseInt(u16, max_http_requests, 10) catch {
             logger.addErrorFmt(
                 null,
-                Loc.Empty,
+                .none,
                 allocator,
                 "BUN_CONFIG_MAX_HTTP_REQUESTS value \"{s}\" is not a valid integer between 1 and 65535",
                 .{max_http_requests},
@@ -52,7 +52,7 @@ pub fn loadEnv(allocator: std.mem.Allocator, logger: *Log, env: *DotEnv.Loader) 
         if (max == 0) {
             logger.addWarningFmt(
                 null,
-                Loc.Empty,
+                .none,
                 allocator,
                 "BUN_CONFIG_MAX_HTTP_REQUESTS value must be a number between 1 and 65535",
                 .{},

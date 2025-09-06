@@ -295,7 +295,7 @@ pub fn processNamesArray(
                         error.MissingPackageName => {
                             log.addErrorFmt(
                                 source,
-                                logger.Loc.Empty,
+                                .none,
                                 allocator,
                                 "Missing \"name\" from package.json in {s}" ++ std.fs.path.sep_str ++ "{s}",
                                 .{ entry_dir, entry_base },
@@ -304,7 +304,7 @@ pub fn processNamesArray(
                         else => {
                             log.addErrorFmt(
                                 source,
-                                logger.Loc.Empty,
+                                .none,
                                 allocator,
                                 "{s} reading package.json for workspace package \"{s}\" from \"{s}\"",
                                 .{ @errorName(err), entry_dir, entry_base },

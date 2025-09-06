@@ -160,7 +160,7 @@ pub fn runTasks(
                         if (manager.options.log_level.isVerbose()) {
                             manager.log.addWarningFmt(
                                 null,
-                                logger.Loc.Empty,
+                                .none,
                                 manager.allocator,
                                 "{s} downloading package manifest <b>{s}<r>. Retry {d}/{d}...",
                                 .{ bun.span(@errorName(err)), name.slice(), task.retried, manager.options.max_retry_count },
@@ -187,7 +187,7 @@ pub fn runTasks(
                         if (manager.isNetworkTaskRequired(task.task_id)) {
                             manager.log.addErrorFmt(
                                 null,
-                                logger.Loc.Empty,
+                                .none,
                                 manager.allocator,
                                 fmt,
                                 .{ @errorName(err), name.slice() },
@@ -195,7 +195,7 @@ pub fn runTasks(
                         } else {
                             manager.log.addWarningFmt(
                                 null,
-                                logger.Loc.Empty,
+                                .none,
                                 manager.allocator,
                                 fmt,
                                 .{ @errorName(err), name.slice() },
@@ -243,7 +243,7 @@ pub fn runTasks(
                     if (manager.isNetworkTaskRequired(task.task_id)) {
                         manager.log.addErrorFmt(
                             null,
-                            logger.Loc.Empty,
+                            .none,
                             manager.allocator,
                             "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
                             .{ metadata.url, response.status_code },
@@ -251,7 +251,7 @@ pub fn runTasks(
                     } else {
                         manager.log.addWarningFmt(
                             null,
-                            logger.Loc.Empty,
+                            .none,
                             manager.allocator,
                             "<r><yellow><b>GET<r><yellow> {s}<d> - {d}<r>",
                             .{ metadata.url, response.status_code },
@@ -342,7 +342,7 @@ pub fn runTasks(
                         if (manager.options.log_level.isVerbose()) {
                             manager.log.addWarningFmt(
                                 null,
-                                logger.Loc.Empty,
+                                .none,
                                 manager.allocator,
                                 "<r><yellow>warn:<r> {s} downloading tarball <b>{s}@{s}<r>. Retrying {d}/{d}...",
                                 .{
@@ -379,7 +379,7 @@ pub fn runTasks(
                     if (manager.isNetworkTaskRequired(task.task_id)) {
                         manager.log.addErrorFmt(
                             null,
-                            logger.Loc.Empty,
+                            .none,
                             manager.allocator,
                             fmt,
                             .{
@@ -391,7 +391,7 @@ pub fn runTasks(
                     } else {
                         manager.log.addWarningFmt(
                             null,
-                            logger.Loc.Empty,
+                            .none,
                             manager.allocator,
                             fmt,
                             .{
@@ -444,7 +444,7 @@ pub fn runTasks(
                     if (manager.isNetworkTaskRequired(task.task_id)) {
                         manager.log.addErrorFmt(
                             null,
-                            logger.Loc.Empty,
+                            .none,
                             manager.allocator,
                             "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
                             .{
@@ -455,7 +455,7 @@ pub fn runTasks(
                     } else {
                         manager.log.addWarningFmt(
                             null,
-                            logger.Loc.Empty,
+                            .none,
                             manager.allocator,
                             "<r><yellow><b>GET<r><yellow> {s}<d> - {d}<r>",
                             .{
@@ -530,7 +530,7 @@ pub fn runTasks(
                     } else {
                         manager.log.addErrorFmt(
                             null,
-                            logger.Loc.Empty,
+                            .none,
                             manager.allocator,
                             "{s} parsing package manifest for <b>{s}<r>",
                             .{
@@ -600,7 +600,7 @@ pub fn runTasks(
                     } else {
                         manager.log.addErrorFmt(
                             null,
-                            logger.Loc.Empty,
+                            .none,
                             manager.allocator,
                             "{s} extracting tarball from <b>{s}<r>",
                             .{
@@ -720,7 +720,7 @@ pub fn runTasks(
                     } else if (log_level != .silent) {
                         manager.log.addErrorFmt(
                             null,
-                            logger.Loc.Empty,
+                            .none,
                             manager.allocator,
                             "{s} cloning repository for <b>{s}<r>",
                             .{
@@ -794,7 +794,7 @@ pub fn runTasks(
 
                     manager.log.addErrorFmt(
                         null,
-                        logger.Loc.Empty,
+                        .none,
                         manager.allocator,
                         "{s} checking out repository for <b>{s}<r>",
                         .{

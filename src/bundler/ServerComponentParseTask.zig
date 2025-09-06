@@ -162,7 +162,7 @@ fn generateClientReferenceProxy(task: *ServerComponentParseTask, data: Data.Refe
             .args = try BabyList(Expr).fromSlice(b.allocator, &.{
                 b.newExpr(E.String{ .data = err_msg_string }),
             }),
-            .close_parens_loc = Logger.Loc.Empty,
+            .close_parens_loc = .none,
         });
 
         // registerClientReference(
@@ -177,7 +177,7 @@ fn generateClientReferenceProxy(task: *ServerComponentParseTask, data: Data.Refe
                     .stmts = try b.allocator.dupe(Stmt, &.{
                         b.newStmt(S.Throw{ .value = err_msg }),
                     }),
-                    .loc = Logger.Loc.Empty,
+                    .loc = .none,
                 } }),
                 module_path,
                 b.newExpr(E.String{ .data = key }),
@@ -193,7 +193,7 @@ fn generateClientReferenceProxy(task: *ServerComponentParseTask, data: Data.Refe
             const export_ref = try b.newSymbol(.other, key);
             try b.appendStmt(S.Local{
                 .decls = try G.Decl.List.fromSlice(b.allocator, &.{.{
-                    .binding = Binding.alloc(b.allocator, B.Identifier{ .ref = export_ref }, Logger.Loc.Empty),
+                    .binding = Binding.alloc(b.allocator, B.Identifier{ .ref = export_ref }, .none),
                     .value = value,
                 }}),
                 .is_export = true,

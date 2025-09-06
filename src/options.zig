@@ -27,7 +27,7 @@ pub fn validatePath(
     const out = std.fs.path.resolve(allocator, &paths) catch |err| {
         log.addErrorFmt(
             null,
-            logger.Loc.Empty,
+            .none,
             allocator,
             "<r><red>{s}<r> resolving external: <b>\"{s}\"<r>",
             .{ @errorName(err), rel_path },
@@ -123,7 +123,7 @@ pub const ExternalModules = struct {
             const path = external;
             if (strings.indexOfChar(path, '*')) |i| {
                 if (strings.indexOfChar(path[i + 1 .. path.len], '*') != null) {
-                    log.addErrorFmt(null, logger.Loc.Empty, allocator, "External path \"{s}\" cannot have more than one \"*\" wildcard", .{external}) catch unreachable;
+                    log.addErrorFmt(null, .none, allocator, "External path \"{s}\" cannot have more than one \"*\" wildcard", .{external}) catch unreachable;
                     return result;
                 }
 

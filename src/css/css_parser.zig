@@ -1420,7 +1420,7 @@ pub const BundlerAtRuleParser = struct {
                 .path = bun.fs.Path.init(import_rule.url),
                 .kind = if (import_rule.supports != null) .at_conditional else .at,
                 .range = bun.logger.Range{
-                    .loc = bun.logger.Loc{ .start = @intCast(start_position) },
+                    .loc = .from(@intCast(start_position)),
                     .len = @intCast(end_position - start_position),
                 },
             }) catch |err| bun.handleOom(err);
@@ -2633,7 +2633,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                     for (this.composes_refs.slice()) |ref| {
                         const entry = bun.handleOom(this.local_properties.getOrPut(this.allocator, ref));
                         const property_usage: *PropertyUsage = if (!entry.found_existing) brk: {
-                            entry.value_ptr.* = PropertyUsage{ .range = bun.logger.Range{ .loc = bun.logger.Loc{ .start = @intCast(location) }, .len = @intCast(len) } };
+                            entry.value_ptr.* = PropertyUsage{ .range = bun.logger.Range{ .loc = .from(@intCast(location)), .len = @intCast(len) } };
                             break :brk entry.value_ptr;
                         } else entry.value_ptr;
                         property_usage.fill(&usage, custom_properties_slice);
@@ -3429,7 +3429,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                                     new_import_records.push(allocator, ImportRecord{
                                         .path = bun.fs.Path.init(import_rule.url),
                                         .kind = if (import_rule.supports != null) .at_conditional else .at,
-                                        .range = bun.logger.Range.None,
+                                        .range = .none,
                                     }) catch |err| bun.handleOom(err);
                                     rule.* = .ignored;
                                 },
@@ -3742,7 +3742,7 @@ pub const ParserOptions = struct {
         if (this.logger) |lg| {
             lg.addRangeWarningFmtWithNote(
                 null,
-                bun.logger.Loc{ .start = @intCast(line), .end = @intCast(column) },
+                .{ .loc = .from(@intCast(line)), .end = @intCast(column) },
                 this.allocator,
                 text,
                 args,
@@ -3858,7 +3858,7 @@ pub const Parser = struct {
                 .path = bun.fs.Path.init(url),
                 .kind = kind,
                 .range = bun.logger.Range{
-                    .loc = bun.logger.Loc{ .start = @intCast(start_position) },
+                    .loc = .from(@intCast(start_position)),
                     .len = @intCast(url.len), // TODO: technically this is not correct because the url could be escaped
                 },
             }) catch |err| bun.handleOom(err);

@@ -155,14 +155,14 @@ pub const Parser = struct {
         if (self.options.jsx.parse and p.needs_jsx_import) {
             _ = p.addImportRecord(
                 .require,
-                logger.Loc{ .start = 0 },
+                .from(0),
                 p.options.jsx.importSource(),
             );
             // Ensure we have both classic and automatic
             // This is to handle cases where they use fragments in the automatic runtime
             _ = p.addImportRecord(
                 .require,
-                logger.Loc{ .start = 0 },
+                .from(0),
                 p.options.jsx.classic_import_source,
             );
         }
@@ -454,7 +454,7 @@ pub const Parser = struct {
             var debugger_stmts = try p.allocator.alloc(Stmt, 1);
             debugger_stmts[0] = Stmt{
                 .data = .{ .s_debugger = .{} },
-                .loc = logger.Loc.Empty,
+                .loc = .none,
             };
             before.append(
                 js_ast.Part{
@@ -660,24 +660,24 @@ pub const Parser = struct {
                 var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
                 if (uses_dirname) {
                     decls[0] = .{
-                        .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
+                        .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, .none),
                         .value = p.newExpr(
                             E.String{
                                 .data = p.source.path.name.dir,
                             },
-                            logger.Loc.Empty,
+                            .none,
                         ),
                     };
                     declared_symbols.appendAssumeCapacity(.{ .ref = p.dirname_ref, .is_top_level = true });
                 }
                 if (uses_filename) {
                     decls[@as(usize, @intFromBool(uses_dirname))] = .{
-                        .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
+                        .binding = p.b(B.Identifier{ .ref = p.filename_ref }, .none),
                         .value = p.newExpr(
                             E.String{
                                 .data = p.source.path.text,
                             },
-                            logger.Loc.Empty,
+                            .none,
                         ),
                     };
                     declared_symbols.appendAssumeCapacity(.{ .ref = p.filename_ref, .is_top_level = true });
@@ -687,7 +687,7 @@ pub const Parser = struct {
                 part_stmts[0] = p.s(S.Local{
                     .kind = .k_var,
                     .decls = Decl.List.init(decls),
-                }, logger.Loc.Empty);
+                }, .none);
                 before.append(js_ast.Part{
                     .stmts = part_stmts,
                     .declared_symbols = declared_symbols,
@@ -1134,14 +1134,14 @@ pub const Parser = struct {
             if (uses_dirname) {
                 // var __dirname = import.meta
                 decls[0] = .{
-                    .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
+                    .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, .none),
                     .value = p.newExpr(
                         E.Dot{
                             .name = "dir",
-                            .name_loc = logger.Loc.Empty,
-                            .target = p.newExpr(E.ImportMeta{}, logger.Loc.Empty),
+                            .name_loc = .none,
+                            .target = p.newExpr(E.ImportMeta{}, .none),
                         },
-                        logger.Loc.Empty,
+                        .none,
                     ),
                 };
                 declared_symbols.appendAssumeCapacity(.{ .ref = p.dirname_ref, .is_top_level = true });
@@ -1149,14 +1149,14 @@ pub const Parser = struct {
             if (uses_filename) {
                 // var __filename = import.meta.path
                 decls[@as(usize, @intFromBool(uses_dirname))] = .{
-                    .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
+                    .binding = p.b(B.Identifier{ .ref = p.filename_ref }, .none),
                     .value = p.newExpr(
                         E.Dot{
                             .name = "path",
-                            .name_loc = logger.Loc.Empty,
-                            .target = p.newExpr(E.ImportMeta{}, logger.Loc.Empty),
+                            .name_loc = .none,
+                            .target = p.newExpr(E.ImportMeta{}, .none),
                         },
-                        logger.Loc.Empty,
+                        .none,
                     ),
                 };
                 declared_symbols.appendAssumeCapacity(.{ .ref = p.filename_ref, .is_top_level = true });
@@ -1166,7 +1166,7 @@ pub const Parser = struct {
             part_stmts[0] = p.s(S.Local{
                 .kind = .k_var,
                 .decls = Decl.List.init(decls),
-            }, logger.Loc.Empty);
+            }, .none);
             before.append(js_ast.Part{
                 .stmts = part_stmts,
                 .declared_symbols = declared_symbols,
@@ -1208,7 +1208,7 @@ pub const Parser = struct {
             if (items_count == 0)
                 break :outer;
 
-            const import_record_id = p.addImportRecord(.stmt, logger.Loc.Empty, "bun:test");
+            const import_record_id = p.addImportRecord(.stmt, .none, "bun:test");
             var import_record: *ImportRecord = &p.import_records.items[import_record_id];
             import_record.tag = .bun_test;
 
@@ -1219,9 +1219,9 @@ pub const Parser = struct {
             inline for (comptime std.meta.fieldNames(Jest)) |symbol_name| {
                 if (p.symbols.items[@field(jest, symbol_name).innerIndex()].use_count_estimate > 0) {
                     clauses[clause_i] = js_ast.ClauseItem{
-                        .name = .{ .ref = @field(jest, symbol_name), .loc = logger.Loc.Empty },
+                        .name = .{ .ref = @field(jest, symbol_name), .loc = .none },
                         .alias = symbol_name,
-                        .alias_loc = logger.Loc.Empty,
+                        .alias_loc = .none,
                         .original_name = "",
                     };
                     declared_symbols.appendAssumeCapacity(.{ .ref = @field(jest, symbol_name), .is_top_level = true });
@@ -1231,11 +1231,11 @@ pub const Parser = struct {
 
             const import_stmt = p.s(
                 S.Import{
-                    .namespace_ref = p.declareSymbol(.unbound, logger.Loc.Empty, "bun_test_import_namespace_for_internal_use_only") catch unreachable,
+                    .namespace_ref = p.declareSymbol(.unbound, .none, "bun_test_import_namespace_for_internal_use_only") catch unreachable,
                     .items = clauses,
                     .import_record_index = import_record_id,
                 },
-                logger.Loc.Empty,
+                .none,
             );
 
             var part_stmts = try p.allocator.alloc(Stmt, 1);

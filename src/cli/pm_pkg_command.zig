@@ -561,7 +561,7 @@ pub const PmPkgCommand = struct {
 
         var nested_obj = root.get(current_key);
         if (nested_obj == null or nested_obj.?.data != .e_object) {
-            const new_obj = js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
+            const new_obj = js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, .none);
             try root.data.e_object.put(allocator, current_key, new_obj);
             nested_obj = root.get(current_key);
         }
@@ -592,7 +592,7 @@ pub const PmPkgCommand = struct {
 
         var nested_obj = root.get(current_key);
         if (nested_obj == null or nested_obj.?.data != .e_object) {
-            const new_obj = js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
+            const new_obj = js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, .none);
 
             try root.data.e_object.put(allocator, current_key, new_obj);
 
@@ -611,19 +611,19 @@ pub const PmPkgCommand = struct {
     fn parseValue(allocator: std.mem.Allocator, value: []const u8, parse_json: bool) !js_ast.Expr {
         if (parse_json) {
             if (strings.eqlComptime(value, "true")) {
-                return js_ast.Expr.init(js_ast.E.Boolean, js_ast.E.Boolean{ .value = true }, logger.Loc.Empty);
+                return js_ast.Expr.init(js_ast.E.Boolean, js_ast.E.Boolean{ .value = true }, .none);
             } else if (strings.eqlComptime(value, "false")) {
-                return js_ast.Expr.init(js_ast.E.Boolean, js_ast.E.Boolean{ .value = false }, logger.Loc.Empty);
+                return js_ast.Expr.init(js_ast.E.Boolean, js_ast.E.Boolean{ .value = false }, .none);
             } else if (strings.eqlComptime(value, "null")) {
-                return js_ast.Expr.init(js_ast.E.Null, js_ast.E.Null{}, logger.Loc.Empty);
+                return js_ast.Expr.init(js_ast.E.Null, js_ast.E.Null{}, .none);
             }
 
             if (std.fmt.parseInt(i64, value, 10)) |int_val| {
-                return js_ast.Expr.init(js_ast.E.Number, js_ast.E.Number{ .value = @floatFromInt(int_val) }, logger.Loc.Empty);
+                return js_ast.Expr.init(js_ast.E.Number, js_ast.E.Number{ .value = @floatFromInt(int_val) }, .none);
             } else |_| {}
 
             if (std.fmt.parseFloat(f64, value)) |float_val| {
-                return js_ast.Expr.init(js_ast.E.Number, js_ast.E.Number{ .value = float_val }, logger.Loc.Empty);
+                return js_ast.Expr.init(js_ast.E.Number, js_ast.E.Number{ .value = float_val }, .none);
             } else |_| {}
 
             const temp_source = logger.Source.initPathString("package.json", value);
@@ -632,11 +632,11 @@ pub const PmPkgCommand = struct {
                 return json_expr;
             } else |_| {
                 const data = try allocator.dupe(u8, value);
-                return js_ast.Expr.init(js_ast.E.String, js_ast.E.String.init(data), logger.Loc.Empty);
+                return js_ast.Expr.init(js_ast.E.String, js_ast.E.String.init(data), .none);
             }
         } else {
             const data = try allocator.dupe(u8, value);
-            return js_ast.Expr.init(js_ast.E.String, js_ast.E.String.init(data), logger.Loc.Empty);
+            return js_ast.Expr.init(js_ast.E.String, js_ast.E.String.init(data), .none);
         }
     }
 

@@ -326,7 +326,7 @@ pub const PackageJSONVersionChecker = struct {
     has_found_name: bool = false,
     has_found_version: bool = false,
 
-    name_loc: logger.Loc = logger.Loc.Empty,
+    name_loc: logger.Loc = .none,
 
     const opts = if (LEXER_DEBUGGER_WORKAROUND) js_lexer.JSONOptions{} else js_lexer.JSONOptions{
         .is_json = true,
@@ -495,7 +495,7 @@ pub fn toAST(
                 .data = .{ .e_boolean = .{
                     .value = value,
                 } },
-                .loc = logger.Loc{},
+                .loc = .none,
             };
         },
         .int => {
@@ -505,7 +505,7 @@ pub fn toAST(
                         .value = @as(f64, @floatFromInt(value)),
                     },
                 },
-                .loc = logger.Loc{},
+                .loc = .none,
             };
         },
         .float => {
@@ -515,7 +515,7 @@ pub fn toAST(
                         .value = @as(f64, @floatCast(value)),
                     },
                 },
-                .loc = logger.Loc{},
+                .loc = .none,
             };
         },
         .pointer => |ptr_info| switch (ptr_info.size) {
@@ -530,25 +530,25 @@ pub fn toAST(
             },
             .slice => {
                 if (ptr_info.child == u8) {
-                    return Expr.init(js_ast.E.String, js_ast.E.String.init(value), logger.Loc.Empty);
+                    return Expr.init(js_ast.E.String, js_ast.E.String.init(value), .none);
                 }
 
                 const exprs = try allocator.alloc(Expr, value.len);
                 for (exprs, 0..) |*ex, i| ex.* = try toAST(allocator, @TypeOf(value[i]), value[i]);
 
-                return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = exprs }, logger.Loc.Empty);
+                return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = exprs }, .none);
             },
             else => @compileError("Unable to stringify type '" ++ @typeName(T) ++ "'"),
         },
         .array => |Array| {
             if (Array.child == u8) {
-                return Expr.init(js_ast.E.String, js_ast.E.String.init(value), logger.Loc.Empty);
+                return Expr.init(js_ast.E.String, js_ast.E.String.init(value), .none);
             }
 
             const exprs = try allocator.alloc(Expr, value.len);
             for (exprs, 0..) |*ex, i| ex.* = try toAST(allocator, @TypeOf(value[i]), value[i]);
 
-            return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = exprs }, logger.Loc.Empty);
+            return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = exprs }, .none);
         },
         .@"struct" => |Struct| {
             const fields: []const std.builtin.Type.StructField = Struct.fields;
@@ -556,7 +556,7 @@ pub fn toAST(
             var property_i: usize = 0;
             inline for (fields) |field| {
                 properties[property_i] = G.Property{
-                    .key = Expr.init(E.String, E.String{ .data = field.name }, logger.Loc.Empty),
+                    .key = Expr.init(E.String, E.String{ .data = field.name }, .none),
                     .value = try toAST(allocator, field.type, @field(value, field.name)),
                 };
                 property_i += 1;
@@ -568,22 +568,22 @@ pub fn toAST(
                     .properties = BabyList(G.Property).init(properties[0..property_i]),
                     .is_single_line = property_i <= 1,
                 },
-                logger.Loc.Empty,
+                .none,
             );
         },
         .null => {
-            return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
+            return Expr{ .data = .{ .e_null = .{} }, .loc = .none };
         },
         .optional => {
             if (value) |_value| {
                 return try toAST(allocator, @TypeOf(_value), _value);
             } else {
-                return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
+                return Expr{ .data = .{ .e_null = .{} }, .loc = .none };
             }
         },
         .@"enum" => {
             _ = std.meta.intToEnum(Type, @intFromEnum(value)) catch {
-                return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
+                return Expr{ .data = .{ .e_null = .{} }, .loc = .none };
             };
 
             return toAST(allocator, string, @as(string, @tagName(value)));
@@ -670,16 +670,16 @@ pub fn parse(
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
-            return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+            return Expr{ .loc = .from(0), .data = empty_object_data };
         },
         // This is a fast pass I guess
         2 => {
             if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data };
+                return Expr{ .loc = .from(0), .data = empty_string_data };
             } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+                return Expr{ .loc = .from(0), .data = empty_object_data };
             } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data };
+                return Expr{ .loc = .from(0), .data = empty_array_data };
             }
         },
         else => {},
@@ -703,16 +703,16 @@ pub fn parsePackageJSONUTF8(
     switch (len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
-            return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+            return Expr{ .loc = .from(0), .data = empty_object_data };
         },
         // This is a fast pass I guess
         2 => {
             if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data };
+                return Expr{ .loc = .from(0), .data = empty_string_data };
             } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+                return Expr{ .loc = .from(0), .data = empty_object_data };
             } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data };
+                return Expr{ .loc = .from(0), .data = empty_array_data };
             }
         },
         else => {},
@@ -745,17 +745,17 @@ pub fn parsePackageJSONUTF8WithOpts(
         // This is to be consisntent with how disabled JS files are handled
         0 => {
             return .{
-                .root = Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data },
+                .root = Expr{ .loc = .from(0), .data = empty_object_data },
             };
         },
         // This is a fast pass I guess
         2 => {
             if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
-                return .{ .root = Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data } };
+                return .{ .root = Expr{ .loc = .from(0), .data = empty_string_data } };
             } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
-                return .{ .root = Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data } };
+                return .{ .root = Expr{ .loc = .from(0), .data = empty_object_data } };
             } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
-                return .{ .root = Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data } };
+                return .{ .root = Expr{ .loc = .from(0), .data = empty_array_data } };
             }
         },
         else => {},
@@ -796,16 +796,16 @@ pub fn parseUTF8Impl(
     switch (len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
-            return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+            return Expr{ .loc = .from(0), .data = empty_object_data };
         },
         // This is a fast pass I guess
         2 => {
             if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data };
+                return Expr{ .loc = .from(0), .data = empty_string_data };
             } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+                return Expr{ .loc = .from(0), .data = empty_object_data };
             } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data };
+                return Expr{ .loc = .from(0), .data = empty_array_data };
             }
         },
         else => {},
@@ -826,16 +826,16 @@ pub fn parseForMacro(source: *const logger.Source, log: *logger.Log, allocator: 
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
-            return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+            return Expr{ .loc = .from(0), .data = empty_object_data };
         },
         // This is a fast pass I guess
         2 => {
             if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data };
+                return Expr{ .loc = .from(0), .data = empty_string_data };
             } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+                return Expr{ .loc = .from(0), .data = empty_object_data };
             } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data };
+                return Expr{ .loc = .from(0), .data = empty_array_data };
             }
         },
         else => {},
@@ -861,16 +861,16 @@ pub fn parseForBundling(source: *const logger.Source, log: *logger.Log, allocato
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
-            return JSONParseResult{ .expr = Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data }, .tag = .empty };
+            return JSONParseResult{ .expr = Expr{ .loc = .from(0), .data = empty_object_data }, .tag = .empty };
         },
         // This is a fast pass I guess
         2 => {
             if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
-                return JSONParseResult{ .expr = Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data }, .tag = .expr };
+                return JSONParseResult{ .expr = Expr{ .loc = .from(0), .data = empty_string_data }, .tag = .expr };
             } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
-                return JSONParseResult{ .expr = Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data }, .tag = .expr };
+                return JSONParseResult{ .expr = Expr{ .loc = .from(0), .data = empty_object_data }, .tag = .expr };
             } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
-                return JSONParseResult{ .expr = Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data }, .tag = .expr };
+                return JSONParseResult{ .expr = Expr{ .loc = .from(0), .data = empty_array_data }, .tag = .expr };
             }
         },
         else => {},
@@ -890,16 +890,16 @@ pub fn parseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: s
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
-            return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+            return Expr{ .loc = .from(0), .data = empty_object_data };
         },
         // This is a fast pass I guess
         2 => {
             if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data };
+                return Expr{ .loc = .from(0), .data = empty_string_data };
             } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+                return Expr{ .loc = .from(0), .data = empty_object_data };
             } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data };
+                return Expr{ .loc = .from(0), .data = empty_array_data };
             }
         },
         else => {},
@@ -914,17 +914,17 @@ pub fn parseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: s
         else => {
             switch (parser.lexer.token) {
                 .t_true => {
-                    return Expr{ .loc = logger.Loc{ .start = 0 }, .data = .{ .e_boolean = E.Boolean{ .value = true } } };
+                    return Expr{ .loc = .from(0), .data = .{ .e_boolean = E.Boolean{ .value = true } } };
                 },
                 .t_false => {
-                    return Expr{ .loc = logger.Loc{ .start = 0 }, .data = .{ .e_boolean = E.Boolean{ .value = false } } };
+                    return Expr{ .loc = .from(0), .data = .{ .e_boolean = E.Boolean{ .value = false } } };
                 },
                 .t_null => {
-                    return Expr{ .loc = logger.Loc{ .start = 0 }, .data = .{ .e_null = E.Null{} } };
+                    return Expr{ .loc = .from(0), .data = .{ .e_null = E.Null{} } };
                 },
                 .t_identifier => {
                     if (strings.eqlComptime(parser.lexer.identifier, "undefined")) {
-                        return Expr{ .loc = logger.Loc{ .start = 0 }, .data = .{ .e_undefined = E.Undefined{} } };
+                        return Expr{ .loc = .from(0), .data = .{ .e_undefined = E.Undefined{} } };
                     }
 
                     return try parser.parseExpr(true, false);
@@ -941,16 +941,16 @@ pub fn parseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: 
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
-            return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+            return Expr{ .loc = .from(0), .data = empty_object_data };
         },
         // This is a fast pass I guess
         2 => {
             if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data };
+                return Expr{ .loc = .from(0), .data = empty_string_data };
             } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+                return Expr{ .loc = .from(0), .data = empty_object_data };
             } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data };
+                return Expr{ .loc = .from(0), .data = empty_array_data };
             }
         },
         else => {},

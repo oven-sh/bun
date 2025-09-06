@@ -151,7 +151,7 @@ pub const AstBuilder = struct {
             }
             out_ref.* = p.newExpr(E.ImportIdentifier{ .ref = ref });
             clause.* = .{
-                .name = .{ .loc = Logger.Loc.Empty, .ref = ref },
+                .name = .{ .loc = .none, .ref = ref },
                 .original_name = import_id,
                 .alias = import_id,
             };
@@ -174,12 +174,12 @@ pub const AstBuilder = struct {
 
     pub fn newStmt(p: *AstBuilder, data: anytype) Stmt {
         _ = p;
-        return Stmt.alloc(@TypeOf(data), data, Logger.Loc.Empty);
+        return Stmt.alloc(@TypeOf(data), data, .none);
     }
 
     pub fn newExpr(p: *AstBuilder, data: anytype) Expr {
         _ = p;
-        return Expr.init(@TypeOf(data), data, Logger.Loc.Empty);
+        return Expr.init(@TypeOf(data), data, .none);
     }
 
     pub fn newExternalSymbol(p: *AstBuilder, name: []const u8) !Ref {
@@ -279,7 +279,7 @@ pub const AstBuilder = struct {
             .char_freq = .{},
             .flags = .{},
             .target = target,
-            .top_level_await_keyword = Logger.Range.None,
+            .top_level_await_keyword = .none,
             // .nested_scope_slot_counts = if (p.options.features.minify_identifiers)
             //     renamer.assignNestedScopeSlots(p.allocator, p.scopes.items[0], p.symbols.items)
             // else
@@ -301,7 +301,7 @@ pub const AstBuilder = struct {
                 .{alias},
             );
         } else {
-            try p.named_exports.put(p.allocator, alias, .{ .alias_loc = Logger.Loc.Empty, .ref = ref });
+            try p.named_exports.put(p.allocator, alias, .{ .alias_loc = .none, .ref = ref });
         }
     }
 

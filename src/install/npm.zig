@@ -1550,7 +1550,7 @@ pub const PackageManifest = struct {
 
         if (json.asProperty("error")) |error_q| {
             if (error_q.expr.asString(allocator)) |err| {
-                log.addErrorFmt(source, logger.Loc.Empty, allocator, "npm error: {s}", .{err}) catch unreachable;
+                log.addErrorFmt(source, .none, allocator, "npm error: {s}", .{err}) catch unreachable;
                 return null;
             }
         }

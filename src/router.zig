@@ -240,7 +240,7 @@ const RouteLoader = struct {
                 const source = Logger.Source.initEmptyFile(route.abs_path.slice());
                 this.log.addErrorFmt(
                     &source,
-                    Logger.Loc.Empty,
+                    .none,
                     this.allocator,
                     "Route \"{s}\" is already defined by {s}",
                     .{ route.name, entry.value_ptr.*.abs_path.slice() },
@@ -264,7 +264,7 @@ const RouteLoader = struct {
                     const source = Logger.Source.initEmptyFile(route.abs_path.slice());
                     this.log.addErrorFmt(
                         &source,
-                        Logger.Loc.Empty,
+                        .none,
                         this.allocator,
                         "Route \"{s}\" is already defined by {s}",
                         .{ route.name, static_entry.value_ptr.*.abs_path.slice() },
@@ -288,7 +288,7 @@ const RouteLoader = struct {
                 const source = Logger.Source.initEmptyFile(route.abs_path.slice());
                 this.log.addErrorFmt(
                     &source,
-                    Logger.Loc.Empty,
+                    .none,
                     this.allocator,
                     "Route \"{s}\" is already defined by {s}",
                     .{ route.name, entry.value_ptr.* },
@@ -741,7 +741,7 @@ pub const Route = struct {
                 route_file_buf[abs_path_str.len] = 0;
                 const buf = route_file_buf[0..abs_path_str.len :0];
                 file = std.fs.openFileAbsoluteZ(buf, .{ .mode = .read_only }) catch |err| {
-                    log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{s} opening route: {s}", .{ @errorName(err), abs_path_str }) catch unreachable;
+                    log.addErrorFmt(null, .none, allocator, "{s} opening route: {s}", .{ @errorName(err), abs_path_str }) catch unreachable;
                     return null;
                 };
                 FileSystem.setMaxFd(file.handle);
@@ -751,7 +751,7 @@ pub const Route = struct {
             }
 
             const _abs = bun.getFdPath(.fromStdFile(file), &route_file_buf) catch |err| {
-                log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{s} resolving route: {s}", .{ @errorName(err), abs_path_str }) catch unreachable;
+                log.addErrorFmt(null, .none, allocator, "{s} resolving route: {s}", .{ @errorName(err), abs_path_str }) catch unreachable;
                 return null;
             };
 
@@ -1173,7 +1173,7 @@ const Pattern = struct {
             const source = Logger.Source.initEmptyFile(input);
             log.addErrorFmt(
                 &source,
-                Logger.Loc.Empty,
+                .none,
                 allocator,
                 "Route name must be plaintext",
                 .{},
@@ -1193,7 +1193,7 @@ const Pattern = struct {
                     error.CatchAllMustBeAtTheEnd => {
                         log.addErrorFmt(
                             &source,
-                            Logger.Loc.Empty,
+                            .none,
                             allocator,
                             "Catch-all route must be at the end of the path",
                             .{},
@@ -1202,7 +1202,7 @@ const Pattern = struct {
                     error.InvalidCatchAllRoute => {
                         log.addErrorFmt(
                             &source,
-                            Logger.Loc.Empty,
+                            .none,
                             allocator,
                             "Invalid catch-all route, e.g. should be [...param]",
                             .{},
@@ -1211,7 +1211,7 @@ const Pattern = struct {
                     error.InvalidOptionalCatchAllRoute => {
                         log.addErrorFmt(
                             &source,
-                            Logger.Loc.Empty,
+                            .none,
                             allocator,
                             "Invalid optional catch-all route, e.g. should be [[...param]]",
                             .{},
@@ -1220,7 +1220,7 @@ const Pattern = struct {
                     error.InvalidRoutePattern => {
                         log.addErrorFmt(
                             &source,
-                            Logger.Loc.Empty,
+                            .none,
                             allocator,
                             "Invalid dynamic route",
                             .{},
@@ -1229,7 +1229,7 @@ const Pattern = struct {
                     error.MissingParamName => {
                         log.addErrorFmt(
                             &source,
-                            Logger.Loc.Empty,
+                            .none,
                             allocator,
                             "Route is missing a parameter name, e.g. [param]",
                             .{},
@@ -1238,7 +1238,7 @@ const Pattern = struct {
                     error.PatternMissingClosingBracket => {
                         log.addErrorFmt(
                             &source,
-                            Logger.Loc.Empty,
+                            .none,
                             allocator,
                             "Route is missing a closing bracket]",
                             .{},

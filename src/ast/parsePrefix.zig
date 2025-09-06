@@ -339,7 +339,7 @@ pub fn ParsePrefix(
         }
         fn t_function(noalias p: *P) anyerror!Expr {
             const loc = p.lexer.loc();
-            return try p.parseFnExpr(loc, false, logger.Range.None);
+            return try p.parseFnExpr(loc, false, .none);
         }
         fn t_class(noalias p: *P) anyerror!Expr {
             const loc = p.lexer.loc();
@@ -391,7 +391,7 @@ pub fn ParsePrefix(
                     try p.lexer.unexpected();
                     return error.SyntaxError;
                 }
-                const range = logger.Range{ .loc = loc, .len = p.lexer.range().end().start - loc.start };
+                const range = logger.Range{ .loc = loc, .len = p.lexer.range().end().get() - loc.get() };
 
                 try p.lexer.next();
                 return p.newExpr(E.NewTarget{ .range = range }, loc);
@@ -418,7 +418,7 @@ pub fn ParsePrefix(
                 new.data.e_new.args = call_args.list;
                 new.data.e_new.close_parens_loc = call_args.loc;
             } else {
-                new.data.e_new.close_parens_loc = .Empty;
+                new.data.e_new.close_parens_loc = .none;
                 new.data.e_new.args = .{};
             }
 
@@ -430,7 +430,7 @@ pub fn ParsePrefix(
             var is_single_line = !p.lexer.has_newline_before;
             var items = ListManaged(Expr).init(p.allocator);
             var self_errors = DeferredErrors{};
-            var comma_after_spread = logger.Loc{};
+            var comma_after_spread: logger.Loc = .none;
 
             // Allow "in" inside arrays
             const old_allow_in = p.allow_in;
@@ -501,7 +501,7 @@ pub fn ParsePrefix(
             }
             return p.newExpr(E.Array{
                 .items = ExprNodeList.fromList(items),
-                .comma_after_spread = comma_after_spread.toNullable(),
+                .comma_after_spread = if (comma_after_spread == .none) null else comma_after_spread,
                 .is_single_line = is_single_line,
                 .close_bracket_loc = close_bracket_loc,
             }, loc);
@@ -512,7 +512,7 @@ pub fn ParsePrefix(
             var is_single_line = !p.lexer.has_newline_before;
             var properties = ListManaged(G.Property).init(p.allocator);
             var self_errors = DeferredErrors{};
-            var comma_after_spread: logger.Loc = logger.Loc{};
+            var comma_after_spread: logger.Loc = .none;
 
             // Allow "in" inside object literals
             const old_allow_in = p.allow_in;
@@ -585,7 +585,7 @@ pub fn ParsePrefix(
 
             return p.newExpr(E.Object{
                 .properties = G.Property.List.fromList(properties),
-                .comma_after_spread = if (comma_after_spread.start > 0)
+                .comma_after_spread = if (comma_after_spread.get() > 0)
                     comma_after_spread
                 else
                     null,

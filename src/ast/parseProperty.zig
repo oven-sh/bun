@@ -137,7 +137,7 @@ pub fn ParseProperty(
             var errors = errors_;
             // This while loop exists to conserve stack space by reducing (but not completely eliminating) recursion.
             restart: while (true) {
-                var key: Expr = Expr{ .loc = logger.Loc.Empty, .data = .{ .e_missing = E.Missing{} } };
+                var key: Expr = Expr{ .loc = .none, .data = .{ .e_missing = E.Missing{} } };
                 const key_range = p.lexer.range();
                 var is_computed = false;
 
@@ -531,7 +531,7 @@ pub fn ParseProperty(
                         .is_computed = is_computed,
                     }),
                     .key = key,
-                    .value = Expr{ .data = .e_missing, .loc = .{} },
+                    .value = Expr{ .data = .e_missing, .loc = .none },
                 };
 
                 try p.parseExprOrBindings(.comma, errors, &property.value.?);

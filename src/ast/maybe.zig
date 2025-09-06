@@ -22,7 +22,7 @@ pub fn AstMaybe(
                 return .{ .ok = false };
             }
 
-            var value: Expr = Expr{ .loc = logger.Loc.Empty, .data = Expr.Data{ .e_missing = E.Missing{} } };
+            var value: Expr = Expr{ .loc = .none, .data = Expr.Data{ .e_missing = E.Missing{} } };
 
             for (decls) |decl| {
                 const binding = Binding.toExpr(
@@ -651,14 +651,14 @@ pub fn AstMaybe(
                             .op = .un_typeof,
                             .value = expr,
                         },
-                        logger.Loc.Empty,
+                        .none,
                     ),
                     .right = p.newExpr(
                         E.String{ .data = "undefined" },
-                        logger.Loc.Empty,
+                        .none,
                     ),
                 },
-                logger.Loc.Empty,
+                .none,
             );
         }
 
@@ -668,19 +668,19 @@ pub fn AstMaybe(
                     .test_ = try p.checkIfDefinedHelper(identifier_expr),
                     .yes = p.newExpr(
                         E.Identifier{
-                            .ref = (p.findSymbol(logger.Loc.Empty, "Object") catch unreachable).ref,
+                            .ref = (p.findSymbol(.none, "Object") catch unreachable).ref,
                         },
-                        logger.Loc.Empty,
+                        .none,
                     ),
                     .no = identifier_expr,
                 },
-                logger.Loc.Empty,
+                .none,
             );
         }
 
         pub fn maybeCommaSpreadError(p: *P, _comma_after_spread: ?logger.Loc) void {
             const comma_after_spread = _comma_after_spread orelse return;
-            if (comma_after_spread.start == -1) return;
+            if (comma_after_spread == .none) return;
 
             p.log.addRangeError(p.source, logger.Range{ .loc = comma_after_spread, .len = 1 }, "Unexpected \",\" after rest pattern") catch unreachable;
         }

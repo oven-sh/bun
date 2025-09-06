@@ -72,7 +72,7 @@ pub fn ParseFn(
 
             var func = try p.parseFn(name, FnOrArrowDataParse{
                 .needs_async_loc = loc,
-                .async_range = asyncRange orelse logger.Range.None,
+                .async_range = asyncRange orelse .none,
                 .has_async_range = asyncRange != null,
                 .allow_await = if (is_async) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
                 .allow_yield = if (is_generator) AwaitOrYield.allow_expr else AwaitOrYield.allow_ident,
@@ -170,7 +170,7 @@ pub fn ParseFn(
                 AwaitOrYield.allow_ident;
 
             // Don't suggest inserting "async" before anything if "await" is found
-            p.fn_or_arrow_data_parse.needs_async_loc = logger.Loc.Empty;
+            p.fn_or_arrow_data_parse.needs_async_loc = .none;
 
             // If "super()" is allowed in the body, it's allowed in the arguments
             p.fn_or_arrow_data_parse.allow_super_call = opts.allow_super_call;

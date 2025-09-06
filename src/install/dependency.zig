@@ -1116,7 +1116,7 @@ pub fn parseWithTag(
                     .value = .{ .tarball = .{ .uri = .{ .local = sliced.sub(dependency[5..]).value() } } },
                 };
             } else if (strings.contains(dependency, "://")) {
-                if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "invalid or unsupported dependency \"{s}\"", .{dependency}) catch unreachable;
+                if (log_) |log| log.addErrorFmt(null, .none, allocator, "invalid or unsupported dependency \"{s}\"", .{dependency}) catch unreachable;
                 return null;
             }
 
@@ -1206,7 +1206,7 @@ pub fn parseWithTag(
                     }
                 }
 
-                if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Unsupported protocol {s}", .{dependency}) catch unreachable;
+                if (log_) |log| log.addErrorFmt(null, .none, allocator, "Unsupported protocol {s}", .{dependency}) catch unreachable;
                 return null;
             }
 

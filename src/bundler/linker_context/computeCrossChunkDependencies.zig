@@ -321,10 +321,10 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                         clause_item.* = .{
                             .name = .{
                                 .ref = ref,
-                                .loc = Logger.Loc.Empty,
+                                .loc = .none,
                             },
                             .alias = alias,
-                            .alias_loc = Logger.Loc.Empty,
+                            .alias_loc = .none,
                             .original_name = "",
                         };
 
@@ -345,7 +345,7 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                             .data = .{
                                 .s_export_clause = export_clause,
                             },
-                            .loc = Logger.Loc.Empty,
+                            .loc = .none,
                         });
                         repr.cross_chunk_suffix_stmts = stmts;
                     }
@@ -380,10 +380,10 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                             clauses.appendAssumeCapacity(.{
                                 .name = .{
                                     .ref = item.ref,
-                                    .loc = Logger.Loc.Empty,
+                                    .loc = .none,
                                 },
                                 .alias = item.export_alias,
-                                .alias_loc = Logger.Loc.Empty,
+                                .alias_loc = .none,
                             });
                         }
 
@@ -403,7 +403,7 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                                 .data = .{
                                     .s_import = import,
                                 },
-                                .loc = Logger.Loc.Empty,
+                                .loc = .none,
                             },
                         ) catch unreachable;
                     },

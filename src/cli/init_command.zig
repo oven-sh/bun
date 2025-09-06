@@ -528,7 +528,7 @@ pub const InitCommand = struct {
             fields.object = js_ast.Expr.init(
                 js_ast.E.Object,
                 .{},
-                logger.Loc.Empty,
+                .none,
             ).data.e_object;
         }
 
@@ -658,7 +658,7 @@ pub const InitCommand = struct {
             }
 
             if (fields.private) {
-                try fields.object.put(alloc, "private", js_ast.Expr.init(js_ast.E.Boolean, .{ .value = true }, logger.Loc.Empty));
+                try fields.object.put(alloc, "private", js_ast.Expr.init(js_ast.E.Boolean, .{ .value = true }, .none));
             }
         }
 
@@ -715,7 +715,7 @@ pub const InitCommand = struct {
             need_run_bun_install = needs_dependencies or needs_dev_dependencies or needs_typescript_dependency;
 
             if (needs_dependencies) {
-                var dependencies_object = fields.object.get("dependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
+                var dependencies_object = fields.object.get("dependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, .none);
                 var iter = needed_dependencies.iterator(.{ .kind = .set });
                 while (iter.next()) |index| {
                     const dep = dependencies[index];
@@ -725,7 +725,7 @@ pub const InitCommand = struct {
             }
 
             if (needs_dev_dependencies) {
-                var object = fields.object.get("devDependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
+                var object = fields.object.get("devDependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, .none);
                 var iter = needed_dev_dependencies.iterator(.{ .kind = .set });
                 while (iter.next()) |index| {
                     const dep = dev_dependencies[index];
@@ -735,7 +735,7 @@ pub const InitCommand = struct {
             }
 
             if (needs_typescript_dependency) {
-                var peer_dependencies = fields.object.get("peerDependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
+                var peer_dependencies = fields.object.get("peerDependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, .none);
                 try peer_dependencies.data.e_object.putString(alloc, "typescript", "^5");
                 try fields.object.put(alloc, "peerDependencies", peer_dependencies);
             }
@@ -755,7 +755,7 @@ pub const InitCommand = struct {
             _ = JSPrinter.printJSON(
                 @TypeOf(&package_json_writer),
                 &package_json_writer,
-                js_ast.Expr{ .data = .{ .e_object = fields.object }, .loc = logger.Loc.Empty },
+                js_ast.Expr{ .data = .{ .e_object = fields.object }, .loc = .none },
                 &logger.Source.initEmptyFile("package.json"),
                 .{ .mangled_props = null },
             ) catch |err| {
@@ -933,7 +933,7 @@ const Template = enum {
         fields.name = this.name();
         const key = try alloc.create(Rope);
         key.* = Rope{
-            .head = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{ .data = "scripts" }, logger.Loc.Empty),
+            .head = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{ .data = "scripts" }, .none),
             .next = null,
         };
         var scripts_json = try fields.object.getOrPutObject(key, alloc);

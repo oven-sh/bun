@@ -1,6 +1,6 @@
 pub const Block = struct {
     stmts: StmtNodeList,
-    close_brace_loc: logger.Loc = logger.Loc.Empty,
+    close_brace_loc: logger.Loc = .none,
 };
 
 pub const SExpr = struct {
@@ -123,7 +123,7 @@ pub const While = struct {
 pub const With = struct {
     value: ExprNodeIndex,
     body: StmtNodeIndex,
-    body_loc: logger.Loc = logger.Loc.Empty,
+    body_loc: logger.Loc = .none,
 };
 
 pub const Try = struct {

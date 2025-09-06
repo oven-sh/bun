@@ -15,7 +15,7 @@ pub inline fn run(this: *const ExtractTarball, log: *logger.Log, bytes: []const 
         if (!this.integrity.verify(bytes)) {
             log.addErrorFmt(
                 null,
-                logger.Loc.Empty,
+                .none,
                 bun.default_allocator,
                 "Integrity check failed<r> for tarball: {s}",
                 .{this.name.slice()},
@@ -141,7 +141,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         var extract_destination = bun.MakePath.makeOpenPath(tmpdir, bun.span(tmpname), .{}) catch |err| {
             log.addErrorFmt(
                 null,
-                logger.Loc.Empty,
+                .none,
                 bun.default_allocator,
                 "{s} when create temporary directory named \"{s}\" (while extracting \"{s}\")",
                 .{ @errorName(err), tmpname, name },
@@ -200,7 +200,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
             zlib_entry.readAll(true) catch |err| {
                 log.addErrorFmt(
                     null,
-                    logger.Loc.Empty,
+                    .none,
                     bun.default_allocator,
                     "{s} decompressing \"{s}\" to \"{}\"",
                     .{ @errorName(err), name, bun.fmt.fmtPath(u8, std.mem.span(tmpname), .{}) },
@@ -314,7 +314,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                 // i guess we just
                 log.addErrorFmt(
                     null,
-                    logger.Loc.Empty,
+                    .none,
                     bun.default_allocator,
                     "moving \"{s}\" to cache dir failed\n{}\n From: {s}\n   To: {s}",
                     .{ name, err, tmpname, folder_name },
@@ -363,7 +363,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                     dir_to_move.close();
                     log.addErrorFmt(
                         null,
-                        logger.Loc.Empty,
+                        .none,
                         bun.default_allocator,
                         "moving \"{s}\" to cache dir failed\n{}\n  From: {s}\n    To: {s}",
                         .{ name, err, tmpname, folder_name },
@@ -403,7 +403,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         ).asErr()) |err| {
             log.addErrorFmt(
                 null,
-                logger.Loc.Empty,
+                .none,
                 bun.default_allocator,
                 "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
                 .{ name, err, tmpname, folder_name },
@@ -417,7 +417,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
     var final_dir = bun.openDir(cache_dir, folder_name) catch |err| {
         log.addErrorFmt(
             null,
-            logger.Loc.Empty,
+            .none,
             bun.default_allocator,
             "failed to verify cache dir for \"{s}\": {s}",
             .{ name, @errorName(err) },
@@ -432,7 +432,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
     ) catch |err| {
         log.addErrorFmt(
             null,
-            logger.Loc.Empty,
+            .none,
             bun.default_allocator,
             "failed to resolve cache dir for \"{s}\": {s}",
             .{ name, @errorName(err) },
@@ -465,7 +465,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
 
             log.addErrorFmt(
                 null,
-                logger.Loc.Empty,
+                .none,
                 bun.default_allocator,
                 "\"package.json\" for \"{s}\" failed to open: {s}",
                 .{ name, @errorName(err) },
@@ -478,7 +478,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         ).unwrap() catch |err| {
             log.addErrorFmt(
                 null,
-                logger.Loc.Empty,
+                .none,
                 bun.default_allocator,
                 "\"package.json\" for \"{s}\" failed to resolve: {s}",
                 .{ name, @errorName(err) },

@@ -433,12 +433,12 @@ pub const PatchTask = struct {
                         this.callback.calc_hash.patchfile_path,
                         this.manager.lockfile.patched_dependencies.get(this.callback.calc_hash.name_and_version_hash).?.path.slice(this.manager.lockfile.buffers.string_bytes.items),
                     };
-                    bun.handleOom(log.addErrorFmt(null, Loc.Empty, this.manager.allocator, fmt, args));
+                    bun.handleOom(log.addErrorFmt(null, .none, this.manager.allocator, fmt, args));
                     return null;
                 }
                 log.addWarningFmt(
                     null,
-                    Loc.Empty,
+                    .none,
                     this.manager.allocator,
                     "patchfile <b>{s}<r> is empty, please restore or delete it.",
                     .{absolute_patchfile_path},
@@ -451,7 +451,7 @@ pub const PatchTask = struct {
         if (size == 0) {
             log.addErrorFmt(
                 null,
-                Loc.Empty,
+                .none,
                 this.manager.allocator,
                 "patchfile <b>{s}<r> is empty, please restore or delete it.",
                 .{absolute_patchfile_path},
@@ -463,7 +463,7 @@ pub const PatchTask = struct {
             .err => |e| {
                 log.addErrorFmt(
                     null,
-                    Loc.Empty,
+                    .none,
                     this.manager.allocator,
                     "failed to open patch file: {}",
                     .{e},
@@ -488,7 +488,7 @@ pub const PatchTask = struct {
                 .err => |e| {
                     log.addErrorFmt(
                         null,
-                        Loc.Empty,
+                        .none,
                         this.manager.allocator,
                         "failed to read from patch file: {} ({s})",
                         .{ e, absolute_patchfile_path },

@@ -8,7 +8,7 @@ pub const ExprListLoc = struct {
     loc: logger.Loc,
 };
 
-pub const locModuleScope = logger.Loc{ .start = -100 };
+pub const locModuleScope: logger.Loc = .from(-100);
 
 pub const DeferredImportNamespace = struct {
     namespace: LocRef,
@@ -201,7 +201,7 @@ pub fn ExpressionTransposer(
 }
 
 pub fn locAfterOp(e: E.Binary) logger.Loc {
-    if (e.left.loc.start < e.right.loc.start) {
+    if (e.left.loc.get() < e.right.loc.get()) {
         return e.right.loc;
     } else {
         // handle the case when we have transposed the operands
@@ -213,7 +213,7 @@ pub const TransposeState = struct {
     is_await_target: bool = false,
     is_then_catch_target: bool = false,
     is_require_immediately_assigned_to_decl: bool = false,
-    loc: logger.Loc = logger.Loc.Empty,
+    loc: logger.Loc = .none,
     import_record_tag: ?ImportRecord.Tag = null,
     import_loader: ?bun.options.Loader = null,
     import_options: Expr = Expr.empty,
@@ -285,7 +285,7 @@ pub const JSXTag = struct {
             try p.lexer.expectInsideJSXElement(.t_identifier);
 
             if (strings.indexOfChar(member, '-')) |index| {
-                try p.log.addError(p.source, logger.Loc{ .start = member_range.loc.start + @as(i32, @intCast(index)) }, "Unexpected \"-\"");
+                try p.log.addError(p.source, member_range.loc.add(@intCast(index)), "Unexpected \"-\"");
                 return error.SyntaxError;
             }
 
@@ -294,7 +294,7 @@ pub const JSXTag = struct {
             _name[name.len] = '.';
             bun.copy(u8, _name[name.len + 1 .. _name.len], member);
             name = _name;
-            tag_range.len = member_range.loc.start + member_range.len - tag_range.loc.start;
+            tag_range.len = member_range.loc.get() + member_range.len - tag_range.loc.get();
             tag = p.newExpr(E.Dot{ .target = tag, .name = member, .name_loc = member_range.loc }, loc);
         }
 
@@ -587,7 +587,7 @@ pub const ScopeOrder = struct {
 };
 
 pub const ParenExprOpts = struct {
-    async_range: logger.Range = logger.Range.None,
+    async_range: logger.Range = .none,
     is_async: bool = false,
     force_arrow_fn: bool = false,
 };
@@ -602,8 +602,8 @@ pub const AwaitOrYield = enum(u3) {
 /// restored on the call stack around code that parses nested functions and
 /// arrow expressions.
 pub const FnOrArrowDataParse = struct {
-    async_range: logger.Range = logger.Range.None,
-    needs_async_loc: logger.Loc = logger.Loc.Empty,
+    async_range: logger.Range = .none,
+    needs_async_loc: logger.Loc = .none,
     allow_await: AwaitOrYield = AwaitOrYield.allow_ident,
     allow_yield: AwaitOrYield = AwaitOrYield.allow_ident,
     allow_super_call: bool = false,
@@ -737,8 +737,8 @@ pub const ImportClause = struct {
 };
 
 pub const PropertyOpts = struct {
-    async_range: logger.Range = logger.Range.None,
-    declare_range: logger.Range = logger.Range.None,
+    async_range: logger.Range = .none,
+    declare_range: logger.Range = .none,
     is_async: bool = false,
     is_generator: bool = false,
 
@@ -830,10 +830,10 @@ pub const ParseStatementOptions = struct {
 pub const Prefill = struct {
     pub const HotModuleReloading = struct {
         pub var DebugEnabledArgs = [_]Expr{
-            Expr{ .data = .{ .e_boolean = E.Boolean{ .value = true } }, .loc = logger.Loc.Empty },
+            Expr{ .data = .{ .e_boolean = E.Boolean{ .value = true } }, .loc = .none },
         };
         pub var DebugDisabled = [_]Expr{
-            Expr{ .data = .{ .e_boolean = E.Boolean{ .value = false } }, .loc = logger.Loc.Empty },
+            Expr{ .data = .{ .e_boolean = E.Boolean{ .value = false } }, .loc = .none },
         };
         pub var ActivateString = E.String{
             .data = "activate",
@@ -843,7 +843,7 @@ pub const Prefill = struct {
                 .data = .{
                     .e_string = &ActivateString,
                 },
-                .loc = logger.Loc.Empty,
+                .loc = .none,
             },
             .target = undefined,
         };
@@ -986,8 +986,8 @@ pub const TypeScriptImportScanner = NewParser(.{ .typescript = true, .scan_only 
 //   function* foo() { (x = yield y) => {} }
 //
 pub const DeferredArrowArgErrors = struct {
-    invalid_expr_await: logger.Range = logger.Range.None,
-    invalid_expr_yield: logger.Range = logger.Range.None,
+    invalid_expr_await: logger.Range = .none,
+    invalid_expr_yield: logger.Range = .none,
 };
 
 pub fn newLazyExportAST(

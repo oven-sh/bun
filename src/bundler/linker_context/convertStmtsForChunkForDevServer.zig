@@ -36,7 +36,7 @@ pub fn convertStmtsForChunkForDevServer(
     ast: *JSAst,
 ) !void {
     const hmr_api_ref = ast.wrapper_ref;
-    const hmr_api_id = Expr.initIdentifier(hmr_api_ref, Logger.Loc.Empty);
+    const hmr_api_id = Expr.initIdentifier(hmr_api_ref, .none);
     var esm_decls: std.ArrayListUnmanaged(B.Array.Item) = .empty;
     var esm_callbacks: std.ArrayListUnmanaged(Expr) = .empty;
 
@@ -93,8 +93,8 @@ pub fn convertStmtsForChunkForDevServer(
             } else {
                 const loc = st.star_name_loc orelse stmt.loc;
                 if (is_bare_import) {
-                    try esm_decls.append(allocator, .{ .binding = .{ .data = .b_missing, .loc = .Empty } });
-                    try esm_callbacks.append(allocator, Expr.init(E.Arrow, .noop_return_undefined, .Empty));
+                    try esm_decls.append(allocator, .{ .binding = .{ .data = .b_missing, .loc = .none } });
+                    try esm_callbacks.append(allocator, Expr.init(E.Arrow, .noop_return_undefined, .none));
                 } else {
                     const binding = Binding.alloc(allocator, B.Identifier{ .ref = st.namespace_ref }, loc);
                     try esm_decls.append(allocator, .{ .binding = binding });
@@ -102,15 +102,15 @@ pub fn convertStmtsForChunkForDevServer(
                         .args = try allocator.dupe(G.Arg, &.{.{
                             .binding = Binding.alloc(allocator, B.Identifier{
                                 .ref = ast.module_ref,
-                            }, .Empty),
+                            }, .none),
                         }}),
                         .prefer_expr = true,
                         .body = try .initReturnExpr(allocator, Expr.init(E.Binary, .{
                             .op = .bin_assign,
-                            .left = Expr.initIdentifier(st.namespace_ref, .Empty),
-                            .right = Expr.initIdentifier(ast.module_ref, .Empty),
-                        }, .Empty)),
-                    }, .Empty));
+                            .left = Expr.initIdentifier(st.namespace_ref, .none),
+                            .right = Expr.initIdentifier(ast.module_ref, .none),
+                        }, .none)),
+                    }, .none));
                 }
 
                 try stmts.outside_wrapper_prefix.append(stmt);
@@ -126,14 +126,14 @@ pub fn convertStmtsForChunkForDevServer(
                 .binding = Binding.alloc(allocator, B.Array{
                     .items = esm_decls.items,
                     .is_single_line = true,
-                }, .Empty),
+                }, .none),
                 .value = Expr.init(E.Dot, .{
                     .target = hmr_api_id,
                     .name = "imports",
-                    .name_loc = .Empty,
-                }, .Empty),
+                    .name_loc = .none,
+                }, .none),
             }}),
-        }, .Empty));
+        }, .none));
         // hmr.onUpdate = [ ... ];
         try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.SExpr, .{
             .value = Expr.init(E.Binary, .{
@@ -141,14 +141,14 @@ pub fn convertStmtsForChunkForDevServer(
                 .left = Expr.init(E.Dot, .{
                     .target = hmr_api_id,
                     .name = "updateImport",
-                    .name_loc = .Empty,
-                }, .Empty),
+                    .name_loc = .none,
+                }, .none),
                 .right = Expr.init(E.Array, .{
                     .items = .fromList(esm_callbacks),
                     .is_single_line = esm_callbacks.items.len <= 2,
-                }, .Empty),
-            }, .Empty),
-        }, .Empty));
+                }, .none),
+            }, .none),
+        }, .none));
     }
 }
 

@@ -1029,9 +1029,7 @@ pub const SelectorParser = struct {
 
     pub fn newLocalIdentifier(_: *SelectorParser, input: *css.Parser, tag: css.CssRef.Tag, raw: []const u8, loc: usize) Impl.SelectorImpl.LocalIdentifier {
         if (input.flags.css_modules) {
-            return Impl.SelectorImpl.LocalIdentifier.fromRef(input.addSymbolForName(raw, tag, bun.logger.Loc{
-                .start = @intCast(loc),
-            }), if (comptime bun.Environment.isDebug) .{ raw, input.allocator() } else {});
+            return Impl.SelectorImpl.LocalIdentifier.fromRef(input.addSymbolForName(raw, tag, .from(@intCast(loc))), if (comptime bun.Environment.isDebug) .{ raw, input.allocator() } else {});
         }
         return Impl.SelectorImpl.LocalIdentifier.fromIdent(.{ .v = raw });
     }

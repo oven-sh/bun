@@ -18,9 +18,9 @@ byte_offset_to_start_of_line: u32 = 0,
 pub const List = bun.MultiArrayList(LineOffsetTable);
 
 pub fn findLine(byte_offsets_to_start_of_line: []const u32, loc: Logger.Loc) i32 {
-    assert(loc.start > -1); // checked by caller
+    assert(loc.get() > -1); // checked by caller
     var original_line: usize = 0;
-    const loc_start = @as(usize, @intCast(loc.start));
+    const loc_start: usize = @intCast(loc.get());
 
     {
         var count = @as(usize, @truncate(byte_offsets_to_start_of_line.len));
@@ -41,9 +41,9 @@ pub fn findLine(byte_offsets_to_start_of_line: []const u32, loc: Logger.Loc) i32
 }
 
 pub fn findIndex(byte_offsets_to_start_of_line: []const u32, loc: Logger.Loc) ?usize {
-    assert(loc.start > -1); // checked by caller
+    assert(loc.get() > -1); // checked by caller
     var original_line: usize = 0;
-    const loc_start = @as(usize, @intCast(loc.start));
+    const loc_start: usize = @intCast(loc.get());
 
     var count = @as(usize, @truncate(byte_offsets_to_start_of_line.len));
     var i: usize = 0;

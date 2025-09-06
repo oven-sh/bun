@@ -500,7 +500,7 @@ pub const Repository = extern struct {
             ) catch |err| {
                 log.addErrorFmt(
                     null,
-                    logger.Loc.Empty,
+                    .none,
                     allocator,
                     "\"git fetch\" for \"{s}\" failed",
                     .{name},
@@ -525,7 +525,7 @@ pub const Repository = extern struct {
                 if (err == error.RepositoryNotFound or attempt > 1) {
                     log.addErrorFmt(
                         null,
-                        logger.Loc.Empty,
+                        .none,
                         allocator,
                         "\"git clone\" for \"{s}\" failed",
                         .{name},
@@ -563,7 +563,7 @@ pub const Repository = extern struct {
         ) catch |err| {
             log.addErrorFmt(
                 null,
-                logger.Loc.Empty,
+                .none,
                 allocator,
                 "no commit matching \"{s}\" found for \"{s}\" (but repository exists)",
                 .{ committish, name },
@@ -601,7 +601,7 @@ pub const Repository = extern struct {
             }) catch |err| {
                 log.addErrorFmt(
                     null,
-                    logger.Loc.Empty,
+                    .none,
                     allocator,
                     "\"git clone\" for \"{s}\" failed",
                     .{name},
@@ -614,7 +614,7 @@ pub const Repository = extern struct {
             _ = exec(allocator, env, &[_]string{ "git", "-C", folder, "checkout", "--quiet", resolved }) catch |err| {
                 log.addErrorFmt(
                     null,
-                    logger.Loc.Empty,
+                    .none,
                     allocator,
                     "\"git checkout\" for \"{s}\" failed",
                     .{name},
@@ -647,7 +647,7 @@ pub const Repository = extern struct {
 
             log.addErrorFmt(
                 null,
-                logger.Loc.Empty,
+                .none,
                 allocator,
                 "\"package.json\" for \"{s}\" failed to open: {s}",
                 .{ name, @errorName(err) },
@@ -661,7 +661,7 @@ pub const Repository = extern struct {
         ).unwrap() catch |err| {
             log.addErrorFmt(
                 null,
-                logger.Loc.Empty,
+                .none,
                 allocator,
                 "\"package.json\" for \"{s}\" failed to resolve: {s}",
                 .{ name, @errorName(err) },

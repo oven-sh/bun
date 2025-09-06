@@ -622,7 +622,7 @@ pub const PackageJSON = struct {
             null,
         ) catch |err| {
             if (err != error.IsDir) {
-                r.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Cannot read file \"{s}\": {s}", .{ input_path, @errorName(err) }) catch unreachable;
+                r.log.addErrorFmt(null, .none, allocator, "Cannot read file \"{s}\": {s}", .{ input_path, @errorName(err) }) catch unreachable;
             }
 
             return null;
@@ -1088,7 +1088,7 @@ pub const PackageJSON = struct {
 
 pub const ExportsMap = struct {
     root: Entry,
-    exports_range: logger.Range = logger.Range.None,
+    exports_range: logger.Range = .none,
     property_key_loc: logger.Loc,
 
     pub fn parse(allocator: std.mem.Allocator, source: *const logger.Source, log: *logger.Log, json: js_ast.Expr, property_key_loc: logger.Loc) ?ExportsMap {
@@ -1113,7 +1113,7 @@ pub const ExportsMap = struct {
         log: *logger.Log,
 
         pub fn visit(this: Visitor, expr: js_ast.Expr) Entry {
-            var first_token: logger.Range = logger.Range.None;
+            var first_token: logger.Range = .none;
 
             switch (expr.data) {
                 .e_null => {
@@ -1313,7 +1313,7 @@ pub const ESModule = struct {
 
         pub const Debug = struct {
             // This is the range of the token to use for error messages
-            token: logger.Range = logger.Range.None,
+            token: logger.Range = .none,
             // If the status is "UndefinedNoConditionsMatch", this is the set of
             // conditions that didn't match. This information is used for error messages.
             unmatched_conditions: []string = &[_]string{},
@@ -1484,7 +1484,7 @@ pub const ESModule = struct {
     const ReverseKind = enum { exact, pattern, prefix };
     pub const ReverseResolution = struct {
         subpath: string = "",
-        token: logger.Range = logger.Range.None,
+        token: logger.Range = .none,
     };
     const invalid_percent_chars = [_]string{
         "%2f",
@@ -1505,7 +1505,7 @@ pub const ESModule = struct {
             return .{
                 .status = .InvalidPackageConfiguration,
                 .debug = .{
-                    .token = logger.Range.None,
+                    .token = .none,
                 },
             };
         }
@@ -1585,7 +1585,7 @@ pub const ESModule = struct {
         }
 
         if (strings.eqlComptime(subpath, ".")) {
-            var main_export = ExportsMap.Entry{ .data = .{ .null = {} }, .first_token = logger.Range.None };
+            var main_export = ExportsMap.Entry{ .data = .{ .null = {} }, .first_token = .none };
             if (switch (exports.data) {
                 .string,
                 .array,
@@ -1868,7 +1868,7 @@ pub const ESModule = struct {
                         .key = keys[last_map_entry_i],
                         .value = slice.items(.value)[last_map_entry_i],
                         // key_range is unused, so we don't need to pull up the array for it.
-                        .key_range = logger.Range.None,
+                        .key_range = .none,
                     };
                     if (did_find_map_entry and
                         last_map_entry.value.data == .map and

@@ -298,7 +298,7 @@ pub fn ParseSuffix(
             // "(a?) => {}"
             // "(a?: b) => {}"
             // "(a?, b?) => {}"
-            if (is_typescript_enabled and left.loc.start == p.latest_arrow_arg_loc.start and (p.lexer.token == .t_colon or
+            if (is_typescript_enabled and left.loc == p.latest_arrow_arg_loc and (p.lexer.token == .t_colon or
                 p.lexer.token == .t_close_paren or p.lexer.token == .t_comma))
             {
                 if (errors == null) {
@@ -826,7 +826,7 @@ pub fn ParseSuffix(
             var optional_chain_: ?OptionalChain = null;
             const optional_chain = &optional_chain_;
             while (true) {
-                if (p.lexer.loc().start == p.after_arrow_body_loc.start) {
+                if (p.lexer.loc() == p.after_arrow_body_loc) {
                     while (true) {
                         switch (p.lexer.token) {
                             .t_comma => {
@@ -850,7 +850,7 @@ pub fn ParseSuffix(
 
                 if (comptime is_typescript_enabled) {
                     // Stop now if this token is forbidden to follow a TypeScript "as" cast
-                    if (p.forbid_suffix_after_as_loc.start > -1 and p.lexer.loc().start == p.forbid_suffix_after_as_loc.start) {
+                    if (p.forbid_suffix_after_as_loc.get() > -1 and p.lexer.loc() == p.forbid_suffix_after_as_loc) {
                         break;
                     }
                 }

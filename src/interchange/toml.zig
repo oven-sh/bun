@@ -122,7 +122,7 @@ pub const TOML = struct {
         switch (source_.contents.len) {
             // This is to be consisntent with how disabled JS files are handled
             0 => {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = Expr.init(E.Object, E.Object{}, logger.Loc.Empty).data };
+                return Expr{ .loc = .from(0), .data = Expr.init(E.Object, E.Object{}, .none).data };
             },
             else => {},
         }
@@ -216,8 +216,8 @@ pub const TOML = struct {
                 switch (err) {
                     error.Clobber => {
                         const loc = rope.head.loc;
-                        assert(loc.start > 0);
-                        const start: u32 = @intCast(loc.start);
+                        assert(loc.get() > 0);
+                        const start: u32 = @intCast(loc.get());
                         const key_name = std.mem.trimRight(u8, p.source().contents[start..rope_end], &std.ascii.whitespace);
                         p.lexer.addError(start, "Cannot redefine key '{s}'", .{key_name});
                         return error.SyntaxError;

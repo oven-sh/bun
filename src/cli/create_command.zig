@@ -879,7 +879,7 @@ pub const CreateCommand = struct {
 
                     var npx_react_scripts_build_str = E.String.init("npx react-scripts build");
 
-                    pub const npx_react_scripts_build = js_ast.Expr{ .data = .{ .e_string = &npx_react_scripts_build_str }, .loc = logger.Loc.Empty };
+                    pub const npx_react_scripts_build = js_ast.Expr{ .data = .{ .e_string = &npx_react_scripts_build_str }, .loc = .none };
 
                     var bun_macro_relay_properties = [_]js_ast.G.Property{
                         js_ast.G.Property{
@@ -887,13 +887,13 @@ pub const CreateCommand = struct {
                                 .data = .{
                                     .e_string = &graphql_string,
                                 },
-                                .loc = logger.Loc.Empty,
+                                .loc = .none,
                             },
                             .value = js_ast.Expr{
                                 .data = .{
                                     .e_string = &bun_macros_relay_path_string,
                                 },
-                                .loc = logger.Loc.Empty,
+                                .loc = .none,
                             },
                         },
                     };
@@ -908,13 +908,13 @@ pub const CreateCommand = struct {
                                 .data = .{
                                     .e_string = &react_relay_string,
                                 },
-                                .loc = logger.Loc.Empty,
+                                .loc = .none,
                             },
                             .value = js_ast.Expr{
                                 .data = .{
                                     .e_object = &bun_macro_relay_object,
                                 },
-                                .loc = logger.Loc.Empty,
+                                .loc = .none,
                             },
                         },
                         js_ast.G.Property{
@@ -922,13 +922,13 @@ pub const CreateCommand = struct {
                                 .data = .{
                                     .e_string = &babel_plugin_relay_macro,
                                 },
-                                .loc = logger.Loc.Empty,
+                                .loc = .none,
                             },
                             .value = js_ast.Expr{
                                 .data = .{
                                     .e_object = &bun_macro_relay_object,
                                 },
-                                .loc = logger.Loc.Empty,
+                                .loc = .none,
                             },
                         },
                         js_ast.G.Property{
@@ -936,13 +936,13 @@ pub const CreateCommand = struct {
                                 .data = .{
                                     .e_string = &babel_plugin_relay_macro_js,
                                 },
-                                .loc = logger.Loc.Empty,
+                                .loc = .none,
                             },
                             .value = js_ast.Expr{
                                 .data = .{
                                     .e_object = &bun_macro_relay_object,
                                 },
-                                .loc = logger.Loc.Empty,
+                                .loc = .none,
                             },
                         },
                     };
@@ -958,13 +958,13 @@ pub const CreateCommand = struct {
                                 .data = .{
                                     .e_string = &bun_macros_relay_only_object_string,
                                 },
-                                .loc = logger.Loc.Empty,
+                                .loc = .none,
                             },
                             .value = js_ast.Expr{
                                 .data = .{
                                     .e_object = &bun_macros_relay_object,
                                 },
-                                .loc = logger.Loc.Empty,
+                                .loc = .none,
                             },
                         },
                     };
@@ -976,13 +976,13 @@ pub const CreateCommand = struct {
                             .data = .{
                                 .e_string = &bun_only_macros_string,
                             },
-                            .loc = logger.Loc.Empty,
+                            .loc = .none,
                         },
                         .value = js_ast.Expr{
                             .data = .{
                                 .e_object = &bun_macros_relay_only_object,
                             },
-                            .loc = logger.Loc.Empty,
+                            .loc = .none,
                         },
                     };
 
@@ -993,13 +993,13 @@ pub const CreateCommand = struct {
                             .data = .{
                                 .e_string = &bun_framework_next_string,
                             },
-                            .loc = logger.Loc.Empty,
+                            .loc = .none,
                         },
                         .value = js_ast.Expr{
                             .data = .{
                                 .e_string = &bun_framework_next_version,
                             },
-                            .loc = logger.Loc.Empty,
+                            .loc = .none,
                         },
                     };
 
@@ -1011,13 +1011,13 @@ pub const CreateCommand = struct {
                             .data = .{
                                 .e_string = &bun_macro_relay_dependency_string,
                             },
-                            .loc = logger.Loc.Empty,
+                            .loc = .none,
                         },
                         .value = js_ast.Expr{
                             .data = .{
                                 .e_string = &bun_macro_relay_dependency_version,
                             },
-                            .loc = logger.Loc.Empty,
+                            .loc = .none,
                         },
                     };
 
@@ -1028,13 +1028,13 @@ pub const CreateCommand = struct {
                             .data = .{
                                 .e_string = &refresh_runtime_string,
                             },
-                            .loc = logger.Loc.Empty,
+                            .loc = .none,
                         },
                         .value = js_ast.Expr{
                             .data = .{
                                 .e_string = &refresh_runtime_version,
                             },
-                            .loc = logger.Loc.Empty,
+                            .loc = .none,
                         },
                     };
 
@@ -1042,11 +1042,11 @@ pub const CreateCommand = struct {
                         .data = .{
                             .e_string = &devDependencies_e_string,
                         },
-                        .loc = logger.Loc.Empty,
+                        .loc = .none,
                     };
                     pub var dependencies_key = js_ast.Expr{
                         .data = .{ .e_string = &dependencies_e_string },
-                        .loc = logger.Loc.Empty,
+                        .loc = .none,
                     };
 
                     pub const bun_bun_for_nextjs_task: string = "bun bun --use next";
@@ -1061,7 +1061,7 @@ pub const CreateCommand = struct {
 
                 //     e_object.* = E.Object{};
 
-                //     const value = js_ast.Expr{ .data = .{ .e_object = e_object }, .loc = logger.Loc.Empty };
+                //     const value = js_ast.Expr{ .data = .{ .e_object = e_object }, .loc = .none };
                 //     properties_list.appendAssumeCapacity(js_ast.G.Property{
                 //         .key = InjectionPrefill.dev_dependencies_key,
                 //         .value = value,
@@ -1074,7 +1074,7 @@ pub const CreateCommand = struct {
 
                 //     e_object.* = E.Object{};
 
-                //     const value = js_ast.Expr{ .data = .{ .e_object = e_object }, .loc = logger.Loc.Empty };
+                //     const value = js_ast.Expr{ .data = .{ .e_object = e_object }, .loc = .none };
                 //     properties_list.appendAssumeCapacity(js_ast.G.Property{
                 //         .key = InjectionPrefill.dependencies_key,
                 //         .value = value,

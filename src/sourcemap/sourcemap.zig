@@ -602,7 +602,7 @@ pub const Mapping = struct {
                     .fail = .{
                         .msg = "Out of memory",
                         .err = error.OutOfMemory,
-                        .loc = .{},
+                        .loc = .none,
                     },
                 };
             };
@@ -646,7 +646,7 @@ pub const Mapping = struct {
                         .msg = "Missing generated column value",
                         .err = error.MissingGeneratedColumnValue,
                         .value = generated.columns.zeroBased(),
-                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                        .loc = .from(@intCast(bytes.len - remain.len)),
                     },
                 };
             }
@@ -660,7 +660,7 @@ pub const Mapping = struct {
                         .msg = "Invalid generated column value",
                         .err = error.InvalidGeneratedColumnValue,
                         .value = generated.columns.zeroBased(),
-                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                        .loc = .from(@intCast(bytes.len - remain.len)),
                     },
                 };
             }
@@ -692,7 +692,7 @@ pub const Mapping = struct {
                     .fail = .{
                         .msg = "Invalid source index delta",
                         .err = error.InvalidSourceIndexDelta,
-                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                        .loc = .from(@intCast(bytes.len - remain.len)),
                     },
                 };
             }
@@ -704,7 +704,7 @@ pub const Mapping = struct {
                         .msg = "Invalid source index value",
                         .err = error.InvalidSourceIndexValue,
                         .value = source_index,
-                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                        .loc = .from(@intCast(bytes.len - remain.len)),
                     },
                 };
             }
@@ -717,7 +717,7 @@ pub const Mapping = struct {
                     .fail = .{
                         .msg = "Missing original line",
                         .err = error.MissingOriginalLine,
-                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                        .loc = .from(@intCast(bytes.len - remain.len)),
                     },
                 };
             }
@@ -729,7 +729,7 @@ pub const Mapping = struct {
                         .msg = "Invalid original line value",
                         .err = error.InvalidOriginalLineValue,
                         .value = original.lines.zeroBased(),
-                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                        .loc = .from(@intCast(bytes.len - remain.len)),
                     },
                 };
             }
@@ -743,7 +743,7 @@ pub const Mapping = struct {
                         .msg = "Missing original column value",
                         .err = error.MissingOriginalColumnValue,
                         .value = original.columns.zeroBased(),
-                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                        .loc = .from(@intCast(bytes.len - remain.len)),
                     },
                 };
             }
@@ -755,7 +755,7 @@ pub const Mapping = struct {
                         .msg = "Invalid original column value",
                         .err = error.InvalidOriginalColumnValue,
                         .value = original.columns.zeroBased(),
-                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                        .loc = .from(@intCast(bytes.len - remain.len)),
                     },
                 };
             }
@@ -780,7 +780,7 @@ pub const Mapping = struct {
                                     .msg = "Invalid name index delta",
                                     .err = error.InvalidNameIndexDelta,
                                     .value = @intCast(c),
-                                    .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                                    .loc = .from(@intCast(bytes.len - remain.len)),
                                 },
                             };
                         }
@@ -794,7 +794,7 @@ pub const Mapping = struct {
                                         .fail = .{
                                             .msg = "Out of memory",
                                             .err = error.OutOfMemory,
-                                            .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                                            .loc = .from(@intCast(bytes.len - remain.len)),
                                         },
                                     };
                                 };
@@ -847,7 +847,7 @@ pub const ParseResult = union(enum) {
             return Logger.Data{
                 .location = Logger.Location{
                     .file = path,
-                    .offset = this.loc.toUsize(),
+                    .offset = @max(this.loc.get(), 0),
                     // TODO: populate correct line and column information
                     .line = -1,
                     .column = -1,
@@ -1769,7 +1769,7 @@ pub const Chunk = struct {
             prev_state: SourceMapState = SourceMapState{},
             last_generated_update: u32 = 0,
             generated_column: i32 = 0,
-            prev_loc: Logger.Loc = Logger.Loc.Empty,
+            prev_loc: Logger.Loc = .none,
             has_prev_state: bool = false,
 
             line_offset_table_byte_offset_list: []const u32 = &.{},
@@ -1890,9 +1890,9 @@ pub const Chunk = struct {
             pub fn addSourceMapping(b: *ThisBuilder, loc: Logger.Loc, output: []const u8) void {
                 if (
                 // don't insert mappings for same location twice
-                b.prev_loc.eql(loc) or
+                b.prev_loc == loc or
                     // exclude generated code from source
-                    loc.start == Logger.Loc.Empty.start)
+                    loc == .none)
                     return;
 
                 b.prev_loc = loc;
@@ -1912,7 +1912,7 @@ pub const Chunk = struct {
                 const line = list.get(@as(usize, @intCast(@max(original_line, 0))));
 
                 // Use the line to compute the column
-                var original_column = loc.start - @as(i32, @intCast(line.byte_offset_to_start_of_line));
+                var original_column = loc.get() - @as(i32, @intCast(line.byte_offset_to_start_of_line));
                 if (line.columns_for_non_ascii.len > 0 and original_column >= @as(i32, @intCast(line.byte_offset_to_first_non_ascii))) {
                     original_column = line.columns_for_non_ascii.slice()[@as(u32, @intCast(original_column)) - line.byte_offset_to_first_non_ascii];
                 }

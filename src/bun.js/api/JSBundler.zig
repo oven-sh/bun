@@ -774,7 +774,7 @@ pub const JSBundler = struct {
             specifier: string = "",
             importer_source_index: u32,
             import_record_index: u32 = 0,
-            range: logger.Range = logger.Range.None,
+            range: logger.Range = .none,
             original_target: Target,
 
             // pub inline fn loader(_: *const MiniImportRecord) ?options.Loader {

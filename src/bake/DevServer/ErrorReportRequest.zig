@@ -347,7 +347,7 @@ fn extractJsonEncodedSourceCode(contents: []const u8, target_line: u32, comptime
         .source = .initEmptyFile(""),
         .allocator = arena,
         .should_redact_logs = false,
-        .prev_error_loc = .Empty,
+        .prev_error_loc = .none,
     };
     defer log.deinit();
 

@@ -230,7 +230,7 @@ pub const Snapshots = struct {
             const fd = switch (bun.sys.open(test_filename, bun.O.RDWR, 0o644)) {
                 .result => |r| r,
                 .err => |e| {
-                    try log.addErrorFmt(&bun.logger.Source.initEmptyFile(test_filename), .{ .start = 0 }, arena, "Failed to update inline snapshot: Failed to open file: {s}", .{e.name()});
+                    try log.addErrorFmt(&bun.logger.Source.initEmptyFile(test_filename), .from(0), arena, "Failed to update inline snapshot: Failed to open file: {s}", .{e.name()});
                     continue;
                 },
             };
@@ -254,14 +254,14 @@ pub const Snapshots = struct {
             var last_col: c_ulong = 1;
             for (ils_info.items) |ils| {
                 if (ils.line == last_line and ils.col == last_col) {
-                    try log.addErrorFmt(source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Multiple inline snapshots for the same call are not supported", .{});
+                    try log.addErrorFmt(source, .from(@intCast(uncommitted_segment_end)), arena, "Failed to update inline snapshot: Multiple inline snapshots for the same call are not supported", .{});
                     continue;
                 }
 
                 inline_snapshot_dbg("Finding byte for {}/{}", .{ ils.line, ils.col });
                 const byte_offset_add = logger.Source.lineColToByteOffset(file_text[last_byte..], last_line, last_col, ils.line, ils.col) orelse {
                     inline_snapshot_dbg("-> Could not find byte", .{});
-                    try log.addErrorFmt(source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Ln {d}, Col {d} not found", .{ ils.line, ils.col });
+                    try log.addErrorFmt(source, .from(@intCast(uncommitted_segment_end)), arena, "Failed to update inline snapshot: Ln {d}, Col {d} not found", .{ ils.line, ils.col });
                     continue;
                 };
 
@@ -283,7 +283,7 @@ pub const Snapshots = struct {
                     };
                     const fn_name = ils.kind;
                     if (!bun.strings.startsWith(file_text[next_start..], fn_name)) {
-                        try log.addErrorFmt(source, .{ .start = @intCast(next_start) }, arena, "Failed to update inline snapshot: Could not find '{s}' here", .{fn_name});
+                        try log.addErrorFmt(source, .from(@intCast(next_start)), arena, "Failed to update inline snapshot: Could not find '{s}' here", .{fn_name});
                         continue;
                     }
                     next_start += fn_name.len;
@@ -299,14 +299,14 @@ pub const Snapshots = struct {
                     try bun.js_parser.TSXParser.init(arena, &log, source, vm.transpiler.options.define, lexer, opts, &parser);
 
                     try parser.lexer.expect(.t_open_paren);
-                    const after_open_paren_loc = parser.lexer.loc().start;
+                    const after_open_paren_loc = parser.lexer.loc().get();
                     if (parser.lexer.token == .t_close_paren) {
                         // zero args
                         if (ils.has_matchers) {
                             try log.addErrorFmt(source, parser.lexer.loc(), arena, "Failed to update inline snapshot: Snapshot has matchers and yet has no arguments", .{});
                             continue;
                         }
-                        const close_paren_loc = parser.lexer.loc().start;
+                        const close_paren_loc = parser.lexer.loc().get();
                         try parser.lexer.expect(.t_close_paren);
                         break :blk .{ after_open_paren_loc, close_paren_loc, false };
                     }
@@ -315,16 +315,16 @@ pub const Snapshots = struct {
                         continue;
                     }
 
-                    const before_expr_loc = parser.lexer.loc().start;
+                    const before_expr_loc = parser.lexer.loc().get();
                     const expr_1 = try parser.parseExpr(.comma);
-                    const after_expr_loc = parser.lexer.loc().start;
+                    const after_expr_loc = parser.lexer.loc().get();
 
                     var is_one_arg = false;
                     if (parser.lexer.token == .t_comma) {
                         try parser.lexer.expect(.t_comma);
                         if (parser.lexer.token == .t_close_paren) is_one_arg = true;
                     } else is_one_arg = true;
-                    const after_comma_loc = parser.lexer.loc().start;
+                    const after_comma_loc = parser.lexer.loc().get();
 
                     if (is_one_arg) {
                         try parser.lexer.expect(.t_close_paren);
@@ -344,9 +344,9 @@ pub const Snapshots = struct {
                         continue;
                     }
 
-                    const before_expr_2_loc = parser.lexer.loc().start;
+                    const before_expr_2_loc = parser.lexer.loc().get();
                     const expr_2 = try parser.parseExpr(.comma);
-                    const after_expr_2_loc = parser.lexer.loc().start;
+                    const after_expr_2_loc = parser.lexer.loc().get();
 
                     if (!ils.has_matchers) {
                         try log.addErrorFmt(source, parser.lexer.loc(), arena, "Failed to update inline snapshot: Snapshot does not have matchers and yet has two arguments", .{});
@@ -373,7 +373,7 @@ pub const Snapshots = struct {
                 inline_snapshot_dbg("  -> Found update range {}-{}", .{ final_start_usize, final_end_usize });
 
                 if (final_end_usize < final_start_usize or final_start_usize < uncommitted_segment_end) {
-                    try log.addErrorFmt(source, .{ .start = final_start }, arena, "Failed to update inline snapshot: Did not advance.", .{});
+                    try log.addErrorFmt(source, .from(final_start), arena, "Failed to update inline snapshot: Did not advance.", .{});
                     continue;
                 }
 
@@ -438,12 +438,12 @@ pub const Snapshots = struct {
 
             // 4. write out result_text to the file
             file.file.seekTo(0) catch |e| {
-                try log.addErrorFmt(source, .{ .start = 0 }, arena, "Failed to update inline snapshot: Seek file error: {s}", .{@errorName(e)});
+                try log.addErrorFmt(source, .from(0), arena, "Failed to update inline snapshot: Seek file error: {s}", .{@errorName(e)});
                 continue;
             };
 
             file.file.writeAll(result_text.items) catch |e| {
-                try log.addErrorFmt(source, .{ .start = 0 }, arena, "Failed to update inline snapshot: Write file error: {s}", .{@errorName(e)});
+                try log.addErrorFmt(source, .from(0), arena, "Failed to update inline snapshot: Write file error: {s}", .{@errorName(e)});
                 continue;
             };
             if (result_text.items.len < file_text.len) {

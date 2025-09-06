@@ -148,8 +148,8 @@ pub fn constructor(
     const mapping_list = switch (parse_result) {
         .success => |parsed| parsed,
         .fail => |fail| {
-            if (fail.loc.toNullable()) |loc| {
-                return globalObject.throwValue(globalObject.createSyntaxErrorInstance("{s} at {d}", .{ fail.msg, loc.start }));
+            if (fail.loc != .none) {
+                return globalObject.throwValue(globalObject.createSyntaxErrorInstance("{s} at {d}", .{ fail.msg, fail.loc.get() }));
             }
             return globalObject.throwValue(globalObject.createSyntaxErrorInstance("{s}", .{fail.msg}));
         },

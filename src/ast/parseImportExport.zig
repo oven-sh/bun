@@ -240,7 +240,7 @@ pub fn ParseImportExport(
             var items = ListManaged(js_ast.ClauseItem).initCapacity(p.allocator, 1) catch unreachable;
             try p.lexer.expect(.t_open_brace);
             var is_single_line = !p.lexer.has_newline_before;
-            var first_non_identifier_loc = logger.Loc{ .start = 0 };
+            var first_non_identifier_loc: logger.Loc = .from(0);
             var had_type_only_exports = false;
 
             while (p.lexer.token != .t_close_brace) {
@@ -263,7 +263,7 @@ pub fn ParseImportExport(
                 //   // This is a syntax error
                 //   export { default }
                 //
-                if (p.lexer.token != .t_identifier and first_non_identifier_loc.start == 0) {
+                if (p.lexer.token != .t_identifier and first_non_identifier_loc.get() == 0) {
                     first_non_identifier_loc = p.lexer.loc();
                 }
                 try p.lexer.next();
@@ -321,7 +321,7 @@ pub fn ParseImportExport(
                             //   // This is a syntax error
                             //   export { default }
                             //
-                            if (p.lexer.token != .t_identifier and first_non_identifier_loc.start == 0) {
+                            if (p.lexer.token != .t_identifier and first_non_identifier_loc.get() == 0) {
                                 first_non_identifier_loc = p.lexer.loc();
                             }
 
@@ -397,7 +397,7 @@ pub fn ParseImportExport(
 
             // Throw an error here if we found a keyword earlier and this isn't an
             // "export from" statement after all
-            if (first_non_identifier_loc.start != 0 and !p.lexer.isContextualKeyword("from")) {
+            if (first_non_identifier_loc.get() != 0 and !p.lexer.isContextualKeyword("from")) {
                 const r = js_lexer.rangeOfIdentifier(p.source, first_non_identifier_loc);
                 try p.lexer.addRangeError(r, "Expected identifier but found \"{s}\"", .{p.source.textForRange(r)}, true);
                 return error.SyntaxError;

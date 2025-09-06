@@ -172,7 +172,7 @@ fn parseWithError(
                     positional,
                 });
             } else {
-                log.addErrorFmt(null, logger.Loc.Empty, allocator, "unrecognised dependency format: {s}", .{
+                log.addErrorFmt(null, .none, allocator, "unrecognised dependency format: {s}", .{
                     positional,
                 }) catch |err| bun.handleOom(err);
             }
@@ -204,7 +204,7 @@ fn parseWithError(
                     positional,
                 });
             } else {
-                log.addErrorFmt(null, logger.Loc.Empty, allocator, "unrecognised dependency format: {s}", .{
+                log.addErrorFmt(null, .none, allocator, "unrecognised dependency format: {s}", .{
                     positional,
                 }) catch |err| bun.handleOom(err);
             }

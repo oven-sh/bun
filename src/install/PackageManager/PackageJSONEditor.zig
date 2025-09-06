@@ -43,7 +43,7 @@ pub fn editPatchedDependencies(
         E.String{
             .data = patchfile_path,
         },
-        logger.Loc.Empty,
+        .none,
     ).clone(manager.allocator);
 
     try patched_dependencies.put(
@@ -55,7 +55,7 @@ pub fn editPatchedDependencies(
     try package_json.data.e_object.put(
         manager.allocator,
         "patchedDependencies",
-        try Expr.init(E.Object, patched_dependencies, logger.Loc.Empty).clone(manager.allocator),
+        try Expr.init(E.Object, patched_dependencies, .none).clone(manager.allocator),
     );
 }
 
@@ -116,7 +116,7 @@ pub fn editTrustedDependencies(allocator: std.mem.Allocator, package_json: *Expr
                         E.String{
                             .data = name,
                         },
-                        logger.Loc.Empty,
+                        .none,
                     ).clone(allocator);
                     break;
                 }
@@ -144,7 +144,7 @@ pub fn editTrustedDependencies(allocator: std.mem.Allocator, package_json: *Expr
             E.Array{
                 .items = JSAst.ExprNodeList.init(new_trusted_deps),
             },
-            logger.Loc.Empty,
+            .none,
         );
     };
 
@@ -161,7 +161,7 @@ pub fn editTrustedDependencies(allocator: std.mem.Allocator, package_json: *Expr
                 E.String{
                     .data = trusted_dependencies_string,
                 },
-                logger.Loc.Empty,
+                .none,
             ),
             .value = trusted_dependencies_array,
         };
@@ -171,7 +171,7 @@ pub fn editTrustedDependencies(allocator: std.mem.Allocator, package_json: *Expr
             E.Object{
                 .properties = JSAst.G.Property.List.init(root_properties),
             },
-            logger.Loc.Empty,
+            .none,
         );
     } else if (needs_new_trusted_dependencies_list) {
         var root_properties = try allocator.alloc(G.Property, package_json.data.e_object.properties.len + 1);
@@ -182,7 +182,7 @@ pub fn editTrustedDependencies(allocator: std.mem.Allocator, package_json: *Expr
                 E.String{
                     .data = trusted_dependencies_string,
                 },
-                logger.Loc.Empty,
+                .none,
             ),
             .value = trusted_dependencies_array,
         };
@@ -191,7 +191,7 @@ pub fn editTrustedDependencies(allocator: std.mem.Allocator, package_json: *Expr
             E.Object{
                 .properties = JSAst.G.Property.List.init(root_properties),
             },
-            logger.Loc.Empty,
+            .none,
         );
     }
 }
@@ -265,7 +265,7 @@ pub fn editUpdateNoArgs(
 
                             dep.value = Expr.allocate(allocator, E.String, .{
                                 .data = temp_version,
-                            }, logger.Loc.Empty);
+                            }, .none);
                         }
                     }
                 } else {
@@ -342,7 +342,7 @@ pub fn editUpdateNoArgs(
                                                     dep_literal[0..at_index],
                                                     new_version,
                                                 }),
-                                            }, logger.Loc.Empty);
+                                            }, .none);
                                             break :updated;
                                         }
 
@@ -351,7 +351,7 @@ pub fn editUpdateNoArgs(
 
                                     dep.value = Expr.allocate(allocator, E.String, .{
                                         .data = new_version,
-                                    }, logger.Loc.Empty);
+                                    }, .none);
                                     break :updated;
                                 }
                             }
@@ -537,7 +537,7 @@ pub fn edit(
                     if (deps[i].data == .e_missing) {
                         deps[i] = Expr.allocate(allocator, E.String, .{
                             .data = package_name,
-                        }, logger.Loc.Empty);
+                        }, .none);
                         break;
                     }
                 }
@@ -571,13 +571,13 @@ pub fn edit(
                     allocator,
                     JSAst.E.String,
                     .{ .data = try allocator.dupe(u8, request.getResolvedName(manager.lockfile)) },
-                    logger.Loc.Empty,
+                    .none,
                 );
 
                 new_dependencies[k].value = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
                     // we set it later
                     .data = "",
-                }, logger.Loc.Empty);
+                }, .none);
 
                 request.e_string = new_dependencies[k].value.?.data.e_string;
                 break;
@@ -596,7 +596,7 @@ pub fn edit(
 
             break :brk JSAst.Expr.allocate(allocator, JSAst.E.Object, .{
                 .properties = JSAst.G.Property.List.init(new_dependencies),
-            }, logger.Loc.Empty);
+            }, .none);
         };
 
         dependencies_object.data.e_object.properties = JSAst.G.Property.List.init(new_dependencies);
@@ -618,7 +618,7 @@ pub fn edit(
 
             break :brk Expr.allocate(allocator, E.Array, .{
                 .items = JSAst.ExprNodeList.init(new_trusted_deps),
-            }, logger.Loc.Empty);
+            }, .none);
         };
 
         if (options.add_trusted_dependencies and trusted_dependencies_to_add > 0) {
@@ -633,7 +633,7 @@ pub fn edit(
             root_properties[0] = JSAst.G.Property{
                 .key = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
                     .data = dependency_list,
-                }, logger.Loc.Empty),
+                }, .none),
                 .value = dependencies_object,
             };
 
@@ -641,14 +641,14 @@ pub fn edit(
                 root_properties[1] = JSAst.G.Property{
                     .key = Expr.allocate(allocator, E.String, .{
                         .data = trusted_dependencies_string,
-                    }, logger.Loc.Empty),
+                    }, .none),
                     .value = trusted_dependencies_array,
                 };
             }
 
             current_package_json.* = JSAst.Expr.allocate(allocator, JSAst.E.Object, .{
                 .properties = JSAst.G.Property.List.init(root_properties),
-            }, logger.Loc.Empty);
+            }, .none);
         } else {
             if (needs_new_dependency_list and needs_new_trusted_dependencies_list) {
                 var root_properties = try allocator.alloc(G.Property, current_package_json.data.e_object.properties.len + 2);
@@ -656,30 +656,30 @@ pub fn edit(
                 root_properties[root_properties.len - 2] = .{
                     .key = Expr.allocate(allocator, E.String, E.String{
                         .data = dependency_list,
-                    }, logger.Loc.Empty),
+                    }, .none),
                     .value = dependencies_object,
                 };
                 root_properties[root_properties.len - 1] = .{
                     .key = Expr.allocate(allocator, E.String, .{
                         .data = trusted_dependencies_string,
-                    }, logger.Loc.Empty),
+                    }, .none),
                     .value = trusted_dependencies_array,
                 };
                 current_package_json.* = Expr.allocate(allocator, E.Object, .{
                     .properties = G.Property.List.init(root_properties),
-                }, logger.Loc.Empty);
+                }, .none);
             } else if (needs_new_dependency_list or needs_new_trusted_dependencies_list) {
                 var root_properties = try allocator.alloc(JSAst.G.Property, current_package_json.data.e_object.properties.len + 1);
                 @memcpy(root_properties[0..current_package_json.data.e_object.properties.len], current_package_json.data.e_object.properties.slice());
                 root_properties[root_properties.len - 1] = .{
                     .key = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
                         .data = if (needs_new_dependency_list) dependency_list else trusted_dependencies_string,
-                    }, logger.Loc.Empty),
+                    }, .none),
                     .value = if (needs_new_dependency_list) dependencies_object else trusted_dependencies_array,
                 };
                 current_package_json.* = JSAst.Expr.allocate(allocator, JSAst.E.Object, .{
                     .properties = JSAst.G.Property.List.init(root_properties),
-                }, logger.Loc.Empty);
+                }, .none);
             }
         }
     }

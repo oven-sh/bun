@@ -15,7 +15,7 @@ pub const Array = struct {
     is_single_line: bool = false,
     is_parenthesized: bool = false,
     was_originally_macro: bool = false,
-    close_bracket_loc: logger.Loc = logger.Loc.Empty,
+    close_bracket_loc: logger.Loc = .none,
 
     pub fn push(this: *Array, allocator: std.mem.Allocator, item: Expr) !void {
         try this.items.push(allocator, item);
@@ -161,7 +161,7 @@ pub const Call = struct {
     args: ExprNodeList = ExprNodeList{},
     optional_chain: ?OptionalChain = null,
     is_direct_eval: bool = false,
-    close_paren_loc: logger.Loc = logger.Loc.Empty,
+    close_paren_loc: logger.Loc = .none,
 
     // True if there is a comment containing "@__PURE__" or "#__PURE__" preceding
     // this call expression. This is an annotation used for tree shaking, and
@@ -233,7 +233,7 @@ pub const Arrow = struct {
     pub const noop_return_undefined: Arrow = .{
         .args = &.{},
         .body = .{
-            .loc = .Empty,
+            .loc = .none,
             .stmts = &.{},
         },
     };
@@ -365,7 +365,7 @@ pub const JSXElement = struct {
 
     flags: Flags.JSXElement.Bitset = Flags.JSXElement.Bitset{},
 
-    close_tag_loc: logger.Loc = logger.Loc.Empty,
+    close_tag_loc: logger.Loc = .none,
 
     pub const SpecialProp = enum {
         __self, // old react transform used this as a prop
@@ -493,7 +493,7 @@ pub const Object = struct {
     is_parenthesized: bool = false,
     was_originally_macro: bool = false,
 
-    close_brace_loc: logger.Loc = logger.Loc.Empty,
+    close_brace_loc: logger.Loc = .none,
 
     // used in TOML parser to merge properties
     pub const Rope = struct {
@@ -544,7 +544,7 @@ pub const Object = struct {
     }
 
     pub fn putString(self: *Object, allocator: std.mem.Allocator, key: string, value: string) !void {
-        return try put(self, allocator, key, Expr.init(E.String, E.String.init(value), logger.Loc.Empty));
+        return try put(self, allocator, key, Expr.init(E.String, E.String.init(value), .none));
     }
 
     pub const SetError = error{ OutOfMemory, Clobber };
@@ -1246,7 +1246,7 @@ pub const Template = struct {
             if (part.value.data == .e_string and part.tail.cooked.isUTF8() and part.value.data.e_string.isUTF8()) {
                 if (parts.items.len == 0) {
                     if (part.value.data.e_string.len() > 0) {
-                        head.data.e_string.push(Expr.init(E.String, part.value.data.e_string.*, logger.Loc.Empty).data.e_string);
+                        head.data.e_string.push(Expr.init(E.String, part.value.data.e_string.*, .none).data.e_string);
                     }
 
                     if (part.tail.cooked.len() > 0) {
@@ -1260,7 +1260,7 @@ pub const Template = struct {
 
                     if (prev_part.tail.cooked.isUTF8()) {
                         if (part.value.data.e_string.len() > 0) {
-                            prev_part.tail.cooked.push(Expr.init(E.String, part.value.data.e_string.*, logger.Loc.Empty).data.e_string);
+                            prev_part.tail.cooked.push(Expr.init(E.String, part.value.data.e_string.*, .none).data.e_string);
                         }
 
                         if (part.tail.cooked.len() > 0) {
@@ -1361,7 +1361,7 @@ pub const RequireString = struct {
 pub const RequireResolveString = struct {
     import_record_index: u32,
 
-    // close_paren_loc: logger.Loc = logger.Loc.Empty,
+    // close_paren_loc: logger.Loc = .none,
 };
 
 pub const InlinedEnum = struct {

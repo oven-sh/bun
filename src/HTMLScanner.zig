@@ -41,7 +41,7 @@ fn createImportRecord(this: *HTMLScanner, input_path: []const u8, kind: ImportKi
     const record = ImportRecord{
         .path = fs.Path.init(try this.allocator.dupeZ(u8, path_to_use)),
         .kind = kind,
-        .range = logger.Range.None,
+        .range = .none,
     };
 
     try this.import_records.push(this.allocator, record);
@@ -56,7 +56,7 @@ pub fn onWriteHTML(_: *HTMLScanner, bytes: []const u8) void {
 pub fn onHTMLParseError(this: *HTMLScanner, message: []const u8) void {
     this.log.addError(
         this.source,
-        logger.Loc.Empty,
+        .none,
         message,
     ) catch |err| bun.handleOom(err);
 }

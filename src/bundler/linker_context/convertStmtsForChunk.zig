@@ -58,12 +58,12 @@ pub fn convertStmtsForChunk(
                     E.Identifier{
                         .ref = c.unbound_module_ref,
                     },
-                    Logger.Loc.Empty,
+                    .none,
                 ),
                 .name = "exports",
-                .name_loc = Logger.Loc.Empty,
+                .name_loc = .none,
             },
-            Logger.Loc.Empty,
+            .none,
         );
     }
 

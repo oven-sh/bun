@@ -75,7 +75,7 @@ pub fn enqueueDependencyList(
             };
 
             if (dependency.behavior.isOptional() or dependency.behavior.isPeer())
-                this.log.addWarningWithNote(null, .{}, this.allocator, @errorName(err), note.fmt, note.args) catch unreachable
+                this.log.addWarningWithNote(null, .none, this.allocator, @errorName(err), note.fmt, note.args) catch unreachable
             else
                 this.log.addZigErrorWithNote(this.allocator, err, note.fmt, note.args) catch unreachable;
 
@@ -548,7 +548,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                     } else {
                                         this.log.addErrorFmt(
                                             null,
-                                            logger.Loc.Empty,
+                                            .none,
                                             this.allocator,
                                             "Package \"{s}\" with tag \"{s}\" not found, but package exists",
                                             .{
@@ -573,7 +573,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                     } else {
                                         this.log.addErrorFmt(
                                             null,
-                                            logger.Loc.Empty,
+                                            .none,
                                             this.allocator,
                                             "No version matching \"{s}\" found for specifier \"{s}\" (but package exists)",
                                             .{
@@ -976,7 +976,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                 if (comptime dependency_tag == .workspace) {
                     this.log.addErrorFmt(
                         null,
-                        logger.Loc.Empty,
+                        .none,
                         this.allocator,
                         workspace_not_found_fmt,
                         .{
@@ -987,7 +987,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                 } else {
                     this.log.addErrorFmt(
                         null,
-                        logger.Loc.Empty,
+                        .none,
                         this.allocator,
                         link_not_found_fmt,
                         .{
@@ -999,7 +999,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                 if (comptime dependency_tag == .workspace) {
                     this.log.addWarningFmt(
                         null,
-                        logger.Loc.Empty,
+                        .none,
                         this.allocator,
                         workspace_not_found_fmt,
                         .{
@@ -1010,7 +1010,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                 } else {
                     this.log.addWarningFmt(
                         null,
-                        logger.Loc.Empty,
+                        .none,
                         this.allocator,
                         link_not_found_fmt,
                         .{
@@ -1474,7 +1474,7 @@ fn getOrPutResolvedPackage(
                             const existing_package = this.lockfile.packages.get(existing_id);
                             this.log.addWarningFmt(
                                 null,
-                                logger.Loc.Empty,
+                                .none,
                                 this.allocator,
                                 "incorrect peer dependency \"{}@{}\"",
                                 .{
@@ -1511,7 +1511,7 @@ fn getOrPutResolvedPackage(
                             const existing_package = this.lockfile.packages.get(existing_package_id);
                             this.log.addWarningFmt(
                                 null,
-                                logger.Loc.Empty,
+                                .none,
                                 this.allocator,
                                 "incorrect peer dependency \"{}@{}\"",
                                 .{

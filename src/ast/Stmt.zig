@@ -37,7 +37,7 @@ pub fn isMissingExpr(self: Stmt) bool {
 }
 
 pub fn empty() Stmt {
-    return Stmt{ .data = .{ .s_empty = None }, .loc = logger.Loc{} };
+    return Stmt{ .data = .{ .s_empty = None }, .loc = .none };
 }
 
 pub fn toEmpty(this: Stmt) Stmt {

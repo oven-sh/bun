@@ -1888,7 +1888,7 @@ fn updateDefaultCatalog(
     }
 
     // Update or add the package version
-    const new_expr = Expr.allocate(allocator, E.String, E.String{ .data = version_with_prefix }, logger.Loc.Empty);
+    const new_expr = Expr.allocate(allocator, E.String, E.String{ .data = version_with_prefix }, .none);
     try catalog_obj.put(allocator, package_name, new_expr);
 
     // Check if we need to update under workspaces.catalog or root-level catalog
@@ -1899,7 +1899,7 @@ fn updateDefaultCatalog(
                 try workspaces_query.expr.data.e_object.put(
                     allocator,
                     "catalog",
-                    Expr.allocate(allocator, E.Object, catalog_obj, logger.Loc.Empty),
+                    Expr.allocate(allocator, E.Object, catalog_obj, .none),
                 );
                 return;
             }
@@ -1910,7 +1910,7 @@ fn updateDefaultCatalog(
     try package_json.data.e_object.put(
         allocator,
         "catalog",
-        Expr.allocate(allocator, E.Object, catalog_obj, logger.Loc.Empty),
+        Expr.allocate(allocator, E.Object, catalog_obj, .none),
     );
 }
 
@@ -1960,14 +1960,14 @@ fn updateNamedCatalog(
     }
 
     // Update or add the package version
-    const new_expr = Expr.allocate(allocator, E.String, E.String{ .data = version_with_prefix }, logger.Loc.Empty);
+    const new_expr = Expr.allocate(allocator, E.String, E.String{ .data = version_with_prefix }, .none);
     try catalog_obj.put(allocator, package_name, new_expr);
 
     // Update the catalog in catalogs object
     try catalogs_obj.put(
         allocator,
         catalog_name,
-        Expr.allocate(allocator, E.Object, catalog_obj, logger.Loc.Empty),
+        Expr.allocate(allocator, E.Object, catalog_obj, .none),
     );
 
     // Check if we need to update under workspaces.catalogs or root-level catalogs
@@ -1978,7 +1978,7 @@ fn updateNamedCatalog(
                 try workspaces_query.expr.data.e_object.put(
                     allocator,
                     "catalogs",
-                    Expr.allocate(allocator, E.Object, catalogs_obj, logger.Loc.Empty),
+                    Expr.allocate(allocator, E.Object, catalogs_obj, .none),
                 );
                 return;
             }
@@ -1989,7 +1989,7 @@ fn updateNamedCatalog(
     try package_json.data.e_object.put(
         allocator,
         "catalogs",
-        Expr.allocate(allocator, E.Object, catalogs_obj, logger.Loc.Empty),
+        Expr.allocate(allocator, E.Object, catalogs_obj, .none),
     );
 }
 

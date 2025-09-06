@@ -8,12 +8,12 @@ pub fn writeOutputFilesToDisk(
     defer trace.end();
     var root_dir = std.fs.cwd().makeOpenPath(root_path, .{}) catch |err| {
         if (err == error.NotDir) {
-            c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to create output directory {} is a file. Please choose a different outdir or delete {}", .{
+            c.log.addErrorFmt(null, .none, bun.default_allocator, "Failed to create output directory {} is a file. Please choose a different outdir or delete {}", .{
                 bun.fmt.quote(root_path),
                 bun.fmt.quote(root_path),
             }) catch unreachable;
         } else {
-            c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to create output directory {s} {}", .{
+            c.log.addErrorFmt(null, .none, bun.default_allocator, "Failed to create output directory {s} {}", .{
                 @errorName(err),
                 bun.fmt.quote(root_path),
             }) catch unreachable;
@@ -50,7 +50,7 @@ pub fn writeOutputFilesToDisk(
         if (std.fs.path.dirnamePosix(rel_path)) |rel_parent| {
             if (rel_parent.len > 0) {
                 root_dir.makePath(rel_parent) catch |err| {
-                    c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s} creating outdir {} while saving chunk {}", .{
+                    c.log.addErrorFmt(null, .none, bun.default_allocator, "{s} creating outdir {} while saving chunk {}", .{
                         @errorName(err),
                         bun.fmt.quote(rel_parent),
                         bun.fmt.quote(chunk.final_rel_path),
@@ -227,7 +227,7 @@ pub fn writeOutputFilesToDisk(
                         )) {
                             .result => {},
                             .err => |err| {
-                                c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing bytecode for chunk {}", .{
+                                c.log.addErrorFmt(null, .none, bun.default_allocator, "{} writing bytecode for chunk {}", .{
                                     err,
                                     bun.fmt.quote(chunk.final_rel_path),
                                 }) catch unreachable;
@@ -361,7 +361,7 @@ pub fn writeOutputFilesToDisk(
             if (std.fs.path.dirname(src.dest_path)) |rel_parent| {
                 if (rel_parent.len > 0) {
                     root_dir.makePath(rel_parent) catch |err| {
-                        c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s} creating outdir {} while saving file {}", .{
+                        c.log.addErrorFmt(null, .none, bun.default_allocator, "{s} creating outdir {} while saving file {}", .{
                             @errorName(err),
                             bun.fmt.quote(rel_parent),
                             bun.fmt.quote(src.dest_path),

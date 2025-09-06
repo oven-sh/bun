@@ -195,7 +195,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
             bun.ast.E.Array{
                 .items = .init(keys),
             },
-            .{ .start = -1 },
+            .none,
         );
         try manifest.set(allocator, "versions", versions_array);
     }

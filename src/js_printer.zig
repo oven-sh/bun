@@ -1109,7 +1109,7 @@ fn NewPrinter(
 
                 p.printIndent();
             }
-            if (close_brace_loc != null and close_brace_loc.?.start > loc.start) {
+            if (close_brace_loc != null and close_brace_loc.?.get() > loc.get()) {
                 p.addSourceMapping(close_brace_loc.?);
             }
             p.print("}");
@@ -1399,7 +1399,7 @@ fn NewPrinter(
             p.needs_semicolon = false;
             p.unindent();
             p.printIndent();
-            if (class.close_brace_loc.start > class.body_loc.start)
+            if (class.close_brace_loc.get() > class.body_loc.get())
                 p.addSourceMapping(class.close_brace_loc);
             p.print("}");
         }
@@ -2170,7 +2170,7 @@ fn NewPrinter(
                             }
                         }
 
-                        if (e.close_parens_loc.start > expr.loc.start) {
+                        if (e.close_parens_loc.get() > expr.loc.get()) {
                             p.addSourceMapping(e.close_parens_loc);
                         }
 
@@ -2236,7 +2236,7 @@ fn NewPrinter(
                             p.printExpr(arg, .comma, ExprFlag.None());
                         }
                     }
-                    if (e.close_paren_loc.start > expr.loc.start) {
+                    if (e.close_paren_loc.get() > expr.loc.get()) {
                         p.addSourceMapping(e.close_paren_loc);
                     }
                     p.print(")");
@@ -2623,7 +2623,7 @@ fn NewPrinter(
                         }
                     }
 
-                    if (e.close_bracket_loc.start > expr.loc.start) {
+                    if (e.close_bracket_loc.get() > expr.loc.get()) {
                         p.addSourceMapping(e.close_bracket_loc);
                     }
 
@@ -2677,7 +2677,7 @@ fn NewPrinter(
                             p.printIndent();
                         }
                     }
-                    if (e.close_brace_loc.start > expr.loc.start) {
+                    if (e.close_brace_loc.get() > expr.loc.get()) {
                         p.addSourceMapping(e.close_brace_loc);
                     }
                     p.print("}");
@@ -4918,7 +4918,7 @@ fn NewPrinter(
                 // TODO: extract printString
                 .string => |str| p.printExpr(.{
                     .data = .{ .e_string = str },
-                    .loc = logger.Loc.Empty,
+                    .loc = .none,
                 }, level, .{}),
             }
 
@@ -5831,7 +5831,7 @@ pub fn printJSON(
     const PrinterType = NewPrinter(false, Writer, false, false, true, false);
     const writer = _writer;
     var s_expr = S.SExpr{ .value = expr };
-    const stmt = Stmt{ .loc = logger.Loc.Empty, .data = .{
+    const stmt = Stmt{ .loc = .none, .data = .{
         .s_expr = &s_expr,
     } };
     var stmts = [_]js_ast.Stmt{stmt};

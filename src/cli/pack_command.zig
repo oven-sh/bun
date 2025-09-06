@@ -2065,7 +2065,7 @@ pub const PackCommand = struct {
                                                         workspace_version.fmt(lockfile.buffers.string_bytes.items),
                                                     }),
                                                 },
-                                                .{},
+                                                .none,
                                             );
 
                                             continue;
@@ -2086,7 +2086,7 @@ pub const PackCommand = struct {
                                     .{
                                         .data = try allocator.dupe(u8, without_workspace_protocol),
                                     },
-                                    .{},
+                                    .none,
                                 );
                             } else if (strings.withoutPrefixIfPossibleComptime(package_spec, "catalog:")) |catalog_name_str| {
                                 const dep_name_str = dependency.key.?.asString(allocator).?;
@@ -2128,7 +2128,7 @@ pub const PackCommand = struct {
                                     .{
                                         .data = try allocator.dupe(u8, dep.version.literal.slice(lockfile.buffers.string_bytes.items)),
                                     },
-                                    .{},
+                                    .none,
                                 );
                             }
                         }

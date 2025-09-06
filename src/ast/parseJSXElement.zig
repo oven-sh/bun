@@ -21,7 +21,7 @@ pub fn ParseJSXElement(
                 _ = try p.skipTypeScriptTypeArguments(true);
             }
 
-            var previous_string_with_backslash_loc = logger.Loc{};
+            var previous_string_with_backslash_loc: logger.Loc = .none;
             var properties = G.Property.List{};
             var key_prop_i: i32 = -1;
             var flags = Flags.JSXElement.Bitset{};
@@ -32,7 +32,7 @@ pub fn ParseJSXElement(
             if (@as(JSXTag.TagType, tag.data) == .tag) {
                 start_tag = tag.data.tag;
 
-                var spread_loc: logger.Loc = logger.Loc.Empty;
+                var spread_loc: logger.Loc = .none;
                 var props = ListManaged(G.Property).init(p.allocator);
                 var first_spread_prop_i: i32 = -1;
                 var i: i32 = 0;
@@ -65,7 +65,7 @@ pub fn ParseJSXElement(
 
                                 // Implicitly true value
                                 // <button selected>
-                                value = p.newExpr(E.Boolean{ .value = true }, logger.Loc{ .start = key_range.loc.start + key_range.len });
+                                value = p.newExpr(E.Boolean{ .value = true }, key_range.loc.add(key_range.len));
                             } else {
                                 value = try p.parseJSXPropValueIdentifier(&previous_string_with_backslash_loc);
                             }
@@ -168,7 +168,7 @@ pub fn ParseJSXElement(
             //       There is no "=" after the JSX attribute "text", so we expect a ">"
             //
             // This code special-cases this error to provide a less obscure error message.
-            if (p.lexer.token == .t_syntax_error and strings.eqlComptime(p.lexer.raw(), "\\") and previous_string_with_backslash_loc.start > 0) {
+            if (p.lexer.token == .t_syntax_error and strings.eqlComptime(p.lexer.raw(), "\\") and previous_string_with_backslash_loc.get() > 0) {
                 const r = p.lexer.range();
                 // Not dealing with this right now.
                 try p.log.addRangeError(p.source, r, "Invalid JSX escape - use XML entity codes quotes or pass a JavaScript string instead");

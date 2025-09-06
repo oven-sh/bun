@@ -119,7 +119,7 @@ fn NewLexer_(
         end: usize = 0,
         did_panic: bool = false,
         approximate_newline_count: usize = 0,
-        previous_backslash_quote_in_jsx: logger.Range = logger.Range.None,
+        previous_backslash_quote_in_jsx: logger.Range = .none,
         token: T = T.t_end_of_file,
         has_newline_before: bool = false,
         has_pure_comment_before: bool = false,
@@ -134,10 +134,10 @@ fn NewLexer_(
         source_mapping_url: ?js_ast.Span = null,
         number: f64 = 0.0,
         rescan_close_brace_as_template_token: bool = false,
-        prev_error_loc: logger.Loc = logger.Loc.Empty,
+        prev_error_loc: logger.Loc = .none,
         prev_token_was_await_keyword: bool = false,
-        await_keyword_loc: logger.Loc = logger.Loc.Empty,
-        fn_or_arrow_start_loc: logger.Loc = logger.Loc.Empty,
+        await_keyword_loc: logger.Loc = .none,
+        fn_or_arrow_start_loc: logger.Loc = .none,
         regex_flags_start: ?u16 = null,
         allocator: std.mem.Allocator,
         string_literal_raw_content: string = "",
@@ -161,7 +161,7 @@ fn NewLexer_(
             .{},
 
         pub inline fn loc(noalias self: *const LexerType) logger.Loc {
-            return logger.usize2Loc(self.start);
+            return .from(@intCast(self.start));
         }
 
         pub fn syntaxError(noalias self: *LexerType) !void {
@@ -192,8 +192,8 @@ fn NewLexer_(
             @branchHint(.cold);
 
             if (self.is_log_disabled) return;
-            var __loc = logger.usize2Loc(_loc);
-            if (__loc.eql(self.prev_error_loc)) {
+            const __loc: logger.Loc = .from(@intCast(_loc));
+            if (__loc == self.prev_error_loc) {
                 return;
             }
 
@@ -205,7 +205,7 @@ fn NewLexer_(
             @branchHint(.cold);
 
             if (self.is_log_disabled) return;
-            if (self.prev_error_loc.eql(r.loc)) {
+            if (self.prev_error_loc == r.loc) {
                 return;
             }
 
@@ -222,7 +222,7 @@ fn NewLexer_(
             @branchHint(.cold);
 
             if (self.is_log_disabled) return;
-            if (self.prev_error_loc.eql(r.loc)) {
+            if (self.prev_error_loc == r.loc) {
                 return;
             }
 
@@ -416,7 +416,7 @@ fn NewLexer_(
                                 iter.c = @as(i32, @intCast(value));
                                 if (is_bad) {
                                     lexer.addRangeError(
-                                        logger.Range{ .loc = .{ .start = @as(i32, @intCast(octal_start)) }, .len = @as(i32, @intCast(iter.i - octal_start)) },
+                                        logger.Range{ .loc = .from(@intCast(octal_start)), .len = @as(i32, @intCast(iter.i - octal_start)) },
                                         "Invalid legacy octal literal",
                                         .{},
                                         false,
@@ -529,7 +529,7 @@ fn NewLexer_(
 
                                     if (is_out_of_range) {
                                         try lexer.addRangeError(
-                                            .{ .loc = .{ .start = @as(i32, @intCast(start + hex_start)) }, .len = @as(i32, @intCast(((iter.i + start) - hex_start))) },
+                                            .{ .loc = .from(@intCast(start + hex_start)), .len = @as(i32, @intCast(((iter.i + start) - hex_start))) },
                                             "Unicode escape sequence is out of range",
                                             .{},
                                             true,
@@ -952,7 +952,7 @@ fn NewLexer_(
 
             if (!isIdentifier(identifier)) {
                 try lexer.addRangeError(
-                    .{ .loc = logger.usize2Loc(lexer.start), .len = @as(i32, @intCast(lexer.end - lexer.start)) },
+                    .{ .loc = .from(@intCast(lexer.start)), .len = @as(i32, @intCast(lexer.end - lexer.start)) },
                     "Invalid identifier: \"{s}\"",
                     .{result.contents},
                     true,
@@ -1821,7 +1821,7 @@ fn NewLexer_(
         pub fn expectedString(self: *LexerType, text: string) !void {
             if (self.prev_token_was_await_keyword) {
                 var notes: [1]logger.Data = undefined;
-                if (!self.fn_or_arrow_start_loc.isEmpty()) {
+                if (self.fn_or_arrow_start_loc != .none) {
                     notes[0] = logger.rangeData(
                         &self.source,
                         rangeOfIdentifier(
@@ -1834,7 +1834,7 @@ fn NewLexer_(
 
                 const notes_ptr: []const logger.Data = notes[0..@as(
                     usize,
-                    @intFromBool(!self.fn_or_arrow_start_loc.isEmpty()),
+                    @intFromBool(self.fn_or_arrow_start_loc != .none),
                 )];
 
                 try self.addRangeErrorWithNotes(
@@ -2027,7 +2027,7 @@ fn NewLexer_(
 
         pub fn range(self: *LexerType) logger.Range {
             return logger.Range{
-                .loc = logger.usize2Loc(self.start),
+                .loc = .from(@intCast(self.start)),
                 .len = std.math.lossyCast(i32, self.end - self.start),
             };
         }
@@ -2037,7 +2037,7 @@ fn NewLexer_(
                 .log = log,
                 .source = source.*,
                 .temp_buffer_u16 = std.ArrayList(u16).init(allocator),
-                .prev_error_loc = logger.Loc.Empty,
+                .prev_error_loc = .none,
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
                 .all_comments = std.ArrayList(logger.Range).init(allocator),
@@ -2053,7 +2053,7 @@ fn NewLexer_(
                 .log = log,
                 .source = source.*,
                 .temp_buffer_u16 = std.ArrayList(u16).init(allocator),
-                .prev_error_loc = logger.Loc.Empty,
+                .prev_error_loc = .none,
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
                 .all_comments = std.ArrayList(logger.Range).init(allocator),
@@ -2327,7 +2327,7 @@ fn NewLexer_(
         pub fn parseJSXStringLiteral(lexer: *LexerType, comptime quote: u8) !void {
             lexer.assertNotJSON();
 
-            var backslash = logger.Range.None;
+            var backslash: logger.Range = .none;
             var needs_decode = false;
 
             string_literal: while (true) {
@@ -2341,9 +2341,7 @@ fn NewLexer_(
                     },
 
                     '\\' => {
-                        backslash = logger.Range{ .loc = logger.Loc{
-                            .start = @as(i32, @intCast(lexer.end)),
-                        }, .len = 1 };
+                        backslash = logger.Range{ .loc = .from(@intCast(lexer.end)), .len = 1 };
                         lexer.step();
 
                         // JSX string literals do not support escaping
@@ -2376,7 +2374,7 @@ fn NewLexer_(
                         lexer.step();
                     },
                 }
-                backslash = logger.Range.None;
+                backslash = .none;
             }
 
             lexer.token = .t_string_literal;
@@ -3114,9 +3112,9 @@ pub fn isIdentifierUTF16(text: []const u16) bool {
 // this fn is a stub!
 pub fn rangeOfIdentifier(source: *const Source, loc: logger.Loc) logger.Range {
     const contents = source.contents;
-    if (loc.start == -1 or @as(usize, @intCast(loc.start)) >= contents.len) return logger.Range.None;
+    if (loc == .none or @as(usize, @intCast(loc.get())) >= contents.len) return .none;
 
-    const iter = strings.CodepointIterator.init(contents[loc.toUsize()..]);
+    const iter = strings.CodepointIterator.init(contents[@max(loc.get(), 0)..]);
     var cursor = strings.CodepointIterator.Cursor{};
 
     var r = logger.Range{ .loc = loc, .len = 0 };
@@ -3266,7 +3264,7 @@ pub const PragmaArg = enum {
         result.* = js_ast.Span{
             .range = logger.Range{
                 .len = @as(i32, @intCast(url_len)), // Correct length
-                .loc = .{ .start = @as(i32, @intCast(absolute_arg_start)) }, // Correct start
+                .loc = .from(@intCast(absolute_arg_start)), // Correct start
             },
             .text = url,
         };
@@ -3319,9 +3317,7 @@ pub const PragmaArg = enum {
         return js_ast.Span{
             .range = logger.Range{
                 .len = @as(i32, @intCast(i)),
-                .loc = logger.Loc{
-                    .start = @as(i32, @intCast(start + @as(u32, @intCast(offset_)) + @as(u32, @intCast(pragma.len)))),
-                },
+                .loc = .from(@intCast(start + @as(u32, @intCast(offset_)) + @as(u32, @intCast(pragma.len)))),
             },
             .text = text[0..i],
         };

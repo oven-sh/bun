@@ -102,7 +102,7 @@ pub fn forManifest(
             if (!is_optional) {
                 this.package_manager.log.addErrorFmt(
                     null,
-                    logger.Loc.Empty,
+                    .none,
                     allocator,
                     "Failed to join registry {} and package {} URLs",
                     .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
@@ -110,7 +110,7 @@ pub fn forManifest(
             } else {
                 this.package_manager.log.addWarningFmt(
                     null,
-                    logger.Loc.Empty,
+                    .none,
                     allocator,
                     "Failed to join registry {} and package {} URLs",
                     .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
@@ -123,7 +123,7 @@ pub fn forManifest(
             if (!is_optional) {
                 this.package_manager.log.addErrorFmt(
                     null,
-                    logger.Loc.Empty,
+                    .none,
                     allocator,
                     "Registry URL must be http:// or https://\nReceived: \"{}\"",
                     .{tmp},
@@ -131,7 +131,7 @@ pub fn forManifest(
             } else {
                 this.package_manager.log.addWarningFmt(
                     null,
-                    logger.Loc.Empty,
+                    .none,
                     allocator,
                     "Registry URL must be http:// or https://\nReceived: \"{}\"",
                     .{tmp},
@@ -266,7 +266,7 @@ pub fn forTarball(
             .args = .{ bun.fmt.QuotedFormatter{ .text = this.url_buf }, bun.fmt.QuotedFormatter{ .text = tarball.name.slice() } },
         };
 
-        try this.package_manager.log.addErrorFmt(null, .{}, allocator, msg.fmt, msg.args);
+        try this.package_manager.log.addErrorFmt(null, .none, allocator, msg.fmt, msg.args);
         return error.InvalidURL;
     }
 

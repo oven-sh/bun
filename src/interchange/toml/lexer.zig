@@ -46,7 +46,7 @@ pub const Lexer = struct {
     code_point: CodePoint = -1,
     identifier: []const u8 = "",
     number: f64 = 0.0,
-    prev_error_loc: logger.Loc = logger.Loc.Empty,
+    prev_error_loc: logger.Loc = .none,
     string_literal_slice: string = "",
     string_literal_is_ascii: bool = true,
     line_number: u32 = 0,
@@ -58,7 +58,7 @@ pub const Lexer = struct {
     should_redact_logs: bool,
 
     pub inline fn loc(self: *const Lexer) logger.Loc {
-        return logger.usize2Loc(self.start);
+        return .from(@intCast(self.start));
     }
 
     pub fn syntaxError(self: *Lexer) !void {
@@ -75,8 +75,8 @@ pub const Lexer = struct {
     pub fn addError(self: *Lexer, _loc: usize, comptime format: []const u8, args: anytype) void {
         @branchHint(.cold);
 
-        var __loc = logger.usize2Loc(_loc);
-        if (__loc.eql(self.prev_error_loc)) {
+        const __loc: logger.Loc = .from(@intCast(_loc));
+        if (__loc == self.prev_error_loc) {
             return;
         }
 
@@ -109,7 +109,7 @@ pub const Lexer = struct {
     pub fn addRangeError(self: *Lexer, r: logger.Range, comptime format: []const u8, args: anytype) !void {
         @branchHint(.cold);
 
-        if (self.prev_error_loc.eql(r.loc)) {
+        if (self.prev_error_loc == r.loc) {
             return;
         }
 
@@ -925,7 +925,7 @@ pub const Lexer = struct {
                             iter.c = @as(i32, @intCast(value));
                             if (is_bad) {
                                 lexer.addRangeError(
-                                    logger.Range{ .loc = .{ .start = @as(i32, @intCast(octal_start)) }, .len = @as(i32, @intCast(iter.i - octal_start)) },
+                                    logger.Range{ .loc = .from(@intCast(octal_start)), .len = @as(i32, @intCast(iter.i - octal_start)) },
                                     "Invalid legacy octal literal",
                                     .{},
                                 ) catch unreachable;
@@ -1036,7 +1036,7 @@ pub const Lexer = struct {
 
                                 if (is_out_of_range) {
                                     try lexer.addRangeError(
-                                        .{ .loc = .{ .start = @as(i32, @intCast(start + hex_start)) }, .len = @as(i32, @intCast((iter.i - hex_start))) },
+                                        .{ .loc = .from(@intCast(start + hex_start)), .len = @as(i32, @intCast((iter.i - hex_start))) },
                                         "Unicode escape sequence is out of range",
                                         .{},
                                     );
@@ -1151,7 +1151,7 @@ pub const Lexer = struct {
 
     pub fn range(self: *Lexer) logger.Range {
         return logger.Range{
-            .loc = logger.usize2Loc(self.start),
+            .loc = .from(@intCast(self.start)),
             .len = std.math.lossyCast(i32, self.end - self.start),
         };
     }
@@ -1160,7 +1160,7 @@ pub const Lexer = struct {
         var lex = Lexer{
             .log = log,
             .source = source,
-            .prev_error_loc = logger.Loc.Empty,
+            .prev_error_loc = .none,
             .allocator = allocator,
             .should_redact_logs = redact_logs,
         };

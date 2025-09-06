@@ -38,7 +38,7 @@ pub const Composes = struct {
             .result = Composes{
                 .names = names,
                 .from = from,
-                .loc = bun.logger.Loc{ .start = @intCast(loc) },
+                .loc = .from(@intCast(loc)),
                 .cssparser_loc = Location.fromSourceLocation(loc2),
             },
         };

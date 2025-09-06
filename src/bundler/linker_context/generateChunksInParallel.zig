@@ -282,7 +282,7 @@ pub fn generateChunksInParallel(
                 }
             }
 
-            try c.log.addError(null, Logger.Loc.Empty, try msg.toOwnedSlice());
+            try c.log.addError(null, .none, try msg.toOwnedSlice());
 
             inline for (.{
                 .{ .name = "entry", .template = entry_naming },
@@ -310,7 +310,7 @@ pub fn generateChunksInParallel(
     const more_than_one_output = c.parse_graph.additional_output_files.items.len > 0 or c.options.generate_bytecode_cache or (has_css_chunk and has_js_chunk) or (has_html_chunk and (has_js_chunk or has_css_chunk));
 
     if (!c.resolver.opts.compile and more_than_one_output and !c.resolver.opts.supports_multiple_outputs) {
-        try c.log.addError(null, Logger.Loc.Empty, "cannot write multiple output files without an output directory");
+        try c.log.addError(null, .none, "cannot write multiple output files without an output directory");
         return error.MultipleOutputFilesWithoutOutputDir;
     }
 
@@ -462,7 +462,7 @@ pub fn generateChunksInParallel(
                             });
                         } else {
                             // an error
-                            c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to generate bytecode for {s}", .{
+                            c.log.addErrorFmt(null, .none, bun.default_allocator, "Failed to generate bytecode for {s}", .{
                                 chunk.final_rel_path,
                             }) catch |err| bun.handleOom(err);
                         }

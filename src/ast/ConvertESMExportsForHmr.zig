@@ -439,19 +439,19 @@ pub fn finalize(ctx: *ConvertESMExportsForHmr, p: anytype, all_parts: []js_ast.P
     if (ctx.export_props.items.len > 0) {
         const obj = Expr.init(E.Object, .{
             .properties = G.Property.List.fromList(ctx.export_props),
-        }, logger.Loc.Empty);
+        }, .none);
 
         // `hmr.exports = ...`
         try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
             .value = Expr.assign(
                 Expr.init(E.Dot, .{
-                    .target = Expr.initIdentifier(p.hmr_api_ref, logger.Loc.Empty),
+                    .target = Expr.initIdentifier(p.hmr_api_ref, .none),
                     .name = "exports",
-                    .name_loc = logger.Loc.Empty,
-                }, logger.Loc.Empty),
+                    .name_loc = .none,
+                }, .none),
                 obj,
             ),
-        }, logger.Loc.Empty));
+        }, .none));
 
         // mark a dependency on module_ref so it is renamed
         try ctx.last_part.symbol_uses.put(p.allocator, p.module_ref, .{ .count_estimate = 1 });
@@ -462,13 +462,13 @@ pub fn finalize(ctx: *ConvertESMExportsForHmr, p: anytype, all_parts: []js_ast.P
         try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
             .value = Expr.init(E.Call, .{
                 .target = Expr.init(E.Dot, .{
-                    .target = Expr.initIdentifier(p.hmr_api_ref, .Empty),
+                    .target = Expr.initIdentifier(p.hmr_api_ref, .none),
                     .name = "reactRefreshAccept",
-                    .name_loc = .Empty,
-                }, .Empty),
+                    .name_loc = .none,
+                }, .none),
                 .args = .init(&.{}),
-            }, .Empty),
-        }, .Empty));
+            }, .none),
+        }, .none));
     }
 
     // Merge all part metadata into the first part.

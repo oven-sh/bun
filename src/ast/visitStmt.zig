@@ -137,7 +137,7 @@ pub fn VisitStmt(
 
                         if (p.options.features.replace_exports.count() > 0) {
                             if (p.options.features.replace_exports.getPtr(item.alias)) |entry| {
-                                _ = p.injectReplacementExport(stmts, old_ref, logger.Loc.Empty, entry);
+                                _ = p.injectReplacementExport(stmts, old_ref, .none, entry);
 
                                 continue;
                             }
@@ -183,7 +183,7 @@ pub fn VisitStmt(
                 if (data.alias) |alias| {
                     if (p.options.features.replace_exports.count() > 0) {
                         if (p.options.features.replace_exports.getPtr(alias.original_name)) |entry| {
-                            _ = p.injectReplacementExport(stmts, p.declareSymbol(.other, logger.Loc.Empty, alias.original_name) catch unreachable, logger.Loc.Empty, entry);
+                            _ = p.injectReplacementExport(stmts, p.declareSymbol(.other, .none, alias.original_name) catch unreachable, .none, entry);
                             return;
                         }
                     }
@@ -312,7 +312,7 @@ pub fn VisitStmt(
                             if (entry.* == .replace) {
                                 data.value.expr = entry.replace;
                             } else {
-                                _ = p.injectReplacementExport(stmts, Ref.None, logger.Loc.Empty, entry);
+                                _ = p.injectReplacementExport(stmts, Ref.None, .none, entry);
                                 return;
                             }
                         }
@@ -358,7 +358,7 @@ pub fn VisitStmt(
                                 if (entry.* == .replace) {
                                     data.value = .{ .expr = entry.replace };
                                 } else {
-                                    _ = p.injectReplacementExport(stmts, Ref.None, logger.Loc.Empty, entry);
+                                    _ = p.injectReplacementExport(stmts, Ref.None, .none, entry);
                                     return;
                                 }
                             }
@@ -439,7 +439,7 @@ pub fn VisitStmt(
                                 if (entry.* == .replace) {
                                     data.value = .{ .expr = entry.replace };
                                 } else {
-                                    _ = p.injectReplacementExport(stmts, Ref.None, logger.Loc.Empty, entry);
+                                    _ = p.injectReplacementExport(stmts, Ref.None, .none, entry);
                                     return;
                                 }
                             }
@@ -559,8 +559,8 @@ pub fn VisitStmt(
                     if (react_hook_data) |*hook| {
                         try stmts.append(p.getReactRefreshHookSignalDecl(hook.signature_cb));
                         try stmts.append(p.s(S.SExpr{
-                            .value = p.getReactRefreshHookSignalInit(hook, Expr.initIdentifier(name_ref, logger.Loc.Empty)),
-                        }, logger.Loc.Empty));
+                            .value = p.getReactRefreshHookSignalInit(hook, Expr.initIdentifier(name_ref, .none)),
+                        }, .none));
                     }
 
                     if (p.current_scope == p.module_scope) {
@@ -907,13 +907,13 @@ pub fn VisitStmt(
             pub fn s_return(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.Return) !void {
                 // Forbid top-level return inside modules with ECMAScript-style exports
                 if (p.fn_or_arrow_data_visit.is_outside_fn_or_arrow) {
-                    const where = where: {
+                    const where: logger.Range = where: {
                         if (p.esm_export_keyword.len > 0) {
                             break :where p.esm_export_keyword;
                         } else if (p.top_level_await_keyword.len > 0) {
                             break :where p.top_level_await_keyword;
                         } else {
-                            break :where logger.Range.None;
+                            break :where .none;
                         }
                     };
 

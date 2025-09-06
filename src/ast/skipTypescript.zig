@@ -489,7 +489,7 @@ pub fn SkipTypescript(
                             },
                             else => {
                                 if (comptime get_metadata) {
-                                    const find_result = p.findSymbol(logger.Loc.Empty, p.lexer.identifier) catch unreachable;
+                                    const find_result = p.findSymbol(.none, p.lexer.identifier) catch unreachable;
                                     result.* = .{ .m_identifier = find_result.ref };
                                 }
 
@@ -686,12 +686,12 @@ pub fn SkipTypescript(
                             if (result.* == .m_identifier) {
                                 var dot = List(Ref).initCapacity(p.allocator, 2) catch unreachable;
                                 dot.appendAssumeCapacity(result.m_identifier);
-                                const find_result = p.findSymbol(logger.Loc.Empty, p.lexer.identifier) catch unreachable;
+                                const find_result = p.findSymbol(.none, p.lexer.identifier) catch unreachable;
                                 dot.appendAssumeCapacity(find_result.ref);
                                 result.* = .{ .m_dot = dot };
                             } else if (result.* == .m_dot) {
                                 if (p.lexer.isIdentifierOrKeyword()) {
-                                    const find_result = p.findSymbol(logger.Loc.Empty, p.lexer.identifier) catch unreachable;
+                                    const find_result = p.findSymbol(.none, p.lexer.identifier) catch unreachable;
                                     result.m_dot.append(p.allocator, find_result.ref) catch unreachable;
                                 }
                             }
@@ -904,7 +904,7 @@ pub fn SkipTypescript(
                 var has_out = false;
                 var expect_identifier = true;
 
-                var invalid_modifier_range = logger.Range.None;
+                var invalid_modifier_range: logger.Range = .none;
 
                 // Scan over a sequence of "in" and "out" modifiers (a.k.a. optional
                 // variance annotations) as well as "const" modifiers

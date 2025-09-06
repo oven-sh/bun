@@ -1138,7 +1138,7 @@ pub const Package = extern struct {
                         // and this version doesn't match it, fail to install
                         try log.addErrorFmt(
                             source,
-                            logger.Loc.Empty,
+                            .none,
                             allocator,
                             "No matching version for workspace dependency \"{s}\". Version: \"{s}\"",
                             .{
@@ -1852,8 +1852,8 @@ pub const Package = extern struct {
                         workspace_version,
                         external_name,
                         path,
-                        logger.Loc.Empty,
-                        logger.Loc.Empty,
+                        .none,
+                        .none,
                     )) |_dep| {
                         var dep = _dep;
                         if (group.behavior.isPeer() and optional_peer_dependencies.contains(external_name.hash)) {

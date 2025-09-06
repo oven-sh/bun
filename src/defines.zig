@@ -144,9 +144,9 @@ pub const DefineData = struct {
         while (keySplitter.next()) |part| {
             if (!js_lexer.isIdentifier(part)) {
                 if (strings.eql(part, key)) {
-                    try log.addErrorFmt(null, logger.Loc{}, allocator, "define key \"{s}\" must be a valid identifier", .{key});
+                    try log.addErrorFmt(null, .none, allocator, "define key \"{s}\" must be a valid identifier", .{key});
                 } else {
-                    try log.addErrorFmt(null, logger.Loc{}, allocator, "define key \"{s}\" contains invalid identifier \"{s}\"", .{ part, value_str });
+                    try log.addErrorFmt(null, .none, allocator, "define key \"{s}\" contains invalid identifier \"{s}\"", .{ part, value_str });
                 }
                 break;
             }

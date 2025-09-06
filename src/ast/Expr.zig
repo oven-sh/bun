@@ -1,7 +1,7 @@
 loc: logger.Loc,
 data: Data,
 
-pub const empty = Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = logger.Loc.Empty };
+pub const empty = Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = .none };
 
 pub fn isAnonymousNamed(expr: Expr) bool {
     return switch (expr.data) {
@@ -275,7 +275,7 @@ pub fn set(expr: *Expr, allocator: std.mem.Allocator, name: string, value: Expr)
 
     var new_props = expr.data.e_object.properties.listManaged(allocator);
     try new_props.append(.{
-        .key = Expr.init(E.String, .{ .data = name }, logger.Loc.Empty),
+        .key = Expr.init(E.String, .{ .data = name }, .none),
         .value = value,
     });
 
@@ -293,15 +293,15 @@ pub fn setString(expr: *Expr, allocator: std.mem.Allocator, name: string, value:
         const key = prop.key orelse continue;
         if (std.meta.activeTag(key.data) != .e_string) continue;
         if (key.data.e_string.eql(string, name)) {
-            prop.value = Expr.init(E.String, .{ .data = value }, logger.Loc.Empty);
+            prop.value = Expr.init(E.String, .{ .data = value }, .none);
             return;
         }
     }
 
     var new_props = expr.data.e_object.properties.listManaged(allocator);
     try new_props.append(.{
-        .key = Expr.init(E.String, .{ .data = name }, logger.Loc.Empty),
-        .value = Expr.init(E.String, .{ .data = value }, logger.Loc.Empty),
+        .key = Expr.init(E.String, .{ .data = name }, .none),
+        .value = Expr.init(E.String, .{ .data = value }, .none),
     });
 
     expr.data.e_object.properties = BabyList(G.Property).fromList(new_props);
@@ -3088,7 +3088,7 @@ pub const Data = union(Tag) {
 
             // brk: {
             //     // var node = try allocator.create(Macro.JSNode);
-            //     // node.* = Macro.JSNode.initExpr(Expr{ .data = this, .loc = logger.Loc.Empty });
+            //     // node.* = Macro.JSNode.initExpr(Expr{ .data = this, .loc = .none });
             //     // break :brk jsc.JSValue.c(Macro.JSNode.Class.make(globalObject, node));
             // },
 

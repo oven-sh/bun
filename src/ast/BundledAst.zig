@@ -111,7 +111,7 @@ pub fn toAST(this: *const BundledAst) Ast {
         .uses_exports_ref = this.flags.uses_exports_ref,
         .uses_module_ref = this.flags.uses_module_ref,
         // .uses_require_ref = ast.uses_require_ref,
-        .export_keyword = .{ .len = if (this.flags.uses_export_keyword) 1 else 0, .loc = .{} },
+        .export_keyword = .{ .len = if (this.flags.uses_export_keyword) 1 else 0, .loc = .none },
         .force_cjs_to_esm = this.flags.force_cjs_to_esm,
         .has_lazy_export = this.flags.has_lazy_export,
         .commonjs_module_exports_assigned_deoptimized = this.flags.commonjs_module_exports_assigned_deoptimized,

@@ -667,7 +667,7 @@ pub fn ParseStmt(
                         },
                     }
                 }
-                try cases.append(js_ast.Case{ .value = value, .body = body.items, .loc = logger.Loc.Empty });
+                try cases.append(js_ast.Case{ .value = value, .body = body.items, .loc = .none });
             }
             try p.lexer.expect(.t_close_brace);
             return p.s(S.Switch{ .test_ = test_, .body_loc = body_loc, .cases = cases.items }, loc);
@@ -1039,7 +1039,7 @@ pub fn ParseStmt(
                         // Parse TypeScript import assignment statements
                         if (p.lexer.token == .t_equals or opts.is_export or (opts.is_namespace_scope and !opts.is_typescript_declare)) {
                             p.esm_import_keyword = previous_import_keyword; // This wasn't an ESM import statement after all;
-                            return p.parseTypeScriptImportEqualsStmt(loc, opts, logger.Loc.Empty, default_name);
+                            return p.parseTypeScriptImportEqualsStmt(loc, opts, .none, default_name);
                         }
                     }
 
@@ -1115,9 +1115,7 @@ pub fn ParseStmt(
         fn t_throw(p: *P, _: *ParseStatementOptions, loc: logger.Loc) anyerror!Stmt {
             try p.lexer.next();
             if (p.lexer.has_newline_before) {
-                try p.log.addError(p.source, logger.Loc{
-                    .start = loc.start + 5,
-                }, "Unexpected newline after \"throw\"");
+                try p.log.addError(p.source, loc.add(5), "Unexpected newline after \"throw\"");
                 return error.SyntaxError;
             }
             const expr = try p.parseExpr(.lowest);

@@ -290,7 +290,7 @@ pub fn Parse(
             // Use NextInsideJSXElement() not Next() so we can parse a JSX-style string literal
             try p.lexer.nextInsideJSXElement();
             if (p.lexer.token == .t_string_literal) {
-                previous_string_with_backslash_loc.start = @max(p.lexer.loc().start, p.lexer.previous_backslash_quote_in_jsx.loc.start);
+                previous_string_with_backslash_loc.* = p.lexer.loc().max(p.lexer.previous_backslash_quote_in_jsx.loc);
                 const expr = p.newExpr(try p.lexer.toEString(), previous_string_with_backslash_loc.*);
 
                 try p.lexer.nextInsideJSXElement();
@@ -362,7 +362,7 @@ pub fn Parse(
                 }
 
                 // There may be a "=" after the type (but not after an "as" cast)
-                if (is_typescript_enabled and p.lexer.token == .t_equals and !p.forbid_suffix_after_as_loc.eql(p.lexer.loc())) {
+                if (is_typescript_enabled and p.lexer.token == .t_equals and p.forbid_suffix_after_as_loc != p.lexer.loc()) {
                     try p.lexer.next();
                     item.* = Expr.assign(item.*, try p.parseExpr(.comma));
                 }
@@ -886,7 +886,7 @@ pub fn Parse(
         }
 
         pub fn parsePropertyBinding(p: *P) anyerror!B.Property {
-            var key: js_ast.Expr = Expr{ .loc = logger.Loc.Empty, .data = Prefill.Data.EMissing };
+            var key: js_ast.Expr = Expr{ .loc = .none, .data = Prefill.Data.EMissing };
             var is_computed = false;
 
             switch (p.lexer.token) {
@@ -1213,7 +1213,7 @@ pub fn Parse(
                     switch (stmt.data) {
                         .s_return => |ret| {
                             if (ret.value == null and !p.latest_return_had_semicolon) {
-                                returnWithoutSemicolonStart = stmt.loc.start;
+                                returnWithoutSemicolonStart = stmt.loc.get();
                                 needsCheck = false;
                             }
                         },
@@ -1225,7 +1225,7 @@ pub fn Parse(
                             .s_expr => {
                                 try p.log.addWarning(
                                     p.source,
-                                    logger.Loc{ .start = returnWithoutSemicolonStart + 6 },
+                                    .from(returnWithoutSemicolonStart + 6),
                                     "The following expression is not returned because of an automatically-inserted semicolon",
                                 );
                             },

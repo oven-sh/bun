@@ -13,7 +13,7 @@ pub const YAML = struct {
         };
 
         return switch (stream.docs.items.len) {
-            0 => .init(E.Null, .{}, .Empty),
+            0 => .init(E.Null, .{}, .none),
             1 => stream.docs.items[0].root,
             else => {
 
@@ -25,7 +25,7 @@ pub const YAML = struct {
                     items.appendAssumeCapacity(doc.root);
                 }
 
-                return .init(E.Array, .{ .items = .fromList(items) }, .Empty);
+                return .init(E.Array, .{ .items = .fromList(items) }, .none);
             },
         };
     }
@@ -195,7 +195,7 @@ pub const Pos = enum(usize) {
     }
 
     pub fn loc(pos: Pos) logger.Loc {
-        return .{ .start = @intCast(@intFromEnum(pos)) };
+        return .from(@intCast(pos.cast()));
     }
 
     pub fn inc(pos: *Pos, n: usize) void {

@@ -248,7 +248,7 @@ pub fn Builder(comptime method: BuilderMethod) type {
         install_root_dependencies: if (method == .filter) bool else void,
 
         pub fn maybeReportError(this: *@This(), comptime fmt: string, args: anytype) void {
-            this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
+            this.log.addErrorFmt(null, .none, this.allocator, fmt, args) catch {};
         }
 
         pub fn buf(this: *const @This()) []const u8 {

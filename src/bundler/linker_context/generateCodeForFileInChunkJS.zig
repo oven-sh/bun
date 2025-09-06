@@ -52,7 +52,7 @@ pub fn generateCodeForFileInChunkJS(
         var clousure_args = bun.BoundedArray(G.Arg, 3).fromSlice(&.{
             .{ .binding = Binding.alloc(temp_allocator, B.Identifier{
                 .ref = hmr_api_ref,
-            }, Logger.Loc.Empty) },
+            }, .none) },
         }) catch unreachable; // is within bounds
 
         if (ast.flags.uses_module_ref or ast.flags.uses_exports_ref) {
@@ -60,12 +60,12 @@ pub fn generateCodeForFileInChunkJS(
                 .{
                     .binding = Binding.alloc(temp_allocator, B.Identifier{
                         .ref = ast.module_ref,
-                    }, Logger.Loc.Empty),
+                    }, .none),
                 },
                 .{
                     .binding = Binding.alloc(temp_allocator, B.Identifier{
                         .ref = ast.exports_ref,
-                    }, Logger.Loc.Empty),
+                    }, .none),
                 },
             });
         }
@@ -74,9 +74,9 @@ pub fn generateCodeForFileInChunkJS(
             .args = bun.handleOom(temp_allocator.dupe(G.Arg, clousure_args.slice())),
             .body = .{
                 .stmts = inner,
-                .loc = Logger.Loc.Empty,
+                .loc = .none,
             },
-        } }, Logger.Loc.Empty)));
+        } }, .none)));
         stmts.all_stmts.appendSliceAssumeCapacity(stmts.outside_wrapper_prefix.items);
 
         ast.flags.uses_module_ref = true;
@@ -130,7 +130,7 @@ pub fn generateCodeForFileInChunkJS(
     if (flags.wrap != .none and ast.flags.has_explicit_use_strict_directive and !chunk.isEntryPoint() and !output_format.isAlwaysStrictMode()) {
         stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Directive, .{
             .value = "use strict",
-        }, Logger.Loc.Empty)) catch unreachable;
+        }, .none)) catch unreachable;
     }
 
     // TODO: handle directive
@@ -321,7 +321,7 @@ pub fn generateCodeForFileInChunkJS(
                                 B.Identifier{
                                     .ref = ast.exports_ref,
                                 },
-                                Logger.Loc.Empty,
+                                .none,
                             ),
                         },
                     );
@@ -334,7 +334,7 @@ pub fn generateCodeForFileInChunkJS(
                                     B.Identifier{
                                         .ref = ast.module_ref,
                                     },
-                                    Logger.Loc.Empty,
+                                    .none,
                                 ),
                             },
                         );
@@ -349,10 +349,10 @@ pub fn generateCodeForFileInChunkJS(
                         .args = args.items,
                         .body = .{
                             .stmts = stmts.all_stmts.items,
-                            .loc = Logger.Loc.Empty,
+                            .loc = .none,
                         },
                     },
-                    Logger.Loc.Empty,
+                    .none,
                 );
 
                 const commonjs_wrapper_definition = Expr.init(
@@ -363,11 +363,11 @@ pub fn generateCodeForFileInChunkJS(
                             E.Identifier{
                                 .ref = c.cjs_runtime_ref,
                             },
-                            Logger.Loc.Empty,
+                            .none,
                         ),
                         .args = bun.BabyList(Expr).init(cjs_args),
                     },
-                    Logger.Loc.Empty,
+                    .none,
                 );
 
                 // "var require_foo = __commonJS(...);"
@@ -379,7 +379,7 @@ pub fn generateCodeForFileInChunkJS(
                             B.Identifier{
                                 .ref = ast.wrapper_ref,
                             },
-                            Logger.Loc.Empty,
+                            .none,
                         ),
                         .value = commonjs_wrapper_definition,
                     };
@@ -390,7 +390,7 @@ pub fn generateCodeForFileInChunkJS(
                             S.Local{
                                 .decls = G.Decl.List.init(decls),
                             },
-                            Logger.Loc.Empty,
+                            .none,
                         ),
                     ) catch unreachable;
                 }
@@ -504,7 +504,7 @@ pub fn generateCodeForFileInChunkJS(
                             S.Local{
                                 .decls = G.Decl.List.fromList(hoist.decls),
                             },
-                            Logger.Loc.Empty,
+                            .none,
                         ),
                     ) catch unreachable;
                     hoist.decls.items.len = 0;
@@ -522,15 +522,15 @@ pub fn generateCodeForFileInChunkJS(
                         .is_async = is_async,
                         .body = .{
                             .stmts = inner_stmts,
-                            .loc = Logger.Loc.Empty,
+                            .loc = .none,
                         },
-                    }, Logger.Loc.Empty);
+                    }, .none);
 
                     // "var init_foo = __esm(...);"
                     const value = Expr.init(E.Call, .{
-                        .target = Expr.initIdentifier(c.esm_runtime_ref, Logger.Loc.Empty),
+                        .target = Expr.initIdentifier(c.esm_runtime_ref, .none),
                         .args = bun.BabyList(Expr).init(esm_args),
-                    }, Logger.Loc.Empty);
+                    }, .none);
 
                     var decls = bun.handleOom(temp_allocator.alloc(G.Decl, 1));
                     decls[0] = G.Decl{
@@ -539,7 +539,7 @@ pub fn generateCodeForFileInChunkJS(
                             B.Identifier{
                                 .ref = ast.wrapper_ref,
                             },
-                            Logger.Loc.Empty,
+                            .none,
                         ),
                         .value = value,
                     };
@@ -547,7 +547,7 @@ pub fn generateCodeForFileInChunkJS(
                     stmts.outside_wrapper_prefix.append(
                         Stmt.alloc(S.Local, .{
                             .decls = G.Decl.List.init(decls),
-                        }, Logger.Loc.Empty),
+                        }, .none),
                     ) catch |err| bun.handleOom(err);
                 } else {
                     // // If this fails, then there will be places we reference
@@ -573,9 +573,9 @@ pub fn generateCodeForFileInChunkJS(
                             .is_async = is_async,
                             .body = .{
                                 .stmts = inner_stmts,
-                                .loc = Logger.Loc.Empty,
+                                .loc = .none,
                             },
-                        }, Logger.Loc.Empty);
+                        }, .none);
 
                         stmts.outside_wrapper_prefix.append(
                             Stmt.alloc(S.Local, .{
@@ -585,11 +585,11 @@ pub fn generateCodeForFileInChunkJS(
                                         B.Identifier{
                                             .ref = ast.wrapper_ref,
                                         },
-                                        Logger.Loc.Empty,
+                                        .none,
                                     ),
                                     .value = value,
                                 }}) catch |err| bun.handleOom(err),
-                            }, Logger.Loc.Empty),
+                            }, .none),
                         ) catch |err| bun.handleOom(err);
                     }
                 }

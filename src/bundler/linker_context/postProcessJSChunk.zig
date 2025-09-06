@@ -49,7 +49,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
                 .{
                     .kind = import_record.import_kind,
                     .path = Fs.Path.init(ctx.chunks[import_record.chunk_index].unique_key),
-                    .range = Logger.Range.None,
+                    .range = .none,
                 },
             );
         }
@@ -444,7 +444,7 @@ pub fn generateEntryPointTailJS(
                             S.ExportDefault,
                             .{
                                 .default_name = .{
-                                    .loc = Logger.Loc.Empty,
+                                    .loc = .none,
                                     .ref = ast.wrapper_ref,
                                 },
                                 .value = .{
@@ -453,14 +453,14 @@ pub fn generateEntryPointTailJS(
                                         E.Call{
                                             .target = Expr.initIdentifier(
                                                 ast.wrapper_ref,
-                                                Logger.Loc.Empty,
+                                                .none,
                                             ),
                                         },
-                                        Logger.Loc.Empty,
+                                        .none,
                                     ),
                                 },
                             },
-                            Logger.Loc.Empty,
+                            .none,
                         ),
                     ) catch unreachable;
                 },
@@ -480,16 +480,16 @@ pub fn generateEntryPointTailJS(
                                                     E.Call{
                                                         .target = Expr.initIdentifier(
                                                             ast.wrapper_ref,
-                                                            Logger.Loc.Empty,
+                                                            .none,
                                                         ),
                                                     },
-                                                    Logger.Loc.Empty,
+                                                    .none,
                                                 ),
                                             },
-                                            Logger.Loc.Empty,
+                                            .none,
                                         ),
                                     },
-                                    Logger.Loc.Empty,
+                                    .none,
                                 ),
                             ) catch unreachable;
                         } else {
@@ -503,13 +503,13 @@ pub fn generateEntryPointTailJS(
                                             E.Call{
                                                 .target = Expr.initIdentifier(
                                                     ast.wrapper_ref,
-                                                    Logger.Loc.Empty,
+                                                    .none,
                                                 ),
                                             },
-                                            Logger.Loc.Empty,
+                                            .none,
                                         ),
                                     },
-                                    Logger.Loc.Empty,
+                                    .none,
                                 ),
                             ) catch unreachable;
                         }
@@ -598,20 +598,20 @@ pub fn generateEntryPointTailJS(
                                                             B.Identifier{
                                                                 .ref = temp_ref,
                                                             },
-                                                            Logger.Loc.Empty,
+                                                            .none,
                                                         ),
                                                         .value = Expr.init(
                                                             E.ImportIdentifier,
                                                             E.ImportIdentifier{
                                                                 .ref = resolved_export.data.import_ref,
                                                             },
-                                                            Logger.Loc.Empty,
+                                                            .none,
                                                         ),
                                                     },
                                                 },
                                             ) catch unreachable,
                                         },
-                                        Logger.Loc.Empty,
+                                        .none,
                                     ),
                                 ) catch unreachable;
 
@@ -619,10 +619,10 @@ pub fn generateEntryPointTailJS(
                                     .{
                                         .name = js_ast.LocRef{
                                             .ref = temp_ref,
-                                            .loc = Logger.Loc.Empty,
+                                            .loc = .none,
                                         },
                                         .alias = alias,
-                                        .alias_loc = Logger.Loc.Empty,
+                                        .alias_loc = .none,
                                     },
                                 ) catch unreachable;
                             } else {
@@ -667,7 +667,7 @@ pub fn generateEntryPointTailJS(
                                     .items = items.items,
                                     .is_single_line = false,
                                 },
-                                Logger.Loc.Empty,
+                                .none,
                             ),
                         ) catch unreachable;
 
@@ -689,7 +689,7 @@ pub fn generateEntryPointTailJS(
                                             export_item.name.loc,
                                         ),
                                     },
-                                    Logger.Loc.Empty,
+                                    .none,
                                 );
                                 properties.appendAssumeCapacity(
                                     G.Property{
@@ -706,7 +706,7 @@ pub fn generateEntryPointTailJS(
                                             E.Function{
                                                 .func = G.Fn{
                                                     .body = G.FnBody{
-                                                        .loc = Logger.Loc.Empty,
+                                                        .loc = .none,
                                                         .stmts = fn_body,
                                                     },
                                                 },
@@ -726,7 +726,7 @@ pub fn generateEntryPointTailJS(
                                     S.ExportDefault{
                                         .default_name = .{
                                             .ref = Ref.None,
-                                            .loc = Logger.Loc.Empty,
+                                            .loc = .none,
                                         },
                                         .value = .{
                                             .expr = Expr.init(
@@ -734,11 +734,11 @@ pub fn generateEntryPointTailJS(
                                                 E.Object{
                                                     .properties = properties,
                                                 },
-                                                Logger.Loc.Empty,
+                                                .none,
                                             ),
                                         },
                                     },
-                                    Logger.Loc.Empty,
+                                    .none,
                                 ),
                             ) catch unreachable;
                         }
@@ -764,18 +764,18 @@ pub fn generateEntryPointTailJS(
                             Expr.init(
                                 E.Dot,
                                 .{
-                                    .target = Expr.initIdentifier(c.unbound_module_ref, Logger.Loc.Empty),
+                                    .target = Expr.initIdentifier(c.unbound_module_ref, .none),
                                     .name = "exports",
-                                    .name_loc = Logger.Loc.Empty,
+                                    .name_loc = .none,
                                 },
-                                Logger.Loc.Empty,
+                                .none,
                             ),
                             Expr.init(
                                 E.Call,
                                 .{
-                                    .target = Expr.initIdentifier(ast.wrapper_ref, Logger.Loc.Empty),
+                                    .target = Expr.initIdentifier(ast.wrapper_ref, .none),
                                 },
-                                Logger.Loc.Empty,
+                                .none,
                             ),
                         ),
                     ) catch unreachable;
@@ -789,12 +789,12 @@ pub fn generateEntryPointTailJS(
                                 .value = Expr.init(
                                     E.Call,
                                     .{
-                                        .target = Expr.initIdentifier(ast.wrapper_ref, Logger.Loc.Empty),
+                                        .target = Expr.initIdentifier(ast.wrapper_ref, .none),
                                     },
-                                    Logger.Loc.Empty,
+                                    .none,
                                 ),
                             },
-                            Logger.Loc.Empty,
+                            .none,
                         ),
                     ) catch unreachable;
                 },

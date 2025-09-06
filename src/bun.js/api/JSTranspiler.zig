@@ -591,7 +591,7 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject, allocator
                     .value = value.toBoolean(),
                 },
             },
-            .loc = logger.Loc.Empty,
+            .loc = .none,
         };
     }
 
@@ -600,7 +600,7 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject, allocator
             .data = .{
                 .e_number = .{ .value = value.asNumber() },
             },
-            .loc = logger.Loc.Empty,
+            .loc = .none,
         };
     }
 
@@ -609,7 +609,7 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject, allocator
             .data = .{
                 .e_null = .{},
             },
-            .loc = logger.Loc.Empty,
+            .loc = .none,
         };
     }
 
@@ -618,7 +618,7 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject, allocator
             .data = .{
                 .e_undefined = .{},
             },
-            .loc = logger.Loc.Empty,
+            .loc = .none,
         };
     }
 
@@ -632,7 +632,7 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject, allocator
             .data = .{
                 .e_string = out,
             },
-            .loc = logger.Loc.Empty,
+            .loc = .none,
         };
     }
 

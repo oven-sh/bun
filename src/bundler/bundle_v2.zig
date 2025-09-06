@@ -1262,7 +1262,7 @@ pub const BundleV2 = struct {
             .decls = try G.Decl.List.fromSlice(alloc, &.{.{
                 .binding = Binding.alloc(alloc, B.Identifier{
                     .ref = try server.newSymbol(.other, "serverManifest"),
-                }, Logger.Loc.Empty),
+                }, .none),
                 .value = server.newExpr(E.Object{
                     .properties = G.Property.List.fromList(server_manifest_props),
                 }),
@@ -1274,7 +1274,7 @@ pub const BundleV2 = struct {
             .decls = try G.Decl.List.fromSlice(alloc, &.{.{
                 .binding = Binding.alloc(alloc, B.Identifier{
                     .ref = try server.newSymbol(.other, "ssrManifest"),
-                }, Logger.Loc.Empty),
+                }, .none),
                 .value = server.newExpr(E.Object{
                     .properties = G.Property.List.fromList(client_manifest_props),
                 }),
@@ -2097,7 +2097,7 @@ pub const BundleV2 = struct {
                     defer compile_result.deinit();
 
                     if (compile_result != .success) {
-                        bun.handleOom(this.log.addError(null, Logger.Loc.Empty, bun.handleOom(this.log.msgs.allocator.dupe(u8, compile_result.error_message))));
+                        bun.handleOom(this.log.addError(null, .none, bun.handleOom(this.log.msgs.allocator.dupe(u8, compile_result.error_message))));
                         this.result.value.deinit();
                         this.result = .{ .err = error.CompilationFailed };
                     }
@@ -2245,7 +2245,7 @@ pub const BundleV2 = struct {
 
                 // When it's not a file, this is a build error and we should report it.
                 // we have no way of loading non-files.
-                log.addErrorFmt(source, Logger.Loc.Empty, bun.default_allocator, "Module not found {} in namespace {}", .{
+                log.addErrorFmt(source, .none, bun.default_allocator, "Module not found {} in namespace {}", .{
                     bun.fmt.quote(source.path.pretty),
                     bun.fmt.quote(source.path.namespace),
                 }) catch {};
@@ -2381,7 +2381,7 @@ pub const BundleV2 = struct {
                 //
                 // We have no way of loading non-files.
                 if (resolve.import_record.kind == .entry_point_build) {
-                    log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Module not found {} in namespace {}", .{
+                    log.addErrorFmt(null, .none, bun.default_allocator, "Module not found {} in namespace {}", .{
                         bun.fmt.quote(resolve.import_record.specifier),
                         bun.fmt.quote(resolve.import_record.namespace),
                     }) catch {};
@@ -2938,7 +2938,7 @@ pub const BundleV2 = struct {
                     .specifier = entry_point,
                     .importer_source_index = std.math.maxInt(u32), // Sentinel value for entry points
                     .import_record_index = 0,
-                    .range = Logger.Range.None,
+                    .range = .none,
                     .original_target = target,
                 });
 
@@ -3511,7 +3511,7 @@ pub const BundleV2 = struct {
                 E.String{
                     .data = unique_key,
                 },
-                Logger.Loc.Empty,
+                .none,
             ),
             &empty_html_file_source,
 
@@ -3848,7 +3848,7 @@ pub const BundleV2 = struct {
                     } else {
                         this.transpiler.log.addErrorFmt(
                             null,
-                            Logger.Loc.Empty,
+                            .none,
                             this.transpiler.log.msgs.allocator,
                             "{s} while {s}",
                             .{ @errorName(err.err), @tagName(err.step) },
@@ -4123,7 +4123,7 @@ pub const StableRef = packed struct(u96) {
 
 pub const ImportTracker = struct {
     source_index: Index = Index.invalid,
-    name_loc: Logger.Loc = Logger.Loc.Empty,
+    name_loc: Logger.Loc = .none,
     import_ref: Ref = Ref.None,
 
     pub const Status = enum {

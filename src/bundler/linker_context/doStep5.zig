@@ -248,7 +248,7 @@ pub fn createExportsForFile(
 
     var stmts = bun.handleOom(js_ast.Stmt.Batcher.init(allocator, stmts_count));
     defer stmts.done();
-    const loc = Logger.Loc.Empty;
+    const loc = .none;
     // todo: investigate if preallocating this array is faster
     var ns_export_dependencies = bun.handleOom(std.ArrayList(js_ast.Dependency).initCapacity(allocator, re_exports_count));
     for (export_aliases) |alias| {
@@ -416,26 +416,26 @@ pub fn createExportsForFile(
         const toCommonJSRef = c.runtimeFunction("__toCommonJS");
 
         var call_args = allocator.alloc(js_ast.Expr, 1) catch unreachable;
-        call_args[0] = Expr.initIdentifier(exports_ref, Loc.Empty);
+        call_args[0] = Expr.initIdentifier(exports_ref, .none);
         remaining_stmts[0] = js_ast.Stmt.assign(
             Expr.allocate(
                 allocator,
                 E.Dot,
                 E.Dot{
                     .name = "exports",
-                    .name_loc = Loc.Empty,
-                    .target = Expr.initIdentifier(c.unbound_module_ref, Loc.Empty),
+                    .name_loc = .none,
+                    .target = Expr.initIdentifier(c.unbound_module_ref, .none),
                 },
-                Loc.Empty,
+                .none,
             ),
             Expr.allocate(
                 allocator,
                 E.Call,
                 E.Call{
-                    .target = Expr.initIdentifier(toCommonJSRef, Loc.Empty),
+                    .target = Expr.initIdentifier(toCommonJSRef, .none),
                     .args = js_ast.ExprNodeList.init(call_args),
                 },
-                Loc.Empty,
+                .none,
             ),
         );
         remaining_stmts = remaining_stmts[1..];

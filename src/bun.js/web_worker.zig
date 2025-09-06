@@ -462,7 +462,7 @@ fn spin(this: *WebWorker) void {
         if (vm.log.errors == 0 and !resolve_error.isEmpty()) {
             const err = resolve_error.toUTF8(bun.default_allocator);
             defer err.deinit();
-            bun.handleOom(vm.log.addError(null, .Empty, err.slice()));
+            bun.handleOom(vm.log.addError(null, .none, err.slice()));
         }
         this.flushLogs();
         this.exitAndDeinit();

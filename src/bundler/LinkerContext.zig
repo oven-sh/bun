@@ -511,9 +511,9 @@ pub const LinkerContext = struct {
         kind: MatchImport.Kind = MatchImport.Kind.ignore,
         namespace_ref: Ref = Ref.None,
         source_index: u32 = 0,
-        name_loc: Logger.Loc = Logger.Loc.Empty, // Optional, goes with sourceIndex, ignore if zero,
+        name_loc: Logger.Loc = .none, // Optional, goes with sourceIndex, ignore if zero,
         other_source_index: u32 = 0,
-        other_name_loc: Logger.Loc = Logger.Loc.Empty, // Optional, goes with otherSourceIndex, ignore if zero,
+        other_name_loc: Logger.Loc = .none, // Optional, goes with otherSourceIndex, ignore if zero,
         ref: Ref = Ref.None,
 
         pub const Kind = enum {
@@ -1678,7 +1678,7 @@ pub const LinkerContext = struct {
                 source_index,
                 c.parse_graph.input_files.get(source_index).source.path.pretty,
                 part_index,
-                if (part.stmts.len > 0) part.stmts[0].loc.start else Logger.Loc.Empty.start,
+                if (part.stmts.len > 0) part.stmts[0].loc.get() else -1,
                 if (part.stmts.len > 0) @tagName(part.stmts[0].data) else @tagName(Stmt.empty().data),
             });
         }
@@ -1824,7 +1824,7 @@ pub const LinkerContext = struct {
                         result.kind = .normal_and_namespace;
                         result.namespace_ref = tracker.import_ref;
                         result.alias = named_import.alias.?;
-                        result.name_loc = named_import.alias_loc orelse Logger.Loc.Empty;
+                        result.name_loc = named_import.alias_loc orelse .none;
                     }
                 },
 
@@ -1987,8 +1987,8 @@ pub const LinkerContext = struct {
             if (!std.meta.eql(ambig, result)) {
                 if (result.kind == ambig.kind and
                     ambig.kind == .normal and
-                    ambig.name_loc.start != 0 and
-                    result.name_loc.start != 0)
+                    ambig.name_loc.get() != 0 and
+                    result.name_loc.get() != 0)
                 {
                     return .{
                         .kind = .ambiguous,
@@ -2349,7 +2349,7 @@ pub const LinkerContext = struct {
                 },
                 .cycle => {
                     const source = &c.parse_graph.input_files.items(.source)[source_index];
-                    const r = lex.rangeOfIdentifier(source, named_import.alias_loc orelse Logger.Loc{});
+                    const r = lex.rangeOfIdentifier(source, named_import.alias_loc orelse .none);
                     c.log.addRangeErrorFmt(
                         source,
                         r,
@@ -2370,7 +2370,7 @@ pub const LinkerContext = struct {
                 .ambiguous => {
                     const source = &c.parse_graph.input_files.items(.source)[source_index];
 
-                    const r = lex.rangeOfIdentifier(source, named_import.alias_loc orelse Logger.Loc{});
+                    const r = lex.rangeOfIdentifier(source, named_import.alias_loc orelse .none);
 
                     // TODO: log locations of the ambiguous exports
 

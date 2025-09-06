@@ -423,8 +423,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObj
 }
 
 // Extern declarations for Timer.zig
-extern "C" void Timer_enableEventLoopDelayMonitoring(void* vm, void* histogram, int32_t resolution);
-extern "C" void Timer_disableEventLoopDelayMonitoring(void* vm, void* histogram);
+extern "C" void Timer_enableEventLoopDelayMonitoring(void* vm, JSC::EncodedJSValue histogram, int32_t resolution);
+extern "C" void Timer_disableEventLoopDelayMonitoring(void* vm);
 
 // Create histogram for event loop delay monitoring
 JSC_DEFINE_HOST_FUNCTION(jsFunction_monitorEventLoopDelay, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -486,10 +486,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_enableEventLoopDelay, (JSGlobalObject * glob
     histogram->reset();
 
     // Enable the event loop delay monitor in Timer.zig
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    auto* bunVM = zigGlobalObject->bunVM();
-
-    Timer_enableEventLoopDelayMonitoring(bunVM, histogram, resolution);
+    Timer_enableEventLoopDelayMonitoring(bunVM(globalObject), JSValue::encode(histogram), resolution);
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
@@ -514,20 +511,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_disableEventLoopDelay, (JSGlobalObject * glo
     }
 
     // Call into Zig to disable monitoring
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    auto* bunVM = zigGlobalObject->bunVM();
-
-    Timer_disableEventLoopDelayMonitoring(bunVM, histogram);
+    Timer_disableEventLoopDelayMonitoring(bunVM(globalObject));
 
     return JSValue::encode(jsUndefined());
 }
 
 // Extern function for Zig to record delays
-extern "C" void JSNodePerformanceHooksHistogram_recordDelay(void* histogram, int64_t delay_ns)
+extern "C" void JSNodePerformanceHooksHistogram_recordDelay(JSC::EncodedJSValue histogram, int64_t delay_ns)
 {
     if (!histogram || delay_ns <= 0) return;
 
-    auto* hist = static_cast<JSNodePerformanceHooksHistogram*>(histogram);
+    auto* hist = jsCast<JSNodePerformanceHooksHistogram*>(JSValue::decode(histogram));
     hist->record(delay_ns);
 }
 

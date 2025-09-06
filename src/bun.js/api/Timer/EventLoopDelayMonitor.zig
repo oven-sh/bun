@@ -1,6 +1,6 @@
 const EventLoopDelayMonitor = @This();
 
-js_histogram: ?*anyopaque = null,
+js_histogram: jsc.JSValue = jsc.JSValue.zero,
 event_loop_timer: jsc.API.Timer.EventLoopTimer = .{
     .next = .epoch,
     .tag = .EventLoopDelayMonitor,
@@ -9,7 +9,7 @@ resolution_ms: i32 = 10,
 last_fire_ns: u64 = 0,
 enabled: bool = false,
 
-pub fn enable(this: *EventLoopDelayMonitor, vm: *VirtualMachine, histogram: *anyopaque, resolution_ms: i32) void {
+pub fn enable(this: *EventLoopDelayMonitor, vm: *VirtualMachine, histogram: jsc.JSValue, resolution_ms: i32) void {
     this.js_histogram = histogram;
     this.resolution_ms = resolution_ms;
 
@@ -25,27 +25,27 @@ pub fn disable(this: *EventLoopDelayMonitor, vm: *VirtualMachine) void {
     if (!this.enabled) return;
 
     this.enabled = false;
-    this.js_histogram = null;
+    this.js_histogram = jsc.JSValue.zero;
     vm.timer.remove(&this.event_loop_timer);
 }
 
 pub fn isEnabled(this: *const EventLoopDelayMonitor) bool {
-    return this.enabled and this.js_histogram != null;
+    return this.enabled and this.js_histogram != jsc.JSValue.zero;
 }
 
 pub fn onFire(this: *EventLoopDelayMonitor, vm: *VirtualMachine, now: *const bun.timespec) void {
-    if (!this.enabled or this.js_histogram == null) {
+    if (!this.enabled or this.js_histogram == jsc.JSValue.zero) {
         return;
     }
 
     const now_ns = now.ns();
     if (this.last_fire_ns > 0) {
-        const expected_ns = @as(u64, @intCast(this.resolution_ms)) * 1_000_000;
+        const expected_ns = @as(u64, @intCast(this.resolution_ms)) *| 1_000_000;
         const actual_ns = now_ns - this.last_fire_ns;
 
         if (actual_ns > expected_ns) {
-            const delay_ns = @as(i64, @intCast(actual_ns - expected_ns));
-            JSNodePerformanceHooksHistogram_recordDelay(this.js_histogram.?, delay_ns);
+            const delay_ns = @as(i64, @intCast(actual_ns -| expected_ns));
+            JSNodePerformanceHooksHistogram_recordDelay(this.js_histogram, delay_ns);
         }
     }
 
@@ -57,15 +57,14 @@ pub fn onFire(this: *EventLoopDelayMonitor, vm: *VirtualMachine, now: *const bun
 }
 
 // Record delay to histogram
-extern fn JSNodePerformanceHooksHistogram_recordDelay(histogram: *anyopaque, delay_ns: i64) void;
+extern fn JSNodePerformanceHooksHistogram_recordDelay(histogram: jsc.JSValue, delay_ns: i64) void;
 
 // Export functions for C++
-export fn Timer_enableEventLoopDelayMonitoring(vm: *VirtualMachine, histogram: *anyopaque, resolution_ms: i32) void {
+export fn Timer_enableEventLoopDelayMonitoring(vm: *VirtualMachine, histogram: jsc.JSValue, resolution_ms: i32) void {
     vm.timer.event_loop_delay.enable(vm, histogram, resolution_ms);
 }
 
-export fn Timer_disableEventLoopDelayMonitoring(vm: *VirtualMachine, histogram: *anyopaque) void {
-    _ = histogram;
+export fn Timer_disableEventLoopDelayMonitoring(vm: *VirtualMachine) void {
     vm.timer.event_loop_delay.disable(vm);
 }
 

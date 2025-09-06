@@ -283,9 +283,10 @@ static const char* dlerror()
 static std::string* _user_overriden_sqlite3_lib_path = nullptr;
 static void setSQLiteLibPath(const std::string& path)
 {
+
     if (path.empty()) {
-        std::string* str = std::exchange(_user_overriden_sqlite3_lib_path, nullptr);
-        delete str;
+        // This is a memory leak of a value that should only ever be set once per application.
+        std::exchange(_user_overriden_sqlite3_lib_path, nullptr);
         return;
     }
     std::string* str = new std::string(path);

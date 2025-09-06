@@ -822,11 +822,11 @@ pub const ScopeFunctions = @import("./ScopeFunctions.zig");
 
 pub const Order = @import("./Order.zig");
 
+const group = debug.group;
+
 const std = @import("std");
 const test_command = @import("../../cli/test_command.zig");
 
 const bun = @import("bun");
 const jsc = bun.jsc;
 const Strong = jsc.Strong.Safe;
-
-const group = debug.group;

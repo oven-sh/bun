@@ -6,7 +6,6 @@ pub const Tag = enum(u3) {
     todo,
     skipped_because_label,
 };
-const debug = Output.scoped(.jest, .visible);
 
 var max_test_id_for_debugger: u32 = 0;
 
@@ -438,28 +437,22 @@ const string = []const u8;
 pub const describe2 = @import("./describe2.zig");
 
 const std = @import("std");
-const ObjectPool = @import("../../pool.zig").ObjectPool;
 const Snapshots = @import("./snapshot.zig").Snapshots;
 
 const expect = @import("./expect.zig");
-const Counter = expect.Counter;
 const Expect = expect.Expect;
 const ExpectTypeOf = expect.ExpectTypeOf;
 
 const bun = @import("bun");
 const ArrayIdentityContext = bun.ArrayIdentityContext;
-const Environment = bun.Environment;
-const MutableString = bun.MutableString;
 const Output = bun.Output;
 const RegularExpression = bun.RegularExpression;
-const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 
 const jsc = bun.jsc;
 const CallFrame = jsc.CallFrame;
 const JSGlobalObject = jsc.JSGlobalObject;
-const JSInternalPromise = jsc.JSInternalPromise;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
 const ZigString = jsc.ZigString;

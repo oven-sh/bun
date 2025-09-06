@@ -387,5 +387,5 @@ const Strong = jsc.Strong.Safe;
 const describe2 = jsc.Jest.describe2;
 const BunTest = describe2.BunTest;
 const ScopeFunctions = describe2.ScopeFunctions;
-const groupLog = describe2.debug.group;
 const Signature = describe2.js_fns.Signature;
+const groupLog = describe2.debug.group;

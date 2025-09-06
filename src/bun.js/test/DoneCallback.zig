@@ -84,7 +84,6 @@ const CallFrame = jsc.CallFrame;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-const Strong = jsc.Strong.Safe;
 
 const describe2 = jsc.Jest.describe2;
 const BunTest = describe2.BunTest;

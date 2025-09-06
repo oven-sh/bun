@@ -374,6 +374,7 @@ private:
 
             /* Mark that we are no longer parsing Http */
             httpContextData->flags.isParsingHttp = false;
+
             /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
             if (httpErrorStatusCode) {
                 if(httpContextData->onClientError) {
@@ -408,9 +409,20 @@ private:
                             /* We need to force close after sending FIN since we want to hinder
                              * clients from keeping to send their huge data */
                             ((AsyncSocket<SSL> *) s)->close();
+                            return (us_socket_t *) returnedData;
                         }
                     }
                 }
+
+                /* Check if we should gracefully close the socket after parsing HTTP */
+                if (httpResponseData->shouldCloseOnceIdle && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)) {
+                    /* Gracefully close the socket by shutting down and then closing */
+                    if (!us_socket_is_closed(SSL, s) && !us_socket_is_shut_down(SSL, s)) {
+                        us_socket_shutdown(SSL, s);
+                        us_socket_shutdown_read(SSL, s);
+                    }
+                }
+
                 return (us_socket_t *) returnedData;
             }
 

@@ -687,7 +687,7 @@ pub fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn getListener(this: *This, _: *jsc.JSGlobalObject) JSValue {
-            const handlers = this.getHandlers();
+            const handlers = this.handlers orelse return .js_undefined;
 
             if (!handlers.is_server or this.socket.isDetached()) {
                 return .js_undefined;

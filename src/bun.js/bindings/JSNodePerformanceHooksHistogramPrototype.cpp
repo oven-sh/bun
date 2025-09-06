@@ -149,6 +149,10 @@ static double toPercentile(JSC::ThrowScope& scope, JSGlobalObject* globalObject,
     // TODO: ®ewrite validateNumber to return the validated value.
     double percentile = value.toNumber(globalObject);
     scope.assertNoException();
+    if (percentile <= 0 || percentile > 100 || std::isnan(percentile)) {
+        Bun::ERR::OUT_OF_RANGE(scope, globalObject, "percentile"_s, "> 0 && <= 100"_s, value);
+        return {};
+    }
     return percentile;
 }
 JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentile, (JSGlobalObject * globalObject, CallFrame* callFrame))

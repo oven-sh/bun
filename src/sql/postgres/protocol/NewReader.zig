@@ -91,7 +91,7 @@ pub fn NewReaderWrap(
         pub fn length(this: @This()) !PostgresInt32 {
             const expected = try this.int(PostgresInt32);
             if (expected > -1) {
-                try this.ensureCapacity(@intCast(expected -| 4));
+                try this.ensureCapacity(@as(usize, expected -| 4));
             }
 
             return expected;

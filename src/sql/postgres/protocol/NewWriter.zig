@@ -23,11 +23,13 @@ pub fn NewWriterWrap(
             context: WrappedWriter,
 
             pub fn write(this: LengthWriter) AnyPostgresError!void {
-                try this.context.pwrite(&Int32(this.context.offset() - this.index), this.index);
+                const result = @as(usize, this.context.offset()) - @as(usize, this.index);
+                try this.context.pwrite(&Int32(@as(u32, @truncate(result))), this.index);
             }
 
             pub fn writeExcludingSelf(this: LengthWriter) AnyPostgresError!void {
-                try this.context.pwrite(&Int32(this.context.offset() -| (this.index + 4)), this.index);
+                const result = @as(usize, this.context.offset()) -| (@as(usize, this.index) + 4);
+                try this.context.pwrite(&Int32(@as(u32, @truncate(result))), this.index);
             }
         };
 
@@ -69,7 +71,7 @@ pub fn NewWriterWrap(
         }
 
         pub fn short(this: @This(), value: anytype) !void {
-            try this.write(std.mem.asBytes(&@byteSwap(@as(u16, @intCast(value)))));
+            try this.write(std.mem.asBytes(&@byteSwap(@as(u16, @truncate(value)))));
         }
 
         pub fn string(this: @This(), value: []const u8) !void {

@@ -49,7 +49,7 @@ pub fn checkForDuplicateFields(this: *PostgresSQLStatement) void {
     var seen_numbers = std.ArrayList(u32).init(bun.default_allocator);
     defer seen_numbers.deinit();
     var seen_fields = bun.StringHashMap(void).init(bun.default_allocator);
-    bun.handleOom(seen_fields.ensureUnusedCapacity(@intCast(this.fields.len)));
+    bun.handleOom(seen_fields.ensureUnusedCapacity(@truncate(this.fields.len)));
     defer seen_fields.deinit();
 
     // iterate backwards

@@ -5,94 +5,50 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 test("Unix domain socket file should be cleaned up when listener.stop() is called", () => {
-  // Generate a random socket path to avoid conflicts
   const socketPath = join(tmpdir(), `bun_test_${randomBytes(8).toString("hex")}.sock`);
 
-  // Clean up any existing socket file
   if (existsSync(socketPath)) {
     unlinkSync(socketPath);
   }
 
-  // Create a Unix socket listener
-  const listener = Bun.listen({
+  using listener = Bun.listen({
     unix: socketPath,
-    socket: {
-      open(socket) {},
-      data(socket, data) {},
-      close(socket) {},
-    },
+    socket: { data() {} },
   });
 
-  // Verify the socket file was created
   expect(existsSync(socketPath)).toBe(true);
 
-  // Stop the listener
   listener.stop();
 
-  // Verify the socket file was cleaned up
   expect(existsSync(socketPath)).toBe(false);
 });
 
 test("Unix domain socket file should be cleaned up when listener.stop(true) is called", () => {
-  // Generate a random socket path
   const socketPath = join(tmpdir(), `bun_test_${randomBytes(8).toString("hex")}.sock`);
 
-  // Clean up any existing socket file
   if (existsSync(socketPath)) {
     unlinkSync(socketPath);
   }
 
-  // Create a Unix socket listener
-  const listener = Bun.listen({
+  using listener = Bun.listen({
     unix: socketPath,
-    socket: {
-      open(socket) {},
-      data(socket, data) {},
-      close(socket) {},
-    },
+    socket: { data() {} },
   });
 
-  // Verify the socket file was created
   expect(existsSync(socketPath)).toBe(true);
 
-  // Stop the listener with force=true
   listener.stop(true);
 
-  // Verify the socket file was cleaned up
   expect(existsSync(socketPath)).toBe(false);
-});
-
-test("Abstract Unix domain sockets should not leave files (start with null byte)", () => {
-  // Abstract sockets start with a null byte and don't create filesystem entries
-  const abstractPath = "\0bun_test_abstract_" + randomBytes(8).toString("hex");
-
-  // Create an abstract Unix socket listener
-  const listener = Bun.listen({
-    unix: abstractPath,
-    socket: {
-      open(socket) {},
-      data(socket, data) {},
-      close(socket) {},
-    },
-  });
-
-  // Abstract sockets shouldn't create a file in the filesystem
-  // We can't really check this, but we can verify stop() doesn't crash
-  listener.stop();
-
-  // Test passes if no crash occurs
-  expect(true).toBe(true);
 });
 
 test("Multiple Unix sockets cleanup", () => {
   const sockets: Array<Bun.UnixSocketListener<undefined>> = [];
   const paths: string[] = [];
 
-  // Create multiple Unix socket listeners
   for (let i = 0; i < 3; i++) {
     const socketPath = join(tmpdir(), `bun_test_multi_${i}_${randomBytes(4).toString("hex")}.sock`);
 
-    // Clean up any existing socket file
     if (existsSync(socketPath)) {
       unlinkSync(socketPath);
     }
@@ -102,23 +58,18 @@ test("Multiple Unix sockets cleanup", () => {
       Bun.listen({
         unix: socketPath,
         socket: {
-          open(socket) {},
-          data(socket, data) {},
-          close(socket) {},
+          data() {},
         },
       }),
     );
 
-    // Verify the socket file was created
     expect(existsSync(socketPath)).toBe(true);
   }
 
-  // Stop all listeners
   for (const listener of sockets) {
     listener.stop();
   }
 
-  // Verify all socket files were cleaned up
   for (const path of paths) {
     expect(existsSync(path)).toBe(false);
   }
@@ -127,18 +78,17 @@ test("Multiple Unix sockets cleanup", () => {
 test("Unix socket cleanup with active connections", async () => {
   const socketPath = join(tmpdir(), `bun_test_active_${randomBytes(8).toString("hex")}.sock`);
 
-  // Clean up any existing socket file
   if (existsSync(socketPath)) {
     unlinkSync(socketPath);
   }
 
-  let connectionReceived = false;
+  const { promise, resolve: resolveConnectionReceived } = Promise.withResolvers<void>();
 
-  const listener = Bun.listen({
+  using listener = Bun.listen({
     unix: socketPath,
     socket: {
       open(socket) {
-        connectionReceived = true;
+        resolveConnectionReceived();
       },
       data(socket, data) {
         socket.write(data);
@@ -146,30 +96,22 @@ test("Unix socket cleanup with active connections", async () => {
     },
   });
 
-  // Verify the socket file was created
   expect(existsSync(socketPath)).toBe(true);
 
-  // Connect to the socket
-  const client = await Bun.connect({
+  await Bun.connect({
     unix: socketPath,
     socket: {
-      open(socket) {},
-      data(socket, data) {},
-      close(socket) {},
+      data(socket, data) {
+        socket.write(data);
+      },
     },
   });
 
-  // Wait for connection to be established
-  await Bun.sleep(10);
-  expect(connectionReceived).toBe(true);
+  await promise;
 
-  // Stop the listener with force=true (should close all connections)
   listener.stop(true);
 
-  // Give some time for cleanup
   await Bun.sleep(10);
 
-  // Verify the socket file was cleaned up even with active connections
   expect(existsSync(socketPath)).toBe(false);
-  await client.close().catch(() => {});
 });

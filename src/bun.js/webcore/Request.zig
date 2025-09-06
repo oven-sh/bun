@@ -178,6 +178,11 @@ pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
     return js.toJSUnchecked(globalObject, this);
 }
 
+extern "C" fn Bun__JSRequest__createFromUwsReqForBake(globalObject: *jsc.JSGlobalObject, requestPtr: *Request, req: *uws.Request) jsc.JSValue;
+pub fn toJSForBake(this: *Request, globalObject: *JSGlobalObject, req: *uws.Request) JSValue {
+    return Bun__JSRequest__createFromUwsReqForBake(globalObject, this, req);
+}
+
 extern "JS" fn Bun__getParamsIfBunRequest(this_value: JSValue) JSValue;
 
 pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {

@@ -43,6 +43,7 @@ extern JSC_CALLCONV size_t Response__estimatedSize(void* ptr);
 bool isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)
 {
 
+    auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     auto& vm = JSC::getVM(globalObject);
 
     // React does this:
@@ -50,10 +51,6 @@ bool isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObjec
     // export const REACT_ELEMENT_TYPE: symbol = renameElementSymbol
     //   ? Symbol.for('react.transitional.element')
     //   : REACT_LEGACY_ELEMENT_TYPE;
-
-    // TODO: cache these, i cri everytim
-    auto react_legacy_element_symbol = JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.element"_s));
-    auto react_element_symbol = JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.transitional.element"_s));
 
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
 
@@ -66,7 +63,7 @@ bool isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObjec
         JSC::JSValue typeofValue = object->get(globalObject, typeofProperty);
         RETURN_IF_EXCEPTION(scope, false);
 
-        if (typeofValue.isSymbol() && (typeofValue == react_legacy_element_symbol || typeofValue == react_element_symbol)) {
+        if (typeofValue.isSymbol() && (typeofValue == zigGlobal->reactLegacyElementSymbol() || typeofValue == zigGlobal->reactElementSymbol())) {
             return true;
         }
     }

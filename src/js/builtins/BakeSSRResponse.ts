@@ -1,28 +1,20 @@
-export function wrapComponent(component, responseObject, responseOptions, kind) {
+export function wrapComponent(
+  component,
+  responseObject: Response,
+  responseOptions: ConstructorParameters<typeof Response>[1],
+  kind: 0 | 1 | 2,
+) {
   const bakeGetAsyncLocalStorage = $newZigFunction("bun.js/webcore/Response.zig", "bakeGetAsyncLocalStorage", 0);
 
   return function () {
-    // For Response.redirect(), we need to throw a RedirectAbortError
+    // For Response.redirect() / Response.render(), throw the response object so
+    // we can stop React from rendering
     if (kind === 1 /* JSBakeResponseKind.Redirect */) {
-      // responseObject is the Response from Response.redirect()
-      const RedirectAbortError = globalThis.RedirectAbortError;
-      if (RedirectAbortError) {
-        throw new RedirectAbortError(responseObject);
-      }
-      // Fallback if RedirectAbortError is not available
-      throw new Error("RedirectAbortError not available this is a bug");
+      throw responseObject;
     }
 
-    // For Response.render(), we need to throw a RenderAbortError
     if (kind === 2 /* JSBakeResponseKind.Render */) {
-      // strongComponent is the path string, responseOptions is params, responseObject is the Response
-      // We need to get the RenderAbortError from the global
-      const RenderAbortError = globalThis.RenderAbortError;
-      if (RenderAbortError) {
-        throw new RenderAbortError(component, responseOptions, responseObject);
-      }
-      // Fallback if RenderAbortError is not available
-      throw new Error("RenderAbortError not available this is a bug");
+      throw responseObject;
     }
 
     // For new Response(<jsx />, {}), update AsyncLocalStorage

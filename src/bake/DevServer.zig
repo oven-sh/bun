@@ -1108,7 +1108,7 @@ fn deferRequest(
             },
             .server_handler => brk: {
                 const server_handler = switch (req) {
-                    .req => |r| dev.server.?.prepareAndSaveJsRequestContext(r, resp, dev.vm.global, method) orelse {
+                    .req => |r| (try dev.server.?.prepareAndSaveJsRequestContext(r, resp, dev.vm.global, method)) orelse {
                         dev.deferred_request_pool.put(deferred);
                         return;
                     },

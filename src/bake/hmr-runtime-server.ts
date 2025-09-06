@@ -20,30 +20,6 @@ export type RequestContext = {
 // Create the AsyncLocalStorage instance for propagating response options
 const responseOptionsALS = new AsyncLocalStorage();
 
-/// Created when the user does `return Response.render(...)`
-class RenderAbortError extends Error {
-  constructor(
-    public path: string,
-    public params: Record<string, any> | null,
-    public response: Response,
-  ) {
-    super("Response.render() called");
-    this.name = "RenderAbortError";
-  }
-}
-
-/// Created when the user does `return Response.redirect(...)`
-class RedirectAbortError extends Error {
-  constructor(public response: Response) {
-    super("Response.redirect() called");
-    this.name = "RedirectAbortError";
-  }
-}
-
-// Make RenderAbortError and RedirectAbortError globally available for other modules
-(globalThis as any).RenderAbortError = RenderAbortError;
-(globalThis as any).RedirectAbortError = RedirectAbortError;
-
 interface Exports {
   handleRequest: (
     req: Request,
@@ -144,16 +120,10 @@ server_exports = {
 
       return response;
     } catch (error) {
-      // Handle Response.render() aborts
-      if (error instanceof RenderAbortError) {
-        // return it so the Zig code can handle it and re-render new route
-        return error.response;
-      }
-
-      // Handle Response.redirect() aborts
-      if (error instanceof RedirectAbortError) {
-        // Return the redirect response directly
-        return error.response;
+      // For `Response.render(...)`/`Response.redirect(...)` we throw the
+      // response to stop React from rendering
+      if (error instanceof Response) {
+        return error;
       }
 
       throw error;

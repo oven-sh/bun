@@ -2030,7 +2030,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const index = user_route.id;
 
             var should_deinit_context = false;
-            var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, false, switch (user_route.route.method) {
+            var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, .no, switch (user_route.route.method) {
                 .any => null,
                 .specific => |m| m,
             }) orelse return;
@@ -2076,7 +2076,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             resp: *App.Response,
         ) void {
             var should_deinit_context = false;
-            const prepared = this.prepareJsRequestContext(req, resp, &should_deinit_context, true, null) orelse return;
+            const prepared = this.prepareJsRequestContext(req, resp, &should_deinit_context, .yes, null) orelse return;
 
             bun.assert(this.config.onRequest != .zero);
 
@@ -2100,7 +2100,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             extra_args: [arg_count]JSValue,
         ) void {
             const prepared: PreparedRequest = switch (req) {
-                .stack => |r| this.prepareJsRequestContext(r, resp, null, true, null) orelse return,
+                .stack => |r| this.prepareJsRequestContext(r, resp, null, .bake, null) orelse return,
                 .saved => |data| .{
                     .js_request = data.js_request.get() orelse @panic("Request was unexpectedly freed"),
                     .request_object = data.request,
@@ -2176,7 +2176,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
         };
 
-        pub fn prepareJsRequestContext(this: *ThisServer, req: *uws.Request, resp: *App.Response, should_deinit_context: ?*bool, create_js_request: bool, method: ?bun.http.Method) ?PreparedRequest {
+        pub fn prepareJsRequestContext(
+            this: *ThisServer,
+            req: *uws.Request,
+            resp: *App.Response,
+            should_deinit_context: ?*bool,
+            create_js_request: enum { yes, no, bake },
+            method: ?bun.http.Method,
+        ) ?PreparedRequest {
             jsc.markBinding(@src());
             this.onPendingRequest();
             if (comptime Environment.isDebug) {
@@ -2269,7 +2276,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             return .{
-                .js_request = if (create_js_request) request_object.toJS(this.globalThis) else .zero,
+                .js_request = switch (create_js_request) {
+                    .yes => request_object.toJS(this.globalThis),
+                    .bake => request_object.toJSForBake(this.globalThis, req),
+                    .no => .zero,
+                },
                 .request_object = request_object,
                 .ctx = ctx,
             };
@@ -2280,7 +2291,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const index = this.id;
 
             var should_deinit_context = false;
-            var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, false, method) orelse return;
+            var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, .no, method) orelse return;
             prepared.ctx.upgrade_context = upgrade_ctx; // set the upgrade context
             const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
             const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
@@ -3185,12 +3196,12 @@ pub const AnyServer = struct {
         resp: uws.AnyResponse,
         global: *jsc.JSGlobalObject,
         method: ?bun.http.Method,
-    ) ?SavedRequest {
+    ) bun.JSError!?SavedRequest {
         return switch (server.ptr.tag()) {
-            Ptr.case(HTTPServer) => (server.ptr.as(HTTPServer).prepareJsRequestContext(req, resp.TCP, null, true, method) orelse return null).save(global, req, resp.TCP),
-            Ptr.case(HTTPSServer) => (server.ptr.as(HTTPSServer).prepareJsRequestContext(req, resp.SSL, null, true, method) orelse return null).save(global, req, resp.SSL),
-            Ptr.case(DebugHTTPServer) => (server.ptr.as(DebugHTTPServer).prepareJsRequestContext(req, resp.TCP, null, true, method) orelse return null).save(global, req, resp.TCP),
-            Ptr.case(DebugHTTPSServer) => (server.ptr.as(DebugHTTPSServer).prepareJsRequestContext(req, resp.SSL, null, true, method) orelse return null).save(global, req, resp.SSL),
+            Ptr.case(HTTPServer) => (server.ptr.as(HTTPServer).prepareJsRequestContext(req, resp.TCP, null, .bake, method) orelse return null).save(global, req, resp.TCP),
+            Ptr.case(HTTPSServer) => (server.ptr.as(HTTPSServer).prepareJsRequestContext(req, resp.SSL, null, .bake, method) orelse return null).save(global, req, resp.SSL),
+            Ptr.case(DebugHTTPServer) => (server.ptr.as(DebugHTTPServer).prepareJsRequestContext(req, resp.TCP, null, .bake, method) orelse return null).save(global, req, resp.TCP),
+            Ptr.case(DebugHTTPSServer) => (server.ptr.as(DebugHTTPSServer).prepareJsRequestContext(req, resp.SSL, null, .bake, method) orelse return null).save(global, req, resp.SSL),
             else => bun.unreachablePanic("Invalid pointer tag", .{}),
         };
     }

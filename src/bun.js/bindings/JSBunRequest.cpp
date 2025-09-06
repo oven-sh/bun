@@ -13,8 +13,26 @@
 #include "CookieMap.h"
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
+#include <bun-uws/src/App.h>
 
 namespace Bun {
+
+extern "C" JSC::EncodedJSValue Bun__JSRequest__createFromUwsReqForBake(Zig::GlobalObject* globalObject, void* requestPtr, uWS::HttpRequest* req)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* structure = globalObject->m_JSBunRequestStructure.get(globalObject);
+
+    // the params are passed into the page component as a prop so we'll make
+    // this empty for now
+    auto* emptyParams = JSC::constructEmptyObject(globalObject);
+
+    JSBunRequest* request
+        = JSBunRequest::create(vm, structure, requestPtr, emptyParams);
+    scope.assertNoException();
+
+    return JSValue::encode(request);
+}
 
 static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetParams);
 static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetCookies);

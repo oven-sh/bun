@@ -316,6 +316,9 @@ public:
 
     v8::shim::GlobalInternals* V8GlobalInternals() const { return m_V8GlobalInternals.getInitializedOnMainThread(this); }
 
+    JSC::Symbol* reactLegacyElementSymbol() const { return m_reactLegacyElementSymbol.getInitializedOnMainThread(this); }
+    JSC::Symbol* reactElementSymbol() const { return m_reactElementSymbol.getInitializedOnMainThread(this); }
+
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
     RefPtr<WebCore::Performance> performance();
@@ -453,6 +456,9 @@ public:
     //   a new overload of `visitGlobalObjectMember` so it understands your type.
 
 #define FOR_EACH_GLOBALOBJECT_GC_MEMBER(V)                                                                   \
+    V(private, LazyPropertyOfGlobalObject<JSC::Symbol>, m_reactLegacyElementSymbol)                          \
+    V(private, LazyPropertyOfGlobalObject<JSC::Symbol>, m_reactElementSymbol)                                \
+                                                                                                             \
     /* TODO: these should use LazyProperty */                                                                \
     V(private, WriteBarrier<JSFunction>, m_assignToStream)                                                   \
     V(private, WriteBarrier<JSFunction>, m_assignStreamToResumableSink)                                      \

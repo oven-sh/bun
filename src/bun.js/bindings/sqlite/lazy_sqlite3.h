@@ -295,9 +295,9 @@ static const std::string& getSQLiteLibPath()
 
 static HMODULE sqlite3_handle = nullptr;
 #if OS(DARWIN)
-static bool use_static_sqlite = false; // Use dynamic linking by default on macOS
+static constexpr bool use_static_sqlite = false; // Use dynamic linking by default on macOS
 #else
-static bool use_static_sqlite = true; // Use static linking by default on Linux/Windows
+static constexpr bool use_static_sqlite = true; // Use static linking by default on Linux/Windows
 #endif
 
 static int lazyLoadSQLite()
@@ -305,16 +305,10 @@ static int lazyLoadSQLite()
     if (sqlite3_handle)
         return 0;
 
-#if !LAZY_LOAD_SQLITE
-    // On Linux with static linking by default
-    if (use_static_sqlite) {
-        // Function pointers are already statically initialized to SQLite functions
-        // Just mark as loaded to prevent reloading
-        sqlite3_handle = (HMODULE)1; // Use a non-null value to indicate static loading
+    if (use_static_sqlite && _user_overriden_sqlite3_lib_path.empty()) {
         return 0;
     }
-    // If we get here on Linux, we're switching to dynamic loading via setCustomSQLite
-#endif
+
 #if OS(WINDOWS)
     sqlite3_handle = LoadLibraryA(getSQLiteLibPath().c_str());
 #else

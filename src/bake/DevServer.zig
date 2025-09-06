@@ -346,7 +346,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     const fs = bun.fs.FileSystem.init(options.root) catch |err|
         return global.throwError(err, generic_action);
 
-    dev.bun_watcher = Watcher.init(DevServer, dev, fs, bun.default_allocator) catch |err|
+    dev.bun_watcher = Watcher.init(DevServer, dev, fs, bun.default_allocator, .{}) catch |err|
         return global.throwError(err, "while initializing file watcher for development server");
 
     errdefer dev.bun_watcher.deinit(false);

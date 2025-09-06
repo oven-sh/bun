@@ -124,6 +124,7 @@ pub const PathWatcherManager = struct {
                 this,
                 vm.transpiler.fs,
                 bun.default_allocator,
+                .{},
             ),
             .vm = vm,
             .watcher_count = 0,

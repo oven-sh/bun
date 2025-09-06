@@ -676,8 +676,8 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
-const transpiler = bun.transpiler;
 const strings = bun.strings;
+const transpiler = bun.transpiler;
 
 const CLI = bun.cli;
 const Command = CLI.Command;

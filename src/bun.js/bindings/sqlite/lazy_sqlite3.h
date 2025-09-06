@@ -273,12 +273,25 @@ static const char* dlerror()
 #include <string>
 
 #if OS(WINDOWS)
-static std::string sqlite3_lib_path = "sqlite3.dll";
+#define DEFAULT_SQLITE_LIB_PATH "sqlite3.dll"
 #elif OS(DARWIN)
-static std::string sqlite3_lib_path = "libsqlite3.dylib";
+#define DEFAULT_SQLITE_LIB_PATH "libsqlite3.dylib"
 #else
-static std::string sqlite3_lib_path = "libsqlite3.so";
+#define DEFAULT_SQLITE_LIB_PATH "libsqlite3.so"
 #endif
+
+static std::string _user_overriden_sqlite3_lib_path;
+static void setSQLiteLibPath(const std::string& path)
+{
+
+    _user_overriden_sqlite3_lib_path = path;
+}
+
+static const std::string& getSQLiteLibPath()
+{
+    static constexpr std::string _default_sqlite3_lib_path = DEFAULT_SQLITE_LIB_PATH;
+    return _user_overriden_sqlite3_lib_path.empty() ? _default_sqlite3_lib_path : _user_overriden_sqlite3_lib_path;
+}
 
 static HMODULE sqlite3_handle = nullptr;
 #if OS(DARWIN)
@@ -291,7 +304,7 @@ static int lazyLoadSQLite()
 {
     if (sqlite3_handle)
         return 0;
-        
+
 #if !LAZY_LOAD_SQLITE
     // On Linux with static linking by default
     if (use_static_sqlite) {
@@ -303,9 +316,9 @@ static int lazyLoadSQLite()
     // If we get here on Linux, we're switching to dynamic loading via setCustomSQLite
 #endif
 #if OS(WINDOWS)
-    sqlite3_handle = LoadLibraryA(sqlite3_lib_path.c_str());
+    sqlite3_handle = LoadLibraryA(getSQLiteLibPath().c_str());
 #else
-    sqlite3_handle = dlopen(sqlite3_lib_path.c_str(), RTLD_LAZY);
+    sqlite3_handle = dlopen(getSQLiteLibPath().c_str(), RTLD_LAZY);
 #endif
 
     if (!sqlite3_handle) {

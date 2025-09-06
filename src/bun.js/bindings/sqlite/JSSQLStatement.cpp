@@ -1124,7 +1124,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
     use_static_sqlite = false;
     auto pathString = sqliteStrValue.toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    sqlite3_lib_path = std::string(pathString.utf8().data());
+    setSQLiteLibPath(std::string(pathString.utf8().data()));
 
     if (lazyLoadSQLite() == -1) {
         sqlite3_handle = nullptr;

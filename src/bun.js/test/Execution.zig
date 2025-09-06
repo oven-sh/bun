@@ -199,10 +199,18 @@ pub fn step(this: *Execution, globalThis: *jsc.JSGlobalObject, data: describe2.B
     groupLog.begin(@src());
     defer groupLog.end();
 
-    // switch (data) {
-    //     .start => {},
-    //     else => {},
-    // }
+    // TODO: for removing n²:
+    switch (data) {
+        .start => {
+            // determine the active sequence,group
+            // advance the sequence
+            // step the sequence
+            // if the group is complete, step the group
+        },
+        else => {
+            // step the group
+        },
+    }
     if (data != .start) try this.runOneCompleted(globalThis, null, data);
     return try this.stepGroup(globalThis, bun.timespec.now());
 }

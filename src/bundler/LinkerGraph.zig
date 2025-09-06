@@ -466,7 +466,7 @@ pub fn propagateAsyncDependencies(this: *LinkerGraph) !void {
             self.visited.set(index);
             if (self.flags[index].is_async_or_has_async_dependency) return;
 
-            for (self.import_records[index].slice()) |import_record| {
+            for (self.import_records[index].slice()) |*import_record| {
                 switch (import_record.kind) {
                     .stmt, .require, .dynamic, .require_resolve => {},
                     else => continue,

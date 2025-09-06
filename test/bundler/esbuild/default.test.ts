@@ -5417,7 +5417,7 @@ describe("bundler", () => {
         `,
     },
   });
-  itBundled.only("default/RequireShimSubstitutionNode", {
+  itBundled("default/RequireShimSubstitutionNode", {
     files: RequireShimSubstitutionBrowser.options.files,
     runtimeFiles: RequireShimSubstitutionBrowser.options.runtimeFiles,
     target: "node",

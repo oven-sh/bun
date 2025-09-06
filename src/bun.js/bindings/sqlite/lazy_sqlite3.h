@@ -280,17 +280,22 @@ static const char* dlerror()
 #define DEFAULT_SQLITE_LIB_PATH "libsqlite3.so"
 #endif
 
-static std::string _user_overriden_sqlite3_lib_path;
+static std::string* _user_overriden_sqlite3_lib_path = nullptr;
 static void setSQLiteLibPath(const std::string& path)
 {
-
-    _user_overriden_sqlite3_lib_path = path;
+    if (path.empty()) {
+        std::string* str = std::exchange(_user_overriden_sqlite3_lib_path, nullptr);
+        delete str;
+        return;
+    }
+    std::string* str = new std::string(path);
+    std::exchange(_user_overriden_sqlite3_lib_path, str);
 }
 
 static const std::string& getSQLiteLibPath()
 {
-    static constexpr std::string _default_sqlite3_lib_path = DEFAULT_SQLITE_LIB_PATH;
-    return _user_overriden_sqlite3_lib_path.empty() ? _default_sqlite3_lib_path : _user_overriden_sqlite3_lib_path;
+    static const constexpr std::string _default_sqlite3_lib_path = std::string(DEFAULT_SQLITE_LIB_PATH);
+    return _user_overriden_sqlite3_lib_path ? *_user_overriden_sqlite3_lib_path : _default_sqlite3_lib_path;
 }
 
 static HMODULE sqlite3_handle = nullptr;

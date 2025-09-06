@@ -1801,9 +1801,16 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
                 }
             }
 
-            if (try options.getTruthy(globalThis, "lastModified")) |last_modified| {
+            // Check if lastModified property exists (even if falsy)
+            if (try options.getPropertyValue(globalThis, "lastModified")) |last_modified_value| {
                 set_last_modified = true;
-                blob.last_modified = try last_modified.coerce(f64, globalThis);
+                // Try to coerce to number, if it fails or results in NaN, use 0
+                const coerced = try last_modified_value.coerce(f64, globalThis);
+                if (std.math.isNan(coerced) or !std.math.isFinite(coerced)) {
+                    blob.last_modified = 0;
+                } else {
+                    blob.last_modified = coerced;
+                }
             }
         }
     }
@@ -1901,8 +1908,15 @@ pub fn constructBunFile(
                     }
                 }
             }
-            if (try opts.getTruthy(globalObject, "lastModified")) |last_modified| {
-                blob.last_modified = try last_modified.coerce(f64, globalObject);
+            // Check if lastModified property exists (even if falsy)
+            if (try opts.getPropertyValue(globalObject, "lastModified")) |last_modified_value| {
+                // Try to coerce to number, if it fails or results in NaN, use 0
+                const coerced = try last_modified_value.coerce(f64, globalObject);
+                if (std.math.isNan(coerced) or !std.math.isFinite(coerced)) {
+                    blob.last_modified = 0;
+                } else {
+                    blob.last_modified = coerced;
+                }
             }
         }
     }

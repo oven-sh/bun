@@ -860,13 +860,6 @@ bool NodeVMSpecialSandbox::getOwnPropertySlot(JSObject* cell, JSGlobalObject* gl
     auto* thisObject = jsCast<NodeVMSpecialSandbox*>(cell);
     NodeVMGlobalObject* parentGlobal = thisObject->parentGlobal();
 
-    if (propertyName.uid()->utf8() == "globalThis") [[unlikely]] {
-        slot.disableCaching();
-        slot.setThisValue(thisObject);
-        slot.setValue(thisObject, slot.attributes(), thisObject);
-        return true;
-    }
-
     bool result = parentGlobal->getOwnPropertySlot(parentGlobal, globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
 
@@ -886,7 +879,8 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
 
     bool notContextified = thisObject->isNotContextified();
 
-    if (notContextified && propertyName.uid()->utf8() == "globalThis") [[unlikely]] {
+    // globalThis is an alias for the global object, not "global"
+    if (notContextified && propertyName.uid() && propertyName.uid()->utf8() == "globalThis") [[unlikely]] {
         slot.disableCaching();
         slot.setThisValue(thisObject);
         slot.setValue(thisObject, slot.attributes(), thisObject->specialSandbox());

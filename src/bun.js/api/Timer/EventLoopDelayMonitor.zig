@@ -1,6 +1,13 @@
 const EventLoopDelayMonitor = @This();
 
+/// We currently only globally share the same instance, which is kept alive by
+/// the existence of the src/js/internal/perf_hooks/monitorEventLoopDelay.ts
+/// function's scope.
+///
+/// I don't think having a single event loop delay monitor histogram instance
+/// /will cause any issues? Let's find out.
 js_histogram: jsc.JSValue = jsc.JSValue.zero,
+
 event_loop_timer: jsc.API.Timer.EventLoopTimer = .{
     .next = .epoch,
     .tag = .EventLoopDelayMonitor,
@@ -10,6 +17,7 @@ last_fire_ns: u64 = 0,
 enabled: bool = false,
 
 pub fn enable(this: *EventLoopDelayMonitor, vm: *VirtualMachine, histogram: jsc.JSValue, resolution_ms: i32) void {
+    if (this.enabled) return;
     this.js_histogram = histogram;
     this.resolution_ms = resolution_ms;
 

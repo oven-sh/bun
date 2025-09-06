@@ -199,17 +199,17 @@ pub fn step(this: *Execution, globalThis: *jsc.JSGlobalObject, data: describe2.B
     groupLog.begin(@src());
     defer groupLog.end();
 
+    // switch (data) {
+    //     .start => {},
+    //     else => {},
+    // }
     if (data != .start) try this.runOneCompleted(globalThis, null, data);
-    const result = try this.runOne(globalThis);
-
-    return result;
+    return try this.stepGroup(globalThis, bun.timespec.now());
 }
 
-pub fn runOne(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!describe2.StepResult {
+pub fn stepGroup(this: *Execution, globalThis: *jsc.JSGlobalObject, now: bun.timespec) bun.JSError!describe2.StepResult {
     groupLog.begin(@src());
     defer groupLog.end();
-
-    const now = bun.timespec.now();
 
     while (true) {
         const group = this.activeGroup() orelse return .complete;
@@ -217,7 +217,7 @@ pub fn runOne(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!des
 
         // loop over items in the group and advance their execution
 
-        const status = try this.advanceSequencesInGroup(globalThis, group, now);
+        const status = try this.stepGroupOne(globalThis, group, now);
         switch (status) {
             .execute => |exec| return .{ .waiting = .{ .timeout = exec.timeout } },
             .done => {},
@@ -226,21 +226,17 @@ pub fn runOne(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!des
     }
 }
 const AdvanceStatus = union(enum) { done, execute: struct { timeout: bun.timespec = .epoch } };
-fn advanceSequencesInGroup(this: *Execution, globalThis: *jsc.JSGlobalObject, group: *ConcurrentGroup, now: bun.timespec) !AdvanceStatus {
+fn stepGroupOne(this: *Execution, globalThis: *jsc.JSGlobalObject, group: *ConcurrentGroup, now: bun.timespec) !AdvanceStatus {
     var final_status: AdvanceStatus = .done;
     for (group.sequences(this), 0..) |*sequence, sequence_index| {
-        while (true) {
-            const sequence_status = try this.advanceSequenceInGroup(globalThis, sequence, group, sequence_index, now);
-            switch (sequence_status) {
-                .done => {},
-                .execute => |exec| {
-                    const prev_timeout: bun.timespec = if (final_status == .execute) final_status.execute.timeout else .epoch;
-                    const this_timeout = exec.timeout;
-                    final_status = .{ .execute = .{ .timeout = prev_timeout.minIgnoreEpoch(this_timeout) } };
-                },
-                .again => continue,
-            }
-            break;
+        const sequence_status = try this.stepSequence(globalThis, sequence, group, sequence_index, now);
+        switch (sequence_status) {
+            .done => {},
+            .execute => |exec| {
+                const prev_timeout: bun.timespec = if (final_status == .execute) final_status.execute.timeout else .epoch;
+                const this_timeout = exec.timeout;
+                final_status = .{ .execute = .{ .timeout = prev_timeout.minIgnoreEpoch(this_timeout) } };
+            },
         }
     }
     return final_status;
@@ -252,10 +248,14 @@ const AdvanceSequenceStatus = union(enum) {
     execute: struct {
         timeout: bun.timespec = .epoch,
     },
-    /// the item completed immediately; advance to the next item
-    again,
 };
-fn advanceSequenceInGroup(this: *Execution, globalThis: *jsc.JSGlobalObject, sequence: *ExecutionSequence, group: *ConcurrentGroup, sequence_index: usize, now: bun.timespec) !AdvanceSequenceStatus {
+fn stepSequence(this: *Execution, globalThis: *jsc.JSGlobalObject, sequence: *ExecutionSequence, group: *ConcurrentGroup, sequence_index: usize, now: bun.timespec) !AdvanceSequenceStatus {
+    while (true) {
+        return try this.stepSequenceOne(globalThis, sequence, group, sequence_index, now) orelse continue;
+    }
+}
+/// returns null if the while loop should continue
+fn stepSequenceOne(this: *Execution, globalThis: *jsc.JSGlobalObject, sequence: *ExecutionSequence, group: *ConcurrentGroup, sequence_index: usize, now: bun.timespec) !?AdvanceSequenceStatus {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -268,14 +268,14 @@ fn advanceSequenceInGroup(this: *Execution, globalThis: *jsc.JSGlobalObject, seq
             // timed out
             sequence.result = if (active_entry.has_done_parameter) .fail_because_timeout_with_done_callback else .fail_because_timeout;
             this.advanceSequence(sequence, group);
-            return .again;
+            return null; // run again
         }
         groupLog.log("runOne: can't advance; already executing", .{});
         return .{ .execute = .{ .timeout = active_entry.timespec } };
     }
 
     const next_item = sequence.activeEntry(this) orelse {
-        bun.assert(sequence.remaining_repeat_count == 0);
+        bun.debugAssert(sequence.remaining_repeat_count == 0); // repeat count is decremented when the sequence is advanced, this should only happen if the sequence were empty. which should be impossible.
         groupLog.log("runOne: no repeats left; wait for group completion.", .{});
         return .done;
     };
@@ -284,8 +284,6 @@ fn advanceSequenceInGroup(this: *Execution, globalThis: *jsc.JSGlobalObject, seq
         this.onSequenceStarted(sequence);
     }
     this.onEntryStarted(next_item);
-
-    // switch(executeEntry) {.immediate => continue, .queued => {}}
 
     if (next_item.callback) |cb| {
         groupLog.log("runSequence queued callback", .{});
@@ -321,7 +319,7 @@ fn advanceSequenceInGroup(this: *Execution, globalThis: *jsc.JSGlobalObject, seq
             },
         }
         this.advanceSequence(sequence, group);
-        return .again;
+        return null; // run again
     }
 }
 pub fn activeGroup(this: *Execution) ?*ConcurrentGroup {
@@ -386,6 +384,11 @@ fn advanceSequence(this: *Execution, sequence: *ExecutionSequence, group: *Concu
     defer groupLog.end();
 
     bun.assert(sequence.executing);
+    if (sequence.activeEntry(this)) |entry| {
+        this.onEntryCompleted(entry);
+    } else {
+        bun.debugAssert(false); // sequence is executing with no active entry?
+    }
     sequence.executing = false;
     sequence.index += 1;
 
@@ -425,6 +428,7 @@ fn onEntryStarted(_: *Execution, entry: *ExecutionEntry) void {
         entry.timespec = .epoch;
     }
 }
+fn onEntryCompleted(_: *Execution, _: *ExecutionEntry) void {}
 fn onSequenceCompleted(this: *Execution, sequence: *ExecutionSequence) void {
     const elapsed_ns = sequence.started_at.sinceNow();
     if (sequence.result == .pending) {

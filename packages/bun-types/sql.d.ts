@@ -264,14 +264,14 @@ declare module "bun" {
        * Whether to use TLS/SSL for the connection
        * @default false
        */
-      tls?: TLSOptions | boolean | undefined;
+      tls?: Bun.BunFile | TLSOptions | boolean | undefined;
 
       /**
        * Whether to use TLS/SSL for the connection (alias for tls)
        * @deprecated Prefer {@link tls}
        * @default false
        */
-      ssl?: TLSOptions | boolean | undefined;
+      ssl?: Bun.BunFile | TLSOptions | boolean | undefined;
 
       /**
        * Unix domain socket path for connection

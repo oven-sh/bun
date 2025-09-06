@@ -1,6 +1,7 @@
 import { SQL } from "bun";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { isWindows } from "harness";
+import { unlinkSync } from "js/node/fs/export-star-from";
 
 declare module "bun" {
   namespace SQL {
@@ -317,6 +318,8 @@ describe("SQL adapter environment variable precedence", () => {
       const options = new SQL(`unix://${sock.unix}`, { adapter: "mysql" });
       expect(options.options.adapter).toBe("mysql");
       expect(options.options.path).toBe("/tmp/thisisacoolmysql.sock");
+
+      unlinkSync(sock.unix);
     });
 
     test("should work with sqlite:// protocol and sqlite adapter", () => {

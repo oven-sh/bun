@@ -520,7 +520,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         if (ctx.workspaces) {
             Output.prettyErrorln("<r><red>error<r>: No workspace packages have script \"{s}\"", .{script_name});
         } else {
-            Output.prettyErrorln("<r><red>error<r>: No packages matched the filter", .{});
+            Output.errGeneric("No packages matched the filter", .{});
         }
         Global.exit(1);
     }

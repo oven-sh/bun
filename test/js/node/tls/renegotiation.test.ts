@@ -1,6 +1,7 @@
 import type { Subprocess } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import type { IncomingMessage } from "http";
+import { bunEnv, tls } from "harness";
 import { join } from "path";
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "ignore"> | null = null;
@@ -9,6 +10,11 @@ beforeAll(async () => {
     stdout: "pipe",
     stderr: "inherit",
     stdin: "ignore",
+    env: {
+      ...bunEnv,
+      SERVER_CERT: tls.cert,
+      SERVER_KEY: tls.key,
+    },
   });
   const { value } = await process.stdout.getReader().read();
   url = new URL(new TextDecoder().decode(value));

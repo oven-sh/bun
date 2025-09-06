@@ -3095,22 +3095,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * global
 extern "C" int getRSS(size_t* rss)
 {
 #if defined(__APPLE__)
-    mach_msg_type_number_t count;
-    task_basic_info_data_t info;
-    kern_return_t err;
-
-    count = TASK_BASIC_INFO_COUNT;
-    err = task_info(mach_task_self(),
-        TASK_BASIC_INFO,
-        reinterpret_cast<task_info_t>(&info),
+    task_vm_info_data_t info;
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    kern_return_t kr = task_info(mach_task_self(),
+        TASK_VM_INFO,
+        (task_info_t)&info,
         &count);
-
-    if (err == KERN_SUCCESS) {
-        *rss = (size_t)info.resident_size;
-        return 0;
-    }
-
-    return -1;
+    if (kr != KERN_SUCCESS) return -1;
+    *rss = (size_t)info.phys_footprint; // best “real memory” metric on macOS
+    return 0;
 #elif defined(__linux__)
     // Taken from libuv.
     char buf[1024];

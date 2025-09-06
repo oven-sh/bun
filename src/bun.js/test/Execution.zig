@@ -37,6 +37,7 @@
 
 groups: []ConcurrentGroup,
 #sequences: []ExecutionSequence,
+/// the entries themselves are owned by BunTestFile, which owns Execution.
 #entries: []const *ExecutionEntry,
 group_index: usize,
 

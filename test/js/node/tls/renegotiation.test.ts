@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import type { IncomingMessage } from "http";
 import { bunEnv, tls } from "harness";
+import type { IncomingMessage } from "http";
 import { join } from "path";
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "ignore"> | null = null;

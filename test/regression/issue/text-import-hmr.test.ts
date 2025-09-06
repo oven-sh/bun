@@ -1,11 +1,11 @@
-import { describe, test, expect } from "bun:test";
-import { bunExe, bunEnv, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 describe("regression: text imports return asset path after HMR", () => {
   test("text imports should maintain file contents after HMR update", async () => {
     using dir = tempDir("text-import-hmr");
-    
+
     // Create an HTML file with a module that imports text
     await Bun.write(
       join(dir, "index.html"),
@@ -44,7 +44,7 @@ describe("regression: text imports return asset path after HMR", () => {
     }
   </script>
 </body>
-</html>`
+</html>`,
     );
 
     // Create initial text file
@@ -66,29 +66,28 @@ describe("regression: text imports return asset path after HMR", () => {
       // Connect to the page and check initial load
       const response = await fetch("http://localhost:3000/");
       const html = await response.text();
-      
+
       // The HTML should have the text content injected, not an asset path
       expect(html).toContain("Initial text content");
       expect(html).not.toContain("/_bun/asset/");
 
       // Trigger HMR by modifying the text file
       await Bun.write(join(dir, "data.txt"), "Updated text content");
-      
+
       // Wait for HMR to process
       await Bun.sleep(1500);
 
       // Check if HMR maintains text content (not asset path)
       // In the bug, this would return an asset path like "/_bun/asset/9337eccf99c40fb5.txt"
       // instead of the actual text content
-      
+
       // We can't easily test the live HMR result without a browser,
       // but we can verify the server output doesn't show errors
       const output = await server.stdout.text();
       const errors = await server.stderr.text();
-      
+
       // The server should not have any errors about asset handling
       expect(errors).not.toContain("asset");
-      
     } finally {
       server.kill();
     }

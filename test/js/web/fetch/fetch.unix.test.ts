@@ -6,7 +6,7 @@ import { request } from "http";
 import { join } from "path";
 const tmp_dir = tmpdirSync();
 
-it("throws ENAMETOOLONG when socket path exceeds platform-specific limit", () => {
+it("throws ENOENT when socket path exceeds platform-specific limit", () => {
   // this must be the filename specifically, because we add a workaround for the length limit on linux
   const path = "a".repeat(
     {
@@ -32,7 +32,7 @@ it("throws ENAMETOOLONG when socket path exceeds platform-specific limit", () =>
         return new Response("hello");
       },
     }),
-  ).toThrow("too long");
+  ).toThrow(/^ENOENT: no such file or directory, listen 'a+'$/);
 });
 
 it("throws an error when the directory is not found", () => {

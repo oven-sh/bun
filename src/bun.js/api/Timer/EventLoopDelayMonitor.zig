@@ -34,6 +34,7 @@ pub fn disable(this: *EventLoopDelayMonitor, vm: *VirtualMachine) void {
 
     this.enabled = false;
     this.js_histogram = jsc.JSValue.zero;
+    this.last_fire_ns = 0;
     vm.timer.remove(&this.event_loop_timer);
 }
 

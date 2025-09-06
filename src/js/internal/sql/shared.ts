@@ -316,9 +316,8 @@ function hasProtocol(url: string | URL): boolean {
     return true;
   }
 
-  return hasProtocol.regex.test(url);
+  return url.includes("://");
 }
-hasProtocol.regex = /^(?:\w+:)?\/\//;
 
 /**
  * @returns A tuple containing the parsed adapter (this is always correct) and a

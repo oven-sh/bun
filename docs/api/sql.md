@@ -604,13 +604,12 @@ const db = new SQL({
   connectionTimeout: 30, // Timeout when establishing new connections
 
   // SSL/TLS options
-  ssl: "prefer", // or "disable", "require", "verify-ca", "verify-full"
-  // tls: {
-  //   rejectUnauthorized: true,
-  //   ca: "path/to/ca.pem",
-  //   key: "path/to/key.pem",
-  //   cert: "path/to/cert.pem",
-  // },
+  tls: {
+    rejectUnauthorized: true,
+    ca: "path/to/ca.pem",
+    key: "path/to/key.pem",
+    cert: "path/to/cert.pem",
+  },
 
   // Callbacks
   onconnect: client => {

@@ -51,6 +51,14 @@ pub fn openatOSPath(other: bun.FD, path: bun.OSPathSliceZ, flags: i32, mode: bun
     };
 }
 
+pub fn setFileOffset(self: File, offset: u64) Maybe(void) {
+    return sys.setFileOffset(self.handle, offset);
+}
+
+pub fn fchmod(self: File, mode: bun.Mode) Maybe(void) {
+    return sys.fchmod(self.handle, mode);
+}
+
 pub fn from(other: anytype) File {
     const T = @TypeOf(other);
 

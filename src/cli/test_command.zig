@@ -1255,6 +1255,39 @@ export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callcon
     return true;
 }
 
+fn parseFileLineArg(arg: []const u8) ?struct { file_pattern: []const u8, line_num: u32 } {
+    // Find the last ':' to handle Windows drive letters like C:\foo\bar.test.ts:7
+    const colon_index = strings.lastIndexOfChar(arg, ':') orelse return null;
+    const after_colon = arg[colon_index + 1 ..];
+    if (after_colon.len == 0) return null;
+
+    // Check if there's a second colon (for file:line:column format)
+    const line_part = if (strings.indexOf(after_colon, ":")) |second_colon_index|
+        after_colon[0..second_colon_index]
+    else
+        after_colon;
+
+    // Only accept positive line numbers
+    const line_num = std.fmt.parseInt(u32, line_part, 10) catch return null;
+    if (line_num == 0) return null; // Line numbers start at 1
+
+    return .{
+        .file_pattern = arg[0..colon_index],
+        .line_num = line_num,
+    };
+}
+
+fn makeAbsolutePath(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
+    if (std.fs.path.isAbsolute(path)) {
+        return try allocator.dupe(u8, path);
+    } else {
+        var local_buf: bun.PathBuffer = undefined;
+        const cwd = bun.fs.FileSystem.instance.top_level_dir;
+        const joined = bun.path.joinAbsStringBuf(cwd, &local_buf, &.{path}, .auto);
+        return try allocator.dupe(u8, joined);
+    }
+}
+
 pub const TestCommand = struct {
     pub const name = "test";
     pub const CodeCoverageOptions = struct {
@@ -1319,6 +1352,7 @@ pub const TestCommand = struct {
                 .allocator = ctx.allocator,
                 .log = ctx.log,
                 .callback = undefined,
+                .test_options = &ctx.test_options,
                 .default_timeout_ms = ctx.test_options.default_timeout_ms,
                 .run_todo = ctx.test_options.run_todo,
                 .only = ctx.test_options.only,
@@ -1336,6 +1370,7 @@ pub const TestCommand = struct {
             },
             .callback = undefined,
         };
+
         reporter.callback = TestRunner.Callback{
             .onUpdateCount = CommandLineReporter.handleUpdateCount,
             .onTestStart = CommandLineReporter.handleTestStart,
@@ -1426,18 +1461,46 @@ pub const TestCommand = struct {
         var scanner = bun.handleOom(Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len));
         defer scanner.deinit();
         const has_relative_path = for (ctx.positionals) |arg| {
-            if (std.fs.path.isAbsolute(arg) or
-                strings.startsWith(arg, "./") or
-                strings.startsWith(arg, "../") or
-                (Environment.isWindows and (strings.startsWith(arg, ".\\") or
-                    strings.startsWith(arg, "..\\")))) break true;
+            // Check if it's a file:line format, extract just the file part
+            const path_to_check = if (parseFileLineArg(arg)) |parsed| parsed.file_pattern else arg;
+
+            // Check if it looks like a file path
+            if (std.fs.path.isAbsolute(path_to_check) or
+                strings.startsWith(path_to_check, "./") or
+                strings.startsWith(path_to_check, "../") or
+                (Environment.isWindows and (strings.startsWith(path_to_check, ".\\") or
+                    strings.startsWith(path_to_check, "..\\") or
+                    strings.indexOf(path_to_check, ":\\") != null)) or
+                // Also treat paths containing slashes as file paths (e.g., "test/foo.test.ts")
+                strings.indexOf(path_to_check, if (Environment.isWindows) "\\" else "/") != null) break true;
         } else false;
+        // Collect line filters during argument parsing
+        var line_filters = bun.StringHashMap(std.ArrayList(u32)).init(ctx.allocator);
+        defer {
+            var iter = line_filters.iterator();
+            while (iter.next()) |entry| {
+                entry.value_ptr.deinit();
+            }
+            line_filters.deinit();
+        }
+
         if (has_relative_path) {
             // One of the files is a filepath. Instead of treating the
             // arguments as filters, treat them as filepaths
             const file_or_dirnames = ctx.positionals[1..];
             for (file_or_dirnames) |arg| {
-                scanner.scan(arg) catch |err| switch (err) {
+                const file_line = parseFileLineArg(arg);
+                if (file_line) |parsed| {
+                    const abs_pattern = try makeAbsolutePath(ctx.allocator, parsed.file_pattern);
+                    const result = try line_filters.getOrPut(abs_pattern);
+                    if (!result.found_existing) {
+                        result.value_ptr.* = std.ArrayList(u32).init(ctx.allocator);
+                    }
+                    try result.value_ptr.append(parsed.line_num);
+                }
+
+                const file_to_scan = if (file_line) |parsed| parsed.file_pattern else arg;
+                scanner.scan(file_to_scan) catch |err| switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
                     // don't error if multiple are passed; one might fail
                     // but the others may not
@@ -1485,6 +1548,9 @@ pub const TestCommand = struct {
                 },
             };
         }
+
+        // Pass line filters directly to TestRunner
+        reporter.jest.addLineFilters(line_filters);
 
         const test_files = bun.handleOom(scanner.takeFoundTestFiles());
         defer ctx.allocator.free(test_files);
@@ -1692,13 +1758,30 @@ pub const TestCommand = struct {
 
                 reporter.printSummary();
             } else {
-                Output.prettyError("<red>error<r><d>:<r> regex <b>{}<r> matched 0 tests. Searched {d} file{s} (skipping {d} test{s}) ", .{
-                    bun.fmt.quote(ctx.test_options.test_filter_pattern.?),
-                    summary.files,
-                    if (summary.files == 1) "" else "s",
-                    summary.skipped_because_label,
-                    if (summary.skipped_because_label == 1) "" else "s",
-                });
+                if (line_filters.count() > 0) {
+                    Output.prettyError("<red>error<r><d>:<r> no tests found for file:line filters. Searched {d} file{s} (skipping {d} test{s}) ", .{
+                        summary.files,
+                        if (summary.files == 1) "" else "s",
+                        summary.skipped_because_label,
+                        if (summary.skipped_because_label == 1) "" else "s",
+                    });
+
+                    var iter = line_filters.iterator();
+                    while (iter.next()) |entry| {
+                        for (entry.value_ptr.items) |line_number| {
+                            Output.prettyError("\n  <b>{s}<r>:{d}", .{ entry.key_ptr.*, line_number });
+                        }
+                    }
+                    Output.prettyError("\n", .{});
+                } else {
+                    Output.prettyError("<red>error<r><d>:<r> regex <b>{}<r> matched 0 tests. Searched {d} file{s} (skipping {d} test{s}) ", .{
+                        bun.fmt.quote(ctx.test_options.test_filter_pattern.?),
+                        summary.files,
+                        if (summary.files == 1) "" else "s",
+                        summary.skipped_because_label,
+                        if (summary.skipped_because_label == 1) "" else "s",
+                    });
+                }
                 Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
             }
         }

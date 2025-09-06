@@ -105,6 +105,8 @@ pub const TestRunner = struct {
     filter_regex: ?*RegularExpression,
     filter_buffer: MutableString,
 
+    line_filters_by_file_id: std.AutoHashMapUnmanaged(u32, std.ArrayListUnmanaged(u32)) = .{},
+
     unhandled_errors_between_tests: u32 = 0,
     summary: Summary = Summary{},
 
@@ -136,7 +138,65 @@ pub const TestRunner = struct {
     }
 
     pub fn hasTestFilter(this: *const TestRunner) bool {
-        return this.filter_regex != null;
+        return this.filter_regex != null or this.line_filters_by_file_id.count() > 0;
+    }
+
+    pub fn needsTestLineNumber(this: *const TestRunner) bool {
+        return this.line_filters_by_file_id.count() > 0;
+    }
+
+    pub fn shouldSkipBasedOnLineFilter(this: *const TestRunner, line_number: u32, parent: *DescribeScope) bool {
+        return this.needsTestLineNumber() and !this.matchesLineFilter(line_number, parent);
+    }
+
+    pub fn matchesLineFilter(this: *const TestRunner, line_number: u32, parent: *DescribeScope) bool {
+        if (this.line_filters_by_file_id.count() == 0) return true;
+
+        const lines = this.line_filters_by_file_id.get(parent.file_id) orelse return true;
+        for (lines.items) |filter_line| {
+            if (line_number == filter_line) return true;
+
+            var current_parent: ?*DescribeScope = parent;
+            while (current_parent) |p| {
+                if (p.line_number > 0 and p.line_number == filter_line) {
+                    return true;
+                }
+                current_parent = p.parent;
+            }
+        }
+        return false;
+    }
+
+    pub fn addLineFilters(this: *TestRunner, line_filters: anytype) void {
+        var iter = line_filters.iterator();
+        while (iter.next()) |entry| {
+            const file_path = entry.key_ptr.*;
+            const line_numbers = entry.value_ptr;
+
+            // Compute hash for the file path
+            const file_hash = @as(u32, @truncate(bun.hash(file_path)));
+
+            // Check if file is already loaded
+            if (this.index.get(file_hash)) |existing_file_id| {
+                // File exists, add to actual file_id
+                const result = this.line_filters_by_file_id.getOrPut(this.allocator, existing_file_id) catch continue;
+                if (!result.found_existing) {
+                    result.value_ptr.* = std.ArrayListUnmanaged(u32){};
+                }
+                for (line_numbers.items) |line_num| {
+                    result.value_ptr.append(this.allocator, line_num) catch continue;
+                }
+            } else {
+                // File not loaded yet, store with hash as temporary key
+                const result = this.line_filters_by_file_id.getOrPut(this.allocator, file_hash) catch continue;
+                if (!result.found_existing) {
+                    result.value_ptr.* = std.ArrayListUnmanaged(u32){};
+                }
+                for (line_numbers.items) |line_num| {
+                    result.value_ptr.append(this.allocator, line_num) catch continue;
+                }
+            }
+        }
     }
 
     pub fn setTimeout(
@@ -276,6 +336,14 @@ pub const TestRunner = struct {
         };
         this.files.append(this.allocator, .{ .module_scope = scope, .source = logger.Source.initEmptyFile(file_path) }) catch unreachable;
         entry.value_ptr.* = file_id;
+
+        // Check if there are line filters stored using the hash as a temporary key
+        const file_hash = @as(u32, @truncate(bun.hash(file_path)));
+        if (this.line_filters_by_file_id.fetchRemove(file_hash)) |kv| {
+            // Move the line filters from the hash key to the actual file_id key
+            this.line_filters_by_file_id.put(this.allocator, file_id, kv.value) catch {};
+        }
+
         return scope;
     }
 
@@ -1990,6 +2058,8 @@ inline fn createScope(
         (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
         (tag != .only and Jest.runner.?.only and parent.tag != .only);
 
+    const line_number = captureTestLineNumber(callframe, globalThis);
+
     if (is_test) {
         // Apply filter to all tests, including skipped and todo tests
         if (Jest.runner) |runner| {
@@ -2004,6 +2074,11 @@ inline fn createScope(
                     is_skip = true;
                     tag_to_use = .skipped_because_label;
                 }
+            }
+
+            if (runner.shouldSkipBasedOnLineFilter(line_number, parent)) {
+                is_skip = true;
+                tag_to_use = .skipped_because_label;
             }
         }
 
@@ -2031,7 +2106,7 @@ inline fn createScope(
             .func_arg = function_args,
             .func_has_callback = has_callback,
             .timeout_millis = timeout_ms,
-            .line_number = captureTestLineNumber(callframe, globalThis),
+            .line_number = line_number,
             .test_id_for_debugger = brk: {
                 const vm = globalThis.bunVM();
                 if (vm.debugger) |*debugger| {
@@ -2058,7 +2133,7 @@ inline fn createScope(
             .parent = parent,
             .file_id = parent.file_id,
             .tag = tag_to_use,
-            .line_number = captureTestLineNumber(callframe, globalThis),
+            .line_number = line_number,
             .test_id_for_debugger = brk: {
                 const vm = globalThis.bunVM();
                 if (vm.debugger) |*debugger| {
@@ -2380,6 +2455,11 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                         tag_to_use = .skipped_because_label;
                     }
                 }
+
+                if (Jest.runner.?.shouldSkipBasedOnLineFilter(each_data.line_number, parent)) {
+                    is_skip = true;
+                    tag_to_use = .skipped_because_label;
+                }
             }
 
             if (is_skip) {
@@ -2504,7 +2584,7 @@ extern fn Bun__CallFrame__getLineNumber(callframe: *jsc.CallFrame, globalObject:
 
 fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObject) u32 {
     if (Jest.runner) |runner| {
-        if (runner.test_options.file_reporter == .junit) {
+        if (runner.test_options.file_reporter == .junit or runner.needsTestLineNumber()) {
             return Bun__CallFrame__getLineNumber(callframe, globalThis);
         }
     }

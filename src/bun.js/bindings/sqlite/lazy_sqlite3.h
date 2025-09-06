@@ -311,7 +311,7 @@ static int lazyLoadSQLite()
     if (sqlite3_handle)
         return 0;
 
-    if (use_static_sqlite && _user_overriden_sqlite3_lib_path->empty()) {
+    if (use_static_sqlite && _user_overriden_sqlite3_lib_path != nullptr) {
         return 0;
     }
 

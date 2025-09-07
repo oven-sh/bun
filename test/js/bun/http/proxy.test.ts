@@ -261,3 +261,43 @@ test("axios with https-proxy-agent", async () => {
   // did we got proxied?
   expect(httpProxyServer.log).toEqual([`CONNECT localhost:${httpsServer.port}`]);
 });
+
+test("HTTPS over HTTP proxy preserves TLS record order with large bodies", async () => {
+  // Create a custom HTTPS server that returns body size for this test
+  using customServer = Bun.serve({
+    port: 0,
+    tls: tlsCert,
+    async fetch(req) {
+      // return the body size
+      const buf = await req.arrayBuffer();
+      return new Response(String(buf.byteLength), { status: 200 });
+    },
+  });
+
+  // Test with multiple body sizes to ensure TLS record ordering is preserved
+  // also testing several times because it's flaky otherwise
+  const testCases = [
+    50 * 1024 * 1024, // 50MB
+    100 * 1024 * 1024, // 100MB
+  ];
+
+  for (const size of testCases) {
+    const body = "a".repeat(size);
+
+    const response = await fetch(customServer.url, {
+      method: "POST",
+      proxy: httpProxyServer.url,
+      headers: { "Content-Type": "text/plain" },
+      body,
+      keepalive: false,
+      tls: { ca: tlsCert.cert, rejectUnauthorized: false },
+    });
+
+    expect(response.ok).toBe(true);
+    expect(response.status).toBe(200);
+    const result = await response.text();
+
+    // recvd body size should exactly match the sent body size
+    expect(result).toBe(String(size));
+  }
+}, 30_000); // 30 seconds timeout for large uploads

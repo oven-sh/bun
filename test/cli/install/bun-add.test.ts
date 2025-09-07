@@ -2428,3 +2428,57 @@ it("should install tarball with tarball dependencies", async () => {
   await access(join(add_dir, "node_modules", "test-parent"));
   await access(join(add_dir, "node_modules", "test-child"));
 });
+
+it("should install tarball with query parameters", async () => {
+  // Regression test for issue #20647
+  // Previously on Windows, tarball URLs with query parameters would fail with BadPathName errors
+
+  // Use a local server to serve the tarball
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      // Serve the same tarball regardless of query parameters
+      return new Response(Bun.file(join(__dirname, "baz-0.0.3.tgz")));
+    },
+  });
+  const server_url = server.url.href.replace(/\/+$/, "");
+
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+
+  // Add a tarball with query parameters (used for auth tokens, cache busting, etc.)
+  const tarballUrl = `${server_url}/package.tgz?token=abc123&timestamp=2024`;
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", tarballUrl],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await stderr.text();
+  expect(err).toContain("Saved lockfile");
+  const out = await stdout.text();
+  expect(out).toContain("installed baz@");
+  expect(await exited).toBe(0);
+
+  // Verify the package was actually installed
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toContain("baz");
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.3",
+    bin: {
+      "baz-run": "index.js",
+    },
+  });
+
+  // Verify package.json has the dependency with the full URL including query params
+  const pkg = await file(join(package_dir, "package.json")).json();
+  expect(pkg.dependencies["baz"]).toBe(tarballUrl);
+});

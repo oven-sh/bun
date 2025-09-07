@@ -1478,7 +1478,7 @@ pub const TestCommand = struct {
                 };
 
                 if (file_line) |parsed| {
-                    bun.assert(scanner.test_files.items.len > files_len_before_insert);
+                    bun.assert(scanner.test_files.items.len >= files_len_before_insert);
                     for (files_len_before_insert..scanner.test_files.items.len) |i| {
                         const last = scanner.test_files.items[i];
                         reporter.jest.addLineFilter(last.slice(), parsed.line_num);

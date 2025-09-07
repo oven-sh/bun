@@ -64,8 +64,9 @@ pub const TestLineFilter = struct {
     path: []const u8,
     line: u32,
 
-    pub fn hash(self: TestLineFilter) u64 {
-        return @as(u64, @truncate(bun.hash(self.path))) | (@as(u64, self.line) << 32);
+    pub fn hash(self: TestLineFilter) u32 {
+        const h = std.hash.Wyhash.hash(self.line, self.path);
+        return @as(u32, @truncate(h));
     }
 
     pub fn eql(a: TestLineFilter, b: TestLineFilter) bool {

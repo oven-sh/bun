@@ -186,17 +186,19 @@ pub const StatsCommand = struct {
         // Process each reachable file
         for (result.reachable_files) |source_index| {
             const index = source_index.get();
-            if (index >= sources.len) continue;
+            
+            // Comprehensive bounds checking for all arrays
+            if (index >= sources.len or index >= loaders.len) continue;
 
             // Skip the runtime file (index 0)
             if (index == 0) continue;
 
             const source = sources[index];
             const loader = loaders[index];
-            const imports = if (index < import_records.len) import_records[index] else ImportRecord.List{};
-            const export_kind = if (index < exports_kind.len) exports_kind[index] else .none;
-            const named_export_map = if (index < named_exports.len) named_exports[index] else bun.StringArrayHashMapUnmanaged(bun.ast.NamedExport){};
-            const export_stars = if (index < export_star_import_records.len) export_star_import_records[index] else &[_]u32{};
+            const imports = if (index >= import_records.len) ImportRecord.List{} else import_records[index];
+            const export_kind = if (index >= exports_kind.len) .none else exports_kind[index];
+            const named_export_map = if (index >= named_exports.len) bun.StringArrayHashMapUnmanaged(bun.ast.NamedExport){} else named_exports[index];
+            const export_stars = if (index >= export_star_import_records.len) &[_]u32{} else export_star_import_records[index];
 
             // Get source content and path
             const source_contents = source.contents;

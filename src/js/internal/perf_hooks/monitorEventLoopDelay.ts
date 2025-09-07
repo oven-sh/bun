@@ -47,7 +47,6 @@ function disable() {
 }
 
 function monitorEventLoopDelay(options?: { resolution?: number }) {
-  console.log("monitorEventLoopDelay", options);
   if (options !== undefined) {
     validateObject(options, "options");
   }

@@ -101,14 +101,14 @@ pub const StatsCommand = struct {
             fn print(name: []const u8, s: *const FileStats) void {
                 const methods_per_class: f32 = if (s.classes > 0) @as(f32, @floatFromInt(s.functions)) / @as(f32, @floatFromInt(s.classes)) else 0;
                 const loc_per_method: f32 = if (s.functions > 0) @as(f32, @floatFromInt(s.loc)) / @as(f32, @floatFromInt(s.functions)) else 0;
-                
-                Output.pretty("| {s:<20} | {d:>6} | {d:>6} | {d:>6} | {d:>7} | {d:>7} | {d:>7} | {d:>5.1} | {d:>5.0} |\n", .{ 
-                    name, 
-                    s.files, 
-                    s.lines, 
-                    s.loc, 
+
+                Output.pretty("| {s:<20} | {d:>6} | {d:>6} | {d:>6} | {d:>7} | {d:>7} | {d:>7} | {d:>5.1} | {d:>5.0} |\n", .{
+                    name,
+                    s.files,
+                    s.lines,
+                    s.loc,
                     s.classes,
-                    s.functions, 
+                    s.functions,
                     s.imports,
                     methods_per_class,
                     loc_per_method,
@@ -150,22 +150,22 @@ pub const StatsCommand = struct {
 
         // Print separator and totals
         Output.pretty("+{s:-<22}+{s:-<8}+{s:-<8}+{s:-<8}+{s:-<9}+{s:-<9}+{s:-<9}+{s:-<7}+{s:-<7}+\n", .{ "-", "-", "-", "-", "-", "-", "-", "-", "-" });
-        
+
         // Calculate code and test totals separately
         const code_loc = stats.total.loc -| stats.tests.loc -| stats.node_modules.loc;
         const test_loc = stats.tests.loc;
-        
+
         var code_stats = stats.total;
         code_stats.loc = code_loc;
         code_stats.files = stats.total.files -| stats.tests.files -| stats.node_modules.files;
         printRow("Total Code", &code_stats);
-        
+
         if (stats.tests.files > 0) {
             printRow("Total Tests", &stats.tests);
         }
-        
+
         Output.pretty("+{s:-<22}+{s:-<8}+{s:-<8}+{s:-<8}+{s:-<9}+{s:-<9}+{s:-<9}+{s:-<7}+{s:-<7}+\n", .{ "-", "-", "-", "-", "-", "-", "-", "-", "-" });
-        
+
         // Print code to test ratio at the bottom
         if (code_loc > 0 and test_loc > 0) {
             const ratio = @as(f32, @floatFromInt(test_loc)) / @as(f32, @floatFromInt(code_loc));
@@ -222,7 +222,7 @@ pub const StatsCommand = struct {
             const loader = loaders[index];
             const imports = if (index >= import_records.len) ImportRecord.List{} else import_records[index];
             const export_kind = if (index >= exports_kind.len) .none else exports_kind[index];
-            
+
             // Only access named_exports and export_stars for non-CSS files
             const is_css = loader == .css;
             const named_exports_count: u32 = if (is_css or index >= named_exports.len) 0 else @intCast(named_exports[index].count());
@@ -263,14 +263,14 @@ pub const StatsCommand = struct {
             // Count classes and functions using the parsed AST (for non-CSS files)
             var class_count: u32 = 0;
             var function_count: u32 = 0;
-            
+
             // Only access parts for non-CSS files
             // When parts.len == 0, it means the AST is invalid/failed to parse
             // Skip files that failed to parse or have empty ASTs
             if (!is_css and index < parts_list.len and parts_list[index].len > 0) {
                 // Try to safely access the parts
                 const parts = parts_list[index].slice();
-                
+
                 // Iterate through all parts in the file
                 for (parts) |part| {
                     // Iterate through all statements in the part
@@ -343,7 +343,7 @@ pub const StatsCommand = struct {
                     }
                 }
             }
-            
+
             var file_stats = FileStats{
                 .files = 1,
                 .lines = line_stats.lines,
@@ -405,7 +405,7 @@ pub const StatsCommand = struct {
             }
 
             // No need to track components
-            
+
             // Always add to total
             addStats(&ctx.stats.total, &file_stats);
         }
@@ -493,7 +493,7 @@ pub const StatsCommand = struct {
         const start_time = std.time.nanoTimestamp();
 
         // Set up the bundler context to be as permissive as possible
-        ctx.args.target = .bun; // Use bun target to resolve test files and Bun-specific imports  
+        ctx.args.target = .bun; // Use bun target to resolve test files and Bun-specific imports
         ctx.args.packages = .bundle; // Bundle mode to analyze all files
         ctx.args.ignore_dce_annotations = true; // Ignore DCE annotations that might cause errors
 
@@ -572,7 +572,7 @@ pub const StatsCommand = struct {
         // Suppress ALL bundler errors and warnings - we only care about collecting stats
         this_transpiler.log.level = .err; // Only show errors (highest level)
         this_transpiler.log.msgs.clearRetainingCapacity();
-        
+
         _ = BundleV2.generateFromCLI(
             &this_transpiler,
             allocator,
@@ -610,6 +610,5 @@ const ImportRecord = @import("../import_record.zig").ImportRecord;
 const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
-const strings = bun.strings;
 const ast = bun.ast;
-const Op = ast.Op;
+const strings = bun.strings;

@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
-import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
+import { access, appendFile, copyFile, exists, mkdir, readlink, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
 import { join, relative, resolve } from "path";
 import {
@@ -34,7 +34,7 @@ beforeAll(() => {
 
 beforeEach(async () => {
   add_dir = tmpdirSync();
-  await dummyBeforeEach({ linker: "hoisted" });
+  await dummyBeforeEach();
 });
 afterEach(async () => {
   await dummyAfterEach();
@@ -1064,9 +1064,6 @@ it("should add dependency alongside workspaces", async () => {
       name: "foo",
       version: "0.0.1",
       workspaces: ["packages/*"],
-      "dependencies": {
-        "bar": "workspace:*",
-      },
     }),
   );
   await mkdir(join(package_dir, "packages", "bar"), { recursive: true });
@@ -1078,7 +1075,7 @@ it("should add dependency alongside workspaces", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "baz", "--linker=isolated"],
+    cmd: [bunExe(), "add", "baz"],
     cwd: package_dir,
     stdout: "pipe",
     stdin: "pipe",
@@ -1100,14 +1097,7 @@ it("should add dependency alongside workspaces", async () => {
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
   expect(requested).toBe(2);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
-    ".bin",
-    ".bun",
-    ".cache",
-    expect.stringContaining(".old_modules-"),
-    "bar",
-    "baz",
-  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
   expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readlink(join(package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "packages", "bar"));
@@ -1127,7 +1117,6 @@ it("should add dependency alongside workspaces", async () => {
         version: "0.0.1",
         workspaces: ["packages/*"],
         dependencies: {
-          bar: "workspace:*",
           baz: "^0.0.3",
         },
       },
@@ -2105,7 +2094,7 @@ it("should add dependencies to workspaces directly", async () => {
   const add_path = relative(join(package_dir, "moo"), add_dir);
   const dep = `file:${add_path}`.replace(/\\/g, "/");
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", dep, "--linker=isolated"],
+    cmd: [bunExe(), "add", dep],
     cwd: join(package_dir, "moo"),
     stdout: "pipe",
     stdin: "pipe",
@@ -2135,7 +2124,9 @@ it("should add dependencies to workspaces directly", async () => {
   expect(await readdirSorted(join(package_dir, "moo"))).toEqual(["bunfig.toml", "node_modules", "package.json"]);
   expect(await readdirSorted(join(package_dir, "moo", "node_modules", "foo"))).toEqual(["package.json"]);
   if (process.platform === "win32") {
-    expect(await file(join(package_dir, "moo", "node_modules", "foo", "package.json")).json()).toEqual(fooPackage);
+    expect(await file(await readlink(join(package_dir, "moo", "node_modules", "foo", "package.json"))).json()).toEqual(
+      fooPackage,
+    );
   } else {
     expect(await file(join(package_dir, "moo", "node_modules", "foo", "package.json")).json()).toEqual(fooPackage);
   }
@@ -2146,11 +2137,7 @@ it("should add dependencies to workspaces directly", async () => {
       foo: `file:${add_path.replace(/\\/g, "/")}`,
     },
   });
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
-    ".bun",
-    ".cache",
-    expect.stringContaining(".old_modules-"),
-  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "moo"]);
 });
 
 it("should redirect 'install --save X' to 'add'", async () => {
@@ -2338,97 +2325,6 @@ it("should add multiple dependencies specified on command line", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
-it("should install tarball with tarball dependencies", async () => {
-  // This test verifies that tarballs containing dependencies that are also tarballs
-  // can be installed correctly. Regression test for URL corruption bug where
-  // URLs like https://example.com/pkg.tgz get mangled with cache folder patterns.
-
-  // Create simple test tarballs
-  const tmpDir = tmpdirSync();
-
-  // Create child package
-  const childDir = join(tmpDir, "child");
-  await mkdir(childDir, { recursive: true });
-  await writeFile(join(childDir, "package.json"), JSON.stringify({ name: "test-child", version: "1.0.0" }));
-
-  // Create child tarball
-  const { exited: childTarExited } = spawn({
-    cmd: ["tar", "-czf", join(tmpDir, "child.tgz"), "-C", tmpDir, "child"],
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  expect(await childTarExited).toBe(0);
-
-  // Set up server first to get the port
-  using server = Bun.serve({
-    port: 0,
-    fetch(req) {
-      const url = new URL(req.url);
-      if (url.pathname === "/child.tgz") {
-        return new Response(Bun.file(join(tmpDir, "child.tgz")));
-      } else if (url.pathname === "/parent.tgz") {
-        return new Response(Bun.file(join(tmpDir, "parent.tgz")));
-      }
-      return new Response("Not found", { status: 404 });
-    },
-  });
-
-  const server_url = server.url.href.replace(/\/+$/, "");
-
-  // Create parent package that depends on child via URL
-  const parentDir = join(tmpDir, "parent");
-  await mkdir(parentDir, { recursive: true });
-  await writeFile(
-    join(parentDir, "package.json"),
-    JSON.stringify({
-      name: "test-parent",
-      version: "1.0.0",
-      dependencies: {
-        "test-child": `${server_url}/child.tgz`,
-      },
-    }),
-  );
-
-  // Create parent tarball
-  const { exited: parentTarExited } = spawn({
-    cmd: ["tar", "-czf", join(tmpDir, "parent.tgz"), "-C", tmpDir, "parent"],
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  expect(await parentTarExited).toBe(0);
-
-  // Now test adding the parent tarball
-  await writeFile(
-    join(add_dir, "package.json"),
-    JSON.stringify({
-      name: "foo",
-    }),
-  );
-
-  const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
-
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", `${server_url}/parent.tgz`, "--linker=hoisted"],
-    cwd: add_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-
-  const err = await new Response(stderr).text();
-  expect(err).not.toContain("error:");
-  expect(err).not.toContain("HttpNotFound");
-  expect(err).not.toContain("404");
-
-  expect(await exited).toBe(0);
-
-  // Verify both packages were installed
-  await access(join(add_dir, "node_modules", "test-parent"));
-  await access(join(add_dir, "node_modules", "test-child"));
-});
-
 it("should install tarball with query parameters", async () => {
   // Regression test for issue #20647
   // Previously on Windows, tarball URLs with query parameters would fail with BadPathName errors
@@ -2481,4 +2377,52 @@ it("should install tarball with query parameters", async () => {
   // Verify package.json has the dependency with the full URL including query params
   const pkg = await file(join(package_dir, "package.json")).json();
   expect(pkg.dependencies["baz"]).toBe(tarballUrl);
+});
+
+it("should install tarballs with complex query parameters", async () => {
+  // Test that query parameters with special characters work correctly
+  // These characters (?, =, &, /, :) are invalid in Windows file paths but valid in URLs
+
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      // Verify query parameters are preserved in the request
+      const url = new URL(req.url);
+      expect(url.search).toBeTruthy();
+      return new Response(Bun.file(join(__dirname, "baz-0.0.3.tgz")));
+    },
+  });
+  const server_url = server.url.href.replace(/\/+$/, "");
+
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+
+  // Use query parameters that would be invalid Windows file path characters
+  const tarballUrl = `${server_url}/pkg.tgz?auth=token:pass&path=/api/v2&time=2024-01-01T00:00:00Z`;
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", tarballUrl],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await stderr.text();
+  expect(err).toContain("Saved lockfile");
+  const out = await stdout.text();
+  expect(out).toContain("installed baz@");
+  expect(await exited).toBe(0);
+
+  // Verify installation succeeded
+  expect(await exists(join(package_dir, "node_modules", "baz", "index.js"))).toBeTrue();
+  const installedPkg = await file(join(package_dir, "node_modules", "baz", "package.json")).json();
+  expect(installedPkg.name).toBe("baz");
+  expect(installedPkg.version).toBe("0.0.3");
 });

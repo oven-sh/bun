@@ -1256,36 +1256,28 @@ export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callcon
 }
 
 fn parseFileLineArg(arg: []const u8) ?struct { file_pattern: []const u8, line_num: u32 } {
-    // Find the last ':' to handle Windows drive letters like C:\foo\bar.test.ts:7
     const colon_index = strings.lastIndexOfChar(arg, ':') orelse return null;
     const after_colon = arg[colon_index + 1 ..];
-    if (after_colon.len == 0) return null;
+    const before_colon = arg[0..colon_index];
+    if (before_colon.len == 0) return null;
 
-    // Check if there's a second colon (for file:line:column format)
-    const line_part = if (strings.indexOf(after_colon, ":")) |second_colon_index|
-        after_colon[0..second_colon_index]
-    else
-        after_colon;
+    const line_num = std.fmt.parseInt(u32, after_colon, 10) catch return null;
+    if (line_num == 0) return null;
 
-    // Only accept positive line numbers
-    const line_num = std.fmt.parseInt(u32, line_part, 10) catch return null;
-    if (line_num == 0) return null; // Line numbers start at 1
+    if (strings.lastIndexOfChar(before_colon, ':')) |second_last_colon_index| {
+        if (std.fmt.parseInt(u32, before_colon[second_last_colon_index + 1 ..], 10) catch null) |line_num_2| {
+            if (line_num_2 == 0) return null;
+            return .{
+                .file_pattern = arg[0..second_last_colon_index],
+                .line_num = line_num_2,
+            };
+        }
+    }
 
     return .{
-        .file_pattern = arg[0..colon_index],
+        .file_pattern = before_colon,
         .line_num = line_num,
     };
-}
-
-fn makeAbsolutePath(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
-    if (std.fs.path.isAbsolute(path)) {
-        return try allocator.dupe(u8, path);
-    } else {
-        var local_buf: bun.PathBuffer = undefined;
-        const cwd = bun.fs.FileSystem.instance.top_level_dir;
-        const joined = bun.path.joinAbsStringBuf(cwd, &local_buf, &.{path}, .auto);
-        return try allocator.dupe(u8, joined);
-    }
 }
 
 pub const TestCommand = struct {
@@ -1462,28 +1454,14 @@ pub const TestCommand = struct {
         var scanner = bun.handleOom(Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len));
         defer scanner.deinit();
         const has_relative_path = for (ctx.positionals) |arg| {
-            // Check if it's a file:line format, extract just the file part
-            const path_to_check = if (parseFileLineArg(arg)) |parsed| parsed.file_pattern else arg;
-
-            // Check if it looks like a file path
-            if (std.fs.path.isAbsolute(path_to_check) or
-                strings.startsWith(path_to_check, "./") or
-                strings.startsWith(path_to_check, "../") or
-                (Environment.isWindows and (strings.startsWith(path_to_check, ".\\") or
-                    strings.startsWith(path_to_check, "..\\") or
-                    strings.indexOf(path_to_check, ":\\") != null)) or
-                // Also treat paths containing slashes as file paths (e.g., "test/foo.test.ts")
-                strings.indexOf(path_to_check, if (Environment.isWindows) "\\" else "/") != null) break true;
+            if (std.fs.path.isAbsolute(arg) or
+                strings.startsWith(arg, "./") or
+                strings.startsWith(arg, "../") or
+                (Environment.isWindows and (strings.startsWith(arg, ".\\") or
+                    strings.startsWith(arg, "..\\")))) break true;
         } else false;
-        // Collect line filters during argument parsing
+
         var line_filters = bun.StringHashMap(std.ArrayList(u32)).init(ctx.allocator);
-        defer {
-            var iter = line_filters.iterator();
-            while (iter.next()) |entry| {
-                entry.value_ptr.deinit();
-            }
-            line_filters.deinit();
-        }
 
         if (has_relative_path) {
             // One of the files is a filepath. Instead of treating the
@@ -1492,7 +1470,17 @@ pub const TestCommand = struct {
             for (file_or_dirnames) |arg| {
                 const file_line = parseFileLineArg(arg);
                 if (file_line) |parsed| {
-                    const abs_pattern = try makeAbsolutePath(ctx.allocator, parsed.file_pattern);
+                    const abs_pattern = brk: {
+                        if (std.fs.path.isAbsolute(parsed.file_pattern)) {
+                            break :brk try ctx.allocator.dupe(u8, parsed.file_pattern);
+                        } else {
+                            var local_buf: bun.PathBuffer = undefined;
+                            const cwd = bun.fs.FileSystem.instance.top_level_dir;
+                            const joined = bun.path.joinAbsStringBuf(cwd, &local_buf, &.{parsed.file_pattern}, .auto);
+                            break :brk try ctx.allocator.dupe(u8, joined);
+                        }
+                    };
+
                     const result = try line_filters.getOrPut(abs_pattern);
                     if (!result.found_existing) {
                         result.value_ptr.* = std.ArrayList(u32).init(ctx.allocator);
@@ -1550,8 +1538,9 @@ pub const TestCommand = struct {
             };
         }
 
-        // Pass line filters directly to TestRunner
-        reporter.jest.addLineFilters(line_filters);
+        if (line_filters.count() > 0) {
+            reporter.jest.addLineFilters(line_filters);
+        }
 
         const test_files = bun.handleOom(scanner.takeFoundTestFiles());
         defer ctx.allocator.free(test_files);

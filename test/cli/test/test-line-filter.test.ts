@@ -375,13 +375,10 @@ test("test 3 - should NOT run", () => {
 });`,
     );
 
-    const { stdout, stderr, exitCode } = await runTestWithOutput(
-      [`./nonexistent.test.ts:5`, `./valid.test.ts:7`],
-      cwd,
-    );
+    const { stdout, stderr, exitCode } = await runTestWithOutput([`./nonexistent.test.ts:5`, `./valid.test.ts:7`], cwd);
 
     expect(stdout).toContain("✅ Valid file target test ran");
-    
+
     expect(stderr).toContain("1 pass");
     expect(stderr).toContain("2 filtered out");
     expect(exitCode).toBe(0);

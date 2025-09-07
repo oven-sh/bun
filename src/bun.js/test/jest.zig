@@ -60,6 +60,30 @@ const CurrentFile = struct {
     }
 };
 
+pub const TestLineFilter = struct {
+    path: []const u8,
+    line: u32,
+
+    pub fn hash(self: TestLineFilter) u64 {
+        return @as(u64, @truncate(bun.hash(self.path))) | (@as(u64, self.line) << 32);
+    }
+
+    pub fn eql(a: TestLineFilter, b: TestLineFilter) bool {
+        return a.line == b.line and bun.strings.eql(a.path, b.path);
+    }
+
+    pub const HashContext = struct {
+        pub fn hash(_: HashContext, key: TestLineFilter) u64 {
+            return key.hash();
+        }
+        pub fn eql(_: HashContext, a: TestLineFilter, b: TestLineFilter) bool {
+            return TestLineFilter.eql(a, b);
+        }
+    };
+
+    pub const Map = std.HashMapUnmanaged(TestLineFilter, void, HashContext, 80);
+};
+
 pub const TestRunner = struct {
     current_file: CurrentFile = CurrentFile{},
     tests: TestRunner.Test.List = .{},
@@ -105,7 +129,7 @@ pub const TestRunner = struct {
     filter_regex: ?*RegularExpression,
     filter_buffer: MutableString,
 
-    line_filters_by_file_id: std.AutoHashMapUnmanaged(File.ID, std.ArrayListUnmanaged(u32)) = .{},
+    line_filters: TestLineFilter.Map = .{},
 
     unhandled_errors_between_tests: u32 = 0,
     summary: Summary = Summary{},
@@ -142,7 +166,7 @@ pub const TestRunner = struct {
     }
 
     pub inline fn hasTestLineFilter(this: *const TestRunner) bool {
-        return this.line_filters_by_file_id.count() > 0;
+        return this.line_filters.count() > 0;
     }
 
     pub inline fn needsTestLineNumber(this: *const TestRunner) bool {
@@ -154,39 +178,40 @@ pub const TestRunner = struct {
     }
 
     pub fn matchesLineFilter(this: *const TestRunner, line_number: u32, parent: *DescribeScope) bool {
-        if (this.line_filters_by_file_id.count() == 0) return true;
+        if (this.line_filters.count() == 0) return true;
 
-        const lines = this.line_filters_by_file_id.get(parent.file_id) orelse return true;
-        for (lines.items) |filter_line| {
-            if (line_number == filter_line) return true;
+        const file_path = this.files.items(.source)[parent.file_id].path.text;
 
-            var current_parent: ?*DescribeScope = parent;
-            while (current_parent) |p| {
-                if (p.line_number > 0 and p.line_number == filter_line) {
-                    return true;
-                }
-                current_parent = p.parent;
+        var has_filters_for_file = false;
+        var iter = this.line_filters.keyIterator();
+        while (iter.next()) |entry| {
+            if (bun.strings.eql(entry.path, file_path)) {
+                has_filters_for_file = true;
+                break;
             }
         }
+        if (!has_filters_for_file) return true;
+
+        const direct_filter = TestLineFilter{ .path = file_path, .line = line_number };
+        if (this.line_filters.contains(direct_filter)) return true;
+
+        var current_parent: ?*DescribeScope = parent;
+        while (current_parent) |p| {
+            if (p.line_number > 0) {
+                const parent_filter = TestLineFilter{ .path = file_path, .line = p.line_number };
+                if (this.line_filters.contains(parent_filter)) {
+                    return true;
+                }
+            }
+            current_parent = p.parent;
+        }
+
         return false;
     }
 
-    pub fn addLineFilters(this: *TestRunner, line_filters: bun.StringHashMap(std.ArrayList(u32))) void {
-        var iter = line_filters.iterator();
-        while (iter.next()) |entry| {
-            const file_path = entry.key_ptr.*;
-            const line_numbers = entry.value_ptr;
-
-            // If the file exists add to actual file_id, otherwise use the hash as a temporary key to be replaced later
-            const file_hash = @as(u32, @truncate(bun.hash(file_path)));
-            const file_id = this.index.get(file_hash) orelse file_hash;
-
-            const result = bun.handleOom(this.line_filters_by_file_id.getOrPut(this.allocator, file_id));
-            if (!result.found_existing) {
-                result.value_ptr.* = bun.handleOom(std.ArrayListUnmanaged(u32).initCapacity(this.allocator, line_numbers.items.len));
-            }
-            bun.handleOom(result.value_ptr.appendSlice(this.allocator, line_numbers.items));
-        }
+    pub fn addLineFilter(this: *TestRunner, file_path: []const u8, line: u32) void {
+        const filter = TestLineFilter{ .path = file_path, .line = line };
+        bun.handleOom(this.line_filters.put(this.allocator, filter, {}));
     }
 
     pub fn setTimeout(
@@ -327,12 +352,6 @@ pub const TestRunner = struct {
         };
         this.files.append(this.allocator, .{ .module_scope = scope, .source = logger.Source.initEmptyFile(file_path) }) catch unreachable;
         entry.value_ptr.* = file_id;
-
-        // Check if there are line filters stored using the hash as a temporary key
-        // If so, move them to the actual file_id key
-        if (this.line_filters_by_file_id.fetchRemove(file_hash)) |kv| {
-            bun.handleOom(this.line_filters_by_file_id.put(this.allocator, file_id, kv.value));
-        }
 
         return scope;
     }

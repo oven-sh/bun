@@ -1448,7 +1448,7 @@ pub const TestCommand = struct {
         //
         try vm.ensureDebugger(false);
 
-        var scanner = bun.handleOom(Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len));
+        var scanner: Scanner = bun.handleOom(Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len));
         defer scanner.deinit();
         const has_relative_path = for (ctx.positionals) |arg| {
             if (std.fs.path.isAbsolute(arg) or
@@ -1458,32 +1458,13 @@ pub const TestCommand = struct {
                     strings.startsWith(arg, "..\\")))) break true;
         } else false;
 
-        var line_filters = bun.StringHashMap(std.ArrayList(u32)).init(ctx.allocator);
-
         if (has_relative_path) {
             // One of the files is a filepath. Instead of treating the
             // arguments as filters, treat them as filepaths
             const file_or_dirnames = ctx.positionals[1..];
             for (file_or_dirnames) |arg| {
                 const file_line = parseFileLineArg(arg);
-                if (file_line) |parsed| {
-                    const abs_pattern = brk: {
-                        if (std.fs.path.isAbsolute(parsed.file_pattern)) {
-                            break :brk try ctx.allocator.dupe(u8, parsed.file_pattern);
-                        } else {
-                            var local_buf: bun.PathBuffer = undefined;
-                            const cwd = bun.fs.FileSystem.instance.top_level_dir;
-                            const joined = bun.path.joinAbsStringBuf(cwd, &local_buf, &.{parsed.file_pattern}, .auto);
-                            break :brk try ctx.allocator.dupe(u8, joined);
-                        }
-                    };
-
-                    const result = try line_filters.getOrPut(abs_pattern);
-                    if (!result.found_existing) {
-                        result.value_ptr.* = std.ArrayList(u32).init(ctx.allocator);
-                    }
-                    try result.value_ptr.append(parsed.line_num);
-                }
+                const files_len_before_insert = scanner.test_files.items.len;
 
                 const file_to_scan = if (file_line) |parsed| parsed.file_pattern else arg;
                 scanner.scan(file_to_scan) catch |err| switch (err) {
@@ -1495,6 +1476,14 @@ pub const TestCommand = struct {
                         Global.exit(1);
                     },
                 };
+
+                if (file_line) |parsed| {
+                    bun.assert(scanner.test_files.items.len > files_len_before_insert);
+                    for (files_len_before_insert..scanner.test_files.items.len) |i| {
+                        const last = scanner.test_files.items[i];
+                        reporter.jest.addLineFilter(last.slice(), parsed.line_num);
+                    }
+                }
             }
         } else {
             // Treat arguments as filters and scan the codebase
@@ -1533,10 +1522,6 @@ pub const TestCommand = struct {
                     Global.exit(1);
                 },
             };
-        }
-
-        if (line_filters.count() > 0) {
-            reporter.jest.addLineFilters(line_filters);
         }
 
         const test_files = bun.handleOom(scanner.takeFoundTestFiles());
@@ -1745,7 +1730,7 @@ pub const TestCommand = struct {
 
                 reporter.printSummary();
             } else {
-                if (line_filters.count() > 0) {
+                if (reporter.jest.hasTestLineFilter()) {
                     Output.prettyError("<red>error<r><d>:<r> no tests found for file:line filters. Searched {d} file{s} (skipping {d} test{s}) ", .{
                         summary.files,
                         if (summary.files == 1) "" else "s",
@@ -1753,11 +1738,9 @@ pub const TestCommand = struct {
                         if (summary.skipped_because_label == 1) "" else "s",
                     });
 
-                    var iter = line_filters.iterator();
+                    var iter = reporter.jest.line_filters.keyIterator();
                     while (iter.next()) |entry| {
-                        for (entry.value_ptr.items) |line_number| {
-                            Output.prettyError("\n  <b>{s}<r>:{d}", .{ entry.key_ptr.*, line_number });
-                        }
+                        Output.prettyError("\n  <b>{s}<r>:{d}", .{ entry.path, entry.line });
                     }
                     Output.prettyError("\n", .{});
                 } else {

@@ -704,7 +704,7 @@ void NodeVMSpecialSandbox::finishCreation(VM& vm)
 const JSC::ClassInfo NodeVMSpecialSandbox::s_info = { "NodeVMSpecialSandbox"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMSpecialSandbox) };
 
 NodeVMGlobalObject::NodeVMGlobalObject(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions contextOptions, JSValue importer)
-    : Base(vm, structure) // Don't override method table
+    : Base(vm, structure) // Don't override method table to avoid crash
     , m_dynamicImportCallback(vm, this, importer)
     , m_contextOptions(contextOptions)
 {
@@ -738,8 +738,8 @@ Structure* NodeVMGlobalObject::createStructure(JSC::VM& vm, JSC::JSValue prototy
 
 // const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable()
 // {
-//     // Just copy exactly what ZigGlobalObject does - don't define any functions,
-//     // just reference them and let the linker find them
+//     // We need to provide implementations that respect our code generation settings
+//     // But for now, let's just provide the minimum required to not crash
 //     static const JSC::GlobalObjectMethodTable table {
 //         nullptr, // supportsRichSourceInfo
 //         nullptr, // shouldInterruptScript

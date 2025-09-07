@@ -28,8 +28,8 @@ describe("bun test file:line filtering", () => {
   const standardTestContent = `import { test, expect } from "bun:test";
 
 test("test 1 - should NOT run", () => {
-  console.log("❌ Test 1 ran");
-  expect(1).toBe(1);
+  console.log("❌ Test 1 ran - this should not happen!");
+  expect.unreachable("Test 1 should not run");
 });
 
 test("target test - SHOULD run", () => {
@@ -38,15 +38,14 @@ test("target test - SHOULD run", () => {
 });
 
 test("test 3 - should NOT run", () => {
-  console.log("❌ Test 3 ran");
-  expect(3).toBe(3);
+  console.log("❌ Test 3 ran - this should not happen!");
+  expect.unreachable("Test 3 should not run");
 });`;
 
   const describeTestContent = `import { test, expect, describe } from "bun:test";
 
 test("standalone - should NOT run", () => {
-  console.log("❌ Standalone test ran");
-  expect(1).toBe(1);
+  expect.unreachable("Standalone test should not run");
 });
 
 describe("target block", () => {
@@ -63,8 +62,7 @@ describe("target block", () => {
 
 describe("other block", () => {
   test("test C - should NOT run", () => {
-    console.log("❌ Test C ran");
-    expect(4).toBe(4);
+    expect.unreachable("Test C should not run");
   });
 });`;
 
@@ -75,8 +73,8 @@ describe("other block", () => {
     const { stdout, stderr, exitCode } = await runTestWithOutput([`./single-test.test.ts:8`], cwd);
 
     expect(stdout).toContain("✅ Target test ran");
-    expect(stdout).not.toContain("❌ Test 1 ran");
-    expect(stdout).not.toContain("❌ Test 3 ran");
+    expect(stdout).not.toContain("❌ Test 1 ran - this should not happen!");
+    expect(stdout).not.toContain("❌ Test 3 ran - this should not happen!");
     expect(stderr).toContain("1 pass");
     expect(stderr).toContain("2 filtered out");
     expect(exitCode).toBe(0);
@@ -86,12 +84,10 @@ describe("other block", () => {
     const cwd = tmpdirSync();
     const testFile = createTestFile(cwd, "describe-block.test.ts", describeTestContent);
 
-    const { stdout, stderr, exitCode } = await runTestWithOutput([`./describe-block.test.ts:8`], cwd);
+    const { stdout, stderr, exitCode } = await runTestWithOutput([`./describe-block.test.ts:7`], cwd);
 
     expect(stdout).toContain("✅ Test A ran");
     expect(stdout).toContain("✅ Test B ran");
-    expect(stdout).not.toContain("❌ Standalone test ran");
-    expect(stdout).not.toContain("❌ Test C ran");
     expect(stderr).toContain("2 pass");
     expect(stderr).toContain("2 filtered out");
     expect(exitCode).toBe(0);
@@ -106,8 +102,7 @@ describe("other block", () => {
 
 describe("outer", () => {
   test("outer test - should NOT run", () => {
-    console.log("❌ Outer test ran");
-    expect(1).toBe(1);
+    expect.unreachable("Outer test should not run");
   });
 
   describe("inner target", () => {
@@ -123,18 +118,15 @@ describe("outer", () => {
   });
 
   test("another outer test - should NOT run", () => {
-    console.log("❌ Another outer test ran");
-    expect(4).toBe(4);
+    expect.unreachable("Another outer test should not run");
   });
 });`,
     );
 
-    const { stdout, stderr, exitCode } = await runTestWithOutput([`./nested-describe.test.ts:9`], cwd);
+    const { stdout, stderr, exitCode } = await runTestWithOutput([`./nested-describe.test.ts:8`], cwd);
 
     expect(stdout).toContain("✅ Inner test A ran");
     expect(stdout).toContain("✅ Inner test B ran");
-    expect(stdout).not.toContain("❌ Outer test ran");
-    expect(stdout).not.toContain("❌ Another outer test ran");
     expect(stderr).toContain("2 pass");
     expect(stderr).toContain("2 filtered out");
     expect(exitCode).toBe(0);
@@ -224,11 +216,67 @@ describe("outer", () => {
       standardTestContent.replace("Target test ran", "File2 test ran"),
     );
 
-    // Test multiple file:line arguments for same file
+    // Test multiple file:line arguments for same file (same test - should deduplicate)
     const result1 = await runTestWithOutput([`./multi1.test.ts:8`, `./multi1.test.ts:9`], cwd);
     expect(result1.stdout).toContain("✅ Target test ran");
     expect(result1.stderr).toContain("1 pass");
     expect(result1.exitCode).toBe(0);
+
+    // Test multiple different tests and describe blocks in same file
+    const multiTestFile = createTestFile(
+      cwd,
+      "multi-tests.test.ts",
+      `import { test, expect, describe } from "bun:test";
+
+test("standalone test - SHOULD run", () => {
+  console.log("✅ Standalone test ran");
+  expect(1).toBe(1);
+});
+
+test("another standalone - should NOT run", () => {
+  expect.unreachable("Another standalone should not run");
+});
+
+describe("target group", () => {
+  test("group test A - SHOULD run", () => {
+    console.log("✅ Group test A ran");
+    expect(3).toBe(3);
+  });
+
+  test("group test B - SHOULD run", () => {
+    console.log("✅ Group test B ran");
+    expect(4).toBe(4);
+  });
+});
+
+test("final test - SHOULD run", () => {
+  console.log("✅ Final test ran");
+  expect(5).toBe(5);
+});
+
+describe("ignored group", () => {
+  test("ignored test A - should NOT run", () => {
+    expect.unreachable("Ignored test A should not run");
+  });
+
+  test("ignored test B - should NOT run", () => {
+    expect.unreachable("Ignored test B should not run");
+  });
+});`,
+    );
+
+    // Target line 3 (standalone), line 12 (describe block), and line 24 (final test)
+    const result1b = await runTestWithOutput(
+      [`./multi-tests.test.ts:3`, `./multi-tests.test.ts:12`, `./multi-tests.test.ts:24`],
+      cwd,
+    );
+    expect(result1b.stdout).toContain("✅ Standalone test ran");
+    expect(result1b.stdout).toContain("✅ Group test A ran");
+    expect(result1b.stdout).toContain("✅ Group test B ran");
+    expect(result1b.stdout).toContain("✅ Final test ran");
+    expect(result1b.stderr).toContain("4 pass");
+    expect(result1b.stderr).toContain("3 filtered out");
+    expect(result1b.exitCode).toBe(0);
 
     // Test multiple file:line arguments for different files
     const result2 = await runTestWithOutput([`./multi1.test.ts:8`, `./multi2.test.ts:8`], cwd);
@@ -241,8 +289,8 @@ describe("outer", () => {
     const result3 = await runTestWithOutput([`./multi1.test.ts:8`, `./multi2.test.ts`], cwd);
     expect(result3.stdout).toContain("✅ Target test ran");
     expect(result3.stdout).toContain("✅ File2 test ran");
-    expect(result3.stderr).toContain("4 pass"); // 1 from line filter + 3 from full file
-    expect(result3.exitCode).toBe(0);
+    expect(result3.stderr).toContain("2 pass"); // 1 from line filter + 1 from full file (others fail with unreachable)
+    expect(result3.exitCode).toBe(1); // Exit code 1 because unreachable tests fail
   });
 
   test("should work with test.each and special syntax", async () => {
@@ -253,8 +301,7 @@ describe("outer", () => {
       `import { test, expect } from "bun:test";
 
 test("regular test - should NOT run", () => {
-  console.log("❌ Regular test ran");
-  expect(1).toBe(1);
+  expect.unreachable("Regular test should not run");
 });
 
 test.each([1, 2, 3])("each test %s - SHOULD run", (num) => {
@@ -263,18 +310,15 @@ test.each([1, 2, 3])("each test %s - SHOULD run", (num) => {
 });
 
 test("another test - should NOT run", () => {
-  console.log("❌ Another test ran");
-  expect(2).toBe(2);
+  expect.unreachable("Another test should not run");
 });`,
     );
 
-    const { stdout, stderr, exitCode } = await runTestWithOutput([`./test-each.test.ts:8`], cwd);
+    const { stdout, stderr, exitCode } = await runTestWithOutput([`./test-each.test.ts:7`], cwd);
 
     expect(stdout).toContain("✅ Each test 1 ran");
     expect(stdout).toContain("✅ Each test 2 ran");
     expect(stdout).toContain("✅ Each test 3 ran");
-    expect(stdout).not.toContain("❌ Regular test ran");
-    expect(stdout).not.toContain("❌ Another test ran");
     expect(exitCode).toBe(0);
   });
 
@@ -298,15 +342,13 @@ describe("comment test block", () => {
 });
 
 test("outside test - should NOT run", () => {
-  console.log("❌ Outside test ran");
-  expect(2).toBe(2);
+  expect.unreachable("Outside test should not run");
 });`,
     );
 
     const { stdout, stderr, exitCode } = await runTestWithOutput([`./comment-lines.test.ts:6`], cwd);
 
     expect(stdout).toContain("✅ Test inside ran");
-    expect(stdout).not.toContain("❌ Outside test ran");
     expect(stderr).toContain("1 pass");
     expect(stderr).toContain("1 filtered out");
     expect(exitCode).toBe(0);

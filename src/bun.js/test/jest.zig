@@ -105,7 +105,7 @@ pub const TestRunner = struct {
     filter_regex: ?*RegularExpression,
     filter_buffer: MutableString,
 
-    line_filters_by_file_id: std.AutoHashMapUnmanaged(u32, std.ArrayListUnmanaged(u32)) = .{},
+    line_filters_by_file_id: std.AutoHashMapUnmanaged(File.ID, std.ArrayListUnmanaged(u32)) = .{},
 
     unhandled_errors_between_tests: u32 = 0,
     summary: Summary = Summary{},
@@ -178,16 +178,14 @@ pub const TestRunner = struct {
             const line_numbers = entry.value_ptr;
 
             // If the file exists add to actual file_id, otherwise use the hash as a temporary key to be replaced later
-            const file_hash = @as(File.ID, @truncate(bun.hash(file_path)));
+            const file_hash = @as(u32, @truncate(bun.hash(file_path)));
             const file_id = this.index.get(file_hash) orelse file_hash;
 
-            const result = this.line_filters_by_file_id.getOrPut(this.allocator, file_id) catch continue;
+            const result = bun.handleOom(this.line_filters_by_file_id.getOrPut(this.allocator, file_id));
             if (!result.found_existing) {
-                result.value_ptr.* = std.ArrayListUnmanaged(u32){};
+                result.value_ptr.* = bun.handleOom(std.ArrayListUnmanaged(u32).initCapacity(this.allocator, line_numbers.items.len));
             }
-            for (line_numbers.items) |line_num| {
-                result.value_ptr.append(this.allocator, line_num) catch continue;
-            }
+            bun.handleOom(result.value_ptr.appendSlice(this.allocator, line_numbers.items));
         }
     }
 
@@ -316,7 +314,8 @@ pub const TestRunner = struct {
     }
 
     pub fn getOrPutFile(this: *TestRunner, file_path: string) *DescribeScope {
-        const entry = this.index.getOrPut(this.allocator, @as(u32, @truncate(bun.hash(file_path)))) catch unreachable;
+        const file_hash = @as(u32, @truncate(bun.hash(file_path)));
+        const entry = this.index.getOrPut(this.allocator, file_hash) catch unreachable;
         if (entry.found_existing) {
             return this.files.items(.module_scope)[entry.value_ptr.*];
         }
@@ -331,9 +330,8 @@ pub const TestRunner = struct {
 
         // Check if there are line filters stored using the hash as a temporary key
         // If so, move them to the actual file_id key
-        const file_hash = @as(File.ID, @truncate(bun.hash(file_path)));
         if (this.line_filters_by_file_id.fetchRemove(file_hash)) |kv| {
-            this.line_filters_by_file_id.put(this.allocator, file_id, kv.value) catch {};
+            bun.handleOom(this.line_filters_by_file_id.put(this.allocator, file_id, kv.value));
         }
 
         return scope;

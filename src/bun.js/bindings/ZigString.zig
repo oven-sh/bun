@@ -360,7 +360,7 @@ pub const ZigString = extern struct {
             return !this.allocator.isNull();
         }
 
-        pub fn toOwned(this: Slice, allocator: std.mem.Allocator) OOM!Slice {
+        pub fn toOwned(this: *const Slice, allocator: std.mem.Allocator) OOM!Slice {
             const duped = try allocator.dupe(u8, this.ptr[0..this.len]);
             return .{ .allocator = .init(allocator), .ptr = duped.ptr, .len = this.len };
         }

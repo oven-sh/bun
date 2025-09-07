@@ -1,8 +1,8 @@
-import { test, expect, describe } from "bun:test";
-import { spawn, spawnSync, exec, execSync } from "node:child_process";
-import { tempDir, bunEnv, bunExe } from "harness";
-import { join } from "node:path";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, tempDir } from "harness";
+import { exec, execSync, spawn, spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 describe("Batch file execution security on Windows", () => {
   // Only run these tests on Windows
@@ -23,9 +23,9 @@ describe("Batch file execution security on Windows", () => {
 
     // Try with spawn (async)
     const child = spawn(batFile, [], { env: bunEnv });
-    
+
     return new Promise((resolve, reject) => {
-      child.on("error", (err) => {
+      child.on("error", err => {
         expect(err.code).toBe("EINVAL");
         resolve();
       });
@@ -47,9 +47,9 @@ describe("Batch file execution security on Windows", () => {
 
     // Try with spawn (async)
     const child = spawn(cmdFile, [], { env: bunEnv });
-    
+
     return new Promise((resolve, reject) => {
-      child.on("error", (err) => {
+      child.on("error", err => {
         expect(err.code).toBe("EINVAL");
         resolve();
       });
@@ -65,12 +65,12 @@ describe("Batch file execution security on Windows", () => {
     writeFileSync(batFile, "@echo test output");
 
     // This should work
-    const result = spawnSync(batFile, [], { 
+    const result = spawnSync(batFile, [], {
       shell: true,
       encoding: "utf8",
-      env: bunEnv 
+      env: bunEnv,
     });
-    
+
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("test output");
   });
@@ -81,12 +81,12 @@ describe("Batch file execution security on Windows", () => {
     writeFileSync(cmdFile, "@echo test output");
 
     // This should work
-    const result = spawnSync(cmdFile, [], { 
+    const result = spawnSync(cmdFile, [], {
       shell: true,
       encoding: "utf8",
-      env: bunEnv 
+      env: bunEnv,
     });
-    
+
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("test output");
   });
@@ -115,9 +115,9 @@ describe("Batch file execution security on Windows", () => {
     // execSync uses shell by default
     const result = execSync(`"${batFile}"`, {
       encoding: "utf8",
-      env: bunEnv
+      env: bunEnv,
     });
-    
+
     expect(result).toContain("exec test");
 
     // exec uses shell by default
@@ -135,23 +135,23 @@ describe("Batch file execution security on Windows", () => {
 
   test("should handle case-insensitive batch file extensions", () => {
     using dir = tempDir("batch-security");
-    
+
     const extensions = [".BAT", ".bAt", ".BaT", ".CMD", ".cMd", ".CmD"];
-    
+
     for (const ext of extensions) {
       const file = join(String(dir), `test${ext}`);
       writeFileSync(file, "@echo test");
-      
+
       // Should throw without shell
       expect(() => {
         spawnSync(file, [], { env: bunEnv });
       }).toThrow();
-      
+
       // Should work with shell
-      const result = spawnSync(file, [], { 
+      const result = spawnSync(file, [], {
         shell: true,
         encoding: "utf8",
-        env: bunEnv 
+        env: bunEnv,
       });
       expect(result.status).toBe(0);
     }
@@ -161,9 +161,9 @@ describe("Batch file execution security on Windows", () => {
     // Test that normal executables still work
     const result = spawnSync("cmd.exe", ["/c", "echo", "test"], {
       encoding: "utf8",
-      env: bunEnv
+      env: bunEnv,
     });
-    
+
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("test");
   });
@@ -176,9 +176,9 @@ describe("Batch file execution security on Windows", () => {
     // Even if we have .bat in arguments, should work if the executable is not a batch file
     const result = spawnSync("cmd.exe", ["/c", "echo", "test.bat"], {
       encoding: "utf8",
-      env: bunEnv
+      env: bunEnv,
     });
-    
+
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("test.bat");
   });

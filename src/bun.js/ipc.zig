@@ -521,7 +521,6 @@ pub const SendQueue = struct {
         log("SendQueue#_windowsClose", .{});
         if (this.socket != .open) return;
         const pipe = this.socket.open;
-        pipe.data = pipe;
         pipe.close(&_windowsOnClosed);
         this._socketClosed();
         this.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, _onAfterIPCClosed).init(this));

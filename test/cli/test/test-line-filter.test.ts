@@ -353,4 +353,37 @@ test("outside test - should NOT run", () => {
     expect(stderr).toContain("1 filtered out");
     expect(exitCode).toBe(0);
   });
+
+  test("should ignore invalid file and run valid file with line number", async () => {
+    const cwd = tmpdirSync();
+    createTestFile(
+      cwd,
+      "valid.test.ts",
+      `import { test, expect } from "bun:test";
+
+test("test 1 - should NOT run", () => {
+  expect.unreachable("Test 1 should not run");
+});
+
+test("target test - SHOULD run", () => {
+  console.log("✅ Valid file target test ran");
+  expect(1).toBe(1);
+});
+
+test("test 3 - should NOT run", () => {
+  expect.unreachable("Test 3 should not run");
+});`,
+    );
+
+    const { stdout, stderr, exitCode } = await runTestWithOutput(
+      [`./nonexistent.test.ts:5`, `./valid.test.ts:7`],
+      cwd,
+    );
+
+    expect(stdout).toContain("✅ Valid file target test ran");
+    
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("2 filtered out");
+    expect(exitCode).toBe(0);
+  });
 });

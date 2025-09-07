@@ -71,6 +71,33 @@ bun --filter '*' dev
 Both commands will be run in parallel, and you will see a nice terminal UI showing their respective outputs:
 ![Terminal Output](https://github.com/oven-sh/bun/assets/48869301/2a103e42-9921-4c33-948f-a1ad6e6bac71)
 
+### Output options
+
+By default, when running scripts with `--filter` in a terminal, Bun displays a formatted UI that elides long output to keep the display manageable. You can control this behavior with these flags:
+
+#### `--elide-lines <number>`
+
+Controls how many lines of output are shown for each package (default: 10). Set to 0 to show all output:
+
+```bash
+# Show only 5 lines of output per package
+bun --filter '*' --elide-lines 5 test
+
+# Show all output (no eliding)
+bun --filter '*' --elide-lines 0 test
+```
+
+#### `--stream`
+
+Stream logs immediately without buffering or eliding. This is useful when you want to see real-time output from all packages, similar to pnpm's `--stream` flag:
+
+```bash
+# Stream all output immediately
+bun --filter '*' --stream dev
+```
+
+Note: `--stream` and `--elide-lines` cannot be used together. When `--stream` is enabled, output is written directly to stdout without package name prefixes or formatting.
+
 ### Running scripts in workspaces
 
 Filters respect your [workspace configuration](https://bun.com/docs/install/workspaces): If you have a `package.json` file that specifies which packages are part of the workspace,

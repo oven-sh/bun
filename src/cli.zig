@@ -419,6 +419,7 @@ pub const Command = struct {
             env_behavior: api.DotEnvBehavior = .disable,
             env_prefix: []const u8 = "",
             elide_lines: ?usize = null,
+            stream_logs: bool = false,
             // Compile options
             compile: bool = false,
             compile_target: Cli.CompileTarget = .{},

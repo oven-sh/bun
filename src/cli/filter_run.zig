@@ -146,6 +146,7 @@ const State = struct {
     draw_buf: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
     last_lines_written: usize = 0,
     pretty_output: bool,
+    stream_logs: bool,
     shell_bin: [:0]const u8,
     aborted: bool = false,
     env: *bun.DotEnv.Loader,
@@ -160,7 +161,11 @@ const State = struct {
     };
 
     fn readChunk(this: *This, handle: *ProcessHandle, chunk: []const u8) !void {
-        if (this.pretty_output) {
+        if (this.stream_logs) {
+            // In stream mode, output immediately without buffering
+            const stdout = std.io.getStdOut();
+            stdout.writeAll(chunk) catch {};
+        } else if (this.pretty_output) {
             bun.handleOom(handle.buffer.appendSlice(chunk));
             this.redraw(false) catch {};
         } else {
@@ -202,7 +207,10 @@ const State = struct {
                 }
             }
         }
-        if (this.pretty_output) {
+        if (this.stream_logs) {
+            // In stream mode, don't do any special exit handling for output
+            // The output has already been streamed
+        } else if (this.pretty_output) {
             this.redraw(false) catch {};
         } else {
             this.draw_buf.clearRetainingCapacity();
@@ -542,10 +550,22 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         .handles = try ctx.allocator.alloc(ProcessHandle, scripts.items.len),
         .event_loop = event_loop,
         .pretty_output = if (Environment.isWindows) windowsIsTerminal() and Output.enable_ansi_colors_stdout else Output.enable_ansi_colors_stdout,
+        .stream_logs = ctx.bundler_options.stream_logs,
         .shell_bin = shell_bin,
         .env = this_transpiler.env,
     };
 
+    // Check if both --stream and --elide-lines are used
+    if (state.stream_logs and ctx.bundler_options.elide_lines != null) {
+        Output.prettyErrorln("<r><red>error<r>: --stream and --elide-lines cannot be used together", .{});
+        Global.exit(1);
+    }
+    
+    // When --stream is set, disable pretty output
+    if (state.stream_logs) {
+        state.pretty_output = false;
+    }
+    
     // Check if elide-lines is used in a non-terminal environment
     if (ctx.bundler_options.elide_lines != null and !state.pretty_output) {
         Output.prettyErrorln("<r><red>error<r>: --elide-lines is only supported in terminal environments", .{});

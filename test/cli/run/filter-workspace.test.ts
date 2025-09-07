@@ -506,4 +506,221 @@ describe("bun", () => {
       win32ExpectedError: /--elide-lines is only supported in terminal environments/,
     });
   });
+
+  describe("--stream flag", () => {
+    test("streams output immediately without buffering", () => {
+      const dir = tempDirWithFiles("testworkspace-stream", {
+        packages: {
+          pkg1: {
+            "index.js": `console.log('pkg1-line1'); console.log('pkg1-line2'); console.log('pkg1-line3');`,
+            "package.json": JSON.stringify({
+              name: "pkg1",
+              scripts: {
+                test: `${bunExe()} run index.js`,
+              },
+            }),
+          },
+          pkg2: {
+            "index.js": `console.log('pkg2-line1'); console.log('pkg2-line2'); console.log('pkg2-line3');`,
+            "package.json": JSON.stringify({
+              name: "pkg2",
+              scripts: {
+                test: `${bunExe()} run index.js`,
+              },
+            }),
+          },
+        },
+        "package.json": JSON.stringify({
+          name: "ws",
+          workspaces: ["packages/*"],
+        }),
+      });
+
+      const { exitCode, stdout, stderr } = spawnSync({
+        cwd: dir,
+        cmd: [bunExe(), "run", "--filter", "*", "--stream", "test"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const output = stdout.toString();
+      // In stream mode, output should not have package name prefixes
+      expect(output).toMatch(/pkg1-line1/);
+      expect(output).toMatch(/pkg1-line2/);
+      expect(output).toMatch(/pkg1-line3/);
+      expect(output).toMatch(/pkg2-line1/);
+      expect(output).toMatch(/pkg2-line2/);
+      expect(output).toMatch(/pkg2-line3/);
+      // Should not have the package name prefixes that appear in non-stream mode
+      expect(output).not.toMatch(/pkg1 test:/);
+      expect(output).not.toMatch(/pkg2 test:/);
+      expect(exitCode).toBe(0);
+    });
+
+    test("--stream and --elide-lines cannot be used together", () => {
+      const dir = tempDirWithFiles("testworkspace-stream-conflict", {
+        packages: {
+          pkg1: {
+            "package.json": JSON.stringify({
+              name: "pkg1",
+              scripts: {
+                test: "echo test",
+              },
+            }),
+          },
+        },
+        "package.json": JSON.stringify({
+          name: "ws",
+          workspaces: ["packages/*"],
+        }),
+      });
+
+      const { exitCode, stderr } = spawnSync({
+        cwd: dir,
+        cmd: [bunExe(), "run", "--filter", "*", "--stream", "--elide-lines", "5", "test"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(stderr.toString()).toMatch(/--stream and --elide-lines cannot be used together/);
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("--stream works with dependency ordering", () => {
+      const dir = tempDirWithFiles("testworkspace-stream-deps", {
+        dep0: {
+          "index.js": `await Bun.write('out.txt', 'dep0-complete'); console.log('dep0-output');`,
+          "package.json": JSON.stringify({
+            name: "dep0",
+            scripts: {
+              script: `${bunExe()} run index.js`,
+            },
+          }),
+        },
+        dep1: {
+          "index.js": `const content = await Bun.file("../dep0/out.txt").text(); console.log('dep1-output: ' + content);`,
+          "package.json": JSON.stringify({
+            name: "dep1",
+            dependencies: {
+              dep0: "*",
+            },
+            scripts: {
+              script: `${bunExe()} run index.js`,
+            },
+          }),
+        },
+      });
+
+      const { exitCode, stdout } = spawnSync({
+        cwd: dir,
+        cmd: [bunExe(), "run", "--filter", "*", "--stream", "script"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const output = stdout.toString();
+      // Verify that dep0 runs before dep1 and outputs are streamed
+      expect(output).toMatch(/dep0-output/);
+      expect(output).toMatch(/dep1-output: dep0-complete/);
+      expect(exitCode).toBe(0);
+    });
+
+    test("--stream works with pre and post scripts", () => {
+      const dir = tempDirWithFiles("testworkspace-stream-lifecycle", {
+        pkg1: {
+          "package.json": JSON.stringify({
+            name: "pkg1",
+            scripts: {
+              prescript: "echo pre-script",
+              script: "echo main-script",
+              postscript: "echo post-script",
+            },
+          }),
+        },
+      });
+
+      const { exitCode, stdout } = spawnSync({
+        cwd: dir,
+        cmd: [bunExe(), "run", "--filter", "*", "--stream", "script"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const output = stdout.toString();
+      // All outputs should be streamed in order
+      expect(output).toMatch(/pre-script[\s\S]*main-script[\s\S]*post-script/);
+      expect(exitCode).toBe(0);
+    });
+
+    test("--stream handles errors correctly", () => {
+      const dir = tempDirWithFiles("testworkspace-stream-error", {
+        pkg1: {
+          "package.json": JSON.stringify({
+            name: "pkg1",
+            scripts: {
+              test: "echo before-error && exit 42",
+            },
+          }),
+        },
+        pkg2: {
+          "package.json": JSON.stringify({
+            name: "pkg2",
+            scripts: {
+              test: "echo pkg2-runs",
+            },
+          }),
+        },
+      });
+
+      const { exitCode, stdout } = spawnSync({
+        cwd: dir,
+        cmd: [bunExe(), "run", "--filter", "*", "--stream", "test"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const output = stdout.toString();
+      // Both should run even if one fails
+      expect(output).toMatch(/before-error/);
+      expect(output).toMatch(/pkg2-runs/);
+      // Should exit with the error code from the failed script
+      expect(exitCode).toBe(42);
+    });
+
+    test("--stream works with auto command", () => {
+      const dir = tempDirWithFiles("testworkspace-stream-auto", {
+        packages: {
+          pkg1: {
+            "package.json": JSON.stringify({
+              name: "pkg1",
+              scripts: {
+                test: "echo auto-stream-test",
+              },
+            }),
+          },
+        },
+        "package.json": JSON.stringify({
+          name: "ws",
+          workspaces: ["packages/*"],
+        }),
+      });
+
+      const { exitCode, stdout } = spawnSync({
+        cwd: dir,
+        cmd: [bunExe(), "--filter", "*", "--stream", "test"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const output = stdout.toString();
+      expect(output).toMatch(/auto-stream-test/);
+      expect(exitCode).toBe(0);
+    });
+  });
 });

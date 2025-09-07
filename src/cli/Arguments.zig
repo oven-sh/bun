@@ -123,6 +123,7 @@ pub const auto_only_params = [_]ParamType{
     // clap.parseParam("--all") catch unreachable,
     clap.parseParam("--silent                          Don't print the script command") catch unreachable,
     clap.parseParam("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines.") catch unreachable,
+    clap.parseParam("--stream                          Stream logs immediately without buffering or eliding. Similar to pnpm's --stream flag") catch unreachable,
     clap.parseParam("-v, --version                     Print version and exit") catch unreachable,
     clap.parseParam("--revision                        Print version with revision and exit") catch unreachable,
 } ++ auto_or_run_params;
@@ -131,6 +132,7 @@ pub const auto_params = auto_only_params ++ runtime_params_ ++ transpiler_params
 pub const run_only_params = [_]ParamType{
     clap.parseParam("--silent                          Don't print the script command") catch unreachable,
     clap.parseParam("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines.") catch unreachable,
+    clap.parseParam("--stream                          Stream logs immediately without buffering or eliding. Similar to pnpm's --stream flag") catch unreachable,
 } ++ auto_or_run_params;
 pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -399,6 +401,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 };
             }
         }
+        
+        ctx.bundler_options.stream_logs = args.flag("--stream");
     }
 
     if (cmd == .TestCommand) {
@@ -1140,6 +1144,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 };
             }
         }
+        
+        ctx.bundler_options.stream_logs = args.flag("--stream");
 
         if (opts.define) |define| {
             if (define.keys.len > 0)

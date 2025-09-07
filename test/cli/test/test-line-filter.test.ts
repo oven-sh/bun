@@ -153,7 +153,7 @@ describe("outer", () => {
 
     // Test edge case: file:1:999 should use line 1, not 999 (which would be invalid)
     const result4 = await runTestWithOutput([`./path-formats.test.ts:1:999`], cwd);
-    expect(result4.stderr).toContain("no tests found for file:line filters"); // Line 1 has no test
+    expect(result4.stderr).toContain("no tests found at the specified line"); // Line 1 has no test
     expect(result4.exitCode).toBe(1);
 
     // Test edge case: file:8:abc should fail entirely (not use line 8) because last part is invalid
@@ -202,7 +202,7 @@ describe("outer", () => {
     // Test valid line that doesn't match any test
     const result = await runTestWithOutput([`./edge-cases.test.ts:1`], cwd);
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("no tests found for file:line filters");
+    expect(result.stderr).toContain("no tests found at the specified line");
   });
 
   test("should handle multiple files and complex scenarios", async () => {

@@ -339,8 +339,7 @@ pub const TestRunner = struct {
     }
 
     pub fn getOrPutFile(this: *TestRunner, file_path: string) *DescribeScope {
-        const file_hash = @as(u32, @truncate(bun.hash(file_path)));
-        const entry = this.index.getOrPut(this.allocator, file_hash) catch unreachable;
+        const entry = this.index.getOrPut(this.allocator, @as(u32, @truncate(bun.hash(file_path)))) catch unreachable;
         if (entry.found_existing) {
             return this.files.items(.module_scope)[entry.value_ptr.*];
         }
@@ -352,7 +351,6 @@ pub const TestRunner = struct {
         };
         this.files.append(this.allocator, .{ .module_scope = scope, .source = logger.Source.initEmptyFile(file_path) }) catch unreachable;
         entry.value_ptr.* = file_id;
-
         return scope;
     }
 

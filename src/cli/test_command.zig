@@ -1731,16 +1731,18 @@ pub const TestCommand = struct {
                 reporter.printSummary();
             } else {
                 if (reporter.jest.hasTestLineFilter()) {
-                    Output.prettyError("<red>error<r><d>:<r> no tests found for file:line filters. Searched {d} file{s} (skipping {d} test{s}) ", .{
+                    Output.prettyError("<red>error<r><d>:<r> no tests found at the specified line{s}. Searched {d} file{s} (skipping {d} test{s}) ", .{
+                        if (reporter.jest.line_filters.count() == 1) "" else "s",
                         summary.files,
                         if (summary.files == 1) "" else "s",
                         summary.skipped_because_label,
                         if (summary.skipped_because_label == 1) "" else "s",
                     });
+                    Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
 
                     var iter = reporter.jest.line_filters.keyIterator();
                     while (iter.next()) |entry| {
-                        Output.prettyError("\n  <b>{s}<r>:{d}", .{ entry.path, entry.line });
+                        Output.prettyError("\n  {s}:<b>{d}<r>", .{ entry.path, entry.line });
                     }
                     Output.prettyError("\n", .{});
                 } else {
@@ -1751,8 +1753,8 @@ pub const TestCommand = struct {
                         summary.skipped_because_label,
                         if (summary.skipped_because_label == 1) "" else "s",
                     });
+                    Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
                 }
-                Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
             }
         }
 

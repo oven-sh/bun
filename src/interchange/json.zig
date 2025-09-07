@@ -969,7 +969,6 @@ const expect = std.testing.expect;
 const bun = @import("bun");
 const Environment = bun.Environment;
 const MutableString = bun.MutableString;
-const Output = bun.Output;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const js_printer = bun.js_printer;

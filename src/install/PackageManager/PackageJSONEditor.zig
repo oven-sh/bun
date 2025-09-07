@@ -401,7 +401,11 @@ pub fn edit(
         };
 
         if (options.add_trusted_dependencies) {
-            for (manager.trusted_deps_to_add_to_package_json.items, 0..) |trusted_package_name, i| {
+            // Iterate backwards to avoid index issues when removing items
+            var i: usize = manager.trusted_deps_to_add_to_package_json.items.len;
+            while (i > 0) {
+                i -= 1;
+                const trusted_package_name = manager.trusted_deps_to_add_to_package_json.items[i];
                 for (original_trusted_dependencies.items.slice()) |item| {
                     if (item.data == .e_string) {
                         if (item.data.e_string.eql(string, trusted_package_name)) {

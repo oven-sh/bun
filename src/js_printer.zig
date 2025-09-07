@@ -1828,8 +1828,9 @@ fn NewPrinter(
         }
 
         pub inline fn printPure(p: *Printer) void {
-            if (Environment.allow_assert) assert(p.options.print_dce_annotations);
-            p.printWhitespacer(ws("/* @__PURE__ */ "));
+            if (p.options.print_dce_annotations) {
+                p.printWhitespacer(ws("/* @__PURE__ */ "));
+            }
         }
 
         pub fn printStringLiteralEString(p: *Printer, str: *E.String, allow_backtick: bool) void {

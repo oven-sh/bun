@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 import { spawn as nodeSpawn } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
@@ -13,6 +11,10 @@ import {
   reportAnnotationToBuildKite,
   startGroup,
 } from "./utils.mjs";
+
+if (globalThis.Bun) {
+  await import("./glob-sources.mjs");
+}
 
 // https://cmake.org/cmake/help/latest/manual/cmake.1.html#generate-a-project-buildsystem
 const generateFlags = [

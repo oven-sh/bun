@@ -23,7 +23,7 @@ pub fn decompress(compressed_data: []const u8, output: *MutableString, allocator
             .windowBits = 15 + 32,
         },
     );
-    try reader.readAll();
+    try reader.readAll(true);
     reader.deinit();
 }
 

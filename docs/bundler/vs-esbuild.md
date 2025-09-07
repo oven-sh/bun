@@ -245,8 +245,8 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 ---
 
 - `--jsx-side-effects`
-- n/a
-- JSX is always assumed to be side-effect-free
+- `--jsx-side-effects`
+- Controls whether JSX expressions are marked as `/* @__PURE__ */` for dead code elimination. Default is `false` (JSX marked as pure).
 
 ---
 
@@ -617,7 +617,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `jsxSideEffects`
 - `jsxSideEffects`
-- Not supported in JS API, configure in `tsconfig.json`
+- Controls whether JSX expressions are marked as pure for dead code elimination
 
 ---
 

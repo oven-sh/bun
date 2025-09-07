@@ -443,9 +443,8 @@ pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us
                         }
                     }
                 },
-                else => {
-                    return;
-                },
+                // require is the same as prefer
+                .require, .prefer, .disable => {},
             }
         }
     } else {

@@ -3466,12 +3466,16 @@ void Process::emitOnNextTick(Zig::GlobalObject* globalObject, ASCIILiteral event
 extern "C" void Bun__Process__queueNextTick1(GlobalObject* globalObject, EncodedJSValue func, EncodedJSValue arg1)
 {
     auto process = globalObject->processObject();
-    process->queueNextTick(globalObject, JSValue::decode(func), JSValue::decode(arg1));
+    JSValue function = JSValue::decode(func);
+
+    process->queueNextTick(globalObject, function, JSValue::decode(arg1));
 }
 extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, EncodedJSValue func, EncodedJSValue arg1, EncodedJSValue arg2)
 {
     auto process = globalObject->processObject();
-    process->queueNextTick<2>(globalObject, JSValue::decode(func), { JSValue::decode(arg1), JSValue::decode(arg2) });
+    JSValue function = JSValue::decode(func);
+
+    process->queueNextTick<2>(globalObject, function, { JSValue::decode(arg1), JSValue::decode(arg2) });
 }
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)

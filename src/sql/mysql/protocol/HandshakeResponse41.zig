@@ -8,6 +8,7 @@ auth_response: Data,
 database: Data,
 auth_plugin_name: Data,
 connect_attrs: bun.StringHashMapUnmanaged([]const u8) = .{},
+sequence_id: u8,
 
 pub fn deinit(this: *HandshakeResponse41) void {
     this.username.deinit();
@@ -24,14 +25,14 @@ pub fn deinit(this: *HandshakeResponse41) void {
 }
 
 pub fn writeInternal(this: *HandshakeResponse41, comptime Context: type, writer: NewWriter(Context)) !void {
-    var packet = try writer.start(1);
+    var packet = try writer.start(this.sequence_id);
 
     this.capability_flags.CLIENT_CONNECT_ATTRS = this.connect_attrs.count() > 0;
 
     // Write client capabilities flags (4 bytes)
     const caps = this.capability_flags.toInt();
     try writer.int4(caps);
-    debug("Client capabilities: [{}] 0x{x:0>8}", .{ this.capability_flags, caps });
+    debug("Client capabilities: [{}] 0x{x:0>8} sequence_id: {d}", .{ this.capability_flags, caps, this.sequence_id });
 
     // Write max packet size (4 bytes)
     try writer.int4(this.max_packet_size);

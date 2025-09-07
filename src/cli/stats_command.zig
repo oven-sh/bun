@@ -11,6 +11,7 @@ const transpiler = @import("../transpiler.zig");
 const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
 const Graph = @import("../bundler/Graph.zig");
 const BundledAst = @import("../ast/BundledAst.zig");
+const ImportRecord = @import("../import_record.zig").ImportRecord;
 
 pub const StatsCommand = struct {
     const FileStats = struct {
@@ -227,16 +228,25 @@ pub const StatsCommand = struct {
             const index = source_index.get();
             if (index >= sources.len) continue;
             
+            // Skip the runtime file (index 0)
+            if (index == 0) continue;
+            
             const source = sources[index];
             const loader = loaders[index];
-            const imports = import_records[index];
-            const export_kind = exports_kind[index];
-            const named_export_map = named_exports[index];
-            const export_stars = export_star_import_records[index];
+            const imports = if (index < import_records.len) import_records[index] else ImportRecord.List{};
+            const export_kind = if (index < exports_kind.len) exports_kind[index] else .none;
+            const named_export_map = if (index < named_exports.len) named_exports[index] else bun.StringArrayHashMapUnmanaged(bun.ast.NamedExport){};
+            const export_stars = if (index < export_star_import_records.len) export_star_import_records[index] else &[_]u32{};
             
             // Get source content and path
             const source_contents = source.contents;
             const path_text = source.path.text;
+            
+            // Skip virtual files and bun: files
+            if (strings.hasPrefixComptime(path_text, "bun:") or 
+                strings.hasPrefixComptime(path_text, "node:") or
+                strings.hasPrefixComptime(path_text, "<") or
+                strings.eqlComptime(path_text, "bun")) continue;
             
             // Count lines and LOC
             const line_stats = countLinesAndLOC(source_contents);

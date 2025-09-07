@@ -137,7 +137,12 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
   describe("Value type checks", () => {
     it("correctly identifies Maps", async () => {
       await checkSameOutput("test_v8_value_type_checks", [new Map()]);
-      await checkSameOutput("test_v8_value_type_checks", [new Map([[1, 'a'], [2, 'b']])]);
+      await checkSameOutput("test_v8_value_type_checks", [
+        new Map([
+          [1, "a"],
+          [2, "b"],
+        ]),
+      ]);
     });
     it("correctly identifies Arrays", async () => {
       await checkSameOutput("test_v8_value_type_checks", [[]]);

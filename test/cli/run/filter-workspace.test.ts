@@ -508,11 +508,11 @@ describe("bun", () => {
   });
 
   describe("--stream flag", () => {
-    test("streams output immediately without buffering", () => {
+    test("streams output immediately without buffering", async () => {
       const dir = tempDirWithFiles("testworkspace-stream", {
         packages: {
           pkg1: {
-            "index.js": `console.log('pkg1-line1'); console.log('pkg1-line2'); console.log('pkg1-line3');`,
+            "index.js": `console.log('pkg1-line1'); await new Promise(r => setTimeout(r, 100)); console.log('pkg1-line2'); await new Promise(r => setTimeout(r, 100)); console.log('pkg1-line3');`,
             "package.json": JSON.stringify({
               name: "pkg1",
               scripts: {
@@ -521,7 +521,7 @@ describe("bun", () => {
             }),
           },
           pkg2: {
-            "index.js": `console.log('pkg2-line1'); console.log('pkg2-line2'); console.log('pkg2-line3');`,
+            "index.js": `console.log('pkg2-line1'); await new Promise(r => setTimeout(r, 100)); console.log('pkg2-line2'); await new Promise(r => setTimeout(r, 100)); console.log('pkg2-line3');`,
             "package.json": JSON.stringify({
               name: "pkg2",
               scripts: {
@@ -536,15 +536,43 @@ describe("bun", () => {
         }),
       });
 
-      const { exitCode, stdout, stderr } = spawnSync({
+      const proc = Bun.spawn({
         cwd: dir,
         cmd: [bunExe(), "run", "--filter", "*", "--stream", "test"],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
-
-      const output = stdout.toString();
+      
+      const td = new TextDecoder();
+      const reader = proc.stdout.getReader();
+      let output = "";
+      
+      // Prove we get a chunk before the process exits (streaming)
+      let firstChunk: Uint8Array | null = null;
+      const first = await Promise.race([
+        proc.exited.then(() => "exit"),
+        (async () => {
+          const r = await reader.read();
+          if (!r.done && r.value) {
+            firstChunk = r.value;
+            output += td.decode(r.value);
+            return "chunk";
+          }
+          return "done";
+        })(),
+      ]);
+      expect(first).toBe("chunk");
+      
+      // Drain remaining output
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        output += td.decode(value);
+      }
+      
+      const exitCode = await proc.exited;
+      
       // In stream mode, output should not have package name prefixes
       expect(output).toMatch(/pkg1-line1/);
       expect(output).toMatch(/pkg1-line2/);
@@ -555,6 +583,8 @@ describe("bun", () => {
       // Should not have the package name prefixes that appear in non-stream mode
       expect(output).not.toMatch(/pkg1 test:/);
       expect(output).not.toMatch(/pkg2 test:/);
+      // No elision UI in stream mode
+      expect(output).not.toMatch(/lines elided/);
       expect(exitCode).toBe(0);
     });
 

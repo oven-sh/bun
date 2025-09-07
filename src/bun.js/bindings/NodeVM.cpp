@@ -19,6 +19,7 @@
 
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JavaScriptCore/FunctionConstructor.h"
+#include "JavaScriptCore/GlobalObjectMethodTable.h"
 #include "JavaScriptCore/HeapAnalyzer.h"
 
 #include "JavaScriptCore/JSDestructibleObjectHeapCellType.h"
@@ -65,6 +66,7 @@
 
 namespace Bun {
 using namespace WebCore;
+using JSGlobalObject = JSC::JSGlobalObject;
 
 static JSInternalPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, JSC::JSValue parameters, const JSC::SourceOrigin& sourceOrigin);
 
@@ -702,7 +704,7 @@ void NodeVMSpecialSandbox::finishCreation(VM& vm)
 const JSC::ClassInfo NodeVMSpecialSandbox::s_info = { "NodeVMSpecialSandbox"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMSpecialSandbox) };
 
 NodeVMGlobalObject::NodeVMGlobalObject(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions contextOptions, JSValue importer)
-    : Base(vm, structure, &globalObjectMethodTable())
+    : Base(vm, structure) // Don't override method table
     , m_dynamicImportCallback(vm, this, importer)
     , m_contextOptions(contextOptions)
 {
@@ -734,34 +736,36 @@ Structure* NodeVMGlobalObject::createStructure(JSC::VM& vm, JSC::JSValue prototy
     return JSC::Structure::create(vm, nullptr, prototype, JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags & ~IsImmutablePrototypeExoticObject), info());
 }
 
-const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable()
-{
-    static const JSC::GlobalObjectMethodTable table {
-        &supportsRichSourceInfo,
-        &shouldInterruptScript,
-        &javaScriptRuntimeFlags,
-        nullptr, // queueTaskToEventLoop
-        nullptr, // shouldInterruptScriptBeforeTimeout,
-        &moduleLoaderImportModule,
-        nullptr, // moduleLoaderResolve
-        nullptr, // moduleLoaderFetch
-        nullptr, // moduleLoaderCreateImportMetaProperties
-        nullptr, // moduleLoaderEvaluate
-        nullptr, // promiseRejectionTracker
-        &reportUncaughtExceptionAtEventLoop,
-        &currentScriptExecutionOwner,
-        &scriptExecutionStatus,
-        nullptr, // reportViolationForUnsafeEval
-        nullptr, // defaultLanguage
-        nullptr, // compileStreaming
-        nullptr, // instantiateStreaming
-        nullptr,
-        &codeForEval,
-        &canCompileStrings,
-        &trustedScriptStructure,
-    };
-    return table;
-}
+// const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable()
+// {
+//     // Just copy exactly what ZigGlobalObject does - don't define any functions,
+//     // just reference them and let the linker find them
+//     static const JSC::GlobalObjectMethodTable table {
+//         nullptr, // supportsRichSourceInfo
+//         nullptr, // shouldInterruptScript
+//         nullptr, // javaScriptRuntimeFlags
+//         nullptr, // queueTaskToEventLoop
+//         nullptr, // shouldInterruptScriptBeforeTimeout,
+//         &moduleLoaderImportModule, // Override for module imports
+//         nullptr, // moduleLoaderResolve
+//         nullptr, // moduleLoaderFetch
+//         nullptr, // moduleLoaderCreateImportMetaProperties
+//         nullptr, // moduleLoaderEvaluate
+//         nullptr, // promiseRejectionTracker
+//         nullptr, // reportUncaughtExceptionAtEventLoop
+//         nullptr, // currentScriptExecutionOwner
+//         nullptr, // scriptExecutionStatus
+//         nullptr, // reportViolationForUnsafeEval
+//         nullptr, // defaultLanguage
+//         nullptr, // compileStreaming
+//         nullptr, // instantiateStreaming
+//         nullptr, // deriveShadowRealmGlobalObject
+//         nullptr, // codeForEval
+//         nullptr, // canCompileStrings
+//         nullptr  // trustedScriptStructure
+//     };
+//     return table;
+// }
 
 void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
 {

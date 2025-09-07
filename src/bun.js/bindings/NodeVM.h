@@ -111,7 +111,7 @@ public:
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
     static NodeVMGlobalObject* create(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions options, JSValue importer);
     static Structure* createStructure(JSC::VM& vm, JSC::JSValue prototype);
-    static const JSC::GlobalObjectMethodTable& globalObjectMethodTable();
+    // static const JSC::GlobalObjectMethodTable& globalObjectMethodTable();
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;

@@ -1,6 +1,5 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "path";
 
 test("bun stats - basic functionality", async () => {
   using dir = tempDir("stats-test", {
@@ -18,15 +17,11 @@ test("bun stats - basic functionality", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stderr).toBe("");
-  
+
   // Check that the output contains expected sections
   expect(stdout).toContain("JavaScript");
   expect(stdout).toContain("ES modules");
@@ -52,15 +47,11 @@ test("bun stats - with TypeScript files", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stderr).toBe("");
-  
+
   // Check TypeScript stats
   expect(stdout).toContain("TypeScript");
   expect(stdout).toContain("Tests");
@@ -82,15 +73,11 @@ test("bun stats - handles CommonJS and ES modules", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stderr).toBe("");
-  
+
   // Check module type detection
   expect(stdout).toContain("CommonJS modules");
   expect(stdout).toContain("ES modules");
@@ -116,10 +103,7 @@ test("bun stats - counts imports and exports", async () => {
     stderr: "pipe",
   });
 
-  const [stdout] = await Promise.all([
-    proc.stdout.text(),
-    proc.exited,
-  ]);
+  const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   // Should count imports and exports - check the table contains expected values
   expect(stdout).toContain("|       3 |       2 |");
@@ -133,11 +117,7 @@ test("bun stats --help", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stderr).toBe("");

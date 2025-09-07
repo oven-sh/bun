@@ -1300,7 +1300,7 @@ pub const Command = struct {
                         \\Analyzes JavaScript, TypeScript, CSS, and JSON files.
                         \\
                     ;
-                    
+
                     Output.pretty(intro_text, .{});
                     Output.flush();
                 },

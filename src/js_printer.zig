@@ -2733,12 +2733,12 @@ fn NewPrinter(
 
                             if (inlined_value) |value| {
                                 if (replaced.items.len == 0) {
-                                    bun.handleOom(replaced.appendSlice(e.parts[0..i]));
+                                    try replaced.appendSlice(e.parts[0..i]);
                                 }
                                 part.value = value;
-                                bun.handleOom(replaced.append(part));
+                                try replaced.append(part);
                             } else if (replaced.items.len > 0) {
-                                bun.handleOom(replaced.append(part));
+                                try replaced.append(part);
                             }
                         }
 
@@ -3042,7 +3042,7 @@ fn NewPrinter(
                         }
 
                         // Only allocate heap memory on the stack for nested binary expressions
-                        bun.handleOom(p.binary_expression_stack.append(v));
+                        try p.binary_expression_stack.append(v);
                         v = BinaryExpressionVisitor{
                             .e = left_binary.?,
                             .level = v.left_level,

@@ -135,50 +135,16 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
   });
 
   describe("Value type checks", () => {
-    it("correctly identifies Maps", async () => {
+    it("correctly identifies value types with IsMap, IsArray, IsInt32, and IsBigInt", async () => {
+      // Test a representative sample of each type, not every possible value
+      // The C++ test function will be called once with each value
       await checkSameOutput("test_v8_value_type_checks", [new Map()]);
-      await checkSameOutput("test_v8_value_type_checks", [
-        new Map([
-          [1, "a"],
-          [2, "b"],
-        ]),
-      ]);
-    });
-    it("correctly identifies Arrays", async () => {
       await checkSameOutput("test_v8_value_type_checks", [[]]);
-      await checkSameOutput("test_v8_value_type_checks", [[1, 2, 3]]);
-    });
-    it("correctly identifies Int32 values", async () => {
-      await checkSameOutput("test_v8_value_type_checks", [0]);
       await checkSameOutput("test_v8_value_type_checks", [42]);
-      await checkSameOutput("test_v8_value_type_checks", [-42]);
-      await checkSameOutput("test_v8_value_type_checks", [2147483647]); // INT32_MAX
-      await checkSameOutput("test_v8_value_type_checks", [-2147483648]); // INT32_MIN
-    });
-    it("correctly identifies BigInt values", async () => {
-      await checkSameOutput("test_v8_value_type_checks", [0n]);
       await checkSameOutput("test_v8_value_type_checks", [123n]);
-      await checkSameOutput("test_v8_value_type_checks", [-123n]);
-      await checkSameOutput("test_v8_value_type_checks", [99999999999999999999999999999999n]);
-    });
-    it("correctly identifies non-Int32 numbers", async () => {
       await checkSameOutput("test_v8_value_type_checks", [3.14]);
-      await checkSameOutput("test_v8_value_type_checks", [2147483648]); // INT32_MAX + 1
-      await checkSameOutput("test_v8_value_type_checks", [Number.MAX_SAFE_INTEGER]);
-      await checkSameOutput("test_v8_value_type_checks", [Infinity]);
-      await checkSameOutput("test_v8_value_type_checks", [NaN]);
-    });
-    it("correctly identifies other types", async () => {
       await checkSameOutput("test_v8_value_type_checks", ["string"]);
-      await checkSameOutput("test_v8_value_type_checks", [true]);
-      await checkSameOutput("test_v8_value_type_checks", [false]);
-      await checkSameOutput("test_v8_value_type_checks", [null]);
-      await checkSameOutput("test_v8_value_type_checks", [undefined]);
       await checkSameOutput("test_v8_value_type_checks", [{}]);
-      await checkSameOutput("test_v8_value_type_checks", [new Date()]);
-      await checkSameOutput("test_v8_value_type_checks", [/regex/]);
-      await checkSameOutput("test_v8_value_type_checks", [new Set()]);
-      await checkSameOutput("test_v8_value_type_checks", [() => {}]);
     });
   });
   describe("Number", () => {

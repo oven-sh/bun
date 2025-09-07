@@ -5559,7 +5559,7 @@ pub fn getSourceMapBuilder(
     opts: Options,
     source: *const logger.Source,
     tree: *const Ast,
-) SourceMap.Chunk.Builder {
+) OOM!SourceMap.Chunk.Builder {
     if (comptime generate_source_map == .disable)
         return undefined;
 
@@ -5572,7 +5572,7 @@ pub fn getSourceMapBuilder(
         .approximate_input_line_count = tree.approximate_newline_count,
         .prepend_count = is_bun_platform and generate_source_map == .lazy,
         .line_offset_tables = opts.line_offset_tables orelse brk: {
-            if (generate_source_map == .lazy) break :brk SourceMap.LineOffsetTable.generate(
+            if (generate_source_map == .lazy) break :brk try SourceMap.LineOffsetTable.generate(
                 opts.source_map_allocator orelse opts.allocator,
                 source.contents,
                 @as(
@@ -5685,7 +5685,7 @@ pub fn printAst(
         tree.import_records.slice(),
         opts,
         renamer,
-        getSourceMapBuilder(if (generate_source_map) .lazy else .disable, ascii_only, opts, source, &tree),
+        try getSourceMapBuilder(if (generate_source_map) .lazy else .disable, ascii_only, opts, source, &tree),
     );
     defer {
         if (comptime generate_source_map) {
@@ -5880,7 +5880,7 @@ pub fn printWithWriterAndPlatform(
         import_records,
         opts,
         renamer,
-        getSourceMapBuilder(if (generate_source_maps) .eager else .disable, is_bun_platform, opts, source, &ast),
+        try getSourceMapBuilder(if (generate_source_maps) .eager else .disable, is_bun_platform, opts, source, &ast),
     );
     printer.was_lazy_export = ast.has_lazy_export;
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
@@ -5956,7 +5956,7 @@ pub fn printCommonJS(
         tree.import_records.slice(),
         opts,
         renamer.toRenamer(),
-        getSourceMapBuilder(if (generate_source_map) .lazy else .disable, false, opts, source, &tree),
+        try getSourceMapBuilder(if (generate_source_map) .lazy else .disable, false, opts, source, &tree),
     );
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());

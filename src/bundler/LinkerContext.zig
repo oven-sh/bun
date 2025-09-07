@@ -98,7 +98,7 @@ pub const LinkerContext = struct {
 
                 const worker = ThreadPool.Worker.get(@fieldParentPtr("linker", task.ctx));
                 defer worker.unget();
-                SourceMapData.computeLineOffsets(task.ctx, worker.allocator, task.source_index);
+                bun.handleOom(SourceMapData.computeLineOffsets(task.ctx, worker.allocator, task.source_index));
             }
 
             pub fn runQuotedSourceContents(thread_task: *ThreadPoolLib.Task) void {
@@ -124,7 +124,7 @@ pub const LinkerContext = struct {
             }
         };
 
-        pub fn computeLineOffsets(this: *LinkerContext, alloc: std.mem.Allocator, source_index: Index.Int) void {
+        pub fn computeLineOffsets(this: *LinkerContext, alloc: std.mem.Allocator, source_index: Index.Int) bun.OOM!void {
             debug("Computing LineOffsetTable: {d}", .{source_index});
             const line_offset_table: *bun.sourcemap.LineOffsetTable.List = &this.graph.files.items(.line_offset_table)[source_index];
 
@@ -139,7 +139,7 @@ pub const LinkerContext = struct {
 
             const approximate_line_count = this.graph.ast.items(.approximate_newline_count)[source_index];
 
-            line_offset_table.* = bun.sourcemap.LineOffsetTable.generate(
+            line_offset_table.* = try bun.sourcemap.LineOffsetTable.generate(
                 alloc,
                 source.contents,
 

@@ -154,7 +154,7 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
     RETURN_IF_EXCEPTION(scope, {});
     requireMap->remove(globalObject, moduleIdValue);
     RETURN_IF_EXCEPTION(scope, {});
-    
+
     auto* esmRegistry = global->esmRegistryMap();
     RETURN_IF_EXCEPTION(scope, {});
     esmRegistry->remove(globalObject, moduleIdValue);

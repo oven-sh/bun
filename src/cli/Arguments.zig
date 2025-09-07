@@ -401,7 +401,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 };
             }
         }
-        
+
         ctx.bundler_options.stream_logs = args.flag("--stream");
     }
 
@@ -1144,7 +1144,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 };
             }
         }
-        
+
         ctx.bundler_options.stream_logs = args.flag("--stream");
 
         if (opts.define) |define| {

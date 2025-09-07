@@ -165,6 +165,7 @@ bun run --filter 'ba*' <script>
 will execute `<script>` in both `bar` and `baz`, but not in `foo`.
 
 When using `--filter`, you can control the output display with:
+
 - `--elide-lines <number>`: Limit the number of output lines shown per package (default: 10, use 0 for no limit)
 - `--stream`: Stream output immediately without buffering or formatting (similar to pnpm's `--stream`)
 

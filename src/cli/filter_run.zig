@@ -560,12 +560,12 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         Output.prettyErrorln("<r><red>error<r>: --stream and --elide-lines cannot be used together", .{});
         Global.exit(1);
     }
-    
+
     // When --stream is set, disable pretty output
     if (state.stream_logs) {
         state.pretty_output = false;
     }
-    
+
     // Check if elide-lines is used in a non-terminal environment
     if (ctx.bundler_options.elide_lines != null and !state.pretty_output) {
         Output.prettyErrorln("<r><red>error<r>: --elide-lines is only supported in terminal environments", .{});

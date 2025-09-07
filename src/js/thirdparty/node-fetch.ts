@@ -145,7 +145,13 @@ class Request extends WebRequest {
  * like `.json()` or `.text()`, which is faster in Bun's native fetch, vs `node-fetch` going
  * through `node:http`, a node stream, then processing the data.
  */
-async function fetch(url: any, init?: RequestInit & { body?: any }) {
+async function fetch(
+  // eslint-disable-next-line no-unused-vars
+  url: any,
+
+  // eslint-disable-next-line no-unused-vars
+  init?: RequestInit & { body?: any },
+) {
   // Since `body` accepts async iterables
   // We don't need to convert the Readable body into a ReadableStream.
   const response = await nativeFetch.$apply(undefined, arguments);

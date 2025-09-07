@@ -543,11 +543,11 @@ describe("bun", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      
+
       const td = new TextDecoder();
       const reader = proc.stdout.getReader();
       let output = "";
-      
+
       // Prove we get a chunk before the process exits (streaming)
       let firstChunk: Uint8Array | null = null;
       const first = await Promise.race([
@@ -563,16 +563,16 @@ describe("bun", () => {
         })(),
       ]);
       expect(first).toBe("chunk");
-      
+
       // Drain remaining output
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
         output += td.decode(value);
       }
-      
+
       const exitCode = await proc.exited;
-      
+
       // In stream mode, output should not have package name prefixes
       expect(output).toMatch(/pkg1-line1/);
       expect(output).toMatch(/pkg1-line2/);

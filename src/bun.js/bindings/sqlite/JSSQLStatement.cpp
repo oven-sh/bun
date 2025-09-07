@@ -160,7 +160,7 @@ static constexpr int MAX_SQLITE_PREPARE_FLAG = SQLITE_PREPARE_PERSISTENT | SQLIT
 static inline JSC::JSValue jsNumberFromSQLite(sqlite3_stmt* stmt, unsigned int i)
 {
     int64_t num = sqlite3_column_int64(stmt, i);
-    return num > INT_MAX || num < INT_MIN ? JSC::jsNumber(static_cast<double>(num)) : JSC::jsNumber(static_cast<int>(num));
+    return JSC::jsNumber(num);
 }
 
 static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject, sqlite3_stmt* stmt, unsigned int i)

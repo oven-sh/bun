@@ -544,7 +544,7 @@ pub export fn napi_get_prototype(env_: napi_env, object_: napi_value, result_: ?
 pub extern fn napi_set_element(env_: napi_env, object_: napi_value, index: c_uint, value_: napi_value) napi_status;
 pub extern fn napi_has_element(env_: napi_env, object_: napi_value, index: c_uint, result_: ?*bool) napi_status;
 pub extern fn napi_get_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status;
-pub extern fn napi_delete_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status;
+pub extern fn napi_delete_element(env: napi_env, object: napi_value, index: u32, result: *bool) napi_status;
 pub extern fn napi_define_properties(env: napi_env, object: napi_value, property_count: usize, properties: [*c]const napi_property_descriptor) napi_status;
 pub export fn napi_is_array(env_: napi_env, value_: napi_value, result_: ?*bool) napi_status {
     log("napi_is_array", .{});

@@ -2735,6 +2735,7 @@ extern "C" napi_status napi_call_function(napi_env env, napi_value recv,
     }
 
     NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, recv);
     NAPI_RETURN_EARLY_IF_FALSE(env, argc == 0 || argv, napi_invalid_arg);
     NAPI_CHECK_ARG(env, func);
     JSValue funcValue = toJS(func);

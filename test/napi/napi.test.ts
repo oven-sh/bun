@@ -630,6 +630,35 @@ describe("cleanup hooks", () => {
     });
   });
 
+  describe("napi_strict_equals", () => {
+    it("should match JavaScript === operator behavior", async () => {
+      const output = await checkSameOutput("test_napi_strict_equals", []);
+      expect(output).toContain("PASS: NaN !== NaN");
+      expect(output).toContain("PASS: -0 === 0");
+      expect(output).toContain("PASS: 42 === 42");
+      expect(output).toContain("PASS: 42 !== 43");
+      expect(output).not.toContain("FAIL");
+    });
+  });
+
+  describe("napi_call_function", () => {
+    it("should handle null recv parameter consistently", async () => {
+      const output = await checkSameOutput("test_napi_call_function_recv_null", []);
+      expect(output).toContain("PASS");
+      expect(output).toContain("napi_call_function with valid recv succeeded");
+      expect(output).not.toContain("FAIL");
+    });
+  });
+
+  describe("napi_create_array_with_length", () => {
+    it("should handle boundary values consistently", async () => {
+      const output = await checkSameOutput("test_napi_create_array_boundary", []);
+      expect(output).toContain("PASS");
+      expect(output).toContain("napi_create_array_with_length(10) created array with correct length");
+      expect(output).not.toContain("FAIL");
+    });
+  });
+
   describe("error handling", () => {
     it("removing non-existent env cleanup hook should not crash", async () => {
       // Test that removing non-existent hooks doesn't crash the process

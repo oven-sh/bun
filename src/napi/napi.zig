@@ -324,9 +324,11 @@ pub export fn napi_create_array_with_length(env_: napi_env, length: usize, resul
         return env.invalidArg();
     };
 
-    // JSC createEmptyArray takes u32
-    // Node and V8 convert out-of-bounds array sizes to 0
-    const len = std.math.cast(u32, length) orelse 0;
+    // https://github.com/nodejs/node/blob/14c68e3b536798e25f810ed7ae180a5cde9e47d3/deps/v8/src/api/api.cc#L8163-L8174
+    // size_t immediately cast to int as argument to Array::New, then min 0
+    const len_i64: i64 = @bitCast(length);
+    const len_i32: i32 = @truncate(len_i64);
+    const len: u32 = if (len_i32 > 0) @bitCast(len_i32) else 0;
 
     const array = jsc.JSValue.createEmptyArray(env.toJS(), len) catch return env.setLastError(.pending_exception);
     array.ensureStillAlive();
@@ -583,8 +585,7 @@ pub export fn napi_strict_equals(env_: napi_env, lhs_: napi_value, rhs_: napi_va
         return env.invalidArg();
     };
     const lhs, const rhs = .{ lhs_.get(), rhs_.get() };
-    // TODO: this needs to be strictEquals not isSameValue (NaN !== NaN and -0 === 0)
-    result.* = lhs.isSameValue(rhs, env.toJS()) catch return env.setLastError(.pending_exception);
+    result.* = lhs.isStrictEqual(rhs, env.toJS()) catch return env.setLastError(.pending_exception);
     return env.ok();
 }
 pub extern fn napi_call_function(env: napi_env, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status;

@@ -545,7 +545,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                                 if (js.source_map) |*source_map| {
                                     bun.assert(html_route_bundle_index == null); // suspect behind #17956
                                     if (source_map.chunk.buffer.len() > 0) {
-                                        break :blk .{ .some = PackedMap.newNonEmpty(
+                                        break :blk .{ .some = try PackedMap.newNonEmpty(
                                             source_map.chunk,
                                             source_map.escaped_source.take().?,
                                         ) };

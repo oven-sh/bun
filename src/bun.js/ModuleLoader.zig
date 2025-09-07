@@ -1816,7 +1816,6 @@ pub export fn Bun__transpileFile(
                     bun.assert(promise != null);
                     return promise;
                 },
-                error.PluginError => return null,
                 error.JSError => {
                     ret.* = jsc.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError));
                     return null;
@@ -1992,7 +1991,6 @@ export fn Bun__transpileVirtualModule(
             FetchFlags.transpile,
         ) catch |err| {
             switch (err) {
-                error.PluginError => return true,
                 error.JSError => {
                     ret.* = jsc.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError));
                     return true;

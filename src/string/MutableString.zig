@@ -240,8 +240,8 @@ pub inline fn lenI(self: *MutableString) i32 {
     return @as(i32, @intCast(self.list.items.len));
 }
 
-pub fn toOwnedSlice(self: *MutableString) []u8 {
-    return bun.handleOom(self.list.toOwnedSlice(self.allocator)); // TODO
+pub fn toOwnedSlice(self: *MutableString) bun.OOM![]u8 {
+    return self.list.toOwnedSlice(self.allocator);
 }
 
 pub fn toDynamicOwned(self: *MutableString) DynamicOwned([]u8) {
@@ -249,9 +249,9 @@ pub fn toDynamicOwned(self: *MutableString) DynamicOwned([]u8) {
 }
 
 /// `self.allocator` must be `bun.default_allocator`.
-pub fn toDefaultOwned(self: *MutableString) Owned([]u8) {
+pub fn toDefaultOwned(self: *MutableString) bun.OOM!Owned([]u8) {
     bun.safety.alloc.assertEq(self.allocator, bun.default_allocator);
-    return .fromRaw(self.toOwnedSlice());
+    return .fromRaw(try self.toOwnedSlice());
 }
 
 pub fn slice(self: *MutableString) []u8 {
@@ -273,7 +273,7 @@ pub fn sliceWithSentinel(self: *MutableString) [:0]u8 {
     return self.list.items[0 .. self.list.items.len - 1 :0];
 }
 
-pub fn toOwnedSliceLength(self: *MutableString, length: usize) string {
+pub fn toOwnedSliceLength(self: *MutableString, length: usize) bun.OOM!string {
     self.list.items.len = length;
     return self.toOwnedSlice();
 }

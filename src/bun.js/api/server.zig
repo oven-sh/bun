@@ -1828,7 +1828,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 bun.Global.BunInfo.generate(*Transpiler, &jsc.VirtualMachine.get().transpiler, allocator) catch unreachable,
                 source,
                 .{ .mangled_props = null },
-            ) catch unreachable;
+            ) catch |err| switch (err) {
+                error.OutOfMemory => unreachable, // TODO
+                error.StackOverflow => unreachable, // TODO
+            };
 
             resp.writeStatus("200 OK");
             resp.writeHeader("Content-Type", MimeType.json.value);

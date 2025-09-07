@@ -2648,7 +2648,7 @@ fn NewLexer_(
             lexer.rescan_close_brace_as_template_token = false;
         }
 
-        pub fn rawTemplateContents(noalias lexer: *LexerType) string {
+        pub fn rawTemplateContents(noalias lexer: *LexerType) bun.OOM!string {
             lexer.assertNotJSON();
 
             var text: string = undefined;
@@ -2675,7 +2675,7 @@ fn NewLexer_(
             // them. <CR><LF> and <CR> LineTerminatorSequences are normalized to
             // <LF> for both TV and TRV. An explicit EscapeSequence is needed to
             // include a <CR> or <CR><LF> sequence.
-            var bytes = bun.handleOom(MutableString.initCopy(lexer.allocator, text));
+            var bytes = try MutableString.initCopy(lexer.allocator, text);
             var end: usize = 0;
             var i: usize = 0;
             var c: u8 = '0';

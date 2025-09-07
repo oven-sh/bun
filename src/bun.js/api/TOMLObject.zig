@@ -45,8 +45,9 @@ pub fn parse(
         .{
             .mangled_props = null,
         },
-    ) catch {
-        return globalThis.throwValue(try log.toJS(globalThis, default_allocator, "Failed to print toml"));
+    ) catch |err| return switch (err) {
+        error.OutOfMemory => |oom| oom,
+        error.StackOverflow => globalThis.throwStackOverflow(),
     };
 
     const slice = writer.ctx.buffer.slice();

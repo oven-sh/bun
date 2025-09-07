@@ -120,7 +120,7 @@ pub const LinkerContext = struct {
                 else
                     worker.allocator;
 
-                SourceMapData.computeQuotedSourceContents(task.ctx, alloc, task.source_index);
+                bun.handleOom(SourceMapData.computeQuotedSourceContents(task.ctx, alloc, task.source_index));
             }
         };
 
@@ -148,7 +148,7 @@ pub const LinkerContext = struct {
             );
         }
 
-        pub fn computeQuotedSourceContents(this: *LinkerContext, _: std.mem.Allocator, source_index: Index.Int) void {
+        pub fn computeQuotedSourceContents(this: *LinkerContext, _: std.mem.Allocator, source_index: Index.Int) bun.OOM!void {
             debug("Computing Quoted Source Contents: {d}", .{source_index});
             const quoted_source_contents = &this.graph.files.items(.quoted_source_contents)[source_index];
             quoted_source_contents.reset();
@@ -161,7 +161,7 @@ pub const LinkerContext = struct {
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
             var mutable = MutableString.initEmpty(bun.default_allocator);
             bun.handleOom(js_printer.quoteForJSON(source.contents, &mutable, false));
-            var mutableOwned = mutable.toDefaultOwned();
+            var mutableOwned = try mutable.toDefaultOwned();
             quoted_source_contents.* = mutableOwned.toOptional();
         }
     };

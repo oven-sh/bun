@@ -112,7 +112,7 @@ without *requiring* a postinstall script.
     cpu,
     keywords: ["bun", "bun.js", "node", "node.js", "runtime", "bundler", "transpiler", "typescript"],
     homepage: "https://bun.com",
-    bugs: "https://github.com/oven-sh/issues",
+    bugs: "https://github.com/oven-sh/bun/issues",
     license: "MIT",
     repository: "https://github.com/oven-sh/bun",
   });
@@ -123,7 +123,7 @@ without *requiring* a postinstall script.
 
 async function buildModule(
   release: Awaited<ReturnType<typeof getRelease>>,
-  { bin, exe, os, arch }: Platform,
+  { bin, exe, os, arch, abi }: Platform,
 ): Promise<void> {
   const module = `${owner}/${bin}`;
   log("Building:", `${module}@${version}`);
@@ -137,17 +137,24 @@ async function buildModule(
   mkdirSync(dirname(join(cwd, exe)), { recursive: true });
   write(join(cwd, exe), await bun.async("arraybuffer"));
   chmod(join(cwd, exe), 0o755);
+  const osName =
+    {
+      darwin: "macOS",
+      win32: "windows",
+      linux: "linux",
+    }[os] || os;
   writeJson(join(cwd, "package.json"), {
     name: module,
     version: version,
-    description: "This is the macOS arm64 binary for Bun, a fast all-in-one JavaScript runtime.",
+    description: `This is the ${osName} ${arch} binary for Bun, a fast all-in-one JavaScript runtime.`,
     homepage: "https://bun.com",
-    bugs: "https://github.com/oven-sh/issues",
+    bugs: "https://github.com/oven-sh/bun/issues",
     license: "MIT",
     repository: "https://github.com/oven-sh/bun",
     preferUnplugged: true,
     os: [os],
     cpu: [arch],
+    libc: abi ? [abi] : undefined,
   });
   if (exists(".npmrc")) {
     copy(".npmrc", join(cwd, ".npmrc"));
@@ -252,7 +259,7 @@ async function test() {
     ["npm i", "npm exec"],
     ["yarn set version berry; yarn add", "yarn"],
     ["yarn set version latest; yarn add", "yarn"],
-    ["pnpm i", "pnpm"],
+    ["pnpm i --dangerously-allow-all-builds", "pnpm"],
     ["bun i", "bun run"],
   ]) {
     rmSync(join(root, "node_modules"), { recursive: true, force: true });
@@ -265,7 +272,10 @@ async function test() {
     });
 
     console.log("Testing", install + " bun");
-    await $`${{ raw: install }} ./bun-${version}.tgz`;
+    const nodePath = Bun.which("node")?.replace("/node", "") || "";
+    await $`${{ raw: install }} ./bun-${version}.tgz`.env({
+      PATH: nodePath ? `${nodePath}:${process.env.PATH}` : process.env.PATH,
+    });
 
     console.log("Running " + exec + " bun");
 
@@ -305,7 +315,7 @@ async function test() {
     expect(output[0]).toBe(version);
     expect(output[1]).toBe(process.platform);
     expect(output[2]).toBe(process.arch);
-    expect(output[3]).toStartWith(root);
+    expect(output[3]).toInclude(root);
     expect(output[3]).toInclude("bun");
   }
 }

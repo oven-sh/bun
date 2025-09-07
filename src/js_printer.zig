@@ -833,7 +833,7 @@ fn NewPrinter(
                 .{ ptr[0..len], str, args },
             ) catch unreachable;
 
-            try p.writer.advance(written.len);
+            p.writer.advance(written.len);
         }
 
         pub fn printBuffer(p: *Printer, str: []const u8) OOM!void {
@@ -1446,7 +1446,7 @@ fn NewPrinter(
                     11...99 => {
                         const buf: *[2]u8 = (try p.writer.reserve(2))[0..2];
                         formatUnsignedIntegerBetween(2, buf, val);
-                        try p.writer.advance(2);
+                        p.writer.advance(2);
                     },
                     100 => {
                         try p.print("100");
@@ -1454,7 +1454,7 @@ fn NewPrinter(
                     101...999 => {
                         const buf: *[3]u8 = (try p.writer.reserve(3))[0..3];
                         formatUnsignedIntegerBetween(3, buf, val);
-                        try p.writer.advance(3);
+                        p.writer.advance(3);
                     },
 
                     1000 => {
@@ -1463,7 +1463,7 @@ fn NewPrinter(
                     1001...9999 => {
                         const buf: *[4]u8 = (try p.writer.reserve(4))[0..4];
                         formatUnsignedIntegerBetween(4, buf, val);
-                        try p.writer.advance(4);
+                        p.writer.advance(4);
                     },
                     10000 => {
                         try p.print("1e4");
@@ -1487,32 +1487,32 @@ fn NewPrinter(
                     10001...99999 => {
                         const buf: *[5]u8 = (try p.writer.reserve(5))[0..5];
                         formatUnsignedIntegerBetween(5, buf, val);
-                        try p.writer.advance(5);
+                        p.writer.advance(5);
                     },
                     100001...999999 => {
                         const buf: *[6]u8 = (try p.writer.reserve(6))[0..6];
                         formatUnsignedIntegerBetween(6, buf, val);
-                        try p.writer.advance(6);
+                        p.writer.advance(6);
                     },
                     1_000_001...9_999_999 => {
                         const buf: *[7]u8 = (try p.writer.reserve(7))[0..7];
                         formatUnsignedIntegerBetween(7, buf, val);
-                        try p.writer.advance(7);
+                        p.writer.advance(7);
                     },
                     10_000_001...99_999_999 => {
                         const buf: *[8]u8 = (try p.writer.reserve(8))[0..8];
                         formatUnsignedIntegerBetween(8, buf, val);
-                        try p.writer.advance(8);
+                        p.writer.advance(8);
                     },
                     100_000_001...999_999_999 => {
                         const buf: *[9]u8 = (try p.writer.reserve(9))[0..9];
                         formatUnsignedIntegerBetween(9, buf, val);
-                        try p.writer.advance(9);
+                        p.writer.advance(9);
                     },
                     1_000_000_001...9_999_999_999 => {
                         const buf: *[10]u8 = (try p.writer.reserve(10))[0..10];
                         formatUnsignedIntegerBetween(10, buf, val);
-                        try p.writer.advance(10);
+                        p.writer.advance(10);
                     },
                     else => try std.fmt.formatInt(val, 10, .lower, .{}, p),
                 }
@@ -5065,7 +5065,7 @@ fn NewPrinter(
                         else => {
                             try p.print("\\u");
                             var buf_ptr = try p.writer.reserve(4);
-                            try p.writer.advance(strings.encodeWTF8RuneT(buf_ptr[0..4], CodeUnitType, c));
+                            p.writer.advance(strings.encodeWTF8RuneT(buf_ptr[0..4], CodeUnitType, c));
                         },
                     }
                     continue;
@@ -5073,7 +5073,7 @@ fn NewPrinter(
 
                 {
                     var buf_ptr = try p.writer.reserve(4);
-                    try p.writer.advance(strings.encodeWTF8RuneT(buf_ptr[0..4], CodeUnitType, c));
+                    p.writer.advance(strings.encodeWTF8RuneT(buf_ptr[0..4], CodeUnitType, c));
                 }
             }
         }
@@ -5329,12 +5329,6 @@ fn NewPrinter(
     };
 }
 
-pub const WriteResult = struct {
-    off: u32,
-    len: usize,
-    end_off: u32,
-};
-
 pub fn NewWriter(
     comptime ContextType: type,
     comptime writeByte: fn (ctx: *ContextType, char: u8) OOM!usize,
@@ -5347,12 +5341,10 @@ pub fn NewWriter(
     return struct {
         const Self = @This();
         ctx: ContextType,
-        written: i32 = -1,
+        written: i64 = -1,
         // Used by the printer
         prev_char: u8 = 0,
         prev_prev_char: u8 = 0,
-        err: ?anyerror = null,
-        orig_err: ?anyerror = null,
 
         pub fn init(ctx: ContextType) Self {
             return .{
@@ -5380,16 +5372,6 @@ pub fn NewWriter(
             return this.ctx.slice();
         }
 
-        // pub fn getError(writer: *const Self) anyerror!void {
-        //     if (writer.orig_err) |orig_err| {
-        //         return orig_err;
-        //     }
-
-        //     if (writer.err) |err| {
-        //         return err;
-        //     }
-        // }
-
         pub inline fn prevChar(writer: *const Self) u8 {
             return @call(bun.callmod_inline, getLastByte, .{&writer.ctx});
         }
@@ -5402,26 +5384,20 @@ pub fn NewWriter(
             return try reserveNext(&writer.ctx, count);
         }
 
-        pub fn advance(writer: *Self, count: u64) OOM!void {
+        pub fn advance(writer: *Self, count: u64) void {
             advanceBy(&writer.ctx, count);
-            writer.written = std.math.add(i32, writer.written, @intCast(count)) catch {
-                return error.OutOfMemory;
-            };
+            writer.written += @intCast(count);
         }
 
         pub inline fn print(writer: *Self, comptime ValueType: type, str: ValueType) OOM!void {
             switch (ValueType) {
                 comptime_int, u16, u8 => {
                     const written = try writeByte(&writer.ctx, @as(u8, @intCast(str)));
-                    writer.written = std.math.add(i32, writer.written, @intCast(written)) catch {
-                        return error.OutOfMemory;
-                    };
+                    writer.written += @intCast(written);
                 },
                 else => {
                     const written = try writeAllFn(&writer.ctx, str);
-                    writer.written = std.math.add(i32, writer.written, @intCast(written)) catch {
-                        return error.OutOfMemory;
-                    };
+                    writer.written += @intCast(written);
                 },
             }
         }

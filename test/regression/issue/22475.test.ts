@@ -1,10 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("issue #22475: cookie.isExpired() should return true for Unix epoch (0)", () => {
-  const cookies = [
-    'a=; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
-    'b=; Expires=Thu, 01 Jan 1970 00:00:01 GMT'
-  ];
+  const cookies = ["a=; Expires=Thu, 01 Jan 1970 00:00:00 GMT", "b=; Expires=Thu, 01 Jan 1970 00:00:01 GMT"];
 
   const results = [];
   for (const _cookie of cookies) {
@@ -12,18 +9,18 @@ test("issue #22475: cookie.isExpired() should return true for Unix epoch (0)", (
     results.push({
       name: cookie.name,
       expires: cookie.expires,
-      isExpired: cookie.isExpired()
+      isExpired: cookie.isExpired(),
     });
   }
 
   // Cookie 'a' with Unix epoch (0) should be expired
-  expect(results[0].name).toBe('a');
+  expect(results[0].name).toBe("a");
   expect(results[0].expires).toBeDate();
   expect(results[0].expires?.getTime()).toBe(0);
   expect(results[0].isExpired).toBe(true);
 
   // Cookie 'b' with 1 second after Unix epoch should also be expired
-  expect(results[1].name).toBe('b');
+  expect(results[1].name).toBe("b");
   expect(results[1].expires).toBeDate();
   expect(results[1].expires?.getTime()).toBe(1000);
   expect(results[1].isExpired).toBe(true);

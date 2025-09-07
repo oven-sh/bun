@@ -1066,6 +1066,7 @@ pub const WindowsSpawnOptions = struct {
         verbatim_arguments: bool = false,
         hide_window: bool = true,
         loop: jsc.EventLoopHandle = undefined,
+        shell_enabled: bool = false,
     };
 
     pub const Stdio = union(enum) {
@@ -1528,6 +1529,37 @@ pub fn spawnProcessPosix(
     unreachable;
 }
 
+fn isWindowsBatchFile(path: []const u8) bool {
+    if (path.len < 4) return false;
+    
+    // Find the last dot to get the extension
+    var i = path.len;
+    while (i > 0) : (i -= 1) {
+        if (path[i - 1] == '.') break;
+    }
+    if (i == 0) return false;
+    
+    const ext = path[i - 1..];
+    
+    // Check for .bat or .cmd extensions (case-insensitive)
+    if (ext.len == 4) {
+        // .bat
+        if ((ext[1] == 'b' or ext[1] == 'B') and
+            (ext[2] == 'a' or ext[2] == 'A') and
+            (ext[3] == 't' or ext[3] == 'T')) {
+            return true;
+        }
+        // .cmd
+        if ((ext[1] == 'c' or ext[1] == 'C') and
+            (ext[2] == 'm' or ext[2] == 'M') and
+            (ext[3] == 'd' or ext[3] == 'D')) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
 pub fn spawnProcessWindows(
     options: *const WindowsSpawnOptions,
     argv: [*:null]?[*:0]const u8,
@@ -1541,6 +1573,13 @@ pub fn spawnProcessWindows(
     uv_process_options.args = argv;
     uv_process_options.env = envp;
     uv_process_options.file = options.argv0 orelse argv[0].?;
+    
+    // Security check: prevent direct execution of batch files without shell
+    // This prevents command injection vulnerabilities (similar to CVE-2024-27980)
+    const file_path = std.mem.sliceTo(uv_process_options.file, 0);
+    if (isWindowsBatchFile(file_path) and !options.windows.shell_enabled) {
+        return .{ .err = bun.sys.Error.fromCode(.INVAL, .uv_spawn) };
+    }
     uv_process_options.exit_cb = &Process.onExitUV;
     var stack_allocator = std.heap.stackFallback(8192, bun.default_allocator);
     const allocator = stack_allocator.get();

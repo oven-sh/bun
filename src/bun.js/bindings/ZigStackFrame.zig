@@ -62,10 +62,24 @@ pub const ZigStackFrame = extern struct {
                     if (strings.startsWith(source_slice, this.root_path)) {
                         source_slice = source_slice[this.root_path.len..];
                     }
+                    try writer.writeAll(source_slice);
+                }
+            } else {
+                if (this.enable_color) {
+                    if (strings.startsWith(source_slice, this.root_path)) {
+                        const relative_path = strings.withoutLeadingPathSeparator(source_slice[this.root_path.len..]);
+                        try writer.writeAll(comptime Output.prettyFmt("<d>", true));
+                        try writer.writeAll(this.root_path);
+                        try writer.writeAll(comptime Output.prettyFmt(std.fs.path.sep_str ++ "<r><cyan>", true));
+                        try writer.writeAll(relative_path);
+                    } else {
+                        try writer.writeAll(source_slice);
+                    }
+                } else {
+                    try writer.writeAll(source_slice);
                 }
             }
 
-            try writer.writeAll(source_slice);
             if (source_slice.len > 0 and (this.position.line.isValid() or this.position.column.isValid())) {
                 if (this.enable_color) {
                     try writer.writeAll(comptime Output.prettyFmt("<r><d>:", true));

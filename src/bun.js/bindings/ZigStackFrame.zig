@@ -66,7 +66,8 @@ pub const ZigStackFrame = extern struct {
                 }
             } else {
                 if (this.enable_color) {
-                    if (strings.hasPrefix(source_slice, this.root_path)) {
+                    const not_root = if (comptime bun.Environment.isWindows) this.root_path.len > "C:\\".len else this.root_path.len > "/".len;
+                    if (not_root and strings.startsWith(source_slice, this.root_path)) {
                         const relative_path = strings.withoutLeadingPathSeparator(source_slice[this.root_path.len..]);
                         try writer.writeAll(comptime Output.prettyFmt("<d>", true));
                         try writer.writeAll(this.root_path);

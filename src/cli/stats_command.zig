@@ -39,6 +39,7 @@ pub const StatsCommand = struct {
         stats: CategoryStats,
         allocator: std.mem.Allocator,
         workspace_packages: [][]const u8,
+        bun_apis_used: std.StringHashMap(u32),
     };
 
     fn countLinesAndLOC(content: []const u8) struct { lines: u32, loc: u32 } {
@@ -173,13 +174,60 @@ pub const StatsCommand = struct {
         });
     }
 
-    fn printSummary(stats: *const CategoryStats, workspace_count: usize, reachable_count: usize, source_size: u64) void {
+    fn printSummary(stats: *const CategoryStats, workspace_count: usize, _: usize, source_size: u64, elapsed_ms: u64, bun_apis: *std.StringHashMap(u32)) void {
         const code_loc = stats.total.loc -| stats.node_modules.loc -| stats.tests.loc;
         const test_loc = stats.tests.loc;
         const deps_loc = stats.node_modules.loc;
         
         Output.pretty("\n", .{});
-        Output.pretty("Files analyzed: {d}\n", .{reachable_count});
+        
+        // Speed flex message
+        Output.pretty("\n<green>✓<r> Analyzed <b>{d}<r> LOC across <b>{d}<r> files in <cyan>{d}ms<r>\n", .{
+            stats.total.loc,
+            stats.total.files,
+            elapsed_ms,
+        });
+        
+        // Bun rating
+        const bun_api_count = bun_apis.count();
+        const bun_rating = calculateBunRating(bun_api_count, stats.total.files);
+        
+        Output.pretty("\n", .{});
+        Output.pretty("<b>🐰 Bun Rating: {d}/10<r>", .{bun_rating});
+        
+        if (bun_api_count > 0) {
+            Output.pretty(" (using {d} Bun APIs", .{bun_api_count});
+            
+            // Show some of the APIs used
+            var iter = bun_apis.iterator();
+            var shown: usize = 0;
+            var api_list = std.ArrayList([]const u8).init(bun.default_allocator);
+            defer api_list.deinit();
+            
+            while (iter.next()) |entry| : (shown += 1) {
+                if (shown >= 3) break;
+                api_list.append(entry.key_ptr.*) catch break;
+            }
+            
+            if (api_list.items.len > 0) {
+                Output.pretty(": ", .{});
+                for (api_list.items, 0..) |api, i| {
+                    if (i > 0) Output.pretty(", ", .{});
+                    Output.pretty("{s}", .{api});
+                }
+                if (bun_api_count > 3) {
+                    Output.pretty(" +{d} more", .{bun_api_count - 3});
+                }
+            }
+            Output.pretty(")\n", .{});
+        } else {
+            Output.pretty(" <d>(not using any Bun APIs yet)<r>\n", .{});
+        }
+        
+        // Print rating message
+        printBunRatingMessage(bun_rating);
+        
+        Output.pretty("\n<d>─────────────────────────────────────<r>\n", .{});
         Output.pretty("Code LOC: {d}\n", .{code_loc});
         Output.pretty("Test LOC: {d}\n", .{test_loc});
         Output.pretty("Deps LOC: {d}\n", .{deps_loc});
@@ -195,6 +243,40 @@ pub const StatsCommand = struct {
         if (source_size > 0) {
             const size_mb = @as(f32, @floatFromInt(source_size)) / 1024.0 / 1024.0;
             Output.pretty("Total Source Size: {d:.1} MB\n", .{size_mb});
+        }
+    }
+    
+    fn calculateBunRating(bun_api_count: usize, total_files: u32) u8 {
+        if (total_files == 0) return 1;
+        
+        // Base rating on API usage density
+        const api_density = @as(f32, @floatFromInt(bun_api_count)) / @as(f32, @floatFromInt(total_files));
+        
+        // Rating scale (generous to encourage Bun usage)
+        if (bun_api_count == 0) return 1;
+        if (bun_api_count == 1) return 3;
+        if (bun_api_count <= 3) return 5;
+        if (bun_api_count <= 5) return 6;
+        if (bun_api_count <= 10) return 7;
+        if (bun_api_count <= 15) return 8;
+        if (api_density > 0.1) return 10; // Using Bun in >10% of files
+        if (bun_api_count > 15) return 9;
+        
+        return 7;
+    }
+    
+    fn printBunRatingMessage(rating: u8) void {
+        const message = switch (rating) {
+            1 => "<d>Time to discover the power of Bun! Try Bun.file() or Bun.spawn()<r>",
+            2, 3 => "<yellow>Getting started! Check out bun:sqlite and Bun.$ for more power<r>",
+            4, 5 => "<yellow>Nice! You're using Bun APIs. Try Bun.serve() for a fast HTTP server<r>",
+            6, 7 => "<green>Great Bun usage! Your code is getting faster<r>",
+            8, 9 => "<green>Excellent! You're leveraging Bun's full potential<r>",
+            10 => "<b><green>🔥 BUNTASTIC! Maximum Bun power achieved!<r>",
+            else => "",
+        };
+        if (message.len > 0) {
+            Output.pretty("{s}\n", .{message});
         }
     }
 
@@ -269,6 +351,29 @@ pub const StatsCommand = struct {
             // Count imports and exports
             const import_count: u32 = @intCast(imports.len);
             const export_count: u32 = @intCast(named_export_map.count() + export_stars.len);
+            
+            // Check for Bun API usage
+            for (imports.slice()) |import| {
+                if (import.path.text.len == 0) continue;
+                const import_path = import.path.text;
+                
+                // Check for Bun-specific imports
+                if (strings.hasPrefixComptime(import_path, "bun:") or
+                    strings.eqlComptime(import_path, "bun")) {
+                    const gop = try ctx.bun_apis_used.getOrPut(import_path);
+                    if (!gop.found_existing) {
+                        gop.value_ptr.* = 1;
+                    } else {
+                        gop.value_ptr.* += 1;
+                    }
+                }
+                
+                // Check for Bun global usage in the source
+                if (!is_node_modules and (std.mem.indexOf(u8, source_contents, "Bun.") != null or
+                    std.mem.indexOf(u8, source_contents, "Bun[") != null)) {
+                    _ = try ctx.bun_apis_used.getOrPut("Bun.*");
+                }
+            }
             
             var file_stats = FileStats{
                 .files = 1,
@@ -410,6 +515,8 @@ pub const StatsCommand = struct {
         const allocator = ctx.allocator;
         const log = ctx.log;
         
+        const start_time = std.time.nanoTimestamp();
+        
         // Set up the bundler context similar to build command
         ctx.args.target = .browser; // Default target for analysis
         ctx.args.packages = .bundle; // Bundle mode to analyze all files
@@ -430,8 +537,10 @@ pub const StatsCommand = struct {
             },
             .allocator = allocator,
             .workspace_packages = workspace_packages,
+            .bun_apis_used = std.StringHashMap(u32).init(allocator),
         };
         defer stats_ctx.stats.workspace_packages.deinit();
+        defer stats_ctx.bun_apis_used.deinit();
         
         // Initialize workspace package stats
         for (workspace_packages) |pkg| {
@@ -503,8 +612,13 @@ pub const StatsCommand = struct {
             }
         };
         
+        // Calculate elapsed time
+        const end_time = std.time.nanoTimestamp();
+        const elapsed_ns = @as(u64, @intCast(end_time - start_time));
+        const elapsed_ms = elapsed_ns / std.time.ns_per_ms;
+        
         // Print results
         printTable(&stats_ctx.stats, workspace_packages);
-        printSummary(&stats_ctx.stats, workspace_packages.len, reachable_file_count, source_code_size);
+        printSummary(&stats_ctx.stats, workspace_packages.len, reachable_file_count, source_code_size, elapsed_ms, &stats_ctx.bun_apis_used);
     }
 };

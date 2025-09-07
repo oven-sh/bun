@@ -1,5 +1,3 @@
-import type * as s from "stream";
-
 // Users may override the global fetch implementation, so we need to ensure these are the originals.
 const bindings = $cpp("NodeFetch.cpp", "createNodeFetchInternalBinding");
 const WebResponse: typeof globalThis.Response = bindings[0];

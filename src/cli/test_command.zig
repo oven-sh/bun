@@ -1344,7 +1344,6 @@ pub const TestCommand = struct {
                 .allocator = ctx.allocator,
                 .log = ctx.log,
                 .callback = undefined,
-                .test_options = &ctx.test_options,
                 .default_timeout_ms = ctx.test_options.default_timeout_ms,
                 .run_todo = ctx.test_options.run_todo,
                 .only = ctx.test_options.only,
@@ -1362,7 +1361,6 @@ pub const TestCommand = struct {
             },
             .callback = undefined,
         };
-
         reporter.callback = TestRunner.Callback{
             .onUpdateCount = CommandLineReporter.handleUpdateCount,
             .onTestStart = CommandLineReporter.handleTestStart,

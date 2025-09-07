@@ -142,7 +142,7 @@ pub const OutKind = union(enum) {
                     .capture = .{
                         .buf = cap,
                     },
-                } else .{
+                } else if (val.writer.fd.get()) |fd| .{
                     // Windows notes:
                     // Since `val.writer.fd` is `MovableFD`, it could
                     // technically be moved to libuv for ownership.
@@ -151,8 +151,8 @@ pub const OutKind = union(enum) {
                     // process, except to hand off to the subprocess when we
                     // spawn it, we don't really care if the file descriptor
                     // ends up being invalid.
-                    .fd = val.writer.fd.get().?,
-                };
+                    .fd = fd,
+                } else .ignore;
             },
             .pipe => .pipe,
             .ignore => .ignore,

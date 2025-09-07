@@ -7,6 +7,7 @@ on:
 
 jobs:
   check-and-update:
+    if: ${{ github.repository_owner == 'oven-sh' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -66,6 +67,8 @@ jobs:
           commit-message: "update(root_certs): Update root certificates $(date +'%Y-%m-%d')"
           title: "update(root_certs) $(date +'%Y-%m-%d')"
           body: |
+            ## What does this PR do?
+
             Automated root certificates update
 
             ${{ env.cert_output }}
@@ -74,9 +77,11 @@ jobs:
             ```
             ${{ env.changed_files }}
             ```
-          branch: certs/update-root-certs-${{ github.run_number }}
+
+            Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-root-certs.yml)
+          branch: certs/update-root-certs
           base: main
           delete-branch: true
-          labels:
-            - "automation"
-            - "root-certs"
+          labels: |
+            automation
+            root-certs

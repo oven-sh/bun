@@ -18,7 +18,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.2.18"
+          bun-version: "1.2.19"
 
       - name: Install dependencies (root)
         run: bun install

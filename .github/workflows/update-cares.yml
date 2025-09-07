@@ -7,6 +7,7 @@ on:
 
 jobs:
   check-update:
+    if: ${{ github.repository_owner == 'oven-sh' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -88,7 +89,8 @@ jobs:
           commit-message: "deps: update c-ares to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
           title: "deps: update c-ares to ${{ steps.check-version.outputs.tag }}"
           delete-branch: true
-          branch: deps/update-cares-${{ github.run_number }}
+          branch: deps/update-cares
+          labels: "automation"
           body: |
             ## What does this PR do?
 

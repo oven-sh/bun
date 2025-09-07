@@ -300,4 +300,4 @@ test("HTTPS over HTTP proxy preserves TLS record order with large bodies", async
     // recvd body size should exactly match the sent body size
     expect(result).toBe(String(size));
   }
-}, 30_000); // 30 seconds timeout for large uploads
+});

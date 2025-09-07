@@ -71,15 +71,6 @@ note: "duplicateConstDecl" was originally declared here
   }
 });
 
-function ansiRegex({ onlyFirst = false } = {}) {
-  const pattern = [
-    "[\\u001B\\u009B][[\\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]+)*|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)",
-    "(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]))",
-  ].join("|");
-
-  return new RegExp(pattern, onlyFirst ? undefined : "g");
-}
-const stripANSIColors = str => str.replace(ansiRegex(), "");
 const normalizeError = str => {
   // remove debug-only stack trace frames
   // like "at require (:1:21)"
@@ -133,12 +124,10 @@ test("Error inside minified file (color) ", () => {
     expect(
       // TODO: remove this workaround once snapshots work better
       normalizeError(
-        stripANSIColors(
-          Bun.inspect(e, { colors: true })
-            .replaceAll("\\", "/")
-            .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]")
-            .trim(),
-        ).trim(),
+        Bun.stripANSI(Bun.inspect(e, { colors: true }))
+          .replaceAll("\\", "/")
+          .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]")
+          .trim(),
       ),
     ).toMatchInlineSnapshot(`
       "21 | exports.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED=Z;

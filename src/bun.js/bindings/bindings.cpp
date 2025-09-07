@@ -3800,10 +3800,6 @@ void JSC__JSValue__forEach(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* ar
 {
     return JSC::JSValue::encode(JSC::jsEmptyString(arg0->vm()));
 }
-JSC::EncodedJSValue JSC__JSValue__jsNull()
-{
-    return JSC::JSValue::encode(JSC::jsNull());
-}
 [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSValue__jsNumberFromChar(unsigned char arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
@@ -4301,8 +4297,11 @@ JSC::EncodedJSValue JSC__JSValue__getErrorsProperty(JSC::EncodedJSValue JSValue0
     return JSC::JSValue::encode(obj->getDirect(global->vm(), global->vm().propertyNames->errors));
 }
 
-[[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSValue__jsTDZValue() { return JSC::JSValue::encode(JSC::jsTDZValue()); };
-JSC::EncodedJSValue JSC__JSValue__jsUndefined() { return JSC::JSValue::encode(JSC::jsUndefined()); };
+[[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSValue__jsTDZValue()
+{
+    return JSC::JSValue::encode(JSC::jsTDZValue());
+};
+
 JSC::JSObject* JSC__JSValue__toObject(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);

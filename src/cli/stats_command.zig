@@ -186,7 +186,7 @@ pub const StatsCommand = struct {
         // Process each reachable file
         for (result.reachable_files) |source_index| {
             const index = source_index.get();
-            
+
             // Comprehensive bounds checking for all arrays
             if (index >= sources.len or index >= loaders.len) continue;
 

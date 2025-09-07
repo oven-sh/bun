@@ -422,7 +422,7 @@ pub const StatsCommand = struct {
         const start_time = std.time.nanoTimestamp();
         
         // Set up the bundler context similar to build command
-        ctx.args.target = .browser; // Default target for analysis
+        ctx.args.target = .bun; // Use bun target to resolve test files and Bun-specific imports
         ctx.args.packages = .bundle; // Bundle mode to analyze all files
         
         // Get workspace packages
@@ -508,6 +508,11 @@ pub const StatsCommand = struct {
             &source_code_size,
             &scanner,
         ) catch |err| {
+            // Print any errors from the bundler
+            if (this_transpiler.log.hasErrors()) {
+                this_transpiler.log.print(Output.writer()) catch {};
+            }
+            
             // It's okay if bundling fails, we still collected stats
             if (err != error.BuildFailed) {
                 return err;

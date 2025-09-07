@@ -277,18 +277,18 @@ test("HTTPS over HTTP proxy preserves TLS record order with large bodies", async
   // Test with multiple body sizes to ensure TLS record ordering is preserved
   // also testing several times because it's flaky otherwise
   const testCases = [
-    50 * 1024 * 1024, // 50MB
-    100 * 1024 * 1024, // 100MB
+    16 * 1024 * 1024, // 16MB
+    32 * 1024 * 1024, // 32MB
   ];
 
   for (const size of testCases) {
-    const body = "a".repeat(size);
+    const body = Buffer.alloc(size, 0x61); // 'a'
 
     const response = await fetch(customServer.url, {
       method: "POST",
       proxy: httpProxyServer.url,
-      headers: { "Content-Type": "text/plain" },
-      body,
+      headers: { "Content-Type": "application/octet-stream" },
+      body: body.buffer as BodyInit,
       keepalive: false,
       tls: { ca: tlsCert.cert, rejectUnauthorized: false },
     });

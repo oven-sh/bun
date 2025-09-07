@@ -5,6 +5,10 @@ pub const StatsCommand = struct {
         loc: u32 = 0,
         imports: u32 = 0,
         exports: u32 = 0,
+        classes: u32 = 0,
+        functions: u32 = 0,
+        components: u32 = 0,
+        avg_size: u32 = 0,
     };
 
     const CategoryStats = struct {
@@ -18,6 +22,7 @@ pub const StatsCommand = struct {
         node_modules: FileStats = .{},
         workspace_packages: std.StringHashMap(FileStats),
         total: FileStats = .{},
+        components: u32 = 0,
     };
 
     const StatsContext = struct {
@@ -75,87 +80,106 @@ pub const StatsCommand = struct {
         dest.loc += src.loc;
         dest.imports += src.imports;
         dest.exports += src.exports;
+        dest.classes += src.classes;
+        dest.functions += src.functions;
+        dest.components += src.components;
+        // Recalculate average
+        if (dest.files > 0) {
+            dest.avg_size = dest.loc / dest.files;
+        }
     }
 
     fn printTable(stats: *const CategoryStats, workspace_package_names: []const []const u8) void {
-        _ = workspace_package_names; // TODO: implement workspace package stats
+        _ = workspace_package_names;
 
-        // Print header
-        Output.pretty("+{s:-<18}+{s:-<9}+{s:-<9}+{s:-<9}+{s:-<9}+{s:-<9}+\n", .{ "-", "-", "-", "-", "-", "-" });
-        Output.pretty("| {s:<16} | {s:>7} | {s:>7} | {s:>7} | {s:>7} | {s:>7} |\n", .{ "Name", "Files", "Lines", "LOC", "Imports", "Exports" });
-        Output.pretty("+{s:-<18}+{s:-<9}+{s:-<9}+{s:-<9}+{s:-<9}+{s:-<9}+\n", .{ "-", "-", "-", "-", "-", "-" });
+        // More compact table like rails stats
+        Output.pretty("+{s:-<22}+{s:-<8}+{s:-<8}+{s:-<8}+{s:-<9}+{s:-<9}+{s:-<9}+{s:-<7}+{s:-<7}+\n", .{ "-", "-", "-", "-", "-", "-", "-", "-", "-" });
+        Output.pretty("| {s:<20} | {s:>6} | {s:>6} | {s:>6} | {s:>7} | {s:>7} | {s:>7} | {s:>5} | {s:>5} |\n", .{ "Name", "Files", "Lines", "LOC", "Classes", "Methods", "Imports", "M/C", "LOC/M" });
+        Output.pretty("+{s:-<22}+{s:-<8}+{s:-<8}+{s:-<8}+{s:-<9}+{s:-<9}+{s:-<9}+{s:-<7}+{s:-<7}+\n", .{ "-", "-", "-", "-", "-", "-", "-", "-", "-" });
 
-        // Print rows
+        const printRow = struct {
+            fn print(name: []const u8, s: *const FileStats) void {
+                const methods_per_class: f32 = if (s.classes > 0) @as(f32, @floatFromInt(s.functions)) / @as(f32, @floatFromInt(s.classes)) else 0;
+                const loc_per_method: f32 = if (s.functions > 0) @as(f32, @floatFromInt(s.loc)) / @as(f32, @floatFromInt(s.functions)) else 0;
+                
+                Output.pretty("| {s:<20} | {d:>6} | {d:>6} | {d:>6} | {d:>7} | {d:>7} | {d:>7} | {d:>5.1} | {d:>5.0} |\n", .{ 
+                    name, 
+                    s.files, 
+                    s.lines, 
+                    s.loc, 
+                    s.classes,
+                    s.functions, 
+                    s.imports,
+                    methods_per_class,
+                    loc_per_method,
+                });
+            }
+        }.print;
+
+        // Language breakdown
         if (stats.typescript.files > 0) {
-            Output.pretty("| {s:<16} | {d:>7} | {d:>7} | {d:>7} | {d:>7} | {d:>7} |\n", .{ "TypeScript", stats.typescript.files, stats.typescript.lines, stats.typescript.loc, stats.typescript.imports, stats.typescript.exports });
+            printRow("TypeScript", &stats.typescript);
         }
 
         if (stats.javascript.files > 0) {
-            Output.pretty("| {s:<16} | {d:>7} | {d:>7} | {d:>7} | {d:>7} | {d:>7} |\n", .{ "JavaScript", stats.javascript.files, stats.javascript.lines, stats.javascript.loc, stats.javascript.imports, stats.javascript.exports });
+            printRow("JavaScript", &stats.javascript);
         }
 
-        if (stats.commonjs.files > 0) {
-            Output.pretty("| {s:<16} | {d:>7} | {d:>7} | {d:>7} | {d:>7} | {d:>7} |\n", .{ "CommonJS modules", stats.commonjs.files, stats.commonjs.lines, stats.commonjs.loc, stats.commonjs.imports, stats.commonjs.exports });
-        }
-
-        if (stats.esmodules.files > 0) {
-            Output.pretty("| {s:<16} | {d:>7} | {d:>7} | {d:>7} | {d:>7} | {d:>7} |\n", .{ "ES modules", stats.esmodules.files, stats.esmodules.lines, stats.esmodules.loc, stats.esmodules.imports, stats.esmodules.exports });
-        }
-
+        // Stylesheets
         if (stats.css.files > 0) {
-            Output.pretty("| {s:<16} | {d:>7} | {d:>7} | {d:>7} | {s:>7} | {s:>7} |\n", .{ "CSS", stats.css.files, stats.css.lines, stats.css.loc, "-", "-" });
+            var css_stats = stats.css;
+            css_stats.classes = 0;
+            css_stats.functions = 0;
+            css_stats.imports = 0;
+            printRow("Stylesheets", &css_stats);
         }
 
+        // Configuration
         if (stats.json.files > 0) {
-            Output.pretty("| {s:<16} | {d:>7} | {d:>7} | {d:>7} | {s:>7} | {s:>7} |\n", .{ "JSON", stats.json.files, stats.json.lines, stats.json.loc, "-", "-" });
+            var config_stats = stats.json;
+            config_stats.classes = 0;
+            config_stats.functions = 0;
+            config_stats.imports = 0;
+            printRow("Configuration", &config_stats);
         }
 
+        // Tests
         if (stats.tests.files > 0) {
-            Output.pretty("| {s:<16} | {d:>7} | {d:>7} | {d:>7} | {d:>7} | {d:>7} |\n", .{ "Tests", stats.tests.files, stats.tests.lines, stats.tests.loc, stats.tests.imports, stats.tests.exports });
+            printRow("Tests", &stats.tests);
         }
 
-        if (stats.node_modules.files > 0) {
-            Output.pretty("| {s:<16} | {d:>7} | {d:>7} | {d:>7} | {s:>7} | {s:>7} |\n", .{ "node_modules", stats.node_modules.files, stats.node_modules.lines, stats.node_modules.loc, "-", "-" });
+        // Print separator and totals
+        Output.pretty("+{s:-<22}+{s:-<8}+{s:-<8}+{s:-<8}+{s:-<9}+{s:-<9}+{s:-<9}+{s:-<7}+{s:-<7}+\n", .{ "-", "-", "-", "-", "-", "-", "-", "-", "-" });
+        
+        // Calculate code and test totals separately
+        const code_loc = stats.total.loc -| stats.tests.loc -| stats.node_modules.loc;
+        const test_loc = stats.tests.loc;
+        
+        var code_stats = stats.total;
+        code_stats.loc = code_loc;
+        code_stats.files = stats.total.files -| stats.tests.files -| stats.node_modules.files;
+        printRow("Total Code", &code_stats);
+        
+        if (stats.tests.files > 0) {
+            printRow("Total Tests", &stats.tests);
         }
-
-        // Print total
-        Output.pretty("+{s:-<18}+{s:-<9}+{s:-<9}+{s:-<9}+{s:-<9}+{s:-<9}+\n", .{ "-", "-", "-", "-", "-", "-" });
-        Output.pretty("| {s:<16} | {d:>7} | {d:>7} | {d:>7} | {d:>7} | {d:>7} |\n", .{ "Total", stats.total.files, stats.total.lines, stats.total.loc, stats.total.imports, stats.total.exports });
-        Output.pretty("+{s:-<18}+{s:-<9}+{s:-<9}+{s:-<9}+{s:-<9}+{s:-<9}+\n", .{ "-", "-", "-", "-", "-", "-" });
+        
+        Output.pretty("+{s:-<22}+{s:-<8}+{s:-<8}+{s:-<8}+{s:-<9}+{s:-<9}+{s:-<9}+{s:-<7}+{s:-<7}+\n", .{ "-", "-", "-", "-", "-", "-", "-", "-", "-" });
+        
+        // Print code to test ratio at the bottom
+        if (code_loc > 0 and test_loc > 0) {
+            const ratio = @as(f32, @floatFromInt(test_loc)) / @as(f32, @floatFromInt(code_loc));
+            Output.pretty("  Code to Test Ratio: 1:{d:.1}\n", .{ratio});
+        }
     }
 
     fn printSummary(stats: *const CategoryStats, workspace_count: usize, reachable_count: usize, source_size: u64, elapsed_ms: u64) void {
-        const code_loc = stats.total.loc -| stats.node_modules.loc -| stats.tests.loc;
-        const test_loc = stats.tests.loc;
-        const deps_loc = stats.node_modules.loc;
-
-        Output.pretty("\n", .{});
-
-        // Speed flex message
-        Output.pretty("<green>✓<r> Analyzed <b>{d}<r> LOC across <b>{d}<r> files in <cyan>{d}ms<r>\n", .{
-            stats.total.loc,
-            stats.total.files,
-            elapsed_ms,
-        });
-
-        Output.pretty("\n", .{});
-        Output.pretty("Files analyzed: {d}\n", .{reachable_count});
-        Output.pretty("Code LOC: {d}\n", .{code_loc});
-        Output.pretty("Test LOC: {d}\n", .{test_loc});
-        Output.pretty("Deps LOC: {d}\n", .{deps_loc});
-
-        if (code_loc > 0 and test_loc > 0) {
-            const ratio = @as(f32, @floatFromInt(test_loc)) / @as(f32, @floatFromInt(code_loc));
-            Output.pretty("Code to Test Ratio: 1 : {d:.1}\n", .{ratio});
-        }
-
-        Output.pretty("Workspace Packages: {d}\n", .{workspace_count});
-
-        // Use actual source size from bundler
-        if (source_size > 0) {
-            const size_mb = @as(f32, @floatFromInt(source_size)) / 1024.0 / 1024.0;
-            Output.pretty("Total Source Size: {d:.1} MB\n", .{size_mb});
-        }
+        _ = workspace_count;
+        _ = reachable_count;
+        _ = source_size;
+        _ = elapsed_ms;
+        _ = stats;
+        // Remove all the extra summary text - table is sufficient
     }
 
     fn getWorkspacePackages(allocator: std.mem.Allocator) ![][]const u8 {
@@ -173,15 +197,16 @@ pub const StatsCommand = struct {
 
         // Access the parsed graph data
         const graph = &bundle.graph;
-        const ast = &graph.ast;
+        const ast_data = &graph.ast;
 
         // Get the MultiArrayList slices
         const sources = graph.input_files.items(.source);
         const loaders = graph.input_files.items(.loader);
-        const import_records = ast.items(.import_records);
-        const exports_kind = ast.items(.exports_kind);
-        const named_exports = ast.items(.named_exports);
-        const export_star_import_records = ast.items(.export_star_import_records);
+        const import_records = ast_data.items(.import_records);
+        const exports_kind = ast_data.items(.exports_kind);
+        const named_exports = ast_data.items(.named_exports);
+        const export_star_import_records = ast_data.items(.export_star_import_records);
+        const parts_list = ast_data.items(.parts);
 
         // Process each reachable file
         for (result.reachable_files) |source_index| {
@@ -197,8 +222,11 @@ pub const StatsCommand = struct {
             const loader = loaders[index];
             const imports = if (index >= import_records.len) ImportRecord.List{} else import_records[index];
             const export_kind = if (index >= exports_kind.len) .none else exports_kind[index];
-            const named_export_map = if (index >= named_exports.len) bun.StringArrayHashMapUnmanaged(bun.ast.NamedExport){} else named_exports[index];
-            const export_stars = if (index >= export_star_import_records.len) &[_]u32{} else export_star_import_records[index];
+            
+            // Only access named_exports and export_stars for non-CSS files
+            const is_css = loader == .css;
+            const named_exports_count: u32 = if (is_css or index >= named_exports.len) 0 else @intCast(named_exports[index].count());
+            const export_stars_count: u32 = if (is_css or index >= export_star_import_records.len) 0 else @intCast(export_star_import_records[index].len);
 
             // Get source content and path
             const source_contents = source.contents;
@@ -230,14 +258,102 @@ pub const StatsCommand = struct {
 
             // Count imports and exports
             const import_count: u32 = @intCast(imports.len);
-            const export_count: u32 = @intCast(named_export_map.count() + export_stars.len);
+            const export_count: u32 = named_exports_count + export_stars_count;
 
+            // Count classes and functions using the parsed AST (for non-CSS files)
+            var class_count: u32 = 0;
+            var function_count: u32 = 0;
+            
+            // Only access parts for non-CSS files
+            // When parts.len == 0, it means the AST is invalid/failed to parse
+            // Skip files that failed to parse or have empty ASTs
+            if (!is_css and index < parts_list.len and parts_list[index].len > 0) {
+                // Try to safely access the parts
+                const parts = parts_list[index].slice();
+                
+                // Iterate through all parts in the file
+                for (parts) |part| {
+                    // Iterate through all statements in the part
+                    for (part.stmts) |stmt| {
+                        switch (stmt.data) {
+                            // Direct function declarations
+                            .s_function => {
+                                function_count += 1;
+                            },
+                            // Direct class declarations
+                            .s_class => {
+                                class_count += 1;
+                            },
+                            // Local variable declarations (const/let/var)
+                            .s_local => |local| {
+                                // Check each declaration's value
+                                for (local.decls.slice()) |decl| {
+                                    if (decl.value) |value_expr| {
+                                        switch (value_expr.data) {
+                                            .e_function => function_count += 1,
+                                            .e_arrow => function_count += 1,
+                                            .e_class => class_count += 1,
+                                            else => {},
+                                        }
+                                    }
+                                }
+                            },
+                            // Expression statements (e.g., anonymous functions)
+                            .s_expr => |expr_stmt| {
+                                switch (expr_stmt.value.data) {
+                                    .e_function => function_count += 1,
+                                    .e_arrow => function_count += 1,
+                                    .e_class => class_count += 1,
+                                    // Check for assignments that might contain functions/classes
+                                    .e_binary => |binary| {
+                                        if (binary.op == .bin_assign) {
+                                            switch (binary.right.data) {
+                                                .e_function => function_count += 1,
+                                                .e_arrow => function_count += 1,
+                                                .e_class => class_count += 1,
+                                                else => {},
+                                            }
+                                        }
+                                    },
+                                    else => {},
+                                }
+                            },
+                            // Export statements might also contain functions/classes
+                            .s_export_default => |export_default| {
+                                switch (export_default.value) {
+                                    .stmt => |export_stmt| {
+                                        switch (export_stmt.data) {
+                                            .s_function => function_count += 1,
+                                            .s_class => class_count += 1,
+                                            else => {},
+                                        }
+                                    },
+                                    .expr => |export_expr| {
+                                        switch (export_expr.data) {
+                                            .e_function => function_count += 1,
+                                            .e_arrow => function_count += 1,
+                                            .e_class => class_count += 1,
+                                            else => {},
+                                        }
+                                    },
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                }
+            }
+            
             var file_stats = FileStats{
                 .files = 1,
                 .lines = line_stats.lines,
                 .loc = line_stats.loc,
                 .imports = import_count,
                 .exports = export_count,
+                .classes = class_count,
+                .functions = function_count,
+                .components = 0,
+                .avg_size = line_stats.loc,
             };
 
             // Determine module type from exports_kind
@@ -288,6 +404,8 @@ pub const StatsCommand = struct {
                 }
             }
 
+            // No need to track components
+            
             // Always add to total
             addStats(&ctx.stats.total, &file_stats);
         }
@@ -374,9 +492,10 @@ pub const StatsCommand = struct {
 
         const start_time = std.time.nanoTimestamp();
 
-        // Set up the bundler context similar to build command
-        ctx.args.target = .bun; // Use bun target to resolve test files and Bun-specific imports
+        // Set up the bundler context to be as permissive as possible
+        ctx.args.target = .bun; // Use bun target to resolve test files and Bun-specific imports  
         ctx.args.packages = .bundle; // Bundle mode to analyze all files
+        ctx.args.ignore_dce_annotations = true; // Ignore DCE annotations that might cause errors
 
         // Get workspace packages
         const workspace_packages = try getWorkspacePackages(allocator);
@@ -448,9 +567,12 @@ pub const StatsCommand = struct {
             return;
         }
 
-        Output.pretty("Analyzing {d} files...\n", .{this_transpiler.options.entry_points.len});
-        Output.flush();
+        // No "Analyzing X files..." message - just start processing
 
+        // Suppress ALL bundler errors and warnings - we only care about collecting stats
+        this_transpiler.log.level = .err; // Only show errors (highest level)
+        this_transpiler.log.msgs.clearRetainingCapacity();
+        
         _ = BundleV2.generateFromCLI(
             &this_transpiler,
             allocator,
@@ -460,16 +582,11 @@ pub const StatsCommand = struct {
             &minify_duration,
             &source_code_size,
             &scanner,
-        ) catch |err| {
-            // Print any errors from the bundler
-            if (this_transpiler.log.hasErrors()) {
-                this_transpiler.log.print(Output.writer()) catch {};
-            }
-
-            // It's okay if bundling fails, we still collected stats
-            if (err != error.BuildFailed) {
-                return err;
-            }
+        ) catch {
+            // Silently ignore ALL bundler errors - we're just collecting stats
+            // This includes BuildFailed, module resolution errors, syntax errors, etc.
+            // Clear any logged errors so they don't get printed
+            this_transpiler.log.msgs.clearRetainingCapacity();
         };
 
         // Calculate elapsed time
@@ -494,3 +611,5 @@ const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const strings = bun.strings;
+const ast = bun.ast;
+const Op = ast.Op;

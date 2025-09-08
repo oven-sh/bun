@@ -97,7 +97,7 @@ pub fn fromBlob(
     if (mime_type.category.isTextLike()) {
         var output = MutableString.initEmpty(allocator);
         try JSPrinter.quoteForJSON(bytes, &output, true);
-        var list = output.toOwnedSlice();
+        var list = try output.toOwnedSlice();
         // remove the quotes
         if (list.len > 0) {
             list = list[1 .. list.len - 1];

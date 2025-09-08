@@ -72,10 +72,10 @@ pub fn findIndex(byte_offsets_to_start_of_line: []const u32, loc: Logger.Loc) ?u
     return null;
 }
 
-pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_line_count: i32) List {
+pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_line_count: i32) bun.OOM!List {
     var list = List{};
     // Preallocate the top-level table using the approximate line count from the lexer
-    list.ensureUnusedCapacity(allocator, @as(usize, @intCast(@max(approximate_line_count, 1)))) catch unreachable;
+    try list.ensureUnusedCapacity(allocator, @as(usize, @intCast(@max(approximate_line_count, 1))));
     var column: i32 = 0;
     var byte_offset_to_first_non_ascii: u32 = 0;
     var column_byte_offset: u32 = 0;
@@ -85,7 +85,7 @@ pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_
     // we want to avoid re-allocating this array _most_ of the time
     // when lines _do_ have unicode characters, they probably still won't be longer than 255 much
     var stack_fallback = std.heap.stackFallback(@sizeOf(i32) * 256, allocator);
-    var columns_for_non_ascii = std.ArrayList(i32).initCapacity(stack_fallback.get(), 120) catch unreachable;
+    var columns_for_non_ascii = try std.ArrayList(i32).initCapacity(stack_fallback.get(), 120);
     const reset_end_index = stack_fallback.fixed_buffer_allocator.end_index;
     const initial_columns_for_non_ascii = columns_for_non_ascii;
 
@@ -128,7 +128,7 @@ pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_
                 u32,
                 @truncate(@intFromPtr(remaining.ptr) - @intFromPtr(contents.ptr)),
             ))) - line_byte_offset;
-            columns_for_non_ascii.ensureUnusedCapacity((line_bytes_so_far - column_byte_offset) + 1) catch unreachable;
+            try columns_for_non_ascii.ensureUnusedCapacity((line_bytes_so_far - column_byte_offset) + 1);
             while (column_byte_offset <= line_bytes_so_far) : (column_byte_offset += 1) {
                 columns_for_non_ascii.appendAssumeCapacity(column);
             }
@@ -165,14 +165,14 @@ pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_
                 // hideously expensive
                 var owned = columns_for_non_ascii.items;
                 if (stack_fallback.fixed_buffer_allocator.ownsSlice(std.mem.sliceAsBytes(owned))) {
-                    owned = allocator.dupe(i32, owned) catch unreachable;
+                    owned = try allocator.dupe(i32, owned);
                 }
 
-                list.append(allocator, .{
+                try list.append(allocator, .{
                     .byte_offset_to_start_of_line = line_byte_offset,
                     .byte_offset_to_first_non_ascii = byte_offset_to_first_non_ascii,
                     .columns_for_non_ascii = BabyList(i32).init(owned),
-                }) catch unreachable;
+                });
 
                 column = 0;
                 byte_offset_to_first_non_ascii = 0;
@@ -200,21 +200,21 @@ pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_
 
     if (columns_for_non_ascii.items.len > 0) {
         const line_bytes_so_far = @as(u32, @intCast(contents.len)) - line_byte_offset;
-        columns_for_non_ascii.ensureUnusedCapacity((line_bytes_so_far - column_byte_offset) + 1) catch unreachable;
+        try columns_for_non_ascii.ensureUnusedCapacity((line_bytes_so_far - column_byte_offset) + 1);
         while (column_byte_offset <= line_bytes_so_far) : (column_byte_offset += 1) {
             columns_for_non_ascii.appendAssumeCapacity(column);
         }
     }
     {
-        var owned = columns_for_non_ascii.toOwnedSlice() catch unreachable;
+        var owned = try columns_for_non_ascii.toOwnedSlice();
         if (stack_fallback.fixed_buffer_allocator.ownsSlice(std.mem.sliceAsBytes(owned))) {
-            owned = allocator.dupe(i32, owned) catch unreachable;
+            owned = try allocator.dupe(i32, owned);
         }
-        list.append(allocator, .{
+        try list.append(allocator, .{
             .byte_offset_to_start_of_line = line_byte_offset,
             .byte_offset_to_first_non_ascii = byte_offset_to_first_non_ascii,
             .columns_for_non_ascii = BabyList(i32).init(owned),
-        }) catch unreachable;
+        });
     }
 
     if (list.capacity > list.len) {

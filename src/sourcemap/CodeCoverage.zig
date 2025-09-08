@@ -387,7 +387,7 @@ pub const ByteRangeMapping = struct {
         var source_contents = source_contents_str.toUTF8(bun.default_allocator);
         defer source_contents.deinit();
 
-        entry.value_ptr.* = compute(source_contents.slice(), source_id, slice);
+        entry.value_ptr.* = bun.handleOom(compute(source_contents.slice(), source_id, slice));
     }
 
     pub fn getSourceID(this: *ByteRangeMapping) callconv(.C) i32 {
@@ -689,9 +689,9 @@ pub const ByteRangeMapping = struct {
         return bun.String.createUTF8ForJS(globalThis, mutable_str.slice()) catch return .zero;
     }
 
-    pub fn compute(source_contents: []const u8, source_id: i32, source_url: bun.jsc.ZigString.Slice) ByteRangeMapping {
+    pub fn compute(source_contents: []const u8, source_id: i32, source_url: bun.jsc.ZigString.Slice) bun.OOM!ByteRangeMapping {
         return ByteRangeMapping{
-            .line_offset_table = LineOffsetTable.generate(bun.jsc.VirtualMachine.get().allocator, source_contents, 0),
+            .line_offset_table = try LineOffsetTable.generate(bun.jsc.VirtualMachine.get().allocator, source_contents, 0),
             .source_id = source_id,
             .source_url = source_url,
         };

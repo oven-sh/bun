@@ -527,7 +527,7 @@ pub const ZigString = extern struct {
         return str;
     }
 
-    pub fn toBase64DataURL(this: ZigString, allocator: std.mem.Allocator) ![]const u8 {
+    pub fn toBase64DataURL(this: ZigString, allocator: std.mem.Allocator) OOM![]const u8 {
         const slice_ = this.slice();
         const size = std.base64.standard.Encoder.calcSize(slice_.len);
         var buf = try allocator.alloc(u8, size + "data:;base64,".len);

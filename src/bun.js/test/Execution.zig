@@ -146,14 +146,6 @@ pub const Result = enum {
     pub fn isFail(this: Result) bool {
         return !this.isPass(.pending_is_pass);
     }
-
-    fn switchPassAndFail(this: Result, pass: Result, failure: Result) Result {
-        switch (this) {
-            .pass => return failure,
-            .fail => return pass,
-            else => return this, // note that this includes other fail reasons (eg fail_because_expected_has_assertions, fail_because_timeout).
-        }
-    }
 };
 const EntryID = enum(usize) {
     none = std.math.maxInt(usize),
@@ -455,7 +447,11 @@ fn onEntryCompleted(_: *Execution, _: *ExecutionEntry) void {}
 fn onSequenceCompleted(this: *Execution, sequence: *ExecutionSequence) void {
     const elapsed_ns = sequence.started_at.sinceNow();
     if (sequence.result == .pending) {
-        sequence.result = .pass;
+        sequence.result = switch (sequence.entryMode()) {
+            .failing => .fail_because_failing_test_passed,
+            .todo => .fail_because_todo_passed,
+            else => .pass,
+        };
     }
     switch (sequence.expect_assertions) {
         .not_set => {},
@@ -465,11 +461,6 @@ fn onSequenceCompleted(this: *Execution, sequence: *ExecutionSequence) void {
         .exact => |expected| if (sequence.expect_call_count != expected and sequence.result.isPass(.pending_is_pass)) {
             sequence.result = .fail_because_expected_assertion_count;
         },
-    }
-    switch (sequence.entryMode()) {
-        .failing => sequence.result = sequence.result.switchPassAndFail(.pass, .fail_because_failing_test_passed),
-        .todo => sequence.result = sequence.result.switchPassAndFail(.todo, .fail_because_todo_passed),
-        else => {},
     }
     const entries = sequence.entries(this);
     if (entries.len > 0 and (sequence.test_entry != null or sequence.result != .pass)) {
@@ -519,11 +510,31 @@ pub fn handleUncaughtException(this: *Execution, user_data: describe2.BunTest.Re
     const sequence, const group = this.getCurrentAndValidExecutionSequence(user_data) orelse return .show_unhandled_error_between_tests;
     _ = group;
 
-    sequence.result = .fail;
     return switch (sequence.entryMode()) {
-        .failing => .hide_error, // failing tests prevent the error from being displayed
-        .todo => .show_handled_error, // todo tests with --todo will still display the error
-        else => .show_handled_error,
+        .failing => {
+            if (sequence.result == .pending) {
+                if (sequence.activeEntry(this) == sequence.test_entry) {
+                    sequence.result = .pass; // executing test() callback
+                } else {
+                    sequence.result = .fail; // executing hook
+                }
+            }
+            return .hide_error; // failing tests prevent the error from being displayed
+        },
+        .todo => {
+            if (sequence.result == .pending) {
+                if (sequence.activeEntry(this) == sequence.test_entry) {
+                    sequence.result = .todo; // executing test() callback
+                } else {
+                    sequence.result = .fail; // executing hook
+                }
+            }
+            return .show_handled_error; // todo tests with --todo will still display the error
+        },
+        else => {
+            if (sequence.result == .pending) sequence.result = .fail;
+            return .show_handled_error;
+        },
     };
 }
 

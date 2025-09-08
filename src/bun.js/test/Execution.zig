@@ -108,10 +108,10 @@ pub const ExecutionSequence = struct {
 pub const Result = enum {
     pending,
     pass,
-    fail,
     skip,
     skipped_because_label,
     todo,
+    fail,
     fail_because_timeout,
     fail_because_timeout_with_done_callback,
     fail_because_failing_test_passed,
@@ -137,9 +137,9 @@ pub const Result = enum {
     }
 
     pub fn isPass(this: Result, pending_is: enum { pending_is_pass, pending_is_fail }) bool {
-        return switch (this) {
-            .pass, .skip, .todo, .skipped_because_label => true,
-            .fail, .fail_because_timeout, .fail_because_timeout_with_done_callback, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => false,
+        return switch (this.basicResult()) {
+            .pass, .skip, .todo => true,
+            .fail => false,
             .pending => pending_is == .pending_is_pass,
         };
     }
@@ -402,9 +402,15 @@ fn advanceSequence(this: *Execution, sequence: *ExecutionSequence, group: *Concu
     }
     sequence.executing = false;
     if (sequence.result.isFail()) {
-        // < first afterEach ? skip to first afterEach
-        // else ? skip to end
-        @panic("TODO: skip to first afterEach or end");
+        // TODO: this needs to only be when this specific entry failed, not when any entry failed
+        const first_aftereach_index = for (sequence.entries(this), 0..) |entry, index| {
+            if (entry == sequence.test_entry) break index + 1;
+        } else sequence.entries(this).len;
+        if (sequence.index < first_aftereach_index) {
+            sequence.index = first_aftereach_index;
+        } else {
+            sequence.index = sequence.entries(this).len;
+        }
     } else {
         sequence.index += 1;
     }
@@ -512,12 +518,6 @@ pub fn handleUncaughtException(this: *Execution, user_data: describe2.BunTest.Re
 
     const sequence, const group = this.getCurrentAndValidExecutionSequence(user_data) orelse return .show_unhandled_error_between_tests;
     _ = group;
-
-    if (sequence.activeEntry(this) != sequence.test_entry) {
-        // error in a hook
-        // TODO: hooks should prevent further execution of the sequence and maybe shouldn't be marked as "between tests" but instead a regular failure
-        return .show_unhandled_error_between_tests;
-    }
 
     sequence.result = .fail;
     return switch (sequence.entryMode()) {

@@ -763,7 +763,6 @@ pub const ExecutionEntry = struct {
     callback: ?CallbackWithArgs,
     /// only available if using junit reporter, otherwise 0
     line_no: u32,
-    result: Execution.Result = .pending,
     /// std.math.maxInt(u32) = no timeout
     timeout: u32,
     has_done_parameter: bool,

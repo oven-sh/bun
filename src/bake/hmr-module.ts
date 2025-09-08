@@ -331,6 +331,11 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
         throw e;
       }
     }
+    if (loadOrEsmModule === true) {
+      throw new Error(
+        `Module "${id}" was resolved to a synthetic module, but did not have any exports. This is a bug in Bun.`,
+      );
+    }
     const { [ESMProps.imports]: deps, [ESMProps.load]: load, [ESMProps.isAsync]: isAsync } = loadOrEsmModule;
     if (isAsync) {
       throw new AsyncImportError(id);
@@ -902,7 +907,7 @@ function registerSynthetic<ModuleName extends keyof BakeBuiltinSyntheticModules>
   const mod = new HMRModule(id, false);
   mod.exports = esmExports;
   registry.set(id, mod);
-  unloadedModuleRegistry[id] = true as any;
+  unloadedModuleRegistry[id] = true;
 }
 
 export function setRefreshRuntime(runtime: HMRModule) {
@@ -955,8 +960,14 @@ declare global {
   }
 }
 
-// bun:app/server, bun:app/client, and bun:wrap are
-// provided by this file instead of the bundler
+// bun:app, bun:app/server, bun:app/client, and bun:wrap are provided by this
+// file instead of the bundler
+
+registerSynthetic("bun:app", {
+  // `bun:app` exports types only, but we don't declare it so we don't throw a
+  // not found error if the user does a normal, non-type-only import
+});
+
 registerSynthetic("bun:wrap", {
   __name,
   __legacyDecorateClassTS,
@@ -981,7 +992,3 @@ if (side === "client") {
     },
   });
 }
-
-// `bun:app` exports types only, but we don't want
-// to throw a module not found error if it's accessed at runtime
-registerSynthetic("bun:app", {});

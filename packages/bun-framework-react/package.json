@@ -5,10 +5,7 @@
     "@types/react-dom": "^19.1.9"
   },
   "exports": {
-    "./client": "./client.tsx",
-    "./server": "./server.tsx",
-    "./ssr": "./ssr.tsx",
-    "./link": "./components/link.tsx",
-    "./util/*": "./util/*"
+    "./package.json": "./package.json",
+    "./*": "./*"
   }
 }

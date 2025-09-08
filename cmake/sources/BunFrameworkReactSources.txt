@@ -2,6 +2,4 @@ packages/bun-framework-react/bake.private.d.ts
 packages/bun-framework-react/client.tsx
 packages/bun-framework-react/index.ts
 packages/bun-framework-react/server.tsx
-packages/bun-framework-react/src/components/link.tsx
-packages/bun-framework-react/src/util/dom.ts
 packages/bun-framework-react/ssr.tsx

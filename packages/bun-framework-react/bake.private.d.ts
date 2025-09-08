@@ -39,7 +39,7 @@ declare namespace DEBUG {
 }
 
 /** All modules for the initial bundle. */
-declare const unloadedModuleRegistry: Record<string, UnloadedModule>;
+declare const unloadedModuleRegistry: Record<string, UnloadedModule | true>;
 declare type UnloadedModule = UnloadedESM | UnloadedCommonJS;
 declare type UnloadedESM = [
   deps: EncodedDependencyArray,

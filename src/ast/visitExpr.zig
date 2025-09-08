@@ -1567,7 +1567,7 @@ pub fn VisitExpr(
                 // Remove unused function names when minifying (only when bundling is enabled)
                 // unless --keep-names is specified
                 if (p.options.features.minify_syntax and p.options.bundle and
-                    !p.options.keep_names and
+                    !p.options.features.minify_keep_names and
                     !p.current_scope.contains_direct_eval and
                     e_.func.name != null and
                     e_.func.name.?.ref != null and
@@ -1601,7 +1601,7 @@ pub fn VisitExpr(
                 // Remove unused class names when minifying (only when bundling is enabled)
                 // unless --keep-names is specified
                 if (p.options.features.minify_syntax and p.options.bundle and
-                    !p.options.keep_names and
+                    !p.options.features.minify_keep_names and
                     !p.current_scope.contains_direct_eval and
                     e_.class_name != null and
                     e_.class_name.?.ref != null and

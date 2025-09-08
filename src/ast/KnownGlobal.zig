@@ -88,10 +88,29 @@ pub const KnownGlobal = enum {
 
                 // new Array(1, 2, 3) -> [1, 2, 3]
                 // But NOT new Array(3) which creates an array with 3 empty slots
-                if (n > 1 or (n == 1 and e.args.ptr[0].knownPrimitive() != .number)) {
+                if (n > 1) {
                     var array = E.Array{};
                     array.items = e.args;
                     return js_ast.Expr.init(E.Array, array, loc);
+                }
+                
+                // For single argument, only convert to literal if we're SURE it's not a number
+                if (n == 1) {
+                    const primitive = e.args.ptr[0].knownPrimitive();
+                    // Only convert if we know for certain it's not a number
+                    // unknown could be a number at runtime, so we must preserve Array() call
+                    switch (primitive) {
+                        .null, .undefined, .boolean, .string, .bigint => {
+                            // These are definitely not numbers, safe to convert
+                            var array = E.Array{};
+                            array.items = e.args;
+                            return js_ast.Expr.init(E.Array, array, loc);
+                        },
+                        .number, .unknown, .mixed => {
+                            // Could be a number, preserve Array() call
+                            return callFromNew(e, loc);
+                        },
+                    }
                 }
 
                 // For new Array(number), just remove 'new'

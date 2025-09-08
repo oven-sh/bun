@@ -1753,7 +1753,8 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             request.onError(.{ .protocol = err }, this.globalObject);
 
             if (was_pipelined) {
-                // resync the connection
+                // "The purpose of Sync is to provide a resynchronization point for error recovery"
+                // source: https://www.postgresql.org/docs/current/protocol-flow.html
                 const connection_writer = this.writer();
                 connection_writer.write(&protocol.Sync) catch {};
                 this.flushData();

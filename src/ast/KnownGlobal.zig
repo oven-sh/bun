@@ -89,22 +89,31 @@ pub const KnownGlobal = enum {
                 // new Array(1, 2, 3) -> [1, 2, 3]
                 // But NOT new Array(3) which creates an array with 3 empty slots
                 if (n > 1) {
-                    var array = E.Array{};
-                    array.items = e.args;
-                    return js_ast.Expr.init(E.Array, array, loc);
+                    return js_ast.Expr.init(E.Array, .{ .items = e.args }, loc);
                 }
 
                 // For single argument, only convert to literal if we're SURE it's not a number
                 if (n == 1) {
-                    const primitive = e.args.ptr[0].knownPrimitive();
+                    const arg = e.args.ptr[0];
+                    
+                    // Check if it's an object or array literal first
+                    switch (arg.data) {
+                        .e_object, .e_array => {
+                            // new Array({}) -> [{}], new Array([1]) -> [[1]]
+                            // These are definitely not numbers, safe to convert
+                            return js_ast.Expr.init(E.Array, .{ .items = e.args }, loc);
+                        },
+                        else => {},
+                    }
+                    
+                    // For other types, check via knownPrimitive
+                    const primitive = arg.knownPrimitive();
                     // Only convert if we know for certain it's not a number
                     // unknown could be a number at runtime, so we must preserve Array() call
                     switch (primitive) {
                         .null, .undefined, .boolean, .string, .bigint => {
                             // These are definitely not numbers, safe to convert
-                            var array = E.Array{};
-                            array.items = e.args;
-                            return js_ast.Expr.init(E.Array, array, loc);
+                            return js_ast.Expr.init(E.Array, .{ .items = e.args }, loc);
                         },
                         .number, .unknown, .mixed => {
                             // Could be a number, preserve Array() call

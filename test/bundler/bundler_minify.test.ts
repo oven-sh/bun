@@ -949,6 +949,12 @@ describe("bundler", () => {
         capture(sparse.length === 5);
         capture(0 in sparse === false); // No element at index 0
         capture(JSON.stringify(sparse) === "[null,null,null,null,null]");
+
+        // Single-arg variable case: must preserve sparse semantics
+        const n = 3;
+        const a3 = new Array(n);
+        const a4 = Array(n);
+        capture(a3.length === a4.length && a3.length === 3 && a3[0] === undefined);
         
         // Test Object semantics
         const o1 = new Object();
@@ -976,6 +982,7 @@ describe("bundler", () => {
       "sparse.length === 5",
       "0 in sparse === !1",
       'JSON.stringify(sparse) === "[null,null,null,null,null]"',
+      "a3.length === a4.length && a3.length === 3 && a3[0] === void 0",
       "typeof o1 === typeof o2",
       "o1.constructor === o2.constructor",
       "typeof f1 === typeof f2",
@@ -986,7 +993,7 @@ describe("bundler", () => {
     minifySyntax: true,
     target: "bun",
     run: {
-      stdout: "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue",
+      stdout: "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue",
     },
   });
 

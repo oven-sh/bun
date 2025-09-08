@@ -93,8 +93,7 @@ const fixtures = [
     "<span>Hello World!</span>😋L😋l😋L😋",
     <>
       <span>Hello World!</span>
-      😋L😋l😋L😋
-{" "}
+      😋L😋l😋L😋{" "}
     </>,
   ],
 ] as const;

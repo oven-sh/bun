@@ -77,6 +77,7 @@ pub const StatsCommand = struct {
     const CategoryStats = struct {
         typescript: FileStats = .{},
         javascript: FileStats = .{},
+        jsx: FileStats = .{},
         commonjs: FileStats = .{},
         esmodules: FileStats = .{},
         css: FileStats = .{},
@@ -155,16 +156,16 @@ pub const StatsCommand = struct {
     fn printTable(stats: *const CategoryStats, workspace_package_names: []const []const u8) void {
         _ = workspace_package_names;
 
-        // Compact table with minimal padding
-        Output.pretty("┌{s:─<18}┬{s:─<7}┬{s:─<8}┬{s:─<7}┬{s:─<7}┬{s:─<5}┐\n", .{ "─", "─", "─", "─", "─", "─" });
-        Output.pretty("│ {s:<16} │ {s:>5} │ {s:>6} │ {s:>5} │ {s:>5} │ {s:>3} │\n", .{ "Category", "Files", "Lines", "LOC", "Funcs", "F/M" });
-        Output.pretty("├{s:─<18}┼{s:─<7}┼{s:─<8}┼{s:─<7}┼{s:─<7}┼{s:─<5}┤\n", .{ "─", "─", "─", "─", "─", "─" });
+        // Table with proper column widths for large numbers
+        Output.pretty("┌{s:─<18}┬{s:─<8}┬{s:─<10}┬{s:─<10}┬{s:─<8}┬{s:─<5}┐\n", .{ "─", "─", "─", "─", "─", "─" });
+        Output.pretty("│ {s:<16} │ {s:>6} │ {s:>8} │ {s:>8} │ {s:>6} │ {s:>3} │\n", .{ "Category", "Files", "Lines", "LOC", "Funcs", "F/M" });
+        Output.pretty("├{s:─<18}┼{s:─<8}┼{s:─<10}┼{s:─<10}┼{s:─<8}┼{s:─<5}┤\n", .{ "─", "─", "─", "─", "─", "─" });
 
         const printRow = struct {
             fn print(name: []const u8, s: *const FileStats) void {
                 const functions_per_module: f64 = if (s.files > 0) @as(f64, @floatFromInt(s.functions)) / @as(f64, @floatFromInt(s.files)) else 0;
 
-                Output.pretty("│ {s:<16} │ {d:>5} │ {d:>6} │ {d:>5} │ {d:>5} │ {d:>3.0} │\n", .{
+                Output.pretty("│ {s:<16} │ {d:>6} │ {d:>8} │ {d:>8} │ {d:>6} │ {d:>3.0} │\n", .{
                     name,
                     s.files,
                     s.lines,
@@ -175,109 +176,70 @@ pub const StatsCommand = struct {
             }
         }.print;
 
-        // Calculate source code stats (excluding node_modules)
-        // We need to properly separate what's in node_modules from what's not
-        const js_excluding_nm = FileStats{
-            .files = if (stats.javascript.files > stats.node_modules.files) stats.javascript.files - stats.node_modules.files else 0,
-            .lines = if (stats.javascript.lines > stats.node_modules.lines) stats.javascript.lines - stats.node_modules.lines else 0,
-            .loc = if (stats.javascript.loc > stats.node_modules.loc) stats.javascript.loc - stats.node_modules.loc else 0,
-            .functions = if (stats.javascript.functions > stats.node_modules.functions) stats.javascript.functions - stats.node_modules.functions else 0,
-            .imports = stats.javascript.imports,
-            .exports = stats.javascript.exports,
-            .classes = stats.javascript.classes,
-            .components = stats.javascript.components,
-            .avg_size = 0,
-        };
-
-        const ts_excluding_nm = stats.typescript; // TypeScript usually not in node_modules
-        const tests_excluding_nm = stats.tests; // Tests are not in node_modules
-
-        // Language breakdown (excluding node_modules)
-        if (js_excluding_nm.files > 0) {
-            printRow("JavaScript", &js_excluding_nm);
+        // Language breakdown (all files)
+        if (stats.javascript.files > 0) {
+            printRow("JavaScript", &stats.javascript);
         }
-        if (ts_excluding_nm.files > 0) {
-            printRow("TypeScript", &ts_excluding_nm);
+        if (stats.jsx.files > 0) {
+            printRow("JSX", &stats.jsx);
         }
-
-        // React Components (files with JSX/TSX that have components)
-        if (stats.components > 0) {
-            const react_stats = FileStats{
-                .files = stats.components,
-                .lines = stats.typescript.lines / 3, // Rough estimate
-                .loc = stats.typescript.loc / 3,
-                .functions = stats.components * 5, // Estimate ~5 functions per component file
-                .imports = 0,
-                .exports = 0,
-                .classes = 0,
-                .components = stats.components,
-                .avg_size = 0,
-            };
-            printRow("React Components", &react_stats);
+        if (stats.typescript.files > 0) {
+            printRow("TypeScript", &stats.typescript);
         }
-
-        // Stylesheets
+        
+        // Assets  
+        if (stats.json.files > 0) {
+            printRow("JSON", &stats.json);
+        }
         if (stats.css.files > 0) {
             printRow("Stylesheets", &stats.css);
         }
 
-        // Module Systems (excluding node_modules)
-        const cjs_excluding_nm = FileStats{
-            .files = if (stats.commonjs.files > stats.node_modules.files / 2) stats.commonjs.files - stats.node_modules.files / 2 else stats.commonjs.files,
-            .lines = if (stats.commonjs.lines > stats.node_modules.lines / 2) stats.commonjs.lines - stats.node_modules.lines / 2 else stats.commonjs.lines,
-            .loc = if (stats.commonjs.loc > stats.node_modules.loc / 2) stats.commonjs.loc - stats.node_modules.loc / 2 else stats.commonjs.loc,
-            .functions = stats.commonjs.functions,
-            .imports = stats.commonjs.imports,
-            .exports = stats.commonjs.exports,
-            .classes = stats.commonjs.classes,
-            .components = 0,
-            .avg_size = 0,
-        };
-
-        if (cjs_excluding_nm.files > 0) {
-            printRow("CommonJS Modules", &cjs_excluding_nm);
+        // Module Systems (all files)
+        if (stats.commonjs.files > 0) {
+            printRow("CommonJS Modules", &stats.commonjs);
         }
         if (stats.esmodules.files > 0) {
             printRow("ECMA Modules", &stats.esmodules);
         }
 
         // Separator before summary sections
-        Output.pretty("├{s:─<18}┼{s:─<7}┼{s:─<8}┼{s:─<7}┼{s:─<7}┼{s:─<5}┤\n", .{ "─", "─", "─", "─", "─", "─" });
+        Output.pretty("├{s:─<18}┼{s:─<8}┼{s:─<10}┼{s:─<10}┼{s:─<8}┼{s:─<5}┤\n", .{ "─", "─", "─", "─", "─", "─" });
 
         // Dependencies
         if (stats.node_modules.files > 0) {
             printRow("node_modules", &stats.node_modules);
         }
 
-        // Your code (everything except node_modules and tests)
+        // Your code (everything except node_modules)
         const your_code = FileStats{
-            .files = js_excluding_nm.files + ts_excluding_nm.files + stats.css.files + stats.json.files,
-            .lines = js_excluding_nm.lines + ts_excluding_nm.lines + stats.css.lines + stats.json.lines,
-            .loc = js_excluding_nm.loc + ts_excluding_nm.loc + stats.css.loc + stats.json.loc,
-            .functions = js_excluding_nm.functions + ts_excluding_nm.functions,
-            .imports = js_excluding_nm.imports + ts_excluding_nm.imports,
-            .exports = js_excluding_nm.exports + ts_excluding_nm.exports,
-            .classes = js_excluding_nm.classes + ts_excluding_nm.classes,
+            .files = stats.total.files -| stats.node_modules.files,
+            .lines = stats.total.lines -| stats.node_modules.lines,
+            .loc = stats.total.loc -| stats.node_modules.loc,
+            .functions = stats.total.functions -| stats.node_modules.functions,
+            .imports = stats.total.imports -| stats.node_modules.imports,
+            .exports = stats.total.exports -| stats.node_modules.exports,
+            .classes = stats.total.classes -| stats.node_modules.classes,
             .components = stats.components,
             .avg_size = 0,
         };
         printRow("Your Code", &your_code);
 
         // Tests
-        if (tests_excluding_nm.files > 0) {
-            printRow("Tests", &tests_excluding_nm);
+        if (stats.tests.files > 0) {
+            printRow("Tests", &stats.tests);
         }
 
         // All code
         printRow("All Code", &stats.total);
 
-        Output.pretty("└{s:─<18}┴{s:─<7}┴{s:─<8}┴{s:─<7}┴{s:─<7}┴{s:─<5}┘\n", .{ "─", "─", "─", "─", "─", "─" });
+        Output.pretty("└{s:─<18}┴{s:─<8}┴{s:─<10}┴{s:─<10}┴{s:─<8}┴{s:─<5}┘\n", .{ "─", "─", "─", "─", "─", "─" });
 
         // Print interesting metrics
         Output.pretty("\n📊 Insights:\n", .{});
 
-        const code_loc = your_code.loc;
-        const test_loc = tests_excluding_nm.loc;
+        const code_loc = your_code.loc -| stats.tests.loc;
+        const test_loc = stats.tests.loc;
 
         // Test coverage
         if (code_loc > 0 and test_loc > 0) {
@@ -285,13 +247,15 @@ pub const StatsCommand = struct {
             Output.pretty("  • Test coverage: {d:.1}%\n", .{coverage});
         }
 
-        // TypeScript adoption
-        if (ts_excluding_nm.files > 0 and js_excluding_nm.files > 0) {
-            const ts_adoption = (@as(f64, @floatFromInt(ts_excluding_nm.files)) / @as(f64, @floatFromInt(ts_excluding_nm.files + js_excluding_nm.files))) * 100.0;
+        // TypeScript adoption (excluding node_modules)
+        const ts_files = stats.typescript.files;
+        const js_files = stats.javascript.files + stats.jsx.files;
+        if (ts_files > 0 and js_files > 0) {
+            const ts_adoption = (@as(f64, @floatFromInt(ts_files)) / @as(f64, @floatFromInt(ts_files + js_files))) * 100.0;
             Output.pretty("  • TypeScript: {d:.1}%\n", .{ts_adoption});
         }
 
-        // ES Modules adoption
+        // ES Modules adoption (excluding node_modules)
         if (stats.esmodules.files > 0 and stats.commonjs.files > 0) {
             const esm_adoption = (@as(f64, @floatFromInt(stats.esmodules.files)) / @as(f64, @floatFromInt(stats.esmodules.files + stats.commonjs.files))) * 100.0;
             Output.pretty("  • ES Modules: {d:.1}%\n", .{esm_adoption});
@@ -503,47 +467,59 @@ pub const StatsCommand = struct {
             const is_commonjs = export_kind == .cjs;
             const is_esm = export_kind == .esm;
 
-            // Update appropriate category based on loader type
-            switch (loader) {
-                .tsx, .ts => {
-                    addStats(&ctx.stats.typescript, &file_stats);
-                    if (is_commonjs) {
-                        addStats(&ctx.stats.commonjs, &file_stats);
-                    } else if (is_esm) {
-                        addStats(&ctx.stats.esmodules, &file_stats);
-                    }
-                },
-                .jsx, .js => {
-                    addStats(&ctx.stats.javascript, &file_stats);
-                    if (is_commonjs) {
-                        addStats(&ctx.stats.commonjs, &file_stats);
-                    } else if (is_esm) {
-                        addStats(&ctx.stats.esmodules, &file_stats);
-                    }
-                },
-                .css => {
-                    file_stats.imports = 0;
-                    file_stats.exports = 0;
-                    addStats(&ctx.stats.css, &file_stats);
-                },
-                .json => {
-                    file_stats.imports = 0;
-                    file_stats.exports = 0;
-                    addStats(&ctx.stats.json, &file_stats);
-                },
-                else => {},
-            }
-
-            // Add to category totals
+            // Check categories first - node_modules files should ONLY count in node_modules
             if (is_node_modules) {
+                // Files in node_modules only count towards node_modules stats
                 file_stats.imports = 0;
                 file_stats.exports = 0;
                 addStats(&ctx.stats.node_modules, &file_stats);
-            } else if (is_test) {
-                addStats(&ctx.stats.tests, &file_stats);
-            } else if (workspace_pkg) |pkg| {
-                if (ctx.stats.workspace_packages.getPtr(pkg)) |pkg_stats| {
-                    addStats(pkg_stats, &file_stats);
+            } else {
+                // Files NOT in node_modules get categorized normally
+                switch (loader) {
+                    .tsx, .ts => {
+                        addStats(&ctx.stats.typescript, &file_stats);
+                        if (is_commonjs) {
+                            addStats(&ctx.stats.commonjs, &file_stats);
+                        } else if (is_esm) {
+                            addStats(&ctx.stats.esmodules, &file_stats);
+                        }
+                    },
+                    .jsx => {
+                        addStats(&ctx.stats.jsx, &file_stats);
+                        if (is_commonjs) {
+                            addStats(&ctx.stats.commonjs, &file_stats);
+                        } else if (is_esm) {
+                            addStats(&ctx.stats.esmodules, &file_stats);
+                        }
+                    },
+                    .js => {
+                        addStats(&ctx.stats.javascript, &file_stats);
+                        if (is_commonjs) {
+                            addStats(&ctx.stats.commonjs, &file_stats);
+                        } else if (is_esm) {
+                            addStats(&ctx.stats.esmodules, &file_stats);
+                        }
+                    },
+                    .css => {
+                        file_stats.imports = 0;
+                        file_stats.exports = 0;
+                        addStats(&ctx.stats.css, &file_stats);
+                    },
+                    .json => {
+                        file_stats.imports = 0;
+                        file_stats.exports = 0;
+                        addStats(&ctx.stats.json, &file_stats);
+                    },
+                    else => {},
+                }
+                
+                // Check if it's a test file
+                if (is_test) {
+                    addStats(&ctx.stats.tests, &file_stats);
+                } else if (workspace_pkg) |pkg| {
+                    if (ctx.stats.workspace_packages.getPtr(pkg)) |pkg_stats| {
+                        addStats(pkg_stats, &file_stats);
+                    }
                 }
             }
 

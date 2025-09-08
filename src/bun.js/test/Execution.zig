@@ -81,6 +81,7 @@ pub const ExecutionSequence = struct {
         at_least_one,
         exact: u32,
     } = .not_set,
+    maybe_skip: bool = false,
 
     pub fn init(start: usize, end: usize, test_entry: ?*ExecutionEntry) ExecutionSequence {
         return .{
@@ -393,19 +394,19 @@ fn advanceSequence(this: *Execution, sequence: *ExecutionSequence, group: *Concu
         bun.debugAssert(false); // sequence is executing with no active entry?
     }
     sequence.executing = false;
-    // if (sequence.result.isFail()) {
-    //     // TODO: this needs to only be when this specific entry failed, not when any entry failed
-    //     const first_aftereach_index = for (sequence.entries(this), 0..) |entry, index| {
-    //         if (entry == sequence.test_entry) break index + 1;
-    //     } else sequence.entries(this).len;
-    //     if (sequence.index < first_aftereach_index) {
-    //         sequence.index = first_aftereach_index;
-    //     } else {
-    //         sequence.index = sequence.entries(this).len;
-    //     }
-    // } else {
-    sequence.index += 1;
-    // }
+    if (sequence.maybe_skip) {
+        sequence.maybe_skip = false;
+        const first_aftereach_index = for (sequence.entries(this), 0..) |entry, index| {
+            if (entry == sequence.test_entry) break index + 1;
+        } else sequence.entries(this).len;
+        if (sequence.index < first_aftereach_index) {
+            sequence.index = first_aftereach_index;
+        } else {
+            sequence.index = sequence.entries(this).len;
+        }
+    } else {
+        sequence.index += 1;
+    }
 
     if (sequence.activeEntry(this) == null) {
         // just completed the sequence
@@ -510,6 +511,7 @@ pub fn handleUncaughtException(this: *Execution, user_data: describe2.BunTest.Re
     const sequence, const group = this.getCurrentAndValidExecutionSequence(user_data) orelse return .show_unhandled_error_between_tests;
     _ = group;
 
+    sequence.maybe_skip = true;
     if (sequence.activeEntry(this) != sequence.test_entry) {
         // executing hook
         if (sequence.result == .pending) sequence.result = .fail;

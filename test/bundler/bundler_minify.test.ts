@@ -74,16 +74,31 @@ describe("bundler", () => {
     minifySyntax: true,
   });
   itBundled("minify/FunctionExpressionRemoveName", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
-        capture(function remove() {});
-        capture(function() {});
-        capture(function rename_me() { rename_me() });
+        export var AB = function A() { };
+        export var CD = function B() { return 1; };
+        export var EF = function C() { C(); };
+        export var GH = function() { };
+        export var IJ = class D { };
+        export var KL = class E { constructor() {} };
+        export var MN = class F { method() { return F; } };
+        export var OP = class { };
       `,
     },
-    // capture is pretty stupid and will stop at first )
-    capture: ["function(", "function(", "function e("],
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // With minify-identifiers, variable names are minified but we check function/class name removal
+      // Function names with 0 usage should be removed
+      expect(code).toMatch(/var \w+ = function\(\) \{/); // AB function without name
+      expect(code).toContain("return 1"); // CD function
+      // Function name with self-reference should be kept (minified)
+      expect(code).toMatch(/function \w+\(\) \{\s*\w+\(\)/); // EF function with self-reference
+      // Class names with 0 usage should be removed
+      expect(code).toMatch(/\w+ = class \{/); // Classes without names
+      // Class name with self-reference should be kept (minified)
+      expect(code).toMatch(/class \w+ \{[\s\S]*return \w+/); // MN class with self-reference
+    },
     minifySyntax: true,
     minifyIdentifiers: true,
     target: "bun",

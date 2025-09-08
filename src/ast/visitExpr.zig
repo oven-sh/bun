@@ -1564,6 +1564,17 @@ pub fn VisitExpr(
 
                 e_.func = p.visitFunc(e_.func, expr.loc);
 
+                // Remove unused function names when minifying (only when bundling is enabled)
+                // unless --keep-names is specified
+                if (p.options.features.minify_syntax and p.options.bundle and 
+                    !p.options.keep_names and
+                    !p.current_scope.contains_direct_eval and 
+                    e_.func.name != null and 
+                    e_.func.name.?.ref != null and
+                    p.symbols.items[e_.func.name.?.ref.?.innerIndex()].use_count_estimate == 0) {
+                    e_.func.name = null;
+                }
+
                 var final_expr = expr;
 
                 if (react_hook_data) |*hook| try_mark_hook: {
@@ -1585,6 +1596,18 @@ pub fn VisitExpr(
                 }
 
                 _ = p.visitClass(expr.loc, e_, Ref.None);
+                
+                // Remove unused class names when minifying (only when bundling is enabled)
+                // unless --keep-names is specified
+                if (p.options.features.minify_syntax and p.options.bundle and 
+                    !p.options.keep_names and
+                    !p.current_scope.contains_direct_eval and 
+                    e_.class_name != null and 
+                    e_.class_name.?.ref != null and
+                    p.symbols.items[e_.class_name.?.ref.?.innerIndex()].use_count_estimate == 0) {
+                    e_.class_name = null;
+                }
+                
                 return expr;
             }
         };

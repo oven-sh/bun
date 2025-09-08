@@ -1852,6 +1852,7 @@ pub const BundleV2 = struct {
             transpiler.options.minify_syntax = config.minify.syntax;
             transpiler.options.minify_whitespace = config.minify.whitespace;
             transpiler.options.minify_identifiers = config.minify.identifiers;
+            transpiler.options.keep_names = config.minify.keep_names;
             transpiler.options.inlining = config.minify.syntax;
             transpiler.options.source_map = config.source_map;
             transpiler.options.packages = config.packages;

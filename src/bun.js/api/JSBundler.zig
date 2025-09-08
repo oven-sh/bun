@@ -409,6 +409,9 @@ pub const JSBundler = struct {
                     if (try minify.getBooleanLoose(globalThis, "identifiers")) |syntax| {
                         this.minify.identifiers = syntax;
                     }
+                    if (try minify.getBooleanLoose(globalThis, "keepNames")) |keep_names| {
+                        this.minify.keep_names = keep_names;
+                    }
                 } else {
                     return globalThis.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
                 }
@@ -688,6 +691,7 @@ pub const JSBundler = struct {
             whitespace: bool = false,
             identifiers: bool = false,
             syntax: bool = false,
+            keep_names: bool = false,
         };
 
         pub const Serve = struct {

@@ -242,6 +242,9 @@ Exited with code [1]
 # Complete before merge:
 
 - [ ] add back vm.auto_killer.kill() https://github.com/oven-sh/bun/blob/973fa98796a3be79b48f0d078485b5833d956593/src/bun.js/test/jest.zig#L1690
+- [x] is there a breaking change for:
+  - `test("error condition", async () => { setTimeout(() => {throw new Error("0")}, 0); await new Promise(() => {}) })`
+  - no change.
 - [x] test what happens running a file that uses describe() not in `bun test`. make sure it errors with the correct error. this might have regressed, if so, fix it.
 - [x] make sure done callback is supported in hooks
 - [ ] add tests for re-entry in different scenerios (timeout, done callback, ...) using waitForPromise in expect()

@@ -172,13 +172,13 @@ public:
         auto structure = createStructure(vm, globalObject, zigGlobal->functionPrototype());
         auto* object = new (NotNull, JSC::allocateCell<JSDOMFile>(vm)) JSDOMFile(vm, structure);
         object->finishCreation(vm, globalObject, prototype);
-        
+
         // Store the structure for File instances (using the File prototype we created)
         auto* blobStructure = zigGlobal->JSBlobStructure();
-        object->m_instanceStructure.set(vm, object, 
-            blobStructure->create(vm, globalObject, prototype, 
-                                 blobStructure->typeInfo(), 
-                                 blobStructure->classInfoForCells()));
+        object->m_instanceStructure.set(vm, object,
+            blobStructure->create(vm, globalObject, prototype,
+                blobStructure->typeInfo(),
+                blobStructure->classInfoForCells()));
 
         return object;
     }
@@ -199,12 +199,12 @@ public:
         auto& vm = JSC::getVM(globalObject);
         JSObject* newTarget = asObject(callFrame->newTarget());
         auto* constructor = jsDynamicCast<JSDOMFile*>(globalObject->JSDOMFileConstructor());
-        
+
         // Use the File instance structure we stored, not the Blob structure
-        Structure* structure = constructor && constructor->m_instanceStructure.get() 
-            ? constructor->m_instanceStructure.get() 
+        Structure* structure = constructor && constructor->m_instanceStructure.get()
+            ? constructor->m_instanceStructure.get()
             : globalObject->JSBlobStructure();
-            
+
         if (constructor != newTarget) {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -233,9 +233,9 @@ public:
         throwTypeError(lexicalGlobalObject, scope, "Class constructor File cannot be invoked without 'new'"_s);
         return {};
     }
-    
+
     DECLARE_VISIT_CHILDREN;
-    
+
     WriteBarrier<Structure> m_instanceStructure;
 };
 

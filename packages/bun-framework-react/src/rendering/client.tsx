@@ -116,7 +116,7 @@ const cachedPages = new Map<number, Page>();
 // const defaultPageExpiryTime = 1000 * 60 * 5; // 5 minutes
 interface Page {
   css: string[];
-  element: unknown;
+  element: Promise<React.ReactNode>;
 }
 
 const firstPageId = Date.now();
@@ -130,6 +130,7 @@ const firstPageId = Date.now();
     currentCssList = [];
     for (let i = 0; i < links.length; i++) {
       const link = links[i];
+      if (!link) continue;
       const href = new URL(link.href).pathname;
       currentCssList.push(href);
 
@@ -269,10 +270,10 @@ function ensureCssIsReady(cssList: string[]) {
       link.disabled = false;
     } else {
       const link = document.createElement("link");
-      let entry;
+      let entry: { promise: Promise<void> | null; link: HTMLLinkElement };
       const promise = new Promise<void>((resolve, reject) => {
         link.rel = "stylesheet";
-        link.onload = resolve as any;
+        link.onload = resolve.bind(null, undefined);
         link.onerror = reject;
         link.href = href;
         document.head.appendChild(link);
@@ -360,12 +361,10 @@ document.addEventListener("click", async (event, element = event.target as HTMLA
 });
 
 // Handle browser navigation events
-window.addEventListener("popstate", event => {
-  let state = event.state;
-  if (typeof state !== "number") {
-    state = undefined;
-  }
-  navigate(location.href, state);
+window.addEventListener("popstate", async event => {
+  const state = typeof event.state === "number" ? event.state : undefined;
+
+  await navigate(location.href, state);
 });
 
 if (import.meta.env.DEV) {
@@ -429,7 +428,7 @@ async function readCssMetadataFallback(stream: ReadableStream<Uint8Array>) {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;
-  const readChunk = async size => {
+  const readChunk = async (size: number) => {
     while (totalBytes < size) {
       const { value, done } = await reader.read();
       if (!done) {

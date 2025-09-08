@@ -1,3 +1,15 @@
+import { BundlerMessageLevel } from "../enums";
+import { DataViewReader, DataViewWriter } from "./data-view";
+import {
+  BundlerMessage,
+  BundlerMessageLocation,
+  BundlerNote,
+  decodeSerializedError,
+  type DeserializedFailure,
+} from "./error-serialization";
+import { syntaxHighlight } from "./JavaScriptSyntaxHighlighter";
+import { parseStackTrace, type Frame } from "./stack-trace";
+
 // This file implements the UI for error modals. Since using a framework like
 // React could collide with the user's code (consider React DevTools), this
 // entire modal is written from scratch using the standard DOM APIs. All CSS is
@@ -10,7 +22,6 @@
 // Both use a WebSocket to coordinate followup updates, when new errors are
 // added or previous ones are solved.
 if (side !== "client") throw new Error("Not client side!");
-// NOTE: imports are at the bottom for readability
 
 /** When set, the next successful build will reload the page. */
 export let hasFatalError = false;
@@ -67,14 +78,15 @@ function elem<T extends keyof HTMLElementTagNameMap>(
   children?: Node[],
 ) {
   const node = document.createElement(tagName);
-  if (props)
-    for (let key in props) {
-      node.setAttribute(key, props[key]);
-    }
-  if (children)
-    for (const child of children) {
-      node.appendChild(child);
-    }
+
+  if (props) {
+    for (const key in props) node.setAttribute(key, props[key]);
+  }
+
+  if (children) {
+    for (const child of children) node.appendChild(child);
+  }
+
   return node;
 }
 
@@ -143,6 +155,7 @@ function mountModal() {
       "background:#8883!important;" +
       "z-index:2147483647!important",
   });
+
   const shadow = domShadowRoot.attachShadow({ mode: "open" });
   const sheet = new CSSStyleSheet();
   sheet.replace(OVERLAY_CSS);
@@ -543,7 +556,7 @@ function updateBuildErrorOverlay({ remountAll = false }) {
 
     // Create the element for the root if it does not yet exist.
     if (!dom || remountAll) {
-      let fileName;
+      let fileName: Text;
       const root = elem("div", { class: "b-group" }, [
         elem("div", { class: "trace-frame" }, [elem("div", { class: "file-name" }, [(fileName = textNode())])]),
       ]);
@@ -669,15 +682,3 @@ declare global {
     "bun-hmr": HTMLElement;
   }
 }
-
-import { BundlerMessageLevel } from "../enums";
-import { DataViewReader, DataViewWriter } from "./data-view";
-import {
-  BundlerMessage,
-  BundlerMessageLocation,
-  BundlerNote,
-  decodeSerializedError,
-  type DeserializedFailure,
-} from "./error-serialization";
-import { syntaxHighlight } from "./JavaScriptSyntaxHighlighter";
-import { parseStackTrace, type Frame } from "./stack-trace";

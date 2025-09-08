@@ -1,3 +1,66 @@
+// Custom bundler generation that continues despite errors
+fn generateForStats(
+    transpiler_: *transpiler.Transpiler,
+    alloc: std.mem.Allocator,
+    event_loop: bun.jsc.AnyEventLoop,
+    scanner: *BundleV2.DependenciesScanner,
+) !void {
+    var this = BundleV2.init(
+        transpiler_,
+        null,
+        alloc,
+        event_loop,
+        false, // no hot reload
+        null,
+        .init(),
+    ) catch {
+        // Even initialization errors should be ignored
+        return;
+    };
+    
+    this.unique_key = bundle_v2.generateUniqueKey();
+    
+    // Clear any initialization errors
+    this.transpiler.log.msgs.clearRetainingCapacity();
+    this.transpiler.log.errors = 0;
+    this.transpiler.log.warnings = 0;
+    
+    // Enqueue entry points but continue even if there are errors
+    this.enqueueEntryPoints(.normal, this.transpiler.options.entry_points) catch {
+        // Continue anyway
+    };
+    
+    // Clear errors again
+    this.transpiler.log.msgs.clearRetainingCapacity();
+    this.transpiler.log.errors = 0;
+    this.transpiler.log.warnings = 0;
+    
+    // Wait for parsing to complete
+    this.waitForParse();
+    
+    // Clear errors again
+    this.transpiler.log.msgs.clearRetainingCapacity();
+    this.transpiler.log.errors = 0;
+    this.transpiler.log.warnings = 0;
+    
+    // Scan for secondary paths
+    this.scanForSecondaryPaths();
+    
+    // Process server components but ignore errors
+    this.processServerComponentManifestFiles() catch {};
+    
+    // Find reachable files
+    const reachable_files = this.findReachableFiles() catch {
+        // Return empty if we can't find reachable files
+        return;
+    };
+    
+    // Call the scanner with whatever we managed to collect
+    this.getAllDependencies(reachable_files, scanner) catch {
+        // Continue even if dependency scanning fails
+    };
+}
+
 pub const StatsCommand = struct {
     const FileStats = struct {
         files: u32 = 0,
@@ -179,7 +242,7 @@ pub const StatsCommand = struct {
         _ = source_size;
         _ = elapsed_ms;
         _ = stats;
-        // Remove all the extra summary text - table is sufficient
+        // All summary output has been removed - table is sufficient
     }
 
     fn getWorkspacePackages(allocator: std.mem.Allocator) ![][]const u8 {
@@ -488,8 +551,6 @@ pub const StatsCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         Global.configureAllocator(.{ .long_running = true });
         const allocator = ctx.allocator;
-        const log = ctx.log;
-
         const start_time = std.time.nanoTimestamp();
 
         // Set up the bundler context to be as permissive as possible
@@ -521,8 +582,10 @@ pub const StatsCommand = struct {
             try stats_ctx.stats.workspace_packages.put(pkg, FileStats{});
         }
 
-        // Set up transpiler
-        var this_transpiler = try transpiler.Transpiler.init(allocator, log, ctx.args, null);
+        // Set up transpiler with suppressed error logging
+        var silent_log = Logger.Log.init(allocator);
+        silent_log.level = .err; // Highest level to minimize processing
+        var this_transpiler = try transpiler.Transpiler.init(allocator, &silent_log, ctx.args, null);
 
         // Handle entry points based on user input
         var allocated_entry_points: ?[][]const u8 = null;
@@ -537,7 +600,7 @@ pub const StatsCommand = struct {
             // User provided entry points - use them directly
             this_transpiler.options.entry_points = ctx.args.entry_points;
         } else {
-            // No entry points provided - walk directory to find all JS/TS files
+                // No entry points provided - walk directory to find all JS/TS files
             const cwd = try std.process.getCwdAlloc(allocator);
             defer allocator.free(cwd);
 
@@ -558,9 +621,6 @@ pub const StatsCommand = struct {
         };
 
         // Run the bundler to parse all files
-        var reachable_file_count: usize = 0;
-        var minify_duration: u64 = 0;
-        var source_code_size: u64 = 0;
 
         if (this_transpiler.options.entry_points.len == 0) {
             Output.prettyErrorln("<red>error<r>: No files found to analyze", .{});
@@ -569,25 +629,18 @@ pub const StatsCommand = struct {
 
         // No "Analyzing X files..." message - just start processing
 
-        // Suppress ALL bundler errors and warnings - we only care about collecting stats
-        this_transpiler.log.level = .err; // Only show errors (highest level)
+        // Clear any messages and reset error count
         this_transpiler.log.msgs.clearRetainingCapacity();
+        this_transpiler.log.errors = 0;
+        this_transpiler.log.warnings = 0;
 
-        _ = BundleV2.generateFromCLI(
+        // Use our custom generation function that doesn't stop on errors
+        try generateForStats(
             &this_transpiler,
             allocator,
             bun.jsc.AnyEventLoop.init(allocator),
-            false, // no hot reload
-            &reachable_file_count,
-            &minify_duration,
-            &source_code_size,
             &scanner,
-        ) catch {
-            // Silently ignore ALL bundler errors - we're just collecting stats
-            // This includes BuildFailed, module resolution errors, syntax errors, etc.
-            // Clear any logged errors so they don't get printed
-            this_transpiler.log.msgs.clearRetainingCapacity();
-        };
+        );
 
         // Calculate elapsed time
         const end_time = std.time.nanoTimestamp();
@@ -596,16 +649,18 @@ pub const StatsCommand = struct {
 
         // Print results
         printTable(&stats_ctx.stats, workspace_packages);
-        printSummary(&stats_ctx.stats, workspace_packages.len, reachable_file_count, source_code_size, elapsed_ms);
+        printSummary(&stats_ctx.stats, workspace_packages.len, 0, 0, elapsed_ms);
     }
 };
 
 const options = @import("../options.zig");
 const std = @import("std");
 const transpiler = @import("../transpiler.zig");
-const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
+const bundle_v2 = @import("../bundler/bundle_v2.zig");
+const BundleV2 = bundle_v2.BundleV2;
 const Command = @import("../cli.zig").Command;
 const ImportRecord = @import("../import_record.zig").ImportRecord;
+const Logger = @import("../logger.zig");
 
 const bun = @import("bun");
 const Global = bun.Global;

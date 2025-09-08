@@ -186,8 +186,8 @@ pub const StatsCommand = struct {
         if (stats.typescript.files > 0) {
             printRow("TypeScript", &stats.typescript);
         }
-        
-        // Assets  
+
+        // Assets
         if (stats.json.files > 0) {
             printRow("JSON", &stats.json);
         }
@@ -512,7 +512,7 @@ pub const StatsCommand = struct {
                     },
                     else => {},
                 }
-                
+
                 // Check if it's a test file
                 if (is_test) {
                     addStats(&ctx.stats.tests, &file_stats);

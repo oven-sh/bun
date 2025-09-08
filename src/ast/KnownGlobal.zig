@@ -95,7 +95,7 @@ pub const KnownGlobal = enum {
                 // For single argument, only convert to literal if we're SURE it's not a number
                 if (n == 1) {
                     const arg = e.args.ptr[0];
-                    
+
                     // Check if it's an object or array literal first
                     switch (arg.data) {
                         .e_object, .e_array => {
@@ -105,7 +105,7 @@ pub const KnownGlobal = enum {
                         },
                         else => {},
                     }
-                    
+
                     // For other types, check via knownPrimitive
                     const primitive = arg.knownPrimitive();
                     // Only convert if we know for certain it's not a number

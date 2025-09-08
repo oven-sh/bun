@@ -22,7 +22,7 @@ function wrapError(error: Error | MySQLErrorOptions) {
   return new MySQLError(error.message, error);
 }
 initMySQL(
-  function onResolveMySQLQuery(query, result, commandTag, count, queries, is_last) {
+  function onResolveMySQLQuery(query, result, commandTag, count, queries, is_last, last_insert_rowid, affected_rows) {
     /// simple queries
     if (query[_flags] & SQLQueryFlags.simple) {
       $assert(result instanceof SQLResultArray, "Invalid result array");
@@ -30,6 +30,8 @@ initMySQL(
       query[_handle].setPendingValue(new SQLResultArray());
 
       result.count = count || 0;
+      result.lastInsertRowid = last_insert_rowid;
+      result.affectedRows = affected_rows || 0;
       const last_result = query[_results];
 
       if (!last_result) {
@@ -60,6 +62,8 @@ initMySQL(
     $assert(result instanceof SQLResultArray, "Invalid result array");
 
     result.count = count || 0;
+    result.lastInsertRowid = last_insert_rowid;
+    result.affectedRows = affected_rows || 0;
     if (queries) {
       const queriesIndex = queries.indexOf(query);
       if (queriesIndex !== -1) {
@@ -388,7 +392,7 @@ class PooledMySQLConnection {
     // remove from ready connections if its there
     this.adapter.readyConnections.delete(this);
     const queries = new Set(this.queries);
-    this.queries.clear();
+    this.queries?.clear?.();
     this.queryCount = 0;
     this.flags &= ~PooledConnectionFlags.reserved;
 

@@ -122,7 +122,7 @@ pub const StringRefList = struct {
     pub const empty: StringRefList = .{ .strings = .{} };
 
     pub fn track(al: *StringRefList, str: ZigString.Slice) []const u8 {
-        al.strings.append(bun.default_allocator, str) catch bun.outOfMemory();
+        bun.handleOom(al.strings.append(bun.default_allocator, str));
         return str.slice();
     }
 
@@ -290,7 +290,7 @@ pub const Framework = struct {
                 .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/client.tsx") },
                 .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/server.tsx") },
                 .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/ssr.tsx") },
-            }) catch bun.outOfMemory(),
+            }) catch |err| bun.handleOom(err),
         };
     }
 

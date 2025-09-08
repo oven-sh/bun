@@ -1,12 +1,6 @@
 // Hardcoded module "node:perf_hooks"
 const { throwNotImplemented } = require("internal/shared");
 
-const createFunctionThatMasqueradesAsUndefined = $newCppFunction(
-  "ZigGlobalObject.cpp",
-  "jsFunctionCreateFunctionThatMasqueradesAsUndefined",
-  2,
-);
-
 const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp", "jsFunction_createHistogram", 3) as (
   min: number,
   max: number,
@@ -92,8 +86,7 @@ class PerformanceNodeTiming {
     };
   }
 }
-Object.setPrototypeOf(PerformanceNodeTiming.prototype, PerformanceEntry.prototype);
-Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
+$toClass(PerformanceNodeTiming, "PerformanceNodeTiming", PerformanceEntry);
 
 function createPerformanceNodeTiming() {
   const object = Object.create(PerformanceNodeTiming.prototype);
@@ -118,8 +111,7 @@ class PerformanceResourceTiming {
     throwNotImplemented("PerformanceResourceTiming");
   }
 }
-Object.setPrototypeOf(PerformanceResourceTiming.prototype, PerformanceEntry.prototype);
-Object.setPrototypeOf(PerformanceResourceTiming, PerformanceEntry);
+$toClass(PerformanceResourceTiming, "PerformanceResourceTiming", PerformanceEntry);
 
 export default {
   performance: {
@@ -180,8 +172,10 @@ export default {
   PerformanceObserver,
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
-  // TODO: node:perf_hooks.monitorEventLoopDelay -- https://github.com/oven-sh/bun/issues/17650
-  monitorEventLoopDelay: createFunctionThatMasqueradesAsUndefined("", 0),
+  monitorEventLoopDelay: function monitorEventLoopDelay(options?: { resolution?: number }) {
+    const impl = require("internal/perf_hooks/monitorEventLoopDelay");
+    return impl(options);
+  },
   createHistogram: function createHistogram(options?: {
     lowest?: number | bigint;
     highest?: number | bigint;

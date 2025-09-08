@@ -243,7 +243,7 @@ pub fn editUpdateNoArgs(
                         }
 
                         const key_str = try key.asStringCloned(allocator) orelse unreachable;
-                        const entry = manager.updating_packages.getOrPut(allocator, key_str) catch bun.outOfMemory();
+                        const entry = bun.handleOom(manager.updating_packages.getOrPut(allocator, key_str));
 
                         // If a dependency is present in more than one dependency group, only one of it's versions
                         // will be updated. The group is determined by the order of `dependency_groups`, the same
@@ -259,9 +259,9 @@ pub fn editUpdateNoArgs(
                         if (manager.options.do.update_to_latest) {
                             // is it an aliased package
                             const temp_version = if (alias_at_index) |at_index|
-                                std.fmt.allocPrint(allocator, "{s}@latest", .{version_literal[0..at_index]}) catch bun.outOfMemory()
+                                bun.handleOom(std.fmt.allocPrint(allocator, "{s}@latest", .{version_literal[0..at_index]}))
                             else
-                                allocator.dupe(u8, "latest") catch bun.outOfMemory();
+                                bun.handleOom(allocator.dupe(u8, "latest"));
 
                             dep.value = Expr.allocate(allocator, E.String, .{
                                 .data = temp_version,
@@ -401,7 +401,11 @@ pub fn edit(
         };
 
         if (options.add_trusted_dependencies) {
-            for (manager.trusted_deps_to_add_to_package_json.items, 0..) |trusted_package_name, i| {
+            // Iterate backwards to avoid index issues when removing items
+            var i: usize = manager.trusted_deps_to_add_to_package_json.items.len;
+            while (i > 0) {
+                i -= 1;
+                const trusted_package_name = manager.trusted_deps_to_add_to_package_json.items[i];
                 for (original_trusted_dependencies.items.slice()) |item| {
                     if (item.data == .e_string) {
                         if (item.data.e_string.eql(string, trusted_package_name)) {
@@ -432,7 +436,7 @@ pub fn edit(
 
                                             if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
 
-                                            const entry = manager.updating_packages.getOrPut(allocator, name) catch bun.outOfMemory();
+                                            const entry = bun.handleOom(manager.updating_packages.getOrPut(allocator, name));
 
                                             // first come, first serve
                                             if (entry.found_existing) break :add_packages_to_update;

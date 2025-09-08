@@ -291,7 +291,8 @@ pub const Entry = struct {
             .files = {
                 const files = entry.files.slice();
                 for (0..files.len) |i| {
-                    files.get(i).deinit();
+                    var file = files.get(i);
+                    file.deinit();
                 }
                 entry.files.deinit(entry.allocator());
             },
@@ -300,7 +301,7 @@ pub const Entry = struct {
     }
 
     fn allocator(entry: *const Entry) Allocator {
-        return entry.dev_allocator.get();
+        return entry.dev_allocator.allocator();
     }
 };
 
@@ -335,12 +336,13 @@ pub fn owner(store: *Self) *DevServer {
     return @alignCast(@fieldParentPtr("source_maps", store));
 }
 
-fn dev_allocator(store: *Self) DevAllocator {
-    return store.owner().dev_allocator();
+fn allocator(store: *Self) Allocator {
+    return store.dev_allocator().allocator();
 }
 
-fn allocator(store: *Self) Allocator {
-    return store.dev_allocator().get();
+fn dev_allocator(store: *const Self) DevAllocator {
+    const dev_server: *const DevServer = @constCast(store).owner();
+    return dev_server.dev_allocator();
 }
 
 const PutOrIncrementRefCount = union(enum) {
@@ -521,7 +523,7 @@ pub fn getParsedSourceMap(store: *Self, script_id: Key, arena: Allocator, gpa: A
     const entry = &store.entries.values()[index];
 
     const script_id_decoded: SourceId = @bitCast(script_id.get());
-    const vlq_bytes = entry.renderMappings(script_id_decoded.kind, arena, arena) catch bun.outOfMemory();
+    const vlq_bytes = bun.handleOom(entry.renderMappings(script_id_decoded.kind, arena, arena));
 
     switch (SourceMap.Mapping.parse(
         gpa,

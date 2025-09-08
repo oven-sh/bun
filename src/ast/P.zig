@@ -581,7 +581,7 @@ pub fn NewParser_(
 
         pub fn transposeRequire(noalias p: *P, arg: Expr, state: *const TransposeState) Expr {
             if (!p.options.features.allow_runtime) {
-                const args = p.allocator.alloc(Expr, 1) catch bun.outOfMemory();
+                const args = bun.handleOom(p.allocator.alloc(Expr, 1));
                 args[0] = arg;
                 return p.newExpr(
                     E.Call{
@@ -623,8 +623,8 @@ pub fn NewParser_(
 
                         // Note that this symbol may be completely removed later.
                         var path_name = fs.PathName.init(path.text);
-                        const name = path_name.nonUniqueNameString(p.allocator) catch bun.outOfMemory();
-                        const namespace_ref = p.newSymbol(.other, name) catch bun.outOfMemory();
+                        const name = bun.handleOom(path_name.nonUniqueNameString(p.allocator));
+                        const namespace_ref = bun.handleOom(p.newSymbol(.other, name));
 
                         p.imports_to_convert_from_require.append(p.allocator, .{
                             .namespace = .{
@@ -632,8 +632,8 @@ pub fn NewParser_(
                                 .loc = arg.loc,
                             },
                             .import_record_id = import_record_index,
-                        }) catch bun.outOfMemory();
-                        p.import_items_for_namespace.put(p.allocator, namespace_ref, ImportItemForNamespaceMap.init(p.allocator)) catch bun.outOfMemory();
+                        }) catch |err| bun.handleOom(err);
+                        bun.handleOom(p.import_items_for_namespace.put(p.allocator, namespace_ref, ImportItemForNamespaceMap.init(p.allocator)));
                         p.recordUsage(namespace_ref);
 
                         if (!state.is_require_immediately_assigned_to_decl) {
@@ -2010,6 +2010,9 @@ pub fn NewParser_(
                 p.jest.afterEach = try p.declareCommonJSSymbol(.unbound, "afterEach");
                 p.jest.beforeAll = try p.declareCommonJSSymbol(.unbound, "beforeAll");
                 p.jest.afterAll = try p.declareCommonJSSymbol(.unbound, "afterAll");
+                p.jest.xit = try p.declareCommonJSSymbol(.unbound, "xit");
+                p.jest.xtest = try p.declareCommonJSSymbol(.unbound, "xtest");
+                p.jest.xdescribe = try p.declareCommonJSSymbol(.unbound, "xdescribe");
             }
 
             if (p.options.features.react_fast_refresh) {
@@ -2046,7 +2049,7 @@ pub fn NewParser_(
         fn ensureRequireSymbol(p: *P) void {
             if (p.runtime_imports.__require != null) return;
             const static_symbol = generatedSymbolName("__require");
-            p.runtime_imports.__require = declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static_symbol, true) catch bun.outOfMemory();
+            p.runtime_imports.__require = bun.handleOom(declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static_symbol, true));
             p.runtime_imports.put("__require", p.runtime_imports.__require.?);
         }
 
@@ -2259,8 +2262,8 @@ pub fn NewParser_(
             {
                 p.log.level = .verbose;
 
-                p.log.addDebugFmt(p.source, loc, p.allocator, "Expected this scope (.{s})", .{@tagName(kind)}) catch bun.outOfMemory();
-                p.log.addDebugFmt(p.source, order.loc, p.allocator, "Found this scope (.{s})", .{@tagName(order.scope.kind)}) catch bun.outOfMemory();
+                bun.handleOom(p.log.addDebugFmt(p.source, loc, p.allocator, "Expected this scope (.{s})", .{@tagName(kind)}));
+                bun.handleOom(p.log.addDebugFmt(p.source, order.loc, p.allocator, "Found this scope (.{s})", .{@tagName(order.scope.kind)}));
 
                 p.panic("Scope mismatch while visiting", .{});
             }
@@ -2307,8 +2310,8 @@ pub fn NewParser_(
                     if (p.scopes_in_order.items[last_i]) |prev_scope| {
                         if (prev_scope.loc.start >= loc.start) {
                             p.log.level = .verbose;
-                            p.log.addDebugFmt(p.source, prev_scope.loc, p.allocator, "Previous Scope", .{}) catch bun.outOfMemory();
-                            p.log.addDebugFmt(p.source, loc, p.allocator, "Next Scope", .{}) catch bun.outOfMemory();
+                            bun.handleOom(p.log.addDebugFmt(p.source, prev_scope.loc, p.allocator, "Previous Scope", .{}));
+                            bun.handleOom(p.log.addDebugFmt(p.source, loc, p.allocator, "Next Scope", .{}));
                             p.panic("Scope location {d} must be greater than {d}", .{ loc.start, prev_scope.loc.start });
                         }
                     }
@@ -2983,7 +2986,7 @@ pub fn NewParser_(
                 scope: js_ast.TSNamespaceScope,
             };
 
-            var pair = p.allocator.create(Pair) catch bun.outOfMemory();
+            var pair = bun.handleOom(p.allocator.create(Pair));
             pair.map = .{};
             pair.scope = .{
                 .exported_members = &pair.map,
@@ -3355,7 +3358,7 @@ pub fn NewParser_(
                     p.allocator,
                     "panic here",
                     .{},
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             }
 
             p.log.level = .verbose;
@@ -3999,7 +4002,7 @@ pub fn NewParser_(
                         // checks are not yet handled correctly by bun or esbuild, so this possibility is
                         // currently ignored.
                         .un_typeof => {
-                            if (ex.value.data == .e_identifier) {
+                            if (ex.value.data == .e_identifier and ex.flags.was_originally_typeof_identifier) {
                                 return true;
                             }
 
@@ -4038,6 +4041,18 @@ pub fn NewParser_(
                             ex.right.data,
                         ) and
                             p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.left) and p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.right),
+
+                        // Special-case "<" and ">" with string, number, or bigint arguments
+                        .bin_lt, .bin_gt, .bin_le, .bin_ge => {
+                            const left = ex.left.knownPrimitive();
+                            const right = ex.right.knownPrimitive();
+                            switch (left) {
+                                .string, .number, .bigint => {
+                                    return right == left and p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.left) and p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.right);
+                                },
+                                else => {},
+                            }
+                        },
                         else => {},
                     }
                 },
@@ -4258,13 +4273,14 @@ pub fn NewParser_(
         //     return false;
         // }
 
-        fn isSideEffectFreeUnboundIdentifierRef(p: *P, value: Expr, guard_condition: Expr, is_yes_branch: bool) bool {
+        fn isSideEffectFreeUnboundIdentifierRef(p: *P, value: Expr, guard_condition: Expr, is_yes_branch_: bool) bool {
             if (value.data != .e_identifier or
                 p.symbols.items[value.data.e_identifier.ref.innerIndex()].kind != .unbound or
                 guard_condition.data != .e_binary)
                 return false;
 
             const binary = guard_condition.data.e_binary.*;
+            var is_yes_branch = is_yes_branch_;
 
             switch (binary.op) {
                 .bin_strict_eq, .bin_strict_ne, .bin_loose_eq, .bin_loose_ne => {
@@ -4292,6 +4308,39 @@ pub fn NewParser_(
                     return ((compare.e_string.eqlComptime("undefined") == is_yes_branch) ==
                         (binary.op == .bin_strict_ne or binary.op == .bin_loose_ne)) and
                         id.eql(id2);
+                },
+                .bin_lt, .bin_gt, .bin_le, .bin_ge => {
+                    // Pattern match for "typeof x < <string>"
+                    var typeof: Expr.Data = binary.left.data;
+                    var str: Expr.Data = binary.right.data;
+
+                    // Check if order is flipped: 'u' >= typeof x
+                    if (typeof == .e_string) {
+                        typeof = binary.right.data;
+                        str = binary.left.data;
+                        is_yes_branch = !is_yes_branch;
+                    }
+
+                    if (typeof == .e_unary and str == .e_string) {
+                        const unary = typeof.e_unary.*;
+                        if (unary.op == .un_typeof and
+                            unary.value.data == .e_identifier and
+                            unary.flags.was_originally_typeof_identifier and
+                            str.e_string.eqlComptime("u"))
+                        {
+                            // In "typeof x < 'u' ? x : null", the reference to "x" is side-effect free
+                            // In "typeof x > 'u' ? x : null", the reference to "x" is side-effect free
+                            if (is_yes_branch == (binary.op == .bin_lt or binary.op == .bin_le)) {
+                                const id = value.data.e_identifier.ref;
+                                const id2 = unary.value.data.e_identifier.ref;
+                                if (id.eql(id2)) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+
+                    return false;
                 },
                 else => return false,
             }
@@ -4556,9 +4605,9 @@ pub fn NewParser_(
             if ((symbol.kind == .ts_namespace or symbol.kind == .ts_enum) and
                 !p.emitted_namespace_vars.contains(name_ref))
             {
-                p.emitted_namespace_vars.putNoClobber(allocator, name_ref, {}) catch bun.outOfMemory();
+                bun.handleOom(p.emitted_namespace_vars.putNoClobber(allocator, name_ref, {}));
 
-                var decls = allocator.alloc(G.Decl, 1) catch bun.outOfMemory();
+                var decls = bun.handleOom(allocator.alloc(G.Decl, 1));
                 decls[0] = G.Decl{ .binding = p.b(B.Identifier{ .ref = name_ref }, name_loc) };
 
                 if (p.enclosing_namespace_arg_ref == null) {
@@ -4569,7 +4618,7 @@ pub fn NewParser_(
                             .decls = G.Decl.List.init(decls),
                             .is_export = is_export,
                         }, stmt_loc),
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                 } else {
                     // Nested namespace: "let"
                     stmts.append(
@@ -4577,7 +4626,7 @@ pub fn NewParser_(
                             .kind = .k_let,
                             .decls = G.Decl.List.init(decls),
                         }, stmt_loc),
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                 }
             }
 
@@ -4616,10 +4665,10 @@ pub fn NewParser_(
                 }, name_loc);
             };
 
-            var func_args = allocator.alloc(G.Arg, 1) catch bun.outOfMemory();
+            var func_args = bun.handleOom(allocator.alloc(G.Arg, 1));
             func_args[0] = .{ .binding = p.b(B.Identifier{ .ref = arg_ref }, name_loc) };
 
-            var args_list = allocator.alloc(ExprNodeIndex, 1) catch bun.outOfMemory();
+            var args_list = bun.handleOom(allocator.alloc(ExprNodeIndex, 1));
             args_list[0] = arg_expr;
 
             // TODO: if unsupported features includes arrow functions
@@ -5490,15 +5539,15 @@ pub fn NewParser_(
         pub fn generateTempRefWithScope(p: *P, default_name: ?string, scope: *Scope) Ref {
             const name = (if (p.willUseRenamer()) default_name else null) orelse brk: {
                 p.temp_ref_count += 1;
-                break :brk std.fmt.allocPrint(p.allocator, "__bun_temp_ref_{x}$", .{p.temp_ref_count}) catch bun.outOfMemory();
+                break :brk bun.handleOom(std.fmt.allocPrint(p.allocator, "__bun_temp_ref_{x}$", .{p.temp_ref_count}));
             };
-            const ref = p.newSymbol(.other, name) catch bun.outOfMemory();
+            const ref = bun.handleOom(p.newSymbol(.other, name));
 
             p.temp_refs_to_declare.append(p.allocator, .{
                 .ref = ref,
-            }) catch bun.outOfMemory();
+            }) catch |err| bun.handleOom(err);
 
-            scope.generated.append(p.allocator, &.{ref}) catch bun.outOfMemory();
+            bun.handleOom(scope.generated.append(p.allocator, &.{ref}));
 
             return ref;
         }
@@ -5584,7 +5633,7 @@ pub fn NewParser_(
                                 if (decl.value) |*decl_value| {
                                     const value_loc = decl_value.loc;
                                     p.recordUsage(ctx.stack_ref);
-                                    const args = p.allocator.alloc(Expr, 3) catch bun.outOfMemory();
+                                    const args = bun.handleOom(p.allocator.alloc(Expr, 3));
                                     args[0] = Expr{
                                         .data = .{ .e_identifier = .{ .ref = ctx.stack_ref } },
                                         .loc = stmt.loc,
@@ -5618,14 +5667,14 @@ pub fn NewParser_(
                     switch (stmt.data) {
                         .s_directive, .s_import, .s_export_from, .s_export_star => {
                             // These can't go in a try/catch block
-                            result.append(stmt) catch bun.outOfMemory();
+                            bun.handleOom(result.append(stmt));
                             continue;
                         },
 
                         .s_class => {
                             if (stmt.data.s_class.is_export) {
                                 // can't go in try/catch; hoist out
-                                result.append(stmt) catch bun.outOfMemory();
+                                bun.handleOom(result.append(stmt));
                                 continue;
                             }
                         },
@@ -5636,14 +5685,14 @@ pub fn NewParser_(
 
                         .s_export_clause => |data| {
                             // Merge export clauses together
-                            exports.appendSlice(data.items) catch bun.outOfMemory();
+                            bun.handleOom(exports.appendSlice(data.items));
                             continue;
                         },
 
                         .s_function => {
                             if (should_hoist_fns) {
                                 // Hoist function declarations for cross-file ESM references
-                                result.append(stmt) catch bun.outOfMemory();
+                                bun.handleOom(result.append(stmt));
                                 continue;
                             }
                         },
@@ -5662,7 +5711,7 @@ pub fn NewParser_(
                                             },
                                             .alias = p.symbols.items[identifier.ref.inner_index].original_name,
                                             .alias_loc = decl.binding.loc,
-                                        }) catch bun.outOfMemory();
+                                        }) catch |err| bun.handleOom(err);
                                         local.kind = .k_var;
                                     }
                                 }
@@ -5693,12 +5742,12 @@ pub fn NewParser_(
                     caught_ref,
                     err_ref,
                     has_err_ref,
-                }) catch bun.outOfMemory();
+                }) catch |err| bun.handleOom(err);
                 p.declared_symbols.ensureUnusedCapacity(
                     p.allocator,
                     // 5 to include the _promise decl later on:
                     if (ctx.has_await_using) 5 else 4,
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
                 p.declared_symbols.appendAssumeCapacity(.{ .is_top_level = is_top_level, .ref = ctx.stack_ref });
                 p.declared_symbols.appendAssumeCapacity(.{ .is_top_level = is_top_level, .ref = caught_ref });
                 p.declared_symbols.appendAssumeCapacity(.{ .is_top_level = is_top_level, .ref = err_ref });
@@ -5709,7 +5758,7 @@ pub fn NewParser_(
                     p.recordUsage(ctx.stack_ref);
                     p.recordUsage(err_ref);
                     p.recordUsage(has_err_ref);
-                    const args = p.allocator.alloc(Expr, 3) catch bun.outOfMemory();
+                    const args = bun.handleOom(p.allocator.alloc(Expr, 3));
                     args[0] = Expr{
                         .data = .{ .e_identifier = .{ .ref = ctx.stack_ref } },
                         .loc = loc,
@@ -5728,7 +5777,7 @@ pub fn NewParser_(
                 const finally_stmts = finally: {
                     if (ctx.has_await_using) {
                         const promise_ref = p.generateTempRef("_promise");
-                        scope.generated.append(p.allocator, &.{promise_ref}) catch bun.outOfMemory();
+                        bun.handleOom(scope.generated.append(p.allocator, &.{promise_ref}));
                         p.declared_symbols.appendAssumeCapacity(.{ .is_top_level = is_top_level, .ref = promise_ref });
 
                         const promise_ref_expr = p.newExpr(E.Identifier{ .ref = promise_ref }, loc);
@@ -5738,10 +5787,10 @@ pub fn NewParser_(
                         }, loc);
                         p.recordUsage(promise_ref);
 
-                        const statements = p.allocator.alloc(Stmt, 2) catch bun.outOfMemory();
+                        const statements = bun.handleOom(p.allocator.alloc(Stmt, 2));
                         statements[0] = p.s(S.Local{
                             .decls = decls: {
-                                const decls = p.allocator.alloc(Decl, 1) catch bun.outOfMemory();
+                                const decls = bun.handleOom(p.allocator.alloc(Decl, 1));
                                 decls[0] = .{
                                     .binding = p.b(B.Identifier{ .ref = promise_ref }, loc),
                                     .value = call_dispose,
@@ -5766,7 +5815,7 @@ pub fn NewParser_(
 
                         break :finally statements;
                     } else {
-                        const single = p.allocator.alloc(Stmt, 1) catch bun.outOfMemory();
+                        const single = bun.handleOom(p.allocator.alloc(Stmt, 1));
                         single[0] = p.s(S.SExpr{ .value = call_dispose }, call_dispose.loc);
                         break :finally single;
                     }
@@ -5774,10 +5823,10 @@ pub fn NewParser_(
 
                 // Wrap everything in a try/catch/finally block
                 p.recordUsage(caught_ref);
-                result.ensureUnusedCapacity(2 + @as(usize, @intFromBool(exports.items.len > 0))) catch bun.outOfMemory();
+                bun.handleOom(result.ensureUnusedCapacity(2 + @as(usize, @intFromBool(exports.items.len > 0))));
                 result.appendAssumeCapacity(p.s(S.Local{
                     .decls = decls: {
-                        const decls = p.allocator.alloc(Decl, 1) catch bun.outOfMemory();
+                        const decls = bun.handleOom(p.allocator.alloc(Decl, 1));
                         decls[0] = .{
                             .binding = p.b(B.Identifier{ .ref = ctx.stack_ref }, loc),
                             .value = p.newExpr(E.Array{}, loc),
@@ -5792,10 +5841,10 @@ pub fn NewParser_(
                     .catch_ = .{
                         .binding = p.b(B.Identifier{ .ref = caught_ref }, loc),
                         .body = catch_body: {
-                            const statements = p.allocator.alloc(Stmt, 1) catch bun.outOfMemory();
+                            const statements = bun.handleOom(p.allocator.alloc(Stmt, 1));
                             statements[0] = p.s(S.Local{
                                 .decls = decls: {
-                                    const decls = p.allocator.alloc(Decl, 2) catch bun.outOfMemory();
+                                    const decls = bun.handleOom(p.allocator.alloc(Decl, 2));
                                     decls[0] = .{
                                         .binding = p.b(B.Identifier{ .ref = err_ref }, loc),
                                         .value = p.newExpr(E.Identifier{ .ref = caught_ref }, loc),
@@ -5851,7 +5900,7 @@ pub fn NewParser_(
                 },
                 .e_array => |arr| for (arr.items.slice()) |*item| {
                     if (item.data != .e_string) {
-                        p.log.addError(p.source, item.loc, import_meta_hot_accept_err) catch bun.outOfMemory();
+                        bun.handleOom(p.log.addError(p.source, item.loc, import_meta_hot_accept_err));
                         continue;
                     }
                     item.data = p.rewriteImportMetaHotAcceptString(item.data.e_string, item.loc) orelse
@@ -5864,7 +5913,7 @@ pub fn NewParser_(
         }
 
         fn rewriteImportMetaHotAcceptString(p: *P, str: *E.String, loc: logger.Loc) ?Expr.Data {
-            str.toUTF8(p.allocator) catch bun.outOfMemory();
+            bun.handleOom(str.toUTF8(p.allocator));
             const specifier = str.data;
 
             const import_record_index = for (p.import_records.items, 0..) |import_record, i| {
@@ -5872,7 +5921,7 @@ pub fn NewParser_(
                     break i;
                 }
             } else {
-                p.log.addError(p.source, loc, import_meta_hot_accept_err) catch bun.outOfMemory();
+                bun.handleOom(p.log.addError(p.source, loc, import_meta_hot_accept_err));
                 return null;
             };
 
@@ -5944,7 +5993,7 @@ pub fn NewParser_(
                     val,
                     module_path,
                     p.newExpr(E.String{ .data = original_name }, logger.Loc.Empty),
-                }) catch bun.outOfMemory(),
+                }) catch |err| bun.handleOom(err),
             }, logger.Loc.Empty);
         }
 
@@ -5976,7 +6025,7 @@ pub fn NewParser_(
                 p.declared_symbols.append(p.allocator, .{
                     .is_top_level = true,
                     .ref = ctx_storage.*.?.signature_cb,
-                }) catch bun.outOfMemory();
+                }) catch |err| bun.handleOom(err);
 
                 break :init &(ctx_storage.*.?);
             };
@@ -5999,7 +6048,7 @@ pub fn NewParser_(
                 .e_import_identifier,
                 .e_commonjs_export_identifier,
                 => |id, tag| {
-                    const gop = ctx.user_hooks.getOrPut(p.allocator, id.ref) catch bun.outOfMemory();
+                    const gop = bun.handleOom(ctx.user_hooks.getOrPut(p.allocator, id.ref));
                     if (!gop.found_existing) {
                         gop.value_ptr.* = .{
                             .data = @unionInit(Expr.Data, @tagName(tag), id),
@@ -6022,7 +6071,7 @@ pub fn NewParser_(
                 // re-allocated entirely to fit. Only one slot of new capacity
                 // is used since we know this statement list is not going to be
                 // appended to afterwards; This function is a post-visit handler.
-                const new_stmts = p.allocator.alloc(Stmt, stmts.items.len + 1) catch bun.outOfMemory();
+                const new_stmts = bun.handleOom(p.allocator.alloc(Stmt, stmts.items.len + 1));
                 @memcpy(new_stmts[1..], stmts.items);
                 stmts.deinit();
                 stmts.* = ListManaged(Stmt).fromOwnedSlice(p.allocator, new_stmts);
@@ -6050,14 +6099,14 @@ pub fn NewParser_(
                 .value = p.newExpr(E.Call{
                     .target = Expr.initIdentifier(p.react_refresh.create_signature_ref, loc),
                 }, loc),
-            }}) catch bun.outOfMemory() }, loc);
+            }}) catch |err| bun.handleOom(err) }, loc);
         }
 
         pub fn getReactRefreshHookSignalInit(p: *P, ctx: *ReactRefresh.HookContext, function_with_hook_calls: Expr) Expr {
             const loc = logger.Loc.Empty;
 
             const final = ctx.hasher.final();
-            const hash_data = p.allocator.alloc(u8, comptime bun.base64.encodeLenFromSize(@sizeOf(@TypeOf(final)))) catch bun.outOfMemory();
+            const hash_data = bun.handleOom(p.allocator.alloc(u8, comptime bun.base64.encodeLenFromSize(@sizeOf(@TypeOf(final)))));
             bun.assert(bun.base64.encode(hash_data, std.mem.asBytes(&final)) == hash_data.len);
 
             const have_custom_hooks = ctx.user_hooks.count() > 0;
@@ -6068,7 +6117,7 @@ pub fn NewParser_(
                 2 +
                     @as(usize, @intFromBool(have_force_arg)) +
                     @as(usize, @intFromBool(have_custom_hooks)),
-            ) catch bun.outOfMemory();
+            ) catch |err| bun.handleOom(err);
 
             args[0] = function_with_hook_calls;
             args[1] = p.newExpr(E.String{ .data = hash_data }, loc);
@@ -6083,7 +6132,7 @@ pub fn NewParser_(
                             p.s(S.Return{ .value = p.newExpr(E.Array{
                                 .items = ExprNodeList.init(ctx.user_hooks.values()),
                             }, loc) }, loc),
-                        }) catch bun.outOfMemory(),
+                        }) catch |err| bun.handleOom(err),
                         .loc = loc,
                     },
                     .prefer_expr = true,
@@ -6232,7 +6281,7 @@ pub fn NewParser_(
                 //   })
                 //
                 //  which is then called in `evaluateCommonJSModuleOnce`
-                var args = allocator.alloc(Arg, 5 + @as(usize, @intFromBool(p.has_import_meta))) catch bun.outOfMemory();
+                var args = bun.handleOom(allocator.alloc(Arg, 5 + @as(usize, @intFromBool(p.has_import_meta))));
                 args[0..5].* = .{
                     Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) },
                     Arg{ .binding = p.b(B.Identifier{ .ref = p.require_ref }, logger.Loc.Empty) },
@@ -6241,7 +6290,7 @@ pub fn NewParser_(
                     Arg{ .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty) },
                 };
                 if (p.has_import_meta) {
-                    p.import_meta_ref = p.newSymbol(.other, "$Bun_import_meta") catch bun.outOfMemory();
+                    p.import_meta_ref = bun.handleOom(p.newSymbol(.other, "$Bun_import_meta"));
                     args[5] = Arg{ .binding = p.b(B.Identifier{ .ref = p.import_meta_ref }, logger.Loc.Empty) };
                 }
 
@@ -6257,7 +6306,7 @@ pub fn NewParser_(
 
                 total_stmts_count += @as(usize, @intCast(@intFromBool(preserve_strict_mode)));
 
-                const stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch bun.outOfMemory();
+                const stmts_to_copy = bun.handleOom(allocator.alloc(Stmt, total_stmts_count));
                 {
                     var remaining_stmts = stmts_to_copy;
                     if (preserve_strict_mode) {
@@ -6291,7 +6340,7 @@ pub fn NewParser_(
                     logger.Loc.Empty,
                 );
 
-                var top_level_stmts = p.allocator.alloc(Stmt, 1) catch bun.outOfMemory();
+                var top_level_stmts = bun.handleOom(p.allocator.alloc(Stmt, 1));
                 top_level_stmts[0] = p.s(
                     S.SExpr{
                         .value = wrapper,
@@ -6371,8 +6420,8 @@ pub fn NewParser_(
                             p.allocator,
                             "require_{any}",
                             .{p.source.fmtIdentifier()},
-                        ) catch bun.outOfMemory(),
-                    ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err),
+                    ) catch |err| bun.handleOom(err);
                 }
 
                 break :brk Ref.None;

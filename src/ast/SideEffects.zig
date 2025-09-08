@@ -153,7 +153,7 @@ pub const SideEffects = enum(u1) {
                         // "typeof x" must not be transformed into if "x" since doing so could
                         // cause an exception to be thrown. Instead we can just remove it since
                         // "typeof x" is special-cased in the standard to never throw.
-                        if (std.meta.activeTag(un.value.data) == .e_identifier) {
+                        if (un.value.data == .e_identifier and un.flags.was_originally_typeof_identifier) {
                             return null;
                         }
 
@@ -199,6 +199,10 @@ pub const SideEffects = enum(u1) {
                     // "toString" and/or "valueOf" to be called.
                     .bin_loose_eq,
                     .bin_loose_ne,
+                    .bin_lt,
+                    .bin_gt,
+                    .bin_le,
+                    .bin_ge,
                     => {
                         if (isPrimitiveWithSideEffects(bin.left.data) and isPrimitiveWithSideEffects(bin.right.data)) {
                             return Expr.joinWithComma(
@@ -207,13 +211,23 @@ pub const SideEffects = enum(u1) {
                                 p.allocator,
                             );
                         }
-                        // If one side is a number, the number can be printed as
-                        // `0` since the result being unused doesnt matter, we
-                        // only care to invoke the coercion.
-                        if (bin.left.data == .e_number) {
-                            bin.left.data = .{ .e_number = .{ .value = 0.0 } };
-                        } else if (bin.right.data == .e_number) {
-                            bin.right.data = .{ .e_number = .{ .value = 0.0 } };
+
+                        switch (bin.op) {
+                            .bin_loose_eq,
+                            .bin_loose_ne,
+                            => {
+                                // If one side is a number and the other side is a known primitive with side effects,
+                                // the number can be printed as `0` since the result being unused doesn't matter,
+                                // we only care to invoke the coercion.
+                                // We only do this optimization if the other side is a known primitive with side effects
+                                // to avoid corrupting shared nodes when the other side is an undefined identifier
+                                if (bin.left.data == .e_number) {
+                                    bin.left.data = .{ .e_number = .{ .value = 0.0 } };
+                                } else if (bin.right.data == .e_number) {
+                                    bin.right.data = .{ .e_number = .{ .value = 0.0 } };
+                                }
+                            },
+                            else => {},
                         }
                     },
 
@@ -347,7 +361,7 @@ pub const SideEffects = enum(u1) {
         const stack_bottom = stack.items.len;
         defer stack.shrinkRetainingCapacity(stack_bottom);
 
-        stack.append(.{ .bin = expr.data.e_binary }) catch bun.outOfMemory();
+        bun.handleOom(stack.append(.{ .bin = expr.data.e_binary }));
 
         // Build stack up of expressions
         var left: Expr = expr.data.e_binary.left;
@@ -357,7 +371,7 @@ pub const SideEffects = enum(u1) {
                 .bin_strict_ne,
                 .bin_comma,
                 => {
-                    stack.append(.{ .bin = left_bin }) catch bun.outOfMemory();
+                    bun.handleOom(stack.append(.{ .bin = left_bin }));
                     left = left_bin.left;
                 },
                 else => break,

@@ -343,7 +343,7 @@ fn getAST(
             defer trace.end();
             var temp_log = bun.logger.Log.init(allocator);
             defer {
-                temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
+                bun.handleOom(temp_log.cloneToWithRecycled(log, true));
                 temp_log.msgs.clearAndFree();
             }
             const root = try TOML.parse(source, &temp_log, allocator, false);
@@ -354,7 +354,7 @@ fn getAST(
             defer trace.end();
             var temp_log = bun.logger.Log.init(allocator);
             defer {
-                temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
+                bun.handleOom(temp_log.cloneToWithRecycled(log, true));
                 temp_log.msgs.clearAndFree();
             }
             const root = try YAML.parse(source, &temp_log, allocator);
@@ -375,7 +375,7 @@ fn getAST(
                     source,
                     Logger.Loc.Empty,
                     "To use the \"sqlite\" loader, set target to \"bun\"",
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
                 return error.ParserError;
             }
 
@@ -442,7 +442,7 @@ fn getAST(
                     source,
                     Logger.Loc.Empty,
                     "Loading .node files won't work in the browser. Make sure to set target to \"bun\" or \"node\"",
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
                 return error.ParserError;
             }
 
@@ -525,7 +525,7 @@ fn getAST(
             const source_code = source.contents;
             var temp_log = bun.logger.Log.init(allocator);
             defer {
-                temp_log.appendToMaybeRecycled(log, source) catch bun.outOfMemory();
+                bun.handleOom(temp_log.appendToMaybeRecycled(log, source));
             }
 
             const css_module_suffix = ".module.css";
@@ -832,10 +832,10 @@ const OnBeforeParsePlugin = struct {
                 @max(this.line, -1),
                 @max(this.column, -1),
                 @max(this.column_end - this.column, 0),
-                if (source_line_text.len > 0) allocator.dupe(u8, source_line_text) catch bun.outOfMemory() else null,
+                if (source_line_text.len > 0) bun.handleOom(allocator.dupe(u8, source_line_text)) else null,
                 null,
             );
-            var msg = Logger.Msg{ .data = .{ .location = location, .text = allocator.dupe(u8, this.message()) catch bun.outOfMemory() } };
+            var msg = Logger.Msg{ .data = .{ .location = location, .text = bun.handleOom(allocator.dupe(u8, this.message())) } };
             switch (this.level) {
                 .err => msg.kind = .err,
                 .warn => msg.kind = .warn,
@@ -848,7 +848,7 @@ const OnBeforeParsePlugin = struct {
             } else if (msg.kind == .warn) {
                 log.warnings += 1;
             }
-            log.addMsg(msg) catch bun.outOfMemory();
+            bun.handleOom(log.addMsg(msg));
         }
 
         pub fn logFn(
@@ -1007,10 +1007,10 @@ const OnBeforeParsePlugin = struct {
                 var msg = Logger.Msg{ .data = .{ .location = null, .text = bun.default_allocator.dupe(
                     u8,
                     "Native plugin set the `free_plugin_source_code_context` field without setting the `plugin_source_code_context` field.",
-                ) catch bun.outOfMemory() } };
+                ) catch |err| bun.handleOom(err) } };
                 msg.kind = .err;
                 args.context.log.errors += 1;
-                args.context.log.addMsg(msg) catch bun.outOfMemory();
+                bun.handleOom(args.context.log.addMsg(msg));
                 return error.InvalidNativePlugin;
             }
 
@@ -1345,7 +1345,7 @@ pub fn runFromThreadPool(this: *ParseTask) void {
         }
     };
 
-    const result = bun.default_allocator.create(Result) catch bun.outOfMemory();
+    const result = bun.handleOom(bun.default_allocator.create(Result));
 
     result.* = .{
         .ctx = this.ctx,

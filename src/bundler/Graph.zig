@@ -5,6 +5,8 @@ heap: ThreadLocalArena,
 
 /// Mapping user-specified entry points to their Source Index
 entry_points: std.ArrayListUnmanaged(Index) = .{},
+/// Maps entry point source indices to their original specifiers (for virtual entries resolved by plugins)
+entry_point_original_names: IndexStringMap = .{},
 /// Every source index has an associated InputFile
 input_files: MultiArrayList(InputFile) = .{},
 /// Every source index has an associated Ast
@@ -32,7 +34,7 @@ pending_items: u32 = 0,
 deferred_pending: u32 = 0,
 
 /// A map of build targets to their corresponding module graphs.
-build_graphs: std.EnumArray(options.Target, PathToSourceIndexMap) = .initFill(.{}),
+build_graphs: std.EnumArray(options.Target, PathToSourceIndexMap),
 
 /// When Server Components is enabled, this holds a list of all boundary
 /// files. This happens for all files with a "use <side>" directive.
@@ -60,8 +62,14 @@ additional_output_files: std.ArrayListUnmanaged(options.OutputFile) = .{},
 kit_referenced_server_data: bool,
 kit_referenced_client_data: bool,
 
+/// Do any input_files have a secondary_path.len > 0?
+///
+/// Helps skip a loop.
+has_any_secondary_paths: bool = false,
+
 pub const InputFile = struct {
     source: Logger.Source,
+    secondary_path: []const u8 = "",
     loader: options.Loader = options.Loader.file,
     side_effects: _resolver.SideEffects,
     allocator: std.mem.Allocator = bun.default_allocator,
@@ -101,6 +109,7 @@ pub const Index = bun.ast.Index;
 
 const string = []const u8;
 
+const IndexStringMap = @import("./IndexStringMap.zig");
 const Logger = @import("../logger.zig");
 const _resolver = @import("../resolver/resolver.zig");
 const std = @import("std");

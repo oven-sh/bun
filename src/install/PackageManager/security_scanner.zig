@@ -398,13 +398,13 @@ pub const SecurityScanSubprocess = struct {
     }
 
     pub fn onStderrChunk(this: *SecurityScanSubprocess, chunk: []const u8) void {
-        this.stderr_data.appendSlice(chunk) catch bun.outOfMemory();
+        bun.handleOom(this.stderr_data.appendSlice(chunk));
     }
 
     pub fn getReadBuffer(this: *SecurityScanSubprocess) []u8 {
         const available = this.ipc_data.unusedCapacitySlice();
         if (available.len < 4096) {
-            this.ipc_data.ensureTotalCapacity(this.ipc_data.capacity + 4096) catch bun.outOfMemory();
+            bun.handleOom(this.ipc_data.ensureTotalCapacity(this.ipc_data.capacity + 4096));
             return this.ipc_data.unusedCapacitySlice();
         }
         return available;
@@ -412,7 +412,7 @@ pub const SecurityScanSubprocess = struct {
 
     pub fn onReadChunk(this: *SecurityScanSubprocess, chunk: []const u8, hasMore: bun.io.ReadState) bool {
         _ = hasMore;
-        this.ipc_data.appendSlice(chunk) catch bun.outOfMemory();
+        bun.handleOom(this.ipc_data.appendSlice(chunk));
         return true;
     }
 

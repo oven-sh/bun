@@ -18,6 +18,7 @@ pub const ConnectionFlags = struct {
     is_reconnecting: bool = false,
     auto_pipelining: bool = true,
     finalized: bool = false,
+    is_using_resp2_fallback: bool = false, // For Redis 5 compatibility
 };
 
 /// Valkey connection status
@@ -466,6 +467,7 @@ pub const ValkeyClient = struct {
         this.flags.is_reconnecting = true;
         this.flags.is_authenticated = false;
         this.flags.is_selecting_db_internal = false;
+        this.flags.is_using_resp2_fallback = false;
 
         // Signal reconnect timer should be started
         this.onValkeyReconnect();
@@ -618,6 +620,16 @@ pub const ValkeyClient = struct {
 
         switch (value.*) {
             .Error => |err| {
+                // Check if Redis 5 (doesn't support HELLO command)
+                if (std.mem.indexOf(u8, err, "unknown command") != null or
+                    std.mem.indexOf(u8, err, "Unknown command") != null or
+                    std.mem.indexOf(u8, err, "HELLO") != null)
+                {
+                    debug("HELLO command not supported, falling back to RESP2", .{});
+                    this.flags.is_using_resp2_fallback = true;
+                    this.authenticateWithoutHello();
+                    return;
+                }
                 this.fail(err, protocol.RedisError.AuthenticationFailed);
                 return;
             },
@@ -671,11 +683,36 @@ pub const ValkeyClient = struct {
     /// Handle Valkey protocol response
     fn handleResponse(this: *ValkeyClient, value: *protocol.RESPValue) !void {
         debug("onData() {any}", .{value.*});
-        // Special handling for the initial HELLO response
+        // Special handling for the initial HELLO response or AUTH response in RESP2 mode
         if (!this.flags.is_authenticated) {
-            this.handleHelloResponse(value);
+            if (this.flags.is_using_resp2_fallback and this.password.len > 0) {
+                // Handle AUTH response in RESP2 fallback mode
+                switch (value.*) {
+                    .SimpleString => |str| {
+                        if (std.mem.eql(u8, str, "OK")) {
+                            this.status = .connected;
+                            this.flags.is_authenticated = true;
+                            this.onValkeyConnect(value);
+                            return;
+                        }
+                        this.fail("Authentication failed", protocol.RedisError.AuthenticationFailed);
+                        return;
+                    },
+                    .Error => |err| {
+                        this.fail(err, protocol.RedisError.AuthenticationFailed);
+                        return;
+                    },
+                    else => {
+                        this.fail("Unexpected AUTH response", protocol.RedisError.AuthenticationFailed);
+                        return;
+                    },
+                }
+            } else {
+                // Handle HELLO response
+                this.handleHelloResponse(value);
+            }
 
-            // We've handled the HELLO response without consuming anything from the command queue
+            // We've handled the HELLO/AUTH response without consuming anything from the command queue
             return;
         }
 
@@ -775,6 +812,59 @@ pub const ValkeyClient = struct {
             return;
         };
 
+        // If using a specific database, send SELECT command
+        if (this.database > 0) {
+            var int_buf: [64]u8 = undefined;
+            const db_str = std.fmt.bufPrintZ(&int_buf, "{d}", .{this.database}) catch unreachable;
+            var select_cmd = Command{
+                .command = "SELECT",
+                .args = .{ .raw = &[_][]const u8{db_str} },
+            };
+            select_cmd.write(this.writer()) catch |err| {
+                this.fail("Failed to write SELECT command", err);
+                return;
+            };
+            this.flags.is_selecting_db_internal = true;
+        }
+    }
+
+    /// Authenticate without HELLO for Redis 5 compatibility (RESP2)
+    fn authenticateWithoutHello(this: *ValkeyClient) void {
+        debug("Authenticating with RESP2 (Redis 5 compatibility mode)", .{});
+        
+        // Send AUTH command if credentials are provided
+        if (this.password.len > 0) {
+            var auth_cmd: Command = undefined;
+            
+            if (this.username.len > 0) {
+                // AUTH username password
+                var auth_args = [_][]const u8{ this.username, this.password };
+                auth_cmd = Command{
+                    .command = "AUTH",
+                    .args = .{ .raw = &auth_args },
+                };
+            } else {
+                // AUTH password (for Redis < 6 compatibility)
+                var auth_args = [_][]const u8{this.password};
+                auth_cmd = Command{
+                    .command = "AUTH",
+                    .args = .{ .raw = &auth_args },
+                };
+            }
+            
+            auth_cmd.write(this.writer()) catch |err| {
+                this.fail("Failed to write AUTH command", err);
+                return;
+            };
+        } else {
+            // No authentication needed, mark as authenticated
+            this.status = .connected;
+            this.flags.is_authenticated = true;
+            // Need to call onValkeyConnect with a dummy value
+            var dummy_value = protocol.RESPValue{ .SimpleString = "OK" };
+            this.onValkeyConnect(&dummy_value);
+        }
+        
         // If using a specific database, send SELECT command
         if (this.database > 0) {
             var int_buf: [64]u8 = undefined;

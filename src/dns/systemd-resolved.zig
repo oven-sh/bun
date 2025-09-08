@@ -90,6 +90,7 @@ pub const SystemdResolved = struct {
             "pending_host_cache_native",
         ) catch |err| bun.handleOom(err);
         
+        log("Created GetAddrInfoRequest, calling requestSent", .{});
         const promise_value = request.head.promise.value();
         
         const callback_context = globalThis.allocator().create(CallbackContext) catch |err| {
@@ -136,6 +137,29 @@ pub const SystemdResolved = struct {
         request: *GetAddrInfoRequest,
         globalThis: *jsc.JSGlobalObject,
         resolver: *dns.Resolver,
+        
+        // Task to schedule callback on JS thread
+        pub const Task = bun.jsc.WorkTask(CallbackContext);
+        
+        pub fn run(this: *CallbackContext, task: *Task) void {
+            // This runs on the JS thread - safe to call getAddrInfoAsyncCallback
+            if (this.errno != 0) {
+                GetAddrInfoRequest.getAddrInfoAsyncCallback(this.errno, null, this.request);
+            } else if (this.addrinfo) |info| {
+                GetAddrInfoRequest.getAddrInfoAsyncCallback(0, info, this.request);
+            } else {
+                GetAddrInfoRequest.getAddrInfoAsyncCallback(-1, null, this.request);
+            }
+            
+            // Clean up
+            const allocator = this.globalThis.allocator();
+            allocator.destroy(this);
+            task.onFinish();
+        }
+        
+        // Store result data for task
+        errno: i32 = 0,
+        addrinfo: ?*std.c.addrinfo = null,
     };
     
     fn onResolveComplete(
@@ -144,15 +168,12 @@ pub const SystemdResolved = struct {
         err: ?*SystemdResolvedBackend.SystemdResolvedConnection.ResolveError,
     ) void {
         const context = @as(*CallbackContext, @ptrCast(@alignCast(req.context)));
-        const request = context.request;
         const globalThis = context.globalThis;
-        _ = context.resolver;
         const allocator = globalThis.allocator();
         
         defer {
             allocator.free(req.name);
             allocator.destroy(req);
-            allocator.destroy(context);
         }
         
         if (err) |error_info| {
@@ -167,7 +188,16 @@ pub const SystemdResolved = struct {
             else
                 -1;
             
-            GetAddrInfoRequest.getAddrInfoAsyncCallback(errno, null, request);
+            context.errno = errno;
+            
+            // Schedule callback on JS thread
+            var task = CallbackContext.Task.createOnJSThread(allocator, globalThis, context) catch |e| {
+                bun.handleOom(e);
+                GetAddrInfoRequest.getAddrInfoAsyncCallback(errno, null, context.request);
+                allocator.destroy(context);
+                return;
+            };
+            task.schedule();
             return;
         }
         
@@ -175,7 +205,16 @@ pub const SystemdResolved = struct {
             defer res.deinit(allocator);
             
             if (res.addresses.len == 0) {
-                GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.NOENT), null, request);
+                context.errno = @intFromEnum(std.posix.E.NOENT);
+                
+                // Schedule callback on JS thread
+                var task = CallbackContext.Task.createOnJSThread(allocator, globalThis, context) catch |e| {
+                    bun.handleOom(e);
+                    GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.NOENT), null, context.request);
+                    allocator.destroy(context);
+                    return;
+                };
+                task.schedule();
                 return;
             }
             
@@ -185,7 +224,16 @@ pub const SystemdResolved = struct {
             for (res.addresses) |addr| {
                 const ai = allocator.create(std.c.addrinfo) catch {
                     if (head) |h| std.c.freeaddrinfo(h);
-                    GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.NOMEM), null, request);
+                    context.errno = @intFromEnum(std.posix.E.NOMEM);
+                    
+                    // Schedule callback on JS thread
+                    var task = CallbackContext.Task.createOnJSThread(allocator, globalThis, context) catch |e2| {
+                        bun.handleOom(e2);
+                        GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.NOMEM), null, context.request);
+                        allocator.destroy(context);
+                        return;
+                    };
+                    task.schedule();
                     return;
                 };
                 
@@ -198,7 +246,16 @@ pub const SystemdResolved = struct {
                     const sockaddr = allocator.create(std.posix.sockaddr.in) catch {
                         allocator.destroy(ai);
                         if (head) |h| std.c.freeaddrinfo(h);
-                        GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.NOMEM), null, request);
+                        context.errno = @intFromEnum(std.posix.E.NOMEM);
+                        
+                        // Schedule callback on JS thread
+                        var task = CallbackContext.Task.createOnJSThread(allocator, globalThis, context) catch |e2| {
+                            bun.handleOom(e2);
+                            GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.NOMEM), null, context.request);
+                            allocator.destroy(context);
+                            return;
+                        };
+                        task.schedule();
                         return;
                     };
                     
@@ -220,7 +277,16 @@ pub const SystemdResolved = struct {
                     const sockaddr = allocator.create(std.posix.sockaddr.in6) catch {
                         allocator.destroy(ai);
                         if (head) |h| std.c.freeaddrinfo(h);
-                        GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.NOMEM), null, request);
+                        context.errno = @intFromEnum(std.posix.E.NOMEM);
+                        
+                        // Schedule callback on JS thread
+                        var task = CallbackContext.Task.createOnJSThread(allocator, globalThis, context) catch |e2| {
+                            bun.handleOom(e2);
+                            GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.NOMEM), null, context.request);
+                            allocator.destroy(context);
+                            return;
+                        };
+                        task.schedule();
                         return;
                     };
                     
@@ -243,9 +309,28 @@ pub const SystemdResolved = struct {
                 }
             }
             
-            GetAddrInfoRequest.getAddrInfoAsyncCallback(0, head, request);
+            context.addrinfo = head;
+            
+            // Schedule callback on JS thread
+            var task = CallbackContext.Task.createOnJSThread(allocator, globalThis, context) catch |e| {
+                bun.handleOom(e);
+                if (head) |h| std.c.freeaddrinfo(h);
+                GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.NOMEM), null, context.request);
+                allocator.destroy(context);
+                return;
+            };
+            task.schedule();
         } else {
-            GetAddrInfoRequest.getAddrInfoAsyncCallback(-1, null, request);
+            context.errno = -1;
+            
+            // Schedule callback on JS thread
+            var task = CallbackContext.Task.createOnJSThread(allocator, globalThis, context) catch |e| {
+                bun.handleOom(e);
+                GetAddrInfoRequest.getAddrInfoAsyncCallback(-1, null, context.request);
+                allocator.destroy(context);
+                return;
+            };
+            task.schedule();
         }
     }
 };

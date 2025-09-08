@@ -135,7 +135,7 @@ const SystemdResolvedConnection = struct {
     socket_context: ?*uws.SocketContext = null,
     vm: *jsc.VirtualMachine,
     
-    read_buffer: std.ArrayList(u8),
+    read_buffer: bun.collections.OffsetList(u8),
     write_buffer: std.ArrayList(u8),
     
     // Queue of pending requests
@@ -153,7 +153,7 @@ const SystemdResolvedConnection = struct {
         const this = try allocator.create(SystemdResolvedConnection);
         this.* = .{
             .vm = vm,
-            .read_buffer = std.ArrayList(u8).init(allocator),
+            .read_buffer = .{},
             .write_buffer = std.ArrayList(u8).init(allocator),
             .pending_requests = std.ArrayList(*GetAddrInfoRequest).init(allocator),
         };
@@ -233,6 +233,8 @@ const SystemdResolvedConnection = struct {
         , .{ query.name, family }) catch return;
         this.write_buffer.append(0) catch return; // null terminator
         
+        log("Sending request for domain: {s} (family={})", .{query.name, family});
+        
         this.flushData();
     }
     
@@ -253,16 +255,33 @@ const SystemdResolvedConnection = struct {
     
     fn processResponse(this: *SystemdResolvedConnection, data: []const u8) void {
         // Append to read buffer
-        this.read_buffer.appendSlice(data) catch return;
+        _ = this.read_buffer.len();
+        this.read_buffer.write(this.vm.allocator, data) catch return;
         
-        // Look for null terminator
-        const null_pos = std.mem.indexOf(u8, this.read_buffer.items, "\x00") orelse return;
+        Output.prettyErrorln("[SystemdResolved] Received {} bytes, buffer has {} bytes total", .{data.len, this.read_buffer.len()});
         
-        const response = this.read_buffer.items[0..null_pos];
-        log("Response: {s}", .{response[0..@min(200, response.len)]});
-        
-        // Process the response
-        if (this.current_request) |request| {
+        // Process all complete responses in the buffer
+        while (true) {
+            const remaining = this.read_buffer.remaining();
+            const null_pos = std.mem.indexOf(u8, remaining, "\x00") orelse break;
+            
+            const response = remaining[0..null_pos];
+            
+            Output.prettyErrorln("[SystemdResolved] Got complete response (len={}): {s}", .{response.len, response[0..@min(100, response.len)]});
+            
+            // Consume this response from the buffer (including the null terminator)
+            defer {
+                const bytes_to_consume = @as(u32, @intCast(null_pos + 1));
+                this.read_buffer.consume(bytes_to_consume);
+            }
+            
+            // Process the response
+            if (this.current_request) |request| {
+            const query_name = switch (request.backend) {
+                .systemd_resolved => |q| q.name,
+                else => "unknown",
+            };
+            log("Processing response for: {s}", .{query_name});
             // Parse JSON response using bun.json
             var json_source = bun.logger.Source.initPathString("systemd-resolved", response);
             var temp_log = bun.logger.Log.init(this.vm.allocator);
@@ -271,37 +290,37 @@ const SystemdResolvedConnection = struct {
                 log("Failed to parse JSON: {}", .{err});
                 GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.PROTO), null, request);
                 this.current_request = null;
-                this.read_buffer.replaceRange(0, null_pos + 1, &.{}) catch {};
+                // Buffer will be consumed by the defer statement
                 this.processNextRequest();
                 return;
             };
             
             // Check for error in response
-            if (parsed.get("error")) |error_obj| {
-                _ = error_obj;
+            if (parsed.asProperty("error")) |error_prop| {
+                _ = error_prop;
                 log("Error in response", .{});
                 GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.NOENT), null, request);
                 this.current_request = null;
-                this.read_buffer.replaceRange(0, null_pos + 1, &.{}) catch {};
+                // Buffer will be consumed by the defer statement
                 this.processNextRequest();
                 return;
             }
             
             // Get addresses from response - systemd-resolved returns them in "parameters.addresses"
-            const params = parsed.get("parameters") orelse {
+            const params = parsed.asProperty("parameters") orelse {
                 log("No parameters in response", .{});
                 GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.NOENT), null, request);
                 this.current_request = null;
-                this.read_buffer.replaceRange(0, null_pos + 1, &.{}) catch {};
+                // Buffer will be consumed by the defer statement
                 this.processNextRequest();
                 return;
             };
             
-            const addresses = params.get("addresses") orelse {
+            const addresses = params.expr.asProperty("addresses") orelse {
                 log("No addresses in response", .{});
                 GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.NOENT), null, request);
                 this.current_request = null;
-                this.read_buffer.replaceRange(0, null_pos + 1, &.{}) catch {};
+                // Buffer will be consumed by the defer statement
                 this.processNextRequest();
                 return;
             };
@@ -311,30 +330,144 @@ const SystemdResolvedConnection = struct {
             errdefer result_list.deinit();
             
             // Check if addresses is an array
-            const addresses_array = addresses.asArray() orelse {
+            const addresses_array = addresses.expr.asArray() orelse {
                 log("Addresses is not an array", .{});
                 GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.PROTO), null, request);
                 this.current_request = null;
-                this.read_buffer.replaceRange(0, null_pos + 1, &.{}) catch {};
+                // Buffer will be consumed by the defer statement
                 this.processNextRequest();
                 return;
             };
             
-            // TODO: Actually parse the addresses_array and create proper addrinfo structures
-            // For now, just log the count
-            log("Successfully resolved via systemd-resolved with {} addresses", .{addresses_array.array.items.len});
+            // Parse each address in the array
+            var addr_iter = addresses_array;
+            while (addr_iter.next()) |addr_item| {
+                // Get the family (AF_INET = 2, AF_INET6 = 10)
+                const family_prop = addr_item.asProperty("family") orelse continue;
+                const family = @as(c_int, @intFromFloat(family_prop.expr.asNumber() orelse 0));
+                
+                if (family != std.posix.AF.INET and family != std.posix.AF.INET6) {
+                    continue;
+                }
+                
+                // Get the address bytes array
+                const address_prop = addr_item.asProperty("address") orelse continue;
+                const address_array = address_prop.expr.asArray() orelse continue;
+                
+                // Get TTL if present (default to 0)
+                var ttl: i32 = 0;
+                if (addr_item.asProperty("ttl")) |ttl_prop| {
+                    ttl = @as(i32, @intFromFloat(ttl_prop.expr.asNumber() orelse 0));
+                }
+                
+                // Create GetAddrInfo.Result object
+                var result_entry: GetAddrInfo.Result = undefined;
+                result_entry.ttl = ttl;
+                
+                if (family == std.posix.AF.INET) {
+                    // IPv4 address
+                    var sockaddr_in: std.posix.sockaddr.in = std.mem.zeroes(std.posix.sockaddr.in);
+                    sockaddr_in.family = std.posix.AF.INET;
+                    sockaddr_in.port = 0; // Port will be set later based on request
+                    
+                    // Convert byte array to IPv4 address
+                    var addr_bytes: [4]u8 = undefined;
+                    var byte_index: usize = 0;
+                    var byte_iter = address_array;
+                    while (byte_iter.next()) |byte_item| : (byte_index += 1) {
+                        if (byte_index >= 4) break;
+                        addr_bytes[byte_index] = @as(u8, @intFromFloat(byte_item.asNumber() orelse 0));
+                    }
+                    if (byte_index == 4) {
+                        sockaddr_in.addr = @as(u32, addr_bytes[0]) | 
+                                          (@as(u32, addr_bytes[1]) << 8) |
+                                          (@as(u32, addr_bytes[2]) << 16) |
+                                          (@as(u32, addr_bytes[3]) << 24);
+                    }
+                    
+                    // Create std.net.Address with IPv4
+                    result_entry.address = std.net.Address{ .in = std.net.Ip4Address{ .sa = sockaddr_in } };
+                } else if (family == std.posix.AF.INET6) {
+                    // IPv6 address
+                    var sockaddr_in6: std.posix.sockaddr.in6 = std.mem.zeroes(std.posix.sockaddr.in6);
+                    sockaddr_in6.family = std.posix.AF.INET6;
+                    sockaddr_in6.port = 0; // Port will be set later based on request
+                    
+                    // Convert byte array to IPv6 address
+                    var byte_index: usize = 0;
+                    var byte_iter = address_array;
+                    while (byte_iter.next()) |byte_item| : (byte_index += 1) {
+                        if (byte_index >= 16) break;
+                        sockaddr_in6.addr[byte_index] = @as(u8, @intFromFloat(byte_item.asNumber() orelse 0));
+                    }
+                    
+                    // Create std.net.Address with IPv6
+                    result_entry.address = std.net.Address{ .in6 = std.net.Ip6Address{ .sa = sockaddr_in6 } };
+                } else {
+                    // Unsupported family
+                    continue;
+                }
+                
+                // Append to result list
+                result_list.append(result_entry) catch {
+                    result_list.deinit();
+                    GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.NOMEM), null, request);
+                    this.current_request = null;
+                    // Buffer will be consumed by the defer statement
+                    this.processNextRequest();
+                    return;
+                };
+            }
             
-            // Convert to backend result and callback
+            // Check if we got any addresses
+            if (result_list.items.len == 0) {
+                result_list.deinit();
+                GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.NOENT), null, request);
+                this.current_request = null;
+                // Buffer will be consumed by the defer statement
+                this.processNextRequest();
+                return;
+            }
+            
+            log("Successfully resolved via systemd-resolved with {} addresses", .{result_list.items.len});
+            if (result_list.items.len > 0) {
+                const first_addr = result_list.items[0].address;
+                if (first_addr.any.family == std.posix.AF.INET) {
+                    var buf: [48]u8 = undefined;
+                    const addr_str = std.fmt.bufPrint(&buf, "{}", .{first_addr.in.sa.addr}) catch "?";
+                    log("First IPv4 address: {s}", .{addr_str});
+                } else if (first_addr.any.family == std.posix.AF.INET6) {
+                    var buf: [48]u8 = undefined;
+                    const addr_str = std.fmt.bufPrint(&buf, "{any}", .{first_addr.in6.sa.addr}) catch "?";
+                    log("First IPv6 address: {s}", .{addr_str});
+                }
+            }
+            
+            // Store result and notify completion  
             request.backend = .{ .libc = .{ .success = result_list } };
-            GetAddrInfoRequest.getAddrInfoAsyncCallback(0, null, request);
+            // Don't clear current_request here - let it be cleared after buffer is cleaned up
+            
+            // Call the callback to process the result
+            if (request.resolver_for_caching) |resolver| {
+                if (request.cache.pending_cache) {
+                    // drainPendingHostNative will destroy the request
+                    resolver.drainPendingHostNative(request.cache.pos_in_pending, request.head.globalThis, 0, .{ .list = result_list });
+                    return;
+                }
+            }
+            
+            // No cache, call onCompleteNative directly with the result list
+            // Save head before destroying request
+            var head = request.head;
+            bun.default_allocator.destroy(request);
+            head.onCompleteNative(.{ .list = result_list });
+            
+            // Clear current_request and process next
             this.current_request = null;
+            this.processNextRequest();
+            } else {
+            }
         }
-        
-        // Remove processed data
-        this.read_buffer.replaceRange(0, null_pos + 1, &.{}) catch {};
-        
-        // Process next request
-        this.processNextRequest();
     }
     
     fn SocketHandler(comptime ssl: bool) type {
@@ -405,19 +538,17 @@ const SystemdResolved = struct {
     }
     
     pub fn lookup(this: *Resolver, query: GetAddrInfo, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
-        Output.prettyErrorln("[SystemdResolved] lookup called for: {s}", .{query.name});
         Output.flush();
         
         const force_systemd = bun.getRuntimeFeatureFlag(.BUN_DNS_FORCE_SYSTEMD_RESOLVED);
         
+        
         if (!force_systemd and !isAvailable()) {
-            Output.prettyErrorln("[SystemdResolved] Not available, falling back to LibC", .{});
             Output.flush();
             return LibC.lookup(this, query, globalThis);
         }
         
         // Log that we're using systemd-resolved
-        Output.prettyErrorln("[SystemdResolved] USING SYSTEMD-RESOLVED for DNS resolution of {s}", .{query.name});
         Output.flush();
         
         const key = GetAddrInfoRequest.PendingCacheKey.init(query);
@@ -428,6 +559,7 @@ const SystemdResolved = struct {
             cache.inflight.append(dns_lookup);
             return dns_lookup.promise.value();
         }
+        
         
         var request = GetAddrInfoRequest.init(
             cache,
@@ -443,7 +575,6 @@ const SystemdResolved = struct {
         // Get or create the singleton connection
         const connection = global_connection orelse brk: {
             const conn = SystemdResolvedConnection.init(globalThis.bunVM()) catch {
-                Output.prettyErrorln("[SystemdResolved] Failed to create connection, falling back", .{});
                 // Fall back to libc
                 request.backend = .{ .libc = .{ .query = query.clone() } };
                 var task = GetAddrInfoRequest.Task.createOnJSThread(this.vm.allocator, globalThis, request) catch |err2| bun.handleOom(err2);
@@ -457,7 +588,6 @@ const SystemdResolved = struct {
         
         // Send request through systemd-resolved connection
         connection.sendRequest(request) catch {
-            Output.prettyErrorln("[SystemdResolved] Failed to send request, falling back", .{});
             // Fall back to libc
             request.backend = .{ .libc = .{ .query = query.clone() } };
             var task = GetAddrInfoRequest.Task.createOnJSThread(this.vm.allocator, globalThis, request) catch |err| bun.handleOom(err);
@@ -467,7 +597,6 @@ const SystemdResolved = struct {
         };
         
         this.requestSent(globalThis.bunVM());
-        Output.prettyErrorln("[SystemdResolved] Request sent via systemd-resolved for {s}", .{query.name});
         
         return promise_value;
     }
@@ -1154,7 +1283,6 @@ pub const GetAddrInfoRequest = struct {
     pub fn run(this: *GetAddrInfoRequest, task: *Task) void {
         switch (this.backend) {
             .systemd_resolved => |query| {
-                Output.prettyErrorln("[SystemdResolved] run() - NOT running in task thread, should connect async for: {s}", .{query.name});
                 // The actual connection happens in lookup(), not here
                 // For now fall back to libc
                 this.backend = .{ .libc = .{ .query = query } };
@@ -1170,7 +1298,6 @@ pub const GetAddrInfoRequest = struct {
         log("then", .{});
         switch (this.backend) {
             .systemd_resolved => {
-                Output.prettyErrorln("[SystemdResolved] then() - processing systemd-resolved results", .{});
                 return;
             },
             .libc => {},
@@ -2330,7 +2457,6 @@ pub const Resolver = struct {
 
         pub fn fromStringOrDie(order: []const u8) Order {
             return fromString(order) orelse {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> Invalid DNS result order.", .{});
                 Global.exit(1);
             };
         }
@@ -3134,10 +3260,8 @@ pub const Resolver = struct {
     pub fn doLookup(this: *Resolver, name: []const u8, port: u16, options: GetAddrInfo.Options, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         var opts = options;
         var backend = opts.backend;
-        Output.prettyErrorln("[DNS] doLookup called with backend: {s}", .{@tagName(backend)});
         const normalized = normalizeDNSName(name, &backend);
         opts.backend = backend;
-        Output.prettyErrorln("[DNS] Backend after normalization: {s}", .{@tagName(backend)});
         const query = GetAddrInfo{
             .options = opts,
             .port = port,

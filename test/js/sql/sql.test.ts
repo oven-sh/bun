@@ -417,6 +417,55 @@ if (isDockerEnabled()) {
     });
   });
 
+  test("Minimal reproduction of Bun.SQL PostgreSQL hang bug (#22395)", async () => {
+    await using sql = new SQL({ ...options, max: 1 });
+
+    try {
+      const random_id = randomUUIDv7() + "test_hang";
+      // Setup: Create table with exclusion constraint
+      await sql`DROP TABLE IF EXISTS ${sql(random_id)} CASCADE`;
+      await sql`CREATE EXTENSION IF NOT EXISTS btree_gist`;
+      await sql`
+      CREATE TABLE ${sql(random_id)} (
+        id SERIAL PRIMARY KEY,
+        start_time TIMESTAMPTZ NOT NULL,
+        end_time TIMESTAMPTZ NOT NULL,
+        resource_id INT NOT NULL,
+        EXCLUDE USING gist (
+          resource_id WITH =,
+          tstzrange(start_time, end_time) WITH &&
+        )
+      )
+    `;
+
+      // Step 1: Insert a row (succeeds)
+      await sql`
+      INSERT INTO ${sql(random_id)} (start_time, end_time, resource_id)
+      VALUES ('2024-01-01 10:00:00', '2024-01-01 12:00:00', 1)
+    `;
+
+      // Step 2: Try to insert conflicting row (throws expected error)
+
+      await sql`
+        INSERT INTO ${sql(random_id)} (start_time, end_time, resource_id)
+        VALUES (${"2024-01-01 11:00:00"}, ${"2024-01-01 13:00:00"}, ${1})
+      `;
+
+      // Step 3: Try another query - THIS WILL HANG
+      console.log("\n3. Attempting query after error...");
+      console.log("   (This should complete immediately but will hang)");
+
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("TIMEOUT")), 3000);
+      });
+
+      const result = await Promise.race([sql`SELECT COUNT(*) FROM ${sql(random_id)}`, timeoutPromise]);
+      expect(result[0].count).toBe(1);
+    } finally {
+      await sql.end();
+    }
+  });
+
   test("should handle encoded chars in password and username when using url #17155", () => {
     const sql = new Bun.SQL("postgres://bun%40bunbun:bunbun%40bun@127.0.0.1:5432/bun%40bun");
     expect(sql.options.username).toBe("bun@bunbun");

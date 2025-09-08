@@ -847,4 +847,109 @@ describe("bundler", () => {
       stdout: "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue",
     },
   });
+
+  itBundled("minify/AdditionalGlobalConstructorOptimization", {
+    files: {
+      "/entry.js": /* js */ `
+        // Test Array constructor
+        capture(new Array());
+        capture(new Array(3));
+        capture(new Array(1, 2, 3));
+        
+        // Test Object constructor
+        capture(new Object());
+        capture(new Object(null));
+        capture(new Object({ a: 1 }));
+        
+        // Test Function constructor
+        capture(new Function("return 42"));
+        capture(new Function("a", "b", "return a + b"));
+        
+        // Test RegExp constructor
+        capture(new RegExp("test"));
+        capture(new RegExp("test", "gi"));
+        capture(new RegExp(/abc/));
+        
+        // Test with variables
+        const pattern = "\\d+";
+        capture(new RegExp(pattern));
+        
+        // Test that other constructors are preserved
+        capture(new Date());
+        capture(new Map());
+        capture(new Set());
+      `,
+    },
+    capture: [
+      "[]",  // new Array() -> []
+      "Array(3)",  // new Array(3) stays as Array(3) because it creates sparse array
+      `[
+  1,
+  2,
+  3
+]`,  // new Array(1, 2, 3) -> [1, 2, 3]
+      "{}",  // new Object() -> {}
+      "{}",  // new Object(null) -> {}
+      "{ a: 1 }",  // new Object({ a: 1 }) -> { a: 1 }
+      'Function("return 42")',
+      'Function("a", "b", "return a + b")',
+      'RegExp("test")',
+      'RegExp("test", "gi")',
+      "RegExp(/abc/)",
+      "RegExp(pattern)",
+      "/* @__PURE__ */ new Date",
+      "/* @__PURE__ */ new Map",
+      "/* @__PURE__ */ new Set",
+    ],
+    minifySyntax: true,
+    target: "bun",
+  });
+
+  itBundled("minify/GlobalConstructorSemanticsPreserved", {
+    files: {
+      "/entry.js": /* js */ `
+        function capture(val) { console.log(val); return val; }
+        
+        // Test Array semantics
+        const a1 = new Array(1, 2, 3);
+        const a2 = Array(1, 2, 3);
+        capture(JSON.stringify(a1) === JSON.stringify(a2));
+        capture(a1.constructor === a2.constructor);
+        
+        // Test Object semantics
+        const o1 = new Object();
+        const o2 = Object();
+        capture(typeof o1 === typeof o2);
+        capture(o1.constructor === o2.constructor);
+        
+        // Test Function semantics
+        const f1 = new Function("return 1");
+        const f2 = Function("return 1");
+        capture(typeof f1 === typeof f2);
+        capture(f1() === f2());
+        
+        // Test RegExp semantics
+        const r1 = new RegExp("test", "g");
+        const r2 = RegExp("test", "g");
+        capture(r1.source === r2.source);
+        capture(r1.flags === r2.flags);
+      `,
+    },
+    capture: [
+      "val",
+      "JSON.stringify(a1) === JSON.stringify(a2)",
+      "a1.constructor === a2.constructor",
+      "typeof o1 === typeof o2",
+      "o1.constructor === o2.constructor",
+      "typeof f1 === typeof f2",
+      "f1() === f2()",
+      'r1.source === r2.source',
+      'r1.flags === r2.flags',
+    ],
+    minifySyntax: true,
+    target: "bun",
+    run: {
+      stdout: "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue",
+    },
+  });
 });

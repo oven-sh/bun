@@ -15,6 +15,10 @@ pub const KnownGlobal = enum {
     ReferenceError,
     EvalError,
     URIError,
+    Array,
+    Object,
+    Function,
+    RegExp,
 
     pub const map = bun.ComptimeEnumMap(KnownGlobal);
 
@@ -31,6 +35,79 @@ pub const KnownGlobal = enum {
             // Error constructors can be called without 'new' with identical behavior
             .Error, .TypeError, .SyntaxError, .RangeError, .ReferenceError, .EvalError, .URIError => {
                 // Convert `new Error(...)` to `Error(...)` to save bytes
+                const call = E.Call{
+                    .target = e.target,
+                    .args = e.args,
+                    .close_paren_loc = e.close_parens_loc,
+                    .can_be_unwrapped_if_unused = e.can_be_unwrapped_if_unused,
+                };
+                return js_ast.Expr.init(E.Call, call, loc);
+            },
+            
+            .Object => {
+                const n = e.args.len;
+                
+                if (n == 0) {
+                    // new Object() -> {}
+                    return js_ast.Expr.init(E.Object, E.Object{}, loc);
+                }
+                
+                if (n == 1) {
+                    const arg = e.args.ptr[0];
+                    switch (arg.data) {
+                        .e_object, .e_array => {
+                            // new Object({a: 1}) -> {a: 1}
+                            // new Object([1, 2]) -> [1, 2]
+                            return arg;
+                        },
+                        .e_null, .e_undefined => {
+                            // new Object(null) -> {}
+                            // new Object(undefined) -> {}
+                            return js_ast.Expr.init(E.Object, E.Object{}, loc);
+                        },
+                        else => {},
+                    }
+                }
+                
+                // For other cases, just remove 'new'
+                const call = E.Call{
+                    .target = e.target,
+                    .args = e.args,
+                    .close_paren_loc = e.close_parens_loc,
+                    .can_be_unwrapped_if_unused = e.can_be_unwrapped_if_unused,
+                };
+                return js_ast.Expr.init(E.Call, call, loc);
+            },
+            
+            .Array => {
+                const n = e.args.len;
+                
+                if (n == 0) {
+                    // new Array() -> []
+                    return js_ast.Expr.init(E.Array, E.Array{}, loc);
+                }
+                
+                // new Array(1, 2, 3) -> [1, 2, 3]
+                // But NOT new Array(3) which creates an array with 3 empty slots
+                if (n > 1 or (n == 1 and e.args.ptr[0].data != .e_number)) {
+                    var array = E.Array{};
+                    array.items = e.args;
+                    return js_ast.Expr.init(E.Array, array, loc);
+                }
+                
+                // For new Array(number), just remove 'new'
+                const call = E.Call{
+                    .target = e.target,
+                    .args = e.args,
+                    .close_paren_loc = e.close_parens_loc,
+                    .can_be_unwrapped_if_unused = e.can_be_unwrapped_if_unused,
+                };
+                return js_ast.Expr.init(E.Call, call, loc);
+            },
+            
+            .Function, .RegExp => {
+                // Just remove 'new' for Function and RegExp
+                // RegExp literal conversion would require parsing the pattern string
                 const call = E.Call{
                     .target = e.target,
                     .args = e.args,

@@ -93,7 +93,7 @@ pub const KnownGlobal = enum {
                     array.items = e.args;
                     return js_ast.Expr.init(E.Array, array, loc);
                 }
-                
+
                 // For single argument, only convert to literal if we're SURE it's not a number
                 if (n == 1) {
                     const primitive = e.args.ptr[0].knownPrimitive();

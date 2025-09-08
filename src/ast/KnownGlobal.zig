@@ -15,6 +15,7 @@ pub const KnownGlobal = enum {
     ReferenceError,
     EvalError,
     URIError,
+    AggregateError,
     Array,
     Object,
     Function,
@@ -33,7 +34,7 @@ pub const KnownGlobal = enum {
 
         switch (constructor) {
             // Error constructors can be called without 'new' with identical behavior
-            .Error, .TypeError, .SyntaxError, .RangeError, .ReferenceError, .EvalError, .URIError => {
+            .Error, .TypeError, .SyntaxError, .RangeError, .ReferenceError, .EvalError, .URIError, .AggregateError => {
                 // Convert `new Error(...)` to `Error(...)` to save bytes
                 const call = E.Call{
                     .target = e.target,
@@ -311,4 +312,3 @@ const E = js_ast.E;
 const Symbol = js_ast.Symbol;
 
 const std = @import("std");
-const Map = std.AutoHashMapUnmanaged;

@@ -718,6 +718,9 @@ describe("bundler", () => {
         capture(new URIError());
         capture(new URIError("uri error"));
         
+        capture(new AggregateError([], "aggregate error"));
+        capture(new AggregateError([new Error("e1")], "multiple"));
+        
         // Test with complex arguments
         const msg = "dynamic";
         capture(new Error(msg));
@@ -747,6 +750,8 @@ describe("bundler", () => {
       'EvalError("eval error")',
       "URIError()",
       'URIError("uri error")',
+      'AggregateError([], "aggregate error")',
+      'AggregateError([Error("e1")], "multiple")',
       "Error(msg)",
       "TypeError(getErrorMessage())",
       "/* @__PURE__ */ new Date",

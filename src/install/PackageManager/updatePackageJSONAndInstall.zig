@@ -47,18 +47,6 @@ fn updatePackageJSONAndInstallWithManagerWithUpdatesAndUpdateRequests(
         &[_]UpdateRequest{}
     else
         UpdateRequest.parse(ctx.allocator, manager, ctx.log, positionals, update_requests, manager.subcommand);
-    
-    // Handle workspace filters for add/remove commands
-    if ((manager.subcommand == .add or manager.subcommand == .remove) and manager.options.filter_patterns.len > 0) {
-        return try updatePackageJSONForWorkspaces(
-            manager,
-            ctx,
-            &updates,
-            manager.subcommand,
-            original_cwd,
-        );
-    }
-    
     try updatePackageJSONAndInstallWithManagerWithUpdates(
         manager,
         ctx,
@@ -66,96 +54,6 @@ fn updatePackageJSONAndInstallWithManagerWithUpdatesAndUpdateRequests(
         manager.subcommand,
         original_cwd,
     );
-}
-
-fn updatePackageJSONForWorkspaces(
-    manager: *PackageManager,
-    ctx: Command.Context,
-    updates: *[]UpdateRequest,
-    subcommand: Subcommand,
-    original_cwd: string,
-) !void {
-    var path_buf: bun.PathBuffer = undefined;
-    var workspace_filters: std.ArrayListUnmanaged(WorkspaceFilter) = .{};
-    defer workspace_filters.deinit(manager.allocator);
-    
-    // Parse workspace filters
-    try workspace_filters.ensureUnusedCapacity(manager.allocator, manager.options.filter_patterns.len);
-    for (manager.options.filter_patterns) |pattern| {
-        try workspace_filters.append(manager.allocator, try WorkspaceFilter.init(manager.allocator, pattern, original_cwd, &path_buf));
-    }
-    
-    // Find matching workspaces from the workspace cache
-    var matched_workspace_paths = std.ArrayList([:0]const u8).init(manager.allocator);
-    defer matched_workspace_paths.deinit();
-    
-    // Iterate through workspace cache to find matches
-    var iter = manager.workspace_package_json_cache.map.iterator();
-    while (iter.next()) |entry| {
-        const workspace_path = entry.key_ptr.*;
-        
-        // Skip the root package.json
-        if (strings.eql(workspace_path, manager.original_package_json_path)) continue;
-        
-        // Extract workspace info
-        const workspace_json = entry.value_ptr.*;
-        const name = if (workspace_json.root.asProperty("name")) |name_prop|
-            if (name_prop.expr.asString(manager.allocator)) |n| n else ""
-        else "";
-        
-        // Calculate relative path
-        const workspace_dir = strings.withoutSuffixComptime(workspace_path, "/package.json");
-        const root_dir = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
-        const relative_path = if (strings.hasPrefix(workspace_dir, root_dir))
-            workspace_dir[root_dir.len + 1..]
-        else
-            workspace_dir;
-        
-        // Check if this workspace matches any filter
-        for (workspace_filters.items) |filter| {
-            const matches = switch (filter) {
-                .all => true,
-                .name => |pattern| brk: {
-                    const result = bun.glob.walk.matchImpl(manager.allocator, pattern, name);
-                    break :brk result.matches();
-                },
-                .path => |pattern| brk: {
-                    const result = bun.glob.walk.matchImpl(manager.allocator, pattern, relative_path);
-                    break :brk result.matches();
-                },
-            };
-            
-            if (matches) {
-                // workspace_path is already null-terminated from the cache
-                const null_term_path = workspace_path[0..workspace_path.len :0];
-                try matched_workspace_paths.append(null_term_path);
-                break;
-            }
-        }
-    }
-    
-    if (matched_workspace_paths.items.len == 0) {
-        Output.errGeneric("No workspaces matched the filter(s): {any}", .{manager.options.filter_patterns});
-        Global.crash();
-    }
-    
-    // Save original path
-    const original_path = manager.original_package_json_path;
-    defer manager.original_package_json_path = original_path;
-    
-    // Update each matched workspace's package.json
-    for (matched_workspace_paths.items) |workspace_package_json_path| {
-        manager.original_package_json_path = workspace_package_json_path;
-        
-        // Call the existing function to update this workspace's package.json
-        try updatePackageJSONAndInstallWithManagerWithUpdates(
-            manager,
-            ctx,
-            updates,
-            subcommand,
-            original_cwd,
-        );
-    }
 }
 
 fn updatePackageJSONAndInstallWithManagerWithUpdates(
@@ -308,19 +206,37 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 );
             }
         },
-
-        .patch, .@"patch-commit" => {
-            not_in_workspace_root = try manager.patchCommit(&current_package_json.root);
+        else => {
+            if (manager.options.patch_features == .commit) {
+                var pathbuf: bun.PathBuffer = undefined;
+                if (try manager.doPatchCommit(&pathbuf, log_level)) |stuff| {
+                    // we're inside a workspace package, we need to edit the
+                    // root json, not the `current_package_json`
+                    if (stuff.not_in_workspace_root) {
+                        not_in_workspace_root = stuff;
+                    } else {
+                        try PackageJSONEditor.editPatchedDependencies(
+                            manager,
+                            &current_package_json.root,
+                            stuff.patch_key,
+                            stuff.patchfile_path,
+                        );
+                    }
+                }
+            }
         },
-
-        else => {},
     }
 
-    var writer_buffer = try std.ArrayListUnmanaged(u8).initCapacity(
-        manager.allocator,
-        bun.handleOom(current_package_json.source.contents.len),
-    );
-    var buffer_writer = JSPrinter.BufferWriter.init(&writer_buffer);
+    manager.to_update = subcommand == .update;
+
+    {
+        // Incase it's a pointer to self. Avoid RLS.
+        const cloned = updates.*;
+        manager.update_requests = cloned;
+    }
+
+    var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
+    try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, current_package_json.source.contents.len + 1);
     buffer_writer.append_newline = preserve_trailing_newline_at_eof_for_package_json;
     var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
 
@@ -328,88 +244,76 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
         @TypeOf(&package_json_writer),
         &package_json_writer,
         current_package_json.root,
-        current_package_json.source.contents,
+        &current_package_json.source,
         .{
             .indent = current_package_json_indent,
+            .mangled_props = null,
         },
     ) catch |err| {
-        if (log_level != .silent) {
-            Output.prettyErrorln("{s} printing package.json: {s}", .{ @errorName(err), @errorName(err) });
-        }
+        Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
         Global.crash();
     };
 
-    var root_package_json = switch (manager.workspace_package_json_cache.getWithPath(
-        manager.allocator,
-        manager.log,
-        manager.original_package_json_path,
-        .{
-            .guess_indentation = true,
-        },
-    )) {
-        .parse_err => |err| {
-            Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
-                manager.original_package_json_path,
-                @errorName(err),
-            });
-            Global.crash();
-        },
-        .read_err => |err| {
-            Output.errGeneric("failed to read package.json \"{s}\": {s}", .{
-                manager.original_package_json_path,
-                @errorName(err),
-            });
-            Global.crash();
-        },
-        .entry => |entry| entry,
-    };
+    // There are various tradeoffs with how we commit updates when you run `bun add` or `bun remove`
+    // The one we chose here is to effectively pretend a human did:
+    // 1. "bun add react@latest"
+    // 2. open lockfile, find what react resolved to
+    // 3. open package.json
+    // 4. replace "react" : "latest" with "react" : "^16.2.0"
+    // 5. save package.json
+    // The Smarter™ approach is you resolve ahead of time and write to disk once!
+    // But, turns out that's slower in any case where more than one package has to be resolved (most of the time!)
+    // Concurrent network requests are faster than doing one and then waiting until the next batch
+    var new_package_json_source = try manager.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
+    current_package_json.source.contents = new_package_json_source;
 
-    var trusted_to_add_to_package_json = [_]string{};
-    if (manager.trusted_deps_to_add_to_package_json.items.len > 0) {
-        trusted_to_add_to_package_json = manager.trusted_deps_to_add_to_package_json.items;
-        var new_trusted_dependencies = root_package_json.root.asProperty("trustedDependencies") orelse brk: {
-            const trusted = Expr.allocate(
-                manager.allocator,
-                E.Array,
-                E.Array{},
-                logger.Loc.Empty,
-            );
-            const prop = try manager.allocator.create(G.Property);
-            prop.* = .{
-                .key = Expr.allocate(
-                    manager.allocator,
-                    E.String,
-                    E.String.init("trustedDependencies"),
-                    logger.Loc.Empty,
-                ),
-                .value = trusted,
-                .kind = .normal,
-                .key_was_computed = false,
-                .was_originally_quoted = false,
-            };
-            break :brk root_package_json.root.data.e_object.appendProperty(manager.allocator, prop);
+    // may or may not be the package json we are editing
+    const top_level_dir_without_trailing_slash = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
+
+    var root_package_json_path_buf: bun.PathBuffer = undefined;
+    const root_package_json_source, const root_package_json_path = brk: {
+        @memcpy(root_package_json_path_buf[0..top_level_dir_without_trailing_slash.len], top_level_dir_without_trailing_slash);
+        @memcpy(root_package_json_path_buf[top_level_dir_without_trailing_slash.len..][0.."/package.json".len], "/package.json");
+        const root_package_json_path = root_package_json_path_buf[0 .. top_level_dir_without_trailing_slash.len + "/package.json".len];
+        root_package_json_path_buf[root_package_json_path.len] = 0;
+
+        // The lifetime of this pointer is only valid until the next call to `getWithPath`, which can happen after this scope.
+        // https://github.com/oven-sh/bun/issues/12288
+        const root_package_json = switch (manager.workspace_package_json_cache.getWithPath(
+            manager.allocator,
+            manager.log,
+            root_package_json_path,
+            .{
+                .guess_indentation = true,
+            },
+        )) {
+            .parse_err => |err| {
+                manager.log.print(Output.errorWriter()) catch {};
+                Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
+                    root_package_json_path,
+                    @errorName(err),
+                });
+                Global.crash();
+            },
+            .read_err => |err| {
+                Output.errGeneric("failed to read package.json \"{s}\": {s}", .{
+                    manager.original_package_json_path,
+                    @errorName(err),
+                });
+                Global.crash();
+            },
+            .entry => |entry| entry,
         };
 
-        if (new_trusted_dependencies.expr.data == .e_array) {
-            var existing_trusted_set = bun.StringHashMapUnmanaged(u32){};
-            defer existing_trusted_set.deinit(manager.allocator);
-            for (new_trusted_dependencies.expr.data.e_array.items.slice(), 0..) |dep, j| {
-                if (dep.asString(manager.allocator)) |existing| {
-                    try existing_trusted_set.put(manager.allocator, existing, @intCast(j));
-                }
-            }
-
-            for (manager.trusted_deps_to_add_to_package_json.items) |dep| {
-                if (!existing_trusted_set.contains(dep)) {
-                    new_trusted_dependencies.expr.data.e_array.push(
-                        manager.allocator,
-                        Expr.init(E.String, E.String.init(dep), logger.Loc.Empty),
-                    );
-                }
-            }
-
-            writer_buffer.clearRetainingCapacity();
-            var buffer_writer2 = JSPrinter.BufferWriter.init(&writer_buffer);
+        if (not_in_workspace_root) |stuff| {
+            try PackageJSONEditor.editPatchedDependencies(
+                manager,
+                &root_package_json.root,
+                stuff.patch_key,
+                stuff.patchfile_path,
+            );
+            var buffer_writer2 = JSPrinter.BufferWriter.init(manager.allocator);
+            try buffer_writer2.buffer.list.ensureTotalCapacity(manager.allocator, root_package_json.source.contents.len + 1);
             buffer_writer2.append_newline = preserve_trailing_newline_at_eof_for_package_json;
             var package_json_writer2 = JSPrinter.BufferPrinter.init(buffer_writer2);
 
@@ -417,94 +321,62 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 @TypeOf(&package_json_writer2),
                 &package_json_writer2,
                 root_package_json.root,
-                root_package_json.source.contents,
+                &root_package_json.source,
                 .{
                     .indent = root_package_json.indentation,
+                    .mangled_props = null,
                 },
             ) catch |err| {
-                if (log_level != .silent) {
-                    Output.prettyErrorln("{s} printing package.json: {s}", .{ @errorName(err), @errorName(err) });
-                }
+                Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
                 Global.crash();
             };
-
-            written = writer_buffer.items;
-        }
-    }
-
-    switch (bun.sys.File.writeFile(
-        std.fs.cwd(),
-        manager.original_package_json_path,
-        written,
-    )) {
-        .result => {},
-        .err => |err| {
-            if (log_level != .silent)
-                Output.prettyErrorln("error saving package.json: {}\npackage.json text:\n{s}\n", .{ err, written });
-            Global.crash();
-        },
-    }
-
-    const possibly_dirty_lockfile = try manager.allocator.create(Lockfile);
-    possibly_dirty_lockfile.* = manager.lockfile.*;
-
-    var maybe_root = Lockfile.Package{};
-    try manager.workspace_package_json_cache.update(
-        manager.allocator,
-        manager.log,
-        manager.original_package_json_path,
-        written,
-    );
-
-    var new_package_json = root_package_json.root;
-    if (manager.trusted_deps_to_add_to_package_json.items.len > 0) {
-        const new_trusted = manager.workspace_package_json_cache.getWithPath(
-            manager.allocator,
-            manager.log,
-            manager.original_package_json_path,
-            .{},
-        ).entry;
-        new_package_json = new_trusted.root;
-    }
-
-    try maybe_root.parseWithLockfile(
-        manager,
-        manager.allocator,
-        manager.log,
-        new_package_json,
-        subcommand,
-        possibly_dirty_lockfile,
-    );
-
-    const new_lockfile_needed = possibly_dirty_lockfile.packages.len == 1 and possibly_dirty_lockfile.buffers.dependencies.items.len == 0;
-
-    if (new_lockfile_needed) {
-        manager.progress = .{};
-        if (log_level.showProgress()) {
-            manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
-            manager.root_progress_node = manager.progress.start(manager.options.log_level, ProgressStrings.start());
-            if (manager.root_progress_node) |progress_node| progress_node.activate();
-
-            manager.progress.refresh();
+            root_package_json.source.contents = try manager.allocator.dupe(u8, package_json_writer2.ctx.writtenWithoutTrailingZero());
         }
 
-        PackageJSONEditor.edit(
-            manager,
-            updates,
-            &new_package_json,
-            dependency_list,
-            .{
-                .exact_versions = manager.options.enable.exact_versions,
-                .before_install = false,
-            },
-        ) catch |err| {
-            if (log_level != .silent)
-                Output.prettyErrorln("error: {s}", .{@errorName(err)});
+        break :brk .{ root_package_json.source.contents, root_package_json_path_buf[0..root_package_json_path.len :0] };
+    };
+
+    try manager.installWithManager(ctx, root_package_json_source, original_cwd);
+
+    if (subcommand == .update or subcommand == .add or subcommand == .link) {
+        for (updates.*) |request| {
+            if (request.failed) {
+                Global.exit(1);
+                return;
+            }
+        }
+
+        const source = &logger.Source.initPathString("package.json", new_package_json_source);
+
+        // Now, we _re_ parse our in-memory edited package.json
+        // so we can commit the version we changed from the lockfile
+        var new_package_json = JSON.parsePackageJSONUTF8(source, manager.log, manager.allocator) catch |err| {
+            Output.prettyErrorln("package.json failed to parse due to error {s}", .{@errorName(err)});
             Global.crash();
         };
 
-        writer_buffer.clearRetainingCapacity();
-        var buffer_writer_two = JSPrinter.BufferWriter.init(&writer_buffer);
+        if (updates.len == 0) {
+            try PackageJSONEditor.editUpdateNoArgs(
+                manager,
+                &new_package_json,
+                .{
+                    .exact_versions = manager.options.enable.exact_versions,
+                },
+            );
+        } else {
+            try PackageJSONEditor.edit(
+                manager,
+                updates,
+                &new_package_json,
+                dependency_list,
+                .{
+                    .exact_versions = manager.options.enable.exact_versions,
+                    .add_trusted_dependencies = manager.options.do.trust_dependencies_from_args,
+                },
+            );
+        }
+        var buffer_writer_two = JSPrinter.BufferWriter.init(manager.allocator);
+        try buffer_writer_two.buffer.list.ensureTotalCapacity(manager.allocator, source.contents.len + 1);
         buffer_writer_two.append_newline =
             preserve_trailing_newline_at_eof_for_package_json;
         var package_json_writer_two = JSPrinter.BufferPrinter.init(buffer_writer_two);
@@ -513,89 +385,93 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             @TypeOf(&package_json_writer_two),
             &package_json_writer_two,
             new_package_json,
-            current_package_json.source.contents,
+            source,
             .{
                 .indent = current_package_json_indent,
+                .mangled_props = null,
             },
         ) catch |err| {
-            if (log_level != .silent) {
-                Output.prettyErrorln("{s} printing package.json: {s}", .{ @errorName(err), @errorName(err) });
-            }
+            Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
             Global.crash();
         };
 
-        // TODO: only write package.json if it's different
-        // TODO: check if package.json changed on disk in the background before writing
-        // TODO: handle when both the lockfile needs to be created and package.json is missing
-        switch (bun.sys.File.writeFile(
-            std.fs.cwd(),
-            manager.original_package_json_path,
-            written,
-        )) {
-            .result => {},
-            .err => |err| {
-                if (log_level != .silent)
-                    Output.prettyErrorln("error saving package.json: {}\npackage.json text:\n{s}\n", .{ err, written });
-                Global.crash();
-            },
-        }
-
-        var lockfile: Lockfile = undefined;
-        lockfile.initEmpty(manager.allocator);
-        lockfile.trusted_dependencies = manager.lockfile.trusted_dependencies;
-        manager.lockfile = &lockfile;
-
-        var resolver: Package.DependencySlice = .{};
-        try maybe_root.parseDependencies(
-            manager,
-            manager.allocator,
-            manager.log,
-            new_package_json,
-            .{},
-            &resolver,
-            subcommand,
-        );
-
-        maybe_root.meta.setHasInstallScript(false);
-        lockfile.packages.append(manager.allocator, maybe_root) catch bun.outOfMemory();
-        lockfile.packages.items(.resolutions)[0] = resolver.resolutions;
-        lockfile.packages.items(.dependencies)[0] = resolver.dependencies;
+        new_package_json_source = try manager.allocator.dupe(u8, package_json_writer_two.ctx.writtenWithoutTrailingZero());
     }
 
-    const new_package_json_source = logger.Source.initPathString(
-        manager.original_package_json_path,
-        written,
-    );
+    if (manager.options.do.write_package_json) {
+        const source, const path = if (manager.options.patch_features == .commit)
+            .{ root_package_json_source, root_package_json_path }
+        else
+            .{ new_package_json_source, manager.original_package_json_path };
 
-    try installWithManager(manager, ctx, new_package_json_source.contents, original_cwd);
-    if (subcommand == .@"patch-commit") {
-        switch (not_in_workspace_root.?) {
-            .build_id => |build_id| {
-                const patch_tag_resolver = manager.lockfile.patched_dependencies.get(build_id).?;
-                const folder_name = switch (patch_tag_resolver.value.patch.name_and_version_hash) {
-                    .npm => |npm| Npm.FolderResolution.buildId(
-                        &patch_tag_resolver.value.patch.name,
-                        npm,
-                    ),
-                    .folder => |folder| folder,
-                };
-                const folder_path = bun.path.joinZ(&[_]string{
-                    FileSystem.instance.top_level_dir,
-                    "node_modules",
-                    ".cache",
-                    folder_name,
-                }, .posix);
+        // Now that we've run the install step
+        // We can save our in-memory package.json to disk
+        const workspace_package_json_file = (try bun.sys.File.openat(
+            .cwd(),
+            path,
+            bun.O.RDWR,
+            0,
+        ).unwrap()).handle.stdFile();
 
-                defer manager.allocator.free(folder_path);
+        try workspace_package_json_file.pwriteAll(source, 0);
+        std.posix.ftruncate(workspace_package_json_file.handle, source.len) catch {};
+        workspace_package_json_file.close();
 
-                _ = bun.sys.rmdir(folder_path);
-                Output.prettyln("<green>done<r>", .{});
-                Output.flush();
-            },
-            .nothing => {
-                Output.prettyln("<green>done<r>", .{});
-                Output.flush();
-            },
+        if (subcommand == .remove) {
+            if (!any_changes) {
+                Global.exit(0);
+                return;
+            }
+
+            var cwd = std.fs.cwd();
+            // This is not exactly correct
+            var node_modules_buf: bun.PathBuffer = undefined;
+            bun.copy(u8, &node_modules_buf, "node_modules" ++ std.fs.path.sep_str);
+            const offset_buf = node_modules_buf["node_modules/".len..];
+            const name_hashes = manager.lockfile.packages.items(.name_hash);
+            for (updates.*) |request| {
+                // If the package no longer exists in the updated lockfile, delete the directory
+                // This is not thorough.
+                // It does not handle nested dependencies
+                // This is a quick & dirty cleanup intended for when deleting top-level dependencies
+                if (std.mem.indexOfScalar(PackageNameHash, name_hashes, String.Builder.stringHash(request.name)) == null) {
+                    bun.copy(u8, offset_buf, request.name);
+                    cwd.deleteTree(node_modules_buf[0 .. "node_modules/".len + request.name.len]) catch {};
+                }
+            }
+
+            // This is where we clean dangling symlinks
+            // This could be slow if there are a lot of symlinks
+            if (bun.openDir(cwd, manager.options.bin_path)) |node_modules_bin_handle| {
+                var node_modules_bin: std.fs.Dir = node_modules_bin_handle;
+                defer node_modules_bin.close();
+                var iter: std.fs.Dir.Iterator = node_modules_bin.iterate();
+                iterator: while (iter.next() catch null) |entry| {
+                    switch (entry.kind) {
+                        std.fs.Dir.Entry.Kind.sym_link => {
+
+                            // any symlinks which we are unable to open are assumed to be dangling
+                            // note that using access won't work here, because access doesn't resolve symlinks
+                            bun.copy(u8, &node_modules_buf, entry.name);
+                            node_modules_buf[entry.name.len] = 0;
+                            const buf: [:0]u8 = node_modules_buf[0..entry.name.len :0];
+
+                            var file = node_modules_bin.openFileZ(buf, .{ .mode = .read_only }) catch {
+                                node_modules_bin.deleteFileZ(buf) catch {};
+                                continue :iterator;
+                            };
+
+                            file.close();
+                        },
+                        else => {},
+                    }
+                }
+            } else |err| {
+                if (err != error.ENOENT) {
+                    Output.err(err, "while reading node_modules/.bin", .{});
+                    Global.crash();
+                }
+            }
         }
     }
 }
@@ -608,10 +484,11 @@ pub fn updatePackageJSONAndInstallCatchError(
         switch (err) {
             error.InstallFailed,
             error.InvalidPackageJSON,
-            error.ParsingDependencyVersionFailed,
             => {
-                // the error was already printed
-                Global.exit(1);
+                const log = &bun.cli.Cli.log_;
+                log.print(bun.Output.errorWriter()) catch {};
+                bun.Global.exit(1);
+                return;
             },
             else => return err,
         }
@@ -623,77 +500,42 @@ fn updatePackageJSONAndInstallAndCLI(
     subcommand: Subcommand,
     cli: CommandLineArguments,
 ) !void {
-    const manager, const original_cwd = PackageManager.init(ctx, subcommand, true, cli) catch |err| {
-        switch (err) {
-            error.MissingPackageJSON => {
-                const command_for_subcommand = switch (subcommand) {
-                    .link => try attemptToCreatePackageJSON(cli.link_command.unlink, ctx),
-                    else => subcommand.bunCommand(),
-                };
-
-                if (subcommand == .remove) {
-                    Output.errGeneric("no package.json, so nothing to remove", .{});
+    var manager, const original_cwd = PackageManager.init(ctx, cli, subcommand) catch |err| brk: {
+        if (err == error.MissingPackageJSON) {
+            switch (subcommand) {
+                .update => {
+                    Output.prettyErrorln("<r>No package.json, so nothing to update", .{});
                     Global.crash();
-                }
-
-                if (ctx.args.opcodes.len > 0) {
-                    // absolute worst case, all their input is the package name
-                    // (namespace) + "@" + version
-                    const input = ctx.args.opcodes[0];
-                    var buf = bun.handleOom(try ctx.allocator.alloc(u8, input.len + 2048));
-                    const json_str = try JSON.stringifyPackageJSONForAdd(buf, ctx.allocator, subcommand, ctx.args.opcodes, cli);
-                    buf = buf[0..json_str.len];
-                    if (subcommand == .link) {
-                        try attemptToCreatePackageJSON(false, ctx);
-                    } else {
-                        _ = try attemptToCreatePackageJSONAndOpen(ctx);
-                    }
-
-                    bun.sys.File.writeFile(
-                        std.fs.cwd(),
-                        PackageManager.package_json_cwd_buf[0 .. PackageManager.package_json_cwd_buf.len - 1 :0],
-                        buf,
-                    ).unwrap() catch |e| {
-                        Output.prettyErrorln(
-                            "<r><red>error<r>: {s} writing default package.json",
-                            .{@errorName(e)},
-                        );
-                        Global.crash();
-                    };
-
-                    Output.prettyln("No package.json, created one for you!", .{});
-                    Output.flush();
-
-                    const manager2, const original_cwd2 = try PackageManager.init(ctx, subcommand, true, cli);
-                    try updatePackageJSONAndInstallWithManager(manager2, ctx, original_cwd2);
-                    return;
-                }
-
-                Output.prettyln(
-                    \\No package.json, but there also aren't any packages to {s}.
-                    \\
-                    \\Run <b>bun init<r> to get started.
-                    \\Otherwise, run <b>{s}<r> to install packages
-                    \\
-                ,
-                    .{
-                        subcommand.bunCommand(),
-                        command_for_subcommand,
-                    },
-                );
-                Global.exit(0);
-            },
-            else => return err,
+                },
+                .remove => {
+                    Output.prettyErrorln("<r>No package.json, so nothing to remove", .{});
+                    Global.crash();
+                },
+                .patch, .@"patch-commit" => {
+                    Output.prettyErrorln("<r>No package.json, so nothing to patch", .{});
+                    Global.crash();
+                },
+                else => {
+                    try attemptToCreatePackageJSON();
+                    break :brk try PackageManager.init(ctx, cli, subcommand);
+                },
+            }
         }
-    };
 
-    if (subcommand == .link and cli.link_command.unlink) {
-        if (manager.options.positionals.len <= 1) {
-            try manager.unlinkSelf();
-            Global.exit(0);
-        } else {
-            try manager.unlink(ctx);
-            Global.exit(0);
+        return err;
+    };
+    defer ctx.allocator.free(original_cwd);
+
+    if (manager.options.shouldPrintCommandName()) {
+        Output.prettyln("<r><b>bun {s} <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{@tagName(subcommand)});
+        Output.flush();
+    }
+
+    // When you run `bun add -g <pkg>` or `bun install -g <pkg>` and the global bin dir is not in $PATH
+    // We should tell the user to add it to $PATH so they don't get confused.
+    if (subcommand.canGloballyInstallPackages()) {
+        if (manager.options.global and manager.options.log_level != .silent) {
+            manager.track_installed_bin = .{ .pending = {} };
         }
     }
 
@@ -703,8 +545,124 @@ fn updatePackageJSONAndInstallAndCLI(
         try manager.preparePatch();
     }
 
-    if (subcommand == .link) {
-        Global.exit(0);
+    if (manager.any_failed_to_install) {
+        Global.exit(1);
+    }
+
+    // Check if we need to print a warning like:
+    //
+    // > warn: To run "vite", add the global bin folder to $PATH:
+    // >
+    // > fish_add_path "/private/tmp/test"
+    //
+    if (subcommand.canGloballyInstallPackages()) {
+        if (manager.options.global) {
+            if (manager.options.bin_path.len > 0 and manager.track_installed_bin == .basename) {
+                const needs_to_print = if (bun.getenvZ("PATH")) |PATH|
+                    // This is not perfect
+                    //
+                    // If you already have a different binary of the same
+                    // name, it will not detect that case.
+                    //
+                    // The problem is there are too many edgecases with filesystem paths.
+                    //
+                    // We want to veer towards false negative than false
+                    // positive. It would be annoying if this message
+                    // appears unnecessarily. It's kind of okay if it doesn't appear
+                    // when it should.
+                    //
+                    // If you set BUN_INSTALL_BIN to "/tmp/woo" on macOS and
+                    // we just checked for "/tmp/woo" in $PATH, it would
+                    // incorrectly print a warning because /tmp/ on macOS is
+                    // aliased to /private/tmp/
+                    //
+                    // Another scenario is case-insensitive filesystems. If you
+                    // have a binary called "esbuild" in /tmp/TeST and you
+                    // install esbuild, it will not detect that case if we naively
+                    // just checked for "esbuild" in $PATH where "$PATH" is /tmp/test
+                    bun.which(
+                        &PackageManager.package_json_cwd_buf,
+                        PATH,
+                        bun.fs.FileSystem.instance.top_level_dir,
+                        manager.track_installed_bin.basename,
+                    ) == null
+                else
+                    true;
+
+                if (needs_to_print) {
+                    const MoreInstructions = struct {
+                        shell: bun.cli.ShellCompletions.Shell = .unknown,
+                        folder: []const u8,
+
+                        // Convert "/Users/Jarred Sumner" => "/Users/Jarred\ Sumner"
+                        const ShellPathFormatter = struct {
+                            folder: []const u8,
+
+                            pub fn format(instructions: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                                var remaining = instructions.folder;
+                                while (bun.strings.indexOfChar(remaining, ' ')) |space| {
+                                    try writer.print(
+                                        "{}",
+                                        .{bun.fmt.fmtPath(u8, remaining[0..space], .{
+                                            .escape_backslashes = true,
+                                            .path_sep = if (Environment.isWindows) .windows else .posix,
+                                        })},
+                                    );
+                                    try writer.writeAll("\\ ");
+                                    remaining = remaining[@min(space + 1, remaining.len)..];
+                                }
+
+                                try writer.print(
+                                    "{}",
+                                    .{bun.fmt.fmtPath(u8, remaining, .{
+                                        .escape_backslashes = true,
+                                        .path_sep = if (Environment.isWindows) .windows else .posix,
+                                    })},
+                                );
+                            }
+                        };
+
+                        pub fn format(instructions: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                            const path = ShellPathFormatter{ .folder = instructions.folder };
+                            switch (instructions.shell) {
+                                .unknown => {
+                                    // Unfortunately really difficult to do this in one line on PowerShell.
+                                    try writer.print("{}", .{path});
+                                },
+                                .bash => {
+                                    try writer.print("export PATH=\"{}:$PATH\"", .{path});
+                                },
+                                .zsh => {
+                                    try writer.print("export PATH=\"{}:$PATH\"", .{path});
+                                },
+                                .fish => {
+                                    // Regular quotes will do here.
+                                    try writer.print("fish_add_path {}", .{bun.fmt.quote(instructions.folder)});
+                                },
+                                .pwsh => {
+                                    try writer.print("$env:PATH += \";{}\"", .{path});
+                                },
+                            }
+                        }
+                    };
+
+                    Output.prettyError("\n", .{});
+
+                    Output.warn(
+                        \\To run {}, add the global bin folder to $PATH:
+                        \\
+                        \\<cyan>{}<r>
+                        \\
+                    ,
+                        .{
+                            bun.fmt.quote(manager.track_installed_bin.basename),
+                            MoreInstructions{ .shell = bun.cli.ShellCompletions.Shell.fromEnv([]const u8, bun.getenvZ("SHELL") orelse ""), .folder = manager.options.bin_path },
+                        },
+                    );
+                    Output.flush();
+                }
+            }
+        }
     }
 }
 
@@ -712,85 +670,48 @@ pub fn updatePackageJSONAndInstall(
     ctx: Command.Context,
     subcommand: Subcommand,
 ) !void {
-    const cli = CommandLineArguments.parse(ctx.allocator, subcommand, ctx.passthrough);
+    var cli = switch (subcommand) {
+        inline else => |cmd| try PackageManager.CommandLineArguments.parse(ctx.allocator, cmd),
+    };
 
-    if (cli.analyze_metafile and cli.analyze_metafile_path != null) {
-        const analyze_path = cli.analyze_metafile_path.?;
+    // The way this works:
+    // 1. Run the bundler on source files
+    // 2. Rewrite positional arguments to act identically to the developer
+    //    typing in the dependency names
+    // 3. Run the install command
+    if (cli.analyze) {
+        const Analyzer = struct {
+            ctx: Command.Context,
+            cli: *PackageManager.CommandLineArguments,
+            subcommand: Subcommand,
+            pub fn onAnalyze(
+                this: *@This(),
+                result: *bun.bundle_v2.BundleV2.DependenciesScanner.Result,
+            ) anyerror!void {
+                // TODO: add separate argument that makes it so positionals[1..] is not done and instead the positionals are passed
+                var positionals = bun.handleOom(bun.default_allocator.alloc(string, result.dependencies.keys().len + 1));
+                positionals[0] = "add";
+                bun.copy(string, positionals[1..], result.dependencies.keys());
+                this.cli.positionals = positionals;
 
-        const manager = &PackageManager{
-            .allocator = ctx.allocator,
-            .log = ctx.log,
+                try updatePackageJSONAndInstallAndCLI(this.ctx, this.subcommand, this.cli.*);
+
+                Global.exit(0);
+            }
+        };
+        var analyzer = Analyzer{
+            .ctx = ctx,
+            .cli = &cli,
             .subcommand = subcommand,
-            .options = .{
-                .filter_patterns = cli.filters,
-                .positionals = cli.positionals,
-            },
-            .lockfile = undefined,
-            .root_dir = &Fs.FileSystem.instance.fs,
-            .cache_directory_ = null,
-            .cache_directory_path = "",
-            .temp_dir_ = null,
-            .temp_dir_path = "",
-            .temp_dir_name = "",
-            .root_package_json_file = std.fs.File{ .handle = 0 },
-            .root_package_id = .{},
-            .original_package_json_path = "",
-            .thread_pool = ThreadPool.init(.{}),
-            .task_batch = .{},
-            .task_queue = .{},
-            .manifests = .{},
-            .folders = .{},
-            .git_repositories = .{},
-            .network_dedupe_map = .init(bun.default_allocator),
-            .async_network_task_queue = .{},
-            .network_tarball_batch = .{},
-            .network_resolve_batch = .{},
-            .network_task_fifo = undefined,
-            .patch_apply_batch = .{},
-            .patch_calc_hash_batch = .{},
-            .patch_task_fifo = undefined,
-            .patch_task_queue = .{},
-            .pending_pre_calc_hashes = .init(0),
-            .pending_tasks = .init(0),
-            .total_tasks = 0,
-            .preallocated_network_tasks = .{},
-            .preallocated_resolve_tasks = .{},
-            .lifecycle_script_time_log = .{},
-            .pending_lifecycle_script_tasks = .init(0),
-            .finished_installing = .init(false),
-            .total_scripts = 0,
-            .root_lifecycle_scripts = null,
-            .node_gyp_tempdir_name = "",
-            .env_configure = null,
-            .env = undefined,
-            .progress = .{},
-            .downloads_node = null,
-            .scripts_node = null,
-            .progress_name_buf = undefined,
-            .progress_name_buf_dynamic = &[_]u8{},
-            .cpu_count = 0,
-            .track_installed_bin = .{ .none = {} },
-            .root_progress_node = undefined,
-            .to_update = false,
-            .update_requests = &[_]UpdateRequest{},
-            .root_package_json_name_at_time_of_init = "",
-            .event_loop = .{ .mini = jsc.MiniEventLoop.initNoOp() },
+        };
+        var fetcher = bun.bundle_v2.BundleV2.DependenciesScanner{
+            .ctx = &analyzer,
+            .entry_points = cli.positionals[1..],
+            .onFetch = @ptrCast(&Analyzer.onAnalyze),
         };
 
-        const result = bun.CLI.analyzeMetafile(ctx.allocator, analyze_path, manager);
-        const positionals = try ctx.allocator.alloc(string, result.dependencies.count());
-        bun.copy(string, positionals[1..], result.dependencies.keys());
-        var modified_cli = cli;
-        modified_cli.positionals = positionals;
-
-        try updatePackageJSONAndInstallAndCLI(ctx, subcommand, modified_cli);
-
-        Global.exit(0);
-    }
-
-    if (cli.version) {
-        Output.prettyln("{}", .{Global.package_json_version_with_sha});
-        Output.flush();
+        // This runs the bundler.
+        try bun.cli.BuildCommand.exec(bun.cli.Command.get(), &fetcher);
         return;
     }
 
@@ -800,41 +721,30 @@ pub fn updatePackageJSONAndInstall(
 const string = []const u8;
 
 const std = @import("std");
-const initializeStore = @import("./initializeStore.zig").initializeStore;
-const json = bun.json;
-const JSON = bun.JSON;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
 const Global = bun.Global;
-const Output = bun.Output;
-const FileSystem = Fs.FileSystem;
-const CommandLineArguments = PackageManager.CommandLineArguments;
-const logger = bun.logger;
-const Expr = bun.js_ast.Expr;
-const E = bun.js_ast.E;
-const G = bun.js_ast.G;
-const ProgressStrings = PackageManager.ProgressStrings;
+const JSON = bun.json;
 const JSPrinter = bun.js_printer;
-const Semver = @import("../../semver.zig");
-const String = Semver.String;
-const stringZ = [:0]const u8;
-const JSAst = bun.JSAst;
-const Lockfile = @import("../lockfile.zig");
-const Npm = @import("../npm.zig");
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const logger = bun.logger;
 const strings = bun.strings;
+const Command = bun.cli.Command;
+const File = bun.sys.File;
+const PackageNameHash = bun.install.PackageNameHash;
+
+const Semver = bun.Semver;
+const String = Semver.String;
+
 const Fs = bun.fs;
-const DotEnv = @import("../../env.zig");
-const bun = @import("root").bun;
-const PackageManager = @import("../install.zig").PackageManager;
-const ThreadPool = bun.ThreadPool;
-const Package = Lockfile.Package;
-const DependencyID = bun.install.DependencyID;
+const FileSystem = Fs.FileSystem;
+
+const PackageManager = bun.install.PackageManager;
+const CommandLineArguments = PackageManager.CommandLineArguments;
 const PackageJSONEditor = PackageManager.PackageJSONEditor;
 const PatchCommitResult = PackageManager.PatchCommitResult;
 const Subcommand = PackageManager.Subcommand;
 const UpdateRequest = PackageManager.UpdateRequest;
 const attemptToCreatePackageJSON = PackageManager.attemptToCreatePackageJSON;
-const attemptToCreatePackageJSONAndOpen = PackageManager.attemptToCreatePackageJSONAndOpen;
-const WorkspaceFilter = PackageManager.WorkspaceFilter;
-const installWithManager = PackageManager.installWithManager;
-const PackageID = PackageManager.PackageID;
-const Command = @import("../../cli.zig").Command;
-const jsc = bun.JSC;

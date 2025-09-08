@@ -2324,3 +2324,4 @@ it("should add multiple dependencies specified on command line", async () => {
   });
   await access(join(package_dir, "bun.lockb"));
 });
+

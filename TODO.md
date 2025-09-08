@@ -331,6 +331,7 @@ Exited with code [1]
 
 # Code quality:
 
+- [ ] rename sequence.index to sequence.active_index because it is misleading.
 - [ ] try using a linked list rather than arraylist for describe/test children, see how it affects performance
 - [ ] consider modifying the junit reporter to print the whole describe tree rather than exploring the execution tree (if that's what it's doing? either way it needs to include tests that are filtered out)
 - [ ] concurrent tests have an n^2 problem because each time a test completes it needs to loop over every test to advance.

@@ -6,6 +6,9 @@
 // Some build failures from the bundler surface as runtime errors here, such as
 // `require` on a module with transitive top-level await, or a missing export.
 // This was done to make incremental updates as isolated as possible.
+// This import is different based on client vs server side.
+
+import { ServerManifest, SSRManifest } from "bun:app/server";
 import {
   __callDispose,
   __legacyDecorateClassTS,
@@ -22,9 +25,9 @@ import { type SourceMapURL, derefMapping } from "#stack-trace";
 const registry = new Map<Id, HMRModule>();
 const registrySourceMapIds = new Map<string, SourceMapURL>();
 /** Server */
-export const serverManifest: Bun.App.ServerManifest = {};
+export const serverManifest: ServerManifest = {};
 /** Server */
-export const ssrManifest: Bun.App.SSRManifest = {};
+export const ssrManifest: SSRManifest = {};
 /** Client */
 export let onServerSideReload: (() => Promise<void>) | null = null;
 const eventHandlers: Record<HMREvent | string, HotEventHandler[] | undefined> = {};

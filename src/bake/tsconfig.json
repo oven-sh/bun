@@ -6,8 +6,7 @@
       "bun-framework-react/*": ["../../packages/bun-framework-react/*"],
       "bindgen": ["../codegen/bindgen-lib"]
     },
-    "jsx": "react-jsx",
-    "types": ["react/experimental"]
+    "jsx": "react-jsx"
   },
   "include": [
     "**/*.ts",

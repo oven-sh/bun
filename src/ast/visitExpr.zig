@@ -1491,7 +1491,7 @@ pub fn VisitExpr(
                     arg.* = p.visitExpr(arg.*);
                 }
 
-                if (p.options.features.minify_syntax) {
+                if (p.options.features.minify_syntax and !p.source.path.isNodeModule()) {
                     if (KnownGlobal.minifyGlobalConstructor(p.allocator, e_, p.symbols.items, expr.loc)) |minified| {
                         return minified;
                     }

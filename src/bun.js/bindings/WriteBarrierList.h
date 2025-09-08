@@ -25,8 +25,6 @@ namespace Bun {
  */
 template<typename T>
 class WriteBarrierList {
-    static_assert(std::is_base_of_v<JSC::JSCell, std::remove_cv_t<std::remove_reference_t<T>>>, "T must derive from JSC::JSCell");
-
 public:
     WriteBarrierList()
     {

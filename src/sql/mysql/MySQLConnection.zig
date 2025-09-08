@@ -378,7 +378,7 @@ pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
     defer loop.exit();
     _ = on_close.call(
         this.globalObject,
-        this.js_value,
+        .js_undefined,
         &[_]JSValue{
             value,
             this.getQueriesArray(),

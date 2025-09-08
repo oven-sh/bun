@@ -470,13 +470,13 @@ pub fn propagateAsyncDependencies(this: *LinkerGraph) !void {
                 switch (import_record.kind) {
                     .stmt => {},
 
-                    // `import()` always requires `await`, so files that contain top-level calls
-                    // to `import()` will have already been detected as having TLA, and thus
-                    // `is_async_or_has_async_dependency` will already be true.
+                    // Any use of `import()` that makes the parent async will necessarily use
+                    // top-level await, so this will have already been detected by `validateTLA`,
+                    // and `is_async_or_has_async_dependency` will already be true.
                     //
                     // We don't want to process these imports here because `import()` can appear in
-                    // non-top-level contexts, like inside an async function, that don't necessarily
-                    // make the parent module async.
+                    // non-top-level contexts (like inside an async function) or in contexts that
+                    // don't use `await`, which don't necessarily make the parent module async.
                     .dynamic => continue,
 
                     // `require()` cannot import async modules.

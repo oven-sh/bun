@@ -34,6 +34,11 @@ for (const options of [
     transactionPool: false,
   },
 ] satisfies (Bun.SQL.Options & { transactionPool?: boolean })[]) {
+  if (options.url === undefined) {
+    console.log("SKIPPING TEST", JSON.stringify(options), "BECAUSE MISSING THE URL SECRET");
+    continue;
+  }
+
   describe(`${options.transactionPool ? "Transaction Pooling" : `Prepared Statements (${options.prepare ? "on" : "off"})`}`, () => {
     test("default sql", async () => {
       expect(sql.reserve).toBeDefined();
@@ -199,7 +204,7 @@ for (const options of [
       expect(
         await sql
           .begin(sql => [sql`select wat`, sql`select current_setting('bun_sql.test') as x, ${1} as a`])
-          .catch(e => e.errno || e),
+          .catch(e => e.errno),
       ).toBe("42703");
     });
 

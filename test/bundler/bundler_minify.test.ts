@@ -691,33 +691,6 @@ describe("bundler", () => {
     },
   });
 
-  itBundled("minify/MathPowToExponentiation", {
-    files: {
-      "/entry.js": /* js */ `
-        // Should be optimized (simple numeric literals)
-        capture(Math.pow(2, 10));
-        capture(Math.pow(3, 5));
-        capture(Math.pow(10, 2));
-        
-        // Should NOT be optimized (non-simple bases)
-        capture(Math.pow(11, 2));
-        capture(Math.pow(-2, 3));
-        capture(Math.pow(2.5, 2));
-        capture(Math.pow(x, 2));
-      `,
-    },
-    capture: [
-      "2 ** 10",
-      "3 ** 5",
-      "10 ** 2",
-      "Math.pow(11, 2)",
-      "Math.pow(-2, 3)",
-      "Math.pow(2.5, 2)",
-      "Math.pow(x, 2)",
-    ],
-    minifySyntax: true,
-  });
-
   itBundled("minify/FractionalLiteralOptimization", {
     files: {
       "/entry.js": /* js */ `
@@ -790,10 +763,9 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         // Combining multiple optimizations
         function calculate(a, b, c) {
-          const power = Math.pow(2, 8);
           const fraction = 0.5;
           const check = (a & 0xFF) === 0;
-          return power * fraction + (check ? 1 : 0);
+          return fraction + (check ? 1 : 0);
         }
         
         capture(calculate(10, 20, 30));
@@ -802,8 +774,6 @@ describe("bundler", () => {
     minifySyntax: true,
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      // Check Math.pow optimization
-      expect(code).toContain("2 ** 8");
       // Check fractional optimization
       expect(code).toContain(".5");
       // Check === to == optimization

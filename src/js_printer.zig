@@ -2239,40 +2239,6 @@ fn NewPrinter(
                     }
                 },
                 .e_call => |e| {
-                    // Optimize Math.pow(x, y) to x ** y when minifying
-                    if (p.options.minify_syntax) {
-                        if (e.target.data == .e_dot) {
-                            const dot = e.target.data.e_dot;
-                            if (dot.target.data == .e_identifier) {
-                                const ident = dot.target.data.e_identifier;
-                                if (p.symbols().get(ident.ref)) |symbol| {
-                                    const args_slice = e.args.slice();
-                                    if (strings.eqlComptime(symbol.original_name, "Math") and 
-                                        strings.eqlComptime(dot.name, "pow") and
-                                        args_slice.len == 2) {
-                                        // Check if first arg is a simple numeric literal
-                                        const is_simple_base = switch (args_slice[0].data) {
-                                            .e_number => |num| num.value >= 0 and num.value <= 10 and @floor(num.value) == num.value,
-                                            else => false,
-                                        };
-                                        if (is_simple_base) {
-                                            // Print as base ** exponent
-                                            const wrap_pow = level.gte(Level.exponentiation);
-                                            if (wrap_pow) p.print("(");
-                                            p.printExpr(args_slice[0], Level.exponentiation, .{});
-                                            p.printSpace();
-                                            p.print("**");
-                                            p.printSpace();
-                                            p.printExpr(args_slice[1], Level.exponentiation.sub(1), .{});
-                                            if (wrap_pow) p.print(")");
-                                            return;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
                     var wrap = level.gte(.new) or flags.contains(.forbid_call);
                     var target_flags = ExprFlag.None();
                     if (e.optional_chain == null) {
@@ -2838,27 +2804,15 @@ fn NewPrinter(
                             const e2 = copy.fold(p.options.allocator, expr.loc);
                             switch (e2.data) {
                                 .e_string => {
-                                    // When minifying, prefer regular string with \n escapes if shorter
-                                    if (p.options.minify_syntax) {
-                                        const str = e2.data.e_string.data;
-                                        var has_newlines = false;
-                                        for (str) |c| {
-                                            if (c == '\n') {
-                                                has_newlines = true;
-                                                break;
-                                            }
-                                        }
-                                        // Use double quotes if we have newlines and no double quotes in string
-                                        if (has_newlines and !strings.containsChar(str, '"')) {
-                                            p.print('"');
-                                            p.printStringCharactersUTF8(str, '"');
-                                            p.print('"');
-                                            return;
-                                        }
+                                    // Use existing quote selection logic
+                                    const quote = bestQuoteCharForEString(e2.data.e_string, false);
+                                    p.print(&[_]u8{quote});
+                                    if (quote == '`') {
+                                        p.printStringCharactersEString(e2.data.e_string, '`');
+                                    } else {
+                                        p.printStringCharactersUTF8(e2.data.e_string.data, quote);
                                     }
-                                    p.print('"');
-                                    p.printStringCharactersUTF8(e2.data.e_string.data, '"');
-                                    p.print('"');
+                                    p.print(&[_]u8{quote});
                                     return;
                                 },
                                 .e_template => {

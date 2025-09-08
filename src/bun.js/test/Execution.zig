@@ -190,8 +190,7 @@ fn bunTest(this: *Execution) *BunTest {
 pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
     groupLog.begin(@src());
     defer groupLog.end();
-    // TODO: implement me
-    this.bunTest().addResult(.start); // good enough for now
+    this.bunTest().addResult(.start);
     _ = globalThis;
 }
 
@@ -199,7 +198,6 @@ pub fn step(this: *Execution, globalThis: *jsc.JSGlobalObject, data: describe2.B
     groupLog.begin(@src());
     defer groupLog.end();
 
-    // TODO: for removing n²:
     switch (data) {
         .start => {
             return try this.stepGroup(globalThis, bun.timespec.now());

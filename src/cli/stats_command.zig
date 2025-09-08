@@ -17,44 +17,44 @@ fn generateForStats(
         // Even initialization errors should be ignored
         return;
     };
-    
+
     this.unique_key = bundle_v2.generateUniqueKey();
-    
+
     // Clear any initialization errors
     this.transpiler.log.msgs.clearRetainingCapacity();
     this.transpiler.log.errors = 0;
     this.transpiler.log.warnings = 0;
-    
+
     // Enqueue entry points but continue even if there are errors
     this.enqueueEntryPoints(.normal, this.transpiler.options.entry_points) catch {
         // Continue anyway
     };
-    
+
     // Clear errors again
     this.transpiler.log.msgs.clearRetainingCapacity();
     this.transpiler.log.errors = 0;
     this.transpiler.log.warnings = 0;
-    
+
     // Wait for parsing to complete
     this.waitForParse();
-    
+
     // Clear errors again
     this.transpiler.log.msgs.clearRetainingCapacity();
     this.transpiler.log.errors = 0;
     this.transpiler.log.warnings = 0;
-    
+
     // Scan for secondary paths
     this.scanForSecondaryPaths();
-    
+
     // Process server components but ignore errors
     this.processServerComponentManifestFiles() catch {};
-    
+
     // Find reachable files
     const reachable_files = this.findReachableFiles() catch {
         // Return empty if we can't find reachable files
         return;
     };
-    
+
     // Call the scanner with whatever we managed to collect
     this.getAllDependencies(reachable_files, scanner) catch {
         // Continue even if dependency scanning fails
@@ -600,7 +600,7 @@ pub const StatsCommand = struct {
             // User provided entry points - use them directly
             this_transpiler.options.entry_points = ctx.args.entry_points;
         } else {
-                // No entry points provided - walk directory to find all JS/TS files
+            // No entry points provided - walk directory to find all JS/TS files
             const cwd = try std.process.getCwdAlloc(allocator);
             defer allocator.free(cwd);
 
@@ -653,14 +653,15 @@ pub const StatsCommand = struct {
     }
 };
 
+const Logger = @import("../logger.zig");
 const options = @import("../options.zig");
 const std = @import("std");
 const transpiler = @import("../transpiler.zig");
-const bundle_v2 = @import("../bundler/bundle_v2.zig");
-const BundleV2 = bundle_v2.BundleV2;
 const Command = @import("../cli.zig").Command;
 const ImportRecord = @import("../import_record.zig").ImportRecord;
-const Logger = @import("../logger.zig");
+
+const bundle_v2 = @import("../bundler/bundle_v2.zig");
+const BundleV2 = bundle_v2.BundleV2;
 
 const bun = @import("bun");
 const Global = bun.Global;

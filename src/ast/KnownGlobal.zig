@@ -126,10 +126,17 @@ pub const KnownGlobal = enum {
                 return callFromNew(e, loc);
             },
 
-            .Function, .RegExp => {
-                // Just remove 'new' for Function and RegExp
-                // RegExp literal conversion would require parsing the pattern string
+            .Function => {
+                // Just remove 'new' for Function
                 return callFromNew(e, loc);
+            },
+            .RegExp => {
+                // Don't optimize RegExp - the semantics are too complex:
+                // - new RegExp(re) creates a copy, but RegExp(re) returns the same instance
+                // - This affects object identity and lastIndex behavior
+                // - The difference only applies when flags are undefined
+                // Keep the original new RegExp() call to preserve correct semantics
+                return null;
             },
             .WeakSet, .WeakMap => {
                 const n = e.args.len;

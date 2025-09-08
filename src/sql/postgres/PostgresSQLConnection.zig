@@ -1746,19 +1746,10 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                     }
                 }
             }
-            const was_pipelined = request.flags.pipelined;
 
             this.finishRequest(request);
             this.updateRef();
             request.onError(.{ .protocol = err }, this.globalObject);
-
-            if (was_pipelined) {
-                // "The purpose of Sync is to provide a resynchronization point for error recovery"
-                // source: https://www.postgresql.org/docs/current/protocol-flow.html
-                const connection_writer = this.writer();
-                connection_writer.write(&protocol.Sync) catch {};
-                this.flushData();
-            }
         },
         .PortalSuspended => {
             // try reader.eatMessage(&protocol.PortalSuspended);

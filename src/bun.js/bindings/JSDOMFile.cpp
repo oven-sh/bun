@@ -172,6 +172,13 @@ public:
         auto structure = createStructure(vm, globalObject, zigGlobal->functionPrototype());
         auto* object = new (NotNull, JSC::allocateCell<JSDOMFile>(vm)) JSDOMFile(vm, structure);
         object->finishCreation(vm, globalObject, prototype);
+        
+        // Store the structure for File instances (using the File prototype we created)
+        auto* blobStructure = zigGlobal->JSBlobStructure();
+        object->m_instanceStructure.set(vm, object, 
+            blobStructure->create(vm, globalObject, prototype, 
+                                 blobStructure->typeInfo(), 
+                                 blobStructure->classInfoForCells()));
 
         return object;
     }
@@ -191,16 +198,18 @@ public:
         auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
         auto& vm = JSC::getVM(globalObject);
         JSObject* newTarget = asObject(callFrame->newTarget());
-        auto* constructor = globalObject->JSDOMFileConstructor();
-        Structure* structure = globalObject->JSBlobStructure();
+        auto* constructor = jsDynamicCast<JSDOMFile*>(globalObject->JSDOMFileConstructor());
+        
+        // Use the File instance structure we stored, not the Blob structure
+        Structure* structure = constructor && constructor->m_instanceStructure.get() 
+            ? constructor->m_instanceStructure.get() 
+            : globalObject->JSBlobStructure();
+            
         if (constructor != newTarget) {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
-                // ShadowRealm functions belong to a different global object.
-                getFunctionRealm(lexicalGlobalObject, newTarget));
-            RETURN_IF_EXCEPTION(scope, {});
-            structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, functionGlobalObject->JSBlobStructure());
+            // For subclassing, use the structure we have as base
+            structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, structure);
             RETURN_IF_EXCEPTION(scope, {});
         }
 
@@ -224,7 +233,22 @@ public:
         throwTypeError(lexicalGlobalObject, scope, "Class constructor File cannot be invoked without 'new'"_s);
         return {};
     }
+    
+    DECLARE_VISIT_CHILDREN;
+    
+    WriteBarrier<Structure> m_instanceStructure;
 };
+
+template<typename Visitor>
+void JSDOMFile::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<JSDOMFile*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_instanceStructure);
+}
+
+DEFINE_VISIT_CHILDREN(JSDOMFile);
 
 const JSC::ClassInfo JSDOMFile::s_info = { "File"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMFile) };
 

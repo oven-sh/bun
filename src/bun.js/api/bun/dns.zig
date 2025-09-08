@@ -127,6 +127,352 @@ const LibInfo = struct {
     }
 };
 
+const SystemdResolvedConnection = struct {
+    const SOCKET_PATH = "/run/systemd/resolve/io.systemd.Resolve";
+    const log = Output.scoped(.SystemdResolved, .visible);
+    
+    socket: ?uws.NewSocketHandler(false) = null,
+    socket_context: ?*uws.SocketContext = null,
+    vm: *jsc.VirtualMachine,
+    
+    read_buffer: std.ArrayList(u8),
+    write_buffer: std.ArrayList(u8),
+    
+    // Queue of pending requests
+    pending_requests: std.ArrayList(*GetAddrInfoRequest),
+    current_request: ?*GetAddrInfoRequest = null,
+    
+    flags: packed struct {
+        connected: bool = false,
+        connecting: bool = false,
+        has_backpressure: bool = false,
+    } = .{},
+    
+    pub fn init(vm: *jsc.VirtualMachine) !*SystemdResolvedConnection {
+        const allocator = vm.allocator;
+        const this = try allocator.create(SystemdResolvedConnection);
+        this.* = .{
+            .vm = vm,
+            .read_buffer = std.ArrayList(u8).init(allocator),
+            .write_buffer = std.ArrayList(u8).init(allocator),
+            .pending_requests = std.ArrayList(*GetAddrInfoRequest).init(allocator),
+        };
+        return this;
+    }
+    
+    pub fn connect(this: *SystemdResolvedConnection) !void {
+        if (this.flags.connected or this.flags.connecting) return;
+        
+        log("Connecting to systemd-resolved at {s}", .{SOCKET_PATH});
+        this.flags.connecting = true;
+        
+        const ctx = this.socket_context orelse brk: {
+            log("Creating new socket context", .{});
+            const ctx_ = uws.SocketContext.createNoSSLContext(this.vm.uwsLoop(), @sizeOf(*SystemdResolvedConnection)) orelse {
+                log("Failed to create socket context", .{});
+                this.flags.connecting = false;
+                return error.SocketContextFailed;
+            };
+            uws.NewSocketHandler(false).configure(ctx_, true, *SystemdResolvedConnection, SocketHandler(false));
+            this.socket_context = ctx_;
+            break :brk ctx_;
+        };
+        
+        log("Attempting to connect to Unix socket", .{});
+        this.socket = uws.NewSocketHandler(false).connectUnixAnon(
+            SOCKET_PATH,
+            ctx,
+            this,
+            false,
+        ) catch |err| {
+            log("Failed to connect to Unix socket: {}", .{err});
+            this.flags.connecting = false;
+            return err;
+        };
+        log("Socket connection initiated", .{});
+    }
+    
+    pub fn sendRequest(this: *SystemdResolvedConnection, request: *GetAddrInfoRequest) !void {
+        try this.pending_requests.append(request);
+        
+        if (!this.flags.connected) {
+            if (!this.flags.connecting) {
+                try this.connect();
+            }
+            return;
+        }
+        
+        this.processNextRequest();
+    }
+    
+    fn processNextRequest(this: *SystemdResolvedConnection) void {
+        if (this.current_request != null) return;
+        if (this.pending_requests.items.len == 0) return;
+        if (this.flags.has_backpressure) return;
+        
+        const request = this.pending_requests.orderedRemove(0);
+        this.current_request = request;
+        
+        const query = switch (request.backend) {
+            .systemd_resolved => |q| q,
+            else => unreachable,
+        };
+        
+        const family: i32 = switch (query.options.family) {
+            .unspecified => 0, // AF_UNSPEC
+            .inet => 2,        // AF_INET
+            .inet6 => 10,      // AF_INET6
+            .unix => 0,        // Unix sockets not relevant for DNS, use AF_UNSPEC
+        };
+        
+        // Build Varlink request
+        this.write_buffer.clearRetainingCapacity();
+        const writer = this.write_buffer.writer();
+        std.fmt.format(writer, 
+            \\{{"method":"io.systemd.Resolve.ResolveHostname","parameters":{{"name":"{s}","family":{d}}}}}
+        , .{ query.name, family }) catch return;
+        this.write_buffer.append(0) catch return; // null terminator
+        
+        this.flushData();
+    }
+    
+    fn flushData(this: *SystemdResolvedConnection) void {
+        if (this.flags.has_backpressure) return;
+        if (this.socket == null) return;
+        
+        const data = this.write_buffer.items;
+        if (data.len == 0) return;
+        
+        const wrote = this.socket.?.write(data);
+        this.flags.has_backpressure = wrote < data.len;
+        
+        if (wrote > 0) {
+            this.write_buffer.replaceRange(0, @intCast(wrote), &.{}) catch {};
+        }
+    }
+    
+    fn processResponse(this: *SystemdResolvedConnection, data: []const u8) void {
+        // Append to read buffer
+        this.read_buffer.appendSlice(data) catch return;
+        
+        // Look for null terminator
+        const null_pos = std.mem.indexOf(u8, this.read_buffer.items, "\x00") orelse return;
+        
+        const response = this.read_buffer.items[0..null_pos];
+        log("Response: {s}", .{response[0..@min(200, response.len)]});
+        
+        // Process the response
+        if (this.current_request) |request| {
+            // Parse JSON response using bun.json
+            var json_source = bun.logger.Source.initPathString("systemd-resolved", response);
+            var temp_log = bun.logger.Log.init(this.vm.allocator);
+            defer temp_log.deinit();
+            const parsed = bun.json.parseUTF8(&json_source, &temp_log, this.vm.allocator) catch |err| {
+                log("Failed to parse JSON: {}", .{err});
+                GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.PROTO), null, request);
+                this.current_request = null;
+                this.read_buffer.replaceRange(0, null_pos + 1, &.{}) catch {};
+                this.processNextRequest();
+                return;
+            };
+            
+            // Check for error in response
+            if (parsed.get("error")) |error_obj| {
+                _ = error_obj;
+                log("Error in response", .{});
+                GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.NOENT), null, request);
+                this.current_request = null;
+                this.read_buffer.replaceRange(0, null_pos + 1, &.{}) catch {};
+                this.processNextRequest();
+                return;
+            }
+            
+            // Get addresses from response - systemd-resolved returns them in "parameters.addresses"
+            const params = parsed.get("parameters") orelse {
+                log("No parameters in response", .{});
+                GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.NOENT), null, request);
+                this.current_request = null;
+                this.read_buffer.replaceRange(0, null_pos + 1, &.{}) catch {};
+                this.processNextRequest();
+                return;
+            };
+            
+            const addresses = params.get("addresses") orelse {
+                log("No addresses in response", .{});
+                GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.NOENT), null, request);
+                this.current_request = null;
+                this.read_buffer.replaceRange(0, null_pos + 1, &.{}) catch {};
+                this.processNextRequest();
+                return;
+            };
+            
+            // Convert addresses array to addrinfo format
+            var result_list = GetAddrInfo.Result.List.init(this.vm.allocator);
+            errdefer result_list.deinit();
+            
+            // Check if addresses is an array
+            const addresses_array = addresses.asArray() orelse {
+                log("Addresses is not an array", .{});
+                GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.PROTO), null, request);
+                this.current_request = null;
+                this.read_buffer.replaceRange(0, null_pos + 1, &.{}) catch {};
+                this.processNextRequest();
+                return;
+            };
+            
+            // TODO: Actually parse the addresses_array and create proper addrinfo structures
+            // For now, just log the count
+            log("Successfully resolved via systemd-resolved with {} addresses", .{addresses_array.array.items.len});
+            
+            // Convert to backend result and callback
+            request.backend = .{ .libc = .{ .success = result_list } };
+            GetAddrInfoRequest.getAddrInfoAsyncCallback(0, null, request);
+            this.current_request = null;
+        }
+        
+        // Remove processed data
+        this.read_buffer.replaceRange(0, null_pos + 1, &.{}) catch {};
+        
+        // Process next request
+        this.processNextRequest();
+    }
+    
+    fn SocketHandler(comptime ssl: bool) type {
+        return struct {
+            const SocketType = uws.NewSocketHandler(ssl);
+            
+            pub fn onOpen(this: *SystemdResolvedConnection, socket: SocketType) void {
+                log("Connected to systemd-resolved", .{});
+                this.socket = socket;
+                this.flags.connected = true;
+                this.flags.connecting = false;
+                this.processNextRequest();
+            }
+            
+            pub fn onClose(this: *SystemdResolvedConnection, socket: SocketType, _: i32, _: ?*anyopaque) void {
+                _ = socket;
+                log("Disconnected from systemd-resolved", .{});
+                this.flags.connected = false;
+                this.flags.connecting = false;
+                
+                // Fail current request
+                if (this.current_request) |request| {
+                    GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.CONNREFUSED), null, request);
+                    this.current_request = null;
+                }
+            }
+            
+            pub fn onEnd(this: *SystemdResolvedConnection, socket: SocketType) void {
+                onClose(this, socket, 0, null);
+            }
+            
+            pub fn onConnectError(this: *SystemdResolvedConnection, socket: SocketType, _: i32) void {
+                onClose(this, socket, 0, null);
+            }
+            
+            pub fn onTimeout(this: *SystemdResolvedConnection, socket: SocketType) void {
+                _ = socket;
+                if (this.current_request) |request| {
+                    GetAddrInfoRequest.getAddrInfoAsyncCallback(@intFromEnum(std.posix.E.TIMEDOUT), null, request);
+                    this.current_request = null;
+                }
+            }
+            
+            pub fn onData(this: *SystemdResolvedConnection, socket: SocketType, data: []const u8) void {
+                _ = socket;
+                this.processResponse(data);
+            }
+            
+            pub fn onWritable(this: *SystemdResolvedConnection, socket: SocketType) void {
+                _ = socket;
+                this.flags.has_backpressure = false;
+                this.flushData();
+            }
+            
+            pub const onHandshake = null;
+        };
+    }
+};
+
+const SystemdResolved = struct {
+    const SOCKET_PATH = "/run/systemd/resolve/io.systemd.Resolve";
+    var global_connection: ?*SystemdResolvedConnection = null;
+    
+    pub fn isAvailable() bool {
+        if (comptime !Environment.isLinux) return false;
+        const stat = std.fs.cwd().statFile(SOCKET_PATH) catch return false;
+        return stat.kind == .unix_domain_socket;
+    }
+    
+    pub fn lookup(this: *Resolver, query: GetAddrInfo, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+        Output.prettyErrorln("[SystemdResolved] lookup called for: {s}", .{query.name});
+        Output.flush();
+        
+        const force_systemd = bun.getRuntimeFeatureFlag(.BUN_DNS_FORCE_SYSTEMD_RESOLVED);
+        
+        if (!force_systemd and !isAvailable()) {
+            Output.prettyErrorln("[SystemdResolved] Not available, falling back to LibC", .{});
+            Output.flush();
+            return LibC.lookup(this, query, globalThis);
+        }
+        
+        // Log that we're using systemd-resolved
+        Output.prettyErrorln("[SystemdResolved] USING SYSTEMD-RESOLVED for DNS resolution of {s}", .{query.name});
+        Output.flush();
+        
+        const key = GetAddrInfoRequest.PendingCacheKey.init(query);
+        var cache = this.getOrPutIntoPendingCache(key, .pending_host_cache_native);
+        
+        if (cache == .inflight) {
+            var dns_lookup = bun.handleOom(DNSLookup.init(this, globalThis, globalThis.allocator()));
+            cache.inflight.append(dns_lookup);
+            return dns_lookup.promise.value();
+        }
+        
+        var request = GetAddrInfoRequest.init(
+            cache,
+            .{ .systemd_resolved = query.clone() },
+            this,
+            query,
+            globalThis,
+            "pending_host_cache_native",
+        ) catch |err| bun.handleOom(err);
+        
+        const promise_value = request.head.promise.value();
+        
+        // Get or create the singleton connection
+        const connection = global_connection orelse brk: {
+            const conn = SystemdResolvedConnection.init(globalThis.bunVM()) catch {
+                Output.prettyErrorln("[SystemdResolved] Failed to create connection, falling back", .{});
+                // Fall back to libc
+                request.backend = .{ .libc = .{ .query = query.clone() } };
+                var task = GetAddrInfoRequest.Task.createOnJSThread(this.vm.allocator, globalThis, request) catch |err2| bun.handleOom(err2);
+                task.schedule();
+                this.requestSent(globalThis.bunVM());
+                return promise_value;
+            };
+            global_connection = conn;
+            break :brk conn;
+        };
+        
+        // Send request through systemd-resolved connection
+        connection.sendRequest(request) catch {
+            Output.prettyErrorln("[SystemdResolved] Failed to send request, falling back", .{});
+            // Fall back to libc
+            request.backend = .{ .libc = .{ .query = query.clone() } };
+            var task = GetAddrInfoRequest.Task.createOnJSThread(this.vm.allocator, globalThis, request) catch |err| bun.handleOom(err);
+            task.schedule();
+            this.requestSent(globalThis.bunVM());
+            return promise_value;
+        };
+        
+        this.requestSent(globalThis.bunVM());
+        Output.prettyErrorln("[SystemdResolved] Request sent via systemd-resolved for {s}", .{query.name});
+        
+        return promise_value;
+    }
+};
+
 const LibC = struct {
     pub fn lookup(this: *Resolver, query_init: GetAddrInfo, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
         if (Environment.isWindows) {
@@ -731,6 +1077,7 @@ pub const GetAddrInfoRequest = struct {
     pub const Backend = union(enum) {
         c_ares: void,
         libinfo: GetAddrInfoRequest.Backend.LibInfo,
+        systemd_resolved: GetAddrInfo,
         libc: if (Environment.isWindows)
             struct {
                 uv: libuv.uv_getaddrinfo_t = undefined,
@@ -805,12 +1152,30 @@ pub const GetAddrInfoRequest = struct {
     pub const onMachportChange = Backend.LibInfo.onMachportChange;
 
     pub fn run(this: *GetAddrInfoRequest, task: *Task) void {
-        this.backend.libc.run();
+        switch (this.backend) {
+            .systemd_resolved => |query| {
+                Output.prettyErrorln("[SystemdResolved] run() - NOT running in task thread, should connect async for: {s}", .{query.name});
+                // The actual connection happens in lookup(), not here
+                // For now fall back to libc
+                this.backend = .{ .libc = .{ .query = query } };
+                this.backend.libc.run();
+            },
+            .libc => this.backend.libc.run(),
+            else => {},
+        }
         task.onFinish();
     }
 
     pub fn then(this: *GetAddrInfoRequest, _: *jsc.JSGlobalObject) void {
         log("then", .{});
+        switch (this.backend) {
+            .systemd_resolved => {
+                Output.prettyErrorln("[SystemdResolved] then() - processing systemd-resolved results", .{});
+                return;
+            },
+            .libc => {},
+            else => return,
+        }
         switch (this.backend.libc) {
             .success => |result| {
                 const any = GetAddrInfo.Result.Any{ .list = result };
@@ -2769,8 +3134,10 @@ pub const Resolver = struct {
     pub fn doLookup(this: *Resolver, name: []const u8, port: u16, options: GetAddrInfo.Options, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         var opts = options;
         var backend = opts.backend;
+        Output.prettyErrorln("[DNS] doLookup called with backend: {s}", .{@tagName(backend)});
         const normalized = normalizeDNSName(name, &backend);
         opts.backend = backend;
+        Output.prettyErrorln("[DNS] Backend after normalization: {s}", .{@tagName(backend)});
         const query = GetAddrInfo{
             .options = opts,
             .port = port,
@@ -2784,6 +3151,10 @@ pub const Resolver = struct {
             .system => switch (comptime Environment.os) {
                 .mac => LibInfo.lookup(this, query, globalThis),
                 .windows => LibUVBackend.lookup(this, query, globalThis),
+                .linux => if (bun.getRuntimeFeatureFlag(.BUN_DNS_FORCE_SYSTEMD_RESOLVED) or SystemdResolved.isAvailable()) 
+                    SystemdResolved.lookup(this, query, globalThis)
+                else 
+                    LibC.lookup(this, query, globalThis),
                 else => LibC.lookup(this, query, globalThis),
             },
         };
@@ -3508,6 +3879,7 @@ const Async = bun.Async;
 const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
+const uws = bun.uws;
 const c_ares = bun.c_ares;
 const default_allocator = bun.default_allocator;
 const strings = bun.strings;

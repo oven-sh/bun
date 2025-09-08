@@ -288,6 +288,7 @@ pub const GetAddrInfo = struct {
 
         pub const default: GetAddrInfo.Backend = switch (bun.Environment.os) {
             .mac, .windows => .system,
+            .linux => .system,  // Use system backend on Linux to support systemd-resolved
             else => .c_ares,
         };
 

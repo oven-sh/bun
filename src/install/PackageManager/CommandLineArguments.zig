@@ -96,6 +96,7 @@ pub const add_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
     clap.parseParam("--peer                        Add dependency to \"peerDependencies\"") catch unreachable,
     clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
+    clap.parseParam("--filter <STR>...                 Add packages for the matching workspaces") catch unreachable,
     clap.parseParam("-a, --analyze                   Recursively analyze & install dependencies of files passed as arguments (using Bun's bundler)") catch unreachable,
     clap.parseParam("--only-missing                  Only add dependencies to package.json if they are not already present") catch unreachable,
     clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of package(s) to install") catch unreachable,

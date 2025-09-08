@@ -180,7 +180,7 @@ pub const Subcommand = enum {
             .install => true,
             .update => true,
             // .pack => true,
-            // .add => true,
+            .add => true,
             else => false,
         };
     }

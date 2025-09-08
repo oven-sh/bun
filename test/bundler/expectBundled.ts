@@ -540,9 +540,6 @@ function expectBundled(
   if (!ESBUILD && unsupportedCSSFeatures && unsupportedCSSFeatures.length) {
     throw new Error("unsupportedCSSFeatures not implemented in bun build");
   }
-  if (!ESBUILD && keepNames) {
-    throw new Error("keepNames not implemented in bun build");
-  }
   if (!ESBUILD && mainFields) {
     throw new Error("mainFields not implemented in bun build");
   }
@@ -735,7 +732,7 @@ function expectBundled(
               // jsx.preserve && "--jsx=preserve",
               // legalComments && `--legal-comments=${legalComments}`,
               // treeShaking === false && `--no-tree-shaking`, // ??
-              // keepNames && `--keep-names`,
+              keepNames && `--keep-names`,
               // mainFields && `--main-fields=${mainFields}`,
               loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}:${v}`]),
               publicPath && `--public-path=${publicPath}`,
@@ -1051,6 +1048,7 @@ function expectBundled(
             whitespace: minifyWhitespace,
             identifiers: minifyIdentifiers,
             syntax: minifySyntax,
+            keepNames: keepNames,
           },
           naming: {
             entry: useOutFile ? path.basename(outfile!) : entryNaming,

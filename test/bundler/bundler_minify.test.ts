@@ -103,6 +103,60 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     target: "bun",
   });
+  itBundled("minify/KeepNamesPreservesNames", {
+    files: {
+      "/entry.js": /* js */ `
+        export var AB = function A() { };
+        export var CD = function B() { return 1; };
+        export var EF = function C() { C(); };
+        export var GH = function() { };
+        export var IJ = class D { };
+        export var KL = class E { constructor() {} };
+        export var MN = class F { method() { return F; } };
+        export var OP = class { };
+      `,
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // With keepNames, all names should be preserved even when minifying
+      expect(code).toContain("function A()");
+      expect(code).toContain("function B()");
+      expect(code).toContain("function C()");
+      expect(code).toContain("class D");
+      expect(code).toContain("class E");
+      expect(code).toContain("class F");
+      // Anonymous functions/classes stay anonymous
+      expect(code).toMatch(/\w+ = function\(\) \{\}/); // GH stays anonymous
+      expect(code).toMatch(/\w+ = class \{\s*\}/); // OP stays anonymous
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false, // Don't minify identifiers to make testing easier
+    keepNames: true,
+    target: "bun",
+  });
+  itBundled("minify/KeepNamesWithMinifyIdentifiers", {
+    files: {
+      "/entry.js": /* js */ `
+        export var AB = function A() { };
+        export var CD = function B() { return 1; };
+        export var EF = class C { };
+      `,
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // With keepNames + minifyIdentifiers, names are preserved but minified
+      // The original names A, B, C should still exist (though minified)
+      expect(code).toMatch(/function \w+\(\)/); // Functions should have names
+      expect(code).toMatch(/class \w+/); // Classes should have names
+      // Should not have anonymous functions/classes
+      expect(code).not.toContain("function()");
+      expect(code).not.toContain("class {");
+    },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    keepNames: true,
+    target: "bun",
+  });
   itBundled("minify/PrivateIdentifiersNameCollision", {
     files: {
       "/entry.js": /* js */ `

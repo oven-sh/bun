@@ -340,3 +340,99 @@ test("Bun.build plugin virtual modules - CSS", async () => {
   expect(result.success).toBe(true);
   expect(result.outputs).toHaveLength(2); // JS and CSS output
 });
+
+test("Bun.build plugin virtual modules - onLoad plugins still work", async () => {
+  using dir = tempDir("virtual-with-onload", {
+    "entry.ts": `
+      import virtual from "my-virtual";
+      import data from "./real.json";
+      console.log(virtual, data);
+    `,
+    "real.json": `{"original": "data"}`,
+  });
+
+  let onLoadCalled = false;
+  
+  const result = await Bun.build({
+    entrypoints: [path.join(String(dir), "entry.ts")],
+    outdir: String(dir),
+    plugins: [{
+      name: "combined-plugin",
+      setup(build) {
+        // Add virtual module
+        build.module("my-virtual", () => ({
+          contents: `export default "virtual content";`,
+          loader: "js",
+        }));
+        
+        // Also add regular onLoad plugin for JSON files
+        build.onLoad({ filter: /\.json$/ }, (args) => {
+          onLoadCalled = true;
+          return {
+            contents: `{"modified": "by onLoad plugin"}`,
+            loader: "json",
+          };
+        });
+      },
+    }],
+  });
+
+  expect(result.success).toBe(true);
+  expect(onLoadCalled).toBe(true);
+  
+  const output = await result.outputs[0].text();
+  expect(output).toContain("virtual content");
+  expect(output).toContain("modified");
+  expect(output).toContain("by onLoad plugin");
+});
+
+test("Bun.build plugin virtual modules - no memory leak on repeated builds", async () => {
+  using dir = tempDir("virtual-memory", {
+    "entry.ts": `
+      import msg from "test-module";
+      console.log(msg);
+    `,
+  });
+
+  // Track memory usage with multiple builds
+  const initialMemory = process.memoryUsage().heapUsed;
+  const memoryAfterBuilds = [];
+  
+  // Run multiple builds to check for memory leaks
+  for (let i = 0; i < 10; i++) {
+    await Bun.build({
+      entrypoints: [path.join(String(dir), "entry.ts")],
+      outdir: String(dir),
+      plugins: [{
+        name: `test-plugin-${i}`,
+        setup(build) {
+          // Create a large callback to make memory leaks more visible
+          const largeData = new Array(10000).fill(`data-${i}`);
+          build.module("test-module", () => ({
+            contents: `export default "${largeData[0]}";`,
+            loader: "js",
+          }));
+        },
+      }],
+    });
+    
+    // Force GC after each build if available
+    if (global.gc) {
+      global.gc();
+    }
+    
+    memoryAfterBuilds.push(process.memoryUsage().heapUsed);
+  }
+  
+  // Memory usage should stabilize and not continuously grow
+  // Check that the last few builds don't show significant growth
+  const lastThreeBuilds = memoryAfterBuilds.slice(-3);
+  const avgLastThree = lastThreeBuilds.reduce((a, b) => a + b, 0) / 3;
+  const firstThreeBuilds = memoryAfterBuilds.slice(0, 3);
+  const avgFirstThree = firstThreeBuilds.reduce((a, b) => a + b, 0) / 3;
+  
+  // Memory shouldn't grow by more than 50% between first and last builds
+  // This is a loose check to avoid flakiness
+  const memoryGrowthRatio = avgLastThree / avgFirstThree;
+  expect(memoryGrowthRatio).toBeLessThan(1.5);
+});

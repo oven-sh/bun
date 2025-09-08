@@ -831,11 +831,11 @@ pub const ValkeyClient = struct {
     /// Authenticate without HELLO for Redis 5 compatibility (RESP2)
     fn authenticateWithoutHello(this: *ValkeyClient) void {
         debug("Authenticating with RESP2 (Redis 5 compatibility mode)", .{});
-        
+
         // Send AUTH command if credentials are provided
         if (this.password.len > 0) {
             var auth_cmd: Command = undefined;
-            
+
             if (this.username.len > 0) {
                 // AUTH username password
                 var auth_args = [_][]const u8{ this.username, this.password };
@@ -851,7 +851,7 @@ pub const ValkeyClient = struct {
                     .args = .{ .raw = &auth_args },
                 };
             }
-            
+
             auth_cmd.write(this.writer()) catch |err| {
                 this.fail("Failed to write AUTH command", err);
                 return;
@@ -864,7 +864,7 @@ pub const ValkeyClient = struct {
             var dummy_value = protocol.RESPValue{ .SimpleString = "OK" };
             this.onValkeyConnect(&dummy_value);
         }
-        
+
         // If using a specific database, send SELECT command
         if (this.database > 0) {
             var int_buf: [64]u8 = undefined;

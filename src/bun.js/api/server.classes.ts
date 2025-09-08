@@ -29,6 +29,10 @@ function generate(name) {
         fn: "dispose",
         length: 0,
       },
+      closeIdleConnections: {
+        fn: "closeIdleConnections",
+        length: 0,
+      },
       stop: {
         fn: "doStop",
         length: 1,

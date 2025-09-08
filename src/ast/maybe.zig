@@ -650,6 +650,9 @@ pub fn AstMaybe(
                         E.Unary{
                             .op = .un_typeof,
                             .value = expr,
+                            .flags = .{
+                                .was_originally_typeof_identifier = expr.data == .e_identifier,
+                            },
                         },
                         logger.Loc.Empty,
                     ),

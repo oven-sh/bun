@@ -323,8 +323,8 @@ fn drainEvents(this: *@This()) void {
                             if (client.state.original_request_body == .stream) {
                                 var stream = &client.state.original_request_body.stream;
                                 stream.ended = ended;
-                                if (messageType == .endChunked) {
-                                    // only send the 0-length chunk if the request body is chunked
+                                if (messageType == .endChunked and client.flags.upgrade_state != .upgraded) {
+                                    // only send the 0-length chunk if the request body is chunked and not upgraded
                                     client.writeToStream(is_tls, socket, bun.http.end_of_chunked_http1_1_encoding_response_body);
                                 } else {
                                     client.flushStream(is_tls, socket);

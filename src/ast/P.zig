@@ -3975,7 +3975,7 @@ pub fn NewParser_(
                         // checks are not yet handled correctly by bun or esbuild, so this possibility is
                         // currently ignored.
                         .un_typeof => {
-                            if (ex.value.data == .e_identifier) {
+                            if (ex.value.data == .e_identifier and ex.flags.was_originally_typeof_identifier) {
                                 return true;
                             }
 
@@ -4014,6 +4014,18 @@ pub fn NewParser_(
                             ex.right.data,
                         ) and
                             p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.left) and p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.right),
+
+                        // Special-case "<" and ">" with string, number, or bigint arguments
+                        .bin_lt, .bin_gt, .bin_le, .bin_ge => {
+                            const left = ex.left.knownPrimitive();
+                            const right = ex.right.knownPrimitive();
+                            switch (left) {
+                                .string, .number, .bigint => {
+                                    return right == left and p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.left) and p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.right);
+                                },
+                                else => {},
+                            }
+                        },
                         else => {},
                     }
                 },
@@ -4234,13 +4246,14 @@ pub fn NewParser_(
         //     return false;
         // }
 
-        fn isSideEffectFreeUnboundIdentifierRef(p: *P, value: Expr, guard_condition: Expr, is_yes_branch: bool) bool {
+        fn isSideEffectFreeUnboundIdentifierRef(p: *P, value: Expr, guard_condition: Expr, is_yes_branch_: bool) bool {
             if (value.data != .e_identifier or
                 p.symbols.items[value.data.e_identifier.ref.innerIndex()].kind != .unbound or
                 guard_condition.data != .e_binary)
                 return false;
 
             const binary = guard_condition.data.e_binary.*;
+            var is_yes_branch = is_yes_branch_;
 
             switch (binary.op) {
                 .bin_strict_eq, .bin_strict_ne, .bin_loose_eq, .bin_loose_ne => {
@@ -4268,6 +4281,39 @@ pub fn NewParser_(
                     return ((compare.e_string.eqlComptime("undefined") == is_yes_branch) ==
                         (binary.op == .bin_strict_ne or binary.op == .bin_loose_ne)) and
                         id.eql(id2);
+                },
+                .bin_lt, .bin_gt, .bin_le, .bin_ge => {
+                    // Pattern match for "typeof x < <string>"
+                    var typeof: Expr.Data = binary.left.data;
+                    var str: Expr.Data = binary.right.data;
+
+                    // Check if order is flipped: 'u' >= typeof x
+                    if (typeof == .e_string) {
+                        typeof = binary.right.data;
+                        str = binary.left.data;
+                        is_yes_branch = !is_yes_branch;
+                    }
+
+                    if (typeof == .e_unary and str == .e_string) {
+                        const unary = typeof.e_unary.*;
+                        if (unary.op == .un_typeof and
+                            unary.value.data == .e_identifier and
+                            unary.flags.was_originally_typeof_identifier and
+                            str.e_string.eqlComptime("u"))
+                        {
+                            // In "typeof x < 'u' ? x : null", the reference to "x" is side-effect free
+                            // In "typeof x > 'u' ? x : null", the reference to "x" is side-effect free
+                            if (is_yes_branch == (binary.op == .bin_lt or binary.op == .bin_le)) {
+                                const id = value.data.e_identifier.ref;
+                                const id2 = unary.value.data.e_identifier.ref;
+                                if (id.eql(id2)) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+
+                    return false;
                 },
                 else => return false,
             }

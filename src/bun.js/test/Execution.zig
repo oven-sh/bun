@@ -393,19 +393,19 @@ fn advanceSequence(this: *Execution, sequence: *ExecutionSequence, group: *Concu
         bun.debugAssert(false); // sequence is executing with no active entry?
     }
     sequence.executing = false;
-    if (sequence.result.isFail()) {
-        // TODO: this needs to only be when this specific entry failed, not when any entry failed
-        const first_aftereach_index = for (sequence.entries(this), 0..) |entry, index| {
-            if (entry == sequence.test_entry) break index + 1;
-        } else sequence.entries(this).len;
-        if (sequence.index < first_aftereach_index) {
-            sequence.index = first_aftereach_index;
-        } else {
-            sequence.index = sequence.entries(this).len;
-        }
-    } else {
-        sequence.index += 1;
-    }
+    // if (sequence.result.isFail()) {
+    //     // TODO: this needs to only be when this specific entry failed, not when any entry failed
+    //     const first_aftereach_index = for (sequence.entries(this), 0..) |entry, index| {
+    //         if (entry == sequence.test_entry) break index + 1;
+    //     } else sequence.entries(this).len;
+    //     if (sequence.index < first_aftereach_index) {
+    //         sequence.index = first_aftereach_index;
+    //     } else {
+    //         sequence.index = sequence.entries(this).len;
+    //     }
+    // } else {
+    sequence.index += 1;
+    // }
 
     if (sequence.activeEntry(this) == null) {
         // just completed the sequence
@@ -446,13 +446,6 @@ fn onEntryStarted(_: *Execution, entry: *ExecutionEntry) void {
 fn onEntryCompleted(_: *Execution, _: *ExecutionEntry) void {}
 fn onSequenceCompleted(this: *Execution, sequence: *ExecutionSequence) void {
     const elapsed_ns = sequence.started_at.sinceNow();
-    if (sequence.result == .pending) {
-        sequence.result = switch (sequence.entryMode()) {
-            .failing => .fail_because_failing_test_passed,
-            .todo => .fail_because_todo_passed,
-            else => .pass,
-        };
-    }
     switch (sequence.expect_assertions) {
         .not_set => {},
         .at_least_one => if (sequence.expect_call_count == 0 and sequence.result.isPass(.pending_is_pass)) {
@@ -461,6 +454,13 @@ fn onSequenceCompleted(this: *Execution, sequence: *ExecutionSequence) void {
         .exact => |expected| if (sequence.expect_call_count != expected and sequence.result.isPass(.pending_is_pass)) {
             sequence.result = .fail_because_expected_assertion_count;
         },
+    }
+    if (sequence.result == .pending) {
+        sequence.result = switch (sequence.entryMode()) {
+            .failing => .fail_because_failing_test_passed,
+            .todo => .fail_because_todo_passed,
+            else => .pass,
+        };
     }
     const entries = sequence.entries(this);
     if (entries.len > 0 and (sequence.test_entry != null or sequence.result != .pass)) {

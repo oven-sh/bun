@@ -71,14 +71,9 @@ test("describe/test", async () => {
     (pass) done parameter > delayed done
     (pass) done parameter > done combined with promise > done combined with promise, promise resolves first
     (pass) done parameter > done combined with promise > done combined with promise, done resolves first
-
-    # Unhandled error between tests
-    -------------------------------
     error: completion is not 2
     completion is not 2
-    -------------------------------
-
-    (pass) done parameter > done combined with promise > fails when completion is not incremented
+    (fail) done parameter > done combined with promise > fails when completion is not incremented
     (pass) done parameter > done combined with promise error conditions > both error and done resolves first
     (pass) done parameter > done combined with promise error conditions > both error and promise resolves first
     (pass) done parameter > done combined with promise error conditions > done errors only
@@ -104,7 +99,7 @@ test("describe/test", async () => {
     (todo) failing todo passes
 
 
-    7 tests failed:
+    8 tests failed:
     (fail) actual tests > more functions called after delayed done
     (fail) concurrent describe 1 > snapshot in concurrent group
     (fail) LINE 68
@@ -114,13 +109,14 @@ test("describe/test", async () => {
     (fail) this test times out with done
       ^ this test timed out before the done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
     (fail) expect.assertions
+    (fail) done parameter > done combined with promise > fails when completion is not incremented
     (fail) done parameter > second call of done callback still triggers error
 
-     31 pass
+     30 pass
      2 skip
      2 todo
-     7 fail
-     2 errors
+     8 fail
+     1 error
      1 snapshots, 9 expect() calls
     Ran 42 tests across 1 file."
     ,

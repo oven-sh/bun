@@ -155,17 +155,17 @@ pub const StatsCommand = struct {
     fn printTable(stats: *const CategoryStats, workspace_package_names: []const []const u8) void {
         _ = workspace_package_names;
 
-        // More compact table like rails stats
-        Output.pretty("+{s:-<22}+{s:-<8}+{s:-<8}+{s:-<8}+{s:-<9}+{s:-<9}+{s:-<9}+{s:-<7}+{s:-<7}+\n", .{ "-", "-", "-", "-", "-", "-", "-", "-", "-" });
-        Output.pretty("| {s:<20} | {s:>6} | {s:>6} | {s:>6} | {s:>7} | {s:>7} | {s:>7} | {s:>5} | {s:>5} |\n", .{ "Name", "Files", "Lines", "LOC", "Classes", "Methods", "Imports", "M/C", "LOC/M" });
-        Output.pretty("+{s:-<22}+{s:-<8}+{s:-<8}+{s:-<8}+{s:-<9}+{s:-<9}+{s:-<9}+{s:-<7}+{s:-<7}+\n", .{ "-", "-", "-", "-", "-", "-", "-", "-", "-" });
+        // Pretty table with unicode box drawing characters
+        Output.pretty("┌{s:─<22}┬{s:─<8}┬{s:─<8}┬{s:─<8}┬{s:─<11}┬{s:─<11}┬{s:─<9}┬{s:─<7}┬{s:─<7}┐\n", .{ "─", "─", "─", "─", "─", "─", "─", "─", "─" });
+        Output.pretty("│ {s:<20} │ {s:>6} │ {s:>6} │ {s:>6} │ {s:>9} │ {s:>9} │ {s:>7} │ {s:>5} │ {s:>5} │\n", .{ "Name", "Files", "Lines", "LOC", "Classes", "Functions", "Imports", "F/M", "LOC/F" });
+        Output.pretty("├{s:─<22}┼{s:─<8}┼{s:─<8}┼{s:─<8}┼{s:─<11}┼{s:─<11}┼{s:─<9}┼{s:─<7}┼{s:─<7}┤\n", .{ "─", "─", "─", "─", "─", "─", "─", "─", "─" });
 
         const printRow = struct {
             fn print(name: []const u8, s: *const FileStats) void {
-                const methods_per_class: f32 = if (s.classes > 0) @as(f32, @floatFromInt(s.functions)) / @as(f32, @floatFromInt(s.classes)) else 0;
-                const loc_per_method: f32 = if (s.functions > 0) @as(f32, @floatFromInt(s.loc)) / @as(f32, @floatFromInt(s.functions)) else 0;
+                const functions_per_module: f64 = if (s.files > 0) @as(f64, @floatFromInt(s.functions)) / @as(f64, @floatFromInt(s.files)) else 0;
+                const loc_per_function: f64 = if (s.functions > 0) @as(f64, @floatFromInt(s.loc)) / @as(f64, @floatFromInt(s.functions)) else 0;
 
-                Output.pretty("| {s:<20} | {d:>6} | {d:>6} | {d:>6} | {d:>7} | {d:>7} | {d:>7} | {d:>5.1} | {d:>5.0} |\n", .{
+                Output.pretty("│ {s:<20} │ {d:>6} │ {d:>6} │ {d:>6} │ {d:>9} │ {d:>9} │ {d:>7} │ {d:>5.1} │ {d:>5.0} │\n", .{
                     name,
                     s.files,
                     s.lines,
@@ -173,8 +173,8 @@ pub const StatsCommand = struct {
                     s.classes,
                     s.functions,
                     s.imports,
-                    methods_per_class,
-                    loc_per_method,
+                    functions_per_module,
+                    loc_per_function,
                 });
             }
         }.print;
@@ -212,7 +212,7 @@ pub const StatsCommand = struct {
         }
 
         // Print separator and totals
-        Output.pretty("+{s:-<22}+{s:-<8}+{s:-<8}+{s:-<8}+{s:-<9}+{s:-<9}+{s:-<9}+{s:-<7}+{s:-<7}+\n", .{ "-", "-", "-", "-", "-", "-", "-", "-", "-" });
+        Output.pretty("├{s:─<22}┼{s:─<8}┼{s:─<8}┼{s:─<8}┼{s:─<11}┼{s:─<11}┼{s:─<9}┼{s:─<7}┼{s:─<7}┤\n", .{ "─", "─", "─", "─", "─", "─", "─", "─", "─" });
 
         // Calculate code and test totals separately
         const code_loc = stats.total.loc -| stats.tests.loc -| stats.node_modules.loc;
@@ -227,12 +227,12 @@ pub const StatsCommand = struct {
             printRow("Total Tests", &stats.tests);
         }
 
-        Output.pretty("+{s:-<22}+{s:-<8}+{s:-<8}+{s:-<8}+{s:-<9}+{s:-<9}+{s:-<9}+{s:-<7}+{s:-<7}+\n", .{ "-", "-", "-", "-", "-", "-", "-", "-", "-" });
+        Output.pretty("└{s:─<22}┴{s:─<8}┴{s:─<8}┴{s:─<8}┴{s:─<11}┴{s:─<11}┴{s:─<9}┴{s:─<7}┴{s:─<7}┘\n", .{ "─", "─", "─", "─", "─", "─", "─", "─", "─" });
 
         // Print code to test ratio at the bottom
         if (code_loc > 0 and test_loc > 0) {
-            const ratio = @as(f32, @floatFromInt(test_loc)) / @as(f32, @floatFromInt(code_loc));
-            Output.pretty("  Code to Test Ratio: 1:{d:.1}\n", .{ratio});
+            const ratio = @as(f64, @floatFromInt(test_loc)) / @as(f64, @floatFromInt(code_loc));
+            Output.pretty("\n  📊 Code to Test Ratio: 1:{d:.1}\n", .{ratio});
         }
     }
 

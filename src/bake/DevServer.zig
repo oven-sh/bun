@@ -1353,7 +1353,7 @@ fn onFrameworkRequestWithBundle(
             // styles
             framework_bundle.cached_css_file_array.get() orelse arr: {
                 const js = try dev.generateCssJSArray(route_bundle);
-                bundle.cached_css_file_array = .create(js, dev.vm.global);
+                framework_bundle.cached_css_file_array = .create(js, dev.vm.global);
                 break :arr js;
             },
             // params

@@ -14,7 +14,7 @@ pub const SystemdResolvedConnection = struct {
     
     socket: ?uws.SocketTCP = null,
     socket_context: ?*uws.SocketContext = null,
-    vm: *jsc.VirtualMachine,
+    event_loop: jsc.EventLoopHandle,
     
     read_buffer: bun.MutableString,
     write_buffer: bun.MutableString,
@@ -68,12 +68,12 @@ pub const SystemdResolvedConnection = struct {
     
     var next_request_id: std.atomic.Value(u64) = std.atomic.Value(u64).init(1);
     
-    pub fn init(vm: *jsc.VirtualMachine) !*SystemdResolvedConnection {
-        const allocator = vm.allocator;
+    pub fn init(event_loop: jsc.EventLoopHandle) !*SystemdResolvedConnection {
+        const allocator = event_loop.allocator();
         const this = try allocator.create(SystemdResolvedConnection);
         
         this.* = .{
-            .vm = vm,
+            .event_loop = event_loop,
             .read_buffer = try bun.MutableString.initEmpty(allocator, 4096),
             .write_buffer = try bun.MutableString.initEmpty(allocator, 4096),
             .request_queue = std.ArrayList(*Request).init(allocator),
@@ -83,7 +83,7 @@ pub const SystemdResolvedConnection = struct {
     }
     
     pub fn deinit(this: *SystemdResolvedConnection) void {
-        const allocator = this.vm.allocator;
+        const allocator = this.event_loop.allocator();
         
         if (this.socket) |socket| {
             socket.close();
@@ -111,7 +111,7 @@ pub const SystemdResolvedConnection = struct {
         this.flags.connecting = true;
         
         const ctx = this.socket_context orelse brk: {
-            const ctx_ = uws.SocketContext.createNoSSLContext(this.vm.uwsLoop(), @sizeOf(*SystemdResolvedConnection)).?;
+            const ctx_ = uws.SocketContext.createNoSSLContext(this.event_loop.loop(), @sizeOf(*SystemdResolvedConnection)).?;
             uws.NewSocketHandler(false).configure(ctx_, true, *SystemdResolvedConnection, SocketHandler(false));
             this.socket_context = ctx_;
             break :brk ctx_;
@@ -206,7 +206,7 @@ pub const SystemdResolvedConnection = struct {
     }
     
     fn processResponseInternal(this: *SystemdResolvedConnection, data: []const u8) usize {
-        const allocator = this.vm.allocator;
+        const allocator = this.event_loop.allocator();
         
         var null_pos: ?usize = null;
         for (data, 0..) |byte, i| {

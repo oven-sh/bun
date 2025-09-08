@@ -16,23 +16,23 @@ const DNSLookup = dns.DNSLookup;
 
 pub const SystemdResolved = struct {
     connection: ?*SystemdResolvedBackend.SystemdResolvedConnection = null,
-    vm: *jsc.VirtualMachine,
+    event_loop: jsc.EventLoopHandle,
     
     var global_instance: ?*SystemdResolved = null;
     
-    pub fn init(vm: *jsc.VirtualMachine) !*SystemdResolved {
+    pub fn init(event_loop: jsc.EventLoopHandle) !*SystemdResolved {
         if (global_instance) |instance| {
             return instance;
         }
         
-        const allocator = vm.allocator;
+        const allocator = event_loop.allocator();
         var this = try allocator.create(SystemdResolved);
         this.* = .{
-            .vm = vm,
+            .event_loop = event_loop,
         };
         
         if (SystemdResolvedBackend.SystemdResolvedConnection.isAvailable()) {
-            this.connection = try SystemdResolvedBackend.SystemdResolvedConnection.init(vm);
+            this.connection = try SystemdResolvedBackend.SystemdResolvedConnection.init(event_loop);
         }
         
         global_instance = this;
@@ -43,7 +43,7 @@ pub const SystemdResolved = struct {
         if (this.connection) |conn| {
             conn.deinit();
         }
-        this.vm.allocator.destroy(this);
+        this.event_loop.allocator().destroy(this);
         global_instance = null;
     }
     
@@ -61,8 +61,9 @@ pub const SystemdResolved = struct {
         }
         
         const vm = globalThis.bunVM();
+        const event_loop = jsc.EventLoopHandle.init(vm);
         const systemd = global_instance orelse blk: {
-            const instance = init(vm) catch {
+            const instance = init(event_loop) catch {
                 return dns.LibC.lookup(this, query, globalThis);
             };
             break :blk instance;
@@ -97,7 +98,7 @@ pub const SystemdResolved = struct {
             bun.handleOom(err);
             request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("Out of memory", .{}));
             if (request.cache.pending_cache) this.pending_host_cache_native.used.set(request.cache.pos_in_pending);
-            this.vm.allocator.destroy(request);
+            event_loop.allocator().destroy(request);
             return promise_value;
         };
         
@@ -124,7 +125,7 @@ pub const SystemdResolved = struct {
             globalThis.allocator().destroy(callback_context);
             request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("DNS request failed: {s}", .{@errorName(err)}));
             if (request.cache.pending_cache) this.pending_host_cache_native.used.set(request.cache.pos_in_pending);
-            this.vm.allocator.destroy(request);
+            event_loop.allocator().destroy(request);
             return promise_value;
         };
         

@@ -23,6 +23,16 @@ pub const KnownGlobal = enum {
 
     pub const map = bun.ComptimeEnumMap(KnownGlobal);
 
+    inline fn callFromNew(e: *E.New, loc: logger.Loc) js_ast.Expr {
+        const call = E.Call{
+            .target = e.target,
+            .args = e.args,
+            .close_paren_loc = e.close_parens_loc,
+            .can_be_unwrapped_if_unused = e.can_be_unwrapped_if_unused,
+        };
+        return js_ast.Expr.init(E.Call, call, loc);
+    }
+
     pub noinline fn minifyGlobalConstructor(allocator: std.mem.Allocator, noalias e: *E.New, symbols: []const Symbol, loc: logger.Loc) ?js_ast.Expr {
         _ = allocator;
         const id = if (e.target.data == .e_identifier) e.target.data.e_identifier.ref else return null;
@@ -36,13 +46,7 @@ pub const KnownGlobal = enum {
             // Error constructors can be called without 'new' with identical behavior
             .Error, .TypeError, .SyntaxError, .RangeError, .ReferenceError, .EvalError, .URIError, .AggregateError => {
                 // Convert `new Error(...)` to `Error(...)` to save bytes
-                const call = E.Call{
-                    .target = e.target,
-                    .args = e.args,
-                    .close_paren_loc = e.close_parens_loc,
-                    .can_be_unwrapped_if_unused = e.can_be_unwrapped_if_unused,
-                };
-                return js_ast.Expr.init(E.Call, call, loc);
+                return callFromNew(e, loc);
             },
 
             .Object => {
@@ -71,13 +75,7 @@ pub const KnownGlobal = enum {
                 }
 
                 // For other cases, just remove 'new'
-                const call = E.Call{
-                    .target = e.target,
-                    .args = e.args,
-                    .close_paren_loc = e.close_parens_loc,
-                    .can_be_unwrapped_if_unused = e.can_be_unwrapped_if_unused,
-                };
-                return js_ast.Expr.init(E.Call, call, loc);
+                return callFromNew(e, loc);
             },
 
             .Array => {
@@ -97,25 +95,13 @@ pub const KnownGlobal = enum {
                 }
 
                 // For new Array(number), just remove 'new'
-                const call = E.Call{
-                    .target = e.target,
-                    .args = e.args,
-                    .close_paren_loc = e.close_parens_loc,
-                    .can_be_unwrapped_if_unused = e.can_be_unwrapped_if_unused,
-                };
-                return js_ast.Expr.init(E.Call, call, loc);
+                return callFromNew(e, loc);
             },
 
             .Function, .RegExp => {
                 // Just remove 'new' for Function and RegExp
                 // RegExp literal conversion would require parsing the pattern string
-                const call = E.Call{
-                    .target = e.target,
-                    .args = e.args,
-                    .close_paren_loc = e.close_parens_loc,
-                    .can_be_unwrapped_if_unused = e.can_be_unwrapped_if_unused,
-                };
-                return js_ast.Expr.init(E.Call, call, loc);
+                return callFromNew(e, loc);
             },
             .WeakSet, .WeakMap => {
                 const n = e.args.len;

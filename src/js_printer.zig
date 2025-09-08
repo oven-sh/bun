@@ -2710,7 +2710,9 @@ fn NewPrinter(
                         return;
                     }
 
-                    p.printStringLiteralEString(e, true);
+                    // Don't allow backticks for strings that weren't originally template literals
+                    // This prevents semantic changes like "\r\n" becoming `\r\n` (actual newline)
+                    p.printStringLiteralEString(e, e.prefer_template);
                 },
                 .e_template => |e| {
                     if (e.tag == null and (p.options.minify_syntax or p.was_lazy_export)) {

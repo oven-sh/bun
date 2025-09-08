@@ -314,14 +314,6 @@ pub const StatsCommand = struct {
             const dep_ratio = @as(f64, @floatFromInt(stats.node_modules.loc)) / @as(f64, @floatFromInt(your_code.loc));
             Output.pretty("  • Dependency weight: {d:.1}x your code\n", .{dep_ratio});
         }
-
-        // Complexity indicators
-        if (your_code.files > 0) {
-            const imports_per_file = @as(f64, @floatFromInt(your_code.imports)) / @as(f64, @floatFromInt(your_code.files));
-            if (imports_per_file > 10) {
-                Output.pretty("  ⚠️  High coupling: {d:.1} imports/file\n", .{imports_per_file});
-            }
-        }
     }
 
     fn printSummary(stats: *const CategoryStats, workspace_count: usize, reachable_count: usize, source_size: u64, elapsed_ms: u64) void {

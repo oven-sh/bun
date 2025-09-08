@@ -2889,6 +2889,7 @@ pub const BundleV2 = struct {
         original_target: options.Target,
     ) bool {
         if (this.plugins) |plugins| {
+            // anyMatches will check for virtual modules too
             if (plugins.hasAnyMatches(&import_record.path, false)) {
                 // This is where onResolve plugins are enqueued
                 var resolve: *jsc.API.JSBundler.Resolve = bun.default_allocator.create(jsc.API.JSBundler.Resolve) catch unreachable;

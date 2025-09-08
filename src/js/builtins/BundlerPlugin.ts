@@ -8,6 +8,7 @@ interface BundlerPlugin {
   onLoad: Map<string, [RegExp, OnLoadCallback][]>;
   onResolve: Map<string, [RegExp, OnResolveCallback][]>;
   onEndCallbacks: Array<(build: Bun.BuildOutput) => void | Promise<void>> | undefined;
+  virtualModules: Map<string, () => { contents: string; loader?: string }> | undefined;
   /** Binding to `JSBundlerPlugin__onLoadAsync` */
   onLoadAsync(
     internalID,
@@ -19,6 +20,7 @@ interface BundlerPlugin {
   /** Binding to `JSBundlerPlugin__addError` */
   addError(internalID: number, error: any, which: number): void;
   addFilter(filter, namespace, number): void;
+  addVirtualModule(path: string, moduleFunction: () => any): void;
   generateDeferPromise(id: number): Promise<void>;
   promises: Array<Promise<any>> | undefined;
 
@@ -347,8 +349,24 @@ export function runSetupFunction(
     onBeforeParse,
     onStart,
     resolve: notImplementedIssueFn(2771, "build.resolve()"),
-    module: () => {
-      throw new TypeError("module() is not supported in Bun.build() yet. Only via Bun.plugin() at runtime");
+    module: (specifier: string, callback: () => { contents: string; loader?: string }) => {
+      if (typeof specifier !== "string") {
+        throw new TypeError("module() specifier must be a string");
+      }
+      if (typeof callback !== "function") {
+        throw new TypeError("module() callback must be a function");
+      }
+      
+      // Store the virtual module
+      if (!self.virtualModules) {
+        self.virtualModules = new Map();
+      }
+      self.virtualModules.$set(specifier, callback);
+      
+      // Register the virtual module with the C++ side
+      self.addVirtualModule(specifier, callback);
+      
+      return this;
     },
     addPreload: () => {
       throw new TypeError("addPreload() is not supported in Bun.build() yet.");
@@ -395,7 +413,15 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
   const kind = $ImportKindIdToLabel[kindId];
 
   var promiseResult: any = (async (inputPath, inputNamespace, importer, kind) => {
-    var { onResolve, onLoad } = this;
+    var { onResolve, onLoad, virtualModules } = this;
+    
+    // Check for virtual modules first
+    if (virtualModules && virtualModules.$has(inputPath)) {
+      // Return the virtual module with file namespace (empty string means file)
+      this.onResolveAsync(internalID, inputPath, "", false);
+      return null;
+    }
+    
     var results = onResolve.$get(inputNamespace);
     if (!results) {
       this.onResolveAsync(internalID, null, null, null);
@@ -511,6 +537,48 @@ export function runOnLoadPlugins(
 
   const generateDefer = () => this.generateDeferPromise(internalID);
   var promiseResult = (async (internalID, path, namespace, isServerSide, defaultLoader, generateDefer) => {
+    // Check for virtual modules first (file namespace and in virtualModules map)
+    if (this.virtualModules && this.virtualModules.$has(path) && (namespace === "file" || namespace === "")) {
+      const virtualModuleCallback = this.virtualModules.$get(path);
+      if (virtualModuleCallback) {
+        let result;
+        try {
+          result = virtualModuleCallback();
+        } catch (e) {
+          // If the callback throws, report it as an error
+          this.addError(internalID, e, 1);
+          return null;
+        }
+        
+        try {
+          if (!result || !$isObject(result)) {
+            throw new TypeError('Virtual module must return an object with "contents" property');
+          }
+          
+          var { contents, loader = defaultLoader } = result;
+          
+          if (!(typeof contents === "string")) {
+            throw new TypeError('Virtual module must return an object with "contents" as a string');
+          }
+          
+          if (!(typeof loader === "string")) {
+            throw new TypeError('Virtual module "loader" must be a string if provided');
+          }
+          
+          const chosenLoader = LOADERS_MAP[loader];
+          if (chosenLoader === undefined) {
+            throw new TypeError(`Loader ${loader} is not supported.`);
+          }
+          
+          this.onLoadAsync(internalID, contents, chosenLoader);
+          return null;
+        } catch (e) {
+          this.addError(internalID, e, 1);
+          return null;
+        }
+      }
+    }
+    
     var results = this.onLoad.$get(namespace);
     if (!results) {
       this.onLoadAsync(internalID, null, null);

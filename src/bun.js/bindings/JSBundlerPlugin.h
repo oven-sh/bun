@@ -20,6 +20,8 @@ using namespace JSC;
 
 class BundlerPlugin final {
 public:
+    using VirtualModuleMap = WTF::UncheckedKeyHashMap<String, unsigned>;
+    
     /// In native plugins, the regular expression could be called concurrently on multiple threads.
     /// Therefore, we need a mutex to synchronize access.
     class FilterRegExp {
@@ -119,7 +121,11 @@ public:
 
 public:
     bool anyMatchesCrossThread(JSC::VM&, const BunString* namespaceStr, const BunString* path, bool isOnLoad);
-    void tombstone() { tombstoned = true; }
+    bool hasVirtualModule(const String& path) const;
+    JSC::JSObject* getVirtualModule(const String& path);
+    void addVirtualModule(JSC::VM& vm, JSC::JSCell* owner, const String& path, JSC::JSObject* moduleFunction);
+    void tombstone();
+    void visitAdditionalChildren(JSC::JSCell*, JSC::SlotVisitor&);
 
     BundlerPlugin(void* config, BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
         : addError(addError)
@@ -130,12 +136,20 @@ public:
         this->config = config;
     }
 
+    ~BundlerPlugin() {
+        if (virtualModules) {
+            delete virtualModules;
+        }
+    }
+
     NamespaceList onLoad = {};
     NamespaceList onResolve = {};
     NativePluginList onBeforeParse = {};
     BunPluginTarget target { BunPluginTargetBrowser };
 
     WriteBarrierList<JSC::JSPromise> deferredPromises = {};
+    VirtualModuleMap* virtualModules { nullptr };
+    WriteBarrierList<JSC::JSObject> virtualModulesList = {};
 
     JSBundlerPluginAddErrorCallback addError;
     JSBundlerPluginOnLoadAsyncCallback onLoadAsync;

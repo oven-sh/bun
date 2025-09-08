@@ -279,6 +279,7 @@ pub const ValkeyClient = struct {
                     .meta = command.meta,
                     .promise = command.promise,
                 }) catch |err| bun.handleOom(err);
+                this.parent().updateHasPendingActivity();
 
                 total += 1;
                 total_bytelength += command.serialized_data.len;
@@ -289,6 +290,7 @@ pub const ValkeyClient = struct {
         bun.handleOom(this.write_buffer.byte_list.ensureUnusedCapacity(this.allocator, total_bytelength));
         for (pipelineable_commands) |*command| {
             bun.handleOom(this.write_buffer.write(this.allocator, command.serialized_data));
+            this.parent().updateHasPendingActivity();
             // Free the serialized data since we've copied it to the write buffer
             this.allocator.free(command.serialized_data);
         }
@@ -374,6 +376,7 @@ pub const ValkeyClient = struct {
         if (wrote > 0) {
             this.write_buffer.consume(@intCast(wrote));
         }
+        this.parent().updateHasPendingActivity();
         return this.write_buffer.len() > 0;
     }
 
@@ -435,6 +438,7 @@ pub const ValkeyClient = struct {
     pub fn failWithJSValue(this: *ValkeyClient, globalThis: *jsc.JSGlobalObject, jsvalue: jsc.JSValue) void {
         this.status = .failed;
         rejectAllPendingCommands(&this.in_flight, &this.queue, globalThis, this.allocator, jsvalue);
+        this.parent().updateHasPendingActivity();
 
         if (!this.connectionReady()) {
             this.flags.is_manually_closed = true;
@@ -483,6 +487,7 @@ pub const ValkeyClient = struct {
         debug("reconnect in {d}ms (attempt {d}/{d})", .{ delay_ms, this.retry_attempts, this.max_retries });
 
         this.status = .disconnected;
+        this.parent().updateHasPendingActivity();
         this.flags.is_reconnecting = true;
         this.flags.is_authenticated = false;
         this.flags.is_selecting_db_internal = false;
@@ -518,6 +523,8 @@ pub const ValkeyClient = struct {
                 // Without auto pipelining, wait for in-flight to empty before draining
                 _ = this.drain();
             }
+
+            this.parent().updateHasPendingActivity();
         }
 
         _ = this.flushData();
@@ -530,6 +537,7 @@ pub const ValkeyClient = struct {
         // Path 1: Buffer already has data, append and process from buffer
         if (this.read_buffer.remaining().len > 0) {
             this.read_buffer.write(this.allocator, data) catch @panic("failed to write to read buffer");
+            this.parent().updateHasPendingActivity();
 
             // Process as many complete messages from the buffer as possible
             while (true) {
@@ -562,6 +570,7 @@ pub const ValkeyClient = struct {
                 }
 
                 this.read_buffer.consume(@truncate(bytes_consumed));
+                this.parent().updateHasPendingActivity();
 
                 var value_to_handle = value; // Use temp var for defer
                 this.handleResponse(&value_to_handle) catch |err| {
@@ -693,6 +702,7 @@ pub const ValkeyClient = struct {
             .SimpleString => |str| {
                 if (std.mem.eql(u8, str, "OK")) {
                     this.status = .connected;
+                    this.parent().updateHasPendingActivity();
                     this.flags.is_authenticated = true;
                     this.onValkeyConnect(value);
                     return;
@@ -726,6 +736,7 @@ pub const ValkeyClient = struct {
 
                 // Authentication successful via HELLO
                 this.status = .connected;
+                this.parent().updateHasPendingActivity();
                 this.flags.is_authenticated = true;
                 this.onValkeyConnect(value);
                 return;
@@ -953,6 +964,7 @@ pub const ValkeyClient = struct {
             .meta = offline_cmd.meta,
             .promise = offline_cmd.promise,
         }) catch |err| bun.handleOom(err);
+        this.parent().updateHasPendingActivity();
         const data = offline_cmd.serialized_data;
 
         if (this.connectionReady() and this.write_buffer.remaining().len == 0) {
@@ -965,6 +977,7 @@ pub const ValkeyClient = struct {
             if (unwritten.len > 0) {
                 // Handle incomplete write.
                 bun.handleOom(this.write_buffer.write(this.allocator, unwritten));
+                this.parent().updateHasPendingActivity();
             }
 
             return true;
@@ -1029,6 +1042,7 @@ pub const ValkeyClient = struct {
 
         // Add to queue with command type
         try this.in_flight.writeItem(cmd_pair);
+        this.parent().updateHasPendingActivity();
 
         _ = this.flushData();
     }
@@ -1073,6 +1087,7 @@ pub const ValkeyClient = struct {
         this.unregisterAutoFlusher();
         if (this.status == .connected or this.status == .connecting) {
             this.status = .disconnected;
+            this.parent().updateHasPendingActivity();
             this.close();
         }
     }
@@ -1085,6 +1100,7 @@ pub const ValkeyClient = struct {
     /// Write data to the socket buffer
     fn write(this: *ValkeyClient, data: []const u8) !usize {
         try this.write_buffer.write(this.allocator, data);
+        this.parent().updateHasPendingActivity();
         return data.len;
     }
 

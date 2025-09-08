@@ -4,21 +4,23 @@ import {
   ConnectionType,
   createClient,
   ctx,
-  DEFAULT_REDIS_URL,
+  //DEFAULT_REDIS_URL,
   expectType,
   isEnabled,
   randomCoinFlip,
 } from "./test-utils";
 
 describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
-  beforeEach(async () => {
-    if (ctx.redis?.connected) {
-      ctx.redis.close?.();
-    }
-    ctx.redis = createClient(ConnectionType.TCP);
+  //beforeEach(async () => {
+  //  if (ctx.redis?.connected) {
+  //    ctx.redis.close?.();
+  //  }
+  //  ctx.redis = createClient(ConnectionType.TCP);
 
-    await ctx.redis.send("FLUSHALL", ["SYNC"]);
-  });
+  //  await ctx.redis.send("FLUSHALL", ["SYNC"]);
+  //});
+
+  const DEFAULT_REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 
   const connectedRedis = async () => {
     const redis = new RedisClient(DEFAULT_REDIS_URL);
@@ -242,7 +244,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       await redis.subscribe(testChannel, () => {});
 
-      expect(() => redis.set(testKey, testValue)).toThrow("RedisClient.set cannot be called while in subscriber mode");
+      expect(() => redis.set(testKey, testValue)).toThrow("RedisClient.prototype.set cannot be called while in subscriber mode");
 
       // Clean up subscription
       await redis.unsubscribe(testChannel);
@@ -501,7 +503,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       await redis.subscribe(channel, () => {});
 
       // Should fail in subscription mode
-      expect(() => redis.set(testKey, testValue)).toThrow("RedisClient.set cannot be called while in subscriber mode.");
+      expect(() => redis.set(testKey, testValue)).toThrow("RedisClient.prototype.set cannot be called while in subscriber mode.");
 
       // Unsubscribe from all channels
       await redis.unsubscribe(channel);
@@ -527,7 +529,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       const channel = "never-subscribed-channel";
 
       expect(() => redis.unsubscribe(channel)).toThrow(
-        "RedisClient.unsubscribe can only be called while in subscriber mode.",
+        "RedisClient.prototype.unsubscribe can only be called while in subscriber mode.",
       );
     });
 

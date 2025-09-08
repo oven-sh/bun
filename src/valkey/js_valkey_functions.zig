@@ -1,5 +1,5 @@
 fn requireNotSubscriber(this: *const JSValkeyClient, function_name: []const u8) bun.JSError!void {
-    const fmt_string = "RedisClient.{s} cannot be called while in subscriber mode.";
+    const fmt_string = "RedisClient.prototype.{s} cannot be called while in subscriber mode.";
 
     if (this.isSubscriber()) {
         return this.globalObject.throw(fmt_string, .{function_name});
@@ -7,7 +7,7 @@ fn requireNotSubscriber(this: *const JSValkeyClient, function_name: []const u8) 
 }
 
 fn requireSubscriber(this: *const JSValkeyClient, function_name: []const u8) bun.JSError!void {
-    const fmt_string = "RedisClient.{s} can only be called while in subscriber mode.";
+    const fmt_string = "RedisClient.prototype.{s} can only be called while in subscriber mode.";
 
     if (!this.isSubscriber()) {
         return this.globalObject.throw(fmt_string, .{function_name});
@@ -676,13 +676,12 @@ pub fn publish(
     return promise.toJS();
 }
 
-pub fn subscribe(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    const args_view = callframe.arguments();
-
-    if (args_view.len != 2) {
-        return globalObject.throwInvalidArguments("subscribe requires two arguments", .{});
-    }
-
+pub fn subscribe(
+    this: *JSValkeyClient,
+    globalObject: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!JSValue {
+    const channel_or_many, const handler_callback = callframe.argumentsAsArray(2);
     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
     var redis_channels = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), 1);
     defer {
@@ -692,7 +691,6 @@ pub fn subscribe(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callf
         redis_channels.deinit();
     }
 
-    const handler_callback = callframe.argument(1);
     if (!handler_callback.isCallable()) {
         return globalObject.throwInvalidArgumentType("subscribe", "listener", "function");
     }
@@ -701,14 +699,13 @@ pub fn subscribe(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callf
     var subscription_ctx = this.getOrCreateSubscriptionCtxEnteringSubscriptionMode();
 
     // The first argument given is the channel or may be an array of channels.
-    const channelOrMany = callframe.argument(0);
-    if (channelOrMany.isArray()) {
-        if ((try channelOrMany.getLength(globalObject)) == 0) {
+    if (channel_or_many.isArray()) {
+        if ((try channel_or_many.getLength(globalObject)) == 0) {
             return globalObject.throwInvalidArguments("subscribe requires at least one channel", .{});
         }
-        try redis_channels.ensureTotalCapacity(try channelOrMany.getLength(globalObject));
+        try redis_channels.ensureTotalCapacity(try channel_or_many.getLength(globalObject));
 
-        var array_iter = try channelOrMany.arrayIterator(globalObject);
+        var array_iter = try channel_or_many.arrayIterator(globalObject);
         while (try array_iter.next()) |channel_arg| {
             const channel = (try fromJS(globalObject, channel_arg)) orelse {
                 return globalObject.throwInvalidArgumentType("subscribe", "channel", "string");
@@ -717,14 +714,14 @@ pub fn subscribe(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callf
 
             try subscription_ctx.upsertReceiveHandler(globalObject, channel_arg, handler_callback);
         }
-    } else if (channelOrMany.isString()) {
+    } else if (channel_or_many.isString()) {
         // It is a single string channel
-        const channel = (try fromJS(globalObject, channelOrMany)) orelse {
+        const channel = (try fromJS(globalObject, channel_or_many)) orelse {
             return globalObject.throwInvalidArgumentType("subscribe", "channel", "string");
         };
         redis_channels.appendAssumeCapacity(channel);
 
-        try subscription_ctx.upsertReceiveHandler(globalObject, channelOrMany, handler_callback);
+        try subscription_ctx.upsertReceiveHandler(globalObject, channel_or_many, handler_callback);
     } else {
         return globalObject.throwInvalidArgumentType("subscribe", "channel", "string or array");
     }
@@ -799,18 +796,18 @@ pub fn unsubscribe(
     }
 
     // The first argument can be a channel or an array of channels
-    const channelOrMany = callframe.argument(0);
+    const channel_or_many = callframe.argument(0);
 
     // Get the subscription context
-    if (this._subscription_ctx == null) {
-        return globalObject.throw("Subscription context not found", .{});
-    }
+    var subscription_ctx = this._subscription_ctx orelse {
+        return .js_undefined;
+    };
 
     // Two arguments means .unsubscribe(channel, listener) is invoked.
     if (callframe.arguments().len == 2) {
         // In this case, the first argument is a channel string and the second
         // argument is the handler to remove.
-        if (!channelOrMany.isString()) {
+        if (!channel_or_many.isString()) {
             return globalObject.throwInvalidArgumentType(
                 "unsubscribe",
                 "channel",
@@ -818,7 +815,7 @@ pub fn unsubscribe(
             );
         }
 
-        const channel = channelOrMany;
+        const channel = channel_or_many;
         const listener_cb = callframe.argument(1);
 
         if (!listener_cb.isCallable()) {
@@ -837,7 +834,7 @@ pub fn unsubscribe(
             return globalObject.throwInvalidArgumentType("unsubscribe", "channel", "string");
         });
 
-        const remaining_listeners = this._subscription_ctx.?.removeReceiveHandler(globalObject, channel, listener_cb) catch {
+        const remaining_listeners = subscription_ctx.removeReceiveHandler(globalObject, channel, listener_cb) catch {
             return globalObject.throw(
                 "Failed to remove handler for channel {}",
                 .{channel.asString().getZigString(globalObject)},
@@ -863,33 +860,33 @@ pub fn unsubscribe(
         return promise.toJS();
     }
 
-    if (channelOrMany.isArray()) {
-        if ((try channelOrMany.getLength(globalObject)) == 0) {
+    if (channel_or_many.isArray()) {
+        if ((try channel_or_many.getLength(globalObject)) == 0) {
             return globalObject.throwInvalidArguments(
                 "unsubscribe requires at least one channel",
                 .{},
             );
         }
 
-        try redis_channels.ensureTotalCapacity(try channelOrMany.getLength(globalObject));
+        try redis_channels.ensureTotalCapacity(try channel_or_many.getLength(globalObject));
         // It is an array, so let's iterate over it
-        var array_iter = try channelOrMany.arrayIterator(globalObject);
+        var array_iter = try channel_or_many.arrayIterator(globalObject);
         while (try array_iter.next()) |channel_arg| {
             const channel = (try fromJS(globalObject, channel_arg)) orelse {
                 return globalObject.throwInvalidArgumentType("unsubscribe", "channel", "string");
             };
             redis_channels.appendAssumeCapacity(channel);
             // Clear the handlers for this channel
-            this._subscription_ctx.?.clearReceiveHandlers(globalObject, channel_arg);
+            subscription_ctx.clearReceiveHandlers(globalObject, channel_arg);
         }
-    } else if (channelOrMany.isString()) {
+    } else if (channel_or_many.isString()) {
         // It is a single string channel
-        const channel = (try fromJS(globalObject, channelOrMany)) orelse {
+        const channel = (try fromJS(globalObject, channel_or_many)) orelse {
             return globalObject.throwInvalidArgumentType("unsubscribe", "channel", "string");
         };
         redis_channels.appendAssumeCapacity(channel);
         // Clear the handlers for this channel
-        this._subscription_ctx.?.clearReceiveHandlers(globalObject, channelOrMany);
+        subscription_ctx.clearReceiveHandlers(globalObject, channel_or_many);
     } else {
         return globalObject.throwInvalidArgumentType("unsubscribe", "channel", "string or array");
     }

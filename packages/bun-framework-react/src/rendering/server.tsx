@@ -291,5 +291,5 @@ export const contentTypeToStaticFile = {
 export interface MiniAbortSignal {
   aborted: Error | undefined;
   /** Caller must set `aborted` to true before calling. */
-  abort: () => void;
+  abort: (reason?: any) => void;
 }

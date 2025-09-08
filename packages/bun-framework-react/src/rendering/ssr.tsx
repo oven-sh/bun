@@ -34,14 +34,14 @@ const createFromNodeStreamOptions: Manifest = {
 // - https://github.com/devongovett/rsc-html-stream
 export function renderToHtml(
   rscPayload: Readable,
-  bootstrapModules: readonly string[],
+  bootstrapModules: string[],
   signal: MiniAbortSignal,
 ): ReadableStream {
   // Bun supports a special type of readable stream type called "direct",
   // which provides a raw handle to the controller. We can bypass all of
   // the Web Streams API (slow) and use the controller directly.
   let stream: RscInjectionStream | null = null;
-  let abort: () => void;
+  let abort: (reason?: any) => void;
   return new ReadableStream({
     type: "direct",
     pull(controller) {
@@ -52,9 +52,10 @@ export function renderToHtml(
         moduleMap: ssrManifest,
         moduleLoading: { prefix: "/" },
       });
+
       // The root is this "Root" component that unwraps the streamed promise
       // with `use`, and then returning the parsed React component for the UI.
-      const Root: any = () => React.use(promise);
+      const Root: React.JSXElementConstructor<{}> = () => React.use(promise);
 
       // If the signal is already aborted, we should not proceed
       if (signal.aborted) {
@@ -70,7 +71,7 @@ export function renderToHtml(
         onError(error) {
           if (!signal.aborted) {
             // Abort the rendering and close the stream
-            signal.aborted = error;
+            signal.aborted = error as Error;
             abort();
             if (signal.abort) signal.abort();
             if (stream) {

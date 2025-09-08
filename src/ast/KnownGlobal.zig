@@ -8,18 +8,37 @@ pub const KnownGlobal = enum {
     Response,
     TextEncoder,
     TextDecoder,
+    Error,
+    TypeError,
+    SyntaxError,
+    RangeError,
+    ReferenceError,
+    EvalError,
+    URIError,
 
     pub const map = bun.ComptimeEnumMap(KnownGlobal);
 
-    pub noinline fn maybeMarkConstructorAsPure(noalias e: *E.New, symbols: []const Symbol) void {
-        const id = if (e.target.data == .e_identifier) e.target.data.e_identifier.ref else return;
+    pub noinline fn minifyGlobalConstructor(allocator: std.mem.Allocator, noalias e: *E.New, symbols: []const Symbol, loc: logger.Loc) ?js_ast.Expr {
+        _ = allocator;
+        const id = if (e.target.data == .e_identifier) e.target.data.e_identifier.ref else return null;
         const symbol = &symbols[id.innerIndex()];
         if (symbol.kind != .unbound)
-            return;
+            return null;
 
-        const constructor = map.get(symbol.original_name) orelse return;
+        const constructor = map.get(symbol.original_name) orelse return null;
 
         switch (constructor) {
+            // Error constructors can be called without 'new' with identical behavior
+            .Error, .TypeError, .SyntaxError, .RangeError, .ReferenceError, .EvalError, .URIError => {
+                // Convert `new Error(...)` to `Error(...)` to save bytes
+                const call = E.Call{
+                    .target = e.target,
+                    .args = e.args,
+                    .close_paren_loc = e.close_parens_loc,
+                    .can_be_unwrapped_if_unused = e.can_be_unwrapped_if_unused,
+                };
+                return js_ast.Expr.init(E.Call, call, loc);
+            },
             .WeakSet, .WeakMap => {
                 const n = e.args.len;
 
@@ -27,7 +46,7 @@ pub const KnownGlobal = enum {
                     // "new WeakSet()" is pure
                     e.can_be_unwrapped_if_unused = .if_unused;
 
-                    return;
+                    return null;
                 }
 
                 if (n == 1) {
@@ -50,6 +69,7 @@ pub const KnownGlobal = enum {
                         },
                     }
                 }
+                return null;
             },
             .Date => {
                 const n = e.args.len;
@@ -58,7 +78,7 @@ pub const KnownGlobal = enum {
                     // "new Date()" is pure
                     e.can_be_unwrapped_if_unused = .if_unused;
 
-                    return;
+                    return null;
                 }
 
                 if (n == 1) {
@@ -78,6 +98,7 @@ pub const KnownGlobal = enum {
                         },
                     }
                 }
+                return null;
             },
 
             .Set => {
@@ -86,7 +107,7 @@ pub const KnownGlobal = enum {
                 if (n == 0) {
                     // "new Set()" is pure
                     e.can_be_unwrapped_if_unused = .if_unused;
-                    return;
+                    return null;
                 }
 
                 if (n == 1) {
@@ -102,6 +123,7 @@ pub const KnownGlobal = enum {
                         },
                     }
                 }
+                return null;
             },
 
             .Headers => {
@@ -111,8 +133,9 @@ pub const KnownGlobal = enum {
                     // "new Headers()" is pure
                     e.can_be_unwrapped_if_unused = .if_unused;
 
-                    return;
+                    return null;
                 }
+                return null;
             },
 
             .Response => {
@@ -122,7 +145,7 @@ pub const KnownGlobal = enum {
                     // "new Response()" is pure
                     e.can_be_unwrapped_if_unused = .if_unused;
 
-                    return;
+                    return null;
                 }
 
                 if (n == 1) {
@@ -142,6 +165,7 @@ pub const KnownGlobal = enum {
                         },
                     }
                 }
+                return null;
             },
             .TextDecoder, .TextEncoder => {
                 const n = e.args.len;
@@ -151,11 +175,12 @@ pub const KnownGlobal = enum {
                     // "new TextDecoder()" is pure
                     e.can_be_unwrapped_if_unused = .if_unused;
 
-                    return;
+                    return null;
                 }
 
                 // We _could_ validate the encoding argument
                 // But let's not bother
+                return null;
             },
 
             .Map => {
@@ -164,7 +189,7 @@ pub const KnownGlobal = enum {
                 if (n == 0) {
                     // "new Map()" is pure
                     e.can_be_unwrapped_if_unused = .if_unused;
-                    return;
+                    return null;
                 }
 
                 if (n == 1) {
@@ -193,6 +218,7 @@ pub const KnownGlobal = enum {
                         },
                     }
                 }
+                return null;
             },
         }
     }
@@ -205,6 +231,7 @@ const bun = @import("bun");
 const js_ast = bun.ast;
 const E = js_ast.E;
 const Symbol = js_ast.Symbol;
+const logger = bun.logger;
 
 const std = @import("std");
 const Map = std.AutoHashMapUnmanaged;

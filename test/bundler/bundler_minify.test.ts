@@ -690,4 +690,161 @@ describe("bundler", () => {
       stdout: "foo\ntrue\ntrue\ndisabled_for_development",
     },
   });
+
+  itBundled("minify/ErrorConstructorOptimization", {
+    files: {
+      "/entry.js": /* js */ `
+        // Test all Error constructors
+        capture(new Error());
+        capture(new Error("message"));
+        capture(new Error("message", { cause: "cause" }));
+        
+        capture(new TypeError());
+        capture(new TypeError("type error"));
+        
+        capture(new SyntaxError());
+        capture(new SyntaxError("syntax error"));
+        
+        capture(new RangeError());
+        capture(new RangeError("range error"));
+        
+        capture(new ReferenceError());
+        capture(new ReferenceError("ref error"));
+        
+        capture(new EvalError());
+        capture(new EvalError("eval error"));
+        
+        capture(new URIError());
+        capture(new URIError("uri error"));
+        
+        // Test with complex arguments
+        const msg = "dynamic";
+        capture(new Error(msg));
+        capture(new TypeError(getErrorMessage()));
+        
+        // Test that other constructors are not affected
+        capture(new Date());
+        capture(new Map());
+        capture(new Set());
+        
+        function getErrorMessage() { return "computed"; }
+      `,
+    },
+    capture: [
+      "Error()",
+      'Error("message")',
+      'Error("message", { cause: "cause" })',
+      "TypeError()",
+      'TypeError("type error")',
+      "SyntaxError()",
+      'SyntaxError("syntax error")',
+      "RangeError()",
+      'RangeError("range error")',
+      "ReferenceError()",
+      'ReferenceError("ref error")',
+      "EvalError()",
+      'EvalError("eval error")',
+      "URIError()",
+      'URIError("uri error")',
+      "Error(msg)",
+      "TypeError(getErrorMessage())",
+      "/* @__PURE__ */ new Date",
+      "/* @__PURE__ */ new Map",
+      "/* @__PURE__ */ new Set",
+    ],
+    minifySyntax: true,
+    target: "bun",
+  });
+
+  itBundled("minify/ErrorConstructorWithVariables", {
+    files: {
+      "/entry.js": /* js */ `
+        function capture(val) { console.log(val); return val; }
+        // Test that Error constructors work with variables and expressions
+        const e1 = new Error("test1");
+        const e2 = new TypeError("test2");
+        const e3 = new SyntaxError("test3");
+        
+        capture(e1.message);
+        capture(e2.message);
+        capture(e3.message);
+        
+        // Test that they're still Error instances
+        capture(e1 instanceof Error);
+        capture(e2 instanceof TypeError);
+        capture(e3 instanceof SyntaxError);
+        
+        // Test with try-catch
+        try {
+          throw new RangeError("out of range");
+        } catch (e) {
+          capture(e.message);
+        }
+      `,
+    },
+    capture: [
+      "val",
+      "e1.message",
+      "e2.message",
+      "e3.message",
+      "e1 instanceof Error",
+      "e2 instanceof TypeError",
+      "e3 instanceof SyntaxError",
+      "e.message",
+    ],
+    minifySyntax: true,
+    target: "bun",
+    run: {
+      stdout: "test1\ntest2\ntest3\ntrue\ntrue\ntrue\nout of range",
+    },
+  });
+
+  itBundled("minify/ErrorConstructorPreservesSemantics", {
+    files: {
+      "/entry.js": /* js */ `
+        function capture(val) { console.log(val); return val; }
+        // Verify that Error() and new Error() have identical behavior
+        const e1 = new Error("with new");
+        const e2 = Error("without new");
+        
+        // Both should be Error instances
+        capture(e1 instanceof Error);
+        capture(e2 instanceof Error);
+        
+        // Both should have the same message
+        capture(e1.message === "with new");
+        capture(e2.message === "without new");
+        
+        // Both should have stack traces
+        capture(typeof e1.stack === "string");
+        capture(typeof e2.stack === "string");
+        
+        // Test all error types
+        const errors = [
+          [new TypeError("t1"), TypeError("t2")],
+          [new SyntaxError("s1"), SyntaxError("s2")],
+          [new RangeError("r1"), RangeError("r2")],
+        ];
+        
+        for (const [withNew, withoutNew] of errors) {
+          capture(withNew.constructor === withoutNew.constructor);
+        }
+      `,
+    },
+    capture: [
+      "val",
+      "e1 instanceof Error",
+      "e2 instanceof Error",
+      'e1.message === "with new"',
+      'e2.message === "without new"',
+      'typeof e1.stack === "string"',
+      'typeof e2.stack === "string"',
+      "withNew.constructor === withoutNew.constructor",
+    ],
+    minifySyntax: true,
+    target: "bun",
+    run: {
+      stdout: "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue",
+    },
+  });
 });

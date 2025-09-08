@@ -1491,7 +1491,9 @@ pub fn VisitExpr(
                 }
 
                 if (p.options.features.minify_syntax) {
-                    KnownGlobal.maybeMarkConstructorAsPure(e_, p.symbols.items);
+                    if (KnownGlobal.minifyGlobalConstructor(p.allocator, e_, p.symbols.items, expr.loc)) |minified| {
+                        return minified;
+                    }
                 }
                 return expr;
             }

@@ -1,7 +1,7 @@
-import { decodeFallbackMessageContainer } from "../../../src/api/schema";
-import { devTest } from "../bake-harness";
 import { expect } from "bun:test";
 import { ByteBuffer } from "peechy";
+import { decodeFallbackMessageContainer } from "../../../src/api/schema";
+import { devTest } from "../bake-harness";
 
 function getFallbackMessageContainer(text: string) {
   const regex = /\s*\<script id="__bunfallback" type="binary\/peechy"\>([^\<]+)\<\/script\>/gm;

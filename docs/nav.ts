@@ -407,6 +407,9 @@ export default {
     page("api/cc", "C Compiler", {
       description: `Build & run native C from JavaScript with Bun's native C compiler API`,
     }), // "`bun:ffi`"),
+    page("api/secrets", "Secrets", {
+      description: `Store and retrieve sensitive credentials securely using the operating system's native credential storage APIs.`,
+    }), // "`Bun.secrets`"),
     page("cli/test", "Testing", {
       description: `Bun's built-in test runner is fast and uses Jest-compatible syntax.`,
     }), // "`bun:test`"),

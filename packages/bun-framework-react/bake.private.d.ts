@@ -137,10 +137,10 @@ declare module "react-dom/server.node" {
 }
 
 declare module "bun:wrap" {
-  export const __name: unique symbol;
-  export const __legacyDecorateClassTS: unique symbol;
-  export const __legacyDecorateParamTS: unique symbol;
-  export const __legacyMetadataTS: unique symbol;
-  export const __using: unique symbol;
-  export const __callDispose: unique symbol;
+  export const __name: unknown;
+  export const __legacyDecorateClassTS: unknown;
+  export const __legacyDecorateParamTS: unknown;
+  export const __legacyMetadataTS: unknown;
+  export const __using: unknown;
+  export const __callDispose: unknown;
 }

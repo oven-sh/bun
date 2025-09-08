@@ -631,5 +631,5 @@ declare module "bun:app/client" {
    * Only one callback can be set. Calling this function will overwrite the
    * previous callback, if set.
    */
-  export function onServerSideReload(cb: () => void | Promise<void>): Promise<void>;
+  export function onServerSideReload(cb: () => void | Promise<void>): void;
 }

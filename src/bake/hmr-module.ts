@@ -29,7 +29,7 @@ export const serverManifest: ServerManifest = {};
 /** Server */
 export const ssrManifest: SSRManifest = {};
 /** Client */
-export let onServerSideReload: (() => Promise<void>) | null = null;
+export let onServerSideReload: (() => Promise<void> | void) | null = null;
 const eventHandlers: Record<HMREvent | string, HotEventHandler[] | undefined> = {};
 let refreshRuntime: any;
 /** The expression `import(a,b)` is not supported in all browsers, most notably
@@ -887,10 +887,21 @@ function toESM(mod: any) {
   return to;
 }
 
-function registerSynthetic(id: Id, esmExports) {
-  const module = new HMRModule(id, false);
-  module.exports = esmExports;
-  registry.set(id, module);
+/** Used to make sure our implementation is type-safe to what the type declarations say */
+interface BakeBuiltinSyntheticModules {
+  "bun:app": typeof import("bun:app");
+  "bun:app/server": typeof import("bun:app/server");
+  "bun:app/client": typeof import("bun:app/client");
+  "bun:wrap": typeof import("bun:wrap");
+}
+
+function registerSynthetic<ModuleName extends keyof BakeBuiltinSyntheticModules>(
+  id: ModuleName,
+  esmExports: BakeBuiltinSyntheticModules[ModuleName],
+) {
+  const mod = new HMRModule(id, false);
+  mod.exports = esmExports;
+  registry.set(id, mod);
   unloadedModuleRegistry[id] = true as any;
 }
 
@@ -909,26 +920,26 @@ export function setRefreshRuntime(runtime: HMRModule) {
 
 // react-refresh/runtime does not provide this function for us
 // https://github.com/facebook/metro/blob/febdba2383113c88296c61e28e4ef6a7f4939fda/packages/metro/src/lib/polyfills/require.js#L748-L774
-function isReactRefreshBoundary(esmExports): boolean {
+function isReactRefreshBoundary(moduleExports: unknown): boolean {
   const { isLikelyComponentType } = refreshRuntime;
   if (!isLikelyComponentType) return true;
-  if (isLikelyComponentType(esmExports)) {
+  if (isLikelyComponentType(moduleExports)) {
     return true;
   }
-  if (esmExports == null || typeof esmExports !== "object") {
+  if (moduleExports == null || typeof moduleExports !== "object") {
     // Exit if we can't iterate over exports.
     return false;
   }
   let hasExports = false;
   let areAllExportsComponents = true;
-  for (const key in esmExports) {
+  for (const key in moduleExports) {
     hasExports = true;
-    const desc = Object.getOwnPropertyDescriptor(esmExports, key);
+    const desc = Object.getOwnPropertyDescriptor(moduleExports, key);
     if (desc && desc.get) {
       // Don't invoke getters as they may have side effects.
       return false;
     }
-    const exportValue = esmExports[key];
+    const exportValue = moduleExports[key];
     if (!isLikelyComponentType(exportValue)) {
       areAllExportsComponents = false;
     }
@@ -965,7 +976,9 @@ if (side === "server") {
 
 if (side === "client") {
   registerSynthetic("bun:app/client", {
-    onServerSideReload: cb => (onServerSideReload = cb),
+    onServerSideReload: cb => {
+      onServerSideReload = cb;
+    },
   });
 }
 

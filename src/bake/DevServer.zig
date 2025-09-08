@@ -2986,7 +2986,7 @@ pub fn respondForHTMLBundle(dev: *DevServer, html: *HTMLBundle.HTMLBundleRoute, 
     dev.ensureRouteIsBundled(
         try dev.getOrPutRouteBundle(.{ .html = html }),
         .bundled_html_page,
-        req,
+        .{ .req = req },
         resp,
     ) catch |err| switch (err) {
         error.JSError => dev.vm.global.reportActiveExceptionAsUnhandled(err),

@@ -63,7 +63,7 @@ bool isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObjec
         JSC::JSValue typeofValue = object->get(globalObject, typeofProperty);
         RETURN_IF_EXCEPTION(scope, false);
 
-        if (typeofValue.isSymbol() && (typeofValue == zigGlobal->reactLegacyElementSymbol() || typeofValue == zigGlobal->reactElementSymbol())) {
+        if (typeofValue.isSymbol() && (typeofValue == zigGlobal->bakeAdditions().reactLegacyElementSymbol(zigGlobal) || typeofValue == zigGlobal->bakeAdditions().reactElementSymbol(zigGlobal))) {
             return true;
         }
     }
@@ -78,7 +78,7 @@ extern "C" bool JSC__JSValue__isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JS
 
 extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES Response__createForSSR(Zig::GlobalObject* globalObject, void* ptr, uint8_t kind)
 {
-    Structure* structure = globalObject->JSBakeResponseStructure();
+    Structure* structure = globalObject->bakeAdditions().JSBakeResponseStructure(globalObject);
     printf("Creating JSBakeResponse for kind: %d\n", kind);
 
     JSBakeResponse* instance = JSBakeResponse::create(globalObject->vm(), globalObject, structure, ptr);
@@ -200,14 +200,14 @@ public:
         JSC::VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSObject* newTarget = asObject(callFrame->newTarget());
-        auto* constructor = globalObject->JSBakeResponseConstructor();
-        Structure* structure = globalObject->JSBakeResponseStructure();
+        auto* constructor = globalObject->bakeAdditions().JSBakeResponseConstructor(globalObject);
+        Structure* structure = globalObject->bakeAdditions().JSBakeResponseStructure(globalObject);
         if (constructor != newTarget) [[unlikely]] {
             auto* functionGlobalObject = defaultGlobalObject(
                 // ShadowRealm functions belong to a different global object.
                 getFunctionRealm(globalObject, newTarget));
             RETURN_IF_EXCEPTION(scope, {});
-            structure = InternalFunction::createSubclassStructure(globalObject, newTarget, functionGlobalObject->JSBakeResponseStructure());
+            structure = InternalFunction::createSubclassStructure(globalObject, newTarget, functionGlobalObject->bakeAdditions().JSBakeResponseStructure(functionGlobalObject));
             RETURN_IF_EXCEPTION(scope, {});
         }
 
@@ -241,7 +241,7 @@ public:
         JSC::VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        Structure* structure = globalObject->JSBakeResponseStructure();
+        Structure* structure = globalObject->bakeAdditions().JSBakeResponseStructure(globalObject);
         JSBakeResponse* instance = JSBakeResponse::create(vm, globalObject, structure, nullptr);
 
         void* ptr = ResponseClass__constructForSSR(globalObject, callFrame, JSValue::encode(instance), nullptr);

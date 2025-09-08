@@ -57,6 +57,7 @@ class GlobalInternals;
 #include "BunGlobalScope.h"
 #include <js_native_api.h>
 #include <node_api.h>
+#include "BakeAdditionsToGlobalObject.h"
 
 namespace Bun {
 class JSCommonJSExtensions;
@@ -234,9 +235,6 @@ public:
     JSC::JSValue HTTPSResponseSinkPrototype() const { return m_JSHTTPSResponseSinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableHTTPSResponseSinkControllerPrototype() const { return m_JSHTTPSResponseControllerPrototype.getInitializedOnMainThread(this); }
 
-    JSC::JSObject* JSBakeResponseConstructor() const { return m_JSBakeResponseClassStructure.constructorInitializedOnMainThread(this); }
-    JSC::Structure* JSBakeResponseStructure() const { return m_JSBakeResponseClassStructure.getInitializedOnMainThread(this); }
-
     JSC::Structure* NetworkSinkStructure() const { return m_JSNetworkSinkClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* NetworkSink() { return m_JSNetworkSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NetworkSinkPrototype() const { return m_JSNetworkSinkClassStructure.prototypeInitializedOnMainThread(this); }
@@ -316,8 +314,7 @@ public:
 
     v8::shim::GlobalInternals* V8GlobalInternals() const { return m_V8GlobalInternals.getInitializedOnMainThread(this); }
 
-    JSC::Symbol* reactLegacyElementSymbol() const { return m_reactLegacyElementSymbol.getInitializedOnMainThread(this); }
-    JSC::Symbol* reactElementSymbol() const { return m_reactElementSymbol.getInitializedOnMainThread(this); }
+    Bun::BakeAdditionsToGlobalObject& bakeAdditions() { return m_bakeAdditions; }
 
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
@@ -456,8 +453,7 @@ public:
     //   a new overload of `visitGlobalObjectMember` so it understands your type.
 
 #define FOR_EACH_GLOBALOBJECT_GC_MEMBER(V)                                                                   \
-    V(private, LazyPropertyOfGlobalObject<JSC::Symbol>, m_reactLegacyElementSymbol)                          \
-    V(private, LazyPropertyOfGlobalObject<JSC::Symbol>, m_reactElementSymbol)                                \
+    V(public, Bun::BakeAdditionsToGlobalObject, m_bakeAdditions)                                            \
                                                                                                              \
     /* TODO: these should use LazyProperty */                                                                \
     V(private, WriteBarrier<JSFunction>, m_assignToStream)                                                   \
@@ -536,7 +532,6 @@ public:
     V(private, LazyClassStructure, m_JSFileSinkClassStructure)                                               \
     V(private, LazyClassStructure, m_JSHTTPResponseSinkClassStructure)                                       \
     V(private, LazyClassStructure, m_JSHTTPSResponseSinkClassStructure)                                      \
-    V(public, LazyClassStructure, m_JSBakeResponseClassStructure)                                            \
     V(private, LazyClassStructure, m_JSNetworkSinkClassStructure)                                            \
                                                                                                              \
     V(private, LazyClassStructure, m_JSStringDecoderClassStructure)                                          \

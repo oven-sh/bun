@@ -74,12 +74,21 @@ while (<IN>) {
         $includeBuiltin = 0;
 
         $inside = 0;
-    } elsif (/^(\S+)\s*(\S+)\s*([\w\|]*)\s*(\w*)\s*(\w*)\s*$/ && $inside) {
+    } elsif (/^(\S+)\s+(\S+)\s+([\w\|]*)\s*(\w*)\s*(\w*)\s*(.*)$/ && $inside) {
         my $key = $1;
         my $val = $2;
         my $att = $3;
         my $param = $4;
         my $intrinsic = $5;
+        my $custom_offset = $6;
+        
+        # Trim whitespace first
+        $custom_offset =~ s/^\s+|\s+$//g;
+        
+        # Remove surrounding quotes from custom offset if present
+        if ($custom_offset =~ /^"(.*)"$/) {
+            $custom_offset = $1;
+        }
 
         push(@keys, $key);
         push(@attrs, length($att) > 0 ? $att : "None");
@@ -93,10 +102,10 @@ while (<IN>) {
             #printf STDERR "WARNING: Number of arguments missing for $key/$val\n" if (length($param) == 0);
         } elsif ($att =~ m/CellProperty/) {
             my $property = $val;
-            push(@values, { "type" => "PropertyAttribute::CellProperty", "property" => $property });
+            push(@values, { "type" => "PropertyAttribute::CellProperty", "property" => $property, "custom_offset" => $custom_offset });
         } elsif ($att =~ m/ClassStructure/) {
             my $property = $val;
-            push(@values, { "type" => "PropertyAttribute::ClassStructure", "property" => $property });
+            push(@values, { "type" => "PropertyAttribute::ClassStructure", "property" => $property, "custom_offset" => $custom_offset });
         } elsif ($att =~ m/PropertyCallback/) {
             my $cback = $val;
             push(@values, { "type" => "PropertyAttribute::PropertyCallback", "cback" => $cback });
@@ -494,8 +503,13 @@ sub output() {
                 $hasSecondValue = 0;
             } elsif ($values[$i]{"type"} eq "PropertyAttribute::CellProperty" || $values[$i]{"type"} eq "PropertyAttribute::ClassStructure") {
                 $typeTag = ($values[$i]{"type"} eq "PropertyAttribute::CellProperty") ? "LazyCellProperty" : "LazyClassStructure";
-                $values[$i]{"property"} =~ /\A([a-zA-Z0-9_]+)::(.*)\Z/ or die;
-                $firstValue = "OBJECT_OFFSETOF($1, $2)";
+                if (length($values[$i]{"custom_offset"}) > 0) {
+                    # Custom offset is already stripped of quotes during parsing
+                    $firstValue = $values[$i]{"custom_offset"};
+                } else {
+                    $values[$i]{"property"} =~ /\A([a-zA-Z0-9_]+)::(.*)\Z/ or die;
+                    $firstValue = "OBJECT_OFFSETOF($1, $2)";
+                }
                 $hasSecondValue = 0;
             } elsif ($values[$i]{"type"} eq "PropertyAttribute::PropertyCallback") {
                 $typeTag = "LazyProperty";

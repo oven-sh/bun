@@ -270,7 +270,10 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
         current_chunk_parts: ArrayListUnmanaged(switch (side) {
             .client => FileIndex,
             // This memory is allocated by the dev server allocator
-            .server => bun.ptr.ScopedOwned([]const u8),
+            .server => bun.ptr.OwnedIn(
+                []const u8,
+                bun.bake.DevServer.DevAllocator,
+            ),
         }),
 
         /// Asset IDs, which can be printed as hex in '/_bun/asset/{hash}.css'
@@ -393,7 +396,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                 .current_chunk_len = {},
                 .current_chunk_parts = {
                     if (comptime side == .server) {
-                        for (g.current_chunk_parts.items) |part| part.deinit();
+                        for (g.current_chunk_parts.items) |*part| part.deinit();
                     }
                     g.current_chunk_parts.deinit(alloc);
                 },
@@ -662,13 +665,12 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                     if (content == .js) {
                         try g.current_chunk_parts.append(
                             dev.allocator(),
-                            bun.ptr.ScopedOwned([]const u8).fromRawOwned(
+                            bun.ptr.OwnedIn([]const u8, bun.bake.DevServer.DevAllocator).fromRawIn(
                                 content.js.code,
-                                if (comptime bun.Environment.enableAllocScopes) dev.allocation_scope else null,
+                                dev.dev_allocator(),
                             ),
                         );
                         g.current_chunk_len += content.js.code.len;
-
 
                         // TODO: we probably want to store SSR chunks but not
                         //       server chunks, but not 100% sure
@@ -1667,7 +1669,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             if (comptime side == .client) {
                 g.current_css_files.clearRetainingCapacity();
             } else if (comptime side == .server) {
-                for (g.current_chunk_parts.items) |part| part.deinit();
+                for (g.current_chunk_parts.items) |*part| part.deinit();
 
                 for (g.current_chunk_source_maps.items) |*sourcemap| sourcemap.deinit();
                 g.current_chunk_source_maps.clearRetainingCapacity();

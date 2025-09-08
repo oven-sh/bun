@@ -2732,16 +2732,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_commonStrings.initialize();
     m_http2CommonStrings.initialize();
-
-    m_reactLegacyElementSymbol.initLater(
-        [](const LazyProperty<JSC::JSGlobalObject, Symbol>::Initializer& init) {
-            init.set(JSC::Symbol::create(init.vm, init.vm.symbolRegistry().symbolForKey("react.element"_s)));
-        });
-
-    m_reactElementSymbol.initLater(
-        [](const LazyProperty<JSC::JSGlobalObject, Symbol>::Initializer& init) {
-            init.set(JSC::Symbol::create(init.vm, init.vm.symbolRegistry().symbolForKey("react.transitional.element"_s)));
-        });
+    m_bakeAdditions.initialize();
 
     Bun::addNodeModuleConstructorProperties(vm, this);
     m_JSNodeHTTPServerSocketStructure.initLater(
@@ -3379,11 +3370,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.setPrototype(prototype);
             init.setStructure(structure);
             init.setConstructor(constructor);
-        });
-
-    m_JSBakeResponseClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            Bun::setupJSBakeResponseClassStructure(init);
         });
 
     m_JSNetworkSinkClassStructure.initLater(

@@ -1,6 +1,4 @@
-src/bake/bake.d.ts
 src/bake/bake.private.d.ts
-src/bake/bun-framework-react/index.ts
 src/bake/client/css-reloader.ts
 src/bake/client/data-view.ts
 src/bake/client/error-serialization.ts

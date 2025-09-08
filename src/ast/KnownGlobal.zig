@@ -43,15 +43,15 @@ pub const KnownGlobal = enum {
                 };
                 return js_ast.Expr.init(E.Call, call, loc);
             },
-            
+
             .Object => {
                 const n = e.args.len;
-                
+
                 if (n == 0) {
                     // new Object() -> {}
                     return js_ast.Expr.init(E.Object, E.Object{}, loc);
                 }
-                
+
                 if (n == 1) {
                     const arg = e.args.ptr[0];
                     switch (arg.data) {
@@ -68,7 +68,7 @@ pub const KnownGlobal = enum {
                         else => {},
                     }
                 }
-                
+
                 // For other cases, just remove 'new'
                 const call = E.Call{
                     .target = e.target,
@@ -78,15 +78,15 @@ pub const KnownGlobal = enum {
                 };
                 return js_ast.Expr.init(E.Call, call, loc);
             },
-            
+
             .Array => {
                 const n = e.args.len;
-                
+
                 if (n == 0) {
                     // new Array() -> []
                     return js_ast.Expr.init(E.Array, E.Array{}, loc);
                 }
-                
+
                 // new Array(1, 2, 3) -> [1, 2, 3]
                 // But NOT new Array(3) which creates an array with 3 empty slots
                 if (n > 1 or (n == 1 and e.args.ptr[0].data != .e_number)) {
@@ -94,7 +94,7 @@ pub const KnownGlobal = enum {
                     array.items = e.args;
                     return js_ast.Expr.init(E.Array, array, loc);
                 }
-                
+
                 // For new Array(number), just remove 'new'
                 const call = E.Call{
                     .target = e.target,
@@ -104,7 +104,7 @@ pub const KnownGlobal = enum {
                 };
                 return js_ast.Expr.init(E.Call, call, loc);
             },
-            
+
             .Function, .RegExp => {
                 // Just remove 'new' for Function and RegExp
                 // RegExp literal conversion would require parsing the pattern string
@@ -304,11 +304,11 @@ pub const KnownGlobal = enum {
 const string = []const u8;
 
 const bun = @import("bun");
+const logger = bun.logger;
 
 const js_ast = bun.ast;
 const E = js_ast.E;
 const Symbol = js_ast.Symbol;
-const logger = bun.logger;
 
 const std = @import("std");
 const Map = std.AutoHashMapUnmanaged;

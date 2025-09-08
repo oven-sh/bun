@@ -882,16 +882,16 @@ describe("bundler", () => {
       `,
     },
     capture: [
-      "[]",  // new Array() -> []
-      "Array(3)",  // new Array(3) stays as Array(3) because it creates sparse array
+      "[]", // new Array() -> []
+      "Array(3)", // new Array(3) stays as Array(3) because it creates sparse array
       `[
   1,
   2,
   3
-]`,  // new Array(1, 2, 3) -> [1, 2, 3]
-      "{}",  // new Object() -> {}
-      "{}",  // new Object(null) -> {}
-      "{ a: 1 }",  // new Object({ a: 1 }) -> { a: 1 }
+]`, // new Array(1, 2, 3) -> [1, 2, 3]
+      "{}", // new Object() -> {}
+      "{}", // new Object(null) -> {}
+      "{ a: 1 }", // new Object({ a: 1 }) -> { a: 1 }
       'Function("return 42")',
       'Function("a", "b", "return a + b")',
       'RegExp("test")',
@@ -944,8 +944,8 @@ describe("bundler", () => {
       "o1.constructor === o2.constructor",
       "typeof f1 === typeof f2",
       "f1() === f2()",
-      'r1.source === r2.source',
-      'r1.flags === r2.flags',
+      "r1.source === r2.source",
+      "r1.flags === r2.flags",
     ],
     minifySyntax: true,
     target: "bun",

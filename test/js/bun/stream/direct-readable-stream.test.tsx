@@ -94,6 +94,7 @@ const fixtures = [
     <>
       <span>Hello World!</span>
       😋L😋l😋L😋
+{" "}
     </>,
   ],
 ] as const;

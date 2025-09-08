@@ -57,6 +57,13 @@ pub fn bestQuoteCharForString(comptime Type: type, str: []const Type, allow_back
                 single_cost += 1;
                 double_cost += 1;
             },
+            '\r' => {
+                // Carriage returns have different semantics in template literals
+                // so we heavily penalize backticks to avoid conversion
+                single_cost += 1;
+                double_cost += 1;
+                backtick_cost += 1000;
+            },
             '\\' => {
                 i += 1;
             },
@@ -2710,9 +2717,9 @@ fn NewPrinter(
                         return;
                     }
 
-                    // Don't allow backticks for strings that weren't originally template literals
-                    // This prevents semantic changes like "\r\n" becoming `\r\n` (actual newline)
-                    p.printStringLiteralEString(e, e.prefer_template);
+                    // Allow conversion to template literals for better compression
+                    // The bestQuoteCharForString function handles the \r edge case
+                    p.printStringLiteralEString(e, true);
                 },
                 .e_template => |e| {
                     if (e.tag == null and (p.options.minify_syntax or p.was_lazy_export)) {

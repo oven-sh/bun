@@ -71,6 +71,17 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
         Global.crash();
     }
 
+    // Handle workspace filtering for add command
+    if (subcommand == .add and manager.options.filter_patterns.len > 0) {
+        return try updatePackageJSONAndInstallWithWorkspaceFilter(
+            manager,
+            ctx,
+            updates,
+            subcommand,
+            original_cwd,
+        );
+    }
+
     var current_package_json = switch (manager.workspace_package_json_cache.getWithPath(
         manager.allocator,
         manager.log,
@@ -476,6 +487,319 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
     }
 }
 
+fn updatePackageJSONAndInstallWithWorkspaceFilter(
+    manager: *PackageManager,
+    ctx: Command.Context,
+    updates: *[]UpdateRequest,
+    _: Subcommand,
+    original_cwd: string,
+) !void {
+    // Load the root package.json first
+    const root_package_json = switch (manager.workspace_package_json_cache.getWithPath(
+        manager.allocator,
+        manager.log,
+        manager.original_package_json_path,
+        .{ .guess_indentation = true },
+    )) {
+        .parse_err => |err| {
+            manager.log.print(Output.errorWriter()) catch {};
+            Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
+                manager.original_package_json_path,
+                @errorName(err),
+            });
+            Global.crash();
+        },
+        .read_err => |err| {
+            Output.errGeneric("failed to read package.json \"{s}\": {s}", .{
+                manager.original_package_json_path,
+                @errorName(err),
+            });
+            Global.crash();
+        },
+        .entry => |entry| entry,
+    };
+    
+    // Check if this is a workspace project
+    const workspaces_prop = root_package_json.root.get("workspaces") orelse {
+        Output.prettyErrorln("<r><red>error<r>: --filter can only be used in a workspace root", .{});
+        Global.exit(1);
+    };
+    
+    // Parse workspace patterns from package.json
+    var workspace_patterns = std.ArrayList([]const u8).init(manager.allocator);
+    defer workspace_patterns.deinit();
+    
+    switch (workspaces_prop.data) {
+        .e_array => |arr| {
+            for (arr.slice()) |item| {
+                const pattern = try item.asStringCloned(manager.allocator) orelse {
+                    Output.prettyErrorln("<r><red>error<r>: workspace patterns must be strings", .{});
+                    Global.exit(1);
+                };
+                try workspace_patterns.append(pattern);
+            }
+        },
+        .e_object => |obj| {
+            if (obj.get("packages")) |packages_prop| {
+                switch (packages_prop.data) {
+                    .e_array => |arr| {
+                        for (arr.slice()) |item| {
+                            const pattern = try item.asStringCloned(manager.allocator) orelse {
+                                Output.prettyErrorln("<r><red>error<r>: workspace patterns must be strings", .{});
+                                Global.exit(1);
+                            };
+                            try workspace_patterns.append(pattern);
+                        }
+                    },
+                    else => {
+                        Output.prettyErrorln("<r><red>error<r>: workspaces.packages must be an array", .{});
+                        Global.exit(1);
+                    },
+                }
+            }
+        },
+        else => {
+            Output.prettyErrorln("<r><red>error<r>: workspaces must be an array or object with packages array", .{});
+            Global.exit(1);
+        },
+    }
+    
+    if (workspace_patterns.items.len == 0) {
+        Output.prettyErrorln("<r><red>error<r>: No workspace patterns found", .{});
+        Global.exit(1);
+    }
+    
+    // Parse workspace filters
+    var path_buf: bun.PathBuffer = undefined;
+    var workspace_filters = std.ArrayList(WorkspaceFilter).init(manager.allocator);
+    defer workspace_filters.deinit();
+    
+    for (manager.options.filter_patterns) |pattern| {
+        try workspace_filters.append(try WorkspaceFilter.init(manager.allocator, pattern, original_cwd, &path_buf));
+    }
+    
+    if (workspace_filters.items.len == 0) {
+        Output.prettyErrorln("<r>No filters provided", .{});
+        Global.exit(1);
+    }
+    
+    // Find matching workspaces by checking each workspace pattern
+    var matched_workspace_paths = std.ArrayList([]const u8).init(manager.allocator);
+    defer matched_workspace_paths.deinit();
+    
+    for (workspace_patterns.items) |pattern| {
+        // Check if it's a glob pattern or a direct path
+        if (Glob.detectGlobSyntax(pattern)) {
+            // Use glob to find workspace directories
+            const GlobWalker = Glob.GlobWalker(Glob.walk.Accessor, Glob.walk.DirEntryAccessor, false);
+            var walker: GlobWalker = .{};
+            defer walker.deinit(false);
+            
+            const pattern_with_package_json = try std.fmt.allocPrint(
+                manager.allocator,
+                "{s}/package.json",
+                .{pattern},
+            );
+            defer manager.allocator.free(pattern_with_package_json);
+            
+            var arena = std.heap.ArenaAllocator.init(manager.allocator);
+            defer arena.deinit();
+            
+            const cwd = try arena.allocator().dupe(u8, original_cwd);
+            const init_result = try walker.initWithCwd(&arena, pattern_with_package_json, cwd, false, false, false, false, true);
+            try init_result.unwrap();
+            
+            var iter = GlobWalker.Iterator{ .walker = &walker };
+            const iter_init = try iter.init();
+            try iter_init.unwrap();
+            
+            while (true) {
+                const next = try iter.next();
+                switch (next) {
+                    .err => break,
+                    .result => |path| {
+                        if (path == null) break;
+                        
+                        // Remove /package.json from the path
+                        const dir_path = std.fs.path.dirname(path.?) orelse continue;
+                        
+                        // Check if this workspace matches the filter
+                        if (try matchesWorkspaceFilter(manager, workspace_filters.items, dir_path, original_cwd)) {
+                            try matched_workspace_paths.append(try manager.allocator.dupe(u8, dir_path));
+                        }
+                    },
+                }
+            }
+        } else {
+            // Direct workspace path
+            const workspace_path = pattern;
+            if (try matchesWorkspaceFilter(manager, workspace_filters.items, workspace_path, original_cwd)) {
+                try matched_workspace_paths.append(try manager.allocator.dupe(u8, workspace_path));
+            }
+        }
+    }
+    
+    if (matched_workspace_paths.items.len == 0) {
+        Output.prettyErrorln("<r><red>error<r>: No workspaces matched the filters", .{});
+        Global.exit(1);
+    }
+    
+    // Update each matched workspace's package.json
+    for (matched_workspace_paths.items) |workspace_path| {
+        // Construct the package.json path for this workspace
+        var workspace_package_json_path_buf: bun.PathBuffer = undefined;
+        const workspace_package_json_path = bun.path.joinAbsStringBufZ(
+            FileSystem.instance.top_level_dir,
+            &workspace_package_json_path_buf,
+            &.{ workspace_path, "package.json" },
+            .auto,
+        );
+        
+        // Load the workspace's package.json
+        var workspace_package_json = switch (manager.workspace_package_json_cache.getWithPath(
+            manager.allocator,
+            manager.log,
+            workspace_package_json_path,
+            .{ .guess_indentation = true },
+        )) {
+            .parse_err => |err| {
+                manager.log.print(Output.errorWriter()) catch {};
+                Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
+                    workspace_package_json_path,
+                    @errorName(err),
+                });
+                continue;
+            },
+            .read_err => |err| {
+                Output.errGeneric("failed to read package.json \"{s}\": {s}", .{
+                    workspace_package_json_path,
+                    @errorName(err),
+                });
+                continue;
+            },
+            .entry => |entry| entry,
+        };
+        
+        const workspace_indent = workspace_package_json.indentation;
+        const preserve_trailing_newline = workspace_package_json.source.contents.len > 0 and
+            workspace_package_json.source.contents[workspace_package_json.source.contents.len - 1] == '\n';
+        
+        // Determine which dependency list to update
+        const dependency_list = if (manager.options.update.development)
+            "devDependencies"
+        else if (manager.options.update.optional)
+            "optionalDependencies"
+        else if (manager.options.update.peer)
+            "peerDependencies"
+        else
+            "dependencies";
+        
+        // Update the workspace's dependencies
+        try PackageJSONEditor.edit(
+            manager,
+            updates,
+            &workspace_package_json.root,
+            dependency_list,
+            .{
+                .exact_versions = manager.options.enable.exact_versions,
+                .before_install = true,
+            },
+        );
+        
+        // Write the updated workspace package.json
+        var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
+        try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, workspace_package_json.source.contents.len + 1);
+        buffer_writer.append_newline = preserve_trailing_newline;
+        var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
+        
+        _ = JSPrinter.printJSON(
+            @TypeOf(&package_json_writer),
+            &package_json_writer,
+            workspace_package_json.root,
+            &workspace_package_json.source,
+            .{
+                .indent = workspace_indent,
+                .mangled_props = null,
+            },
+        ) catch |err| {
+            Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+            continue;
+        };
+        
+        const new_contents = package_json_writer.ctx.writtenWithoutTrailingZero();
+        
+        // Write to disk if enabled
+        if (manager.options.do.write_package_json) {
+            const workspace_json_file = (try bun.sys.File.openat(
+                .cwd(),
+                workspace_package_json_path,
+                bun.O.RDWR,
+                0,
+            ).unwrap()).handle.stdFile();
+            
+            try workspace_json_file.pwriteAll(new_contents, 0);
+            std.posix.ftruncate(workspace_json_file.handle, new_contents.len) catch {};
+            workspace_json_file.close();
+        }
+    }
+    
+    // Now run the install
+    try manager.installWithManager(ctx, root_package_json.source.contents, original_cwd);
+    
+    for (updates.*) |request| {
+        if (request.failed) {
+            Global.exit(1);
+            return;
+        }
+    }
+}
+
+fn matchesWorkspaceFilter(
+    manager: *PackageManager,
+    filters: []const WorkspaceFilter,
+    workspace_path: []const u8,
+    original_cwd: string,
+) !bool {
+    // Read the workspace's package.json to get its name
+    var workspace_package_json_path_buf: bun.PathBuffer = undefined;
+    const workspace_package_json_path = bun.path.joinAbsStringBufZ(
+        original_cwd,
+        &workspace_package_json_path_buf,
+        &.{ workspace_path, "package.json" },
+        .auto,
+    );
+    
+    const workspace_json = manager.workspace_package_json_cache.getWithPath(
+        manager.allocator,
+        manager.log,
+        workspace_package_json_path,
+        .{ .guess_indentation = true },
+    ) catch |err| {
+        _ = err;
+        return false;
+    };
+    
+    const workspace_name = if (workspace_json.entry.root.get("name")) |name_prop|
+        try name_prop.asStringCloned(manager.allocator) orelse return false
+    else
+        return false;
+    
+    // Check if this workspace matches any filter
+    for (filters) |filter| {
+        const matches = switch (filter) {
+            .all => true,
+            .name => |pattern| bun.glob.walk.matchImpl(manager.allocator, pattern, workspace_name).matches(),
+            .path => |pattern| bun.glob.walk.matchImpl(manager.allocator, pattern, workspace_path).matches(),
+        };
+        
+        if (matches) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
 pub fn updatePackageJSONAndInstallCatchError(
     ctx: Command.Context,
     subcommand: Subcommand,
@@ -748,3 +1072,5 @@ const PatchCommitResult = PackageManager.PatchCommitResult;
 const Subcommand = PackageManager.Subcommand;
 const UpdateRequest = PackageManager.UpdateRequest;
 const attemptToCreatePackageJSON = PackageManager.attemptToCreatePackageJSON;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;
+const Path = bun.path;

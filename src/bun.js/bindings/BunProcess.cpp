@@ -1644,7 +1644,7 @@ bool setProcessExitCodeInner(JSC::JSGlobalObject* lexicalGlobalObject, Process* 
             auto num = code.toNumber(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(throwScope, {});
             if (!std::isnan(num)) {
-                code = jsDoubleNumber(num);
+                code = jsNumber(num);
             }
         }
         ssize_t exitCodeInt;
@@ -1723,11 +1723,9 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
             struct rlimit limit;
             getrlimit(resourceLimits[i], &limit);
 
-            JSValue soft = limit.rlim_cur == RLIM_INFINITY ? JSC::jsString(vm, String("unlimited"_s)) : limit.rlim_cur > INT32_MAX ? JSC::jsNumber(limit.rlim_cur)
-                                                                                                                                   : JSC::jsDoubleNumber(static_cast<double>(limit.rlim_cur));
+            JSValue soft = limit.rlim_cur == RLIM_INFINITY ? JSC::jsString(vm, String("unlimited"_s)) : JSC::jsNumber(limit.rlim_cur);
 
-            JSValue hard = limit.rlim_max == RLIM_INFINITY ? JSC::jsString(vm, String("unlimited"_s)) : limit.rlim_max > INT32_MAX ? JSC::jsNumber(limit.rlim_max)
-                                                                                                                                   : JSC::jsDoubleNumber(static_cast<double>(limit.rlim_max));
+            JSValue hard = limit.rlim_max == RLIM_INFINITY ? JSC::jsString(vm, String("unlimited"_s)) : JSC::jsNumber(limit.rlim_max);
 
             limitObject->putDirect(vm, JSC::Identifier::fromString(vm, "soft"_s), soft, 0);
             limitObject->putDirect(vm, JSC::Identifier::fromString(vm, "hard"_s), hard, 0);
@@ -1885,7 +1883,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
         heapSpaces->putDirect(vm, JSC::Identifier::fromString(vm, "shared_large_object_space"_s), JSC::constructEmptyObject(globalObject), 0);
         RETURN_IF_EXCEPTION(scope, {});
 
-        heap->putDirect(vm, JSC::Identifier::fromString(vm, "totalMemory"_s), JSC::jsDoubleNumber(static_cast<double>(WTF::ramSize())), 0);
+        heap->putDirect(vm, JSC::Identifier::fromString(vm, "totalMemory"_s), JSC::jsNumber(WTF::ramSize()), 0);
         heap->putDirect(vm, JSC::Identifier::fromString(vm, "executableMemory"_s), jsNumber(0), 0);
         heap->putDirect(vm, JSC::Identifier::fromString(vm, "totalCommittedMemory"_s), jsNumber(0), 0);
         heap->putDirect(vm, JSC::Identifier::fromString(vm, "availableMemory"_s), jsNumber(0), 0);
@@ -1894,7 +1892,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
         heap->putDirect(vm, JSC::Identifier::fromString(vm, "usedMemory"_s), jsNumber(0), 0);
         heap->putDirect(vm, JSC::Identifier::fromString(vm, "memoryLimit"_s), jsNumber(0), 0);
         heap->putDirect(vm, JSC::Identifier::fromString(vm, "mallocedMemory"_s), jsNumber(0), 0);
-        heap->putDirect(vm, JSC::Identifier::fromString(vm, "externalMemory"_s), JSC::jsDoubleNumber(static_cast<double>(vm.heap.externalMemorySize())), 0);
+        heap->putDirect(vm, JSC::Identifier::fromString(vm, "externalMemory"_s), JSC::jsNumber(vm.heap.externalMemorySize()), 0);
         heap->putDirect(vm, JSC::Identifier::fromString(vm, "peakMallocedMemory"_s), jsNumber(0), 0);
         heap->putDirect(vm, JSC::Identifier::fromString(vm, "nativeContextCount"_s), JSC::jsNumber(1), 0);
         heap->putDirect(vm, JSC::Identifier::fromString(vm, "detachedContextCount"_s), JSC::jsNumber(0), 0);
@@ -2756,7 +2754,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAssert, (JSGlobalObject * globalObject,
 extern "C" uint64_t Bun__Os__getFreeMemory(void);
 JSC_DEFINE_HOST_FUNCTION(Process_availableMemory, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    return JSValue::encode(jsDoubleNumber(Bun__Os__getFreeMemory()));
+    return JSValue::encode(jsNumber(Bun__Os__getFreeMemory()));
 }
 
 #define PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE(str, issue)                                                                                                                                                                                \
@@ -2962,7 +2960,7 @@ static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSVal
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionConstrainedMemory, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return JSValue::encode(jsDoubleNumber(static_cast<double>(WTF::ramSize())));
+    return JSValue::encode(jsNumber(WTF::ramSize()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -3086,8 +3084,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * global
     JSC::JSObject* result = JSC::constructEmptyObject(vm, cpuUsageStructure);
     RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
 
-    result->putDirectOffset(vm, 0, JSC::jsDoubleNumber(user));
-    result->putDirectOffset(vm, 1, JSC::jsDoubleNumber(system));
+    result->putDirectOffset(vm, 0, JSC::jsNumber(user));
+    result->putDirectOffset(vm, 1, JSC::jsNumber(system));
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
 }
@@ -3203,14 +3201,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * glo
     //    arrayBuffers: 9386
     // }
 
-    result->putDirectOffset(vm, 0, JSC::jsDoubleNumber(current_rss));
-    result->putDirectOffset(vm, 1, JSC::jsDoubleNumber(vm.heap.blockBytesAllocated()));
+    result->putDirectOffset(vm, 0, JSC::jsNumber(current_rss));
+    result->putDirectOffset(vm, 1, JSC::jsNumber(vm.heap.blockBytesAllocated()));
 
     // heap.size() loops through every cell...
     // TODO: add a binding for heap.sizeAfterLastCollection()
-    result->putDirectOffset(vm, 2, JSC::jsDoubleNumber(vm.heap.sizeAfterLastEdenCollection()));
+    result->putDirectOffset(vm, 2, JSC::jsNumber(vm.heap.sizeAfterLastEdenCollection()));
 
-    result->putDirectOffset(vm, 3, JSC::jsDoubleNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
+    result->putDirectOffset(vm, 3, JSC::jsNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
 
     // JSC won't count this number until vm.heap.addReference() is called.
     // That will only happen in cases like:
@@ -3223,7 +3221,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * glo
     // - new Uint8Array(42)
     // - Buffer.alloc(42)
     // - new Uint8Array(42).slice()
-    result->putDirectOffset(vm, 4, JSC::jsDoubleNumber(vm.heap.arrayBufferSize()));
+    result->putDirectOffset(vm, 4, JSC::jsNumber(vm.heap.arrayBufferSize()));
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
 }

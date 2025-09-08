@@ -510,25 +510,19 @@ pub fn handleUncaughtException(this: *Execution, user_data: describe2.BunTest.Re
     const sequence, const group = this.getCurrentAndValidExecutionSequence(user_data) orelse return .show_unhandled_error_between_tests;
     _ = group;
 
+    if (sequence.activeEntry(this) != sequence.test_entry) {
+        // executing hook
+        if (sequence.result == .pending) sequence.result = .fail;
+        return .show_handled_error;
+    }
+
     return switch (sequence.entryMode()) {
         .failing => {
-            if (sequence.result == .pending) {
-                if (sequence.activeEntry(this) == sequence.test_entry) {
-                    sequence.result = .pass; // executing test() callback
-                } else {
-                    sequence.result = .fail; // executing hook
-                }
-            }
+            if (sequence.result == .pending) sequence.result = .pass; // executing test() callback
             return .hide_error; // failing tests prevent the error from being displayed
         },
         .todo => {
-            if (sequence.result == .pending) {
-                if (sequence.activeEntry(this) == sequence.test_entry) {
-                    sequence.result = .todo; // executing test() callback
-                } else {
-                    sequence.result = .fail; // executing hook
-                }
-            }
+            if (sequence.result == .pending) sequence.result = .todo; // executing test() callback
             return .show_handled_error; // todo tests with --todo will still display the error
         },
         else => {

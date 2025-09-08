@@ -1,13 +1,13 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("minify preserves newline type in template literals", async () => {
   using dir = tempDir("test-crlf-minify", {
-    "input.js": 
-      'function test() {\n' +
-      '  return "line1\\r\\nline2";\n' +  // Regular string literal with escape sequences
-      '}\n' +
-      'export default test();\n'
+    "input.js":
+      "function test() {\n" +
+      '  return "line1\\r\\nline2";\n' + // Regular string literal with escape sequences
+      "}\n" +
+      "export default test();\n",
   });
 
   const inputFile = `${dir}/input.js`;
@@ -20,21 +20,17 @@ test("minify preserves newline type in template literals", async () => {
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
-  
+
   // Read the minified output
   const minified = await Bun.file(outputFile).text();
-  
+
   // The minified output should NOT convert string literals to template literals
   // when they contain escape sequences like \r\n
   expect(minified).toContain('"line1\\r\\nline2"');
-  
+
   // Run the minified code to ensure it produces the correct output
   const module = await import(outputFile);
   expect(module.default).toBe("line1\r\nline2");
@@ -52,7 +48,7 @@ test("minify typescript preserves line endings", async () => {
         });
         return result.outputText;
       }
-    `
+    `,
   });
 
   const inputFile = `${dir}/typescript-test.js`;
@@ -67,7 +63,7 @@ test("minify typescript preserves line endings", async () => {
 
   const [exitCode] = await Promise.all([proc.exited]);
   expect(exitCode).toBe(0);
-  
+
   // Ensure the minified code is valid
   const module = await import(outputFile);
   expect(module.transpileTest).toBeDefined();

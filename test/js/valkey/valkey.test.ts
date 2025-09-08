@@ -1,5 +1,5 @@
 import { randomUUIDv7, RedisClient, sleep } from "bun";
-import { beforeEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
   ConnectionType,
   createClient,
@@ -244,7 +244,9 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       await redis.subscribe(testChannel, () => {});
 
-      expect(() => redis.set(testKey, testValue)).toThrow("RedisClient.prototype.set cannot be called while in subscriber mode");
+      expect(() => redis.set(testKey, testValue)).toThrow(
+        "RedisClient.prototype.set cannot be called while in subscriber mode",
+      );
 
       // Clean up subscription
       await redis.unsubscribe(testChannel);
@@ -503,7 +505,9 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       await redis.subscribe(channel, () => {});
 
       // Should fail in subscription mode
-      expect(() => redis.set(testKey, testValue)).toThrow("RedisClient.prototype.set cannot be called while in subscriber mode.");
+      expect(() => redis.set(testKey, testValue)).toThrow(
+        "RedisClient.prototype.set cannot be called while in subscriber mode.",
+      );
 
       // Unsubscribe from all channels
       await redis.unsubscribe(channel);

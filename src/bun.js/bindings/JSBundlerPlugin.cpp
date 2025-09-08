@@ -103,7 +103,7 @@ static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& li
 bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const BunString* namespaceStr, const BunString* path, bool isOnLoad)
 {
     auto pathString = path->toWTFString(BunString::ZeroCopy);
-    
+
     // Check virtual modules for both onLoad and onResolve
     if (this->virtualModules && this->virtualModules->contains(pathString)) {
         return true;
@@ -126,7 +126,7 @@ JSC::JSObject* BundlerPlugin::getVirtualModule(const String& path)
     if (!virtualModules) {
         return nullptr;
     }
-    
+
     auto it = virtualModules->find(path);
     if (it != virtualModules->end()) {
         unsigned index = it->value;
@@ -142,7 +142,7 @@ void BundlerPlugin::addVirtualModule(JSC::VM& vm, JSC::JSCell* owner, const Stri
     if (!virtualModules) {
         virtualModules = new VirtualModuleMap();
     }
-    
+
     unsigned index = virtualModulesList.list().size();
     virtualModulesList.append(vm, owner, moduleFunction);
     virtualModules->set(path, index);
@@ -774,7 +774,7 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
 extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)
 {
     plugin->plugin.tombstone();
-    
+
     // Clear virtual modules when tombstoning
     if (plugin->plugin.virtualModules) {
         plugin->plugin.virtualModules->clear();

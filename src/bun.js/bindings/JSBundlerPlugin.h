@@ -21,7 +21,7 @@ using namespace JSC;
 class BundlerPlugin final {
 public:
     using VirtualModuleMap = WTF::UncheckedKeyHashMap<String, unsigned>;
-    
+
     /// In native plugins, the regular expression could be called concurrently on multiple threads.
     /// Therefore, we need a mutex to synchronize access.
     class FilterRegExp {
@@ -136,7 +136,8 @@ public:
         this->config = config;
     }
 
-    ~BundlerPlugin() {
+    ~BundlerPlugin()
+    {
         if (virtualModules) {
             delete virtualModules;
         }

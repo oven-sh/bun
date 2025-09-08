@@ -1162,7 +1162,6 @@ pub const JSBundler = struct {
             return JSBundlerPlugin__anyMatches(this, &namespace_string, &path_string, is_onLoad);
         }
 
-
         pub fn matchOnLoad(
             this: *Plugin,
             path: []const u8,

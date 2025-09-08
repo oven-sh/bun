@@ -422,7 +422,7 @@ describe("Bun.build", () => {
         },
       ],
     });
-    
+
     expect(result.success).toBe(true);
   });
 

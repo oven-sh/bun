@@ -159,6 +159,9 @@ export async function render(
 
     // Buffer the entire response and return it all at once
     const htmlStream = renderToHtml(rscPayload, meta.modules, signal);
+    const result = await htmlStream.bytes();
+
+    /*
     const chunks: Uint8Array[] = [];
     const reader = htmlStream.getReader();
 
@@ -194,6 +197,7 @@ export async function render(
       result.set(chunk, offset);
       offset += chunk.length;
     }
+    */
 
     const opts = als?.getStore()?.responseOptions ?? { headers: {} };
     const { headers, ...response_options } = opts;

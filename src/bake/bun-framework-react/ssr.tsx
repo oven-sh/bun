@@ -162,7 +162,7 @@ class RscInjectionStream extends EventEmitter {
 
     const { resolve, promise, reject } = Promise.withResolvers<void>();
     this.finished = promise;
-    this.finalize = resolve;
+    this.finalize = x => (controller.close(), resolve(x));
     this.reject = reject;
 
     rscPayload.on("data", this.writeRscData.bind(this));

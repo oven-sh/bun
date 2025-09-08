@@ -88,7 +88,7 @@ pub const KnownGlobal = enum {
 
                 // new Array(1, 2, 3) -> [1, 2, 3]
                 // But NOT new Array(3) which creates an array with 3 empty slots
-                if (n > 1 or (n == 1 and e.args.ptr[0].data != .e_number)) {
+                if (n > 1 or (n == 1 and e.args.ptr[0].knownPrimitive() != .number)) {
                     var array = E.Array{};
                     array.items = e.args;
                     return js_ast.Expr.init(E.Array, array, loc);

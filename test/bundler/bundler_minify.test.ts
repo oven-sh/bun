@@ -862,6 +862,13 @@ describe("bundler", () => {
         capture(new Array(3));
         capture(new Array(1, 2, 3));
         
+        // Test Array with non-numeric single arguments (should convert to literal)
+        capture(new Array("string"));
+        capture(new Array(true));
+        capture(new Array(null));
+        capture(new Array(undefined));
+        capture(new Array({}));
+        
         // Test Object constructor
         capture(new Object());
         capture(new Object(null));
@@ -894,6 +901,21 @@ describe("bundler", () => {
   2,
   3
 ]`, // new Array(1, 2, 3) -> [1, 2, 3]
+      `[
+  "string"
+]`, // new Array("string") -> ["string"]
+      `[
+  !0
+]`, // new Array(true) -> [true] (minified to !0)
+      `[
+  null
+]`, // new Array(null) -> [null]
+      `[
+  void 0
+]`, // new Array(undefined) -> [void 0]
+      `[
+  {}
+]`, // new Array({}) -> [{}]
       "{}", // new Object() -> {}
       "{}", // new Object(null) -> {}
       "{ a: 1 }", // new Object({ a: 1 }) -> { a: 1 }
@@ -922,6 +944,12 @@ describe("bundler", () => {
         capture(JSON.stringify(a1) === JSON.stringify(a2));
         capture(a1.constructor === a2.constructor);
         
+        // Test sparse array semantics - new Array(5) creates sparse array
+        const sparse = new Array(5);
+        capture(sparse.length === 5);
+        capture(0 in sparse === false); // No element at index 0
+        capture(JSON.stringify(sparse) === "[null,null,null,null,null]");
+        
         // Test Object semantics
         const o1 = new Object();
         const o2 = Object();
@@ -945,6 +973,9 @@ describe("bundler", () => {
       "val",
       "JSON.stringify(a1) === JSON.stringify(a2)",
       "a1.constructor === a2.constructor",
+      "sparse.length === 5",
+      "0 in sparse === !1",
+      'JSON.stringify(sparse) === "[null,null,null,null,null]"',
       "typeof o1 === typeof o2",
       "o1.constructor === o2.constructor",
       "typeof f1 === typeof f2",
@@ -955,7 +986,7 @@ describe("bundler", () => {
     minifySyntax: true,
     target: "bun",
     run: {
-      stdout: "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue",
+      stdout: "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue",
     },
   });
 

@@ -7,7 +7,7 @@
       "bindgen": ["./codegen/bindgen-lib.ts"]
     }
   },
-  "include": ["**/*.ts", "**/*.tsx"],
+  "include": ["**/*.ts", "**/*.tsx", "../packages/bun-framework-react/bake.private.d.ts"],
   // separate projects have extra settings that only apply in those scopes
   "exclude": ["js", "bake"]
 }

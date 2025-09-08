@@ -35,7 +35,7 @@ interface Config {
  * Removed using --drop=ASSERT in releases.
  */
 declare namespace DEBUG {
-  declare function ASSERT(condition: any, message?: string): asserts condition;
+  function ASSERT(condition: unknown, message?: string): asserts condition;
 }
 
 /** All modules for the initial bundle. */
@@ -45,13 +45,13 @@ declare type UnloadedESM = [
   deps: EncodedDependencyArray,
   exportKeys: string[],
   starImports: Id[],
-  load: (mod: import("./hmr-module").HMRModule) => Promise<void>,
+  load: (mod: import("../../src/bake/hmr-module.ts").HMRModule) => Promise<void>,
   isAsync: boolean,
 ];
 declare type EncodedDependencyArray = (string | number)[];
 declare type UnloadedCommonJS = (
-  hmr: import("./hmr-module").HMRModule,
-  module: import("./hmr-module").HMRModule["cjs"],
+  hmr: import("../../src/bake/hmr-module.ts").HMRModule,
+  module: import("../../src/bake/hmr-module.ts").HMRModule["cjs"],
   exports: unknown,
 ) => unknown;
 declare type CommonJSModule = {
@@ -88,10 +88,10 @@ declare module "react-server-dom-bun/client.browser" {
 }
 
 declare module "react-server-dom-bun/client.node.unbundled.js" {
-  import type { ReactClientManifest } from "bun:app/server";
+  import type { ServerManifest } from "bun:app/server";
   import type { Readable } from "node:stream";
   export interface Manifest {
-    moduleMap: ReactClientManifest;
+    moduleMap: ServerManifest;
     moduleLoading?: ModuleLoading;
   }
   export interface ModuleLoading {
@@ -107,7 +107,7 @@ declare module "react-server-dom-bun/client.node.unbundled.js" {
 }
 
 declare module "react-server-dom-bun/server.node.unbundled.js" {
-  import type { ReactServerManifest } from "bun:app/server";
+  import type { ServerManifest } from "bun:app/server";
   import type { ReactElement } from "react";
 
   export interface PipeableStream<T> {
@@ -118,7 +118,7 @@ declare module "react-server-dom-bun/server.node.unbundled.js" {
 
   export function renderToPipeableStream<T = any>(
     model: ReactElement,
-    webpackMap: ReactServerManifest,
+    webpackMap: ServerManifest,
     options?: RenderToPipeableStreamOptions,
   ): PipeableStream<T>;
 

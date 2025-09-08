@@ -5,6 +5,7 @@ import { ssrManifest } from "bun:app/server";
 import { EventEmitter } from "node:events";
 import type { Readable } from "node:stream";
 import * as React from "react";
+import type { RenderToPipeableStreamOptions } from "react-dom/server";
 import { renderToPipeableStream } from "react-dom/server.node";
 import { createFromNodeStream, type Manifest } from "react-server-dom-bun/client.node.unbundled.js";
 import type { MiniAbortSignal } from "./server.tsx";
@@ -46,7 +47,7 @@ export function renderToHtml(
     type: "direct",
     pull(controller) {
       // `createFromNodeStream` turns the RSC payload into a React component.
-      const promise = createFromNodeStream(rscPayload, {
+      const promise: Promise<React.ReactNode> = createFromNodeStream(rscPayload, {
         // React takes in a manifest mapping client-side assets
         // to the imports needed for server-side rendering.
         moduleMap: ssrManifest,
@@ -65,7 +66,7 @@ export function renderToHtml(
 
       // `renderToPipeableStream` is what actually generates HTML.
       // Here is where React is told what script tags to inject.
-      let pipe: (stream: any) => void;
+      let pipe: (stream: NodeJS.WritableStream) => void;
       ({ pipe, abort } = renderToPipeableStream(<Root />, {
         bootstrapModules,
         onError(error) {
@@ -106,16 +107,21 @@ export function renderToHtml(
 
 // Static builds can not stream suspense boundaries as they finish, but instead
 // produce a single HTML blob. The approach is otherwise similar to `renderToHtml`.
-export function renderToStaticHtml(rscPayload: Readable, bootstrapModules: readonly string[]): Promise<Blob> {
+export function renderToStaticHtml(
+  rscPayload: Readable,
+  bootstrapModules: NonNullable<RenderToPipeableStreamOptions["bootstrapModules"]>,
+): Promise<Blob> {
   const stream = new StaticRscInjectionStream(rscPayload);
-  const promise = createFromNodeStream(rscPayload, createFromNodeStreamOptions);
-  const Root = () => React.use(promise);
+  const promise: Promise<React.ReactNode> = createFromNodeStream(rscPayload, createFromNodeStreamOptions);
+  const Root: React.JSXElementConstructor<{}> = () => React.use(promise);
+
   const { pipe } = renderToPipeableStream(<Root />, {
     bootstrapModules,
     // Only begin flowing HTML once all of it is ready. This tells React
     // to not emit the flight chunks, just the entire HTML.
     onAllReady: () => pipe(stream),
   });
+
   return stream.result;
 }
 
@@ -139,7 +145,7 @@ const enum RscState {
   Done,
 }
 
-class RscInjectionStream extends EventEmitter {
+class RscInjectionStream extends EventEmitter implements NodeJS.WritableStream {
   controller: ReadableStreamDirectController;
 
   html: HtmlState = HtmlState.Flowing;

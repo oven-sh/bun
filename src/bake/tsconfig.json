@@ -9,6 +9,12 @@
     "jsx": "react-jsx",
     "types": ["react/experimental"]
   },
-  "include": ["**/*.ts", "**/*.tsx", "../runtime.js", "../runtime.bun.js"],
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "../runtime.js",
+    "../runtime.bun.js",
+    "../../packages/bun-framework-react/bake.private.d.ts"
+  ],
   "references": [{ "path": "../../packages/bun-types" }]
 }

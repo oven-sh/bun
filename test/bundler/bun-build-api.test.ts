@@ -402,27 +402,28 @@ describe("Bun.build", () => {
     expect(x.logs[0].position).toBeTruthy();
   });
 
-  test("module() throws error", async () => {
-    expect(() =>
-      Bun.build({
-        entrypoints: [join(import.meta.dir, "./fixtures/trivial/bundle-ws.ts")],
-        plugins: [
-          {
-            name: "test",
-            setup: b => {
-              b.module("ad", () => {
-                return {
-                  exports: {
-                    hello: "world",
-                  },
-                  loader: "object",
-                };
-              });
-            },
+  test("module() is now supported", async () => {
+    // module() is now implemented and should not throw
+    const result = await Bun.build({
+      entrypoints: [join(import.meta.dir, "./fixtures/trivial/bundle-ws.ts")],
+      plugins: [
+        {
+          name: "test",
+          setup: b => {
+            // Verify module() exists and can be called
+            expect(typeof b.module).toBe("function");
+            b.module("test-virtual-module", () => {
+              return {
+                contents: "export default 'hello world';",
+                loader: "js",
+              };
+            });
           },
-        ],
-      }),
-    ).toThrow();
+        },
+      ],
+    });
+    
+    expect(result.success).toBe(true);
   });
 
   test("non-object plugins throw invalid argument errors", () => {

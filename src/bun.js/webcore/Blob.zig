@@ -2159,10 +2159,6 @@ pub fn getFormData(
 }
 
 fn getExistsSync(this: *Blob) jsc.JSValue {
-    if (this.size == Blob.max_size) {
-        this.resolveSize();
-    }
-
     // If there's no store that means it's empty and we just return true
     // it will not error to return an empty Blob
     const store = this.store orelse return .true;
@@ -2172,11 +2168,37 @@ fn getExistsSync(this: *Blob) jsc.JSValue {
         return .true;
     }
 
-    // We say regular files and pipes exist.
-    // This is mostly meant for "Can we use this in new Response(file)?"
-    return JSValue.jsBoolean(
-        bun.isRegularFile(store.data.file.mode) or bun.sys.S.ISFIFO(store.data.file.mode),
-    );
+    // For files, always do a fresh stat to ensure we return current state
+    // This matches user expectations that exists() reflects the current file system
+    if (store.data == .file) {
+        if (store.data.file.pathlike == .path) {
+            var buffer: bun.PathBuffer = undefined;
+            switch (bun.sys.stat(store.data.file.pathlike.path.sliceZ(&buffer))) {
+                .result => |stat| {
+                    // We say regular files and pipes exist.
+                    // This is mostly meant for "Can we use this in new Response(file)?"
+                    return JSValue.jsBoolean(
+                        bun.isRegularFile(stat.mode) or bun.sys.S.ISFIFO(stat.mode),
+                    );
+                },
+                // File doesn't exist
+                else => return .false,
+            }
+        } else if (store.data.file.pathlike == .fd) {
+            switch (bun.sys.fstat(store.data.file.pathlike.fd)) {
+                .result => |stat| {
+                    return JSValue.jsBoolean(
+                        bun.isRegularFile(stat.mode) or bun.sys.S.ISFIFO(stat.mode),
+                    );
+                },
+                // File descriptor is invalid or closed
+                else => return .false,
+            }
+        }
+    }
+
+    // Shouldn't reach here, but return false as safe default
+    return .false;
 }
 
 pub fn isS3(this: *const Blob) bool {

@@ -1,6 +1,6 @@
 // This file is the entrypoint to the hot-module-reloading runtime.
 // On the server, communication is established with `server_exports`.
-import type { Bake } from "bun";
+import type * as Bake from "bun:app";
 import "./debug";
 import { loadExports, replaceModules, serverManifest, ssrManifest } from "./hmr-module";
 // import { AsyncLocalStorage } from "node:async_hooks";
@@ -76,11 +76,15 @@ server_exports = {
 
     const [pageModule, ...layouts] = await Promise.all(routeModules.map(loadExports));
 
+    if (!pageModule) {
+      throw new Error("Page module is missing for path: " + req.url);
+    }
+
     let requestWithCookies = req;
 
     let storeValue: RequestContext = {
       responseOptions: {},
-      streaming: pageModule.streaming ?? false,
+      streaming: pageModule?.streaming ?? false,
     };
 
     try {
@@ -97,7 +101,7 @@ server_exports = {
             modulepreload: [],
             params,
             // Pass request in metadata when mode is 'ssr'
-            request: pageModule.mode === "ssr" ? requestWithCookies : undefined,
+            request: pageModule?.mode === "ssr" ? requestWithCookies : undefined,
           },
           responseOptionsALS,
         );

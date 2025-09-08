@@ -1,12 +1,12 @@
-import type { Bake } from "bun";
 import { renderToHtml, renderToStaticHtml } from "bun-framework-react/ssr.tsx" with { bunBakeGraph: "ssr" };
+import * as Bake from "bun:app";
 import { serverManifest } from "bun:app/server";
 import type { AsyncLocalStorage } from "node:async_hooks";
 import { PassThrough } from "node:stream";
 import { renderToPipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
 import type { RequestContext } from "../../src/bake/hmr-runtime-server.ts";
 
-function assertReactComponent(Component: any) {
+function assertReactComponent(Component: unknown): asserts Component is React.JSXElementConstructor<unknown> {
   if (typeof Component !== "function") {
     console.log("Expected a React component", Component, typeof Component);
     throw new Error("Expected a React component");
@@ -38,7 +38,12 @@ function getPage(meta: Bake.RouteMetadata & { request?: Request }, styles: reado
 }
 
 function component(mod: any, params: Record<string, string | string[]> | null, request?: Request) {
+  if (!mod || !mod.default) {
+    throw new Error("Pages must have a default export that is a React component");
+  }
+
   const Page = mod.default;
+
   let props = {};
   if (import.meta.env.DEV) assertReactComponent(Page);
 
@@ -76,7 +81,7 @@ export async function render(
   const skipSSR = request.headers.get("Accept")?.includes("text/x-component");
 
   // Check if the page module has a streaming export, default to false
-  const streaming = meta.pageModule.streaming ?? false;
+  const streaming = meta.pageModule?.streaming ?? false;
 
   // Do not render <link> tags if the request is skipping SSR.
   const page = getPage(meta, skipSSR ? [] : meta.styles);

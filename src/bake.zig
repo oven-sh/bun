@@ -936,13 +936,13 @@ pub fn addImportMetaDefines(
 }
 
 pub const server_virtual_source: bun.logger.Source = .{
-    .path = bun.fs.Path.initForKitBuiltIn("bun", "bake/server"),
+    .path = bun.fs.Path.initForKitBuiltIn("bun", "app/server"),
     .contents = "", // Virtual
     .index = bun.ast.Index.bake_server_data,
 };
 
 pub const client_virtual_source: bun.logger.Source = .{
-    .path = bun.fs.Path.initForKitBuiltIn("bun", "bake/client"),
+    .path = bun.fs.Path.initForKitBuiltIn("bun", "app/client"),
     .contents = "", // Virtual
     .index = bun.ast.Index.bake_client_data,
 };

@@ -733,6 +733,10 @@ Whether to enable minification. Default `false`.
 When targeting `bun`, identifiers will be minified by default.
 {% /callout %}
 
+{% callout %}
+When `minify.syntax` is enabled, unused function and class expression names are removed unless `minify.keepNames` is set to `true` or `--keep-names` flag is used.
+{% /callout %}
+
 To enable all minification options:
 
 {% codetabs group="a" %}
@@ -763,12 +767,16 @@ await Bun.build({
     whitespace: true,
     identifiers: true,
     syntax: true,
+    keepNames: false, // default
   },
 })
 ```
 
 ```bash#CLI
 $ bun build ./index.tsx --outdir ./out --minify-whitespace --minify-identifiers --minify-syntax
+
+# To preserve function and class names during minification:
+$ bun build ./index.tsx --outdir ./out --minify --keep-names
 ```
 
 {% /codetabs %}
@@ -1553,6 +1561,7 @@ interface BuildConfig {
         whitespace?: boolean;
         syntax?: boolean;
         identifiers?: boolean;
+        keepNames?: boolean;
       };
   /**
    * Ignore dead code elimination/tree-shaking annotations such as @__PURE__ and package.json

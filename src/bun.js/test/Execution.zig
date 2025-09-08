@@ -143,6 +143,9 @@ pub const Result = enum {
             .pending => pending_is == .pending_is_pass,
         };
     }
+    pub fn isFail(this: Result) bool {
+        return !this.isPass(.pending_is_pass);
+    }
 
     fn switchPassAndFail(this: Result, pass: Result, failure: Result) Result {
         switch (this) {
@@ -398,7 +401,13 @@ fn advanceSequence(this: *Execution, sequence: *ExecutionSequence, group: *Concu
         bun.debugAssert(false); // sequence is executing with no active entry?
     }
     sequence.executing = false;
-    sequence.index += 1;
+    if (sequence.result.isFail()) {
+        // < first afterEach ? skip to first afterEach
+        // else ? skip to end
+        @panic("TODO: skip to first afterEach or end");
+    } else {
+        sequence.index += 1;
+    }
 
     if (sequence.activeEntry(this) == null) {
         // just completed the sequence

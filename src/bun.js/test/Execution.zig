@@ -202,17 +202,35 @@ pub fn step(this: *Execution, globalThis: *jsc.JSGlobalObject, data: describe2.B
     // TODO: for removing n²:
     switch (data) {
         .start => {
+            return try this.stepGroup(globalThis, bun.timespec.now());
+        },
+        else => {
             // determine the active sequence,group
             // advance the sequence
             // step the sequence
             // if the group is complete, step the group
-        },
-        else => {
-            // step the group
+
+            const sequence, const group = this.getCurrentAndValidExecutionSequence(data) orelse {
+                groupLog.log("runOneCompleted: the data is outdated, invalid, or did not know the sequence", .{});
+                return .{ .waiting = .{} };
+            };
+            const sequence_index = data.execution.entry_data.?.sequence_index;
+
+            bun.assert(sequence.index < sequence.entries(this).len);
+            this.advanceSequence(sequence, group);
+
+            const now = bun.timespec.now();
+            const sequence_result = try this.stepSequence(globalThis, sequence, group, sequence_index, now);
+            switch (sequence_result) {
+                .done => {},
+                .execute => |exec| return .{ .waiting = .{ .timeout = exec.timeout } },
+            }
+            if (group.remaining_incomplete_entries == 0) {
+                return try this.stepGroup(globalThis, now);
+            }
+            return .{ .waiting = .{} };
         },
     }
-    if (data != .start) try this.runOneCompleted(globalThis, null, data);
-    return try this.stepGroup(globalThis, bun.timespec.now());
 }
 
 pub fn stepGroup(this: *Execution, globalThis: *jsc.JSGlobalObject, now: bun.timespec) bun.JSError!describe2.StepResult {
@@ -333,22 +351,6 @@ fn stepSequenceOne(this: *Execution, globalThis: *jsc.JSGlobalObject, sequence: 
 pub fn activeGroup(this: *Execution) ?*ConcurrentGroup {
     if (this.group_index >= this.groups.len) return null;
     return &this.groups[this.group_index];
-}
-pub fn runOneCompleted(this: *Execution, _: *jsc.JSGlobalObject, _: ?jsc.JSValue, data: describe2.BunTest.RefDataValue) bun.JSError!void {
-    groupLog.begin(@src());
-    defer groupLog.end();
-
-    groupLog.log("runOneCompleted", .{});
-
-    bun.assert(this.group_index < this.groups.len);
-
-    const sequence, const group = this.getCurrentAndValidExecutionSequence(data) orelse {
-        groupLog.log("runOneCompleted: the data is outdated, invalid, or did not know the sequence", .{});
-        return;
-    };
-
-    bun.assert(sequence.index < sequence.entries(this).len);
-    this.advanceSequence(sequence, group);
 }
 fn getCurrentAndValidExecutionSequence(this: *Execution, data: describe2.BunTest.RefDataValue) ?struct { *ExecutionSequence, *ConcurrentGroup } {
     groupLog.begin(@src());

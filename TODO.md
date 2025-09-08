@@ -334,12 +334,18 @@ Exited with code [1]
 - [ ] rename sequence.index to sequence.active_index because it is misleading.
 - [ ] try using a linked list rather than arraylist for describe/test children, see how it affects performance
 - [ ] consider modifying the junit reporter to print the whole describe tree rather than exploring the execution tree (if that's what it's doing? either way it needs to include tests that are filtered out)
-- [ ] concurrent tests have an n^2 problem because each time a test completes it needs to loop over every test to advance.
+- [x] concurrent tests have an n^2 problem because each time a test completes it needs to loop over every test to advance.
   - this shouldn't be necessary, it should be possible to step the current execution sequence and only check if we need to advance if the current sequence is done.
   - or even keep a number of how many sequences are complete and only advance once that number is equal to the number of sequences
   - if we have 1,000,000 concurrent tests, there is no need to be looping over all 1,000,000 every time any of them completes
   - with the current n^2 behaviour, it is 2.13x slower to run 20,000 empty async concurrent tests than 1,000,000 empty async regular tests. that's 50x less tests taking twice as long to run.
   - now that we have the new thing this can be fixed. fix it.
+  - this is fixed now. running 1,000,000 empty async concurrent tests is now 1.08x slower than 1,000,000 empty async regular tests
+    - empty noasync
+    - 1.17x slower: empty async
+    - 1.25x slower: empty concurrent
+    - 1.34x slower: 1.2.20 empty noasync
+    - 1.38x slower: 1.2.0 empty async
 - [ ] consider a memory pool for describescope/executionentry. test if it improves performance.
 - [ ] consider making RefDataValue methods return the reason for failure rather than ?value. that way we can improve error messages. the reason could be a string or it could be a defined error set
 - [ ] expect_call_count/expect_assertions is confusing. rename to `expect_calls`, `assert_expect_calls`. or something.

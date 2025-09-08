@@ -604,20 +604,20 @@ extern "C" JSC::EncodedJSValue Bun__createJSStatsObject(Zig::GlobalObject* globa
 {
     auto& vm = globalObject->vm();
 
-    JSC::JSValue js_dev = JSC::jsDoubleNumber(dev);
-    JSC::JSValue js_ino = JSC::jsDoubleNumber(ino);
-    JSC::JSValue js_mode = JSC::jsDoubleNumber(mode);
-    JSC::JSValue js_nlink = JSC::jsDoubleNumber(nlink);
-    JSC::JSValue js_uid = JSC::jsDoubleNumber(uid);
-    JSC::JSValue js_gid = JSC::jsDoubleNumber(gid);
-    JSC::JSValue js_rdev = JSC::jsDoubleNumber(rdev);
-    JSC::JSValue js_size = JSC::jsDoubleNumber(size);
-    JSC::JSValue js_blksize = JSC::jsDoubleNumber(blksize);
-    JSC::JSValue js_blocks = JSC::jsDoubleNumber(blocks);
-    JSC::JSValue js_atimeMs = JSC::jsDoubleNumber(atimeMs);
-    JSC::JSValue js_mtimeMs = JSC::jsDoubleNumber(mtimeMs);
-    JSC::JSValue js_ctimeMs = JSC::jsDoubleNumber(ctimeMs);
-    JSC::JSValue js_birthtimeMs = JSC::jsDoubleNumber(birthtimeMs);
+    JSC::JSValue js_dev = JSC::jsNumber(dev);
+    JSC::JSValue js_ino = JSC::jsNumber(ino);
+    JSC::JSValue js_mode = JSC::jsNumber(mode);
+    JSC::JSValue js_nlink = JSC::jsNumber(nlink);
+    JSC::JSValue js_uid = JSC::jsNumber(uid);
+    JSC::JSValue js_gid = JSC::jsNumber(gid);
+    JSC::JSValue js_rdev = JSC::jsNumber(rdev);
+    JSC::JSValue js_size = JSC::jsNumber(size);
+    JSC::JSValue js_blksize = JSC::jsNumber(blksize);
+    JSC::JSValue js_blocks = JSC::jsNumber(blocks);
+    JSC::JSValue js_atimeMs = JSC::jsNumber(atimeMs);
+    JSC::JSValue js_mtimeMs = JSC::jsNumber(mtimeMs);
+    JSC::JSValue js_ctimeMs = JSC::jsNumber(ctimeMs);
+    JSC::JSValue js_birthtimeMs = JSC::jsNumber(birthtimeMs);
 
     auto* structure = getStructure<false>(globalObject);
     auto* object = JSC::JSFinalObject::create(vm, structure);

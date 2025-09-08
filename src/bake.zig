@@ -282,17 +282,19 @@ pub const Framework = struct {
                 "bun-framework-react/server.tsx",
                 "bun-framework-react/ssr.tsx",
             }, if (Environment.codegen_embed) &.{
-                .{ .code = @embedFile("./bake/bun-framework-react/client.tsx") },
-                .{ .code = @embedFile("./bake/bun-framework-react/server.tsx") },
-                .{ .code = @embedFile("./bake/bun-framework-react/ssr.tsx") },
+                .{ .code = @embedFile(bakeRelativePath ++ "/client.tsx") },
+                .{ .code = @embedFile(bakeRelativePath ++ "/server.tsx") },
+                .{ .code = @embedFile(bakeRelativePath ++ "/ssr.tsx") },
             } else &.{
                 // Cannot use .import because resolution must happen from the user's POV
-                .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/client.tsx") },
-                .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/server.tsx") },
-                .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/ssr.tsx") },
+                .{ .code = bun.runtimeEmbedFile(.src, bakeRelativePath ++ "/client.tsx") },
+                .{ .code = bun.runtimeEmbedFile(.src, bakeRelativePath ++ "/server.tsx") },
+                .{ .code = bun.runtimeEmbedFile(.src, bakeRelativePath ++ "/ssr.tsx") },
             }) catch bun.outOfMemory(),
         };
     }
+
+    const bakeRelativePath = "../packages/bun-framework-react";
 
     /// Default that requires no packages or configuration.
     /// - If `react-refresh` is installed, enable react fast refresh with it.

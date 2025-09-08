@@ -1862,6 +1862,11 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__createRangeError(message, code, global);
     }
 
+    extern fn JSC__JSValue__isStrictEqual(JSValue, JSValue, *JSGlobalObject) bool;
+    pub fn isStrictEqual(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__isStrictEqual, .{ this, other, global });
+    }
+
     extern fn JSC__JSValue__isSameValue(this: JSValue, other: JSValue, global: *JSGlobalObject) bool;
 
     /// Object.is()

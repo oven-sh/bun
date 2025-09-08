@@ -188,10 +188,10 @@ pub const StatsCommand = struct {
             .components = stats.javascript.components,
             .avg_size = 0,
         };
-        
+
         const ts_excluding_nm = stats.typescript; // TypeScript usually not in node_modules
         const tests_excluding_nm = stats.tests; // Tests are not in node_modules
-        
+
         // Language breakdown (excluding node_modules)
         if (js_excluding_nm.files > 0) {
             printRow("JavaScript", &js_excluding_nm);
@@ -199,7 +199,7 @@ pub const StatsCommand = struct {
         if (ts_excluding_nm.files > 0) {
             printRow("TypeScript", &ts_excluding_nm);
         }
-        
+
         // React Components (files with JSX/TSX that have components)
         if (stats.components > 0) {
             const react_stats = FileStats{
@@ -215,12 +215,12 @@ pub const StatsCommand = struct {
             };
             printRow("React Components", &react_stats);
         }
-        
+
         // Stylesheets
         if (stats.css.files > 0) {
             printRow("Stylesheets", &stats.css);
         }
-        
+
         // Module Systems (excluding node_modules)
         const cjs_excluding_nm = FileStats{
             .files = if (stats.commonjs.files > stats.node_modules.files / 2) stats.commonjs.files - stats.node_modules.files / 2 else stats.commonjs.files,
@@ -233,22 +233,22 @@ pub const StatsCommand = struct {
             .components = 0,
             .avg_size = 0,
         };
-        
+
         if (cjs_excluding_nm.files > 0) {
             printRow("CommonJS Modules", &cjs_excluding_nm);
         }
         if (stats.esmodules.files > 0) {
             printRow("ECMA Modules", &stats.esmodules);
         }
-        
+
         // Separator before summary sections
         Output.pretty("├{s:─<18}┼{s:─<7}┼{s:─<8}┼{s:─<7}┼{s:─<7}┼{s:─<5}┤\n", .{ "─", "─", "─", "─", "─", "─" });
-        
+
         // Dependencies
         if (stats.node_modules.files > 0) {
             printRow("node_modules", &stats.node_modules);
         }
-        
+
         // Your code (everything except node_modules and tests)
         const your_code = FileStats{
             .files = js_excluding_nm.files + ts_excluding_nm.files + stats.css.files + stats.json.files,
@@ -262,59 +262,59 @@ pub const StatsCommand = struct {
             .avg_size = 0,
         };
         printRow("Your Code", &your_code);
-        
+
         // Tests
         if (tests_excluding_nm.files > 0) {
             printRow("Tests", &tests_excluding_nm);
         }
-        
+
         // All code
         printRow("All Code", &stats.total);
-        
+
         Output.pretty("└{s:─<18}┴{s:─<7}┴{s:─<8}┴{s:─<7}┴{s:─<7}┴{s:─<5}┘\n", .{ "─", "─", "─", "─", "─", "─" });
 
         // Print interesting metrics
         Output.pretty("\n📊 Insights:\n", .{});
-        
+
         const code_loc = your_code.loc;
         const test_loc = tests_excluding_nm.loc;
-        
+
         // Test coverage
         if (code_loc > 0 and test_loc > 0) {
             const coverage = (@as(f64, @floatFromInt(test_loc)) / @as(f64, @floatFromInt(code_loc + test_loc))) * 100.0;
             Output.pretty("  • Test coverage: {d:.1}%\n", .{coverage});
         }
-        
+
         // TypeScript adoption
         if (ts_excluding_nm.files > 0 and js_excluding_nm.files > 0) {
             const ts_adoption = (@as(f64, @floatFromInt(ts_excluding_nm.files)) / @as(f64, @floatFromInt(ts_excluding_nm.files + js_excluding_nm.files))) * 100.0;
             Output.pretty("  • TypeScript: {d:.1}%\n", .{ts_adoption});
         }
-        
+
         // ES Modules adoption
         if (stats.esmodules.files > 0 and stats.commonjs.files > 0) {
             const esm_adoption = (@as(f64, @floatFromInt(stats.esmodules.files)) / @as(f64, @floatFromInt(stats.esmodules.files + stats.commonjs.files))) * 100.0;
             Output.pretty("  • ES Modules: {d:.1}%\n", .{esm_adoption});
         }
-        
+
         // Average file size
         if (your_code.files > 0) {
             const avg_size = @as(f64, @floatFromInt(your_code.loc)) / @as(f64, @floatFromInt(your_code.files));
             Output.pretty("  • Avg file size: {d:.0} LOC\n", .{avg_size});
         }
-        
+
         // Average function size
         if (your_code.functions > 0) {
             const avg_func_size = @as(f64, @floatFromInt(your_code.loc)) / @as(f64, @floatFromInt(your_code.functions));
             Output.pretty("  • Avg function: {d:.0} LOC\n", .{avg_func_size});
         }
-        
+
         // Dependency weight
         if (stats.node_modules.files > 0 and your_code.files > 0) {
             const dep_ratio = @as(f64, @floatFromInt(stats.node_modules.loc)) / @as(f64, @floatFromInt(your_code.loc));
             Output.pretty("  • Dependency weight: {d:.1}x your code\n", .{dep_ratio});
         }
-        
+
         // Complexity indicators
         if (your_code.files > 0) {
             const imports_per_file = @as(f64, @floatFromInt(your_code.imports)) / @as(f64, @floatFromInt(your_code.files));

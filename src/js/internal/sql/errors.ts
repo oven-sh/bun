@@ -102,8 +102,8 @@ class SQLiteError extends SQLError implements Bun.SQL.SQLiteError {
 
 export interface MySQLErrorOptions {
   code: string;
-  errno: number | undefined;
-  sqlState: string | undefined;
+  errno?: number | undefined;
+  sqlState?: string | undefined;
 }
 
 // oxlint-disable-next-line typescript-eslint(no-unsafe-declaration-merging)

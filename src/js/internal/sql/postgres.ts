@@ -126,7 +126,7 @@ export interface PostgresDotZig {
     password: string,
     databae: string,
     sslmode: SSLMode,
-    tls: Bun.TLSOptions | boolean | null, // boolean true => empty TLSOptions object `{}`, boolean false or null => nothing
+    tls: Bun.TLSOptions | boolean | null | Bun.BunFile, // boolean true => empty TLSOptions object `{}`, boolean false or null => nothing
     query: string,
     path: string,
     onConnected: (err: Error | null, connection: $ZigGeneratedClasses.PostgresSQLConnection) => void,

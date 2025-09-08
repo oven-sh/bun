@@ -7,7 +7,7 @@
 declare module "bun" {
   type Awaitable<T> = T | Promise<T>;
 
-  declare namespace Bake {
+  namespace Bake {
     interface Options {
       /**
        * Bun provides built-in support for using React as a framework by passing
@@ -19,6 +19,7 @@ declare module "bun" {
        * ```
        */
       framework: Framework | "react";
+
       // Note: To contribute to 'bun-framework-react', it can be run from this file:
       // https://github.com/oven-sh/bun/blob/main/src/bake/bun-framework-react/index.ts
       /**
@@ -28,13 +29,16 @@ declare module "bun" {
        * @default {}
        */
       bundlerOptions?: BundlerOptions | undefined;
+
       /**
        * These plugins are applied after `framework.plugins`
        */
       plugins?: BunPlugin[] | undefined;
     }
 
-    /** Bake only allows a subset of options from `Bun.build` */
+    /**
+     * Bake only allows a subset of options from `Bun.build`
+     */
     type BuildConfigSubset = Pick<
       BuildConfig,
       "conditions" | "define" | "loader" | "ignoreDCEAnnotations" | "drop"
@@ -69,22 +73,22 @@ declare module "bun" {
      */
     interface Framework {
       /**
-       * Customize the bundler options. Plugins in this array are merged
-       * with any plugins the user has.
+       * Customize the bundler options. Plugins in this array are merged with
+       * any plugins the user has.
        * @default {}
        */
       bundlerOptions?: BundlerOptions | undefined;
       /**
-       * The translation of files to routes is unopinionated and left
-       * to framework authors. This interface allows most flexibility
-       * between the already established conventions while allowing
-       * new ideas to be explored too.
+       * The translation of files to routes is unopinionated and left to
+       * framework authors. This interface allows most flexibility between the
+       * already established conventions while allowing new ideas to be explored
+       * too.
        * @default []
        */
       fileSystemRouterTypes?: FrameworkFileSystemRouterType[];
       /**
-       * A list of directories that should be served statically. If the directory
-       * does not exist in the user's project, it is ignored.
+       * A list of directories that should be served statically. If the
+       * directory does not exist in the user's project, it is ignored.
        *
        * Example: 'public' or 'static'
        *
@@ -103,8 +107,8 @@ declare module "bun" {
        */
       builtInModules?: BuiltInModule[] | undefined;
       /**
-       * Bun offers integration for React's Server Components with an
-       * interface that is generic enough to adapt to any framework.
+       * Bun offers integration for React's Server Components with an interface
+       * that is generic enough to adapt to any framework.
        * @default undefined
        */
       serverComponents?: ServerComponentsOptions | undefined;
@@ -115,7 +119,7 @@ declare module "bun" {
        */
       reactFastRefresh?: boolean | ReactFastRefreshOptions | undefined;
       /** Framework bundler plugins load before the user-provided ones. */
-      plugins?: BunPlugin[];
+      plugins?: BunPlugin[] | undefined;
 
       // /**
       //  * Called after the list of routes is updated. This can be used to
@@ -129,11 +133,11 @@ declare module "bun" {
     type BuiltInModule = { import: string; code: string } | { import: string; path: string };
 
     /**
-     * A high-level overview of what server components means exists
-     * in the React Docs: https://react.dev/reference/rsc/server-components
+     * A high-level overview of what server components means exists in the React
+     * Docs: https://react.dev/reference/rsc/server-components
      *
-     * When enabled, files with "use server" and "use client" directives will get
-     * special processing according to this object, in combination with the
+     * When enabled, files with "use server" and "use client" directives will
+     * get special processing according to this object, in combination with the
      * framework-specified entry points for server rendering and browser
      * interactivity.
      */
@@ -144,15 +148,14 @@ declare module "bun" {
        *
        * When set `true`, bundling "use client" components for SSR will be
        * placed in a separate bundling graph without the `react-server`
-       * condition. All imports that stem from here get re-bundled for
-       * this second graph, regardless if they actually differ via this
-       * condition.
+       * condition. All imports that stem from here get re-bundled for this
+       * second graph, regardless if they actually differ via this condition.
        *
-       * The built in framework config for React enables this flag so that server
-       * components and client components utilize their own versions of React,
-       * despite running in the same process. This facilitates different aspects
-       * of the server and client react runtimes, such as `async` components only
-       * being available on the server.
+       * The built in framework config for React enables this flag so that
+       * server components and client components utilize their own versions of
+       * React, despite running in the same process. This facilitates different
+       * aspects of the server and client react runtimes, such as `async`
+       * components only being available on the server.
        *
        * To cross from the server graph to the SSR graph, use the bun_bake_graph
        * import attribute:
@@ -166,9 +169,9 @@ declare module "bun" {
       /** Server components runtime for the server */
       serverRuntimeImportSource: ImportSource;
       /**
-       * When server code imports client code, a stub module is generated,
-       * where every export calls this export from `serverRuntimeImportSource`.
-       * This is used to implement client components on the server.
+       * When server code imports client code, a stub module is generated, where
+       * every export calls this export from `serverRuntimeImportSource`. This
+       * is used to implement client components on the server.
        *
        * When separateSSRGraph is enabled, the call looks like:
        *
@@ -225,12 +228,12 @@ declare module "bun" {
       /**
        * This import has four exports, mirroring "react-refresh/runtime":
        *
-       * `injectIntoGlobalHook(window): void`
-       * Called on first startup, before the user entrypoint.
+       * `injectIntoGlobalHook(window): void` Called on first startup, before
+       * the user entrypoint.
        *
-       * `register(component, uniqueId: string): void`
-       * Called on every function that starts with an uppercase letter. These
-       * may or may not be components, but they are always functions.
+       * `register(component, uniqueId: string): void` Called on every function
+       * that starts with an uppercase letter. These may or may not be
+       * components, but they are always functions.
        *
        * `createSignatureFunctionForTransform(): ReactRefreshSignatureFunction`
        * TODO: document. A passing no-op for this api is `return () => {}`
@@ -256,22 +259,24 @@ declare module "bun" {
        */
       prefix?: string | undefined;
       /**
-       * This file is the entrypoint of the server application. This module
-       * must `export default` a fetch function, which takes a request and the
+       * This file is the entrypoint of the server application. This module must
+       * `export default` a fetch function, which takes a request and the
        * bundled route module, and returns a response. See `ServerEntryPoint`
        *
        * When `serverComponents` is configured, this can access the component
-       * manifest using the special 'bun:bake/server' import:
+       * manifest using the special 'bun:app/server' import:
        *
-       *     import { serverManifest } from 'bun:bake/server'
+       *     import { serverManifest } from 'bun:app/server'
        */
       serverEntryPoint: ImportSource<ServerEntryPoint>;
+
       /**
-       * This file is the true entrypoint of the client application. If null,
-       * a client will not be bundled, and the route will not receive bundling
-       * for client-side interactivity.
+       * This file is the true entrypoint of the client application. If null, a
+       * client will not be bundled, and the route will not receive bundling for
+       * client-side interactivity.
        */
       clientEntryPoint?: ImportSource<ClientEntryPoint> | undefined;
+
       /**
        * Do not traverse into directories and files that start with an `_`.  Do
        * not index pages that start with an `_`. Does not prevent stuff like
@@ -279,28 +284,33 @@ declare module "bun" {
        * @default false
        */
       ignoreUnderscores?: boolean;
+
       /**
        * @default ["node_modules", ".git"]
        */
       ignoreDirs?: string[];
+
       /**
-       * Extensions to match on.
-       * '*' - any extension
+       * Extensions to match on. '*' - any extension
        * @default (set of all valid JavaScript/TypeScript extensions)
        */
       extensions?: string[] | "*";
+
       /**
-       * 'nextjs-app' builds routes out of directories with `page.tsx` and `layout.tsx`
-       * 'nextjs-pages' builds routes out of any `.tsx` file and layouts with `_layout.tsx`.
+       * 'nextjs-app' builds routes out of directories with `page.tsx` and
+       * `layout.tsx` 'nextjs-pages' builds routes out of any `.tsx` file and
+       * layouts with `_layout.tsx`.
        *
        * Eventually, an API will be added to add custom styles.
        */
       style: "nextjs-pages" | "nextjs-app-ui" | "nextjs-app-routes" | CustomFileSystemRouterFunction;
+
       /**
        * If true, this will track route layouts and provide them as an array during SSR.
        * @default false
        */
       layouts?: boolean | undefined;
+
       // /**
       //  * If true, layouts act as navigation endpoints. This can be used to
       //  * implement Remix.run's router design, where `hello._index` and `hello`
@@ -331,8 +341,8 @@ declare module "bun" {
         };
 
     /**
-     * Bun will call this function for every found file. This
-     * function classifies each file's role in the file system routing.
+     * Bun will call this function for every found file. This function
+     * classifies each file's role in the file system routing.
      */
     type CustomFileSystemRouterFunction = (candidatePath: string) => CustomFileSystemRouterResult;
 
@@ -341,8 +351,8 @@ declare module "bun" {
       | undefined
       | null
       /**
-       * Use this file as a route. Routes may nest, where a framework
-       * can use parent routes to implement layouts.
+       * Use this file as a route. Routes may nest, where a framework can use
+       * parent routes to implement layouts.
        */
       | {
           /**
@@ -356,8 +366,8 @@ declare module "bun" {
         };
 
     /**
-     * Will be resolved from the point of view of the framework user's project root
-     * Examples: `react-dom`, `./entry_point.tsx`, `/absolute/path.js`
+     * Will be resolved from the point of view of the framework user's project
+     * root Examples: `react-dom`, `./entry_point.tsx`, `/absolute/path.js`
      */
     type ImportSource<T = unknown> = string;
 
@@ -366,8 +376,8 @@ declare module "bun" {
        * Bun passes the route's module as an opaque argument `routeModule`. The
        * framework implementation decides and enforces the shape of the module.
        *
-       * A common pattern would be to enforce the object is
-       * `{ default: ReactComponent }`
+       * A common pattern would be to enforce the object is `{ default:
+       * ReactComponent }`
        */
       render: (request: Request, routeMetadata: RouteMetadata) => Awaitable<Response>;
       /**
@@ -376,8 +386,8 @@ declare module "bun" {
        * not named `staticRender` as it is invoked during a dynamic build to
        * allow deterministic routes to be prerendered.
        *
-       * Note that `import.meta.env.STATIC` will be inlined to true during
-       * a static build.
+       * Note that `import.meta.env.STATIC` will be inlined to true during a
+       * static build.
        */
       prerender?: (routeMetadata: RouteMetadata) => Awaitable<PrerenderResult | null>;
       // TODO: prerenderWithoutProps (for partial prerendering)
@@ -397,11 +407,11 @@ declare module "bun" {
        * "exhaustive" tells Bun that the list is complete. If it is not, a
        * static site cannot be generated as it would otherwise be missing
        * routes. A non-exhaustive list can speed up build times by only
-       * specifying a few important pages (such as 10 most recent), leaving
-       * the rest to be generated on-demand at runtime.
+       * specifying a few important pages (such as 10 most recent), leaving the
+       * rest to be generated on-demand at runtime.
        *
-       * To stream results, `getParams` may return an async iterator, which
-       * Bun will start rendering as more parameters are provided:
+       * To stream results, `getParams` may return an async iterator, which Bun
+       * will start rendering as more parameters are provided:
        *
        *     export async function* getParams(meta: Bake.ParamsMetadata) {
        *         yield { slug: await fetchSlug() };
@@ -410,9 +420,10 @@ declare module "bun" {
        *     }
        */
       getParams?: (paramsMetadata: ParamsMetadata) => Awaitable<GetParamIterator>;
+
       /**
-       * When a dynamic build uses static assets, Bun can map content types in the
-       * user's `Accept` header to the different static files.
+       * When a dynamic build uses static assets, Bun can map content types in
+       * the user's `Accept` header to the different static files.
        */
       contentTypeToStaticFile?: Record<string, string>;
     }
@@ -477,18 +488,24 @@ declare module "bun" {
        *     }
        */
       readonly layouts: ReadonlyArray<any>;
-      /** Received route params. `null` if the route does not take params */
+
+      /**
+       * Received route params. `null` if the route does not take params
+       */
       readonly params: null | Record<string, string | string[]>;
+
       /**
        * A list of js files that the route will need to be interactive.
        */
       readonly modules: ReadonlyArray<string>;
+
       /**
        * A list of js files that should be preloaded.
        *
        *   <link rel="modulepreload" href="..." />
        */
       readonly modulepreload: ReadonlyArray<string>;
+
       /**
        * A list of css files that the route will need to be styled.
        */
@@ -529,8 +546,10 @@ declare module "bun" {
   }
 }
 
-/** Available in server-side files only. */
-declare module "bun:bake/server" {
+/**
+ * Available in server-side files only
+ */
+declare module "bun:app/server" {
   // NOTE: The format of these manifests will likely be customizable in the future.
 
   /**
@@ -541,6 +560,7 @@ declare module "bun:bake/server" {
    * To perform SSR with client components, see `ssrManifest`
    */
   declare const serverManifest: ServerManifest;
+
   /**
    * Entries in this manifest map from client-side files to their respective SSR
    * bundles. They can be loaded by `await import()` or `require()`.
@@ -548,7 +568,7 @@ declare module "bun:bake/server" {
   declare const ssrManifest: SSRManifest;
 
   /** (insert teaser trailer) */
-  declare const actionManifest: never;
+  declare const actionManifest: null;
 
   declare interface ServerManifest {
     /**
@@ -566,12 +586,16 @@ declare module "bun:bake/server" {
      * Correlates but is not required to be the filename
      */
     id: string;
+
     /**
      * The `name` in ReactServerManifest
      * Correlates but is not required to be the export name
      */
     name: string;
-    /** Currently not implemented; always an empty array */
+
+    /**
+     * Currently not implemented; always an empty array
+     */
     chunks: [];
   }
 
@@ -591,17 +615,17 @@ declare module "bun:bake/server" {
   }
 }
 
-/** Available in client-side files. */
-declare module "bun:bake/client" {
+/**
+ * Available in client-side files.
+ */
+declare module "bun:app/client" {
   /**
    * Callback is invoked when server-side code is changed. This can be used to
    * fetch a non-html version of the updated page to perform a faster reload. If
    * not provided, the client will perform a hard reload.
    *
-   * Only one callback can be set. This function overwrites the previous one.
+   * Only one callback can be set. Calling this function will overwrite the
+   * previous callback, if set.
    */
   export function onServerSideReload(cb: () => void | Promise<void>): Promise<void>;
 }
-
-/** Available during development */
-declare module "bun:bake/dev" {}

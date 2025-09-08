@@ -3,7 +3,7 @@
   "compilerOptions": {
     "lib": ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
     "paths": {
-      "bun-framework-react/*": ["./bun-framework-react/*"],
+      "bun-framework-react/*": ["../../packages/bun-framework-react/*"],
       "bindgen": ["../codegen/bindgen-lib"]
     },
     "jsx": "react-jsx",

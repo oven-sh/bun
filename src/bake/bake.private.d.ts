@@ -88,7 +88,7 @@ declare module "react-server-dom-bun/client.browser" {
 }
 
 declare module "react-server-dom-bun/client.node.unbundled.js" {
-  import type { ReactClientManifest } from "bun:bake/server";
+  import type { ReactClientManifest } from "bun:app/server";
   import type { Readable } from "node:stream";
   export interface Manifest {
     moduleMap: ReactClientManifest;
@@ -107,7 +107,7 @@ declare module "react-server-dom-bun/client.node.unbundled.js" {
 }
 
 declare module "react-server-dom-bun/server.node.unbundled.js" {
-  import type { ReactServerManifest } from "bun:bake/server";
+  import type { ReactServerManifest } from "bun:app/server";
   import type { ReactElement } from "react";
 
   export interface PipeableStream<T> {

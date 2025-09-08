@@ -22,9 +22,9 @@ import { type SourceMapURL, derefMapping } from "#stack-trace";
 const registry = new Map<Id, HMRModule>();
 const registrySourceMapIds = new Map<string, SourceMapURL>();
 /** Server */
-export const serverManifest = {};
+export const serverManifest: Bun.App.ServerManifest = {};
 /** Server */
-export const ssrManifest = {};
+export const ssrManifest: Bun.App.SSRManifest = {};
 /** Client */
 export let onServerSideReload: (() => Promise<void>) | null = null;
 const eventHandlers: Record<HMREvent | string, HotEventHandler[] | undefined> = {};
@@ -170,19 +170,19 @@ export class HMRModule {
   // not destructed.
 
   accept(
-    arg1?: string | readonly string[] | HotAcceptFunction,
-    arg2?: HotAcceptFunction | HotArrayAcceptFunction | undefined,
+    specifiedOrAcceptFunctionOrFunctions?: string | readonly string[] | HotAcceptFunction,
+    acceptFunctionOrFunctions?: HotAcceptFunction | HotArrayAcceptFunction | undefined,
   ) {
-    if (arg2 == undefined) {
-      if (arg1 == undefined) {
+    if (acceptFunctionOrFunctions == undefined) {
+      if (specifiedOrAcceptFunctionOrFunctions == undefined) {
         this.selfAccept = implicitAcceptFunction;
         return;
       }
-      if (typeof arg1 !== "function") {
+      if (typeof specifiedOrAcceptFunctionOrFunctions !== "function") {
         throw new Error("import.meta.hot.accept requires a callback function");
       }
       // Self-accept function
-      this.selfAccept = arg1;
+      this.selfAccept = specifiedOrAcceptFunctionOrFunctions;
     } else {
       throw new Error(
         '"import.meta.hot.accept" must be directly called with string literals for ' +
@@ -941,7 +941,7 @@ declare global {
   }
 }
 
-// bun:bake/server, bun:bake/client, and bun:wrap are
+// bun:app/server, bun:app/client, and bun:wrap are
 // provided by this file instead of the bundler
 registerSynthetic("bun:wrap", {
   __name,
@@ -953,7 +953,7 @@ registerSynthetic("bun:wrap", {
 });
 
 if (side === "server") {
-  registerSynthetic("bun:bake/server", {
+  registerSynthetic("bun:app/server", {
     serverManifest,
     ssrManifest,
     actionManifest: null,
@@ -961,7 +961,11 @@ if (side === "server") {
 }
 
 if (side === "client") {
-  registerSynthetic("bun:bake/client", {
+  registerSynthetic("bun:app/client", {
     onServerSideReload: cb => (onServerSideReload = cb),
   });
 }
+
+// `bun:app` exports types only, but we don't want
+// to throw a module not found error if it's accessed at runtime
+registerSynthetic("bun:app", {});

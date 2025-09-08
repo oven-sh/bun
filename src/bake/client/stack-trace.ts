@@ -52,7 +52,7 @@ function parseV8OrIE(stack: string): Frame[] {
   return stack
     .split("\n")
     .filter(line => !!line.match(CHROME_IE_STACK_REGEXP) && !line.includes("Bun HMR Runtime"))
-    .map(function (line) {
+    .map((line): Frame => {
       let sanitizedLine = line
         .replace(/^\s+/, "")
         .replace(/\(eval code/g, "(")
@@ -71,12 +71,14 @@ function parseV8OrIE(stack: string): Frame[] {
       let functionName = (loc && sanitizedLine) || undefined;
       let fileName = ["eval", "<anonymous>"].indexOf(locationParts[0]) > -1 ? undefined : locationParts[0];
 
-      return {
+      const frame: Frame = {
         fn: functionName || "unknown",
         file: fileName,
         line: 0 | locationParts[1],
         col: 0 | locationParts[2],
-      } satisfies Frame;
+      };
+
+      return frame;
     });
 }
 

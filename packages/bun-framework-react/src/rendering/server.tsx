@@ -1,10 +1,10 @@
 import type { Bake } from "bun";
 import { renderToHtml, renderToStaticHtml } from "bun-framework-react/ssr.tsx" with { bunBakeGraph: "ssr" };
-import { serverManifest } from "bun:bake/server";
+import { serverManifest } from "bun:app/server";
 import type { AsyncLocalStorage } from "node:async_hooks";
 import { PassThrough } from "node:stream";
 import { renderToPipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
-import type { RequestContext } from "../hmr-runtime-server";
+import type { RequestContext } from "../../../../src/bake/hmr-runtime-server.ts";
 
 function assertReactComponent(Component: any) {
   if (typeof Component !== "function") {
@@ -37,7 +37,7 @@ function getPage(meta: Bake.RouteMetadata & { request?: Request }, styles: reado
   );
 }
 
-function component(mod: any, params: Record<string, string> | null, request?: Request) {
+function component(mod: any, params: Record<string, string | string[]> | null, request?: Request) {
   const Page = mod.default;
   let props = {};
   if (import.meta.env.DEV) assertReactComponent(Page);

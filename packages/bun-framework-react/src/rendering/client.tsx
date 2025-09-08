@@ -2,7 +2,7 @@
 // Components integration. It is designed as a minimal base to build RSC
 // applications on, and to showcase what features that Bake offers.
 /// <reference lib="dom" />
-import { onServerSideReload } from "bun:bake/client";
+import { onServerSideReload } from "bun:app/client";
 import * as React from "react";
 import { flushSync } from "react-dom";
 import { hydrateRoot } from "react-dom/client";
@@ -11,11 +11,37 @@ import { createFromReadableStream } from "react-server-dom-bun/client.browser";
 const te = new TextEncoder();
 const td = new TextDecoder();
 
+const windowDebugKey = "$bake";
+
+interface WindowDebugObject {
+  navigate: (href: string, cacheId?: number) => Promise<void>;
+  onServerSideReload: (cb: () => void | Promise<void>) => Promise<void>;
+  readonly currentCssList: string[] | undefined;
+}
+
+type WindowWithBakeDebugObject = { [key in typeof windowDebugKey]: WindowDebugObject };
+declare global {
+  interface Window extends WindowWithBakeDebugObject {}
+}
+
 // It is the framework's responsibility to ensure that client-side navigation
 // loads CSS files. The implementation here loads all CSS files as <link> tags,
 // and uses the ".disabled" property to enable/disable them.
 const cssFiles = new Map<string, { promise: Promise<void> | null; link: HTMLLinkElement }>();
 let currentCssList: string[] | undefined = undefined;
+
+declare global {
+  interface Window {
+    __bun_f:
+      | Array<string | Uint8Array<ArrayBufferLike>>
+      | {
+          // it's still an array, but we overwrite the push method to not return
+          // a number and instead use the `handleChunk` function
+          push: (chunk: string | Uint8Array<ArrayBufferLike>) => void;
+          forEach: (callback: (chunk: string | Uint8Array<ArrayBufferLike>) => void) => void;
+        };
+  }
+}
 
 // The initial RSC payload is put into inline <script> tags that follow the pattern
 // `(self.__bun_f ??= []).push(chunk)`, which is converted into a ReadableStream
@@ -23,20 +49,27 @@ let currentCssList: string[] | undefined = undefined;
 // this file is loaded asynchronously, the `__bun_f` becomes a clever way to
 // stream the arbitrary data while HTML is loading. In a static build, this is
 // setup as an array with one string.
-let rscPayload: any = createFromReadableStream(
+let rscPayload = createFromReadableStream(
   new ReadableStream({
     start(controller) {
-      let handleChunk = chunk =>
+      const handleChunk = (chunk: string | Uint8Array<ArrayBufferLike>) =>
         typeof chunk === "string" //
           ? controller.enqueue(te.encode(chunk))
           : controller.enqueue(chunk);
 
-      (self.__bun_f ||= []).forEach((__bun_f.push = handleChunk));
+      const bunF = (self.__bun_f ??= []);
+
+      bunF.push = handleChunk;
+      bunF.forEach(handleChunk);
 
       if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", () => {
-          controller.close();
-        });
+        document.addEventListener(
+          "DOMContentLoaded",
+          () => {
+            controller.close();
+          },
+          { once: true },
+        );
       } else {
         controller.close();
       }
@@ -49,7 +82,7 @@ let rscPayload: any = createFromReadableStream(
 // This is the same logic that happens on the server, except there is also a
 // hook to update the promise when the client navigates. The `Root` component
 // also updates CSS files when navigating between routes.
-let setPage;
+let setPage: React.Dispatch<React.SetStateAction<any>>;
 let abortOnRender: AbortController | undefined;
 const Root = () => {
   setPage = React.useState(rscPayload)[1];
@@ -126,11 +159,12 @@ let lastNavigationId = 0;
 let lastNavigationController: AbortController;
 
 // Client side navigation is implemented by updating the app's `useState` with a
-// new RSC payload promise. Callers of `goto` are expected to manage history state.
-// A navigation id is used
-async function goto(href: string, cacheId?: number) {
+// new RSC payload promise. Callers of `navigate` are expected to manage history
+// state. A navigation id is used
+async function navigate(href: string, cacheId?: number) {
   const thisNavigationId = ++lastNavigationId;
   const olderController = lastNavigationController;
+
   lastNavigationController = new AbortController();
   const signal = lastNavigationController.signal;
   signal.addEventListener("abort", () => {
@@ -138,11 +172,12 @@ async function goto(href: string, cacheId?: number) {
   });
 
   // If the page is cached, use the cached promise instead of fetching it again.
-  const cached = cacheId && cachedPages.get(cacheId);
+  const cached = (cacheId !== undefined && cachedPages.get(cacheId)) || undefined;
   if (cached) {
     currentCssList = cached.css;
     await ensureCssIsReady(currentCssList);
-    setPage?.((rscPayload = cached.element));
+    rscPayload = cached.element;
+    setPage(rscPayload);
     if (olderController?.signal.aborted === false) abortOnRender = olderController;
     return;
   }
@@ -314,7 +349,7 @@ document.addEventListener("click", async (event, element = event.target as HTMLA
       const href = url.href;
       const newId = Date.now();
       history.pushState(newId, "", href);
-      goto(href, newId);
+      navigate(href, newId);
 
       return event.preventDefault();
     }
@@ -330,7 +365,7 @@ window.addEventListener("popstate", event => {
   if (typeof state !== "number") {
     state = undefined;
   }
-  goto(location.href, state);
+  navigate(location.href, state);
 });
 
 if (import.meta.env.DEV) {
@@ -339,12 +374,12 @@ if (import.meta.env.DEV) {
   onServerSideReload(async () => {
     const newId = Date.now();
     history.replaceState(newId, "", location.href);
-    await goto(location.href, newId);
+    await navigate(location.href, newId);
   });
 
   // Expose a global in Development mode
-  (window as any).$bake = {
-    goto,
+  window[windowDebugKey] = {
+    navigate,
     onServerSideReload,
     get currentCssList() {
       return currentCssList;

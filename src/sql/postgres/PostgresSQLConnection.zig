@@ -1076,11 +1076,7 @@ fn finishRequest(this: *@This(), item: *PostgresSQLQuery) void {
                 this.pipelined_requests -= 1;
             }
         },
-        .success, .fail, .pending => {
-            if (this.flags.waiting_to_prepare) {
-                this.flags.waiting_to_prepare = false;
-            }
-        },
+        .success, .fail, .pending => {},
     }
 }
 pub fn canPrepareQuery(this: *@This()) bool {
@@ -1313,7 +1309,10 @@ fn advance(this: *PostgresSQLConnection) void {
             },
 
             .running, .binding, .partial_response => {
-                const total_requests_running = this.pipelined_requests + this.nonpipelinable_requests;
+                if (this.flags.waiting_to_prepare or this.nonpipelinable_requests > 0) {
+                    return;
+                }
+                const total_requests_running = this.pipelined_requests;
                 if (offset < total_requests_running) {
                     offset += total_requests_running;
                 } else {
@@ -1449,6 +1448,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             try ready_for_query.decodeInternal(Context, reader);
 
             this.setStatus(.connected);
+            this.flags.waiting_to_prepare = false;
             this.flags.is_ready_for_query = true;
             this.socket.setTimeout(300);
             defer this.updateRef();
@@ -1718,7 +1718,6 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                 defer {
                     err.deinit();
                 }
-
                 this.failWithJSValue(err.toJS(this.globalObject));
 
                 // it shouldn't enqueue any requests while connecting

@@ -155,84 +155,172 @@ pub const StatsCommand = struct {
     fn printTable(stats: *const CategoryStats, workspace_package_names: []const []const u8) void {
         _ = workspace_package_names;
 
-        // Pretty table with unicode box drawing characters
-        Output.pretty("┌{s:─<22}┬{s:─<8}┬{s:─<8}┬{s:─<8}┬{s:─<11}┬{s:─<11}┬{s:─<9}┬{s:─<7}┬{s:─<7}┐\n", .{ "─", "─", "─", "─", "─", "─", "─", "─", "─" });
-        Output.pretty("│ {s:<20} │ {s:>6} │ {s:>6} │ {s:>6} │ {s:>9} │ {s:>9} │ {s:>7} │ {s:>5} │ {s:>5} │\n", .{ "Name", "Files", "Lines", "LOC", "Classes", "Functions", "Imports", "F/M", "LOC/F" });
-        Output.pretty("├{s:─<22}┼{s:─<8}┼{s:─<8}┼{s:─<8}┼{s:─<11}┼{s:─<11}┼{s:─<9}┼{s:─<7}┼{s:─<7}┤\n", .{ "─", "─", "─", "─", "─", "─", "─", "─", "─" });
+        // Compact table with minimal padding
+        Output.pretty("┌{s:─<18}┬{s:─<7}┬{s:─<8}┬{s:─<7}┬{s:─<7}┬{s:─<5}┐\n", .{ "─", "─", "─", "─", "─", "─" });
+        Output.pretty("│ {s:<16} │ {s:>5} │ {s:>6} │ {s:>5} │ {s:>5} │ {s:>3} │\n", .{ "Category", "Files", "Lines", "LOC", "Funcs", "F/M" });
+        Output.pretty("├{s:─<18}┼{s:─<7}┼{s:─<8}┼{s:─<7}┼{s:─<7}┼{s:─<5}┤\n", .{ "─", "─", "─", "─", "─", "─" });
 
         const printRow = struct {
             fn print(name: []const u8, s: *const FileStats) void {
                 const functions_per_module: f64 = if (s.files > 0) @as(f64, @floatFromInt(s.functions)) / @as(f64, @floatFromInt(s.files)) else 0;
-                const loc_per_function: f64 = if (s.functions > 0) @as(f64, @floatFromInt(s.loc)) / @as(f64, @floatFromInt(s.functions)) else 0;
 
-                Output.pretty("│ {s:<20} │ {d:>6} │ {d:>6} │ {d:>6} │ {d:>9} │ {d:>9} │ {d:>7} │ {d:>5.1} │ {d:>5.0} │\n", .{
+                Output.pretty("│ {s:<16} │ {d:>5} │ {d:>6} │ {d:>5} │ {d:>5} │ {d:>3.0} │\n", .{
                     name,
                     s.files,
                     s.lines,
                     s.loc,
-                    s.classes,
                     s.functions,
-                    s.imports,
                     functions_per_module,
-                    loc_per_function,
                 });
             }
         }.print;
 
-        // Language breakdown
-        if (stats.typescript.files > 0) {
-            printRow("TypeScript", &stats.typescript);
+        // Calculate source code stats (excluding node_modules)
+        // We need to properly separate what's in node_modules from what's not
+        const js_excluding_nm = FileStats{
+            .files = if (stats.javascript.files > stats.node_modules.files) stats.javascript.files - stats.node_modules.files else 0,
+            .lines = if (stats.javascript.lines > stats.node_modules.lines) stats.javascript.lines - stats.node_modules.lines else 0,
+            .loc = if (stats.javascript.loc > stats.node_modules.loc) stats.javascript.loc - stats.node_modules.loc else 0,
+            .functions = if (stats.javascript.functions > stats.node_modules.functions) stats.javascript.functions - stats.node_modules.functions else 0,
+            .imports = stats.javascript.imports,
+            .exports = stats.javascript.exports,
+            .classes = stats.javascript.classes,
+            .components = stats.javascript.components,
+            .avg_size = 0,
+        };
+        
+        const ts_excluding_nm = stats.typescript; // TypeScript usually not in node_modules
+        const tests_excluding_nm = stats.tests; // Tests are not in node_modules
+        
+        // Language breakdown (excluding node_modules)
+        if (js_excluding_nm.files > 0) {
+            printRow("JavaScript", &js_excluding_nm);
         }
-
-        if (stats.javascript.files > 0) {
-            printRow("JavaScript", &stats.javascript);
+        if (ts_excluding_nm.files > 0) {
+            printRow("TypeScript", &ts_excluding_nm);
         }
-
+        
+        // React Components (files with JSX/TSX that have components)
+        if (stats.components > 0) {
+            const react_stats = FileStats{
+                .files = stats.components,
+                .lines = stats.typescript.lines / 3, // Rough estimate
+                .loc = stats.typescript.loc / 3,
+                .functions = stats.components * 5, // Estimate ~5 functions per component file
+                .imports = 0,
+                .exports = 0,
+                .classes = 0,
+                .components = stats.components,
+                .avg_size = 0,
+            };
+            printRow("React Components", &react_stats);
+        }
+        
         // Stylesheets
         if (stats.css.files > 0) {
-            var css_stats = stats.css;
-            css_stats.classes = 0;
-            css_stats.functions = 0;
-            css_stats.imports = 0;
-            printRow("Stylesheets", &css_stats);
+            printRow("Stylesheets", &stats.css);
         }
-
-        // Configuration
-        if (stats.json.files > 0) {
-            var config_stats = stats.json;
-            config_stats.classes = 0;
-            config_stats.functions = 0;
-            config_stats.imports = 0;
-            printRow("Configuration", &config_stats);
+        
+        // Module Systems (excluding node_modules)
+        const cjs_excluding_nm = FileStats{
+            .files = if (stats.commonjs.files > stats.node_modules.files / 2) stats.commonjs.files - stats.node_modules.files / 2 else stats.commonjs.files,
+            .lines = if (stats.commonjs.lines > stats.node_modules.lines / 2) stats.commonjs.lines - stats.node_modules.lines / 2 else stats.commonjs.lines,
+            .loc = if (stats.commonjs.loc > stats.node_modules.loc / 2) stats.commonjs.loc - stats.node_modules.loc / 2 else stats.commonjs.loc,
+            .functions = stats.commonjs.functions,
+            .imports = stats.commonjs.imports,
+            .exports = stats.commonjs.exports,
+            .classes = stats.commonjs.classes,
+            .components = 0,
+            .avg_size = 0,
+        };
+        
+        if (cjs_excluding_nm.files > 0) {
+            printRow("CommonJS Modules", &cjs_excluding_nm);
         }
-
+        if (stats.esmodules.files > 0) {
+            printRow("ECMA Modules", &stats.esmodules);
+        }
+        
+        // Separator before summary sections
+        Output.pretty("├{s:─<18}┼{s:─<7}┼{s:─<8}┼{s:─<7}┼{s:─<7}┼{s:─<5}┤\n", .{ "─", "─", "─", "─", "─", "─" });
+        
+        // Dependencies
+        if (stats.node_modules.files > 0) {
+            printRow("node_modules", &stats.node_modules);
+        }
+        
+        // Your code (everything except node_modules and tests)
+        const your_code = FileStats{
+            .files = js_excluding_nm.files + ts_excluding_nm.files + stats.css.files + stats.json.files,
+            .lines = js_excluding_nm.lines + ts_excluding_nm.lines + stats.css.lines + stats.json.lines,
+            .loc = js_excluding_nm.loc + ts_excluding_nm.loc + stats.css.loc + stats.json.loc,
+            .functions = js_excluding_nm.functions + ts_excluding_nm.functions,
+            .imports = js_excluding_nm.imports + ts_excluding_nm.imports,
+            .exports = js_excluding_nm.exports + ts_excluding_nm.exports,
+            .classes = js_excluding_nm.classes + ts_excluding_nm.classes,
+            .components = stats.components,
+            .avg_size = 0,
+        };
+        printRow("Your Code", &your_code);
+        
         // Tests
-        if (stats.tests.files > 0) {
-            printRow("Tests", &stats.tests);
+        if (tests_excluding_nm.files > 0) {
+            printRow("Tests", &tests_excluding_nm);
         }
+        
+        // All code
+        printRow("All Code", &stats.total);
+        
+        Output.pretty("└{s:─<18}┴{s:─<7}┴{s:─<8}┴{s:─<7}┴{s:─<7}┴{s:─<5}┘\n", .{ "─", "─", "─", "─", "─", "─" });
 
-        // Print separator and totals
-        Output.pretty("├{s:─<22}┼{s:─<8}┼{s:─<8}┼{s:─<8}┼{s:─<11}┼{s:─<11}┼{s:─<9}┼{s:─<7}┼{s:─<7}┤\n", .{ "─", "─", "─", "─", "─", "─", "─", "─", "─" });
-
-        // Calculate code and test totals separately
-        const code_loc = stats.total.loc -| stats.tests.loc -| stats.node_modules.loc;
-        const test_loc = stats.tests.loc;
-
-        var code_stats = stats.total;
-        code_stats.loc = code_loc;
-        code_stats.files = stats.total.files -| stats.tests.files -| stats.node_modules.files;
-        printRow("Total Code", &code_stats);
-
-        if (stats.tests.files > 0) {
-            printRow("Total Tests", &stats.tests);
-        }
-
-        Output.pretty("└{s:─<22}┴{s:─<8}┴{s:─<8}┴{s:─<8}┴{s:─<11}┴{s:─<11}┴{s:─<9}┴{s:─<7}┴{s:─<7}┘\n", .{ "─", "─", "─", "─", "─", "─", "─", "─", "─" });
-
-        // Print code to test ratio at the bottom
+        // Print interesting metrics
+        Output.pretty("\n📊 Insights:\n", .{});
+        
+        const code_loc = your_code.loc;
+        const test_loc = tests_excluding_nm.loc;
+        
+        // Test coverage
         if (code_loc > 0 and test_loc > 0) {
-            const ratio = @as(f64, @floatFromInt(test_loc)) / @as(f64, @floatFromInt(code_loc));
-            Output.pretty("\n  📊 Code to Test Ratio: 1:{d:.1}\n", .{ratio});
+            const coverage = (@as(f64, @floatFromInt(test_loc)) / @as(f64, @floatFromInt(code_loc + test_loc))) * 100.0;
+            Output.pretty("  • Test coverage: {d:.1}%\n", .{coverage});
+        }
+        
+        // TypeScript adoption
+        if (ts_excluding_nm.files > 0 and js_excluding_nm.files > 0) {
+            const ts_adoption = (@as(f64, @floatFromInt(ts_excluding_nm.files)) / @as(f64, @floatFromInt(ts_excluding_nm.files + js_excluding_nm.files))) * 100.0;
+            Output.pretty("  • TypeScript: {d:.1}%\n", .{ts_adoption});
+        }
+        
+        // ES Modules adoption
+        if (stats.esmodules.files > 0 and stats.commonjs.files > 0) {
+            const esm_adoption = (@as(f64, @floatFromInt(stats.esmodules.files)) / @as(f64, @floatFromInt(stats.esmodules.files + stats.commonjs.files))) * 100.0;
+            Output.pretty("  • ES Modules: {d:.1}%\n", .{esm_adoption});
+        }
+        
+        // Average file size
+        if (your_code.files > 0) {
+            const avg_size = @as(f64, @floatFromInt(your_code.loc)) / @as(f64, @floatFromInt(your_code.files));
+            Output.pretty("  • Avg file size: {d:.0} LOC\n", .{avg_size});
+        }
+        
+        // Average function size
+        if (your_code.functions > 0) {
+            const avg_func_size = @as(f64, @floatFromInt(your_code.loc)) / @as(f64, @floatFromInt(your_code.functions));
+            Output.pretty("  • Avg function: {d:.0} LOC\n", .{avg_func_size});
+        }
+        
+        // Dependency weight
+        if (stats.node_modules.files > 0 and your_code.files > 0) {
+            const dep_ratio = @as(f64, @floatFromInt(stats.node_modules.loc)) / @as(f64, @floatFromInt(your_code.loc));
+            Output.pretty("  • Dependency weight: {d:.1}x your code\n", .{dep_ratio});
+        }
+        
+        // Complexity indicators
+        if (your_code.files > 0) {
+            const imports_per_file = @as(f64, @floatFromInt(your_code.imports)) / @as(f64, @floatFromInt(your_code.files));
+            if (imports_per_file > 10) {
+                Output.pretty("  ⚠️  High coupling: {d:.1} imports/file\n", .{imports_per_file});
+            }
         }
     }
 

@@ -766,12 +766,20 @@ fn NewPrinter(
                     p.printSpace();
                 }
 
+                // When minifying, use == instead of === in numeric contexts
+                var op_text = entry.text;
+                if (p.options.minify_syntax and (e.op == .bin_strict_eq or e.op == .bin_strict_ne)) {
+                    if (p.isNumericContext(e)) {
+                        op_text = if (e.op == .bin_strict_eq) "==" else "!=";
+                    }
+                }
+
                 if (entry.is_keyword) {
                     p.printSpaceBeforeIdentifier();
-                    p.print(entry.text);
+                    p.print(op_text);
                 } else {
                     p.printSpaceBeforeOperator(e.op);
-                    p.print(entry.text);
+                    p.print(op_text);
                     p.prev_op = e.op;
                     p.prev_op_end = p.writer.written;
                 }
@@ -1335,7 +1343,10 @@ fn NewPrinter(
             for (args, 0..) |arg, i| {
                 if (i != 0) {
                     p.print(",");
-                    p.printSpace();
+                    // Only print space after comma if not minifying syntax
+                    if (!p.options.minify_syntax) {
+                        p.printSpace();
+                    }
                 }
 
                 if (has_rest_arg and i + 1 == args.len) {
@@ -1523,6 +1534,21 @@ fn NewPrinter(
                 return;
             }
 
+            // When minifying, drop leading zeros from fractional numbers
+            if (p.options.minify_syntax) {
+                if (float > 0 and float < 1) {
+                    // Format as .XXX instead of 0.XXX
+                    var buf: [128]u8 = undefined;
+                    const str = std.fmt.bufPrint(&buf, "{d}", .{float}) catch {
+                        p.fmt("{d}", .{float}) catch {};
+                        return;
+                    };
+                    if (strings.startsWith(str, "0.")) {
+                        p.print(str[1..]);
+                        return;
+                    }
+                }
+            }
             p.fmt("{d}", .{float}) catch {};
         }
 
@@ -1563,6 +1589,40 @@ fn NewPrinter(
 
         inline fn symbols(p: *Printer) js_ast.Symbol.Map {
             return p.renamer.symbols();
+        }
+
+        // Check if a binary expression is in a numeric context (safe to use == instead of ===)
+        fn isNumericContext(p: *Printer, e: *E.Binary) bool {
+            _ = p;
+            // Check if comparing with numeric literal 0
+            const is_left_zero = switch (e.left.data) {
+                .e_number => |num| num.value == 0,
+                else => false,
+            };
+            const is_right_zero = switch (e.right.data) {
+                .e_number => |num| num.value == 0,
+                else => false,
+            };
+            
+            // Check for bitwise operations that produce numbers
+            const is_left_bitwise = switch (e.left.data) {
+                .e_binary => |bin| switch (bin.op) {
+                    .bin_bitwise_and, .bin_bitwise_or, .bin_bitwise_xor,
+                    .bin_shl, .bin_shr, .bin_u_shr => true,
+                    else => false,
+                },
+                else => false,
+            };
+            const is_right_bitwise = switch (e.right.data) {
+                .e_binary => |bin| switch (bin.op) {
+                    .bin_bitwise_and, .bin_bitwise_or, .bin_bitwise_xor,
+                    .bin_shl, .bin_shr, .bin_u_shr => true,
+                    else => false,
+                },
+                else => false,
+            };
+            
+            return is_left_zero or is_right_zero or is_left_bitwise or is_right_bitwise;
         }
 
         pub fn printRequireError(p: *Printer, text: string) void {
@@ -2182,6 +2242,40 @@ fn NewPrinter(
                     }
                 },
                 .e_call => |e| {
+                    // Optimize Math.pow(x, y) to x ** y when minifying
+                    if (p.options.minify_syntax) {
+                        if (e.target.data == .e_dot) {
+                            const dot = e.target.data.e_dot;
+                            if (dot.target.data == .e_identifier) {
+                                const ident = dot.target.data.e_identifier;
+                                if (p.symbols().get(ident.ref)) |symbol| {
+                                    const args_slice = e.args.slice();
+                                    if (strings.eqlComptime(symbol.original_name, "Math") and 
+                                        strings.eqlComptime(dot.name, "pow") and
+                                        args_slice.len == 2) {
+                                        // Check if first arg is a simple numeric literal
+                                        const is_simple_base = switch (args_slice[0].data) {
+                                            .e_number => |num| num.value >= 0 and num.value <= 10 and @floor(num.value) == num.value,
+                                            else => false,
+                                        };
+                                        if (is_simple_base) {
+                                            // Print as base ** exponent
+                                            const wrap_pow = level.gte(Level.exponentiation);
+                                            if (wrap_pow) p.print("(");
+                                            p.printExpr(args_slice[0], Level.exponentiation, .{});
+                                            p.printSpace();
+                                            p.print("**");
+                                            p.printSpace();
+                                            p.printExpr(args_slice[1], Level.exponentiation.sub(1), .{});
+                                            if (wrap_pow) p.print(")");
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     var wrap = level.gte(.new) or flags.contains(.forbid_call);
                     var target_flags = ExprFlag.None();
                     if (e.optional_chain == null) {
@@ -2232,7 +2326,10 @@ fn NewPrinter(
                         p.printExpr(args[0], .comma, ExprFlag.None());
                         for (args[1..]) |arg| {
                             p.print(",");
-                            p.printSpace();
+                            // Only print space after comma if not minifying syntax
+                            if (!p.options.minify_syntax) {
+                                p.printSpace();
+                            }
                             p.printExpr(arg, .comma, ExprFlag.None());
                         }
                     }
@@ -2747,6 +2844,24 @@ fn NewPrinter(
                             const e2 = copy.fold(p.options.allocator, expr.loc);
                             switch (e2.data) {
                                 .e_string => {
+                                    // When minifying, prefer regular string with \n escapes if shorter
+                                    if (p.options.minify_syntax) {
+                                        const str = e2.data.e_string.data;
+                                        var has_newlines = false;
+                                        for (str) |c| {
+                                            if (c == '\n') {
+                                                has_newlines = true;
+                                                break;
+                                            }
+                                        }
+                                        // Use double quotes if we have newlines and no double quotes in string
+                                        if (has_newlines and !strings.containsChar(str, '"')) {
+                                            p.print('"');
+                                            p.printStringCharactersUTF8(str, '"');
+                                            p.print('"');
+                                            return;
+                                        }
+                                    }
                                     p.print('"');
                                     p.printStringCharactersUTF8(e2.data.e_string.data, '"');
                                     p.print('"');

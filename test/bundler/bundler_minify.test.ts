@@ -495,8 +495,8 @@ describe("bundler", () => {
       "-123.567",
       "8.325",
       "1e8",
-      "0.1",
-      "0.1",
+      ".1",  // Our optimization drops leading zero
+      ".1",  // Our optimization drops leading zero
       "NaN",
       // untouched
       '+"æ"',
@@ -688,6 +688,156 @@ describe("bundler", () => {
     },
     run: {
       stdout: "foo\ntrue\ntrue\ndisabled_for_development",
+    },
+  });
+
+  itBundled("minify/MathPowToExponentiation", {
+    files: {
+      "/entry.js": /* js */ `
+        // Should be optimized (simple numeric literals)
+        capture(Math.pow(2, 10));
+        capture(Math.pow(3, 5));
+        capture(Math.pow(10, 2));
+        
+        // Should NOT be optimized (non-simple bases)
+        capture(Math.pow(11, 2));
+        capture(Math.pow(-2, 3));
+        capture(Math.pow(2.5, 2));
+        capture(Math.pow(x, 2));
+      `,
+    },
+    capture: [
+      "2 ** 10",
+      "3 ** 5",
+      "10 ** 2",
+      "Math.pow(11,2)",
+      "Math.pow(-2,3)",
+      "Math.pow(2.5,2)",
+      "Math.pow(x,2)",
+    ],
+    minifySyntax: true,
+  });
+
+  itBundled("minify/FractionalLiteralOptimization", {
+    files: {
+      "/entry.js": /* js */ `
+        // Should drop leading zeros
+        capture(0.5);
+        capture(0.25);
+        capture(0.125);
+        capture(0.999);
+        capture(0.001);
+        
+        // Should NOT drop zeros for numbers >= 1
+        capture(1.5);
+        capture(10.5);
+        
+        // Should NOT affect zero itself
+        capture(0.0);
+      `,
+    },
+    capture: [
+      ".5",
+      ".25",
+      ".125",
+      ".999",
+      ".001",
+      "1.5",
+      "10.5",
+      "0",
+    ],
+    minifySyntax: true,
+  });
+
+  itBundled("minify/StrictEqualToLooseEqualInNumericContext", {
+    files: {
+      "/entry.js": /* js */ `
+        // Should optimize in numeric contexts (comparing with 0)
+        const x = 5;
+        capture((x & 7) === 0);
+        capture(0 === (x | 3));
+        capture((x ^ x) === 0);
+        
+        // Should optimize bitwise operations
+        capture((x & (x - 1)) === 0);
+        capture((x << 2) === 0);
+        capture((x >> 1) === 0);
+        capture((x >>> 1) === 0);
+        
+        // Should NOT optimize non-numeric contexts
+        capture("0" === 0);
+        capture(null === 0);
+        capture(someVar === 0);
+      `,
+    },
+    capture: [
+      "!1",  // (5 & 7) === 0 is false, constant folded
+      "!1",  // 0 === (5 | 3) is false, constant folded
+      "!0",  // (5 ^ 5) === 0 is true, constant folded
+      "!1",  // (5 & 4) === 0 is false, constant folded
+      "!1",  // (5 << 2) === 0 is false, constant folded
+      "!1",  // (5 >> 1) === 0 is false, constant folded
+      "!1",  // (5 >>> 1) === 0 is false, constant folded
+      "!1",  // "0" === 0 is false, constant folded
+      "!1",  // null === 0 is false, constant folded
+      "someVar == 0",  // Variable can't be constant folded
+    ],
+    minifySyntax: true,
+  });
+
+  itBundled("minify/CommaSpacesInFunctionCalls", {
+    files: {
+      "/entry.js": /* js */ `
+        function test(a, b, c, d) {
+          return a + b + c + d;
+        }
+        
+        const arrow = (x, y, z) => x * y * z;
+        
+        capture(test(1, 2, 3, 4));
+        capture(arrow(5, 6, 7));
+        capture(Math.max(8, 9, 10, 11, 12));
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Check that commas in function parameters have no spaces
+      expect(code).toContain("function test(a,b,c,d)");
+      expect(code).toContain("var arrow = (x,y,z) =>");
+      // Check that commas in function calls have no spaces
+      expect(code).toContain("test(1,2,3,4)");
+      expect(code).toContain("arrow(5,6,7)");
+      expect(code).toContain("Math.max(8,9,10,11,12)");
+    },
+  });
+
+  itBundled("minify/CombinedOptimizations", {
+    files: {
+      "/entry.js": /* js */ `
+        // Combining multiple optimizations
+        function calculate(a, b, c) {
+          const power = Math.pow(2, 8);
+          const fraction = 0.5;
+          const check = (a & 0xFF) === 0;
+          return power * fraction + (check ? 1 : 0);
+        }
+        
+        capture(calculate(10, 20, 30));
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Check Math.pow optimization
+      expect(code).toContain("2 ** 8");
+      // Check fractional optimization
+      expect(code).toContain(".5");
+      // Check === to == optimization
+      expect(code).toContain("(a & 255) == 0");
+      // Check comma spaces removed
+      expect(code).toContain("function calculate(a,b,c)");
+      expect(code).toContain("calculate(10,20,30)");
     },
   });
 });

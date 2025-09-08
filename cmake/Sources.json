@@ -25,6 +25,10 @@
     "exclude": ["src/bake/generated.ts"]
   },
   {
+    "output": "BunFrameworkReactSources.txt",
+    "paths": ["packages/bun-framework-react/*.{ts,tsx,js,jsx}", "packages/bun-framework-react/src/**/*.{ts,tsx,js,jsx}"]
+  },
+  {
     "output": "BindgenSources.txt",
     "paths": ["src/**/*.bind.ts"]
   },

@@ -52,7 +52,7 @@ declare global {
 let rscPayload = createFromReadableStream(
   new ReadableStream({
     start(controller) {
-      const handleChunk = (chunk: string | Uint8Array<ArrayBufferLike>) =>
+      const handleChunk = (chunk: string | Uint8Array<ArrayBuffer>) =>
         typeof chunk === "string" //
           ? controller.enqueue(te.encode(chunk))
           : controller.enqueue(chunk);
@@ -82,7 +82,7 @@ let rscPayload = createFromReadableStream(
 // This is the same logic that happens on the server, except there is also a
 // hook to update the promise when the client navigates. The `Root` component
 // also updates CSS files when navigating between routes.
-let setPage: React.Dispatch<React.SetStateAction<any>>;
+let setPage: React.Dispatch<React.SetStateAction<Promise<React.ReactNode>>>;
 let abortOnRender: AbortController | undefined;
 const Root = () => {
   setPage = React.useState(rscPayload)[1];
@@ -104,7 +104,8 @@ const Root = () => {
   // Unwrap the promise if it is one
   return rscPayload.then ? React.use(rscPayload) : rscPayload;
 };
-const root = hydrateRoot(document, <Root />, {
+
+hydrateRoot(document, <Root />, {
   onUncaughtError(e) {
     console.error(e);
   },
@@ -386,7 +387,7 @@ if (import.meta.env.DEV) {
   };
 }
 
-async function readCssMetadata(stream: ReadableStream<Uint8Array>) {
+async function readCssMetadata(stream: ReadableStream<Uint8Array<ArrayBuffer>>) {
   let reader;
   try {
     // Using BYOB reader allows reading an exact amount of bytes, which allows
@@ -404,6 +405,8 @@ async function readCssMetadata(stream: ReadableStream<Uint8Array>) {
       location.reload();
     }
   }
+  DEBUG.ASSERT(header !== undefined);
+  DEBUG.ASSERT(header[0] !== undefined);
   if (header[0] > 0) {
     const cssRaw = (await reader.read(new Uint8Array(header[0]))).value;
     if (!cssRaw) {
@@ -424,9 +427,9 @@ async function readCssMetadata(stream: ReadableStream<Uint8Array>) {
 // Safari does not support BYOB reader. When this is resolved, this fallback
 // should be kept for a few years since Safari on iOS is versioned to the OS.
 // https://bugs.webkit.org/show_bug.cgi?id=283065
-async function readCssMetadataFallback(stream: ReadableStream<Uint8Array>) {
+async function readCssMetadataFallback(stream: ReadableStream<Uint8Array<ArrayBuffer>>) {
   const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
+  const chunks: Uint8Array<ArrayBuffer>[] = [];
   let totalBytes = 0;
   const readChunk = async (size: number) => {
     while (totalBytes < size) {
@@ -443,7 +446,7 @@ async function readCssMetadataFallback(stream: ReadableStream<Uint8Array>) {
       }
     }
     if (chunks.length === 1) {
-      const first = chunks[0];
+      const first = chunks[0]!;
       if (first.byteLength >= size) {
         chunks[0] = first.subarray(size);
         totalBytes -= size;
@@ -456,16 +459,19 @@ async function readCssMetadataFallback(stream: ReadableStream<Uint8Array>) {
     } else {
       const buffer = new Uint8Array(size);
       let i = 0;
-      let chunk;
+      let chunk: Uint8Array<ArrayBuffer> | undefined;
       let len;
       while (size > 0) {
         chunk = chunks.shift();
+        if (!chunk) continue;
         const { byteLength } = chunk;
         len = Math.min(byteLength, size);
         buffer.set(len === byteLength ? chunk : chunk.subarray(0, len), i);
         i += len;
         size -= len;
       }
+      DEBUG.ASSERT(chunk);
+      DEBUG.ASSERT(len !== undefined);
       if (chunk.byteLength > len) {
         chunks.unshift(chunk.subarray(len));
       }
@@ -477,6 +483,7 @@ async function readCssMetadataFallback(stream: ReadableStream<Uint8Array>) {
   if (header === 0) {
     currentCssList = [];
   } else {
+    DEBUG.ASSERT(header !== undefined);
     currentCssList = td.decode(await readChunk(header)).split("\n");
   }
   if (chunks.length === 0) {

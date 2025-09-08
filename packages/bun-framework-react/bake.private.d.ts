@@ -84,7 +84,7 @@ declare var __bun_f: any;
 // The following interfaces have been transcribed manually.
 
 declare module "react-server-dom-bun/client.browser" {
-  export function createFromReadableStream<T = any>(readable: ReadableStream<Uint8Array>): Promise<T>;
+  export function createFromReadableStream<T = any>(readable: ReadableStream<Uint8Array<ArrayBuffer>>): Promise<T>;
 }
 
 declare module "react-server-dom-bun/client.node.unbundled.js" {

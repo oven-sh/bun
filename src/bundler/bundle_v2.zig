@@ -1834,10 +1834,18 @@ pub const BundleV2 = struct {
             transpiler.options.chunk_naming = config.names.chunk.data;
             transpiler.options.asset_naming = config.names.asset.data;
 
-            transpiler.options.public_path = config.public_path.list.items;
             transpiler.options.output_format = config.format;
             transpiler.options.bytecode = config.bytecode;
             transpiler.options.compile = config.compile != null;
+
+            // For compile mode, set the public_path to the target-specific base path
+            // This ensures embedded resources like yoga.wasm are correctly found
+            if (config.compile) |compile_opts| {
+                const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(compile_opts.compile_target.os, "root/");
+                transpiler.options.public_path = base_public_path;
+            } else {
+                transpiler.options.public_path = config.public_path.list.items;
+            }
 
             transpiler.options.output_dir = config.outdir.slice();
             transpiler.options.root_dir = config.rootdir.slice();
@@ -1853,6 +1861,11 @@ pub const BundleV2 = struct {
             transpiler.options.css_chunking = config.css_chunking;
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
+
+            if (transpiler.options.compile) {
+                // Emitting DCE annotations is nonsensical in --compile.
+                transpiler.options.emit_dce_annotations = false;
+            }
 
             transpiler.configureLinker();
             try transpiler.configureDefines();
@@ -1898,11 +1911,18 @@ pub const BundleV2 = struct {
             const outbuf = bun.path_buffer_pool.get();
             defer bun.path_buffer_pool.put(outbuf);
 
+            // Always get an absolute path for the outfile to ensure it works correctly with PE metadata operations
             var full_outfile_path = if (this.config.outdir.slice().len > 0) brk: {
                 const outdir_slice = this.config.outdir.slice();
                 const top_level_dir = bun.fs.FileSystem.instance.top_level_dir;
                 break :brk bun.path.joinAbsStringBuf(top_level_dir, outbuf, &[_][]const u8{ outdir_slice, compile_options.outfile.slice() }, .auto);
-            } else compile_options.outfile.slice();
+            } else if (std.fs.path.isAbsolute(compile_options.outfile.slice()))
+                compile_options.outfile.slice()
+            else brk: {
+                // For relative paths, ensure we make them absolute relative to the current working directory
+                const top_level_dir = bun.fs.FileSystem.instance.top_level_dir;
+                break :brk bun.path.joinAbsStringBuf(top_level_dir, outbuf, &[_][]const u8{compile_options.outfile.slice()}, .auto);
+            };
 
             // Add .exe extension for Windows targets if not already present
             if (compile_options.compile_target.os == .windows and !strings.hasSuffixComptime(full_outfile_path, ".exe")) {
@@ -1921,19 +1941,32 @@ pub const BundleV2 = struct {
                 }
             }
 
-            if (!(dirname.len == 0 or strings.eqlComptime(dirname, "."))) {
+            // On Windows, don't change root_dir, just pass the full relative path
+            // On POSIX, change root_dir to the target directory and pass basename
+            const outfile_for_executable = if (Environment.isWindows) full_outfile_path else basename;
+
+            if (Environment.isPosix and !(dirname.len == 0 or strings.eqlComptime(dirname, "."))) {
+                // On POSIX, makeOpenPath and change root_dir
                 root_dir = root_dir.makeOpenPath(dirname, .{}) catch |err| {
                     return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to open output directory {s}: {s}", .{ dirname, @errorName(err) })));
                 };
+            } else if (Environment.isWindows and !(dirname.len == 0 or strings.eqlComptime(dirname, "."))) {
+                // On Windows, ensure directories exist but don't change root_dir
+                _ = bun.makePath(root_dir, dirname) catch |err| {
+                    return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to create output directory {s}: {s}", .{ dirname, @errorName(err) })));
+                };
             }
+
+            // Use the target-specific base path for compile mode, not the user-configured public_path
+            const module_prefix = bun.StandaloneModuleGraph.targetBasePublicPath(compile_options.compile_target.os, "root/");
 
             const result = bun.StandaloneModuleGraph.toExecutable(
                 &compile_options.compile_target,
                 bun.default_allocator,
                 output_files.items,
                 root_dir,
-                this.config.public_path.slice(),
-                basename,
+                module_prefix,
+                outfile_for_executable,
                 this.env,
                 this.config.format,
                 .{

@@ -217,6 +217,21 @@ pub const HelpCommand = struct {
 
         switch (reason) {
             .explicit => {
+                if (comptime Environment.isDebug) {
+                    if (bun.argv.len == 1) {
+                        if (bun.Output.isAIAgent()) {
+                            if (bun.getenvZ("npm_lifecycle_event")) |event| {
+                                if (bun.strings.hasPrefixComptime(event, "bd")) {
+                                    // claude gets very confused by the help menu
+                                    // let's give claude some self confidence.
+                                    Output.println("BUN COMPILED SUCCESSFULLY! 🎉", .{});
+                                    Global.exit(0);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Output.pretty(
                     "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++
                         Global.package_json_version_with_revision ++
@@ -380,6 +395,8 @@ pub const Command = struct {
         runtime_options: RuntimeOptions = .{},
 
         filters: []const []const u8 = &.{},
+        workspaces: bool = false,
+        if_present: bool = false,
 
         preloads: []const string = &.{},
         has_loaded_global_config: bool = false,
@@ -815,7 +832,7 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .RunCommand);
                 ctx.args.target = .bun;
 
-                if (ctx.filters.len > 0) {
+                if (ctx.filters.len > 0 or ctx.workspaces) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
                         Global.exit(1);
@@ -854,7 +871,7 @@ pub const Command = struct {
                 };
                 ctx.args.target = .bun;
 
-                if (ctx.filters.len > 0) {
+                if (ctx.filters.len > 0 or ctx.workspaces) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
                         Global.exit(1);

@@ -54,6 +54,7 @@ public:
             case InstanceType::Oddball:
                 return reinterpret_cast<shim::Oddball*>(v8_object)->toJSValue();
             case InstanceType::HeapNumber:
+                // a number that doesn't fit in int32_t, always EncodeAsDouble
                 return JSC::jsDoubleNumber(v8_object->asDouble());
             default:
                 return v8_object->asCell();

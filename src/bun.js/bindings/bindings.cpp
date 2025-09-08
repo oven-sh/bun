@@ -36,6 +36,7 @@
 #include "JavaScriptCore/JSArrayBuffer.h"
 #include "JavaScriptCore/JSArrayInlines.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
+#include "JavaScriptCore/BigIntObject.h"
 
 #include "JavaScriptCore/JSCallbackObject.h"
 #include "JavaScriptCore/JSClassRef.h"
@@ -2096,6 +2097,28 @@ BunString WebCore__DOMURL__fileSystemPath(WebCore::DOMURL* arg0, int* errorCode)
     return BunString { BunStringTag::Dead, nullptr };
 }
 
+// Taken from unwrapBoxedPrimitive in JSONObject.cpp in WebKit
+extern "C" JSC::EncodedJSValue JSC__JSValue__unwrapBoxedPrimitive(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
+{
+    JSValue value = JSValue::decode(encodedValue);
+
+    if (!value.isObject()) {
+        return JSValue::encode(value);
+    }
+
+    JSObject* object = asObject(value);
+
+    if (object->inherits<NumberObject>()) {
+        return JSValue::encode(jsNumber(object->toNumber(globalObject)));
+    }
+    if (object->inherits<StringObject>())
+        return JSValue::encode(object->toString(globalObject));
+    if (object->inherits<BooleanObject>() || object->inherits<BigIntObject>())
+        return JSValue::encode(jsCast<JSWrapperObject*>(object)->internalValue());
+
+    return JSValue::encode(object);
+}
+
 extern "C" JSC::EncodedJSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JSGlobalObject* globalObject)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
@@ -2582,6 +2605,13 @@ extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
 size_t JSC__VM__heapSize(JSC::VM* arg0)
 {
     return arg0->heap.size();
+}
+
+bool JSC__JSValue__isStrictEqual(JSC::EncodedJSValue l, JSC::EncodedJSValue r, JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_AND_RETURN(scope, JSC::JSValue::strictEqual(globalObject, JSC::JSValue::decode(l), JSC::JSValue::decode(r)));
 }
 
 bool JSC__JSValue__isSameValue(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1,
@@ -3777,10 +3807,6 @@ void JSC__JSValue__forEach(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* ar
 {
     return JSC::JSValue::encode(JSC::jsEmptyString(arg0->vm()));
 }
-JSC::EncodedJSValue JSC__JSValue__jsNull()
-{
-    return JSC::JSValue::encode(JSC::jsNull());
-}
 [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSValue__jsNumberFromChar(unsigned char arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
@@ -4278,8 +4304,11 @@ JSC::EncodedJSValue JSC__JSValue__getErrorsProperty(JSC::EncodedJSValue JSValue0
     return JSC::JSValue::encode(obj->getDirect(global->vm(), global->vm().propertyNames->errors));
 }
 
-[[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSValue__jsTDZValue() { return JSC::JSValue::encode(JSC::jsTDZValue()); };
-JSC::EncodedJSValue JSC__JSValue__jsUndefined() { return JSC::JSValue::encode(JSC::jsUndefined()); };
+[[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSValue__jsTDZValue()
+{
+    return JSC::JSValue::encode(JSC::jsTDZValue());
+};
+
 JSC::JSObject* JSC__JSValue__toObject(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);

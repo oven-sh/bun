@@ -257,7 +257,7 @@ pub fn VisitExpr(
                                 .target = if (runtime == .classic) target else p.jsxImport(.createElement, expr.loc),
                                 .args = ExprNodeList.init(args[0..i]),
                                 // Enable tree shaking
-                                .can_be_unwrapped_if_unused = if (!p.options.ignore_dce_annotations) .if_unused else .never,
+                                .can_be_unwrapped_if_unused = if (!p.options.ignore_dce_annotations and !p.options.jsx.side_effects) .if_unused else .never,
                                 .close_paren_loc = e_.close_tag_loc,
                             }, expr.loc);
                         }
@@ -362,7 +362,7 @@ pub fn VisitExpr(
                                 .target = p.jsxImportAutomatic(expr.loc, is_static_jsx),
                                 .args = ExprNodeList.init(args),
                                 // Enable tree shaking
-                                .can_be_unwrapped_if_unused = if (!p.options.ignore_dce_annotations) .if_unused else .never,
+                                .can_be_unwrapped_if_unused = if (!p.options.ignore_dce_annotations and !p.options.jsx.side_effects) .if_unused else .never,
                                 .was_jsx_element = true,
                                 .close_paren_loc = e_.close_tag_loc,
                             }, expr.loc);
@@ -804,6 +804,7 @@ pub fn VisitExpr(
                                                     E.Unary{
                                                         .op = e_.op,
                                                         .value = comma.right,
+                                                        .flags = e_.flags,
                                                     },
                                                     comma.right.loc,
                                                 ),

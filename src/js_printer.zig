@@ -1343,10 +1343,7 @@ fn NewPrinter(
             for (args, 0..) |arg, i| {
                 if (i != 0) {
                     p.print(",");
-                    // Only print space after comma if not minifying syntax
-                    if (!p.options.minify_syntax) {
-                        p.printSpace();
-                    }
+                    p.printSpace();
                 }
 
                 if (has_rest_arg and i + 1 == args.len) {
@@ -2326,10 +2323,7 @@ fn NewPrinter(
                         p.printExpr(args[0], .comma, ExprFlag.None());
                         for (args[1..]) |arg| {
                             p.print(",");
-                            // Only print space after comma if not minifying syntax
-                            if (!p.options.minify_syntax) {
-                                p.printSpace();
-                            }
+                            p.printSpace();
                             p.printExpr(arg, .comma, ExprFlag.None());
                         }
                     }

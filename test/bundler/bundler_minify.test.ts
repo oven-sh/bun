@@ -710,10 +710,10 @@ describe("bundler", () => {
       "2 ** 10",
       "3 ** 5",
       "10 ** 2",
-      "Math.pow(11,2)",
-      "Math.pow(-2,3)",
-      "Math.pow(2.5,2)",
-      "Math.pow(x,2)",
+      "Math.pow(11, 2)",
+      "Math.pow(-2, 3)",
+      "Math.pow(2.5, 2)",
+      "Math.pow(x, 2)",
     ],
     minifySyntax: true,
   });
@@ -785,33 +785,6 @@ describe("bundler", () => {
     minifySyntax: true,
   });
 
-  itBundled("minify/CommaSpacesInFunctionCalls", {
-    files: {
-      "/entry.js": /* js */ `
-        function test(a, b, c, d) {
-          return a + b + c + d;
-        }
-        
-        const arrow = (x, y, z) => x * y * z;
-        
-        capture(test(1, 2, 3, 4));
-        capture(arrow(5, 6, 7));
-        capture(Math.max(8, 9, 10, 11, 12));
-      `,
-    },
-    minifySyntax: true,
-    onAfterBundle(api) {
-      const code = api.readFile("/out.js");
-      // Check that commas in function parameters have no spaces
-      expect(code).toContain("function test(a,b,c,d)");
-      expect(code).toContain("var arrow = (x,y,z) =>");
-      // Check that commas in function calls have no spaces
-      expect(code).toContain("test(1,2,3,4)");
-      expect(code).toContain("arrow(5,6,7)");
-      expect(code).toContain("Math.max(8,9,10,11,12)");
-    },
-  });
-
   itBundled("minify/CombinedOptimizations", {
     files: {
       "/entry.js": /* js */ `
@@ -835,9 +808,6 @@ describe("bundler", () => {
       expect(code).toContain(".5");
       // Check === to == optimization
       expect(code).toContain("(a & 255) == 0");
-      // Check comma spaces removed
-      expect(code).toContain("function calculate(a,b,c)");
-      expect(code).toContain("calculate(10,20,30)");
     },
   });
 });

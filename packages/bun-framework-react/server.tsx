@@ -4,7 +4,7 @@ import { serverManifest } from "bun:app/server";
 import type { AsyncLocalStorage } from "node:async_hooks";
 import { PassThrough } from "node:stream";
 import { renderToPipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
-import type { RequestContext } from "../../../../src/bake/hmr-runtime-server.ts";
+import type { RequestContext } from "../../src/bake/hmr-runtime-server.ts";
 
 function assertReactComponent(Component: any) {
   if (typeof Component !== "function") {

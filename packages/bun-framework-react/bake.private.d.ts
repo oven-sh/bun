@@ -88,10 +88,10 @@ declare module "react-server-dom-bun/client.browser" {
 }
 
 declare module "react-server-dom-bun/client.node.unbundled.js" {
-  import type { ServerManifest } from "bun:app/server";
+  import type { SSRManifest } from "bun:app/server";
   import type { Readable } from "node:stream";
   export interface Manifest {
-    moduleMap: ServerManifest;
+    moduleMap: SSRManifest;
     moduleLoading?: ModuleLoading;
   }
   export interface ModuleLoading {
@@ -133,14 +133,7 @@ declare module "react-server-dom-bun/server.node.unbundled.js" {
 }
 
 declare module "react-dom/server.node" {
-  import type { ReactElement } from "react";
-  import type { PipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
-
-  export type RenderToPipeableStreamOptions = any;
-  export function renderToPipeableStream(
-    model: ReactElement,
-    options: RenderToPipeableStreamOptions,
-  ): PipeableStream<Uint8Array>;
+  export * from "react-dom/server";
 }
 
 declare module "bun:wrap" {

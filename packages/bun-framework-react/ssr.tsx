@@ -185,7 +185,7 @@ class RscInjectionStream extends EventEmitter implements NodeJS.WritableStream {
     });
   }
 
-  write(data: Uint8Array) {
+  write(data: Uint8Array<ArrayBuffer>) {
     if (import.meta.env.DEV && process.env.VERBOSE_SSR)
       console.write(
         "write" +
@@ -269,14 +269,16 @@ class RscInjectionStream extends EventEmitter implements NodeJS.WritableStream {
     // Ignore flush requests from React. Bun will automatically flush when reasonable.
   }
 
-  destroy(e) {}
+  destroy() {}
 
-  end(e) {}
+  end() {
+    return this;
+  }
 }
 
 class StaticRscInjectionStream extends EventEmitter {
-  rscPayloadChunks: Uint8Array[] = [];
-  chunks: (Uint8Array | string)[] = [];
+  rscPayloadChunks: Uint8Array<ArrayBuffer>[] = [];
+  chunks: (Uint8Array<ArrayBuffer> | string)[] = [];
   result: Promise<Blob>;
   finalize: (blob: Blob) => void;
   reject: (error: Error) => void;
@@ -291,7 +293,7 @@ class StaticRscInjectionStream extends EventEmitter {
     rscPayload.on("data", chunk => this.rscPayloadChunks.push(chunk));
   }
 
-  write(chunk) {
+  write(chunk: Uint8Array<ArrayBuffer>) {
     this.chunks.push(chunk);
   }
 
@@ -300,7 +302,7 @@ class StaticRscInjectionStream extends EventEmitter {
     const lastChunk = this.chunks[this.chunks.length - 1];
 
     // Release assertions for React's behavior. If these break there will be malformed HTML.
-    if (typeof lastChunk === "string") {
+    if (typeof lastChunk === "string" || !lastChunk) {
       this.destroy(new Error("The last chunk was expected to be a Uint8Array"));
       return;
     }
@@ -320,7 +322,7 @@ class StaticRscInjectionStream extends EventEmitter {
     // Ignore flush requests from React.
   }
 
-  destroy(error) {
+  destroy(error: Error) {
     // We don't need to console.error here as react does it itself
     // console.error(error);
     this.reject(error);
@@ -353,7 +355,7 @@ function writeManyFlightScriptData(
   decoder: TextDecoder,
   controller: { write: (str: string) => void },
 ) {
-  if (chunks.length === 1) return writeSingleFlightScriptData(chunks[0], decoder, controller);
+  if (chunks.length === 1) return writeSingleFlightScriptData(chunks[0]!, decoder, controller);
 
   let i = 0;
   try {
@@ -372,6 +374,7 @@ function writeManyFlightScriptData(
     controller.write('Uint8Array.from(atob("');
     for (; i < chunks.length; i++) {
       const chunk = chunks[i];
+      if (!chunk) continue;
       const base64 = btoa(String.fromCodePoint(...chunk));
       controller.write(base64.slice(1, -1));
     }

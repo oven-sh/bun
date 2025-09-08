@@ -774,6 +774,13 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
 extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)
 {
     plugin->plugin.tombstone();
+    
+    // Clear virtual modules when tombstoning
+    if (plugin->plugin.virtualModules) {
+        plugin->plugin.virtualModules->clear();
+        delete plugin->plugin.virtualModules;
+        plugin->plugin.virtualModules = nullptr;
+    }
 }
 
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedBuildPromise, JSC::EncodedJSValue encodedBuildResult, JSC::EncodedJSValue encodedRejection)

@@ -114,6 +114,12 @@ export function runOnEndCallbacks(
   buildResult: Bun.BuildOutput,
   buildRejection: AggregateError | undefined,
 ): Promise<void> | void {
+  // Clean up virtual modules when build ends
+  if (this.virtualModules) {
+    this.virtualModules.clear();
+    this.virtualModules = undefined;
+  }
+  
   const callbacks = this.onEndCallbacks;
   if (!callbacks) return;
   const promises: PromiseLike<unknown>[] = [];

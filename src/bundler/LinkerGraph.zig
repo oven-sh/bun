@@ -468,8 +468,26 @@ pub fn propagateAsyncDependencies(this: *LinkerGraph) !void {
 
             for (self.import_records[index].sliceConst()) |*import_record| {
                 switch (import_record.kind) {
-                    .stmt, .require, .dynamic, .require_resolve => {},
-                    else => continue,
+                    .stmt => {},
+
+                    // `import()` always requires `await`, so files that contain top-level calls
+                    // to `import()` will have already been detected as having TLA, and thus
+                    // `is_async_or_has_async_dependency` will already be true.
+                    //
+                    // We don't want to process these imports here because `import()` can appear in
+                    // non-top-level contexts, like inside an async function, that don't necessarily
+                    // make the parent module async.
+                    .dynamic => continue,
+
+                    // `require()` cannot import async modules.
+                    .require, .require_resolve => continue,
+
+                    // Entry points; not imports from JS
+                    .entry_point_run, .entry_point_build => continue,
+                    // CSS imports
+                    .at, .at_conditional, .url, .composes => continue,
+                    // Other non-JS imports
+                    .html_manifest, .internal => continue,
                 }
 
                 const import_index: usize = import_record.source_index.get();

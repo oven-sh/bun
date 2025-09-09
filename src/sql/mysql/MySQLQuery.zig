@@ -95,9 +95,7 @@ pub fn onWriteFail(
     const event_loop = vm.eventLoop();
     event_loop.runCallback(function, globalObject, thisValue, &.{
         targetValue,
-        // TODO: add mysql error to JS
-        // postgresErrorToJS(globalObject, null, err),
-        instance,
+        instance.toError() orelse instance,
         queries_array,
     });
 }
@@ -178,7 +176,7 @@ pub fn onJSError(this: *@This(), err: jsc.JSValue, globalObject: *jsc.JSGlobalOb
     const function = vm.rareData().mysql_context.onQueryRejectFn.get().?;
     const event_loop = vm.eventLoop();
     event_loop.runCallback(function, globalObject, thisValue, &.{
-        targetValue,
+        targetValue.toError() orelse targetValue,
         err,
     });
 }

@@ -109,7 +109,7 @@ export interface MySQLDotZig {
     password: string,
     databae: string,
     sslmode: SSLMode,
-    tls: Bun.TLSOptions | boolean | null, // boolean true => empty TLSOptions object `{}`, boolean false or null => nothing
+    tls: Bun.TLSOptions | boolean | null | Bun.BunFile, // boolean true => empty TLSOptions object `{}`, boolean false or null => nothing
     query: string,
     path: string,
     onConnected: (err: Error | null, connection: $ZigGeneratedClasses.MySQLConnection) => void,
@@ -126,7 +126,7 @@ export interface MySQLDotZig {
     columns: string[] | undefined,
     bigint: boolean,
     simple: boolean,
-  ) => $ZigGeneratedClasses.MySQLSQLQuery;
+  ) => $ZigGeneratedClasses.MySQLQuery;
 }
 
 const enum SQLCommand {
@@ -276,10 +276,10 @@ function onQueryFinish(this: PooledMySQLConnection, onClose: (err: Error) => voi
 
 class PooledMySQLConnection {
   private static async createConnection(
-    options: Bun.SQL.__internal.DefinedMySQLOptions,
-    onConnected: (err: Error | null, connection: $ZigGeneratedClasses.MySQLSQLConnection) => void,
+    options: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions,
+    onConnected: (err: Error | null, connection: $ZigGeneratedClasses.MySQLConnection) => void,
     onClose: (err: Error | null) => void,
-  ): Promise<$ZigGeneratedClasses.MySQLSQLConnection | null> {
+  ): Promise<$ZigGeneratedClasses.MySQLConnection | null> {
     const {
       hostname,
       port,
@@ -292,8 +292,6 @@ class PooledMySQLConnection {
       connectionTimeout = 30 * 1000,
       maxLifetime = 0,
       prepare = true,
-
-      // @ts-expect-error path is currently removed from the types
       path,
     } = options;
 
@@ -302,10 +300,10 @@ class PooledMySQLConnection {
     try {
       if (typeof password === "function") {
         password = password();
+      }
 
-        if (password && $isPromise(password)) {
-          password = await password;
-        }
+      if (password && $isPromise(password)) {
+        password = await password;
       }
 
       return createMySQLConnection(
@@ -336,12 +334,12 @@ class PooledMySQLConnection {
   }
 
   adapter: MySQLAdapter;
-  connection: $ZigGeneratedClasses.MySQLSQLConnection | null = null;
+  connection: $ZigGeneratedClasses.MySQLConnection | null = null;
   state: PooledConnectionState = PooledConnectionState.pending;
   storedError: Error | null = null;
   queries: Set<(err: Error) => void> = new Set();
   onFinish: ((err: Error | null) => void) | null = null;
-  connectionInfo: Bun.SQL.__internal.DefinedMySQLOptions;
+  connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
   flags: number = 0;
   /// queryCount is used to indicate the number of queries using the connection, if a connection is reserved or if its a transaction queryCount will be 1 independently of the number of queries
   queryCount: number = 0;
@@ -488,7 +486,7 @@ export class MySQLAdapter
   implements
     DatabaseAdapter<PooledMySQLConnection, $ZigGeneratedClasses.MySQLConnection, $ZigGeneratedClasses.MySQLQuery>
 {
-  public readonly connectionInfo: Bun.SQL.__internal.DefinedMySQLOptions;
+  public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
 
   public readonly connections: PooledMySQLConnection[];
   public readonly readyConnections: Set<PooledMySQLConnection>;
@@ -501,7 +499,7 @@ export class MySQLAdapter
   public totalQueries: number = 0;
   public onAllQueriesFinished: (() => void) | null = null;
 
-  constructor(connectionInfo: Bun.SQL.__internal.DefinedMySQLOptions) {
+  constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;
     this.connections = new Array(connectionInfo.max);
     this.readyConnections = new Set();
@@ -845,7 +843,7 @@ export class MySQLAdapter
         return;
       }
 
-      const { promise, resolve } = Promise.withResolvers();
+      const { promise, resolve } = Promise.withResolvers<void>();
       const timer = setTimeout(() => {
         // timeout is reached, lets close and probably fail some queries
         this.#close().finally(resolve);
@@ -868,7 +866,7 @@ export class MySQLAdapter
       }
 
       // gracefully close the pool
-      const { promise, resolve } = Promise.withResolvers();
+      const { promise, resolve } = Promise.withResolvers<void>();
 
       this.onAllQueriesFinished = () => {
         // everything is closed, lets close the pool
@@ -1179,7 +1177,7 @@ export class MySQLAdapter
 
 export default {
   MySQLAdapter,
-  SQLCommand,
   commandToString,
   detectCommand,
+  SQLCommand,
 };

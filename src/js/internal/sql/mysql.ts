@@ -396,19 +396,15 @@ class PooledMySQLConnection {
     this.queryCount = 0;
     this.flags &= ~PooledConnectionFlags.reserved;
 
-    try {
-      // notify all queries that the connection is closed
-      for (const onClose of queries) {
-        onClose(err);
-      }
-      const onFinish = this.onFinish;
-      if (onFinish) {
-        onFinish(err);
-      }
-    } catch (e) {
-      console.log("onClose error", e, this instanceof PooledMySQLConnection, this);
-      throw e;
+    // notify all queries that the connection is closed
+    for (const onClose of queries) {
+      onClose(err);
     }
+    const onFinish = this.onFinish;
+    if (onFinish) {
+      onFinish(err);
+    }
+
     this.adapter.release(this, true);
   }
 

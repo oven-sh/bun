@@ -346,7 +346,7 @@ class PooledMySQLConnection {
   /// queryCount is used to indicate the number of queries using the connection, if a connection is reserved or if its a transaction queryCount will be 1 independently of the number of queries
   queryCount: number = 0;
 
-  #onConnected(err, _) {
+  __onConnected(err, _) {
     if (err) {
       err = wrapError(err);
     }
@@ -377,34 +377,32 @@ class PooledMySQLConnection {
     this.adapter.release(this, true);
   }
 
-  #onClose(err) {
-    let wrappedErr = err;
+  __onClose(err) {
+    if (err) {
+      err = wrapError(err);
+    }
+    const connectionInfo = this.connectionInfo;
+    if (connectionInfo?.onclose) {
+      connectionInfo.onclose(err);
+    }
     this.state = PooledConnectionState.closed;
     this.connection = null;
+    this.storedError = err;
+
+    // remove from ready connections if its there
     this.adapter.readyConnections.delete(this);
     const queries = new Set(this.queries);
-    this.queries.clear();
+    this.queries?.clear?.();
     this.queryCount = 0;
     this.flags &= ~PooledConnectionFlags.reserved;
-    const connectionInfo = this.connectionInfo;
-
-    if (err) {
-      wrappedErr = wrapError(err);
-    }
-
-    this.storedError = wrappedErr;
 
     // notify all queries that the connection is closed
     for (const onClose of queries) {
-      onClose(wrappedErr);
+      onClose(err);
     }
     const onFinish = this.onFinish;
     if (onFinish) {
-      onFinish(wrappedErr);
-    }
-
-    if (connectionInfo?.onclose) {
-      connectionInfo.onclose(wrappedErr);
+      onFinish(err);
     }
 
     this.adapter.release(this, true);
@@ -420,8 +418,8 @@ class PooledMySQLConnection {
   async #startConnection() {
     this.connection = await PooledMySQLConnection.createConnection(
       this.connectionInfo,
-      (...args) => this.#onConnected(...args),
-      (...args) => this.#onClose(...args),
+      (...args) => this.__onConnected(...args),
+      (...args) => this.__onClose(...args),
     );
   }
 

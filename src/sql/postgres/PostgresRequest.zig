@@ -255,8 +255,6 @@ pub fn executeQuery(
     writer: protocol.NewWriter(Context),
 ) !void {
     try protocol.writeQuery(query, Context, writer);
-    try writer.write(&protocol.Flush);
-    try writer.write(&protocol.Sync);
 }
 
 pub fn onData(

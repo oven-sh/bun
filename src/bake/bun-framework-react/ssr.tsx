@@ -83,15 +83,7 @@ export function renderToHtml(
       stream = new RscInjectionStream(rscPayload, controller);
       pipe(stream);
 
-      // Promise resolved after all data is combined.
-      //
-      // We need to catch this or otherwise it results in unhandled rejection, I
-      // think this is a problem with `type: "direct"` as it does not happen
-      // when that line is commented out.
-      //
-      // This is fine because the actual error will come in cancel or onError callback elsewhere
-      return stream.finished.catch(() => {});
-      // return stream.finished;
+      return stream.finished;
     },
     cancel(err) {
       if (!signal.aborted) {

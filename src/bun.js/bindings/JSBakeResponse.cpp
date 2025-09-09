@@ -79,7 +79,6 @@ extern "C" bool JSC__JSValue__isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JS
 extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES Response__createForSSR(Zig::GlobalObject* globalObject, void* ptr, uint8_t kind)
 {
     Structure* structure = globalObject->bakeAdditions().JSBakeResponseStructure(globalObject);
-    printf("Creating JSBakeResponse for kind: %d\n", kind);
 
     JSBakeResponse* instance = JSBakeResponse::create(globalObject->vm(), globalObject, structure, ptr);
 

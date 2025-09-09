@@ -725,7 +725,8 @@ describe("lex shell", () => {
 
     test("Unexpected EOF", async () => {
       await TestBuilder.command`echo hi |`.error("Unexpected EOF").run();
-      await TestBuilder.command`echo hi &`.error('Background commands "&" are not supported yet.').run();
+      // Background commands are now supported, so this should succeed
+      await TestBuilder.command`echo hi &`.stdout("hi\n").run();
     });
 
     test("Unclosed subshell", async () => {

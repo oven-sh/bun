@@ -376,7 +376,10 @@ pub fn stopTimers(this: *@This()) void {
 }
 
 pub fn getQueriesArray(this: *const @This()) JSValue {
-    return js.queriesGetCached(this.js_value) orelse .zero;
+    if (this.js_value == .zero) {
+        return .js_undefined;
+    }
+    return js.queriesGetCached(this.js_value) orelse .js_undefined;
 }
 pub fn failFmt(this: *@This(), error_code: AnyMySQLError.Error, comptime fmt: [:0]const u8, args: anytype) void {
     const message = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, fmt, args));
@@ -1294,6 +1297,9 @@ fn handleHandshakeDecodePublicKey(this: *MySQLConnection, comptime Context: type
 
 pub fn consumeOnConnectCallback(this: *const @This(), globalObject: *jsc.JSGlobalObject) ?jsc.JSValue {
     debug("consumeOnConnectCallback", .{});
+    if (this.js_value == .zero) {
+        return null;
+    }
     const on_connect = js.onconnectGetCached(this.js_value) orelse return null;
     debug("consumeOnConnectCallback exists", .{});
 
@@ -1303,6 +1309,9 @@ pub fn consumeOnConnectCallback(this: *const @This(), globalObject: *jsc.JSGloba
 
 pub fn consumeOnCloseCallback(this: *const @This(), globalObject: *jsc.JSGlobalObject) ?jsc.JSValue {
     debug("consumeOnCloseCallback", .{});
+    if (this.js_value == .zero) {
+        return null;
+    }
     const on_close = js.oncloseGetCached(this.js_value) orelse return null;
     debug("consumeOnCloseCallback exists", .{});
     js.oncloseSetCached(this.js_value, globalObject, .zero);
@@ -1320,8 +1329,12 @@ pub fn setStatus(this: *@This(), status: ConnectionState) void {
     switch (status) {
         .connected => {
             const on_connect = this.consumeOnConnectCallback(this.globalObject) orelse return;
-            const js_value = this.js_value;
-            js_value.ensureStillAlive();
+            var js_value = this.js_value;
+            if (js_value == .zero) {
+                js_value = .js_undefined;
+            } else {
+                js_value.ensureStillAlive();
+            }
             this.globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
             this.poll_ref.unref(this.vm);
         },
@@ -1898,7 +1911,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 var cached_structure: ?CachedStructure = null;
                 switch (request.flags.result_mode) {
                     .objects => {
-                        cached_structure = statement.structure(this.js_value, this.globalObject);
+                        cached_structure = if (this.js_value == .zero) null else statement.structure(this.js_value, this.globalObject);
                         structure = cached_structure.?.jsValue() orelse .js_undefined;
                     },
                     .raw, .values => {

@@ -350,9 +350,9 @@ const string = []const u8;
 const std = @import("std");
 
 const bun = @import("bun");
+const js_parser = bun.js_parser;
 const logger = bun.logger;
 
 const js_ast = bun.ast;
-const js_parser = bun.js_parser;
 const E = js_ast.E;
 const Symbol = js_ast.Symbol;

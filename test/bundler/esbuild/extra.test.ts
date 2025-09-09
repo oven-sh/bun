@@ -1663,7 +1663,6 @@ describe("bundler", () => {
     run: true,
   });
   itBundled(`extra/FunctionHoistingKeepNames3`, {
-    todo: true, // keepNames requires Object.defineProperty implementation
     files: {
       "in.ts": `
       if (1) {
@@ -1683,7 +1682,6 @@ describe("bundler", () => {
     run: true,
   });
   itBundled(`extra/FunctionHoistingKeepNames4`, {
-    todo: true, // keepNames requires Object.defineProperty implementation
     files: {
       "in.ts": `
       if (1) {

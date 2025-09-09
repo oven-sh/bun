@@ -297,7 +297,6 @@ $> bun-after test hook-timeouts
 - [ ] make sure ScopeFunctions class can finalize (see napi_handle_scope NapiHandleScopeImpl as an example)
   - currently, it never calls its finalize method because it no longer extends from finalize
 - [ ] make sure DoneCallback class can finalize, same as above
-- [ ] see about caching ScopeFunctions by value maybe?
 - [ ] `test("rerun me", () => { console.log("run one time!"); });` `--rerun-each=3`. works 1, no message 2, fails 3
 - [ ] make BunTest into a gc object so you can't deinit it while a .then() is still active
 - [ ] add tests & pass existing tests
@@ -385,7 +384,7 @@ $> bun-after test hook-timeouts
 # Code quality:
 
 - [ ] setting both result and maybe_skip is not ideal, maybe there should be a function to do both at once?
-- [ ] rename sequence.index to sequence.active_index because it is misleading.
+- [x] rename sequence.index to sequence.active_index because it is misleading.
 - [ ] try using a linked list rather than arraylist for describe/test children, see how it affects performance
 - [ ] consider modifying the junit reporter to print the whole describe tree rather than exploring the execution tree (if that's what it's doing? either way it needs to include tests that are filtered out)
 - [x] concurrent tests have an n^2 problem because each time a test completes it needs to loop over every test to advance.
@@ -402,9 +401,8 @@ $> bun-after test hook-timeouts
     - 1.38x slower: 1.2.0 empty async
 - [ ] consider a memory pool for describescope/executionentry. test if it improves performance.
 - [ ] consider making RefDataValue methods return the reason for failure rather than ?value. that way we can improve error messages. the reason could be a string or it could be a defined error set
-- [ ] expect_call_count/expect_assertions is confusing. rename to `expect_calls`, `assert_expect_calls`. or something.
 - [ ] instead of 'description orelse (unnamed)', let's have description default to 'unnamed' and not free it if it === the global that defines that
-- [ ] in test_command.zig, it has `const converted_status: TestRunner.Test.Status = switch (status) {`. instead, change junit writeTestCase to accept the new status type.
+- [x] in test_command.zig, it has `const converted_status: TestRunner.Test.Status = switch (status) {`. instead, change junit writeTestCase to accept the new status type.
 - [x] BunTestFile is called buntest. what is BunTest called? rename these. maybe BunTestFile -> BunTest and BunTest -> BunTestAllFiles? or BunTestRoot?
 - [ ] need to weakly hold BunTestFile from ref()
   - two tests for comparing performance
@@ -430,20 +428,20 @@ $> bun-after test hook-timeouts
 - [ ] strong.list should only have one jsvalue (or be removed fully)
 
 - [x] Add private fields in SafeStrong.zig
-- [ ] Add private fields in Execution.zig and Order.zig
 - [ ] Add a phase before ordering results that inherits properties to the parents. (eg inherit only from the child and inherit has_callback from the child. and has_callback can be on describe/test individually rather than on base). then we won't have that happening in an init() function (terrible!)
-- [ ] In Collection.zig, consider inlining enqueueDescribeCallback/enqueueTestCallback/enqueueHookCallback to their callsites?
+- [x] In Collection.zig, consider inlining enqueueDescribeCallback/enqueueTestCallback/enqueueHookCallback to their callsites?
 - [x] In Execution.zig, rename order: ..., order_index to groups, group_index for consistency.
 - [x] ~~In Execution.zig, change (start, end) to (start, len)~~ did not do this, (start, end) works better for this use-case
 - [x] In Execution.zig, modify so groups has a .sequences() fn and sequences has a .entries() fn and index is 0 based
 - [x] In Execution.zig, change order sequence and entries to be slices rather than ArrayLists. We have to rework test() in test() anyway.
-- [ ] Should make line_no be an enum with a none option and a function to get if line nombers are enabled
 - [x] make Data type-safe. in Execution.zig, it should be a CurrentEntryRef
   - this will help for when we cancel tests due to timeout, because they still might resolve in the future
   - this will help for the done callback, which could be called multiple times by the user. it can be stored as a js value and gc'd.
 
 # Follow-up:
 
+- [ ] expect_call_count/expect_assertions is confusing. rename to `expect_calls`, `assert_expect_calls`. or something.
+- [ ] Should make line_no be an enum with a none option and a function to get if line nombers are enabled
 - [ ] limit the number of concurrent tests that run at once
 
 - [ ] looks like we don't need to use file_id anymore (remove `bun.jsc.Jest.Jest.runner.?.getOrPutFile(file_path).file_id;`, store the file path directly)

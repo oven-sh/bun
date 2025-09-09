@@ -363,25 +363,30 @@ list(APPEND BUN_BAKE_RUNTIME_CODEGEN_SOURCES
 set(BUN_BAKE_RUNTIME_OUTPUTS
   ${CODEGEN_PATH}/bake.client.js
   ${CODEGEN_PATH}/bake.server.js
-  ${CODEGEN_PATH}/bun-framework-react/.copied
 )
 
-add_custom_command(
-  OUTPUT
-    ${CODEGEN_PATH}/bun-framework-react/.copied
-  COMMAND
-    ${CMAKE_COMMAND} -E remove_directory ${CODEGEN_PATH}/bun-framework-react
-  COMMAND
-    ${CMAKE_COMMAND} -E copy_directory ${CWD}/packages/bun-framework-react ${CODEGEN_PATH}/bun-framework-react
-  COMMAND
-    ${CMAKE_COMMAND} -E touch ${CODEGEN_PATH}/bun-framework-react/.copied
-  DEPENDS
-    ${CWD}/packages/bun-framework-react/client.tsx
-    ${CWD}/packages/bun-framework-react/server.tsx
-    ${CWD}/packages/bun-framework-react/package.json
-  COMMENT
-    "Copying bun-framework-react package to codegen"
-)
+# Only copy bun-framework-react in release builds
+if(NOT DEBUG)
+  list(APPEND BUN_BAKE_RUNTIME_OUTPUTS ${CODEGEN_PATH}/bun-framework-react/.copied)
+  
+  add_custom_command(
+    OUTPUT
+      ${CODEGEN_PATH}/bun-framework-react/.copied
+    COMMAND
+      ${CMAKE_COMMAND} -E remove_directory ${CODEGEN_PATH}/bun-framework-react
+    COMMAND
+      ${CMAKE_COMMAND} -E copy_directory ${CWD}/packages/bun-framework-react ${CODEGEN_PATH}/bun-framework-react
+    COMMAND
+      ${CMAKE_COMMAND} -E touch ${CODEGEN_PATH}/bun-framework-react/.copied
+    DEPENDS
+      ${CWD}/packages/bun-framework-react/client.tsx
+      ${CWD}/packages/bun-framework-react/server.tsx
+      ${CWD}/packages/bun-framework-react/ssr.tsx
+      ${CWD}/packages/bun-framework-react/package.json
+    COMMENT
+      "Copying bun-framework-react package to codegen"
+  )
+endif()
 
 register_command(
   TARGET

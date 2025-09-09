@@ -483,10 +483,6 @@ fn drainInternal(this: *PostgresSQLConnection) void {
     defer event_loop.exit();
 
     this.flushData();
-
-    if (!this.flags.has_backpressure) {
-        this.flushData();
-    }
 }
 
 pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
@@ -1077,7 +1073,7 @@ fn finishRequest(this: *@This(), item: *PostgresSQLQuery) void {
         .success, .fail, .pending => {},
     }
 }
-pub fn canPrepareQuery(this: *@This()) bool {
+pub fn canPrepareQuery(noalias this: *const @This()) bool {
     return this.flags.is_ready_for_query and !this.flags.waiting_to_prepare and this.pipelined_requests == 0;
 }
 

@@ -94,17 +94,16 @@ pub fn callback(task: *ThreadPool.Task) void {
         .package_manifest => {
             const allocator = bun.default_allocator;
             var manifest = &this.request.package_manifest;
-            const body = manifest.network.response_buffer.toOwnedSlice();
 
-            defer {
-                bun.default_allocator.free(body);
-            }
+            const body = &manifest.network.response_buffer;
+            body.transferOwnership(bun.DefaultAllocator{});
+            defer body.deinit();
 
             const package_manifest = Npm.Registry.getPackageMetadata(
                 allocator,
                 manager.scopeForPackageName(manifest.name.slice()),
                 (manifest.network.response.metadata orelse @panic("Assertion failure: Expected metadata to be set")).response,
-                body,
+                body.slice(),
                 &this.log,
                 manifest.name.slice(),
                 manifest.network.callback.package_manifest.loaded_manifest,
@@ -135,15 +134,13 @@ pub fn callback(task: *ThreadPool.Task) void {
             }
         },
         .extract => {
-            const bytes = this.request.extract.network.response_buffer.toOwnedSlice();
-
-            defer {
-                bun.default_allocator.free(bytes);
-            }
+            const buffer = &this.request.extract.network.response_buffer;
+            buffer.transferOwnership(bun.DefaultAllocator{});
+            defer buffer.deinit();
 
             const result = this.request.extract.tarball.run(
                 &this.log,
-                bytes,
+                buffer.slice(),
             ) catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
 

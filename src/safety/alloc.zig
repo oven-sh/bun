@@ -93,7 +93,7 @@ pub const CheckedAllocator = struct {
     #allocator: if (enabled) NullableAllocator else void = if (enabled) .init(null),
     #trace: if (traces_enabled) StoredTrace else void = if (traces_enabled) StoredTrace.empty,
 
-    pub fn init(alloc: Allocator) Self {
+    pub inline fn init(alloc: Allocator) Self {
         var self: Self = .{};
         self.set(alloc);
         return self;
@@ -137,8 +137,42 @@ pub const CheckedAllocator = struct {
         bun.safety.alloc.assertEq(old_alloc, alloc);
     }
 
-    pub fn get(self: Self) ?std.mem.Allocator {
-        return if (comptime enabled) self.#allocator.get() else null;
+    /// Transfers ownership of the collection to a new allocator.
+    ///
+    /// This method is valid only if both the old allocator and new allocator use mimalloc.
+    /// This is okay because data allocated by one mimalloc allocator can always be freed
+    /// by another (this includes `resize` and `remap`).
+    ///
+    /// `new_allocator` should be one of the following:
+    ///
+    /// * `*MimallocArena`
+    /// * `*const MimallocArena`
+    /// * `MimallocArena.Borrowed`
+    /// * `bun.DefaultAllocator`
+    ///
+    /// If you only have an `std.mem.Allocator` and need a `MimallocArena`, see
+    /// `MimallocArena.Borrowed.downcast`.
+    pub inline fn transferOwnership(self: *Self, new_allocator: anytype) void {
+        if (comptime !enabled) return;
+        const MimallocArena = bun.allocators.MimallocArena;
+        const ArgType = @TypeOf(new_allocator);
+        const new_std = switch (comptime ArgType) {
+            *MimallocArena,
+            *const MimallocArena,
+            MimallocArena.Borrowed,
+            bun.DefaultAllocator,
+            => new_allocator.allocator(),
+            else => @compileError("unsupported argument: " ++ @typeName(ArgType)),
+        };
+
+        if (self.#allocator.get()) |old_allocator| {
+            bun.assertf(
+                bun.allocators.isMimalloc(old_allocator),
+                "cannot transfer ownership from non-mimalloc allocator (old vtable is {*})",
+                .{old_allocator.vtable},
+            );
+        }
+        self.* = .init(new_std);
     }
 };
 

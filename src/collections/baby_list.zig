@@ -545,36 +545,12 @@ pub fn BabyList(comptime Type: type) type {
             return this;
         }
 
-        /// Transfer ownership of this `BabyList` to a new allocator.
+        /// Transfers ownership of this `BabyList` to a new allocator.
         ///
-        /// This method is valid only if both the old allocator and new allocator are
-        /// `MimallocArena`s. This is okay because data allocated by one `MimallocArena` can always
-        /// be freed by another (this includes `resize` and `remap`).
-        ///
-        /// `new_allocator` should be a pointer to a `MimallocArena` or an instance of
-        /// `MimallocArena.Borrowed`. If you only have an `std.mem.Allocator`, use
-        /// `MimallocArena.Borrowed.downcast`.
+        /// This method is valid only if both the old allocator and new allocator use mimalloc.
+        /// See `bun.safety.CheckedAllocator.transferOwnership`.
         pub fn transferOwnership(this: *Self, new_allocator: anytype) void {
-            if (comptime !safety_checks) return;
-            const MimallocArena = bun.allocators.MimallocArena;
-            const ArgType = @TypeOf(new_allocator);
-            const new_std = switch (comptime ArgType) {
-                *MimallocArena,
-                *const MimallocArena,
-                MimallocArena.Borrowed,
-                => new_allocator.allocator(),
-                else => @compileError("unsupported argument: " ++ @typeName(ArgType)),
-            };
-
-            if (this.#allocator.get()) |old_allocator| {
-                bun.assertf(
-                    MimallocArena.isInstance(old_allocator),
-                    "cannot transfer ownership from non-MimallocArena to MimallocArena" ++
-                        "(old vtable is {*})",
-                    .{old_allocator.vtable},
-                );
-            }
-            this.#allocator = .init(new_std);
+            this.#allocator.transferOwnership(new_allocator);
         }
 
         pub fn format(

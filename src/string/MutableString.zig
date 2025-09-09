@@ -258,6 +258,16 @@ pub fn slice(self: *MutableString) []u8 {
     return self.list.items;
 }
 
+/// Transfers ownership of this `MutableString` to a new allocator.
+///
+/// This method is valid only if both the old allocator and new allocator use mimalloc.
+/// See `bun.safety.CheckedAllocator.transferOwnership`.
+pub fn transferOwnership(self: *MutableString, new_allocator: anytype) void {
+    var checked: bun.safety.CheckedAllocator = .init(self.allocator);
+    checked.transferOwnership(new_allocator); // asserts both allocators use mimalloc
+    self.allocator = new_allocator.allocator();
+}
+
 /// Appends `0` if needed
 pub fn sliceWithSentinel(self: *MutableString) [:0]u8 {
     if (self.list.items.len > 0 and self.list.items[self.list.items.len - 1] != 0) {

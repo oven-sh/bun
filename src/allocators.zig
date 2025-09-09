@@ -780,6 +780,12 @@ pub fn isDefault(allocator: std.mem.Allocator) bool {
     return allocator.vtable == c_allocator.vtable;
 }
 
+/// Checks whether `allocator` uses mimalloc; that is, whether it is a `MimallocArena` or the
+/// default allocator.
+pub fn isMimalloc(allocator: std.mem.Allocator) bool {
+    return isDefault(allocator) or MimallocArena.isInstance(allocator);
+}
+
 // The following functions operate on generic allocators. A generic allocator is a type that
 // satisfies the `GenericAllocator` interface:
 //

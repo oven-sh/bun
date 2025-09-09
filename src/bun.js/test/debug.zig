@@ -26,11 +26,11 @@ pub fn dumpOrder(this: *Execution) bun.JSError!void {
         group.beginMsg("{d} ConcurrentGroup ({d}-{d})", .{ group_index, group_value.sequence_start, group_value.sequence_end });
         defer group.end();
 
-        for (group_value.sequences(this), group_value.sequence_start..) |*sequence, sequence_index| {
-            group.beginMsg("{d} Sequence ({d}-{d},{d}x)", .{ sequence_index, sequence.entries_start, sequence.entries_end, sequence.remaining_repeat_count });
+        for (group_value.sequences(this), 0..) |*sequence, sequence_index| {
+            group.beginMsg("{d} Sequence ({d}x)", .{ sequence_index, sequence.remaining_repeat_count });
             defer group.end();
 
-            for (sequence.entries(this), sequence.entries_start..) |entry, entry_index| {
+            for (sequence.entries(this), 0..) |entry, entry_index| {
                 group.log("{d} ExecutionEntry \"{}\" (concurrent={}, mode={s}, only={s}, has_callback={})", .{ entry_index, std.zig.fmtEscapes(entry.base.name orelse "undefined"), entry.base.concurrent, @tagName(entry.base.mode), @tagName(entry.base.only), entry.base.has_callback });
             }
         }

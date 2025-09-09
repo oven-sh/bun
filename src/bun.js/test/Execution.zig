@@ -67,15 +67,16 @@ pub const ConcurrentGroup = struct {
     }
 };
 pub const ExecutionSequence = struct {
-    entries_start: usize,
-    entries_end: usize,
-    index: usize,
+    /// Index into ExecutionSequence.entries() for the entry that is not started or currently running
+    active_index: usize,
     test_entry: ?*ExecutionEntry,
     remaining_repeat_count: i64 = 1,
     result: Result = .pending,
     executing: bool = false,
     started_at: bun.timespec = .epoch,
+    /// Number of expect() calls observed in this sequence.
     expect_call_count: u32 = 0,
+    /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     expect_assertions: union(enum) {
         not_set,
         at_least_one,
@@ -83,11 +84,16 @@ pub const ExecutionSequence = struct {
     } = .not_set,
     maybe_skip: bool = false,
 
+    /// Start index into `Execution.#entries` (inclusive) for this sequence.
+    #entries_start: usize,
+    /// End index into `Execution.#entries` (exclusive) for this sequence.
+    #entries_end: usize,
+
     pub fn init(start: usize, end: usize, test_entry: ?*ExecutionEntry) ExecutionSequence {
         return .{
-            .entries_start = start,
-            .entries_end = end,
-            .index = 0,
+            .#entries_start = start,
+            .#entries_end = end,
+            .active_index = 0,
             .test_entry = test_entry,
         };
     }
@@ -98,12 +104,12 @@ pub const ExecutionSequence = struct {
     }
 
     pub fn entries(this: ExecutionSequence, execution: *Execution) []const *ExecutionEntry {
-        return execution.#entries[this.entries_start..this.entries_end];
+        return execution.#entries[this.#entries_start..this.#entries_end];
     }
     pub fn activeEntry(this: ExecutionSequence, execution: *Execution) ?*ExecutionEntry {
         const entries_value = this.entries(execution);
-        if (this.index >= entries_value.len) return null;
-        return entries_value[this.index];
+        if (this.active_index >= entries_value.len) return null;
+        return entries_value[this.active_index];
     }
 };
 pub const Result = enum {
@@ -210,7 +216,7 @@ pub fn step(this: *Execution, globalThis: *jsc.JSGlobalObject, data: describe2.B
             };
             const sequence_index = data.execution.entry_data.?.sequence_index;
 
-            bun.assert(sequence.index < sequence.entries(this).len);
+            bun.assert(sequence.active_index < sequence.entries(this).len);
             this.advanceSequence(sequence, group);
 
             const now = bun.timespec.now();
@@ -300,7 +306,7 @@ fn stepSequenceOne(this: *Execution, globalThis: *jsc.JSGlobalObject, sequence: 
         return .done;
     };
     sequence.executing = true;
-    if (sequence.index == 0) {
+    if (sequence.active_index == 0) {
         this.onSequenceStarted(sequence);
     }
     this.onEntryStarted(next_item);
@@ -313,7 +319,7 @@ fn stepSequenceOne(this: *Execution, globalThis: *jsc.JSGlobalObject, sequence: 
                 .group_index = this.group_index,
                 .entry_data = .{
                     .sequence_index = sequence_index,
-                    .entry_index = sequence.index,
+                    .entry_index = sequence.active_index,
                     .remaining_repeat_count = sequence.remaining_repeat_count,
                 },
             },
@@ -334,7 +340,7 @@ fn stepSequenceOne(this: *Execution, globalThis: *jsc.JSGlobalObject, sequence: 
                 sequence.result = .skipped_because_label;
             },
             else => {
-                groupLog.log("runSequence: no callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.index });
+                groupLog.log("runSequence: no callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.active_index });
                 bun.debugAssert(false);
             },
         }
@@ -376,7 +382,7 @@ fn getCurrentAndValidExecutionSequence(this: *Execution, data: describe2.BunTest
         groupLog.log("runOneCompleted: the data is for a previous repeat count (outdated)", .{});
         return null;
     }
-    if (sequence.index != data.execution.entry_data.?.entry_index) {
+    if (sequence.active_index != data.execution.entry_data.?.entry_index) {
         groupLog.log("runOneCompleted: the data is for a different sequence index (outdated)", .{});
         return null;
     }
@@ -399,13 +405,13 @@ fn advanceSequence(this: *Execution, sequence: *ExecutionSequence, group: *Concu
         const first_aftereach_index = for (sequence.entries(this), 0..) |entry, index| {
             if (entry == sequence.test_entry) break index + 1;
         } else sequence.entries(this).len;
-        if (sequence.index < first_aftereach_index) {
-            sequence.index = first_aftereach_index;
+        if (sequence.active_index < first_aftereach_index) {
+            sequence.active_index = first_aftereach_index;
         } else {
-            sequence.index = sequence.entries(this).len;
+            sequence.active_index = sequence.entries(this).len;
         }
     } else {
-        sequence.index += 1;
+        sequence.active_index += 1;
     }
 
     if (sequence.activeEntry(this) == null) {
@@ -495,10 +501,10 @@ pub fn resetSequence(this: *Execution, sequence: *ExecutionSequence) void {
     bun.assert(!sequence.executing);
     if (sequence.result.isPass(.pending_is_pass)) {
         // passed or pending; run again
-        sequence.* = .init(sequence.entries_start, sequence.entries_end, sequence.test_entry);
+        sequence.* = .init(sequence.#entries_start, sequence.#entries_end, sequence.test_entry);
     } else {
         // already failed or skipped; don't run again
-        sequence.index = sequence.entries(this).len;
+        sequence.active_index = sequence.entries(this).len;
     }
 }
 

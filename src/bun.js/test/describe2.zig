@@ -289,7 +289,7 @@ pub const BunTest = struct {
                     .group_index = this.execution.group_index,
                     .entry_data = .{
                         .sequence_index = active_sequence_index,
-                        .entry_index = sequence.index,
+                        .entry_index = sequence.active_index,
                         .remaining_repeat_count = sequence.remaining_repeat_count,
                     },
                 } };

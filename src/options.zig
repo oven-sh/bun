@@ -1510,6 +1510,27 @@ pub fn definesFromTransformOptions(
                 .value = .{ .e_undefined = .{} },
             }));
         }
+        
+        // Define process.isBun as true for dead code elimination
+        // This is a clean way to detect Bun runtime without breaking other checks
+        if (!user_defines.contains("process.isBun")) {
+            _ = try user_defines.getOrPutValue(
+                "process.isBun",
+                "true",
+            );
+        }
+        
+        // Mark process.versions.bun as truthy for DCE without replacing the value
+        // This allows if (process.versions.bun) to be eliminated but preserves
+        // the actual value for version comparisons like process.versions.bun === "1.2.21"
+        if (!user_defines.contains("process.versions.bun")) {
+            _ = try environment_defines.getOrPutValue("process.versions.bun", .init(.{
+                .is_truthy = true,
+                .valueless = true,
+                .original_name = "process.versions.bun",
+                .value = .{ .e_undefined = .{} },  // Value is not used when is_truthy is set
+            }));
+        }
     }
 
     const resolved_defines = try defines.DefineData.fromInput(user_defines, drop, log, allocator);

@@ -829,7 +829,8 @@ pub fn VisitExpr(
                         if (p.isDotDefineMatch(expr, define.parts)) {
                             if (in.assign_target == .none) {
                                 // Substitute user-specified defines
-                                if (!define.data.valueless()) {
+                                // Skip replacement if is_truthy is set - we want to keep the original expression
+                                if (!define.data.valueless() and !define.data.is_truthy()) {
                                     return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
                                 }
 
@@ -917,7 +918,8 @@ pub fn VisitExpr(
                 const e_ = expr.data.e_if;
                 const is_call_target = @as(Expr.Data, p.call_target) == .e_if and expr.data.e_if == p.call_target.e_if;
 
-                e_.test_ = p.visitExpr(e_.test_);
+                // Visit the test expression with is_conditional_test = true
+                e_.test_ = p.visitExprInOut(e_.test_, ExprIn{ .is_conditional_test = true });
 
                 e_.test_ = SideEffects.simplifyBoolean(p, e_.test_);
 

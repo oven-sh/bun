@@ -738,6 +738,22 @@ pub const SideEffects = enum(u1) {
             return Result{ .ok = false, .value = undefined, .side_effects = .could_have_side_effects };
         }
 
+        // Check if this is a dot expression with an is_truthy define
+        if (exp == .e_dot) {
+            const e_ = exp.e_dot;
+            if (p.define.dots.get(e_.name)) |parts| {
+                for (parts) |*define| {
+                    if (p.isDotDefineMatch(Expr{ .data = exp, .loc = .{} }, define.parts)) {
+                        if (define.data.is_truthy()) {
+                            // This expression is marked as truthy for DCE purposes
+                            return Result{ .ok = true, .value = true, .side_effects = .could_have_side_effects };
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
         return toBooleanWithoutDCECheck(exp);
     }
 

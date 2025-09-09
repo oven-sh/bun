@@ -27,7 +27,7 @@ pub const DefineData = struct {
     flags: Flags = .{},
 
     pub const Flags = packed struct(u8) {
-        _padding: u3 = 0,
+        _padding: u2 = 0,
 
         valueless: bool = false,
 
@@ -36,6 +36,10 @@ pub const DefineData = struct {
         call_can_be_unwrapped_if_unused: js_ast.E.CallUnwrap = .never,
 
         method_call_must_be_replaced_with_undefined: bool = false,
+        
+        // If true, this expression is known to be truthy at build time
+        // Used for dead code elimination without replacing the actual value
+        is_truthy: bool = false,
     };
 
     pub const Options = struct {
@@ -45,6 +49,7 @@ pub const DefineData = struct {
         can_be_removed_if_unused: bool = false,
         call_can_be_unwrapped_if_unused: js_ast.E.CallUnwrap = .never,
         method_call_must_be_replaced_with_undefined: bool = false,
+        is_truthy: bool = false,
     };
 
     pub fn init(options: Options) DefineData {
@@ -55,6 +60,7 @@ pub const DefineData = struct {
                 .can_be_removed_if_unused = options.can_be_removed_if_unused,
                 .call_can_be_unwrapped_if_unused = options.call_can_be_unwrapped_if_unused,
                 .method_call_must_be_replaced_with_undefined = options.method_call_must_be_replaced_with_undefined,
+                .is_truthy = options.is_truthy,
             },
             .original_name_ptr = if (options.original_name) |name| name.ptr else null,
             .original_name_len = if (options.original_name) |name| @truncate(name.len) else 0,
@@ -84,6 +90,10 @@ pub const DefineData = struct {
 
     pub inline fn method_call_must_be_replaced_with_undefined(self: *const DefineData) bool {
         return self.flags.method_call_must_be_replaced_with_undefined;
+    }
+    
+    pub inline fn is_truthy(self: *const DefineData) bool {
+        return self.flags.is_truthy;
     }
 
     pub inline fn valueless(self: *const DefineData) bool {

@@ -112,7 +112,7 @@ declare module "react-server-dom-bun/server.node.unbundled.js" {
 
   export interface PipeableStream<T> {
     /** Returns the input, which should match the Node.js writable interface */
-    pipe: <T>(destination: T) => T;
+    pipe: <T extends NodeJS.WritableStream>(destination: T) => T;
     abort: () => void;
   }
 
@@ -123,12 +123,12 @@ declare module "react-server-dom-bun/server.node.unbundled.js" {
   ): PipeableStream<T>;
 
   export interface RenderToPipeableStreamOptions {
-    onError?: Function;
+    onError?: (error: Error) => void;
     identifierPrefix?: string;
-    onPostpone?: Function;
+    onPostpone?: () => void;
     temporaryReferences?: any;
     environmentName?: string;
-    filterStackFrame?: Function;
+    filterStackFrame?: () => boolean;
   }
 }
 

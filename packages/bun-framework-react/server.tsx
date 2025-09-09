@@ -109,7 +109,6 @@ export async function render(
 
       // Mark as aborted and call the abort function
       signal.aborted = err;
-      // @ts-expect-error
       signal.abort(err);
       rscPayload.destroy(err);
     },

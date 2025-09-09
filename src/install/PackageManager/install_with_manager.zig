@@ -992,7 +992,7 @@ pub fn getWorkspaceFilters(manager: *PackageManager, original_cwd: []const u8) !
     if (manager.subcommand == .install and manager.options.filter_patterns.len > 0) {
         try workspace_filters.ensureUnusedCapacity(manager.allocator, manager.options.filter_patterns.len);
         for (manager.options.filter_patterns) |pattern| {
-            try workspace_filters.append(manager.allocator, try WorkspaceFilter.init(manager.allocator, pattern, original_cwd, &path_buf));
+            try workspace_filters.append(manager.allocator, try WorkspaceFilter.init(manager.allocator, pattern, original_cwd, path_buf[0..]));
         }
     }
 

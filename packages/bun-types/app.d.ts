@@ -4,6 +4,10 @@
 // To use, add a TypeScript reference comment mentioning this file:
 // /// <reference path="/path/to/bun/src/bake/bake.d.ts" />
 
+/**
+ * `bun:app` contains symbols usable in both the server and client boundaries of
+ * an app built with the Bun Rendering API.
+ */
 declare module "bun:app" {
   type FrameworkDefinitionLike = Framework | "react";
 

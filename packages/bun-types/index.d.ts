@@ -23,7 +23,7 @@
 /// <reference path="./experimental.d.ts" />
 /// <reference path="./sql.d.ts" />
 /// <reference path="./security.d.ts" />
-/// <reference path="./rendering.d.ts" />
+/// <reference path="./app.d.ts" />
 
 /// <reference path="./bun.ns.d.ts" />
 

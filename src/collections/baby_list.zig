@@ -349,6 +349,7 @@ pub fn BabyList(comptime Type: type) type {
             allocator: std.mem.Allocator,
             additional: usize,
         ) OOM![]Type {
+            if ((comptime safety_checks) and additional > this.cap - this.len) this.assertOwned();
             var list_ = this.listManaged(allocator);
             try list_.ensureUnusedCapacity(additional);
             const prev_len = list_.items.len;

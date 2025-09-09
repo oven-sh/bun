@@ -391,7 +391,7 @@ class PooledMySQLConnection {
 
     // remove from ready connections if its there
     this.adapter.readyConnections.delete(this);
-    const queries = new Set(this.queries);
+    const queries = [...this.queries];
     this.queries?.clear?.();
     this.queryCount = 0;
     this.flags &= ~PooledConnectionFlags.reserved;

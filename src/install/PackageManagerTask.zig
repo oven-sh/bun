@@ -94,7 +94,7 @@ pub fn callback(task: *ThreadPool.Task) void {
         .package_manifest => {
             const allocator = bun.default_allocator;
             var manifest = &this.request.package_manifest;
-            const body = manifest.network.response_buffer.move();
+            const body = manifest.network.response_buffer.toOwnedSlice();
 
             defer {
                 bun.default_allocator.free(body);
@@ -135,7 +135,7 @@ pub fn callback(task: *ThreadPool.Task) void {
             }
         },
         .extract => {
-            const bytes = this.request.extract.network.response_buffer.move();
+            const bytes = this.request.extract.network.response_buffer.toOwnedSlice();
 
             defer {
                 bun.default_allocator.free(bytes);

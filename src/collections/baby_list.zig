@@ -1,6 +1,13 @@
 /// This is like ArrayList except it stores the length and capacity as u32
 /// In practice, it is very unusual to have lengths above 4 GiB
 pub fn BabyList(comptime Type: type) type {
+    const Origin = union(enum) {
+        owned,
+        borrowed: struct {
+            trace: if (traces_enabled) StoredTrace else void,
+        },
+    };
+
     return struct {
         const Self = @This();
 
@@ -12,7 +19,7 @@ pub fn BabyList(comptime Type: type) type {
         ptr: [*]Type = &.{},
         len: u32 = 0,
         cap: u32 = 0,
-        #is_owned: if (safety_checks) bool else void = if (safety_checks) true,
+        #origin: if (safety_checks) Origin else void = if (safety_checks) .owned,
         #allocator: bun.safety.CheckedAllocator = .{},
 
         pub const Elem = Type;
@@ -127,6 +134,7 @@ pub fn BabyList(comptime Type: type) type {
         /// This method invalidates the `BabyList`. Use `clearAndFree` if you want to empty the
         /// list instead.
         pub fn deinit(this: *Self, allocator: std.mem.Allocator) void {
+            this.assertOwned();
             this.listManaged(allocator).deinit();
             this.* = undefined;
         }
@@ -169,19 +177,20 @@ pub fn BabyList(comptime Type: type) type {
 
         /// Empties the `BabyList`.
         pub fn toOwnedSlice(this: *Self, allocator: std.mem.Allocator) OOM![]Type {
+            if ((comptime safety_checks) and this.len != this.cap) this.assertOwned();
             defer this.* = .empty;
             var list_ = this.listManaged(allocator);
             return list_.toOwnedSlice();
         }
 
         pub fn moveToList(this: *Self) std.ArrayListUnmanaged(Type) {
-            if (comptime safety_checks) this.assertOwned();
+            this.assertOwned();
             defer this.* = .empty;
             return this.list();
         }
 
         pub fn moveToListManaged(this: *Self, allocator: std.mem.Allocator) std.ArrayList(Type) {
-            if (comptime safety_checks) this.assertOwned();
+            this.assertOwned();
             defer this.* = .empty;
             return this.listManaged(allocator);
         }
@@ -195,6 +204,7 @@ pub fn BabyList(comptime Type: type) type {
             allocator: std.mem.Allocator,
             new_capacity: usize,
         ) !void {
+            if ((comptime safety_checks) and new_capacity > this.cap) this.assertOwned();
             var list_ = this.listManaged(allocator);
             try list_.ensureTotalCapacity(new_capacity);
             this.update(list_);
@@ -205,6 +215,7 @@ pub fn BabyList(comptime Type: type) type {
             allocator: std.mem.Allocator,
             new_capacity: usize,
         ) !void {
+            if ((comptime safety_checks) and new_capacity > this.cap) this.assertOwned();
             var list_ = this.listManaged(allocator);
             try list_.ensureTotalCapacityPrecise(new_capacity);
             this.update(list_);
@@ -215,12 +226,14 @@ pub fn BabyList(comptime Type: type) type {
             allocator: std.mem.Allocator,
             count: usize,
         ) OOM!void {
+            if ((comptime safety_checks) and count > this.cap - this.len) this.assertOwned();
             var list_ = this.listManaged(allocator);
             try list_.ensureUnusedCapacity(count);
             this.update(list_);
         }
 
         pub fn shrinkAndFree(this: *Self, allocator: std.mem.Allocator, new_len: usize) void {
+            if ((comptime safety_checks) and new_len < this.cap) this.assertOwned();
             var list_ = this.listManaged(allocator);
             list_.shrinkAndFree(new_len);
             this.update(list_);
@@ -236,9 +249,7 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn append(this: *Self, allocator: std.mem.Allocator, value: Type) OOM!void {
-            if ((comptime safety_checks) and this.len == this.cap) {
-                this.assertOwned();
-            }
+            if ((comptime safety_checks) and this.len == this.cap) this.assertOwned();
             var list_ = this.listManaged(allocator);
             try list_.append(value);
             this.update(list_);
@@ -251,9 +262,7 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn appendSlice(this: *Self, allocator: std.mem.Allocator, vals: []const Type) !void {
-            if ((comptime safety_checks) and this.cap - this.len < vals.len) {
-                this.assertOwned();
-            }
+            if ((comptime safety_checks) and this.cap - this.len < vals.len) this.assertOwned();
             var list_ = this.listManaged(allocator);
             try list_.appendSlice(vals);
             this.update(list_);
@@ -286,9 +295,7 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn insert(this: *Self, allocator: std.mem.Allocator, index: usize, val: Type) OOM!void {
-            if ((comptime safety_checks) and this.len == this.cap) {
-                this.assertOwned();
-            }
+            if ((comptime safety_checks) and this.len == this.cap) this.assertOwned();
             var list_ = this.listManaged(allocator);
             try list_.insert(index, val);
             this.update(list_);
@@ -300,9 +307,7 @@ pub fn BabyList(comptime Type: type) type {
             index: usize,
             vals: []const Type,
         ) OOM!void {
-            if ((comptime safety_checks) and this.cap - this.len < vals.len) {
-                this.assertOwned();
-            }
+            if ((comptime safety_checks) and this.cap - this.len < vals.len) this.assertOwned();
             var list_ = this.listManaged(allocator);
             try list_.insertSlice(index, vals);
             this.update(list_);
@@ -320,12 +325,8 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn clone(this: Self, allocator: std.mem.Allocator) OOM!Self {
-            const copy = try this.list().clone(allocator);
-            return Self{
-                .ptr = copy.items.ptr,
-                .len = @intCast(copy.items.len),
-                .cap = @intCast(copy.capacity),
-            };
+            var copy = try this.list().clone(allocator);
+            return .moveFromList(&copy);
         }
 
         pub fn unusedCapacitySlice(this: Self) []Type {
@@ -356,6 +357,10 @@ pub fn BabyList(comptime Type: type) type {
             return writable;
         }
 
+        pub fn allocatedSlice(this: Self) []Type {
+            return this.ptr[0..this.cap];
+        }
+
         pub fn memoryCost(this: Self) usize {
             return this.cap;
         }
@@ -367,9 +372,7 @@ pub fn BabyList(comptime Type: type) type {
             comptime fmt: []const u8,
             args: anytype,
         ) OOM!void {
-            if ((comptime safety_checks) and this.len == this.cap) {
-                this.assertOwned();
-            }
+            if ((comptime safety_checks) and this.len == this.cap) this.assertOwned();
             var list_ = this.listManaged(allocator);
             const writer = list_.writer();
             try writer.print(fmt, args);
@@ -378,9 +381,7 @@ pub fn BabyList(comptime Type: type) type {
 
         /// This method is available only for `BabyList(u8)`.
         pub fn write(this: *Self, allocator: std.mem.Allocator, str: []const u8) OOM!u32 {
-            if ((comptime safety_checks) and this.cap - this.len < str.len) {
-                this.assertOwned();
-            }
+            if ((comptime safety_checks) and this.cap - this.len < str.len) this.assertOwned();
             if (comptime Type != u8)
                 @compileError("Unsupported for type " ++ @typeName(Type));
             const initial = this.len;
@@ -465,11 +466,6 @@ pub fn BabyList(comptime Type: type) type {
             this.len += @sizeOf(Int);
         }
 
-        /// This method is available only for `BabyList(u8)`.
-        pub fn allocatedSlice(this: Self) []u8 {
-            return this.ptr[0..this.cap];
-        }
-
         pub fn parse(input: *bun.css.Parser) bun.css.Result(Self) {
             return switch (input.parseCommaSeparated(Type, bun.css.generic.parseFor(Type))) {
                 .result => |v| return .{ .result = Self{
@@ -543,7 +539,9 @@ pub fn BabyList(comptime Type: type) type {
         /// * Methods that could potentially free, remap, or resize `items` cannot be called.
         pub fn fromBorrowedSliceDangerous(items: []const Type) Self {
             var this: Self = .fromOwnedSlice(@constCast(items));
-            if (comptime safety_checks) this.#is_owned = false;
+            if (comptime safety_checks) this.#origin = .{ .borrowed = .{
+                .trace = if (traces_enabled) .capture(@returnAddress()),
+            } };
             return this;
         }
 
@@ -594,9 +592,15 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         fn assertOwned(this: *Self) void {
-            if (comptime !safety_checks) return;
-            bun.assertf(
-                this.#is_owned,
+            if ((comptime !safety_checks) or this.#origin == .owned) return;
+            if (comptime traces_enabled) {
+                bun.Output.note("borrowed BabyList created here:", .{});
+                bun.crash_handler.dumpStackTrace(
+                    this.#origin.borrowed.trace.trace(),
+                    .{ .frame_count = 10, .stop_at_jsc_llint = true },
+                );
+            }
+            std.debug.panic(
                 "cannot perform this operation on a BabyList that doesn't own its data",
                 .{},
             );
@@ -687,6 +691,9 @@ pub const safety_checks = Environment.ci_assert;
 const std = @import("std");
 
 const bun = @import("bun");
-const Environment = bun.Environment;
 const OOM = bun.OOM;
 const strings = bun.strings;
+const StoredTrace = bun.crash_handler.StoredTrace;
+
+const Environment = bun.Environment;
+const traces_enabled = Environment.isDebug;

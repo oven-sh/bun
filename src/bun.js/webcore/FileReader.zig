@@ -329,6 +329,7 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
         }
     }
 
+    const reader_buffer = this.reader.buffer();
     if (this.read_inside_on_pull != .none) {
         switch (this.read_inside_on_pull) {
             .js => |in_progress| {
@@ -350,34 +351,30 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
             else => @panic("Invalid state"),
         }
     } else if (this.pending.state == .pending) {
-        if (buf.len == 0) {
-            {
-                if (this.buffered.items.len == 0) {
-                    if (this.buffered.capacity > 0) {
-                        this.buffered.clearAndFree(bun.default_allocator);
-                    }
-
-                    if (this.reader.buffer().items.len != 0) {
-                        this.buffered = this.reader.buffer().moveToUnmanaged();
-                    }
-                }
-
-                var buffer = &this.buffered;
-                defer buffer.clearAndFree(bun.default_allocator);
-                if (buffer.items.len > 0) {
-                    if (this.pending_view.len >= buffer.items.len) {
-                        @memcpy(this.pending_view[0..buffer.items.len], buffer.items);
-                        this.pending.result = .{ .into_array_and_done = .{ .value = this.pending_value.get() orelse .zero, .len = @truncate(buffer.items.len) } };
-                    } else {
-                        this.pending.result = .{ .owned_and_done = bun.ByteList.moveFromList(buffer) };
-                    }
-                } else {
-                    this.pending.result = .{ .done = {} };
-                }
-            }
+        defer {
             this.pending_value.clearWithoutDeallocation();
             this.pending_view = &.{};
             this.pending.run();
+        }
+
+        if (buf.len == 0) {
+            if (this.buffered.items.len == 0) {
+                this.buffered.clearAndFree(bun.default_allocator);
+                this.buffered = reader_buffer.moveToUnmanaged();
+            }
+
+            var buffer = &this.buffered;
+            defer buffer.clearAndFree(bun.default_allocator);
+            if (buffer.items.len > 0) {
+                if (this.pending_view.len >= buffer.items.len) {
+                    @memcpy(this.pending_view[0..buffer.items.len], buffer.items);
+                    this.pending.result = .{ .into_array_and_done = .{ .value = this.pending_value.get() orelse .zero, .len = @truncate(buffer.items.len) } };
+                } else {
+                    this.pending.result = .{ .owned_and_done = bun.ByteList.moveFromList(buffer) };
+                }
+            } else {
+                this.pending.result = .{ .done = {} };
+            }
             return false;
         }
 
@@ -385,78 +382,63 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
 
         if (this.pending_view.len >= buf.len) {
             @memcpy(this.pending_view[0..buf.len], buf);
-            this.reader.buffer().clearRetainingCapacity();
+            reader_buffer.clearRetainingCapacity();
             this.buffered.clearRetainingCapacity();
 
-            if (was_done) {
-                this.pending.result = .{
-                    .into_array_and_done = .{
-                        .value = this.pending_value.get() orelse .zero,
-                        .len = @truncate(buf.len),
-                    },
-                };
-            } else {
-                this.pending.result = .{
-                    .into_array = .{
-                        .value = this.pending_value.get() orelse .zero,
-                        .len = @truncate(buf.len),
-                    },
-                };
-            }
+            const into_array: streams.Result.IntoArray = .{
+                .value = this.pending_value.get() orelse .zero,
+                .len = @truncate(buf.len),
+            };
 
-            this.pending_value.clearWithoutDeallocation();
-            this.pending_view = &.{};
-            this.pending.run();
+            this.pending.result = if (was_done)
+                .{ .into_array_and_done = into_array }
+            else
+                .{ .into_array = into_array };
+            return !was_done;
+        }
+
+        if (bun.isSliceInBuffer(buf, reader_buffer.allocatedSlice())) {
+            if (this.reader.isDone()) {
+                bun.assert_eql(buf.ptr, reader_buffer.items.ptr);
+                var buffer = reader_buffer.moveToUnmanaged();
+                buffer.shrinkRetainingCapacity(buf.len);
+                this.pending.result = .{ .owned_and_done = .moveFromList(&buffer) };
+            } else {
+                reader_buffer.clearRetainingCapacity();
+                this.pending.result = .{ .temporary = .fromBorrowedSliceDangerous(buf) };
+            }
             return !was_done;
         }
 
         if (!bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
-            if (this.reader.isDone()) {
-                if (bun.isSliceInBuffer(buf, this.reader.buffer().allocatedSlice())) {
-                    this.reader.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
-                }
-                this.pending.result = .{
-                    .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(buf),
-                };
-            } else {
-                this.pending.result = .{
-                    .temporary = bun.ByteList.fromBorrowedSliceDangerous(buf),
-                };
-
-                if (bun.isSliceInBuffer(buf, this.reader.buffer().allocatedSlice())) {
-                    this.reader.buffer().clearRetainingCapacity();
-                }
-            }
-
-            this.pending_value.clearWithoutDeallocation();
-            this.pending_view = &.{};
-            this.pending.run();
+            this.pending.result = if (this.reader.isDone())
+                .{ .temporary_and_done = .fromBorrowedSliceDangerous(buf) }
+            else
+                .{ .temporary = .fromBorrowedSliceDangerous(buf) };
             return !was_done;
         }
 
-        if (this.reader.isDone()) {
-            this.pending.result = .{
-                .owned_and_done = bun.ByteList.fromBorrowedSliceDangerous(buf),
-            };
-        } else {
-            this.pending.result = .{
-                .owned = bun.ByteList.fromBorrowedSliceDangerous(buf),
-            };
-        }
+        bun.assert_eql(buf.ptr, this.buffered.items.ptr);
+        var buffered = this.buffered;
         this.buffered = .{};
-        this.pending_value.clearWithoutDeallocation();
-        this.pending_view = &.{};
-        this.pending.run();
+        buffered.shrinkRetainingCapacity(buf.len);
+
+        this.pending.result = if (this.reader.isDone())
+            .{ .owned_and_done = .moveFromList(&buffered) }
+        else
+            .{ .owned = .moveFromList(&buffered) };
         return !was_done;
     } else if (!bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
         bun.handleOom(this.buffered.appendSlice(bun.default_allocator, buf));
-        if (bun.isSliceInBuffer(buf, this.reader.buffer().allocatedSlice())) {
-            this.reader.buffer().clearRetainingCapacity();
+        if (bun.isSliceInBuffer(buf, reader_buffer.allocatedSlice())) {
+            reader_buffer.clearRetainingCapacity();
         }
     }
 
     // For pipes, we have to keep pulling or the other process will block.
-    return this.read_inside_on_pull != .temporary and !(this.buffered.items.len + this.reader.buffer().items.len >= this.highwater_mark and !this.reader.flags.pollable);
+    return this.read_inside_on_pull != .temporary and
+        !(this.buffered.items.len + reader_buffer.items.len >= this.highwater_mark and
+            !this.reader.flags.pollable);
 }
 
 fn isPulling(this: *const FileReader) bool {

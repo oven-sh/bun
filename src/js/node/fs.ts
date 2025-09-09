@@ -1038,7 +1038,7 @@ function cpSync(src, dest, options) {
     // Ensure force defaults to true if not specified
     const optsWithDefaults = {
       ...options,
-      force: options.force ?? true
+      force: options.force ?? true,
     };
     return require("internal/fs/cp-sync")(src, dest, optsWithDefaults);
   }

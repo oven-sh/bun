@@ -587,7 +587,7 @@ static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
     auto scope = DECLARE_THROW_SCOPE(vm);
-    
+
     MarkedArgumentBuffer args;
     args.ensureCapacity(countof(builtinModuleNames));
 
@@ -604,11 +604,11 @@ static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
     auto scope = DECLARE_THROW_SCOPE(vm);
-    
+
     auto* compileCacheStatus = JSC::constructEmptyObject(
         vm, globalObject->nullPrototypeObjectStructure());
     RETURN_IF_EXCEPTION(scope, {});
-    
+
     compileCacheStatus->putDirect(vm, JSC::Identifier::fromString(vm, "FAILED"_s),
         JSC::jsNumber(0));
     compileCacheStatus->putDirect(
@@ -622,7 +622,7 @@ static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
     auto* constantsObject = JSC::constructEmptyObject(
         vm, globalObject->nullPrototypeObjectStructure());
     RETURN_IF_EXCEPTION(scope, {});
-    
+
     constantsObject->putDirect(
         vm, JSC::Identifier::fromString(vm, "compileCacheStatus"_s),
         compileCacheStatus);
@@ -712,7 +712,7 @@ static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
     auto scope = DECLARE_THROW_SCOPE(vm);
-    
+
     auto prototype = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
     RETURN_IF_EXCEPTION(scope, {});
 

@@ -12,11 +12,12 @@ function areIdentical(srcStat, destStat) {
 
 const normalizePathToArray = path => {
   // Handle URL objects and strings
-  const pathStr = typeof path === 'object' && path !== null && path.pathname 
-    ? path.pathname 
-    : typeof path === 'object' && path !== null && path.href
-    ? new URL(path.href).pathname
-    : path;
+  const pathStr =
+    typeof path === "object" && path !== null && path.pathname
+      ? path.pathname
+      : typeof path === "object" && path !== null && path.href
+        ? new URL(path.href).pathname
+        : path;
   return ArrayPrototypeFilter.$call(StringPrototypeSplit.$call(resolve(pathStr), sep), Boolean);
 };
 
@@ -59,14 +60,14 @@ const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
 function validateDestinationPath(src, dest) {
   // Convert URLs to paths if necessary
   // Handle both URL objects and strings
-  const srcPath = typeof src === 'object' && src !== null ? (src.pathname || src.toString()) : src;
-  const destPath = typeof dest === 'object' && dest !== null ? (dest.pathname || dest.toString()) : dest;
-  
+  const srcPath = typeof src === "object" && src !== null ? src.pathname || src.toString() : src;
+  const destPath = typeof dest === "object" && dest !== null ? dest.pathname || dest.toString() : dest;
+
   // Skip validation if paths are not strings (shouldn't happen, but be safe)
-  if (typeof srcPath !== 'string' || typeof destPath !== 'string') {
+  if (typeof srcPath !== "string" || typeof destPath !== "string") {
     return;
   }
-  
+
   // Only validate if source exists and is a directory
   // (sockets, pipes, etc. are handled elsewhere)
   try {
@@ -77,12 +78,12 @@ function validateDestinationPath(src, dest) {
   } catch {
     return; // Source doesn't exist, skip validation
   }
-  
+
   // Check each parent directory in the destination path to see if any
   // are symlinks that point back to the source or its parents
   let currentPath = dirname(destPath); // Start with parent of dest
   const resolvedSrc = realpathSync(srcPath);
-  
+
   while (currentPath && currentPath !== parse(currentPath).root) {
     try {
       // Check if this path component exists and might be a symlink
@@ -91,7 +92,7 @@ function validateDestinationPath(src, dest) {
         // Get the part of dest that comes after this path
         const remainingPath = destPath.slice(currentPath.length);
         const fullResolvedDest = resolvedPath + remainingPath;
-        
+
         // Check if the resolved destination would be inside the source
         if (fullResolvedDest.startsWith(resolvedSrc + sep) || fullResolvedDest === resolvedSrc) {
           throw $ERR_FS_CP_EINVAL(`cannot copy ${srcPath} to a subdirectory of self ${destPath}`);
@@ -99,12 +100,12 @@ function validateDestinationPath(src, dest) {
       }
     } catch (err) {
       // Re-throw ERR_FS_CP_EINVAL errors
-      if (err.code === 'ERR_FS_CP_EINVAL') {
+      if (err.code === "ERR_FS_CP_EINVAL") {
         throw err;
       }
       // Ignore other errors (like ENOENT) and continue checking parent directories
     }
-    
+
     currentPath = dirname(currentPath);
   }
 }
@@ -115,19 +116,21 @@ function cpSyncFn(src, dest, opts) {
   //   const warning = "Using the preserveTimestamps option in 32-bit " + "node is not recommended";
   //   process.emitWarning(warning, "TimestampPrecisionWarning");
   // }
-  
+
   // Convert URL objects to paths if necessary
   // Use decodeURIComponent to handle URL-encoded characters like %25 -> %
-  const srcPath = typeof src === 'object' && src !== null 
-    ? decodeURIComponent(src.pathname || (src.href ? new URL(src.href).pathname : src.toString()))
-    : src;
-  const destPath = typeof dest === 'object' && dest !== null 
-    ? decodeURIComponent(dest.pathname || (dest.href ? new URL(dest.href).pathname : dest.toString()))
-    : dest;
-  
+  const srcPath =
+    typeof src === "object" && src !== null
+      ? decodeURIComponent(src.pathname || (src.href ? new URL(src.href).pathname : src.toString()))
+      : src;
+  const destPath =
+    typeof dest === "object" && dest !== null
+      ? decodeURIComponent(dest.pathname || (dest.href ? new URL(dest.href).pathname : dest.toString()))
+      : dest;
+
   // Check if dest path contains symlinks that would create circular reference
   validateDestinationPath(srcPath, destPath);
-  
+
   const { srcStat, destStat, skipped } = checkPathsSync(srcPath, destPath, opts);
   if (skipped) return;
   checkParentPathsSync(srcPath, srcStat, destPath);

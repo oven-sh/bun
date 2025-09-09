@@ -24,7 +24,20 @@ pub fn generateOrderSub(this: *Order, current: TestScheduleEntry) bun.JSError!vo
         .test_callback => |test_callback| try generateOrderTest(this, test_callback),
     }
 }
-pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry) bun.JSError!void {
+const AllOrderResult = struct {
+    start: usize,
+    end: usize,
+    pub const empty: AllOrderResult = .{ .start = 0, .end = 0 };
+    pub fn setFailureSkipTo(aor: AllOrderResult, this: *Order) void {
+        if (aor.start == 0 and aor.end == 0) return;
+        const skip_to = this.groups.items.len;
+        for (this.groups.items[aor.start..aor.end]) |*group| {
+            group.failure_skip_to = skip_to;
+        }
+    }
+};
+pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry) bun.JSError!AllOrderResult {
+    const start = this.groups.items.len;
     for (entries) |entry| {
         const entries_start = this.entries.items.len;
         try this.entries.append(entry); // add entry to sequence
@@ -34,15 +47,15 @@ pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry) bun.JSEr
         const sequences_end = this.sequences.items.len;
         try appendOrExtendConcurrentGroup(this, false, sequences_start, sequences_end); // add a new concurrent group. note that beforeAll/afterAll are never concurrent.
     }
+    const end = this.groups.items.len;
+    return .{ .start = start, .end = end };
 }
 pub fn generateOrderDescribe(this: *Order, current: *DescribeScope) bun.JSError!void {
     if (current.failed) return; // do not schedule any tests in a failed describe scope
     const use_hooks = current.base.has_callback;
 
     // gather beforeAll
-    const beforeall_start = this.groups.items.len;
-    if (use_hooks) try generateAllOrder(this, current.beforeAll.items);
-    const beforeall_end = this.groups.items.len;
+    const beforeall_order: AllOrderResult = if (use_hooks) try generateAllOrder(this, current.beforeAll.items) else .empty;
 
     // gather children
     for (current.entries.items) |entry| {
@@ -50,15 +63,14 @@ pub fn generateOrderDescribe(this: *Order, current: *DescribeScope) bun.JSError!
         try generateOrderSub(this, entry);
     }
 
-    const afterall_start = this.groups.items.len;
-    if (beforeall_end - beforeall_start != current.beforeAll.items.len) {
-        bun.debugAssert(false); // generateAllOrder should have added one group per beforeAll item
-    } else for (this.groups.items[beforeall_start..beforeall_end]) |*group| {
-        group.failure_skip_to = afterall_start;
-    }
+    // update skip_to values for beforeAll to skip to the first afterAll
+    beforeall_order.setFailureSkipTo(this);
 
     // gather afterAll
-    if (use_hooks) try generateAllOrder(this, current.afterAll.items);
+    const afterall_order: AllOrderResult = if (use_hooks) try generateAllOrder(this, current.afterAll.items) else .empty;
+
+    // update skip_to values for afterAll to skip the remaining afterAll items
+    afterall_order.setFailureSkipTo(this);
 }
 pub fn generateOrderTest(this: *Order, current: *ExecutionEntry) bun.JSError!void {
     const entries_start = this.entries.items.len;

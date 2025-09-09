@@ -269,7 +269,6 @@ after all
 - [ ] validate junit output does not regress (make sure the generated xml files are identical to existing behaviour)
 - [ ] add tests for debugger.test_reporter_agent reporting, maybe using `bun-debug x bun-inspect-echo` or using the existing setup but fixing it
 - [ ] validate uses of sequence.entry_index (entry_index can be >= entries_end)
-- [ ] support skipping execution if a preload hook fails
 - [ ] add retry/run-multiple-times back
 - [ ] test passing bad values to describe()/test()
 - [ ] make sure ScopeFunctions class can finalize (see napi_handle_scope NapiHandleScopeImpl as an example)
@@ -287,8 +286,12 @@ after all
 - [ ] disable the logs by default
 - [ ] remove TestId stuff
 - [ ] remove TODO.md
+- [ ] check if there is an issue closed for "when a timeout triggers on a function with a done callback because the done callback was never called, note in the error that the function must call the done callback"
+  - it is this issue: https://github.com/oven-sh/bun/issues/8288, but there is no default timeout on tests so the new error is never seen
+  - jest has a default timeout on hooks. we should also.
+  - jest also allows passing the config parameter for hooks.
 - [x] when a timeout triggers on a function with a done callback because the done callback was never called, note in the error that the function must call the done callback
-  - [ ] there should be an issue that this can close
+- [x] support skipping execution if a preload hook fails
 - [x] is there a breaking change for:
   - `test("error condition", async () => { setTimeout(() => {throw new Error("0")}, 0); await new Promise(() => {}) })`
   - no change.

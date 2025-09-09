@@ -382,7 +382,7 @@ pub const BunTest = struct {
         group.begin(@src());
         defer group.end();
 
-        if (this.in_run_loop) return; // already running. this can happen because of waitForPromise.
+        if (this.in_run_loop) return;
         this.in_run_loop = true;
         defer this.in_run_loop = false;
 
@@ -430,39 +430,22 @@ pub const BunTest = struct {
 
         switch (this.phase) {
             .collection => {
-                // collection phase is complete. advance to execution phase, then continue.
-                // re-entry safety:
-                // - use ScriptDisallowedScope::InMainThread
-
-                // here:
-                // - assert the collection phase is complete, then lock the collection phase
-                // - apply filters (`-t`)
-                // - apply `.only`
-                // - remove orphaned beforeAll/afterAll items, only if any items have been removed so far (e.g. because of `.only` or `-t`)
-                // - reorder (`--randomize`)
-                // now, generate the execution order
                 this.phase = .execution;
                 try debug.dumpDescribe(this.collection.root_scope);
                 var order = Order.init(this.gpa);
                 defer order.deinit();
 
-                try order.generateAllOrder(this.buntest.hook_scope.beforeAll.items);
+                const beforeall_order = try order.generateAllOrder(this.buntest.hook_scope.beforeAll.items);
                 try order.generateOrderDescribe(this.collection.root_scope);
-                try order.generateAllOrder(this.buntest.hook_scope.afterAll.items);
+                beforeall_order.setFailureSkipTo(&order);
+                const afterall_order = try order.generateAllOrder(this.buntest.hook_scope.afterAll.items);
+                afterall_order.setFailureSkipTo(&order);
 
                 try this.execution.loadFromOrder(&order);
                 try debug.dumpOrder(&this.execution);
-                // now, allowing js execution again:
-                // - start the test execution loop
-
-                // test execution:
-                // - one at a time
-                // - timeout handling
                 return .cont;
             },
             .execution => {
-                // execution phase is complete. print results.
-
                 if (this.done_promise.get()) |value| if (value.asPromise()) |promise| promise.resolve(globalThis, .js_undefined);
                 this.in_run_loop = false;
                 this.phase = .done;
@@ -477,11 +460,6 @@ pub const BunTest = struct {
     pub fn runTestCallback(this: *BunTest, globalThis: *jsc.JSGlobalObject, cfg: CallbackEntry) bun.JSError!void {
         group.begin(@src());
         defer group.end();
-
-        // TODO: this will need to support:
-        // - in tests, (done) => {} callbacks
-        // - for test.concurrent, we will have multiple 'then's active at once, and they will
-        //   need to be able to pass context information to runOneCompleted
 
         var args: Strong.List = cfg.callback.args.dupe(this.gpa);
         defer args.deinit(this.gpa);

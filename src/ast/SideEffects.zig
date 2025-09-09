@@ -731,6 +731,52 @@ pub const SideEffects = enum(u1) {
         return Result{ .ok = false, .value = false, .side_effects = SideEffects.could_have_side_effects };
     }
 
+    /// Helper function to check typeof patterns for DCE
+    fn checkTypeofPattern(p: anytype, typeof_expr: Expr, compare_op: Op.Code) ?bool {
+        
+        // Check for identifier (e.g., typeof Bun)
+        if (typeof_expr.data == .e_identifier) {
+            const ident = typeof_expr.data.e_identifier;
+            if (p.define.forIdentifier(p.loadNameFromRef(ident.ref))) |define| {
+                // Check if this is an is_truthy define (e.g., Bun is truthy)
+                if (define.is_truthy()) {
+                    // typeof truthy_value !== "undefined" -> true
+                    // typeof truthy_value === "undefined" -> false
+                    const is_not_equal = compare_op == .bin_strict_ne or compare_op == .bin_loose_ne;
+                    return is_not_equal;
+                }
+                // Check if the define value is undefined (e.g., window is undefined)
+                if (define.value == .e_undefined) {
+                    // typeof undefined_value === "undefined" -> true
+                    // typeof undefined_value !== "undefined" -> false
+                    const is_equal = compare_op == .bin_strict_eq or compare_op == .bin_loose_eq;
+                    return is_equal;
+                }
+            }
+        }
+        
+        // Check for dot expression (e.g., typeof globalThis.Bun)
+        if (typeof_expr.data == .e_dot) {
+            const dot = typeof_expr.data.e_dot;
+            if (p.define.dots.get(dot.name)) |parts| {
+                for (parts) |*define| {
+                    if (p.isDotDefineMatch(typeof_expr, define.parts)) {
+                        if (define.data.is_truthy()) {
+                            // typeof truthy_value !== "undefined" -> true
+                            // typeof truthy_value === "undefined" -> false
+                            const is_not_equal = compare_op == .bin_strict_ne or compare_op == .bin_loose_ne;
+                            return is_not_equal;
+                        }
+                        // Note: We don't check for e_undefined for dot expressions currently
+                        break;
+                    }
+                }
+            }
+        }
+        
+        return null;
+    }
+
     pub fn toBoolean(p: anytype, exp: Expr.Data) Result {
         // Only do this check once.
         if (!p.options.features.dead_code_elimination) {
@@ -765,127 +811,31 @@ pub const SideEffects = enum(u1) {
             }
         }
         
-        // Check for typeof Bun patterns in binary expressions
+        // Check for typeof patterns in binary expressions
         if (exp == .e_binary) {
             const e_ = exp.e_binary;
             switch (e_.op) {
                 .bin_strict_eq, .bin_strict_ne, .bin_loose_eq, .bin_loose_ne => {
-                    // Check for typeof Bun !== "undefined" or typeof Bun === "undefined"
+                    // Check for: typeof X === "undefined" or typeof X !== "undefined"
                     if (e_.left.data == .e_unary) {
                         const unary = e_.left.data.e_unary;
-                        if (unary.op == .un_typeof) {
-                            // Handle typeof identifier (e.g., typeof Bun)
-                            if (unary.value.data == .e_identifier) {
-                                const ident = unary.value.data.e_identifier;
-                                if (p.define.forIdentifier(p.loadNameFromRef(ident.ref))) |define| {
-                                    if (define.is_truthy()) {
-                                        // Bun is truthy, so typeof Bun is NOT "undefined"
-                                        if (e_.right.data == .e_string) {
-                                            const str = e_.right.data.e_string;
-                                            if (str.eqlComptime("undefined")) {
-                                                // typeof Bun === "undefined" -> false
-                                                // typeof Bun !== "undefined" -> true
-                                                const is_not_equal = e_.op == .bin_strict_ne or e_.op == .bin_loose_ne;
-                                                return Result{ .ok = true, .value = is_not_equal, .side_effects = .could_have_side_effects };
-                                            }
-                                        }
-                                    }
-                                    // Check if the define value is undefined
-                                    if (define.value == .e_undefined) {
-                                        // window is undefined, so typeof window is "undefined"
-                                        if (e_.right.data == .e_string) {
-                                            const str = e_.right.data.e_string;
-                                            if (str.eqlComptime("undefined")) {
-                                                // typeof window === "undefined" -> true
-                                                // typeof window !== "undefined" -> false
-                                                const is_equal = e_.op == .bin_strict_eq or e_.op == .bin_loose_eq;
-                                                return Result{ .ok = true, .value = is_equal, .side_effects = .could_have_side_effects };
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            // Handle typeof dot expression (e.g., typeof globalThis.Bun)
-                            if (unary.value.data == .e_dot) {
-                                const dot = unary.value.data.e_dot;
-                                if (p.define.dots.get(dot.name)) |parts| {
-                                    for (parts) |*define| {
-                                        if (p.isDotDefineMatch(unary.value, define.parts)) {
-                                            if (define.data.is_truthy()) {
-                                                // globalThis.Bun is truthy, so typeof globalThis.Bun is NOT "undefined"
-                                                if (e_.right.data == .e_string) {
-                                                    const str = e_.right.data.e_string;
-                                                    if (str.eqlComptime("undefined")) {
-                                                        // typeof globalThis.Bun === "undefined" -> false
-                                                        // typeof globalThis.Bun !== "undefined" -> true
-                                                        const is_not_equal = e_.op == .bin_strict_ne or e_.op == .bin_loose_ne;
-                                                        return Result{ .ok = true, .value = is_not_equal, .side_effects = .could_have_side_effects };
-                                                    }
-                                                }
-                                            }
-                                            break;
-                                        }
-                                    }
+                        if (unary.op == .un_typeof and e_.right.data == .e_string) {
+                            const str = e_.right.data.e_string;
+                            if (str.eqlComptime("undefined")) {
+                                if (checkTypeofPattern(p, unary.value, e_.op)) |result| {
+                                    return Result{ .ok = true, .value = result, .side_effects = .could_have_side_effects };
                                 }
                             }
                         }
                     }
-                    // Also check the reverse: "undefined" === typeof Bun
+                    // Check for: "undefined" === typeof X or "undefined" !== typeof X
                     if (e_.right.data == .e_unary) {
                         const unary = e_.right.data.e_unary;
-                        if (unary.op == .un_typeof) {
-                            // Handle typeof identifier (e.g., typeof Bun)
-                            if (unary.value.data == .e_identifier) {
-                                const ident = unary.value.data.e_identifier;
-                                if (p.define.forIdentifier(p.loadNameFromRef(ident.ref))) |define| {
-                                    if (define.is_truthy()) {
-                                        // Bun is truthy, so typeof Bun is NOT "undefined"
-                                        if (e_.left.data == .e_string) {
-                                            const str = e_.left.data.e_string;
-                                            if (str.eqlComptime("undefined")) {
-                                                // "undefined" === typeof Bun -> false
-                                                // "undefined" !== typeof Bun -> true
-                                                const is_not_equal = e_.op == .bin_strict_ne or e_.op == .bin_loose_ne;
-                                                return Result{ .ok = true, .value = is_not_equal, .side_effects = .could_have_side_effects };
-                                            }
-                                        }
-                                    }
-                                    // Check if the define value is undefined
-                                    if (define.value == .e_undefined) {
-                                        // window is undefined, so typeof window is "undefined"
-                                        if (e_.left.data == .e_string) {
-                                            const str = e_.left.data.e_string;
-                                            if (str.eqlComptime("undefined")) {
-                                                // "undefined" === typeof window -> true
-                                                // "undefined" !== typeof window -> false
-                                                const is_equal = e_.op == .bin_strict_eq or e_.op == .bin_loose_eq;
-                                                return Result{ .ok = true, .value = is_equal, .side_effects = .could_have_side_effects };
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            // Handle typeof dot expression (e.g., typeof globalThis.Bun)
-                            if (unary.value.data == .e_dot) {
-                                const dot = unary.value.data.e_dot;
-                                if (p.define.dots.get(dot.name)) |parts| {
-                                    for (parts) |*define| {
-                                        if (p.isDotDefineMatch(unary.value, define.parts)) {
-                                            if (define.data.is_truthy()) {
-                                                // globalThis.Bun is truthy, so typeof globalThis.Bun is NOT "undefined"
-                                                if (e_.left.data == .e_string) {
-                                                    const str = e_.left.data.e_string;
-                                                    if (str.eqlComptime("undefined")) {
-                                                        // "undefined" === typeof globalThis.Bun -> false
-                                                        // "undefined" !== typeof globalThis.Bun -> true
-                                                        const is_not_equal = e_.op == .bin_strict_ne or e_.op == .bin_loose_ne;
-                                                        return Result{ .ok = true, .value = is_not_equal, .side_effects = .could_have_side_effects };
-                                                    }
-                                                }
-                                            }
-                                            break;
-                                        }
-                                    }
+                        if (unary.op == .un_typeof and e_.left.data == .e_string) {
+                            const str = e_.left.data.e_string;
+                            if (str.eqlComptime("undefined")) {
+                                if (checkTypeofPattern(p, unary.value, e_.op)) |result| {
+                                    return Result{ .ok = true, .value = result, .side_effects = .could_have_side_effects };
                                 }
                             }
                         }
@@ -1036,6 +986,7 @@ const ExprNodeList = js_ast.ExprNodeList;
 const Stmt = js_ast.Stmt;
 
 const G = js_ast.G;
+const Op = js_ast.Op;
 const Decl = G.Decl;
 const Property = G.Property;
 

@@ -265,12 +265,35 @@ after all
 # Complete before merge:
 
 - [ ] add back vm.auto_killer.kill() https://github.com/oven-sh/bun/blob/973fa98796a3be79b48f0d078485b5833d956593/src/bun.js/test/jest.zig#L1690
+- [ ] add tests for re-entry in different scenerios (timeout, done callback, ...) using waitForPromise in expect()
+- [ ] validate junit output does not regress (make sure the generated xml files are identical to existing behaviour)
+- [ ] add tests for debugger.test_reporter_agent reporting, maybe using `bun-debug x bun-inspect-echo` or using the existing setup but fixing it
+- [ ] validate uses of sequence.entry_index (entry_index can be >= entries_end)
+- [ ] support skipping execution if a preload hook fails
+- [ ] add retry/run-multiple-times back
+- [ ] test passing bad values to describe()/test()
+- [ ] make sure ScopeFunctions class can finalize (see napi_handle_scope NapiHandleScopeImpl as an example)
+  - currently, it never calls its finalize method because it no longer extends from finalize
+- [ ] make sure DoneCallback class can finalize, same as above
+- [ ] see about caching ScopeFunctions by value maybe?
+- [ ] `test("rerun me", () => { console.log("run one time!"); });` `--rerun-each=3`. works 1, no message 2, fails 3
+- [ ] make BunTest into a gc object so you can't deinit it while a .then() is still active
+- [ ] add tests & pass existing tests
+- [ ] move the testing files into being real behaviour tests
+- [ ] search for TODOs in the diff and fix them all
+- [ ] replace asserts with runtime throws or debug-only asserts (waitForPromise breaks many expectations)
+- [ ] check the todo list in https://linear.app/oven/issue/ENG-20152/new-buntest, confirm it fixes all those issues (or doesn't make them worse). add reproductions
+- [ ] look in file:///Users/pfg/Dev/Node/bun-coverage/coverage-html/src/bun.js/test/jest.zig.gcov.html and find things to remove
+- [ ] disable the logs by default
+- [ ] remove TestId stuff
+- [ ] remove TODO.md
+- [x] when a timeout triggers on a function with a done callback because the done callback was never called, note in the error that the function must call the done callback
+  - [ ] there should be an issue that this can close
 - [x] is there a breaking change for:
   - `test("error condition", async () => { setTimeout(() => {throw new Error("0")}, 0); await new Promise(() => {}) })`
   - no change.
 - [x] test what happens running a file that uses describe() not in `bun test`. make sure it errors with the correct error. this might have regressed, if so, fix it.
 - [x] make sure done callback is supported in hooks
-- [ ] add tests for re-entry in different scenerios (timeout, done callback, ...) using waitForPromise in expect()
 - [x] Add expect counts back
 - [x] add back expecting a test to have a certain number of expect calls
 - [x] add a test for done callback nexttick after
@@ -287,7 +310,6 @@ after all
 - [x] support `expect.assertions()` in non-concurrent tests
 - [x] test behaviour of `expect.assertions()` in concurrent tests
 - [x] test what happens when done callback is called after the test fails to timeout, or promise resolves after. make sure we match existing behaviour
-- [ ] validate junit output does not regress (make sure the generated xml files are identical to existing behaviour)
 - [x] finalize describe call order. ideally `A[B, C], D[E, F[G]]` will run in normal order rather than `A, D, B, C, E, F, G`
 - [x] sometimes error messages aren't printing!
 - [x] make sure it exits with code 1 on failure
@@ -295,14 +317,11 @@ after all
   - vitest/jest both do them seperately for each file, which makes sense because of isolation
   - bun does them before the first file and after the last file
 - [x] add back debugger.test_reporter_agent reporting
-- [ ] add tests for debugger.test_reporter_agent reporting, maybe using `bun-debug x bun-inspect-echo` or using the existing setup but fixing it
 - [x] afterEach/afterAll behaviour: forwards order or reverse order? vitest uses reverse order but jest uses forwards order. old bun uses forwards order. we will continue to use forwards order to reduce breakage, although reverse order makes more sense to me.
 - [x] announce results of skip/todo with no callback, eg `test.skip("abc")` or `test.todo("def")`
 - [x] fix toMatchInlineSnapshot
 - [x] make sure error.SnapshotInConcurrentGroup prints well
 - [x] test error.SnapshotInConcurrentGroup
-- [ ] validate uses of sequence.entry_index (entry_index can be >= entries_end)
-- [ ] support skipping execution if a preload hook fails
 - [x] decide on beforeAll/beforeEach behaviour
   - decide if beforeEach/beforeAll/afterEach/afterAll should skip executing the test and when. do we match existing behaviour, jest, vitest, or diverge? what does existing behaviour/jest/vitest do?
   - these are all tested flat, not sure if it changes with describe()
@@ -323,38 +342,19 @@ after all
     - vitest: beforeAll1 beforeAll2 beforeEach1 beforeEach2 test1 <b>afterEach2</b> <s>afterEach1</s> beforeEach1 beforeEach2 test1 <b>afterEach2</b> <s>afterEach1</s> afterAll2 afterAll1
     - bun: beforeAll1 beforeAll2 beforeEach1 beforeEach2 test1 <b>afterEach1</b> <s>afterEach2</s> beforeEach1 beforeEach2 test1 <b>afterEach1</b> <s>afterEach2</s> afterAll1 afterAll2
 - [x] make the summary work again
-- [x] when a timeout triggers on a function with a done callback because the done callback was never called, note in the error that the function must call the done callback
-  - [ ] there should be an issue that this can close
 - [x] support the default per-test timeout
-- [ ] add retry/run-multiple-times back
-- [ ] test passing bad values to describe()/test()
 - [x] report expect counts per-test
 - [x] make --bail work again
 - [x] update types for `test.concurrent.skip.only()`
 - [x] make test filtering work again
-- [ ] make sure ScopeFunctions class can finalize (see napi_handle_scope NapiHandleScopeImpl as an example)
-  - currently, it never calls its finalize method because it no longer extends from finalize
-- [ ] make sure DoneCallback class can finalize, same as above
-- [ ] see about caching ScopeFunctions by value maybe?
 - [x] add back repeating failure/skip messages at the end of the test print
 - [x] make sure failure exits with code 1
-- [ ] `test("rerun me", () => { console.log("run one time!"); });` `--rerun-each=3`. works 1, no message 2, fails 3
 - [x] status printing support failures and other modes
-- [ ] make BunTest into a gc object so you can't deinit it while a .then() is still active
-- [ ] add tests & pass existing tests
 - [x] add back associating uncaught exceptions with the active test
 - [x] `test.concurrent.only()`
 - [x] `test.skip.only.concurrent()`. basically we need to make it a class that contains the options.
-- [ ] move the testing files into being real behaviour tests
-- [ ] search for TODOs in the diff and fix them all
-- [ ] replace asserts with runtime throws or debug-only asserts (waitForPromise breaks many expectations)
-- [ ] check the todo list in https://linear.app/oven/issue/ENG-20152/new-buntest, confirm it fixes all those issues (or doesn't make them worse). add reproductions
-- [ ] look in file:///Users/pfg/Dev/Node/bun-coverage/coverage-html/src/bun.js/test/jest.zig.gcov.html and find things to remove
-- [ ] disable the logs by default
 - [x] remove describe/test functions in jest.zig
 - [x] remove DescribeScope/TestScope in jest.zig
-- [ ] remove TestId stuff
-- [ ] remove TODO.md
 
 # Code quality:
 

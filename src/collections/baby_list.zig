@@ -547,8 +547,8 @@ pub fn BabyList(comptime Type: type) type {
 
         /// Transfers ownership of this `BabyList` to a new allocator.
         ///
-        /// This method is valid only if both the old allocator and new allocator use mimalloc.
-        /// See `bun.safety.CheckedAllocator.transferOwnership`.
+        /// This method is valid only if both the old allocator and new allocator are
+        /// `MimallocArena`s. See `bun.safety.CheckedAllocator.transferOwnership`.
         pub fn transferOwnership(this: *Self, new_allocator: anytype) void {
             this.#allocator.transferOwnership(new_allocator);
         }

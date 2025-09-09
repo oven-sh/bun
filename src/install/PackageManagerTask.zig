@@ -96,7 +96,6 @@ pub fn callback(task: *ThreadPool.Task) void {
             var manifest = &this.request.package_manifest;
 
             const body = &manifest.network.response_buffer;
-            body.transferOwnership(bun.DefaultAllocator{});
             defer body.deinit();
 
             const package_manifest = Npm.Registry.getPackageMetadata(
@@ -135,7 +134,6 @@ pub fn callback(task: *ThreadPool.Task) void {
         },
         .extract => {
             const buffer = &this.request.extract.network.response_buffer;
-            buffer.transferOwnership(bun.DefaultAllocator{});
             defer buffer.deinit();
 
             const result = this.request.extract.tarball.run(

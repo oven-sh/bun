@@ -1141,6 +1141,7 @@ fn runWithSourceCode(
             task.known_target == .browser))
     {
         transpiler = this.ctx.client_transpiler.?;
+        transpiler.allocator = this.allocator;
         resolver = &transpiler.resolver;
         bun.assert(transpiler.options.target == .browser);
     }

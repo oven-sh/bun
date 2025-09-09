@@ -161,14 +161,22 @@ pub const CheckedAllocator = struct {
             else => @compileError("unsupported argument: " ++ @typeName(ArgType)),
         };
 
-        if (self.#allocator.get()) |old_allocator| {
-            bun.assertf(
-                MimallocArena.isInstance(old_allocator),
-                "cannot transfer ownership from non-MimallocArena (old vtable is {*})",
-                .{old_allocator.vtable},
+        defer self.* = .init(new_std);
+        const old_allocator = self.#allocator.get() orelse return;
+        if (MimallocArena.isInstance(old_allocator)) return;
+
+        if (comptime traces_enabled) {
+            bun.Output.errGeneric("collection first used here:", .{});
+            var trace = self.#trace;
+            bun.crash_handler.dumpStackTrace(
+                trace.trace(),
+                .{ .frame_count = 10, .stop_at_jsc_llint = true },
             );
         }
-        self.* = .init(new_std);
+        std.debug.panic(
+            "cannot transfer ownership from non-MimallocArena (old vtable is {*})",
+            .{old_allocator.vtable},
+        );
     }
 };
 

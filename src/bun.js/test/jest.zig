@@ -1,14 +1,3 @@
-pub const Tag = enum(u3) {
-    pass,
-    fail,
-    only,
-    skip,
-    todo,
-    skipped_because_label,
-};
-
-var max_test_id_for_debugger: u32 = 0;
-
 const CurrentFile = struct {
     title: string = "",
     prefix: string = "",

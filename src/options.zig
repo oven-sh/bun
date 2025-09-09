@@ -1511,6 +1511,11 @@ pub fn definesFromTransformOptions(
             }));
         }
         
+        // process.isBun - simple boolean true for Bun runtime detection
+        if (!user_defines.contains("process.isBun")) {
+            _ = try user_defines.getOrPutValue("process.isBun", "true");
+        }
+        
         // For --target=bun, mark these as truthy for DCE without replacing values
         // This enables dead code elimination while preserving runtime values
         
@@ -1541,6 +1546,17 @@ pub fn definesFromTransformOptions(
                 .is_truthy = true,
                 .valueless = true,
                 .original_name = "Bun",
+                .value = .{ .e_undefined = .{} },
+            }));
+        }
+    }
+    
+    // For --target=node, mark window as undefined for DCE
+    if (target.isNode()) {
+        if (!user_defines.contains("window")) {
+            _ = try environment_defines.getOrPutValue("window", .init(.{
+                .valueless = true,
+                .original_name = "window",
                 .value = .{ .e_undefined = .{} },
             }));
         }

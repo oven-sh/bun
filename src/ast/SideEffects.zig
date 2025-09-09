@@ -790,6 +790,19 @@ pub const SideEffects = enum(u1) {
                                             }
                                         }
                                     }
+                                    // Check if the define value is undefined
+                                    if (define.value == .e_undefined) {
+                                        // window is undefined, so typeof window is "undefined"
+                                        if (e_.right.data == .e_string) {
+                                            const str = e_.right.data.e_string;
+                                            if (str.eqlComptime("undefined")) {
+                                                // typeof window === "undefined" -> true
+                                                // typeof window !== "undefined" -> false
+                                                const is_equal = e_.op == .bin_strict_eq or e_.op == .bin_loose_eq;
+                                                return Result{ .ok = true, .value = is_equal, .side_effects = .could_have_side_effects };
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             // Handle typeof dot expression (e.g., typeof globalThis.Bun)
@@ -834,6 +847,19 @@ pub const SideEffects = enum(u1) {
                                                 // "undefined" !== typeof Bun -> true
                                                 const is_not_equal = e_.op == .bin_strict_ne or e_.op == .bin_loose_ne;
                                                 return Result{ .ok = true, .value = is_not_equal, .side_effects = .could_have_side_effects };
+                                            }
+                                        }
+                                    }
+                                    // Check if the define value is undefined
+                                    if (define.value == .e_undefined) {
+                                        // window is undefined, so typeof window is "undefined"
+                                        if (e_.left.data == .e_string) {
+                                            const str = e_.left.data.e_string;
+                                            if (str.eqlComptime("undefined")) {
+                                                // "undefined" === typeof window -> true
+                                                // "undefined" !== typeof window -> false
+                                                const is_equal = e_.op == .bin_strict_eq or e_.op == .bin_loose_eq;
+                                                return Result{ .ok = true, .value = is_equal, .side_effects = .could_have_side_effects };
                                             }
                                         }
                                     }

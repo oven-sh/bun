@@ -26,6 +26,13 @@ if (process.versions.bun) {
   require("./should-not-import-3.js");
 }
 
+// process.isBun - should be replaced with true
+if (process.isBun) {
+  exports.test3a = "process-isBun-true";
+} else {
+  exports.test3a = "process-isBun-false";
+}
+
 // ============ typeof checks ============
 if (typeof Bun !== "undefined") {
   exports.test4 = "typeof-bun-defined";
@@ -140,6 +147,7 @@ var require_HASH = __commonJS((exports) => {
   Bun, exports.test1 = "bun-exists";
   globalThis.Bun, exports.test2 = "globalThis-bun-exists";
   process.versions.bun, exports.test3 = "process-versions-bun-exists";
+  exports.test3a = "process-isBun-true";
   exports.test4 = "typeof-bun-defined";
   globalThis.Bun, exports.test5 = "typeof-globalThis-bun-defined";
   exports.test6 = "typeof-bun-reverse-defined";
@@ -171,10 +179,7 @@ var require_HASH = __commonJS((exports) => {
     exports.test17 = "node-version-exists";
   else
     exports.test17 = "node-version-missing";
-  if (typeof window !== "undefined")
-    exports.test18 = "window-exists";
-  else
-    exports.test18 = "window-missing";
+  exports.test18 = "window-missing";
   var isBun = typeof Bun !== "undefined";
   if (!isBun)
     exports.test19 = "const-not-bun";
@@ -210,7 +215,8 @@ export default require_HASH();"
   
   // Non-Bun runtime checks preserved
   expect(bundled).toContain("process.versions.node");
-  expect(bundled).toContain("typeof window");
+  // typeof window check is eliminated since window is undefined for bun target
+  expect(bundled).not.toContain("typeof window");
   
   // Const patterns don't work (needs constant propagation)
   expect(bundled).toContain("const-not-bun");
@@ -231,6 +237,20 @@ if (typeof Bun !== "undefined") {
   exports.hasBun = true;
 } else {
   exports.hasBun = false;
+}
+
+// window check - should be undefined for both bun and node targets
+if (typeof window === "undefined") {
+  exports.isServer = true;
+} else {
+  exports.isServer = false;
+}
+
+// process.isBun check
+if (process.isBun) {
+  exports.isBun = true;
+} else {
+  exports.isBun = false;
 }
   `;
 
@@ -262,6 +282,14 @@ if (typeof Bun !== "undefined") {
   expect(bunBundle).not.toContain('exports.runtime = "unknown"');
   expect(bunBundle).toContain('exports.hasBun = !0'); // minified true
   expect(bunBundle).not.toContain('exports.hasBun = !1'); // minified false
+  
+  // window is undefined for bun target (server environment)
+  expect(bunBundle).toContain('exports.isServer = !0'); // true - window is undefined
+  expect(bunBundle).not.toContain('exports.isServer = !1'); // false branch eliminated
+  
+  // process.isBun is replaced with true for bun target
+  expect(bunBundle).toContain('exports.isBun = !0'); // true
+  expect(bunBundle).not.toContain('exports.isBun = !1'); // false branch eliminated
 
   // Node bundle should keep all branches (Bun is unknown at runtime)
   expect(nodeBundle).toContain('exports.runtime = "bun"');
@@ -269,4 +297,11 @@ if (typeof Bun !== "undefined") {
   expect(nodeBundle).toContain('exports.runtime = "unknown"');
   expect(nodeBundle).toContain('exports.hasBun = !0'); // minified true
   expect(nodeBundle).toContain('exports.hasBun = !1'); // minified false
+  
+  // window is undefined for node target (server environment)
+  expect(nodeBundle).toContain('exports.isServer = !0'); // true - window is undefined
+  expect(nodeBundle).not.toContain('exports.isServer = !1'); // false branch eliminated
+  
+  // process.isBun doesn't exist for node target - both branches kept
+  expect(nodeBundle).toContain('process.isBun'); // The check is still there
 });

@@ -384,7 +384,7 @@ pub const Result = union(Tag) {
                     promise.reject(globalThis, err.toJS(globalThis));
                 },
                 .done => {
-                    promise.resolve(globalThis, JSValue.jsBoolean(false));
+                    promise.resolve(globalThis, .false);
                 },
                 else => {
                     promise.resolve(globalThis, result.toJS(globalThis));
@@ -405,7 +405,7 @@ pub const Result = union(Tag) {
 
                 // false == controller.close()
                 // undefined == noop, but we probably won't send it
-                .done => jsc.JSValue.jsBoolean(true),
+                .done => .true,
 
                 .pending => |pending| pending.promise(globalThis).toJS(),
             };
@@ -540,7 +540,7 @@ pub const Result = union(Tag) {
                 promise.reject(globalThis, value);
             },
             .done => {
-                promise.resolve(globalThis, JSValue.jsBoolean(false));
+                promise.resolve(globalThis, .false);
             },
             else => {
                 const value = result.toJS(globalThis) catch |err| {
@@ -608,7 +608,7 @@ pub const Result = union(Tag) {
             // false == controller.close()
             // undefined == noop, but we probably won't send it
             .done => {
-                return jsc.JSValue.jsBoolean(false);
+                return .false;
             },
         }
     }
@@ -1505,7 +1505,7 @@ pub const NetworkSink = struct {
         this.ended = true;
         // flush everything and send EOF
         if (this.task) |task| {
-            _ = task.writeBytes("", true) catch bun.outOfMemory();
+            _ = bun.handleOom(task.writeBytes("", true));
         }
 
         this.signal.close(err);
@@ -1524,7 +1524,7 @@ pub const NetworkSink = struct {
             if (!this.ended) {
                 this.ended = true;
                 // we need to send EOF
-                _ = task.writeBytes("", true) catch bun.outOfMemory();
+                _ = bun.handleOom(task.writeBytes("", true));
                 this.signal.close(null);
             }
             return .{ .result = value };

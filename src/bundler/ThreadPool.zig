@@ -82,7 +82,7 @@ pub const ThreadPool = struct {
     pub fn init(v2: *BundleV2, worker_pool: ?*ThreadPoolLib) !ThreadPool {
         const pool = worker_pool orelse blk: {
             const cpu_count = bun.getThreadCount();
-            const pool = try v2.graph.allocator.create(ThreadPoolLib);
+            const pool = try v2.allocator().create(ThreadPoolLib);
             pool.* = .init(.{ .max_threads = cpu_count });
             debug("{d} workers", .{cpu_count});
             break :blk pool;
@@ -103,7 +103,7 @@ pub const ThreadPool = struct {
     pub fn deinit(this: *ThreadPool) void {
         if (this.worker_pool_is_owned) {
             this.worker_pool.deinit();
-            this.v2.graph.allocator.destroy(this.worker_pool);
+            this.v2.allocator().destroy(this.worker_pool);
         }
         if (usesIOPool()) {
             IOThreadPool.release();

@@ -175,10 +175,7 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                 std.debug.assert(text[i] <= 0x7F);
                 break :brk text[i];
             },
-            .latin1 => brk: {
-                if (text[i] <= 0x7F) break :brk text[i];
-                break :brk strings.latin1ToCodepointAssumeNotASCII(text[i], i32);
-            },
+            .latin1 => text[i],
             .utf16 => brk: {
                 // TODO: if this is a part of a surrogate pair, we could parse the whole codepoint in order
                 // to emit it as a single \u{result} rather than two paired \uLOW\uHIGH.
@@ -482,13 +479,20 @@ pub const RequireOrImportMeta = struct {
     };
 };
 
+fn isIdentifierOrNumericConstantOrPropertyAccess(expr: *const Expr) bool {
+    return switch (expr.data) {
+        .e_identifier, .e_dot, .e_index => true,
+        .e_number => |e| std.math.isInf(e.value) or std.math.isNan(e.value),
+        else => false,
+    };
+}
+
 pub const PrintResult = union(enum) {
     result: Success,
     err: anyerror,
 
     pub const Success = struct {
         code: []u8,
-        code_allocator: std.mem.Allocator,
         source_map: ?SourceMap.Chunk = null,
     };
 };
@@ -1582,6 +1586,13 @@ fn NewPrinter(
             return &p.import_records[import_record_index];
         }
 
+        pub fn isUnboundIdentifier(p: *Printer, expr: *const Expr) bool {
+            if (expr.data != .e_identifier) return false;
+            const ref = expr.data.e_identifier.ref;
+            const symbol = p.symbols().get(p.symbols().follow(ref)) orelse return false;
+            return symbol.kind == .unbound;
+        }
+
         pub fn printRequireOrImportExpr(
             p: *Printer,
             import_record_index: u32,
@@ -1832,8 +1843,9 @@ fn NewPrinter(
         }
 
         pub inline fn printPure(p: *Printer) void {
-            if (Environment.allow_assert) assert(p.options.print_dce_annotations);
-            p.printWhitespacer(ws("/* @__PURE__ */ "));
+            if (p.options.print_dce_annotations) {
+                p.printWhitespacer(ws("/* @__PURE__ */ "));
+            }
         }
 
         pub fn printStringLiteralEString(p: *Printer, str: *E.String, allow_backtick: bool) void {
@@ -2735,12 +2747,12 @@ fn NewPrinter(
 
                             if (inlined_value) |value| {
                                 if (replaced.items.len == 0) {
-                                    replaced.appendSlice(e.parts[0..i]) catch bun.outOfMemory();
+                                    bun.handleOom(replaced.appendSlice(e.parts[0..i]));
                                 }
                                 part.value = value;
-                                replaced.append(part) catch bun.outOfMemory();
+                                bun.handleOom(replaced.append(part));
                             } else if (replaced.items.len > 0) {
-                                replaced.append(part) catch bun.outOfMemory();
+                                bun.handleOom(replaced.append(part));
                             }
                         }
 
@@ -3000,13 +3012,26 @@ fn NewPrinter(
                         p.printSpace();
                     } else {
                         p.printSpaceBeforeOperator(e.op);
+                        if (e.op.isPrefix()) {
+                            p.addSourceMapping(expr.loc);
+                        }
                         p.print(entry.text);
                         p.prev_op = e.op;
                         p.prev_op_end = p.writer.written;
                     }
 
                     if (e.op.isPrefix()) {
-                        p.printExpr(e.value, Op.Level.sub(.prefix, 1), ExprFlag.None());
+                        // Never turn "typeof (0, x)" into "typeof x" or "delete (0, x)" into "delete x"
+                        if ((e.op == .un_typeof and !e.flags.was_originally_typeof_identifier and p.isUnboundIdentifier(&e.value)) or
+                            (e.op == .un_delete and !e.flags.was_originally_delete_of_identifier_or_property_access and isIdentifierOrNumericConstantOrPropertyAccess(&e.value)))
+                        {
+                            p.print("(0,");
+                            p.printSpace();
+                            p.printExpr(e.value, Op.Level.sub(.prefix, 1), ExprFlag.None());
+                            p.print(")");
+                        } else {
+                            p.printExpr(e.value, Op.Level.sub(.prefix, 1), ExprFlag.None());
+                        }
                     }
 
                     if (wrap) {
@@ -3044,7 +3069,7 @@ fn NewPrinter(
                         }
 
                         // Only allocate heap memory on the stack for nested binary expressions
-                        p.binary_expression_stack.append(v) catch bun.outOfMemory();
+                        bun.handleOom(p.binary_expression_stack.append(v));
                         v = BinaryExpressionVisitor{
                             .e = left_binary.?,
                             .level = v.left_level,
@@ -4470,6 +4495,7 @@ fn NewPrinter(
                         .json => p.printWhitespacer(ws(" with { type: \"json\" }")),
                         .jsonc => p.printWhitespacer(ws(" with { type: \"jsonc\" }")),
                         .toml => p.printWhitespacer(ws(" with { type: \"toml\" }")),
+                        .yaml => p.printWhitespacer(ws(" with { type: \"yaml\" }")),
                         .wasm => p.printWhitespacer(ws(" with { type: \"wasm\" }")),
                         .napi => p.printWhitespacer(ws(" with { type: \"napi\" }")),
                         .base64 => p.printWhitespacer(ws(" with { type: \"base64\" }")),
@@ -6009,7 +6035,6 @@ pub fn printWithWriterAndPlatform(
     return .{
         .result = .{
             .code = buffer.toOwnedSlice(),
-            .code_allocator = buffer.allocator,
             .source_map = source_map,
         },
     };

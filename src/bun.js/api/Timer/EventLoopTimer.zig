@@ -59,12 +59,16 @@ pub const Tag = if (Environment.isWindows) enum {
     WTFTimer,
     PostgresSQLConnectionTimeout,
     PostgresSQLConnectionMaxLifetime,
+    MySQLConnectionTimeout,
+    MySQLConnectionMaxLifetime,
     ValkeyConnectionTimeout,
     ValkeyConnectionReconnect,
     SubprocessTimeout,
     DevServerSweepSourceMaps,
     DevServerMemoryVisualizerTick,
     AbortSignalTimeout,
+    DateHeaderTimer,
+    EventLoopDelayMonitor,
 
     pub fn Type(comptime T: Tag) type {
         return switch (T) {
@@ -79,6 +83,8 @@ pub const Tag = if (Environment.isWindows) enum {
             .WTFTimer => WTFTimer,
             .PostgresSQLConnectionTimeout => jsc.Postgres.PostgresSQLConnection,
             .PostgresSQLConnectionMaxLifetime => jsc.Postgres.PostgresSQLConnection,
+            .MySQLConnectionTimeout => jsc.MySQL.MySQLConnection,
+            .MySQLConnectionMaxLifetime => jsc.MySQL.MySQLConnection,
             .SubprocessTimeout => jsc.Subprocess,
             .ValkeyConnectionReconnect => jsc.API.Valkey,
             .ValkeyConnectionTimeout => jsc.API.Valkey,
@@ -86,6 +92,8 @@ pub const Tag = if (Environment.isWindows) enum {
             .DevServerMemoryVisualizerTick,
             => bun.bake.DevServer,
             .AbortSignalTimeout => jsc.WebCore.AbortSignal.Timeout,
+            .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
+            .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
         };
     }
 } else enum {
@@ -99,12 +107,16 @@ pub const Tag = if (Environment.isWindows) enum {
     DNSResolver,
     PostgresSQLConnectionTimeout,
     PostgresSQLConnectionMaxLifetime,
+    MySQLConnectionTimeout,
+    MySQLConnectionMaxLifetime,
     ValkeyConnectionTimeout,
     ValkeyConnectionReconnect,
     SubprocessTimeout,
     DevServerSweepSourceMaps,
     DevServerMemoryVisualizerTick,
     AbortSignalTimeout,
+    DateHeaderTimer,
+    EventLoopDelayMonitor,
 
     pub fn Type(comptime T: Tag) type {
         return switch (T) {
@@ -118,6 +130,8 @@ pub const Tag = if (Environment.isWindows) enum {
             .DNSResolver => DNSResolver,
             .PostgresSQLConnectionTimeout => jsc.Postgres.PostgresSQLConnection,
             .PostgresSQLConnectionMaxLifetime => jsc.Postgres.PostgresSQLConnection,
+            .MySQLConnectionTimeout => jsc.MySQL.MySQLConnection,
+            .MySQLConnectionMaxLifetime => jsc.MySQL.MySQLConnection,
             .ValkeyConnectionTimeout => jsc.API.Valkey,
             .ValkeyConnectionReconnect => jsc.API.Valkey,
             .SubprocessTimeout => jsc.Subprocess,
@@ -125,6 +139,8 @@ pub const Tag = if (Environment.isWindows) enum {
             .DevServerMemoryVisualizerTick,
             => bun.bake.DevServer,
             .AbortSignalTimeout => jsc.WebCore.AbortSignal.Timeout,
+            .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
+            .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
         };
     }
 };
@@ -185,6 +201,8 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) Arm {
     switch (self.tag) {
         .PostgresSQLConnectionTimeout => return @as(*api.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("timer", self))).onConnectionTimeout(),
         .PostgresSQLConnectionMaxLifetime => return @as(*api.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", self))).onMaxLifetimeTimeout(),
+        .MySQLConnectionTimeout => return @as(*api.MySQL.MySQLConnection, @alignCast(@fieldParentPtr("timer", self))).onConnectionTimeout(),
+        .MySQLConnectionMaxLifetime => return @as(*api.MySQL.MySQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", self))).onMaxLifetimeTimeout(),
         .ValkeyConnectionTimeout => return @as(*api.Valkey, @alignCast(@fieldParentPtr("timer", self))).onConnectionTimeout(),
         .ValkeyConnectionReconnect => return @as(*api.Valkey, @alignCast(@fieldParentPtr("reconnect_timer", self))).onReconnectTimer(),
         .DevServerMemoryVisualizerTick => return bun.bake.DevServer.emitMemoryVisualizerMessageTimer(self, now),
@@ -192,6 +210,16 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) Arm {
         .AbortSignalTimeout => {
             const timeout = @as(*jsc.WebCore.AbortSignal.Timeout, @fieldParentPtr("event_loop_timer", self));
             timeout.run(vm);
+            return .disarm;
+        },
+        .DateHeaderTimer => {
+            const date_header_timer = @as(*jsc.API.Timer.DateHeaderTimer, @fieldParentPtr("event_loop_timer", self));
+            date_header_timer.run(vm);
+            return .disarm;
+        },
+        .EventLoopDelayMonitor => {
+            const monitor = @as(*jsc.API.Timer.EventLoopDelayMonitor, @fieldParentPtr("event_loop_timer", self));
+            monitor.onFire(vm, now);
             return .disarm;
         },
         inline else => |t| {

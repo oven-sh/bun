@@ -339,7 +339,13 @@ pub fn PosixBufferedWriter(Parent: type, function_table: anytype) type {
             }
         }
 
-        pub fn start(this: *PosixWriter, fd: bun.FileDescriptor, pollable: bool) bun.sys.Maybe(void) {
+        pub fn start(this: *PosixWriter, rawfd: anytype, pollable: bool) bun.sys.Maybe(void) {
+            const FDType = @TypeOf(rawfd);
+            const fd = switch (FDType) {
+                bun.FileDescriptor => rawfd,
+                *bun.MovableIfWindowsFd, bun.MovableIfWindowsFd => rawfd.getPosix(),
+                else => @compileError("Expected `bun.FileDescriptor`, `*bun.MovableIfWindowsFd` or `bun.MovableIfWindowsFd` but got: " ++ @typeName(rawfd)),
+            };
             this.pollable = pollable;
             if (!pollable) {
                 bun.assert(this.handle != .poll);
@@ -888,12 +894,27 @@ fn BaseWindowsPipeWriter(
             return this.startWithCurrentPipe();
         }
 
-        pub fn start(this: *WindowsPipeWriter, fd: bun.FileDescriptor, _: bool) bun.sys.Maybe(void) {
+        pub fn start(this: *WindowsPipeWriter, rawfd: anytype, _: bool) bun.sys.Maybe(void) {
+            const FDType = @TypeOf(rawfd);
+            const fd = switch (FDType) {
+                bun.FileDescriptor => rawfd,
+                *bun.MovableIfWindowsFd => rawfd.get().?,
+                else => @compileError("Expected `bun.FileDescriptor` or `*bun.MovableIfWindowsFd` but got: " ++ @typeName(rawfd)),
+            };
             bun.assert(this.source == null);
             const source = switch (Source.open(uv.Loop.get(), fd)) {
                 .result => |source| source,
                 .err => |err| return .{ .err = err },
             };
+            // Creating a uv_pipe/uv_tty takes ownership of the file descriptor
+            // TODO: Change the type of the parameter and update all places to
+            //       use MovableFD
+            if (switch (source) {
+                .pipe, .tty => true,
+                else => false,
+            } and FDType == *bun.MovableIfWindowsFd) {
+                _ = rawfd.take();
+            }
             source.setData(this);
             this.source = source;
             this.setParent(this.parent);

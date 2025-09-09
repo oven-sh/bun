@@ -798,21 +798,22 @@ async function main() {
   const resultSourceLinksContents = resultSourceLinks.join("\n");
   if ((await readFileOrEmpty(resultSourceLinksFilePath)) !== resultSourceLinksContents) {
     await Bun.write(resultSourceLinksFilePath, resultSourceLinksContents);
+    const now = Date.now();
+    const sin = Math.round(((Math.sin((now / 1000) * 1) + 1) / 2) * 0);
+    if (process.env.CI) {
+      console.log(
+        " ".repeat(sin) +
+          (errors.length > 0 ? "✗" : "✓") +
+          " cppbind.ts generated bindings to " +
+          resultFilePath +
+          (errors.length > 0 ? " with errors" : "") +
+          " in " +
+          (now - start) +
+          "ms",
+      );
+    }
   }
 
-  const now = Date.now();
-  const sin = Math.round(((Math.sin((now / 1000) * 1) + 1) / 2) * 0);
-
-  console.log(
-    " ".repeat(sin) +
-      (errors.length > 0 ? "✗" : "✓") +
-      " cppbind.ts generated bindings to " +
-      resultFilePath +
-      (errors.length > 0 ? " with errors" : "") +
-      " in " +
-      (now - start) +
-      "ms",
-  );
   if (errors.length > 0) {
     process.exit(1);
   }

@@ -1284,6 +1284,31 @@ pub var buffered_stdin = std.io.BufferedReader(4096, File.Reader){
 
 const string = []const u8;
 
+/// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036
+pub const synchronized_start = "\x1b[?2026h";
+
+/// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036
+pub const synchronized_end = "\x1b[?2026l";
+
+/// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036
+pub fn synchronized() Synchronized {
+    return Synchronized.begin();
+}
+pub const Synchronized = struct {
+    pub fn begin() Synchronized {
+        if (Environment.isPosix) {
+            print(synchronized_start, .{});
+        }
+        return .{};
+    }
+
+    pub fn end(_: @This()) void {
+        if (Environment.isPosix) {
+            print(synchronized_end, .{});
+        }
+    }
+};
+
 const Environment = @import("./env.zig");
 const root = @import("root");
 const std = @import("std");

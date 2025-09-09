@@ -1003,7 +1003,7 @@ pub fn getWorkspaceFilters(manager: *PackageManager, original_cwd: []const u8) !
                 break :abs_root_path strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
             }
 
-            var abs_path = Path.pathToPosixBuf(u8, FileSystem.instance.top_level_dir, &path_buf);
+            var abs_path = Path.pathToPosixBuf(u8, FileSystem.instance.top_level_dir, path_buf);
             break :abs_root_path strings.withoutTrailingSlash(abs_path[Path.windowsVolumeNameLen(abs_path)[0]..]);
         };
 

@@ -264,13 +264,37 @@ fn drainInternal(this: *@This()) void {
         }
     }
 }
+
 pub fn finalize(this: *MySQLConnection) void {
     this.stopTimers();
     debug("MySQLConnection finalize", .{});
 
     // Ensure we disconnect before finalizing
     if (this.status != .disconnected) {
-        this.disconnect();
+        // delay disconnecting to avoid calling JS code inside the finalizer
+        const DisconnectTask = struct {
+            connection: *MySQLConnection,
+            task: jsc.AnyTask,
+
+            fn run(ctx: *@This()) void {
+                ctx.connection.disconnect();
+
+                ctx.connection.deref();
+                bun.default_allocator.destroy(ctx);
+            }
+
+            pub fn enqueue(connection: *MySQLConnection) void {
+                const holder = bun.handleOom(bun.default_allocator.create(@This()));
+                holder.* = .{
+                    .connection = connection,
+                    .task = jsc.AnyTask.New(@This(), @This().run).init(holder),
+                };
+                connection.ref();
+                connection.vm.enqueueTask(jsc.Task.init(&holder.task));
+            }
+        };
+
+        DisconnectTask.enqueue(this);
     }
 
     this.js_value = .zero;

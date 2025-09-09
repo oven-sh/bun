@@ -94,9 +94,10 @@ pub fn onWriteFail(
     const vm = jsc.VirtualMachine.get();
     const function = vm.rareData().postgresql_context.onQueryRejectFn.get().?;
     const event_loop = vm.eventLoop();
+    const js_err = postgresErrorToJS(globalObject, null, err);
     event_loop.runCallback(function, globalObject, thisValue, &.{
         targetValue,
-        postgresErrorToJS(globalObject, null, err),
+        js_err.toError() orelse js_err,
         queries_array,
     });
 }

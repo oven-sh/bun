@@ -46,13 +46,16 @@ pub const ConcurrentGroup = struct {
     sequence_end: usize,
     executing: bool,
     remaining_incomplete_entries: usize,
+    /// used by beforeAll to skip directly to afterAll if it fails
+    failure_skip_to: usize,
 
-    pub fn init(sequence_start: usize, sequence_end: usize) ConcurrentGroup {
+    pub fn init(sequence_start: usize, sequence_end: usize, next_index: usize) ConcurrentGroup {
         return .{
             .sequence_start = sequence_start,
             .sequence_end = sequence_end,
             .executing = false,
             .remaining_incomplete_entries = sequence_end - sequence_start,
+            .failure_skip_to = next_index,
         };
     }
     pub fn tryExtend(this: *ConcurrentGroup, next_sequence_start: usize, next_sequence_end: usize) bool {
@@ -248,7 +251,19 @@ pub fn stepGroup(this: *Execution, globalThis: *jsc.JSGlobalObject, now: bun.tim
             .execute => |exec| return .{ .waiting = .{ .timeout = exec.timeout } },
             .done => {},
         }
-        this.group_index += 1;
+
+        // if there is one sequence and it failed, skip to the next group
+        const all_failed = for (group.sequences(this)) |*sequence| {
+            if (!sequence.result.isFail()) break false;
+        } else true;
+
+        if (all_failed) {
+            groupLog.log("stepGroup: all sequences failed, skipping to failure_skip_to group", .{});
+            this.group_index = group.failure_skip_to;
+        } else {
+            groupLog.log("stepGroup: not all sequences failed, advancing to next group", .{});
+            this.group_index += 1;
+        }
     }
 }
 const AdvanceStatus = union(enum) { done, execute: struct { timeout: bun.timespec = .epoch } };

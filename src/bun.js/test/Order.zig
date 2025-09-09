@@ -40,12 +40,21 @@ pub fn generateOrderDescribe(this: *Order, current: *DescribeScope) bun.JSError!
     const use_hooks = current.base.has_callback;
 
     // gather beforeAll
+    const beforeall_start = this.groups.items.len;
     if (use_hooks) try generateAllOrder(this, current.beforeAll.items);
+    const beforeall_end = this.groups.items.len;
 
     // gather children
     for (current.entries.items) |entry| {
         if (current.base.only == .contains and entry.base().only == .no) continue;
         try generateOrderSub(this, entry);
+    }
+
+    const afterall_start = this.groups.items.len;
+    if (beforeall_end - beforeall_start != current.beforeAll.items.len) {
+        bun.debugAssert(false); // generateAllOrder should have added one group per beforeAll item
+    } else for (this.groups.items[beforeall_start..beforeall_end]) |*group| {
+        group.failure_skip_to = afterall_start;
     }
 
     // gather afterAll
@@ -106,7 +115,7 @@ pub fn appendOrExtendConcurrentGroup(this: *Order, concurrent: bool, sequences_s
             if (previous_group.tryExtend(sequences_start, sequences_end)) return;
         }
     }
-    try this.groups.append(.init(sequences_start, sequences_end)); // otherwise, add a new concurrentgroup to order
+    try this.groups.append(.init(sequences_start, sequences_end, this.groups.items.len + 1)); // otherwise, add a new concurrentgroup to order
 }
 
 const bun = @import("bun");

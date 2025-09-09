@@ -235,6 +235,29 @@ Ran 0 tests across 1 file.
 Exited with code [1]
 ```
 
+## Hook failures
+
+Previously, a beforeAll failure would skip subsequent beforeAll()s, the test, and the afterAll. Now, a beforeAll failure skips any subsequent beforeAll()s and the test, but not the afterAll.
+
+```js
+beforeAll(() => {
+  throw new Error("before all: uh oh!");
+});
+test("my test", () => {
+  console.log("my test");
+});
+afterAll(() => console.log("after all"));
+```
+
+```
+$> bun-before test hook-failures
+Error: before all: uh oh!
+
+$> bun-after test hook-failures
+Error: before all: uh oh!
+after all
+```
+
 ## Only is not allowed in CI
 
 (TODO)
@@ -279,7 +302,8 @@ Exited with code [1]
 - [x] make sure error.SnapshotInConcurrentGroup prints well
 - [x] test error.SnapshotInConcurrentGroup
 - [ ] validate uses of sequence.entry_index (entry_index can be >= entries_end)
-- [ ] decide on beforeAll/beforeEach behaviour
+- [ ] support skipping execution if a preload hook fails
+- [x] decide on beforeAll/beforeEach behaviour
   - decide if beforeEach/beforeAll/afterEach/afterAll should skip executing the test and when. do we match existing behaviour, jest, vitest, or diverge? what does existing behaviour/jest/vitest do?
   - these are all tested flat, not sure if it changes with describe()
   - none

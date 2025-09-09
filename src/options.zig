@@ -1551,6 +1551,41 @@ pub fn definesFromTransformOptions(
         }
     }
     
+    // For --target=browser, set Bun-related values to false/undefined for DCE
+    if (target == .browser) {
+        // process.isBun - false for browser builds
+        if (!user_defines.contains("process.isBun")) {
+            _ = try user_defines.getOrPutValue("process.isBun", "false");
+        }
+        
+        // process.versions.bun - undefined for browser builds
+        if (!user_defines.contains("process.versions.bun")) {
+            _ = try environment_defines.getOrPutValue("process.versions.bun", .init(.{
+                .valueless = true,
+                .original_name = "process.versions.bun",
+                .value = .{ .e_undefined = .{} },
+            }));
+        }
+        
+        // globalThis.Bun - undefined for browser builds
+        if (!user_defines.contains("globalThis.Bun")) {
+            _ = try environment_defines.getOrPutValue("globalThis.Bun", .init(.{
+                .valueless = true,
+                .original_name = "globalThis.Bun",
+                .value = .{ .e_undefined = .{} },
+            }));
+        }
+        
+        // Bun global - undefined for browser builds
+        if (!user_defines.contains("Bun")) {
+            _ = try environment_defines.getOrPutValue("Bun", .init(.{
+                .valueless = true,
+                .original_name = "Bun",
+                .value = .{ .e_undefined = .{} },
+            }));
+        }
+    }
+    
     // For --target=node, mark window as undefined for DCE
     if (target.isNode()) {
         if (!user_defines.contains("window")) {

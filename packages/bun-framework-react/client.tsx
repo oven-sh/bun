@@ -30,16 +30,15 @@ declare global {
 const cssFiles = new Map<string, { promise: Promise<void> | null; link: HTMLLinkElement }>();
 let currentCssList: string[] | undefined = undefined;
 
-declare global {
-  interface Window {
-    __bun_f:
-      | Array<string | Uint8Array<ArrayBufferLike>>
-      | {
-          // it's still an array, but we overwrite the push method to not return
-          // a number and instead use the `handleChunk` function
-          push: (chunk: string | Uint8Array<ArrayBufferLike>) => void;
-          forEach: (callback: (chunk: string | Uint8Array<ArrayBufferLike>) => void) => void;
-        };
+function enqueueChunks(
+  controller: ReadableStreamDefaultController<Uint8Array<ArrayBuffer>>,
+  ...chunks: (string | Uint8Array<ArrayBuffer>)[]
+) {
+  for (let chunk of chunks) {
+    if (typeof chunk === "string") {
+      chunk = te.encode(chunk);
+    }
+    controller.enqueue(chunk);
   }
 }
 
@@ -52,15 +51,15 @@ declare global {
 let rscPayload = createFromReadableStream(
   new ReadableStream({
     start(controller) {
-      const handleChunk = (chunk: string | Uint8Array<ArrayBuffer>) =>
-        typeof chunk === "string" //
-          ? controller.enqueue(te.encode(chunk))
-          : controller.enqueue(chunk);
-
       const bunF = (self.__bun_f ??= []);
+      const originalPush = bunF.push.bind(bunF);
 
-      bunF.push = handleChunk;
-      bunF.forEach(handleChunk);
+      bunF.push = (...chunks: (string | Uint8Array<ArrayBuffer>)[]) => {
+        enqueueChunks(controller, ...chunks);
+        return originalPush(...chunks);
+      };
+
+      bunF.forEach(chunk => enqueueChunks(controller, chunk));
 
       if (document.readyState === "loading") {
         document.addEventListener(

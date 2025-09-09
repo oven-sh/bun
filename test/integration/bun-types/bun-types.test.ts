@@ -120,6 +120,7 @@ async function diagnose(
     // always check lib files for this integration test
     // (prevent https://github.com/oven-sh/bun/issues/8761 ever happening again)
     skipLibCheck: false,
+    skipDefaultLibCheck: false,
   };
 
   const host: ts.LanguageServiceHost = {
@@ -254,7 +255,7 @@ describe("@types/bun integration test", () => {
   test("checks without lib.dom.d.ts", async () => {
     const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR);
 
-    expect(emptyInterfaces).toEqual(new Set<string>());
+    expect(emptyInterfaces).toEqual(new Set());
     expect(diagnostics).toEqual([]);
   });
 
@@ -282,7 +283,7 @@ describe("@types/bun integration test", () => {
         },
       });
 
-      expect(emptyInterfaces).toEqual(new Set<string>());
+      expect(emptyInterfaces).toEqual(new Set());
       expect(diagnostics).toEqual([]);
     });
 
@@ -291,7 +292,7 @@ describe("@types/bun integration test", () => {
         files: { "my-test.test.ts": code }, // no reference to bun-types/test-globals
       });
 
-      expect(emptyInterfaces).toEqual(new Set<string>()); // should still have no empty interfaces
+      expect(emptyInterfaces).toEqual(new Set()); // should still have no empty interfaces
       expect(diagnostics).toEqual([
         {
           "code": 2582,
@@ -367,7 +368,7 @@ describe("@types/bun integration test", () => {
       },
     });
 
-    expect(emptyInterfaces).toEqual(new Set<string>());
+    expect(emptyInterfaces).toEqual(new Set());
     expect(diagnostics).toEqual([]);
   });
 
@@ -380,7 +381,7 @@ describe("@types/bun integration test", () => {
       },
     });
 
-    expect(emptyInterfaces).toEqual(new Set<string>());
+    expect(emptyInterfaces).toEqual(new Set());
     expect(diagnostics).toEqual([
       // This is expected because we, of course, can't check that our tsx file is passing
       // when tsx is turned off...
@@ -399,7 +400,7 @@ describe("@types/bun integration test", () => {
       },
     });
 
-    expect(emptyInterfaces).toEqual(new Set<string>());
+    expect(emptyInterfaces).toEqual(new Set());
     expect(diagnostics).toEqual([
       {
         code: 2769,

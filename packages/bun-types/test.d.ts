@@ -935,6 +935,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
+    toBe(expected: T): void;
     toBe<X = T>(expected: NoInfer<X>): void;
 
     /**
@@ -987,6 +988,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
+    toEqual(expected: T): void;
     toEqual<X = T>(expected: NoInfer<X>): void;
 
     /**
@@ -1012,6 +1014,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
+    toStrictEqual(expected: T): void;
     toStrictEqual<X = T>(expected: NoInfer<X>): void;
 
     /**
@@ -1026,6 +1029,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
+    toBeOneOf(expected: T): void;
     toBeOneOf<X = T>(expected: NoInfer<Iterable<X>>): void;
 
     /**
@@ -1041,6 +1045,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
+    toContain(expected: T extends Iterable<infer U> ? U : T): void;
     toContain<X = T>(expected: NoInfer<X extends Iterable<infer U> ? U : X>): void;
 
     /**
@@ -1056,6 +1061,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
+    toContainKey(expected: keyof T): void;
     toContainKey<X = T>(expected: NoInfer<keyof X>): void;
 
     /**
@@ -1072,6 +1078,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
+    toContainAllKeys(expected: Array<keyof T>): void;
     toContainAllKeys<X = T>(expected: NoInfer<Array<keyof X>>): void;
 
     /**
@@ -1088,6 +1095,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
+    toContainAnyKeys(expected: Array<keyof T>): void;
     toContainAnyKeys<X = T>(expected: NoInfer<Array<keyof X>>): void;
 
     /**
@@ -1180,6 +1188,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
+    toContainKeys(expected: Array<keyof T>): void;
     toContainKeys<X = T>(expected: NoInfer<Array<keyof X>>): void;
 
     /**
@@ -1194,6 +1203,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
+    toContainEqual(expected: T extends Iterable<infer U> ? U : T): void;
     toContainEqual<X = T>(expected: NoInfer<X extends Iterable<infer U> ? U : X>): void;
 
     /**

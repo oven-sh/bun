@@ -336,3 +336,23 @@ test("expectTypeOf basic type checks", () => {
 });
 
 mock.clearAllMocks();
+
+// Advanced use case tests for #18511:
+
+// 1. => When assignable to, we should pass (e.g. new Set() is assignable to Set<string>).
+//       But when unassigbale, we should type error (e.g `string` is not assignable to `"bun"`)
+// 2. => Expect that exact matches pass
+// 3. => Expect that when we opt out of type safety, any value can be passed
+
+declare const input: "bun" | "baz" | null;
+declare const expected: string;
+
+// @ts-expect-error
+/** 1. **/ expect(input).toBe(expected); // Type error - string is not assignable to `'bun' | ...`
+/** 2. **/ expect(input).toBe("bun"); // happy!
+/** 3. **/ expect(input).toBe<string>(expected); // happy! We opted out of type safety for this expectation
+
+declare const setOfStrings: Set<string>;
+/** 1. **/ expect(setOfStrings).toBe(new Set()); // this is inferrable to Set<string> so this should pass
+/** 2. **/ expect(setOfStrings).toBe(new Set<string>()); // exact, so we are happy!
+/** 3. **/ expect(setOfStrings).toBe<Set<string>>(new Set()); // happy! We opted out of type safety for this expectation

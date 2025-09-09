@@ -485,8 +485,6 @@ fn drainInternal(this: *PostgresSQLConnection) void {
     this.flushData();
 
     if (!this.flags.has_backpressure) {
-        // no backpressure yet so pipeline more if possible and flush again
-        this.advance();
         this.flushData();
     }
 }
@@ -1304,6 +1302,9 @@ fn advance(this: *PostgresSQLConnection) void {
                                 continue;
                             },
                         }
+                    } else {
+                        offset += 1;
+                        continue;
                     }
                 }
             },

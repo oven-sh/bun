@@ -282,9 +282,9 @@ pub const Framework = struct {
                 "bun-framework-react/server.tsx",
                 "bun-framework-react/ssr.tsx",
             }, if (Environment.codegen_embed) &.{
-                .{ .code = @embedFile("bun-framework-react/client.tsx") },
-                .{ .code = @embedFile("bun-framework-react/server.tsx") },
-                .{ .code = @embedFile("bun-framework-react/ssr.tsx") },
+                .{ .code = @embedFile("../packages/bun-framework-react/client.tsx") },
+                .{ .code = @embedFile("../packages/bun-framework-react/server.tsx") },
+                .{ .code = @embedFile("../packages/bun-framework-react/ssr.tsx") },
             } else &.{
                 .{ .code = bun.runtimeEmbedFile(.src, "../packages/bun-framework-react/client.tsx") },
                 .{ .code = bun.runtimeEmbedFile(.src, "../packages/bun-framework-react/server.tsx") },

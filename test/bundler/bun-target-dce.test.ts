@@ -163,16 +163,10 @@ var require_HASH = __commonJS((exports) => {
   process.versions.bun, exports.test3 = "process-versions-bun-exists";
   exports.test3a = "process-isBun-true";
   exports.test4 = "typeof-bun-defined";
-  globalThis.Bun, exports.test5 = "typeof-globalThis-bun-defined";
+  exports.test5 = "typeof-globalThis-bun-defined";
   exports.test6 = "typeof-bun-reverse-defined";
-  if (typeof Bun === "object")
-    exports.test6a = "typeof-bun-object";
-  else
-    exports.test6a = "typeof-bun-not-object";
-  if (typeof Bun !== "object")
-    exports.test6b = "typeof-bun-not-object-2";
-  else
-    exports.test6b = "typeof-bun-object-2";
+  exports.test6a = "typeof-bun-object";
+  exports.test6b = "typeof-bun-object-2";
   if (Bun.version)
     exports.test7 = "bun-version-exists";
   else
@@ -202,7 +196,7 @@ var require_HASH = __commonJS((exports) => {
   else
     exports.test17 = "node-version-missing";
   exports.test18 = "window-missing";
-  var isBun = typeof Bun !== "undefined";
+  var isBun = !0;
   if (!isBun)
     exports.test19 = "const-not-bun";
   else
@@ -240,7 +234,10 @@ export default require_HASH();"
   // typeof window check is eliminated since window is undefined for bun target
   expect(bundled).not.toContain("typeof window");
   
-  // Const patterns don't work (needs constant propagation)
+  // Const patterns: typeof is evaluated but const propagation not yet implemented
+  // The const isBun is now "var isBun = !0" (true) instead of "typeof Bun !== 'undefined'"
+  // But the if statement using isBun isn't optimized yet - needs constant propagation
+  expect(bundled).toContain("var isBun = !0");
   expect(bundled).toContain("const-not-bun");
   expect(bundled).toContain("const-is-bun");
 });
@@ -392,8 +389,9 @@ if (isBun) {
   expect(bundled).toContain('exports.hasBun = !1'); // false
   expect(bundled).not.toContain('exports.hasBun = !0'); // true eliminated
   
-  // typeof Bun === "object" not fully optimized yet - both branches present
-  expect(bundled).toContain('typeof Bun === "object"');
+  // typeof Bun === "object" should now be optimized (false for browser)
+  expect(bundled).toContain('exports.bunIsObject = !1'); // false
+  expect(bundled).not.toContain('exports.bunIsObject = !0'); // true eliminated
   
   expect(bundled).toContain('exports.isBun = !1'); // false  
   expect(bundled).not.toContain('exports.isBun = !0'); // true eliminated
@@ -408,4 +406,82 @@ if (isBun) {
   // Const pattern should ideally be optimized but might not work yet
   // For now just check it's there
   expect(bundled).toContain('constBun');
+});
+test("typeof Bun is evaluated at build time", async () => {
+  const code = `
+// Direct typeof comparison should be fully optimized
+if (typeof Bun === "object") {
+  exports.test1 = "is-object";
+} else {
+  exports.test1 = "not-object";
+}
+
+if (typeof Bun !== "undefined") {
+  exports.test2 = "defined";
+} else {
+  exports.test2 = "undefined";
+}
+
+if (typeof globalThis.Bun === "object") {
+  exports.test3 = "global-is-object";
+} else {
+  exports.test3 = "global-not-object";
+}
+
+// Const assignment - typeof is evaluated but const propagation not yet done
+const isBun = typeof Bun !== "undefined";
+exports.isBunValue = isBun;
+  `;
+
+  // Test for --target=bun
+  using bunDir = tempDir("typeof-bun", { "index.js": code });
+  await using bunProc = Bun.spawn({
+    cmd: [bunExe(), "build", "index.js", "--target=bun", "--outfile=bundle.js", "--minify-syntax"],
+    env: bunEnv,
+    cwd: String(bunDir),
+    stderr: "pipe",
+  });
+  expect(await bunProc.exited).toBe(0);
+  const bunBundle = await Bun.file(String(bunDir) + "/bundle.js").text();
+
+  // typeof Bun === "object" should be optimized to true
+  expect(bunBundle).toContain('exports.test1 = "is-object"');
+  expect(bunBundle).not.toContain('exports.test1 = "not-object"');
+  
+  // typeof Bun !== "undefined" should be optimized to true
+  expect(bunBundle).toContain('exports.test2 = "defined"');
+  expect(bunBundle).not.toContain('exports.test2 = "undefined"');
+  
+  // typeof globalThis.Bun === "object" should be optimized to true
+  expect(bunBundle).toContain('exports.test3 = "global-is-object"');
+  expect(bunBundle).not.toContain('exports.test3 = "global-not-object"');
+  
+  // Const isBun should be evaluated to true (minified as !0)
+  expect(bunBundle).toContain("var isBun = !0");
+
+  // Test for --target=browser
+  using browserDir = tempDir("typeof-browser", { "index.js": code });
+  await using browserProc = Bun.spawn({
+    cmd: [bunExe(), "build", "index.js", "--target=browser", "--outfile=bundle.js", "--minify-syntax"],
+    env: bunEnv,
+    cwd: String(browserDir),
+    stderr: "pipe",
+  });
+  expect(await browserProc.exited).toBe(0);
+  const browserBundle = await Bun.file(String(browserDir) + "/bundle.js").text();
+
+  // typeof Bun === "object" should be optimized to false
+  expect(browserBundle).toContain('exports.test1 = "not-object"');
+  expect(browserBundle).not.toContain('exports.test1 = "is-object"');
+  
+  // typeof Bun !== "undefined" should be optimized to false
+  expect(browserBundle).toContain('exports.test2 = "undefined"');
+  expect(browserBundle).not.toContain('exports.test2 = "defined"');
+  
+  // typeof globalThis.Bun === "object" should be optimized to false
+  expect(browserBundle).toContain('exports.test3 = "global-not-object"');
+  expect(browserBundle).not.toContain('exports.test3 = "global-is-object"');
+  
+  // Const isBun should be evaluated to false (minified as !1)
+  expect(browserBundle).toContain("var isBun = !1");
 });

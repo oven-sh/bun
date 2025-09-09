@@ -421,9 +421,16 @@ pub fn fail(this: *MySQLConnection, message: []const u8, err: AnyMySQLError.Erro
     this.failWithJSValue(instance);
 }
 
-pub fn onClose(this: *MySQLConnection) void {
+pub fn onEnd(this: *MySQLConnection) void {
+    // no more socket
     defer this.deref();
     this.fail("Connection closed", error.ConnectionClosed);
+}
+
+pub fn onClose(this: *MySQLConnection) void {
+    // no more socket
+    defer this.deref();
+    this.onEnd();
 }
 
 fn refAndClose(this: *@This(), js_reason: ?jsc.JSValue) void {
@@ -749,7 +756,7 @@ fn SocketHandler(comptime ssl: bool) type {
 
         pub fn onEnd(this: *MySQLConnection, socket: SocketType) void {
             _ = socket;
-            this.onClose();
+            this.onEnd();
         }
 
         pub fn onConnectError(this: *MySQLConnection, socket: SocketType, _: i32) void {

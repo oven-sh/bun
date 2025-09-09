@@ -418,7 +418,7 @@ class PooledMySQLConnection {
   async #startConnection() {
     this.connection = await PooledMySQLConnection.createConnection(
       this.connectionInfo,
-      this.#onConnected.bind(this),
+      (...args) => this.#onConnected(...args),
       (...args) => this.#onClose(...args),
     );
   }

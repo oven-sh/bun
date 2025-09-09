@@ -157,6 +157,16 @@ Object.defineProperty(WriteStream, "prototype", {
       return require("node:readline").moveCursor(this, dx, dy, cb);
     };
 
+    // Add Symbol.asyncIterator to make tty.WriteStream compatible with code
+    // that expects stdout/stderr to be async iterable (like in Node.js where they're Duplex)
+    WriteStream.prototype[Symbol.asyncIterator] = function () {
+      // Since WriteStream is write-only, we return an empty async iterator
+      // This matches the behavior of Node.js Duplex streams used for stdout/stderr
+      return (async function* () {
+        // stdout/stderr don't produce readable data, so yield nothing
+      })();
+    };
+
     return Real;
   },
   enumerable: true,

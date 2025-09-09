@@ -13,7 +13,7 @@ pub const LifecycleScriptTimeLog = struct {
     pub fn appendConcurrent(log: *LifecycleScriptTimeLog, allocator: std.mem.Allocator, entry: Entry) void {
         log.mutex.lock();
         defer log.mutex.unlock();
-        log.list.append(allocator, entry) catch bun.outOfMemory();
+        bun.handleOom(log.list.append(allocator, entry));
     }
 
     /// this can be called if .start was never called
@@ -54,7 +54,7 @@ pub fn ensurePreinstallStateListCapacity(this: *PackageManager, count: usize) vo
     }
 
     const offset = this.preinstall_state.items.len;
-    this.preinstall_state.ensureTotalCapacity(this.allocator, count) catch bun.outOfMemory();
+    bun.handleOom(this.preinstall_state.ensureTotalCapacity(this.allocator, count));
     this.preinstall_state.expandToCapacity();
     @memset(this.preinstall_state.items[offset..], PreinstallState.unknown);
 }
@@ -139,7 +139,7 @@ pub fn determinePreinstallState(
             // 4. rename temp dir to `folder_path`
             if (patch_hash != null) {
                 const non_patched_path_ = folder_path[0 .. std.mem.indexOf(u8, folder_path, "_patch_hash=") orelse @panic("Expected folder path to contain `patch_hash=`, this is a bug in Bun. Please file a GitHub issue.")];
-                const non_patched_path = manager.lockfile.allocator.dupeZ(u8, non_patched_path_) catch bun.outOfMemory();
+                const non_patched_path = bun.handleOom(manager.lockfile.allocator.dupeZ(u8, non_patched_path_));
                 defer manager.lockfile.allocator.free(non_patched_path);
                 if (manager.isFolderInCache(non_patched_path)) {
                     manager.setPreinstallState(pkg.meta.id, manager.lockfile, .apply_patch);
@@ -248,6 +248,8 @@ pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package) vo
     }
 }
 
+/// Used to be called from multiple threads; now single-threaded
+/// TODO: re-evaluate whether some variables still need to be atomic
 pub fn spawnPackageLifecycleScripts(
     this: *PackageManager,
     ctx: Command.Context,
@@ -303,7 +305,7 @@ pub fn spawnPackageLifecycleScripts(
         }
 
         if (this.env.get("PATH")) |env_path| {
-            break :shell_bin bun.CLI.RunCommand.findShell(env_path, cwd);
+            break :shell_bin bun.cli.RunCommand.findShell(env_path, cwd);
         }
 
         break :shell_bin null;
@@ -327,7 +329,7 @@ pub fn findTrustedDependenciesFromUpdateRequests(this: *PackageManager) std.Auto
                     const package_id = this.lockfile.buffers.resolutions.items[dep_id];
                     if (package_id == invalid_package_id) continue;
 
-                    const entry = set.getOrPut(this.lockfile.allocator, @truncate(root_dep.name_hash)) catch bun.outOfMemory();
+                    const entry = bun.handleOom(set.getOrPut(this.lockfile.allocator, @truncate(root_dep.name_hash)));
                     if (!entry.found_existing) {
                         const dependency_slice = parts.items(.dependencies)[package_id];
                         addDependenciesToSet(&set, this.lockfile, dependency_slice);
@@ -354,7 +356,7 @@ fn addDependenciesToSet(
         if (package_id == invalid_package_id) continue;
 
         const dep = lockfile.buffers.dependencies.items[dep_id];
-        const entry = names.getOrPut(lockfile.allocator, @truncate(dep.name_hash)) catch bun.outOfMemory();
+        const entry = bun.handleOom(names.getOrPut(lockfile.allocator, @truncate(dep.name_hash)));
         if (!entry.found_existing) {
             const dependency_slice = lockfile.packages.items(.dependencies)[package_id];
             addDependenciesToSet(names, lockfile, dependency_slice);
@@ -362,7 +364,7 @@ fn addDependenciesToSet(
     }
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
@@ -372,8 +374,7 @@ const Output = bun.Output;
 const Path = bun.path;
 const Syscall = bun.sys;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 
 const Semver = bun.Semver;
 const String = Semver.String;

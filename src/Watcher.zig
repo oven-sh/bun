@@ -1,6 +1,8 @@
 //! Bun's cross-platform filesystem watcher. Runs on its own thread.
+
 const Watcher = @This();
-const DebugLogScope = bun.Output.Scoped(.watcher, false);
+
+const DebugLogScope = bun.Output.Scoped(.watcher, .visible);
 const log = DebugLogScope.log;
 
 // This will always be [max_count]WatchEvent,
@@ -30,7 +32,7 @@ ctx: *anyopaque,
 onFileUpdate: *const fn (this: *anyopaque, events: []WatchEvent, changed_files: []?[:0]u8, watchlist: WatchList) void,
 onError: *const fn (this: *anyopaque, err: bun.sys.Error) void,
 
-thread_lock: bun.DebugThreadLock = bun.DebugThreadLock.unlocked,
+thread_lock: bun.safety.ThreadLock = .initUnlocked(),
 
 pub const max_count = 128;
 pub const requires_file_descriptors = switch (Environment.os) {
@@ -126,7 +128,6 @@ pub fn getHash(filepath: string) HashType {
 
 pub const WatchItemIndex = u16;
 pub const max_eviction_count = 8096;
-const WindowsWatcher = @import("./watcher/WindowsWatcher.zig");
 // TODO: some platform-specific behavior is implemented in
 // this file instead of the platform-specific file.
 // ideally, the constants above can be inlined
@@ -288,7 +289,7 @@ pub fn flushEvictions(this: *Watcher) void {
     }
 }
 
-fn watchLoop(this: *Watcher) bun.JSC.Maybe(void) {
+fn watchLoop(this: *Watcher) bun.sys.Maybe(void) {
     while (this.running) {
         // individual platform implementation will call onFileUpdate
         switch (Platform.watchLoopCycle(this)) {
@@ -296,7 +297,7 @@ fn watchLoop(this: *Watcher) bun.JSC.Maybe(void) {
             .result => |iter| iter,
         }
     }
-    return .{ .result = {} };
+    return .success;
 }
 
 fn appendFileAssumeCapacity(
@@ -308,20 +309,20 @@ fn appendFileAssumeCapacity(
     parent_hash: HashType,
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
-) bun.JSC.Maybe(void) {
+) bun.sys.Maybe(void) {
     if (comptime Environment.isWindows) {
         // on windows we can only watch items that are in the directory tree of the top level dir
         const rel = bun.path.isParentOrEqual(this.fs.top_level_dir, file_path);
         if (rel == .unrelated) {
             Output.warn("File {s} is not in the project directory and will not be watched\n", .{file_path});
-            return .{ .result = {} };
+            return .success;
         }
     }
 
     const watchlist_id = this.watchlist.len;
 
     const file_path_: string = if (comptime clone_file_path)
-        bun.asByteSlice(this.allocator.dupeZ(u8, file_path) catch bun.outOfMemory())
+        bun.asByteSlice(bun.handleOom(this.allocator.dupeZ(u8, file_path)))
     else
         file_path;
 
@@ -381,7 +382,7 @@ fn appendFileAssumeCapacity(
     }
 
     this.watchlist.appendAssumeCapacity(item);
-    return .{ .result = {} };
+    return .success;
 }
 fn appendDirectoryAssumeCapacity(
     this: *Watcher,
@@ -389,7 +390,7 @@ fn appendDirectoryAssumeCapacity(
     file_path: string,
     hash: HashType,
     comptime clone_file_path: bool,
-) bun.JSC.Maybe(WatchItemIndex) {
+) bun.sys.Maybe(WatchItemIndex) {
     if (comptime Environment.isWindows) {
         // on windows we can only watch items that are in the directory tree of the top level dir
         const rel = bun.path.isParentOrEqual(this.fs.top_level_dir, file_path);
@@ -408,7 +409,7 @@ fn appendDirectoryAssumeCapacity(
     };
 
     const file_path_: string = if (comptime clone_file_path)
-        bun.asByteSlice(this.allocator.dupeZ(u8, file_path) catch bun.outOfMemory())
+        bun.asByteSlice(bun.handleOom(this.allocator.dupeZ(u8, file_path)))
     else
         file_path;
 
@@ -500,7 +501,7 @@ pub fn appendFileMaybeLock(
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
     comptime lock: bool,
-) bun.JSC.Maybe(void) {
+) bun.sys.Maybe(void) {
     if (comptime lock) this.mutex.lock();
     defer if (comptime lock) this.mutex.unlock();
     bun.assert(file_path.len > 1);
@@ -528,7 +529,7 @@ pub fn appendFileMaybeLock(
             }
         }
     }
-    this.watchlist.ensureUnusedCapacity(this.allocator, 1 + @as(usize, @intCast(@intFromBool(parent_watch_item == null)))) catch bun.outOfMemory();
+    bun.handleOom(this.watchlist.ensureUnusedCapacity(this.allocator, 1 + @as(usize, @intCast(@intFromBool(parent_watch_item == null)))));
 
     if (autowatch_parent_dir) {
         parent_watch_item = parent_watch_item orelse switch (this.appendDirectoryAssumeCapacity(dir_fd, parent_dir, parent_dir_hash, clone_file_path)) {
@@ -560,7 +561,7 @@ pub fn appendFileMaybeLock(
         });
     }
 
-    return .{ .result = {} };
+    return .success;
 }
 
 inline fn isEligibleDirectory(this: *Watcher, dir: string) bool {
@@ -576,7 +577,7 @@ pub fn appendFile(
     dir_fd: bun.FileDescriptor,
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
-) bun.JSC.Maybe(void) {
+) bun.sys.Maybe(void) {
     return appendFileMaybeLock(this, fd, file_path, hash, loader, dir_fd, package_json, clone_file_path, true);
 }
 
@@ -586,7 +587,7 @@ pub fn addDirectory(
     file_path: string,
     hash: HashType,
     comptime clone_file_path: bool,
-) bun.JSC.Maybe(WatchItemIndex) {
+) bun.sys.Maybe(WatchItemIndex) {
     this.mutex.lock();
     defer this.mutex.unlock();
 
@@ -594,7 +595,7 @@ pub fn addDirectory(
         return .{ .result = @truncate(idx) };
     }
 
-    this.watchlist.ensureUnusedCapacity(this.allocator, 1) catch bun.outOfMemory();
+    bun.handleOom(this.watchlist.ensureUnusedCapacity(this.allocator, 1));
 
     return this.appendDirectoryAssumeCapacity(fd, file_path, hash, clone_file_path);
 }
@@ -608,7 +609,7 @@ pub fn addFile(
     dir_fd: bun.FileDescriptor,
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
-) bun.JSC.Maybe(void) {
+) bun.sys.Maybe(void) {
     // This must lock due to concurrent transpiler
     this.mutex.lock();
     defer this.mutex.unlock();
@@ -621,7 +622,7 @@ pub fn addFile(
                 fds[index] = fd;
             }
         }
-        return .{ .result = {} };
+        return .success;
     }
 
     return this.appendFileMaybeLock(fd, file_path, hash, loader, dir_fd, package_json, clone_file_path, false);
@@ -673,13 +674,16 @@ pub fn onMaybeWatchDirectory(watch: *Watcher, file_path: string, dir_fd: bun.Sto
     }
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const FeatureFlags = bun.FeatureFlags;
+const string = []const u8;
+
+const WindowsWatcher = @import("./watcher/WindowsWatcher.zig");
 const options = @import("./options.zig");
-const Mutex = bun.Mutex;
+const std = @import("std");
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const Mutex = bun.Mutex;
+const Output = bun.Output;
+const strings = bun.strings;

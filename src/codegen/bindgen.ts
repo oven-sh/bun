@@ -804,7 +804,7 @@ function zigTypeNameInner(type: TypeImpl): string {
       return "usize";
     case "globalObject":
     case "zigVirtualMachine":
-      return "*JSC.JSGlobalObject";
+      return "*jsc.JSGlobalObject";
     default:
       const cAbiType = type.canDirectlyMapToCAbi();
       if (cAbiType) {
@@ -837,7 +837,7 @@ function returnStrategyZigType(strategy: ReturnStrategy): string {
     case "void":
       return "bool"; // true=success, false=exception
     case "jsvalue":
-      return "JSC.JSValue";
+      return "jsc.JSValue";
     default:
       throw new Error(
         `TODO: returnStrategyZigType for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`,
@@ -1129,8 +1129,8 @@ const cppInternal = new CodeWriter();
 const headers = new Set<string>();
 
 zig.line('const bun = @import("bun");');
-zig.line("const JSC = bun.JSC;");
-zig.line("const JSHostFunctionType = JSC.JSHostFn;\n");
+zig.line("const jsc = bun.jsc;");
+zig.line("const JSHostFunctionType = jsc.JSHostFn;\n");
 
 zigInternal.line("const binding_internals = struct {");
 zigInternal.indent();
@@ -1308,7 +1308,7 @@ for (const [filename, { functions, typedefs }] of files) {
 
       let globalObjectArg = "";
       if (vari.globalObjectArg === "hidden") {
-        args.push(`global: *JSC.JSGlobalObject`);
+        args.push(`global: *jsc.JSGlobalObject`);
         globalObjectArg = "global";
       }
       let argNum = 0;
@@ -1366,7 +1366,7 @@ for (const [filename, { functions, typedefs }] of files) {
 
       switch (returnStrategy.type) {
         case "jsvalue":
-          zigInternal.add(`return JSC.toJSHostCall(${globalObjectArg}, @src(), `);
+          zigInternal.add(`return jsc.toJSHostCall(${globalObjectArg}, @src(), `);
           break;
         case "basic-out-param":
           zigInternal.add(`out.* = @as(bun.JSError!${returnStrategy.abiType}, `);
@@ -1452,9 +1452,9 @@ for (const [filename, { functions, typedefs }] of files) {
     // Wrapper to init JSValue
     const wrapperName = zid("create" + cap(fn.name) + "Callback");
     const minArgCount = fn.variants.reduce((acc, vari) => Math.min(acc, vari.args.length), Number.MAX_SAFE_INTEGER);
-    zig.line(`pub fn ${wrapperName}(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {`);
+    zig.line(`pub fn ${wrapperName}(global: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {`);
     zig.line(
-      `    return JSC.host_fn.NewRuntimeFunction(global, JSC.ZigString.static(${str(fn.name)}), ${minArgCount}, js${cap(fn.name)}, false, false, null);`,
+      `    return jsc.host_fn.NewRuntimeFunction(global, jsc.ZigString.static(${str(fn.name)}), ${minArgCount}, js${cap(fn.name)}, false, false, null);`,
     );
     zig.line(`}`);
   }

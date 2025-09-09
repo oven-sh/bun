@@ -23,7 +23,7 @@
     "build:types": "tsc --emitDeclarationOnly --declaration --declarationDir ./dist"
   },
   "devDependencies": {
-    "bun-types": "canary",
+    "@types/bun": "../bun-types",
     "svelte": "^5.20.4",
     "@threlte/core": "8.0.1"
   },

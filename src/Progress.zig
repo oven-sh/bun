@@ -14,12 +14,7 @@
 //! * `refresh_rate_ms`
 //! * `initial_delay_ms`
 
-const std = @import("std");
-const builtin = @import("builtin");
-const windows = std.os.windows;
-const assert = bun.assert;
 const Progress = @This();
-const bun = @import("bun");
 
 /// `null` if the current node (and its children) should
 /// not print on update()
@@ -453,3 +448,10 @@ test "basic functionality" {
         node.end();
     }
 }
+
+const builtin = @import("builtin");
+const std = @import("std");
+const windows = std.os.windows;
+
+const bun = @import("bun");
+const assert = bun.assert;

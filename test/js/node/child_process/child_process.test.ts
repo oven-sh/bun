@@ -388,7 +388,7 @@ it("should call close and exit before process exits", async () => {
     stdin: "inherit",
     stderr: "inherit",
   });
-  const data = await new Response(proc.stdout).text();
+  const data = await proc.stdout.text();
   expect(data).toContain("closeHandler called");
   expect(data).toContain("exithHandler called");
   expect(await proc.exited).toBe(0);
@@ -429,7 +429,7 @@ it("it accepts stdio passthrough", async () => {
     env: bunEnv,
   }));
   console.log(package_dir);
-  const [err, out, exitCode] = await Promise.all([new Response(stderr).text(), new Response(stdout).text(), exited]);
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
   try {
     // This command outputs in either `["hello", "world"]` or `["world", "hello"]` order.
     console.log({ err, out });
@@ -454,7 +454,10 @@ it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
     process.kill(process.pid, "SIGTRAP");
   `;
 
-  const { signal } = spawnSync(bunExe(), ["-e", trapCode]);
+  const { signal } = spawnSync(bunExe(), ["-e", trapCode], {
+    // @ts-expect-error
+    env: { ...bunEnv, BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF: "1" },
+  });
 
   expect(signal).toBe("SIGTRAP");
 });

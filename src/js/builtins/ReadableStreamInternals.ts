@@ -569,7 +569,7 @@ export function readableStreamTeePullFunction(teeState, reader, shouldClone) {
   const pullAlgorithm = function () {
     if (teeState.flags & TeeStateFlags.reading) {
       teeState.flags |= TeeStateFlags.readAgain;
-      return $Promise.$resolve();
+      return Promise.$resolve();
     }
     teeState.flags |= TeeStateFlags.reading;
     $Promise.prototype.$then.$call(
@@ -612,7 +612,7 @@ export function readableStreamTeePullFunction(teeState, reader, shouldClone) {
           $readableStreamDefaultControllerEnqueue(teeState.branch2.$readableStreamController, chunk2);
         teeState.flags &= ~TeeStateFlags.reading;
 
-        $Promise.$resolve().$then(() => {
+        Promise.$resolve().$then(() => {
           if (teeState.flags & TeeStateFlags.readAgain) pullAlgorithm();
         });
       },
@@ -621,7 +621,7 @@ export function readableStreamTeePullFunction(teeState, reader, shouldClone) {
         teeState.flags &= ~TeeStateFlags.reading;
       },
     );
-    return $Promise.$resolve();
+    return Promise.$resolve();
   };
   return pullAlgorithm;
 }
@@ -1053,7 +1053,7 @@ export function onPullDirectStream(controller: ReadableStreamDirectController) {
         controller._handleError = $handleDirectStreamErrorReject.bind(controller);
       }
 
-      Promise.prototype.catch.$call(result, controller._handleError);
+      result.catch(controller._handleError);
     }
   } catch (e) {
     return $handleDirectStreamErrorReject.$call(controller, e);
@@ -2050,7 +2050,6 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       throw $ERR_INVALID_STATE("Internal error: invalid result from pull. This is a bug in Bun. Please report it.");
     }
 
-    // eslint-disable-next-line no-unused-private-class-members
     #pull(controller) {
       var handle = $getByIdDirectPrivate(this, "stream");
 
@@ -2103,7 +2102,6 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       }
     }
 
-    // eslint-disable-next-line no-unused-private-class-members
     #cancel(reason) {
       var handle = $getByIdDirectPrivate(this, "stream");
       this.$data = undefined;

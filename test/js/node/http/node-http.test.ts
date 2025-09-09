@@ -372,7 +372,7 @@ describe("node:http", () => {
       });
     }
 
-    // it.only("check for expected fields", done => {
+    // test("check for expected fields", done => {
     //   runTest((server, port) => {
     //     const req = request({ host: "localhost", port, method: "GET" }, res => {
     //       console.log("called");
@@ -1484,7 +1484,7 @@ it("should emit events in the right order", async () => {
     stderr: "inherit",
     env: bunEnv,
   });
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   // TODO prefinish and socket are not emitted in the right order
   expect(
     out

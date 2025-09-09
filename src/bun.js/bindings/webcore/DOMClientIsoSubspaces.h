@@ -10,7 +10,7 @@ using namespace JSC;
 
 class DOMClientIsoSubspaces {
     WTF_MAKE_NONCOPYABLE(DOMClientIsoSubspaces);
-    WTF_MAKE_FAST_ALLOCATED(DOMClientIsoSubspaces);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DOMClientIsoSubspaces);
 
 public:
     DOMClientIsoSubspaces() = default;
@@ -72,6 +72,8 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSS3File;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSX509Certificate;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNodePerformanceHooksHistogram;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWasmStreamingCompiler;
+
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 

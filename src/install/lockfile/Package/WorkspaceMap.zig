@@ -1,3 +1,5 @@
+const WorkspaceMap = @This();
+
 map: Map,
 
 const Map = bun.StringArrayHashMap(Entry);
@@ -129,7 +131,7 @@ pub fn processNamesArray(
         if (input_path.len == 0 or input_path.len == 1 and input_path[0] == '.') continue;
 
         if (Glob.detectGlobSyntax(input_path)) {
-            workspace_globs.append(input_path) catch bun.outOfMemory();
+            bun.handleOom(workspace_globs.append(input_path));
             continue;
         }
 
@@ -218,7 +220,7 @@ pub fn processNamesArray(
 
             const glob_pattern = if (user_pattern.len == 0) "package.json" else brk: {
                 const parts = [_][]const u8{ user_pattern, "package.json" };
-                break :brk arena.allocator().dupe(u8, bun.path.join(parts, .auto)) catch bun.outOfMemory();
+                break :brk bun.handleOom(arena.allocator().dupe(u8, bun.path.join(parts, .auto)));
             };
 
             var walker: GlobWalker = .{};
@@ -375,21 +377,24 @@ fn ignoredWorkspacePaths(path: []const u8) bool {
 }
 const GlobWalker = Glob.GlobWalker(ignoredWorkspacePaths, Glob.walk.SyscallAccessor, false);
 
-const WorkspaceMap = @This();
-const bun = @import("bun");
-const std = @import("std");
-const logger = bun.logger;
-const Environment = bun.Environment;
-const Output = bun.Output;
-const PackageManager = bun.install.PackageManager;
-const JSAst = bun.JSAst;
 const string = []const u8;
-const debug = Output.scoped(.Lockfile, true);
+const debug = Output.scoped(.Lockfile, .hidden);
+const stringZ = [:0]const u8;
+
+const std = @import("std");
 const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Glob = bun.glob;
+const JSAst = bun.ast;
+const Output = bun.Output;
+const Path = bun.path;
+const logger = bun.logger;
+const strings = bun.strings;
+
 const install = bun.install;
+const PackageManager = bun.install.PackageManager;
+
 const Lockfile = install.Lockfile;
 const StringBuilder = Lockfile.StringBuilder;
-const Glob = bun.glob;
-const stringZ = [:0]const u8;
-const Path = bun.path;
-const strings = bun.strings;

@@ -222,6 +222,78 @@ namespace uWS
             return std::string_view(nullptr, 0);
         }
 
+        struct TransferEncoding {
+            bool has: 1 = false;
+            bool chunked: 1 = false;
+            bool invalid: 1 = false;
+        };
+
+        TransferEncoding getTransferEncoding()
+        {
+            TransferEncoding te;
+            
+            if (!bf.mightHave("transfer-encoding")) {
+                return te;
+            }
+            
+            for (Header *h = headers; (++h)->key.length();) {
+                if (h->key.length() == 17 && !strncmp(h->key.data(), "transfer-encoding", 17)) {
+                    // Parse comma-separated values, ensuring "chunked" is last if present
+                    const auto value = h->value;
+                    size_t pos = 0;
+                    size_t lastTokenStart = 0;
+                    size_t lastTokenLen = 0;
+        
+                    while (pos < value.length()) {
+                        // Skip leading whitespace
+                        while (pos < value.length() && (value[pos] == ' ' || value[pos] == '\t')) {
+                            pos++;
+                        }
+                        
+                        // Remember start of this token
+                        size_t tokenStart = pos;
+                        
+                        // Find end of token (until comma or end)
+                        while (pos < value.length() && value[pos] != ',') {
+                            pos++;
+                        }
+                        
+                        // Trim trailing whitespace from token
+                        size_t tokenEnd = pos;
+                        while (tokenEnd > tokenStart && (value[tokenEnd - 1] == ' ' || value[tokenEnd - 1] == '\t')) {
+                            tokenEnd--;
+                        }
+                        
+                        size_t tokenLen = tokenEnd - tokenStart;
+                        if (tokenLen > 0) {
+                            lastTokenStart = tokenStart;
+                            lastTokenLen = tokenLen;
+                        }
+                        
+                        // Move past comma if present
+                        if (pos < value.length() && value[pos] == ',') {
+                            pos++;
+                        }
+                    }
+
+                    if (te.chunked) [[unlikely]] {
+                        te.invalid = true;
+                        return te;
+                    }
+
+                    te.has = lastTokenLen > 0;
+                    
+                    // Check if the last token is "chunked"
+                    if (lastTokenLen == 7 && !strncmp(value.data() + lastTokenStart, "chunked", 7)) [[likely]] {
+                        te.chunked = true;
+                    }
+                    
+                }
+            }
+
+            return te;
+        }
+
 
         std::string_view getUrl()
         {
@@ -771,14 +843,16 @@ namespace uWS
             * the Transfer-Encoding overrides the Content-Length. Such a message might indicate an attempt
             * to perform request smuggling (Section 11.2) or response splitting (Section 11.1) and
             * ought to be handled as an error. */
-            std::string_view transferEncodingString = req->getHeader("transfer-encoding");
-            std::string_view contentLengthString = req->getHeader("content-length");
+            const std::string_view contentLengthString = req->getHeader("content-length");
+            const auto contentLengthStringLen = contentLengthString.length();
+            
+            /* Check Transfer-Encoding header validity and conflicts */
+            HttpRequest::TransferEncoding transferEncoding = req->getTransferEncoding();
 
-            auto transferEncodingStringLen = transferEncodingString.length();
-            auto contentLengthStringLen = contentLengthString.length();
-            if (transferEncodingStringLen && contentLengthStringLen) {
-                /* We could be smart and set an error in the context along with this, to indicate what
-                 * http error response we might want to return */
+            transferEncoding.invalid = transferEncoding.invalid || (transferEncoding.has && (contentLengthStringLen || !transferEncoding.chunked));
+
+            if (transferEncoding.invalid) [[unlikely]] {
+                /* Invalid Transfer-Encoding (multiple headers or chunked not last - request smuggling attempt) */
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING);
             }
 
@@ -789,7 +863,7 @@ namespace uWS
             // lets check if content len is valid before calling requestHandler
             if(contentLengthStringLen) {
                 remainingStreamingBytes = toUnsignedInteger(contentLengthString);
-                if (remainingStreamingBytes == UINT64_MAX) {
+                if (remainingStreamingBytes == UINT64_MAX) [[unlikely]] {
                     /* Parser error */
                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH);
                 }
@@ -813,20 +887,8 @@ namespace uWS
             /* RFC 9112 6.3
              * If a message is received with both a Transfer-Encoding and a Content-Length header field,
              * the Transfer-Encoding overrides the Content-Length. */
-            if (transferEncodingStringLen) {
-
-                /* If a proxy sent us the transfer-encoding header that 100% means it must be chunked or else the proxy is
-                 * not RFC 9112 compliant. Therefore it is always better to assume this is the case, since that entirely eliminates
-                 * all forms of transfer-encoding obfuscation tricks. We just rely on the header. */
-
-                /* RFC 9112 6.3
-                 * If a Transfer-Encoding header field is present in a request and the chunked transfer coding is not the
-                 * final encoding, the message body length cannot be determined reliably; the server MUST respond with the
-                 * 400 (Bad Request) status code and then close the connection. */
-
-                /* In this case we fail later by having the wrong interpretation (assuming chunked).
-                 * This could be made stricter but makes no difference either way, unless forwarding the identical message as a proxy. */
-
+            if (transferEncoding.has) {
+                /* We already validated that chunked is last if present, before calling the handler */
                 remainingStreamingBytes = STATE_IS_CHUNKED;
                 /* If consume minimally, we do not want to consume anything but we want to mark this as being chunked */
                 if constexpr (!ConsumeMinimally) {
@@ -835,7 +897,7 @@ namespace uWS
                     for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes)) {
                         dataHandler(user, chunk, chunk.length() == 0);
                     }
-                    if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) {
+                    if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) [[unlikely]] {
                         // TODO: what happen if we already responded?
                         return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING);
                     }

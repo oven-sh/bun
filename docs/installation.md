@@ -39,7 +39,7 @@ To install, paste this into a terminal:
 {% codetabs %}
 
 ```powershell#PowerShell/cmd.exe
-> powershell -c "irm bun.com/install.ps1|iex"
+> powershell -c "irm bun.sh/install.ps1|iex"
 ```
 
 ```powershell#npm

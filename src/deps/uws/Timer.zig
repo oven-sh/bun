@@ -55,8 +55,10 @@ const c = struct {
     pub extern fn us_timer_loop(t: ?*Timer) ?*Loop;
 };
 
+const debug = bun.Output.scoped(.uws, .visible);
+
 const bun = @import("bun");
+const std = @import("std");
+
 const uws = bun.uws;
 const Loop = uws.Loop;
-const debug = bun.Output.scoped(.uws, false);
-const std = @import("std");

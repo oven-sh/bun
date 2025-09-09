@@ -19,6 +19,6 @@ describe("yes", async () => {
   test("ignores other arguments", async () => {
     const buffer = Buffer.alloc(17);
     await $`yes ab cd ef > ${buffer}`;
-    expect(buffer.toString()).toEqual("ab\nab\nab\nab\nab\nab");
+    expect(buffer.toString()).toEqual("ab cd ef\nab cd ef");
   });
 });

@@ -1,17 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-const Environment = @import("./env.zig");
-const string = bun.string;
-const root = @import("root");
-const strings = bun.strings;
-const StringTypes = bun.StringTypes;
-const Global = bun.Global;
-const ComptimeStringMap = bun.ComptimeStringMap;
-const use_mimalloc = bun.use_mimalloc;
-const c = bun.c;
-
-const SystemTimer = @import("./system_timer.zig").Timer;
-
 // These are threadlocal so we don't have stdout/stderr writing on top of each other
 threadlocal var source: Source = undefined;
 threadlocal var source_set: bool = false;
@@ -20,12 +6,11 @@ threadlocal var source_set: bool = false;
 var stderr_stream: Source.StreamType = undefined;
 var stdout_stream: Source.StreamType = undefined;
 var stdout_stream_set = false;
-const File = bun.sys.File;
 pub var terminal_size: std.posix.winsize = .{
-    .ws_row = 0,
-    .ws_col = 0,
-    .ws_xpixel = 0,
-    .ws_ypixel = 0,
+    .row = 0,
+    .col = 0,
+    .xpixel = 0,
+    .ypixel = 0,
 };
 
 pub const Source = struct {
@@ -59,13 +44,8 @@ pub const Source = struct {
         stream: StreamType,
         err_stream: StreamType,
     ) Source {
-        if (comptime Environment.isDebug) {
-            if (comptime use_mimalloc) {
-                if (!source_set) {
-                    const Mimalloc = @import("./allocators/mimalloc.zig");
-                    Mimalloc.mi_option_set(.show_errors, 1);
-                }
-            }
+        if ((comptime Environment.isDebug and use_mimalloc) and !source_set) {
+            bun.mimalloc.mi_option_set(.show_errors, 1);
         }
         source_set = true;
 
@@ -90,7 +70,7 @@ pub const Source = struct {
         bun.StackCheck.configureThread();
     }
 
-    pub fn configureNamedThread(name: StringTypes.stringZ) void {
+    pub fn configureNamedThread(name: [:0]const u8) void {
         Global.setThreadName(name);
         configureThread();
     }
@@ -187,7 +167,7 @@ pub const Source = struct {
             const stdout = std.os.windows.GetStdHandle(std.os.windows.STD_OUTPUT_HANDLE) catch w.INVALID_HANDLE_VALUE;
             const stderr = std.os.windows.GetStdHandle(std.os.windows.STD_ERROR_HANDLE) catch w.INVALID_HANDLE_VALUE;
 
-            const fd_internals = @import("fd.zig");
+            const fd_internals = @import("./fd.zig");
             const INVALID_HANDLE_VALUE = std.os.windows.INVALID_HANDLE_VALUE;
             fd_internals.windows_cached_stderr = if (stderr != INVALID_HANDLE_VALUE) .fromSystem(stderr) else .invalid;
             fd_internals.windows_cached_stdout = if (stdout != INVALID_HANDLE_VALUE) .fromSystem(stdout) else .invalid;
@@ -457,9 +437,60 @@ pub inline fn isEmojiEnabled() bool {
 
 pub fn isGithubAction() bool {
     if (bun.getenvZ("GITHUB_ACTIONS")) |value| {
-        return strings.eqlComptime(value, "true");
+        return strings.eqlComptime(value, "true") and
+            // Do not print github annotations for AI agents because that wastes the context window.
+            !isAIAgent();
     }
     return false;
+}
+
+pub fn isAIAgent() bool {
+    const get_is_agent = struct {
+        var value = false;
+        fn evaluate() bool {
+            if (bun.getenvZ("AGENT")) |env| {
+                return strings.eqlComptime(env, "1");
+            }
+
+            if (isVerbose()) {
+                return false;
+            }
+
+            // Claude Code.
+            if (bun.getenvTruthy("CLAUDECODE")) {
+                return true;
+            }
+
+            // Replit.
+            if (bun.getenvTruthy("REPL_ID")) {
+                return true;
+            }
+
+            // TODO: add environment variable for Gemini
+            // Gemini does not appear to add any environment variables to identify it.
+
+            // TODO: add environment variable for Codex
+            // codex does not appear to add any environment variables to identify it.
+
+            // TODO: add environment variable for Cursor Background Agents
+            // cursor does not appear to add any environment variables to identify it.
+
+            return false;
+        }
+
+        fn setValue() void {
+            value = evaluate();
+        }
+
+        var once = std.once(setValue);
+
+        pub fn isEnabled() bool {
+            once.call();
+            return value;
+        }
+    };
+
+    return get_is_agent.isEnabled();
 }
 
 pub fn isVerbose() bool {
@@ -513,6 +544,11 @@ pub fn errorStream() Source.StreamType {
 pub fn writer() WriterType {
     bun.debugAssert(source_set);
     return source.stream.quietWriter();
+}
+
+pub fn writerBuffered() Source.BufferedStream.Writer {
+    bun.debugAssert(source_set);
+    return source.buffered_stream.writer();
 }
 
 pub fn resetTerminal() void {
@@ -705,7 +741,19 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 ///   BUN_DEBUG_ALL=1
 pub const LogFunction = fn (comptime fmt: string, args: anytype) callconv(bun.callconv_inline) void;
 
-pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
+pub const Visibility = enum {
+    /// Hide logs for this scope by default.
+    hidden,
+    /// Show logs for this scope by default.
+    visible,
+
+    /// Show logs for this scope by default if and only if `condition` is true.
+    pub fn visibleIf(condition: bool) Visibility {
+        return if (condition) .visible else .hidden;
+    }
+};
+
+pub fn Scoped(comptime tag: anytype, comptime visibility: Visibility) type {
     const tagname = comptime if (!Environment.enable_logs) .{} else brk: {
         const input = switch (@TypeOf(tag)) {
             @Type(.enum_literal) => @tagName(tag),
@@ -718,10 +766,10 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
         break :brk ascii_slice;
     };
 
-    return ScopedLogger(&tagname, disabled);
+    return ScopedLogger(&tagname, visibility);
 }
 
-fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
+fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) type {
     if (comptime !Environment.enable_logs) {
         return struct {
             pub inline fn isVisible() bool {
@@ -737,7 +785,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
         var buffered_writer: BufferedWriter = undefined;
         var out: BufferedWriter.Writer = undefined;
         var out_set = false;
-        var really_disable = std.atomic.Value(bool).init(disabled);
+        var really_disable = std.atomic.Value(bool).init(visibility == .hidden);
 
         var lock = bun.Mutex{};
 
@@ -829,11 +877,8 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
     };
 }
 
-pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
-    return Scoped(
-        tag,
-        disabled,
-    ).log;
+pub fn scoped(comptime tag: anytype, comptime visibility: Visibility) LogFunction {
+    return Scoped(tag, visibility).log;
 }
 
 pub fn up(n: usize) void {
@@ -877,9 +922,6 @@ pub const color_map = ComptimeStringMap(string, .{
 });
 const RESET: string = "\x1b[0m";
 pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) [:0]const u8 {
-    if (comptime bun.fast_debug_build_mode)
-        return fmt ++ "\x00";
-
     comptime var new_fmt: [fmt.len * 4]u8 = undefined;
     comptime var new_fmt_i: usize = 0;
 
@@ -965,9 +1007,6 @@ pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime 
 }
 
 pub noinline fn prettyWithPrinterFn(comptime fmt: string, args: anytype, comptime printFn: anytype, ctx: anytype) void {
-    if (comptime bun.fast_debug_build_mode)
-        return printFn(ctx, comptime prettyFmt(fmt, false), args);
-
     if (enable_ansi_colors) {
         printFn(ctx, comptime prettyFmt(fmt, true), args);
     } else {
@@ -1242,3 +1281,43 @@ pub inline fn errFmt(formatter: anytype) void {
 pub var buffered_stdin = std.io.BufferedReader(4096, File.Reader){
     .unbuffered_reader = .{ .context = .{ .handle = if (Environment.isWindows) undefined else .stdin() } },
 };
+
+const string = []const u8;
+
+/// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036
+pub const synchronized_start = "\x1b[?2026h";
+
+/// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036
+pub const synchronized_end = "\x1b[?2026l";
+
+/// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036
+pub fn synchronized() Synchronized {
+    return Synchronized.begin();
+}
+pub const Synchronized = struct {
+    pub fn begin() Synchronized {
+        if (Environment.isPosix) {
+            print(synchronized_start, .{});
+        }
+        return .{};
+    }
+
+    pub fn end(_: @This()) void {
+        if (Environment.isPosix) {
+            print(synchronized_end, .{});
+        }
+    }
+};
+
+const Environment = @import("./env.zig");
+const root = @import("root");
+const std = @import("std");
+const SystemTimer = @import("./system_timer.zig").Timer;
+
+const bun = @import("bun");
+const ComptimeStringMap = bun.ComptimeStringMap;
+const Global = bun.Global;
+const c = bun.c;
+const strings = bun.strings;
+const use_mimalloc = bun.use_mimalloc;
+const File = bun.sys.File;

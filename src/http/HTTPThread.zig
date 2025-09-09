@@ -1,7 +1,8 @@
-var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
 const HTTPThread = @This();
 
-loop: *JSC.MiniEventLoop,
+var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
+
+loop: *jsc.MiniEventLoop,
 http_context: NewHTTPContext(false),
 https_context: NewHTTPContext(true),
 
@@ -78,7 +79,7 @@ pub const RequestBodyBuffer = union(enum) {
     }
 };
 
-const threadlog = Output.scoped(.HTTPThread, true);
+const threadlog = Output.scoped(.HTTPThread, .hidden);
 const WriteMessage = struct {
     async_http_id: u32,
     flags: packed struct(u8) {
@@ -194,10 +195,10 @@ pub fn init(opts: *const InitOpts) void {
 
 pub fn onStart(opts: InitOpts) void {
     Output.Source.configureNamedThread("HTTP Client");
-    bun.http.default_arena = Arena.init() catch unreachable;
+    bun.http.default_arena = Arena.init();
     bun.http.default_allocator = bun.http.default_arena.allocator();
 
-    const loop = bun.JSC.MiniEventLoop.initGlobal(null);
+    const loop = bun.jsc.MiniEventLoop.initGlobal(null);
 
     if (Environment.isWindows) {
         _ = std.process.getenvW(comptime bun.strings.w("SystemRoot")) orelse {
@@ -322,8 +323,8 @@ fn drainEvents(this: *@This()) void {
                             if (client.state.original_request_body == .stream) {
                                 var stream = &client.state.original_request_body.stream;
                                 stream.ended = ended;
-                                if (messageType == .endChunked) {
-                                    // only send the 0-length chunk if the request body is chunked
+                                if (messageType == .endChunked and client.flags.upgrade_state != .upgraded) {
+                                    // only send the 0-length chunk if the request body is chunked and not upgraded
                                     client.writeToStream(is_tls, socket, bun.http.end_of_chunked_http1_1_encoding_response_body);
                                 } else {
                                     client.flushStream(is_tls, socket);
@@ -405,7 +406,7 @@ pub fn scheduleShutdown(this: *@This(), http: *AsyncHTTP) void {
         this.queued_shutdowns.append(bun.default_allocator, .{
             .async_http_id = http.async_http_id,
             .is_tls = http.client.isHTTPS(),
-        }) catch bun.outOfMemory();
+        }) catch |err| bun.handleOom(err);
     }
     if (this.has_awoken.load(.monotonic))
         this.loop.loop.wakeup();
@@ -421,7 +422,7 @@ pub fn scheduleRequestWrite(this: *@This(), http: *AsyncHTTP, messageType: Write
                 .is_tls = http.client.isHTTPS(),
                 .type = messageType,
             },
-        }) catch bun.outOfMemory();
+        }) catch |err| bun.handleOom(err);
     }
     if (this.has_awoken.load(.monotonic))
         this.loop.loop.wakeup();
@@ -430,7 +431,7 @@ pub fn scheduleRequestWrite(this: *@This(), http: *AsyncHTTP, messageType: Write
 pub fn scheduleProxyDeref(this: *@This(), proxy: *ProxyTunnel) void {
     // this is always called on the http thread
     {
-        this.queued_proxy_deref.append(bun.default_allocator, proxy) catch bun.outOfMemory();
+        bun.handleOom(this.queued_proxy_deref.append(bun.default_allocator, proxy));
     }
     if (this.has_awoken.load(.monotonic))
         this.loop.loop.wakeup();
@@ -457,25 +458,28 @@ pub fn schedule(this: *@This(), batch: Batch) void {
         this.loop.loop.wakeup();
 }
 
+pub const Queue = UnboundedQueue(AsyncHTTP, .next);
+
+const log = Output.scoped(.HTTPThread, .visible);
+
+const stringZ = [:0]const u8;
+
+const ProxyTunnel = @import("./ProxyTunnel.zig");
 const std = @import("std");
 
 const bun = @import("bun");
-const Output = bun.Output;
 const Environment = bun.Environment;
 const Global = bun.Global;
-const uws = bun.uws;
+const Output = bun.Output;
+const jsc = bun.jsc;
 const strings = bun.strings;
-const stringZ = bun.stringZ;
-const JSC = bun.JSC;
-const NewHTTPContext = bun.http.NewHTTPContext;
-const UnboundedQueue = @import("../bun.js/unbounded_queue.zig").UnboundedQueue;
-const AsyncHTTP = bun.http.AsyncHTTP;
-pub const Queue = UnboundedQueue(AsyncHTTP, .next);
+const uws = bun.uws;
+const Arena = bun.allocators.MimallocArena;
+const Batch = bun.ThreadPool.Batch;
+const UnboundedQueue = bun.threading.UnboundedQueue;
+const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
 
 const HTTPClient = bun.http;
-const ProxyTunnel = @import("./ProxyTunnel.zig");
+const AsyncHTTP = bun.http.AsyncHTTP;
 const InitError = HTTPClient.InitError;
-const Batch = bun.ThreadPool.Batch;
-const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
-const SSLConfig = @import("../bun.js/api/server.zig").ServerConfig.SSLConfig;
-const log = Output.scoped(.HTTPThread, false);
+const NewHTTPContext = bun.http.NewHTTPContext;

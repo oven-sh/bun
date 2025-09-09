@@ -42,7 +42,7 @@ class Performance;
 using PerformanceEntryMap = HashMap<String, Vector<RefPtr<PerformanceEntry>>>;
 
 class PerformanceUserTiming {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(PerformanceUserTiming);
 
 public:
     explicit PerformanceUserTiming(Performance&);

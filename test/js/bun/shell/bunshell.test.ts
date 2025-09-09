@@ -671,6 +671,11 @@ booga"
         "{a,b,HI{c,e,LMAO{d,f}Q}}{1,2,{3,4},5}",
         "a1 a2 a3 a4 a5 b1 b2 b3 b4 b5 HIc1 HIc2 HIc3 HIc4 HIc5 HIe1 HIe2 HIe3 HIe4 HIe5 HILMAOdQ1 HILMAOdQ2 HILMAOdQ3 HILMAOdQ4 HILMAOdQ5 HILMAOfQ1 HILMAOfQ2 HILMAOfQ3 HILMAOfQ4 HILMAOfQ5",
       );
+
+      doTest(
+        `{1,{2,{3,{4,{5,{6,{7,{8,{9,{10,{11,{12,{13,{14,{15,{16,{17}}}}}}}}}}}}}}}}}`,
+        "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17",
+      );
     });
 
     test("command", async () => {

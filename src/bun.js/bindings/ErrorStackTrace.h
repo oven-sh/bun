@@ -132,7 +132,7 @@ public:
     }
     bool isConstructor() const
     {
-        return m_codeBlock && (JSC::CodeForConstruct == m_codeBlock->specializationKind());
+        return m_codeBlock && (JSC::CodeSpecializationKind::CodeForConstruct == m_codeBlock->specializationKind());
     }
 
 private:

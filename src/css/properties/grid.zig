@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
 
 const SmallList = css.SmallList;
@@ -14,7 +10,6 @@ const CustomIdent = css.css_values.ident.CustomIdent;
 const CSSNumber = css.css_values.number.CSSNumber;
 const CustomIdentList = css.css_values.ident.CustomIdentList;
 const CSSInteger = css.css_values.number.CSSInteger;
-const BabyList = bun.BabyList;
 
 /// A [track sizing](https://drafts.csswg.org/css-grid-2/#track-sizing) value
 /// for the `grid-template-rows` and `grid-template-columns` properties.
@@ -44,14 +39,14 @@ pub const TrackList = struct {
 
         while (true) {
             const line_name = input.tryParse(parseLineNames, .{}).asValue() orelse CustomIdentList{};
-            line_names.append(input.allocator(), line_name) catch bun.outOfMemory();
+            bun.handleOom(line_names.append(input.allocator(), line_name));
 
             if (input.tryParse(TrackSize.parse, .{}).asValue()) |track_size| {
                 // TODO: error handling
-                items.append(.{ .track_size = track_size }) catch bun.outOfMemory();
+                bun.handleOom(items.append(.{ .track_size = track_size }));
             } else if (input.tryParse(TrackRepeat.parse, .{}).asValue()) |repeat| {
                 // TODO: error handling
-                items.append(.{ .track_repeat = repeat }) catch bun.outOfMemory();
+                bun.handleOom(items.append(.{ .track_repeat = repeat }));
             } else {
                 break;
             }
@@ -188,7 +183,7 @@ pub const TrackSizeList = struct {
     pub fn parse(input: *css.Parser) css.Result(@This()) {
         var res = SmallList(TrackSize, 1){};
         while (input.tryParse(TrackSize.parse, .{}).asValue()) |size| {
-            res.append(input.allocator(), size) catch bun.outOfMemory();
+            bun.handleOom(res.append(input.allocator(), size));
         }
 
         if (res.len() == 1 and res.at(0).eql(&TrackSize.default())) {
@@ -319,11 +314,11 @@ pub const TrackRepeat = struct {
 
                 while (true) {
                     const line_name = i.tryParse(parseLineNames, .{}).unwrapOr(CustomIdentList{});
-                    line_names.append(i.allocator(), line_name) catch bun.outOfMemory();
+                    bun.handleOom(line_names.append(i.allocator(), line_name));
 
                     if (input.tryParse(TrackSize.parse, .{}).asValue()) |track_size| {
                         // TODO: error handling
-                        track_sizes.append(i.allocator(), track_size) catch bun.outOfMemory();
+                        bun.handleOom(track_sizes.append(i.allocator(), track_size));
                     } else {
                         break;
                     }
@@ -406,7 +401,7 @@ fn parseLineNames(input: *css.Parser) css.Result(CustomIdentList) {
             var values = CustomIdentList{};
 
             while (input.tryParse(CustomIdent.parse, .{}).asValue()) |ident| {
-                values.append(i.allocator(), ident) catch bun.outOfMemory();
+                bun.handleOom(values.append(i.allocator(), ident));
             }
 
             return .{ .result = values };
@@ -524,7 +519,7 @@ pub const GridTemplateAreas = union(enum) {
                 break :token_len rest.len;
             };
             const token = rest[0..token_len];
-            tokens.append(allocator, token) catch bun.outOfMemory();
+            bun.handleOom(tokens.append(allocator, token));
             string = rest[token_len..];
         }
 
@@ -536,3 +531,9 @@ fn isNameCodepoint(c: u8) bool {
     // alpha numeric, -, _, o
     return c >= 'a' and c <= 'z' or c >= 'A' and c <= 'Z' or c == '_' or c >= '0' and c <= '9' or c == '-' or c >= 0x80; // codepoints larger than ascii;
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const BabyList = bun.BabyList;

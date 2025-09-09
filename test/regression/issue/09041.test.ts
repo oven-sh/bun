@@ -17,10 +17,10 @@ test("09041", async () => {
   });
 
   expect(await exited).toBe(0);
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).toContain("1 pass");
   expect(err).toContain("0 fail");
-  const std = await new Response(stdout).text();
+  const std = await stdout.text();
 
   expect(std.length).toBeGreaterThan(1024 * 1024);
 }, 30000);

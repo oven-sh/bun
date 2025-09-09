@@ -226,11 +226,11 @@ pub fn createExportsForFile(
     defer Expr.Disabler.enable();
 
     // 1 property per export
-    var properties = std.ArrayList(js_ast.G.Property)
-        .initCapacity(allocator, export_aliases.len) catch bun.outOfMemory();
+    var properties = bun.handleOom(std.ArrayList(js_ast.G.Property)
+        .initCapacity(allocator, export_aliases.len));
 
     var ns_export_symbol_uses = Part.SymbolUseMap{};
-    ns_export_symbol_uses.ensureTotalCapacity(allocator, export_aliases.len) catch bun.outOfMemory();
+    bun.handleOom(ns_export_symbol_uses.ensureTotalCapacity(allocator, export_aliases.len));
 
     const initial_flags = c.graph.meta.items(.flags)[id];
     const needs_exports_variable = initial_flags.needs_exports_variable;
@@ -246,11 +246,11 @@ pub fn createExportsForFile(
         // + 1 if we need to do module.exports = __toCommonJS(exports)
         @as(usize, @intFromBool(force_include_exports_for_entry_point));
 
-    var stmts = js_ast.Stmt.Batcher.init(allocator, stmts_count) catch bun.outOfMemory();
+    var stmts = bun.handleOom(js_ast.Stmt.Batcher.init(allocator, stmts_count));
     defer stmts.done();
     const loc = Logger.Loc.Empty;
     // todo: investigate if preallocating this array is faster
-    var ns_export_dependencies = std.ArrayList(js_ast.Dependency).initCapacity(allocator, re_exports_count) catch bun.outOfMemory();
+    var ns_export_dependencies = bun.handleOom(std.ArrayList(js_ast.Dependency).initCapacity(allocator, re_exports_count));
     for (export_aliases) |alias| {
         var exp = resolved_exports.getPtr(alias).?.*;
 
@@ -261,7 +261,7 @@ pub fn createExportsForFile(
         if (imports_to_bind[exp.data.source_index.get()].get(exp.data.import_ref)) |import_data| {
             exp.data.import_ref = import_data.data.import_ref;
             exp.data.source_index = import_data.data.source_index;
-            ns_export_dependencies.appendSlice(import_data.re_exports.slice()) catch bun.outOfMemory();
+            bun.handleOom(ns_export_dependencies.appendSlice(import_data.re_exports.slice()));
         }
 
         // Exports of imports need EImportIdentifier in case they need to be re-
@@ -468,30 +468,33 @@ pub fn createExportsForFile(
     }
 }
 
-const bun = @import("bun");
-const string = bun.string;
-const strings = bun.strings;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const Index = bun.bundle_v2.Index;
-const Part = bun.bundle_v2.Part;
-const std = @import("std");
-
-const js_ast = bun.bundle_v2.js_ast;
-const Ref = bun.bundle_v2.js_ast.Ref;
-const Environment = bun.Environment;
-const ResolvedExports = bun.bundle_v2.ResolvedExports;
-const Logger = bun.logger;
-const RefImportData = bun.bundle_v2.RefImportData;
-const ImportData = bun.bundle_v2.ImportData;
-const Dependency = js_ast.Dependency;
-const options = bun.options;
-
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 
-const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
-const S = js_ast.S;
-const G = js_ast.G;
+const string = []const u8;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const options = bun.options;
+const strings = bun.strings;
+
+const ImportData = bun.bundle_v2.ImportData;
+const Index = bun.bundle_v2.Index;
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const Part = bun.bundle_v2.Part;
+const RefImportData = bun.bundle_v2.RefImportData;
+const ResolvedExports = bun.bundle_v2.ResolvedExports;
+
+const js_ast = bun.bundle_v2.js_ast;
 const B = js_ast.B;
+const Dependency = js_ast.Dependency;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const G = js_ast.G;
+const Ref = bun.bundle_v2.js_ast.Ref;
+const S = js_ast.S;
+const Stmt = js_ast.Stmt;
+
+const Logger = bun.logger;
 const Loc = Logger.Loc;

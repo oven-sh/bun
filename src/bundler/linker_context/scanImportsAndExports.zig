@@ -12,8 +12,6 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
         var named_imports: []js_ast.Ast.NamedImports = this.graph.ast.items(.named_imports);
         var flags: []JSMeta.Flags = this.graph.meta.items(.flags);
 
-        const tla_keywords = this.parse_graph.ast.items(.top_level_await_keyword);
-        const tla_checks = this.parse_graph.ast.items(.tla_check);
         const input_files = this.parse_graph.input_files.items(.source);
         const loaders: []const Loader = this.parse_graph.input_files.items(.loader);
 
@@ -64,7 +62,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                                 try this.log.addErrorFmt(
                                     &input_files[record.source_index.get()],
                                     compose.loc,
-                                    this.allocator,
+                                    this.allocator(),
                                     "The name \"{s}\" never appears in \"{s}\" as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
                                     .{
                                         name.v,
@@ -79,8 +77,6 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
 
                 continue;
             }
-
-            _ = try this.validateTLA(id, tla_keywords, tla_checks, input_files, import_records, flags, import_records_list);
 
             for (import_records) |record| {
                 if (!record.source_index.isValid()) {
@@ -206,7 +202,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                 .import_records = import_records_list,
                 .exports_kind = exports_kind,
                 .entry_point_kinds = entry_point_kinds,
-                .export_star_map = std.AutoHashMap(u32, void).init(this.allocator),
+                .export_star_map = std.AutoHashMap(u32, void).init(this.allocator()),
                 .export_star_records = export_star_import_records,
                 .output_format = output_format,
             };
@@ -275,14 +271,14 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                 if (export_star_ids.len > 0) {
                     if (export_star_ctx == null) {
                         export_star_ctx = ExportStarContext{
-                            .allocator = this.allocator,
+                            .allocator = this.allocator(),
                             .resolved_exports = resolved_exports,
                             .import_records_list = import_records_list,
                             .export_star_records = export_star_import_records,
 
                             .imports_to_bind = this.graph.meta.items(.imports_to_bind),
 
-                            .source_index_stack = std.ArrayList(u32).initCapacity(this.allocator, 32) catch unreachable,
+                            .source_index_stack = std.ArrayList(u32).initCapacity(this.allocator(), 32) catch unreachable,
                             .exports_kind = exports_kind,
                             .named_exports = this.graph.ast.items(.named_exports),
                         };
@@ -370,7 +366,12 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
         // for CommonJS files, and is also necessary for other files if they are
         // imported using an import star statement.
         // Note: `do` will wait for all to finish before moving forward
-        try this.parse_graph.pool.worker_pool.do(this.allocator, &this.wait_group, this, LinkerContext.doStep5, this.graph.reachable_files);
+        try this.parse_graph.pool.worker_pool.each(
+            this.allocator(),
+            this,
+            LinkerContext.doStep5,
+            this.graph.reachable_files,
+        );
     }
 
     if (comptime FeatureFlags.help_catch_memory_issues) {
@@ -438,7 +439,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                 break :brk count;
             };
 
-            const string_buffer = this.allocator.alloc(u8, string_buffer_len) catch unreachable;
+            const string_buffer = this.allocator().alloc(u8, string_buffer_len) catch unreachable;
             var builder = bun.StringBuilder{
                 .len = 0,
                 .cap = string_buffer.len,
@@ -451,7 +452,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
             // are necessary later. This is done now because the symbols map cannot be
             // mutated later due to parallelism.
             if (is_entry_point and output_format == .esm) {
-                const copies = this.allocator.alloc(Ref, aliases.len) catch unreachable;
+                const copies = this.allocator().alloc(Ref, aliases.len) catch unreachable;
 
                 for (aliases, copies) |alias, *copy| {
                     const original_name = builder.fmt("export_{}", .{bun.fmt.fmtIdentifier(alias)});
@@ -536,7 +537,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
 
                         const total_len = parts_declaring_symbol.len + @as(usize, import.re_exports.len) + @as(usize, part.dependencies.len);
                         if (part.dependencies.cap < total_len) {
-                            var list = std.ArrayList(Dependency).init(this.allocator);
+                            var list = std.ArrayList(Dependency).init(this.allocator());
                             list.ensureUnusedCapacity(total_len) catch unreachable;
                             list.appendSliceAssumeCapacity(part.dependencies.slice());
                             part.dependencies.update(list);
@@ -567,7 +568,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                 const extra_count = @as(usize, @intFromBool(force_include_exports)) +
                     @as(usize, @intFromBool(add_wrapper));
 
-                var dependencies = std.ArrayList(js_ast.Dependency).initCapacity(this.allocator, extra_count) catch bun.outOfMemory();
+                var dependencies = bun.handleOom(std.ArrayList(js_ast.Dependency).initCapacity(this.allocator(), extra_count));
 
                 var resolved_exports_list: *ResolvedExports = &this.graph.meta.items(.resolved_exports)[id];
                 for (aliases) |alias| {
@@ -580,12 +581,12 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                         target_source_index = import_data.data.source_index;
                         target_ref = import_data.data.import_ref;
 
-                        dependencies.appendSlice(import_data.re_exports.slice()) catch bun.outOfMemory();
+                        bun.handleOom(dependencies.appendSlice(import_data.re_exports.slice()));
                     }
 
                     // Pull in all declarations of this symbol
                     const top_to_parts = this.topLevelSymbolsToParts(target_source_index.get(), target_ref);
-                    dependencies.ensureUnusedCapacity(top_to_parts.len) catch bun.outOfMemory();
+                    bun.handleOom(dependencies.ensureUnusedCapacity(top_to_parts.len));
                     for (top_to_parts) |part_index| {
                         dependencies.appendAssumeCapacity(.{
                             .source_index = target_source_index,
@@ -594,7 +595,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                     }
                 }
 
-                dependencies.ensureUnusedCapacity(extra_count) catch bun.outOfMemory();
+                bun.handleOom(dependencies.ensureUnusedCapacity(extra_count));
 
                 // Ensure "exports" is included if the current output format needs it
                 if (force_include_exports) {
@@ -620,7 +621,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) !void {
                         .dependencies = js_ast.Dependency.List.fromList(dependencies),
                         .can_be_removed_if_unused = false,
                     },
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
 
                 parts = parts_list[id].slice();
                 this.graph.meta.items(.entry_point_part_index)[id] = Index.part(entry_point_part_index);
@@ -958,7 +959,7 @@ const ExportStarContext = struct {
             if (i == source_index)
                 return;
         }
-        this.source_index_stack.append(source_index) catch bun.outOfMemory();
+        bun.handleOom(this.source_index_stack.append(source_index));
         const stack_end_pos = this.source_index_stack.items.len;
         defer this.source_index_stack.shrinkRetainingCapacity(stack_end_pos - 1);
 
@@ -998,7 +999,7 @@ const ExportStarContext = struct {
                     }
                 }
 
-                const gop = resolved_exports.getOrPut(this.allocator, alias) catch bun.outOfMemory();
+                const gop = bun.handleOom(resolved_exports.getOrPut(this.allocator, alias));
                 if (!gop.found_existing) {
                     // Initialize the re-export
                     gop.value_ptr.* = .{
@@ -1016,7 +1017,7 @@ const ExportStarContext = struct {
                             .import_ref = name.ref,
                             .source_index = Index.source(other_source_index),
                         },
-                    }) catch bun.outOfMemory();
+                    }) catch |err| bun.handleOom(err);
                 } else if (gop.value_ptr.data.source_index.get() != other_source_index) {
                     // Two different re-exports colliding makes it potentially ambiguous
                     gop.value_ptr.potentially_ambiguous_export_star_refs.push(this.allocator, .{
@@ -1025,7 +1026,7 @@ const ExportStarContext = struct {
                             .import_ref = name.ref,
                             .name_loc = name.alias_loc,
                         },
-                    }) catch bun.outOfMemory();
+                    }) catch |err| bun.handleOom(err);
                 }
             }
 
@@ -1089,7 +1090,7 @@ fn validateComposesFromProperties(
         }
 
         fn addPropertyOrWarn(v: *@This(), local: Ref, property_name: []const u8, source_index: Index.Int, range: bun.logger.Range) void {
-            const entry = v.properties.getOrPut(property_name) catch bun.outOfMemory();
+            const entry = bun.handleOom(v.properties.getOrPut(property_name));
 
             if (!entry.found_existing) {
                 entry.value_ptr.* = .{
@@ -1114,15 +1115,15 @@ fn validateComposesFromProperties(
                         v.allocator,
                         "<r>The value of <b>{s}<r> in the class <b>{s}<r> is undefined.",
                         .{ property_name, local_original_name },
-                    ) catch bun.outOfMemory(),
-                ).cloneLineText(v.log.clone_line_text, v.log.msgs.allocator) catch bun.outOfMemory(),
+                    ) catch |err| bun.handleOom(err),
+                ).cloneLineText(v.log.clone_line_text, v.log.msgs.allocator) catch |err| bun.handleOom(err),
                 .notes = v.allocator.dupe(
                     Logger.Data,
                     &.{
                         bun.logger.rangeData(
                             &v.all_sources[entry.value_ptr.source_index],
                             entry.value_ptr.range,
-                            Logger.Log.allocPrint(v.allocator, "The first definition of {s} is in this style rule:", .{property_name}) catch bun.outOfMemory(),
+                            bun.handleOom(Logger.Log.allocPrint(v.allocator, "The first definition of {s} is in this style rule:", .{property_name})),
                         ),
                         .{ .text = std.fmt.allocPrint(
                             v.allocator,
@@ -1130,10 +1131,10 @@ fn validateComposesFromProperties(
                                 "The value of the {} property for {} may change unpredictably as the code is edited. " ++
                                 "Make sure that all definitions of {} for {} are in a single file.",
                             .{ bun.fmt.quote(property_name), bun.fmt.quote(local_original_name), bun.fmt.quote(property_name), bun.fmt.quote(local_original_name) },
-                        ) catch bun.outOfMemory() },
+                        ) catch |err| bun.handleOom(err) },
                     },
-                ) catch bun.outOfMemory(),
-            }) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err),
+            }) catch |err| bun.handleOom(err);
 
             // Don't warn more than once
             entry.value_ptr.source_index = Index.invalid.get();
@@ -1214,27 +1215,30 @@ fn validateComposesFromProperties(
     }
 }
 
-const bun = @import("bun");
-const strings = bun.strings;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const Index = bun.bundle_v2.Index;
-const ImportRecord = bun.ImportRecord;
-const Part = bun.bundle_v2.Part;
-const Loader = bun.Loader;
 const std = @import("std");
-const debug = LinkerContext.debug;
-const EntryPoint = bun.bundle_v2.EntryPoint;
 
-const JSMeta = bun.bundle_v2.JSMeta;
-const js_ast = bun.bundle_v2.js_ast;
-const Ref = bun.bundle_v2.js_ast.Ref;
+const bun = @import("bun");
 const Environment = bun.Environment;
-const ResolvedExports = bun.bundle_v2.ResolvedExports;
-const ExportData = bun.bundle_v2.ExportData;
 const FeatureFlags = bun.FeatureFlags;
+const ImportRecord = bun.ImportRecord;
+const Loader = bun.Loader;
 const Logger = bun.logger;
-const RefImportData = bun.bundle_v2.RefImportData;
-const ImportData = bun.bundle_v2.ImportData;
-const Dependency = js_ast.Dependency;
 const options = bun.options;
+const strings = bun.strings;
+
+const EntryPoint = bun.bundle_v2.EntryPoint;
+const ExportData = bun.bundle_v2.ExportData;
+const ImportData = bun.bundle_v2.ImportData;
+const Index = bun.bundle_v2.Index;
+const JSMeta = bun.bundle_v2.JSMeta;
+const Part = bun.bundle_v2.Part;
+const RefImportData = bun.bundle_v2.RefImportData;
+const ResolvedExports = bun.bundle_v2.ResolvedExports;
 const Symbol = bun.bundle_v2.Symbol;
+
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const debug = LinkerContext.debug;
+
+const js_ast = bun.bundle_v2.js_ast;
+const Dependency = js_ast.Dependency;
+const Ref = bun.bundle_v2.js_ast.Ref;

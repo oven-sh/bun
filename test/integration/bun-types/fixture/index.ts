@@ -181,7 +181,7 @@ for await (const chunk of Bun.stdin.stream()) {
   // this converts it to text (assumes ASCII encoding)
   const chunkText = Buffer.from(chunk).toString();
   console.log(`Chunk: ${chunkText}`);
-  expectType(chunk).is<Uint8Array>();
+  expectType(chunk).is<Uint8Array<ArrayBuffer>>();
   expectType(chunkText).is<string>();
 }
 
@@ -455,3 +455,9 @@ Bun.serve({
     cert,
   },
 });
+
+const signal = AbortSignal.timeout(1000);
+expectType(signal).is<AbortSignal>();
+expectType(signal.aborted).is<boolean>();
+
+expectType(RegExp.escape("foo.bar")).is<string>();

@@ -246,6 +246,65 @@ The module from which the component factory function (`createElement`, `jsx`, `j
 
 {% /table %}
 
+### `jsxSideEffects`
+
+By default, Bun marks JSX expressions as `/* @__PURE__ */` so they can be removed during bundling if they are unused (known as "dead code elimination" or "tree shaking"). Set `jsxSideEffects` to `true` to prevent this behavior.
+
+{% table %}
+
+- Compiler options
+- Transpiled output
+
+---
+
+- ```jsonc
+  {
+    "jsx": "react",
+    // jsxSideEffects is false by default
+  }
+  ```
+
+- ```tsx
+  // JSX expressions are marked as pure
+  /* @__PURE__ */ React.createElement("div", null, "Hello");
+  ```
+
+---
+
+- ```jsonc
+  {
+    "jsx": "react",
+    "jsxSideEffects": true,
+  }
+  ```
+
+- ```tsx
+  // JSX expressions are not marked as pure
+  React.createElement("div", null, "Hello");
+  ```
+
+---
+
+- ```jsonc
+  {
+    "jsx": "react-jsx",
+    "jsxSideEffects": true,
+  }
+  ```
+
+- ```tsx
+  // Automatic runtime also respects jsxSideEffects
+  jsx("div", { children: "Hello" });
+  ```
+
+{% /table %}
+
+This option is also available as a CLI flag:
+
+```bash
+$ bun build --jsx-side-effects
+```
+
 ### JSX pragma
 
 All of these values can be set on a per-file basis using _pragmas_. A pragma is a special comment that sets a compiler option in a particular file.

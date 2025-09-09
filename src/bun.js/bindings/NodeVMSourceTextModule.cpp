@@ -386,7 +386,6 @@ RefPtr<CachedBytecode> NodeVMSourceTextModule::bytecode(JSGlobalObject* globalOb
             ModuleProgramExecutable* executable = ModuleProgramExecutable::tryCreate(globalObject, m_sourceCode);
             RETURN_IF_EXCEPTION(scope, nullptr);
             if (!executable) {
-                EXCEPTION_ASSERT(!scope.exception());
                 throwSyntaxError(globalObject, scope, "Failed to create cached executable"_s);
                 return nullptr;
             }

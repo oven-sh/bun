@@ -2392,7 +2392,7 @@ describe("fs/promises", () => {
     ]);
 
     expect(subprocess.exitCode).toBe(0);
-    const text = await new Response(subprocess.stdout).text();
+    const text = await subprocess.stdout.text();
     const node = JSON.parse(text);
     expect(bun).toEqual(node as string[]);
   }, 100000);
@@ -2425,7 +2425,7 @@ describe("fs/promises", () => {
     ]);
 
     expect(subprocess.exitCode).toBe(0);
-    const text = await new Response(subprocess.stdout).text();
+    const text = await subprocess.stdout.text();
     const node = JSON.parse(text);
     expect(bun.length).toEqual(node.length);
     expect([...new Set(node.map(v => v.parentPath ?? v.path))]).toEqual([full]);
@@ -2463,7 +2463,7 @@ describe("fs/promises", () => {
     ]);
 
     expect(subprocess.exitCode).toBe(0);
-    const text = await new Response(subprocess.stdout).text();
+    const text = await subprocess.stdout.text();
     const node = JSON.parse(text);
     expect(bun.length).toEqual(node.length);
     expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
@@ -2500,7 +2500,7 @@ describe("fs/promises", () => {
     ]);
 
     expect(subprocess.exitCode).toBe(0);
-    const text = await new Response(subprocess.stdout).text();
+    const text = await subprocess.stdout.text();
     const node = JSON.parse(text);
     expect(bun.length).toEqual(node.length);
     expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));

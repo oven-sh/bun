@@ -315,9 +315,8 @@ function Install-Bun {
       if (-not $NoPathUpdate) {
         $Path += $BunBin
         Write-Env -Key 'Path' -Value ($Path -join ';')
-        $env:PATH = $Path;
-      }
-      else {
+        $env:PATH = $Path -join ';'
+      } else {
         Write-Output "Skipping adding '${BunBin}' to the user's %PATH%`n"
       }
     }

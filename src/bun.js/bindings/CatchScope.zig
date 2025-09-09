@@ -1,5 +1,5 @@
 // TODO determine size and alignment automatically
-const size = 56;
+const size = if (Environment.allow_assert or Environment.enable_asan) 56 else 8;
 const alignment = 8;
 
 /// Binding for JSC::CatchScope. This should be used rarely, only at translation boundaries between
@@ -203,6 +203,7 @@ extern fn CatchScope__assertNoException(ptr: *align(alignment) [size]u8) void;
 extern fn CatchScope__destruct(ptr: *align(alignment) [size]u8) void;
 
 const std = @import("std");
+
 const bun = @import("bun");
-const jsc = bun.jsc;
 const Environment = bun.Environment;
+const jsc = bun.jsc;

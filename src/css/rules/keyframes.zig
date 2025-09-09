@@ -1,7 +1,4 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("bun");
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const Maybe = css.Maybe;
 const PrintErr = css.PrintErr;
@@ -299,3 +296,8 @@ pub const KeyframesRule = struct {
         return css.implementDeepClone(@This(), this, allocator);
     }
 };
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

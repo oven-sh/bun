@@ -1,3 +1,5 @@
+const SlicedString = @This();
+
 buf: string,
 slice: string,
 
@@ -35,11 +37,11 @@ pub inline fn sub(this: SlicedString, input: string) SlicedString {
     return SlicedString{ .buf = this.buf, .slice = input };
 }
 
-const SlicedString = @This();
-const assert = bun.assert;
+const string = []const u8;
+
 const bun = @import("bun");
-const string = bun.string;
 const Environment = bun.Environment;
+const assert = bun.assert;
 
 const ExternalString = bun.Semver.ExternalString;
 const String = bun.Semver.String;

@@ -1,3 +1,5 @@
+const Range = @This();
+
 pub const Op = enum(u8) {
     unset = 0,
     eql = 1,
@@ -246,13 +248,13 @@ pub fn satisfiesPre(range: Range, version: Version, range_buf: string, version_b
     return true;
 }
 
-const Range = @This();
+const string = []const u8;
 
 const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const Environment = bun.Environment;
 
-const Version = bun.Semver.Version;
-const Query = bun.Semver.Query;
+const bun = @import("bun");
+const Environment = bun.Environment;
 const assert = bun.assert;
+
+const Query = bun.Semver.Query;
+const Version = bun.Semver.Version;

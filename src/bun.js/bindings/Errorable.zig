@@ -1,7 +1,3 @@
-const bun = @import("bun");
-const ZigErrorType = @import("ZigErrorType.zig").ZigErrorType;
-const ErrorCode = @import("ErrorCode.zig").ErrorCode;
-
 pub fn Errorable(comptime Type: type) type {
     return extern struct {
         result: Result,
@@ -41,3 +37,7 @@ pub fn Errorable(comptime Type: type) type {
         }
     };
 }
+
+const bun = @import("bun");
+const ErrorCode = @import("./ErrorCode.zig").ErrorCode;
+const ZigErrorType = @import("./ZigErrorType.zig").ZigErrorType;

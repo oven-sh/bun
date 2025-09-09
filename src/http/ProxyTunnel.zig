@@ -1,4 +1,5 @@
 const ProxyTunnel = @This();
+
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", ProxyTunnel.deinit, .{});
 pub const ref = ProxyTunnel.RefCount.ref;
 pub const deref = ProxyTunnel.RefCount.deref;
@@ -200,7 +201,7 @@ pub fn write(this: *HTTPClient, encoded_data: []const u8) void {
         const pending = encoded_data[@intCast(written)..];
         if (pending.len > 0) {
             // lets flush when we are truly writable
-            proxy.write_buffer.write(pending) catch bun.outOfMemory();
+            bun.handleOom(proxy.write_buffer.write(pending));
         }
     }
 }
@@ -225,7 +226,7 @@ fn onClose(this: *HTTPClient) void {
     }
 }
 
-pub fn start(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, ssl_options: JSC.API.ServerConfig.SSLConfig, start_payload: []const u8) void {
+pub fn start(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, ssl_options: jsc.API.ServerConfig.SSLConfig, start_payload: []const u8) void {
     const proxy_tunnel = bun.new(ProxyTunnel, .{
         .ref_count = .init(),
     });
@@ -333,13 +334,16 @@ fn deinit(this: *ProxyTunnel) void {
     bun.destroy(this);
 }
 
+const log = bun.Output.scoped(.http_proxy_tunnel, .visible);
+
+const HTTPCertError = @import("./HTTPCertError.zig");
+const SSLWrapper = @import("../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
+
 const bun = @import("bun");
+const jsc = bun.jsc;
 const strings = bun.strings;
 const uws = bun.uws;
 const BoringSSL = bun.BoringSSL.c;
-const NewHTTPContext = bun.http.NewHTTPContext;
+
 const HTTPClient = bun.http;
-const JSC = bun.JSC;
-const HTTPCertError = @import("./HTTPCertError.zig");
-const SSLWrapper = @import("../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
-const log = bun.Output.scoped(.http_proxy_tunnel, false);
+const NewHTTPContext = bun.http.NewHTTPContext;

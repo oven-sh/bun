@@ -4,10 +4,11 @@ const Ids = struct {
 };
 
 pub const Store = struct {
+    /// Accessed from multiple threads
     entries: Entry.List,
     nodes: Node.List,
 
-    const log = Output.scoped(.Store, false);
+    const log = Output.scoped(.Store, .visible);
 
     pub const modules_dir_name = ".bun";
 
@@ -50,6 +51,7 @@ pub const Store = struct {
 
     pub const Installer = @import("./Installer.zig").Installer;
 
+    /// Called from multiple threads. `parent_dedupe` should not be shared between threads.
     pub fn isCycle(this: *const Store, id: Entry.Id, maybe_parent_id: Entry.Id, parent_dedupe: *std.AutoArrayHashMap(Entry.Id, void)) bool {
         var i: usize = 0;
         var len: usize = 0;
@@ -63,7 +65,7 @@ pub const Store = struct {
             if (parent_id == maybe_parent_id) {
                 return true;
             }
-            parent_dedupe.put(parent_id, {}) catch bun.outOfMemory();
+            bun.handleOom(parent_dedupe.put(parent_id, {}));
         }
 
         len = parent_dedupe.count();
@@ -75,7 +77,7 @@ pub const Store = struct {
                 if (parent_id == maybe_parent_id) {
                     return true;
                 }
-                parent_dedupe.put(parent_id, {}) catch bun.outOfMemory();
+                bun.handleOom(parent_dedupe.put(parent_id, {}));
                 len = parent_dedupe.count();
             }
             i += 1;
@@ -182,7 +184,7 @@ pub const Store = struct {
                 if (parent_id == .invalid) {
                     continue;
                 }
-                parents.put(bun.default_allocator, parent_id, {}) catch bun.outOfMemory();
+                bun.handleOom(parents.put(bun.default_allocator, parent_id, {}));
             }
 
             len = parents.count();
@@ -191,7 +193,7 @@ pub const Store = struct {
                     if (parent_id == .invalid) {
                         continue;
                     }
-                    parents.put(bun.default_allocator, parent_id, {}) catch bun.outOfMemory();
+                    bun.handleOom(parents.put(bun.default_allocator, parent_id, {}));
                     len = parents.count();
                 }
                 i += 1;
@@ -526,14 +528,13 @@ pub const Store = struct {
     };
 };
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
 const bun = @import("bun");
 const OOM = bun.OOM;
 const Output = bun.Output;
-const string = bun.string;
 
 const Semver = bun.Semver;
 const String = Semver.String;

@@ -1,2 +1,5 @@
 [test]
 preload = "./preload.ts"
+
+[install]
+linker = "isolated"

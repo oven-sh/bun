@@ -1,4 +1,4 @@
-Bun's fast native bundler is now in beta. It can be used via the `bun build` CLI command or the `Bun.build()` JavaScript API.
+Bun's fast native bundler can be used via the `bun build` CLI command or the `Bun.build()` JavaScript API.
 
 {% codetabs group="a" %}
 
@@ -1259,6 +1259,33 @@ $ bun build ./index.tsx --outdir ./out --drop=console --drop=debugger --drop=any
 
 {% /codetabs %}
 
+### `throw`
+
+Controls error handling behavior when the build fails. When set to `true` (default), the returned promise rejects with an `AggregateError`. When set to `false`, the promise resolves with a `BuildOutput` object where `success` is `false`.
+
+```ts#JavaScript
+// Default behavior: throws on error
+try {
+  await Bun.build({
+    entrypoints: ['./index.tsx'],
+    throw: true, // default
+  });
+} catch (error) {
+  // Handle AggregateError
+  console.error("Build failed:", error);
+}
+
+// Alternative: handle errors via success property
+const result = await Bun.build({
+  entrypoints: ['./index.tsx'],
+  throw: false,
+});
+
+if (!result.success) {
+  console.error("Build failed with errors:", result.logs);
+}
+```
+
 ## Outputs
 
 The `Bun.build` function returns a `Promise<BuildOutput>`, defined as:
@@ -1569,8 +1596,7 @@ interface BuildConfig {
    * When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
    * When set to `false`, the `success` property of the returned object will be `false` when a build failure happens.
    *
-   * This defaults to `false` in Bun 1.1 and will change to `true` in Bun 1.2
-   * as most usage of `Bun.build` forgets to check for errors.
+   * This defaults to `true`.
    */
   throw?: boolean;
 }

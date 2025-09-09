@@ -1,15 +1,7 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const logger = bun.logger;
-const Log = logger.Log;
-
 pub const css = @import("./css_parser.zig");
 pub const css_values = @import("./values/values.zig");
 pub const Error = css.Error;
 const Location = css.Location;
-
-const ArrayList = std.ArrayListUnmanaged;
 
 /// A printer error.
 pub const PrinterError = Err(PrinterErrorKind);
@@ -42,7 +34,7 @@ pub fn Err(comptime T: type) type {
             @compileError("fmt not implemented for " ++ @typeName(T));
         }
 
-        pub fn toJSString(this: @This(), allocator: Allocator, globalThis: *bun.JSC.JSGlobalObject) bun.JSC.JSValue {
+        pub fn toJSString(this: @This(), allocator: Allocator, globalThis: *bun.jsc.JSGlobalObject) bun.jsc.JSValue {
             var error_string = ArrayList(u8){};
             defer error_string.deinit(allocator);
             error_string.writer(allocator).print("{}", .{this.kind}) catch unreachable;
@@ -256,6 +248,10 @@ pub const ParserError = union(enum) {
     unexpected_token: css.Token,
     /// Maximum nesting depth was reached.
     maximum_nesting_depth,
+    unexpected_value: struct {
+        expected: []const u8,
+        received: []const u8,
+    },
 
     pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         return switch (this) {
@@ -275,6 +271,7 @@ pub const ParserError = union(enum) {
             .unexpected_namespace_rule => writer.writeAll("@namespace rules must come before any other rules except @charset, @import, and @layer"),
             .unexpected_token => |token| writer.print("Unexpected token: {}", .{token}),
             .maximum_nesting_depth => writer.writeAll("Maximum CSS nesting depth exceeded"),
+            .unexpected_value => |v| writer.print("Expected {s}, received {s}", .{ v.expected, v.received }),
         };
     }
 };
@@ -421,3 +418,12 @@ pub const MinifyErrorKind = union(enum) {
         };
     }
 };
+
+const bun = @import("bun");
+
+const logger = bun.logger;
+const Log = logger.Log;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

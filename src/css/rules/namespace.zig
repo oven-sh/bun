@@ -1,6 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
 pub const css_values = @import("../values/values.zig");
 pub const Error = css.Error;
@@ -36,3 +33,6 @@ pub const NamespaceRule = struct {
         return css.implementDeepClone(@This(), this, allocator);
     }
 };
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;

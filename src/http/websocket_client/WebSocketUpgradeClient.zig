@@ -34,20 +34,19 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         tcp: Socket,
         outgoing_websocket: ?*CppWebSocket,
         input_body_buf: []u8 = &[_]u8{},
-        client_protocol: []const u8 = "",
         to_send: []const u8 = "",
         read_length: usize = 0,
         headers_buf: [128]PicoHTTP.Header = undefined,
         body: std.ArrayListUnmanaged(u8) = .{},
-        websocket_protocol: u64 = 0,
         hostname: [:0]const u8 = "",
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         state: State = .initializing,
+        subprotocols: bun.StringSet,
 
         const State = enum { initializing, reading, failed };
 
         const HTTPClient = @This();
-        pub fn register(_: *JSC.JSGlobalObject, _: *anyopaque, ctx: *uws.SocketContext) callconv(.C) void {
+        pub fn register(_: *jsc.JSGlobalObject, _: *anyopaque, ctx: *uws.SocketContext) callconv(.C) void {
             Socket.configure(
                 ctx,
                 true,
@@ -75,22 +74,21 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         /// On error, this returns null.
         /// Returning null signals to the parent function that the connection failed.
         pub fn connect(
-            global: *JSC.JSGlobalObject,
+            global: *jsc.JSGlobalObject,
             socket_ctx: *anyopaque,
             websocket: *CppWebSocket,
-            host: *const JSC.ZigString,
+            host: *const jsc.ZigString,
             port: u16,
-            pathname: *const JSC.ZigString,
-            client_protocol: *const JSC.ZigString,
-            header_names: ?[*]const JSC.ZigString,
-            header_values: ?[*]const JSC.ZigString,
+            pathname: *const jsc.ZigString,
+            client_protocol: *const jsc.ZigString,
+            header_names: ?[*]const jsc.ZigString,
+            header_values: ?[*]const jsc.ZigString,
             header_count: usize,
         ) callconv(.C) ?*HTTPClient {
             const vm = global.bunVM();
 
             bun.assert(vm.event_loop_handle != null);
 
-            var client_protocol_hash: u64 = 0;
             const body = buildRequestBody(
                 vm,
                 pathname,
@@ -98,7 +96,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 host,
                 port,
                 client_protocol,
-                &client_protocol_hash,
                 NonUTF8Headers.init(header_names, header_values, header_count),
             ) catch return null;
 
@@ -107,8 +104,15 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 .tcp = .{ .socket = .{ .detached = {} } },
                 .outgoing_websocket = websocket,
                 .input_body_buf = body,
-                .websocket_protocol = client_protocol_hash,
                 .state = .initializing,
+                .subprotocols = brk: {
+                    var subprotocols = bun.StringSet.init(bun.default_allocator);
+                    var it = bun.http.HeaderValueIterator.init(client_protocol.slice());
+                    while (it.next()) |protocol| {
+                        subprotocols.insert(protocol) catch |e| bun.handleOom(e);
+                    }
+                    break :brk subprotocols;
+                },
             });
 
             var host_ = host.toSlice(bun.default_allocator);
@@ -135,7 +139,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     client.deref();
                     return null;
                 }
-                bun.Analytics.Features.WebSocket += 1;
+                bun.analytics.Features.WebSocket += 1;
 
                 if (comptime ssl) {
                     if (!strings.isIPAddress(host_.slice())) {
@@ -160,8 +164,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.input_body_buf.len = 0;
         }
         pub fn clearData(this: *HTTPClient) void {
-            this.poll_ref.unref(JSC.VirtualMachine.get());
+            this.poll_ref.unref(jsc.VirtualMachine.get());
 
+            this.subprotocols.clearAndFree();
             this.clearInput();
             this.body.clearAndFree(bun.default_allocator);
         }
@@ -189,7 +194,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         pub fn fail(this: *HTTPClient, code: ErrorCode) void {
             log("onFail: {s}", .{@tagName(code)});
-            JSC.markBinding(@src());
+            jsc.markBinding(@src());
 
             this.ref();
             defer this.deref();
@@ -213,7 +218,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         pub fn handleClose(this: *HTTPClient, _: Socket, _: c_int, _: ?*anyopaque) void {
             log("onClose", .{});
-            JSC.markBinding(@src());
+            jsc.markBinding(@src());
             this.clearData();
             this.tcp.detach();
             this.dispatchAbruptClose(ErrorCode.ended);
@@ -305,7 +310,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             var body = data;
             if (this.body.items.len > 0) {
-                this.body.appendSlice(bun.default_allocator, data) catch bun.outOfMemory();
+                bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
                 body = this.body.items;
             }
 
@@ -327,7 +332,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     },
                     error.ShortRead => {
                         if (this.body.items.len == 0) {
-                            this.body.appendSlice(bun.default_allocator, data) catch bun.outOfMemory();
+                            bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
                         }
                         return;
                     },
@@ -346,7 +351,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var upgrade_header = PicoHTTP.Header{ .name = "", .value = "" };
             var connection_header = PicoHTTP.Header{ .name = "", .value = "" };
             var websocket_accept_header = PicoHTTP.Header{ .name = "", .value = "" };
-            var visited_protocol = this.websocket_protocol == 0;
+            var protocol_header_seen = false;
+
             // var visited_version = false;
             var deflate_result = DeflateNegotiationResult{};
 
@@ -382,11 +388,36 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     },
                     "Sec-WebSocket-Protocol".len => {
                         if (strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Protocol", false)) {
-                            if (this.websocket_protocol == 0 or bun.hash(header.value) != this.websocket_protocol) {
+                            const valid = brk: {
+                                // Can't have multiple protocol headers in the response.
+                                if (protocol_header_seen) break :brk false;
+
+                                protocol_header_seen = true;
+
+                                var iterator = bun.http.HeaderValueIterator.init(header.value);
+
+                                const protocol = iterator.next()
+                                    // Can't be empty.
+                                    orelse break :brk false;
+
+                                // Can't have multiple protocols.
+                                if (iterator.next() != null) break :brk false;
+
+                                // Protocol must be in the list of allowed protocols.
+                                if (!this.subprotocols.contains(protocol)) break :brk false;
+
+                                if (this.outgoing_websocket) |ws| {
+                                    var protocol_str = bun.String.init(protocol);
+                                    defer protocol_str.deref();
+                                    ws.setProtocol(&protocol_str);
+                                }
+                                break :brk true;
+                            };
+
+                            if (!valid) {
                                 this.terminate(ErrorCode.mismatch_client_protocol);
                                 return;
                             }
-                            visited_protocol = true;
                         }
                     },
                     "Sec-WebSocket-Extensions".len => {
@@ -469,11 +500,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 return;
             }
 
-            if (!visited_protocol) {
-                this.terminate(ErrorCode.mismatch_client_protocol);
-                return;
-            }
-
             if (!strings.eqlCaseInsensitiveASCII(connection_header.value, "Upgrade", true)) {
                 this.terminate(ErrorCode.invalid_connection_header);
                 return;
@@ -497,7 +523,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             }
 
             this.clearData();
-            JSC.markBinding(@src());
+            jsc.markBinding(@src());
             if (!this.tcp.isClosed() and this.outgoing_websocket != null) {
                 this.tcp.timeout(0);
                 log("onDidConnect", .{});
@@ -589,8 +615,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 }
 
 const NonUTF8Headers = struct {
-    names: []const JSC.ZigString,
-    values: []const JSC.ZigString,
+    names: []const jsc.ZigString,
+    values: []const jsc.ZigString,
 
     pub fn format(self: NonUTF8Headers, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         const count = self.names.len;
@@ -600,11 +626,11 @@ const NonUTF8Headers = struct {
         }
     }
 
-    pub fn init(names: ?[*]const JSC.ZigString, values: ?[*]const JSC.ZigString, len: usize) NonUTF8Headers {
+    pub fn init(names: ?[*]const jsc.ZigString, values: ?[*]const jsc.ZigString, len: usize) NonUTF8Headers {
         if (len == 0) {
             return .{
-                .names = &[_]JSC.ZigString{},
-                .values = &[_]JSC.ZigString{},
+                .names = &[_]jsc.ZigString{},
+                .values = &[_]jsc.ZigString{},
             };
         }
 
@@ -616,13 +642,12 @@ const NonUTF8Headers = struct {
 };
 
 fn buildRequestBody(
-    vm: *JSC.VirtualMachine,
-    pathname: *const JSC.ZigString,
+    vm: *jsc.VirtualMachine,
+    pathname: *const jsc.ZigString,
     is_https: bool,
-    host: *const JSC.ZigString,
+    host: *const jsc.ZigString,
     port: u16,
-    client_protocol: *const JSC.ZigString,
-    client_protocol_hash: *u64,
+    client_protocol: *const jsc.ZigString,
     extra_headers: NonUTF8Headers,
 ) std.mem.Allocator.Error![]u8 {
     const allocator = vm.allocator;
@@ -641,9 +666,6 @@ fn buildRequestBody(
             .value = client_protocol.slice(),
         },
     };
-
-    if (client_protocol.len > 0)
-        client_protocol_hash.* = bun.hash(static_headers[1].value);
 
     const pathname_ = pathname.toSlice(allocator);
     const host_ = host.toSlice(allocator);
@@ -675,23 +697,22 @@ fn buildRequestBody(
     );
 }
 
+const log = Output.scoped(.WebSocketUpgradeClient, .visible);
+
+const WebSocketDeflate = @import("./WebSocketDeflate.zig");
 const std = @import("std");
+const CppWebSocket = @import("./CppWebSocket.zig").CppWebSocket;
+
+const websocket_client = @import("../websocket_client.zig");
+const ErrorCode = websocket_client.ErrorCode;
 
 const bun = @import("bun");
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
-const BoringSSL = bun.BoringSSL;
-const uws = bun.uws;
-const JSC = bun.JSC;
-const PicoHTTP = bun.picohttp;
-
 const Async = bun.Async;
-const websocket_client = @import("../websocket_client.zig");
-const CppWebSocket = @import("./CppWebSocket.zig").CppWebSocket;
-const ErrorCode = websocket_client.ErrorCode;
-const WebSocketDeflate = @import("./WebSocketDeflate.zig");
-
-const log = Output.scoped(.WebSocketUpgradeClient, false);
+const BoringSSL = bun.BoringSSL;
+const Environment = bun.Environment;
+const Output = bun.Output;
+const PicoHTTP = bun.picohttp;
+const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
+const strings = bun.strings;
+const uws = bun.uws;

@@ -1,6 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
 fn SinglyLinkedList(comptime T: type, comptime Parent: type) type {
     return struct {
         const Self = @This();
@@ -251,3 +248,6 @@ pub fn ObjectPool(
         }
     };
 }
+
+const bun = @import("bun");
+const std = @import("std");

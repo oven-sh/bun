@@ -997,12 +997,50 @@ realpathSync.native = fs.realpathNativeSync.bind(fs);
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
 // using filter and other options uses a lazily loaded js fallback ported from node.js
 function cpSync(src, dest, options) {
-  if (!options) return fs.cpSync(src, dest);
-  if (typeof options !== "object") {
-    throw new TypeError("options must be an object");
+  if (!options) {
+    // Check if src and dest are the same for no-options case
+    if (src === dest) {
+      throw $ERR_FS_CP_EINVAL("Cannot copy", src, "to itself");
+    }
+    // Use JS implementation to ensure proper symlink validation
+    // The native implementation doesn't validate symlinks in dest path
+    return require("internal/fs/cp-sync")(src, dest, { force: true });
   }
-  if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
-    return require("internal/fs/cp-sync")(src, dest, options);
+  if (typeof options !== "object") {
+    throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+  }
+  // Validate verbatimSymlinks is a boolean if provided
+  if ("verbatimSymlinks" in options && typeof options.verbatimSymlinks !== "boolean") {
+    throw $ERR_INVALID_ARG_TYPE("options.verbatimSymlinks", "boolean", options.verbatimSymlinks);
+  }
+  // Validate mode is a valid integer if provided
+  if ("mode" in options) {
+    const mode = options.mode;
+    if (!Number.isInteger(mode) || mode < 0) {
+      throw $ERR_OUT_OF_RANGE("options.mode", ">= 0", mode);
+    }
+  }
+  // Check for incompatible options
+  if (options.dereference && options.verbatimSymlinks) {
+    throw $ERR_INCOMPATIBLE_OPTION_PAIR("options.dereference", "options.verbatimSymlinks");
+  }
+  // Check if src and dest are the same after validations
+  if (src === dest) {
+    throw $ERR_FS_CP_EINVAL("Cannot copy", src, "to itself");
+  }
+  // Use JS fallback when special options are used
+  // IMPORTANT: The native implementation doesn't correctly handle symlink resolution
+  // (it copies symlinks as-is instead of resolving relative paths to absolute).
+  // So we always use the JS fallback for now to ensure correct behavior.
+  // Only use native implementation for simple cases without symlinks.
+  // TODO: Fix the native implementation to handle symlink resolution correctly
+  if (options.dereference || options.filter || options.preserveTimestamps || "verbatimSymlinks" in options || true) {
+    // Ensure force defaults to true if not specified
+    const optsWithDefaults = {
+      ...options,
+      force: options.force ?? true
+    };
+    return require("internal/fs/cp-sync")(src, dest, optsWithDefaults);
   }
   return fs.cpSync(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
 }

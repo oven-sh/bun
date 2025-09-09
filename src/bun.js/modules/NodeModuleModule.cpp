@@ -557,14 +557,21 @@ static JSValue getModuleExtensionsObject(VM& vm, JSObject* moduleObject)
 
 static JSValue getModuleDebugObject(VM& vm, JSObject* moduleObject)
 {
-    return JSC::constructEmptyObject(moduleObject->globalObject());
+    auto* globalObject = moduleObject->globalObject();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result = JSC::constructEmptyObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return result;
 }
 
 static JSValue getPathCacheObject(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    return JSC::constructEmptyObject(
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result = JSC::constructEmptyObject(
         vm, globalObject->nullPrototypeObjectStructure());
+    RETURN_IF_EXCEPTION(scope, {});
+    return result;
 }
 
 static JSValue getSourceMapFunction(VM& vm, JSObject* moduleObject)
@@ -578,6 +585,9 @@ static JSValue getSourceMapFunction(VM& vm, JSObject* moduleObject)
 
 static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
 {
+    auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    
     MarkedArgumentBuffer args;
     args.ensureCapacity(countof(builtinModuleNames));
 
@@ -585,15 +595,20 @@ static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
         args.append(JSC::jsOwnedString(vm, String(builtinModuleNames[i])));
     }
 
-    auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    return JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args));
+    JSValue result = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args));
+    RETURN_IF_EXCEPTION(scope, {});
+    return result;
 }
 
 static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    
     auto* compileCacheStatus = JSC::constructEmptyObject(
         vm, globalObject->nullPrototypeObjectStructure());
+    RETURN_IF_EXCEPTION(scope, {});
+    
     compileCacheStatus->putDirect(vm, JSC::Identifier::fromString(vm, "FAILED"_s),
         JSC::jsNumber(0));
     compileCacheStatus->putDirect(
@@ -606,6 +621,8 @@ static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
 
     auto* constantsObject = JSC::constructEmptyObject(
         vm, globalObject->nullPrototypeObjectStructure());
+    RETURN_IF_EXCEPTION(scope, {});
+    
     constantsObject->putDirect(
         vm, JSC::Identifier::fromString(vm, "compileCacheStatus"_s),
         compileCacheStatus);
@@ -614,9 +631,13 @@ static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
 
 static JSValue getGlobalPathsObject(VM& vm, JSObject* moduleObject)
 {
-    return JSC::constructEmptyArray(
-        moduleObject->globalObject(),
+    auto* globalObject = moduleObject->globalObject();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result = JSC::constructEmptyArray(
+        globalObject,
         static_cast<ArrayAllocationProfile*>(nullptr), 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    return result;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSetCJSWrapperItem, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -690,7 +711,10 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
 static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    
     auto prototype = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+    RETURN_IF_EXCEPTION(scope, {});
 
     prototype->putDirectCustomAccessor(
         vm, WebCore::clientData(vm)->builtinNames().requirePublicName(),

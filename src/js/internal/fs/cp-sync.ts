@@ -10,8 +10,15 @@ function areIdentical(srcStat, destStat) {
   return destStat.ino && destStat.dev && destStat.ino === srcStat.ino && destStat.dev === srcStat.dev;
 }
 
-const normalizePathToArray = path =>
-  ArrayPrototypeFilter.$call(StringPrototypeSplit.$call(resolve(path), sep), Boolean);
+const normalizePathToArray = path => {
+  // Handle URL objects and strings
+  const pathStr = typeof path === 'object' && path !== null && path.pathname 
+    ? path.pathname 
+    : typeof path === 'object' && path !== null && path.href
+    ? new URL(path.href).pathname
+    : path;
+  return ArrayPrototypeFilter.$call(StringPrototypeSplit.$call(resolve(pathStr), sep), Boolean);
+};
 
 function isSrcSubdir(src, dest) {
   const srcArr = normalizePathToArray(src);
@@ -41,6 +48,7 @@ const {
   // opendirSync,
   readdirSync,
   readlinkSync,
+  realpathSync,
   statSync,
   symlinkSync,
   unlinkSync,
@@ -48,24 +56,89 @@ const {
 } = require("node:fs");
 const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
 
+function validateDestinationPath(src, dest) {
+  // Convert URLs to paths if necessary
+  // Handle both URL objects and strings
+  const srcPath = typeof src === 'object' && src !== null ? (src.pathname || src.toString()) : src;
+  const destPath = typeof dest === 'object' && dest !== null ? (dest.pathname || dest.toString()) : dest;
+  
+  // Skip validation if paths are not strings (shouldn't happen, but be safe)
+  if (typeof srcPath !== 'string' || typeof destPath !== 'string') {
+    return;
+  }
+  
+  // Only validate if source exists and is a directory
+  // (sockets, pipes, etc. are handled elsewhere)
+  try {
+    const srcStat = statSync(srcPath);
+    if (!srcStat.isDirectory()) {
+      return; // Skip validation for non-directories
+    }
+  } catch {
+    return; // Source doesn't exist, skip validation
+  }
+  
+  // Check each parent directory in the destination path to see if any
+  // are symlinks that point back to the source or its parents
+  let currentPath = dirname(destPath); // Start with parent of dest
+  const resolvedSrc = realpathSync(srcPath);
+  
+  while (currentPath && currentPath !== parse(currentPath).root) {
+    try {
+      // Check if this path component exists and might be a symlink
+      if (existsSync(currentPath)) {
+        const resolvedPath = realpathSync(currentPath);
+        // Get the part of dest that comes after this path
+        const remainingPath = destPath.slice(currentPath.length);
+        const fullResolvedDest = resolvedPath + remainingPath;
+        
+        // Check if the resolved destination would be inside the source
+        if (fullResolvedDest.startsWith(resolvedSrc + sep) || fullResolvedDest === resolvedSrc) {
+          throw $ERR_FS_CP_EINVAL(`cannot copy ${srcPath} to a subdirectory of self ${destPath}`);
+        }
+      }
+    } catch (err) {
+      // Re-throw ERR_FS_CP_EINVAL errors
+      if (err.code === 'ERR_FS_CP_EINVAL') {
+        throw err;
+      }
+      // Ignore other errors (like ENOENT) and continue checking parent directories
+    }
+    
+    currentPath = dirname(currentPath);
+  }
+}
+
 function cpSyncFn(src, dest, opts) {
   // Warn about using preserveTimestamps on 32-bit node
   // if (opts.preserveTimestamps && process.arch === "ia32") {
   //   const warning = "Using the preserveTimestamps option in 32-bit " + "node is not recommended";
   //   process.emitWarning(warning, "TimestampPrecisionWarning");
   // }
-  const { srcStat, destStat, skipped } = checkPathsSync(src, dest, opts);
+  
+  // Convert URL objects to paths if necessary
+  // Use decodeURIComponent to handle URL-encoded characters like %25 -> %
+  const srcPath = typeof src === 'object' && src !== null 
+    ? decodeURIComponent(src.pathname || (src.href ? new URL(src.href).pathname : src.toString()))
+    : src;
+  const destPath = typeof dest === 'object' && dest !== null 
+    ? decodeURIComponent(dest.pathname || (dest.href ? new URL(dest.href).pathname : dest.toString()))
+    : dest;
+  
+  // Check if dest path contains symlinks that would create circular reference
+  validateDestinationPath(srcPath, destPath);
+  
+  const { srcStat, destStat, skipped } = checkPathsSync(srcPath, destPath, opts);
   if (skipped) return;
-  checkParentPathsSync(src, srcStat, dest);
-  return checkParentDir(destStat, src, dest, opts);
+  checkParentPathsSync(srcPath, srcStat, destPath);
+  return checkParentDir(destStat, srcPath, destPath, opts);
 }
 
 function checkPathsSync(src, dest, opts) {
   if (opts.filter) {
     const shouldCopy = opts.filter(src, dest);
     if ($isPromise(shouldCopy)) {
-      // throw new ERR_INVALID_RETURN_VALUE("boolean", "filter", shouldCopy);
-      throw new Error("Expected a boolean from the filter function, but got a promise. Use `fs.promises.cp` instead.");
+      throw $ERR_INVALID_RETURN_VALUE("boolean", "filter", shouldCopy);
     }
     if (!shouldCopy) return { __proto__: null, skipped: true };
   }
@@ -80,7 +153,7 @@ function checkPathsSync(src, dest, opts) {
       //   errno: EINVAL,
       //   code: "EINVAL",
       // });
-      throw new Error("src and dest cannot be the same");
+      throw $ERR_FS_CP_EINVAL("src and dest cannot be the same");
     }
     if (srcStat.isDirectory() && !destStat.isDirectory()) {
       // throw new ERR_FS_CP_DIR_TO_NON_DIR({
@@ -90,7 +163,7 @@ function checkPathsSync(src, dest, opts) {
       //   errno: EISDIR,
       //   code: "EISDIR",
       // });
-      throw new Error(`cannot overwrite directory ${src} with non-directory ${dest}`);
+      throw $ERR_FS_CP_DIR_TO_NON_DIR(`cannot overwrite directory ${src} with non-directory ${dest}`);
     }
     if (!srcStat.isDirectory() && destStat.isDirectory()) {
       // throw new ERR_FS_CP_NON_DIR_TO_DIR({
@@ -100,7 +173,7 @@ function checkPathsSync(src, dest, opts) {
       //   errno: ENOTDIR,
       //   code: "ENOTDIR",
       // });
-      throw new Error(`cannot overwrite non-directory ${src} with directory ${dest}`);
+      throw $ERR_FS_CP_NON_DIR_TO_DIR(`cannot overwrite non-directory ${src} with directory ${dest}`);
     }
   }
 
@@ -112,7 +185,7 @@ function checkPathsSync(src, dest, opts) {
     //   errno: EINVAL,
     //   code: "EINVAL",
     // });
-    throw new Error(`cannot copy ${src} to a subdirectory of self ${dest}`);
+    throw $ERR_FS_CP_EINVAL(`cannot copy ${src} to a subdirectory of self ${dest}`);
   }
   return { __proto__: null, srcStat, destStat, skipped: false };
 }
@@ -151,7 +224,7 @@ function checkParentPathsSync(src, srcStat, dest) {
     //   errno: EINVAL,
     //   code: "EINVAL",
     // });
-    throw new Error(`cannot copy ${src} to a subdirectory of self ${dest}`);
+    throw $ERR_FS_CP_EINVAL(`cannot copy ${src} to a subdirectory of self ${dest}`);
   }
   return checkParentPathsSync(src, srcStat, destParent);
 }
@@ -176,7 +249,7 @@ function getStats(destStat, src, dest, opts) {
     //   errno: EINVAL,
     //   code: "EISDIR",
     // });
-    throw new Error(`${src} is a directory (not copied)`);
+    throw $ERR_FS_EISDIR(`${src} is a directory (not copied)`);
   } else if (srcStat.isFile() || srcStat.isCharacterDevice() || srcStat.isBlockDevice()) {
     return onFile(srcStat, destStat, src, dest, opts);
   } else if (srcStat.isSymbolicLink()) {
@@ -189,7 +262,7 @@ function getStats(destStat, src, dest, opts) {
     //   errno: EINVAL,
     //   code: "EINVAL",
     // });
-    throw new Error(`cannot copy a socket file: ${dest}`);
+    throw $ERR_FS_CP_SOCKET(`cannot copy a socket file: ${dest}`);
   } else if (srcStat.isFIFO()) {
     // throw new ERR_FS_CP_FIFO_PIPE({
     //   message: `cannot copy a FIFO pipe: ${dest}`,
@@ -198,7 +271,7 @@ function getStats(destStat, src, dest, opts) {
     //   errno: EINVAL,
     //   code: "EINVAL",
     // });
-    throw new Error(`cannot copy a FIFO pipe: ${dest}`);
+    throw $ERR_FS_CP_FIFO_PIPE(`cannot copy a FIFO pipe: ${dest}`);
   }
   // throw new ERR_FS_CP_UNKNOWN({
   //   message: `cannot copy an unknown file type: ${dest}`,
@@ -207,7 +280,7 @@ function getStats(destStat, src, dest, opts) {
   //   errno: EINVAL,
   //   code: "EINVAL",
   // });
-  throw new Error(`cannot copy an unknown file type: ${dest}`);
+  throw $ERR_FS_CP_UNKNOWN(`cannot copy an unknown file type: ${dest}`);
 }
 
 function onFile(srcStat, destStat, src, dest, opts) {
@@ -227,7 +300,7 @@ function mayCopyFile(srcStat, src, dest, opts) {
     //   errno: EEXIST,
     //   code: "EEXIST",
     // });
-    throw new Error(`${dest} already exists`);
+    throw $ERR_FS_CP_EEXIST(`${dest} already exists`);
   }
 }
 
@@ -330,7 +403,7 @@ function onLink(destStat, src, dest, opts) {
     //   errno: EINVAL,
     //   code: "EINVAL",
     // });
-    throw new Error(`cannot copy ${resolvedSrc} to a subdirectory of self ${resolvedDest}`);
+    throw $ERR_FS_CP_EINVAL(`cannot copy ${resolvedSrc} to a subdirectory of self ${resolvedDest}`);
   }
   // Prevent copy if src is a subdir of dest since unlinking
   // dest in this case would result in removing src contents
@@ -343,7 +416,7 @@ function onLink(destStat, src, dest, opts) {
     //   errno: EINVAL,
     //   code: "EINVAL",
     // });
-    throw new Error(`cannot overwrite ${resolvedDest} with ${resolvedSrc}`);
+    throw $ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY(`cannot overwrite ${resolvedDest} with ${resolvedSrc}`);
   }
   return copyLink(resolvedSrc, dest);
 }

@@ -1,9 +1,9 @@
 import { $ } from "bun";
-import { describe, test, expect } from "bun:test";
-import { createTestBuilder } from "./test_builder";
+import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { mkdtempSync, rmSync } from "fs";
+import { createTestBuilder } from "./test_builder";
 
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -29,12 +29,12 @@ describe("Background Commands (&)", () => {
   test("background command with file output", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bg-test-"));
     const file = join(dir, "output.txt");
-    
+
     try {
       await $`echo "to file" > ${file} &`.quiet();
       // Give background task time to complete
       await Bun.sleep(100);
-      
+
       const content = await Bun.file(file).text();
       expect(content).toBe("to file\n");
     } finally {
@@ -45,11 +45,11 @@ describe("Background Commands (&)", () => {
   test("multiple background commands with file output", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bg-multi-"));
     const file = join(dir, "output.txt");
-    
+
     try {
       await $`echo "1" >> ${file} & echo "2" >> ${file} & echo "3" >> ${file}`.quiet();
       await Bun.sleep(100);
-      
+
       const content = await Bun.file(file).text();
       expect(content).toContain("1");
       expect(content).toContain("2");
@@ -68,11 +68,11 @@ describe("Background Commands (&)", () => {
   test("background pipeline", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bg-pipeline-"));
     const file = join(dir, "output.txt");
-    
+
     try {
       await $`echo "test" | cat > ${file} &`.quiet();
       await Bun.sleep(100);
-      
+
       const content = await Bun.file(file).text();
       expect(content).toBe("test\n");
     } finally {
@@ -83,11 +83,11 @@ describe("Background Commands (&)", () => {
   test("background if statement", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bg-if-"));
     const file = join(dir, "output.txt");
-    
+
     try {
       await $`if true; then echo "in if" > ${file}; fi &`.quiet();
       await Bun.sleep(100);
-      
+
       const content = await Bun.file(file).text();
       expect(content).toBe("in if\n");
     } finally {
@@ -98,11 +98,11 @@ describe("Background Commands (&)", () => {
   test("background command with && on right side", async () => {
     const dir = mkdtempSync(join(tmpdir(), "bg-and-"));
     const file = join(dir, "output.txt");
-    
+
     try {
       await $`echo "left" > ${file} && echo "right" >> ${file} &`.quiet();
       await Bun.sleep(100);
-      
+
       const content = await Bun.file(file).text();
       expect(content).toBe("left\nright\n");
     } finally {
@@ -114,9 +114,11 @@ describe("Background Commands (&)", () => {
     // Test the exact example from the GitHub issue
     const emulatorName = "test-emulator";
     const ANDROID_HOME = "/fake/android/home";
-    
+
     // This should not throw an error anymore
-    const result = await $`"$ANDROID_HOME/emulator/emulator" -avd "${emulatorName}" -netdelay none -netspeed full &`.quiet().nothrow();
+    const result = await $`"$ANDROID_HOME/emulator/emulator" -avd "${emulatorName}" -netdelay none -netspeed full &`
+      .quiet()
+      .nothrow();
     // Command will fail because the emulator doesn't exist, but it shouldn't complain about &
     expect(result.stderr.toString()).not.toContain("Background commands");
   });

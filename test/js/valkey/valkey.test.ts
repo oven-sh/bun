@@ -2,9 +2,9 @@ import { randomUUIDv7, RedisClient, sleep } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
 import {
   ConnectionType,
-  DEFAULT_REDIS_URL,
   createClient,
   ctx,
+  DEFAULT_REDIS_URL,
   expectType,
   isEnabled,
   randomCoinFlip,

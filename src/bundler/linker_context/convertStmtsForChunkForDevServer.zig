@@ -172,6 +172,5 @@ const Stmt = js_ast.Stmt;
 const LinkerContext = bun.bundle_v2.LinkerContext;
 const StmtList = LinkerContext.StmtList;
 
-const Output = bun.Output;
 const Logger = bun.logger;
 const Loc = Logger.Loc;

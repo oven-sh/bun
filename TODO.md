@@ -258,6 +258,29 @@ Error: before all: uh oh!
 after all
 ```
 
+## Hook timeouts
+
+Hooks will now time out, and can have their timeout configured in an options parameter
+
+```js
+beforeAll(async () => {
+  await Bun.sleep(1000);
+}, 500);
+test("my test", () => {
+  console.log("ran my test");
+});
+```
+
+```
+$> bun-before test hook-timeouts
+ran my test
+Ran 1 test across 1 file. [1011.00ms]
+
+$> bun-after test hook-timeouts
+✗ my test [501.15ms]
+  ^ a beforeEach/afterEach hook timed out for this test.
+```
+
 ## Only is not allowed in CI
 
 (TODO)
@@ -361,6 +384,7 @@ after all
 
 # Code quality:
 
+- [ ] setting both result and maybe_skip is not ideal, maybe there should be a function to do both at once?
 - [ ] rename sequence.index to sequence.active_index because it is misleading.
 - [ ] try using a linked list rather than arraylist for describe/test children, see how it affects performance
 - [ ] consider modifying the junit reporter to print the whole describe tree rather than exploring the execution tree (if that's what it's doing? either way it needs to include tests that are filtered out)

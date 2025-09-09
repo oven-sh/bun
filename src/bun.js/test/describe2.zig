@@ -44,29 +44,30 @@ pub const js_fns = struct {
                 defer group.end();
                 errdefer group.log("ended in error", .{});
 
-                const callback = callFrame.argumentsAsArray(1)[0];
-                if (!callback.isFunction()) {
-                    return globalThis.throw("beforeAll/beforeEach/afterEach/afterAll() expects a function as the first argument", .{});
-                }
+                var args = try ScopeFunctions.parseArguments(globalThis, callFrame, .{ .str = @tagName(tag) ++ "()" }, bun.default_allocator, .{ .callback = .require });
+                defer args.deinit(bun.default_allocator);
 
-                const has_done_parameter = try callback.getLength(globalThis) > 0;
+                const has_done_parameter = if (args.callback) |callback| try callback.getLength(globalThis) > 0 else false;
 
                 const bunTestRoot = try getActiveTestRoot(globalThis, .{ .signature = .{ .str = @tagName(tag) ++ "()" }, .allow_in_preload = true });
+
                 const bunTest = bunTestRoot.getActiveFileUnlessInPreload(globalThis.bunVM()) orelse {
                     group.log("genericHook in preload", .{});
 
-                    _ = try bunTestRoot.hook_scope.appendHook(bunTestRoot.gpa, tag, callback, .{
+                    _ = try bunTestRoot.hook_scope.appendHook(bunTestRoot.gpa, tag, args.callback, .{
                         .line_no = 0,
                         .has_done_parameter = has_done_parameter,
+                        .timeout = args.options.timeout,
                     }, .{});
                     return .js_undefined;
                 };
 
                 switch (bunTest.phase) {
                     .collection => {
-                        _ = try bunTest.collection.active_scope.appendHook(bunTest.gpa, tag, callback, .{
+                        _ = try bunTest.collection.active_scope.appendHook(bunTest.gpa, tag, args.callback, .{
                             .line_no = 0,
                             .has_done_parameter = has_done_parameter,
+                            .timeout = args.options.timeout,
                         }, .{});
 
                         return .js_undefined;
@@ -733,7 +734,7 @@ pub const DescribeScope = struct {
 pub const ExecutionEntryCfg = struct {
     line_no: u32,
     /// std.math.maxInt(u32) = no timeout
-    timeout: u32 = std.math.maxInt(u32),
+    timeout: u32,
     has_done_parameter: bool,
 };
 pub const ExecutionEntry = struct {

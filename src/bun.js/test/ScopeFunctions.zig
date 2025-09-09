@@ -66,7 +66,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
         else => .require,
     };
 
-    var args = try parseArguments(globalThis, callFrame, .{ .scope_functions = this }, bunTest, .{ .callback = callback_mode });
+    var args = try parseArguments(globalThis, callFrame, .{ .scope_functions = this }, bunTest.gpa, .{ .callback = callback_mode });
     defer args.deinit(bunTest.gpa);
 
     const line_no = switch (this.mode) {
@@ -74,12 +74,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
         else => 0,
     };
 
-    const default_timeout_ms = if (bun.jsc.Jest.Jest.runner) |runner| runner.default_timeout_ms else std.math.maxInt(u32);
-    const override_timeout_ms = if (bun.jsc.Jest.Jest.runner) |runner| runner.default_timeout_override else std.math.maxInt(u32);
-    const final_default_timeout_ms = if (override_timeout_ms != std.math.maxInt(u32)) override_timeout_ms else default_timeout_ms;
-
     const callback_length = if (args.callback) |callback| try callback.getLength(globalThis) else 0;
-    const timeout = std.math.lossyCast(u32, args.options.timeout orelse @as(f64, @floatFromInt(final_default_timeout_ms)));
 
     if (this.each != .zero) {
         if (this.each.isUndefinedOrNull() or !this.each.isArray()) {
@@ -111,13 +106,13 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
             const formatted_label: ?[]const u8 = if (args.description) |desc| try jsc.Jest.formatLabel(globalThis, desc, if (callback) |*c| c.args.get() else &.{}, test_idx, bunTest.gpa) else null;
             defer if (formatted_label) |label| bunTest.gpa.free(label);
 
-            try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, callback, formatted_label, line_no, timeout, callback_length);
+            try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, callback, formatted_label, line_no, args.options.timeout, callback_length);
         }
     } else {
         var callback: ?describe2.CallbackWithArgs = if (args.callback) |callback| .init(bunTest.gpa, callback, &.{}) else null;
         defer if (callback) |*cb| cb.deinit(bunTest.gpa);
 
-        try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, callback, args.description, line_no, timeout, callback_length);
+        try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, callback, args.description, line_no, args.options.timeout, callback_length);
     }
 
     return .js_undefined;
@@ -233,7 +228,7 @@ const ParseArgumentsResult = struct {
     description: ?[]const u8,
     callback: ?jsc.JSValue,
     options: struct {
-        timeout: ?f64 = null, // TODO: use this value
+        timeout: u32 = std.math.maxInt(u32),
         retry: ?f64 = null, // TODO: use this value
         repeats: ?f64 = null, // TODO: use this value
     },
@@ -275,7 +270,7 @@ fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, descr
     return try gpa.dupe(u8, slice.slice());
 }
 
-pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, bunTest: *BunTest, cfg: struct { callback: CallbackMode }) bun.JSError!ParseArgumentsResult {
+pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, gpa: std.mem.Allocator, cfg: struct { callback: CallbackMode }) bun.JSError!ParseArgumentsResult {
     var a1, var a2, var a3 = callframe.argumentsAsArray(3);
 
     if (a1.isFunction()) {
@@ -306,16 +301,18 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
         .callback = result_callback,
         .options = .{},
     };
-    errdefer result.deinit(bunTest.gpa);
+    errdefer result.deinit(gpa);
+
+    var timeout_option: ?f64 = null;
 
     if (options.isNumber()) {
-        result.options.timeout = options.asNumber();
+        timeout_option = options.asNumber();
     } else if (options.isObject()) {
         if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
                 return globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
             }
-            result.options.timeout = timeout.asNumber();
+            timeout_option = timeout.asNumber();
         }
         if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
@@ -335,7 +332,12 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
         return globalThis.throw("describe() expects a number, object, or undefined as the third argument", .{});
     }
 
-    result.description = if (description.isUndefinedOrNull()) null else try getDescription(bunTest.gpa, globalThis, description, signature);
+    result.description = if (description.isUndefinedOrNull()) null else try getDescription(gpa, globalThis, description, signature);
+
+    const default_timeout_ms = if (bun.jsc.Jest.Jest.runner) |runner| runner.default_timeout_ms else std.math.maxInt(u32);
+    const override_timeout_ms = if (bun.jsc.Jest.Jest.runner) |runner| runner.default_timeout_override else std.math.maxInt(u32);
+    const final_default_timeout_ms = if (override_timeout_ms != std.math.maxInt(u32)) override_timeout_ms else default_timeout_ms;
+    result.options.timeout = std.math.lossyCast(u32, timeout_option orelse @as(f64, @floatFromInt(final_default_timeout_ms)));
 
     return result;
 }

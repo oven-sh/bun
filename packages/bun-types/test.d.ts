@@ -286,6 +286,8 @@ declare module "bun:test" {
    * @param fn the function that defines the tests
    */
   export const xdescribe: Describe;
+
+  type HookOptions = number | { timeout?: number };
   /**
    * Runs a function, once, before all the tests.
    *
@@ -302,7 +304,10 @@ declare module "bun:test" {
    *
    * @param fn the function to run
    */
-  export function beforeAll(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
+  export function beforeAll(
+    fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    options?: HookOptions,
+  ): void;
   /**
    * Runs a function before each test.
    *
@@ -313,7 +318,10 @@ declare module "bun:test" {
    *
    * @param fn the function to run
    */
-  export function beforeEach(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
+  export function beforeEach(
+    fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    options?: HookOptions,
+  ): void;
   /**
    * Runs a function, once, after all the tests.
    *
@@ -330,7 +338,10 @@ declare module "bun:test" {
    *
    * @param fn the function to run
    */
-  export function afterAll(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
+  export function afterAll(
+    fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    options?: HookOptions,
+  ): void;
   /**
    * Runs a function after each test.
    *
@@ -339,7 +350,10 @@ declare module "bun:test" {
    *
    * @param fn the function to run
    */
-  export function afterEach(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
+  export function afterEach(
+    fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    options?: HookOptions,
+  ): void;
   /**
    * Sets the default timeout for all tests in the current file. If a test specifies a timeout, it will
    * override this value. The default timeout is 5000ms (5 seconds).

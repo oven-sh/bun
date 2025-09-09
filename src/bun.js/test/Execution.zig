@@ -124,6 +124,8 @@ pub const Result = enum {
     fail,
     fail_because_timeout,
     fail_because_timeout_with_done_callback,
+    fail_because_hook_timeout,
+    fail_because_hook_timeout_with_done_callback,
     fail_because_failing_test_passed,
     fail_because_todo_passed,
     fail_because_expected_has_assertions,
@@ -140,7 +142,7 @@ pub const Result = enum {
         return switch (this) {
             .pending => .pending,
             .pass => .pass,
-            .fail, .fail_because_timeout, .fail_because_timeout_with_done_callback, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => .fail,
+            .fail, .fail_because_timeout, .fail_because_timeout_with_done_callback, .fail_because_hook_timeout, .fail_because_hook_timeout_with_done_callback, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => .fail,
             .skip, .skipped_because_label => .skip,
             .todo => .todo,
         };
@@ -307,7 +309,8 @@ fn stepSequenceOne(this: *Execution, globalThis: *jsc.JSGlobalObject, sequence: 
         };
         if (!active_entry.timespec.eql(&.epoch) and active_entry.timespec.order(&now) == .lt) {
             // timed out
-            sequence.result = if (active_entry.has_done_parameter) .fail_because_timeout_with_done_callback else .fail_because_timeout;
+            sequence.result = if (active_entry == sequence.test_entry) if (active_entry.has_done_parameter) .fail_because_timeout_with_done_callback else .fail_because_timeout else if (active_entry.has_done_parameter) .fail_because_hook_timeout_with_done_callback else .fail_because_hook_timeout;
+            sequence.maybe_skip = true;
             this.advanceSequence(sequence, group);
             return null; // run again
         }
@@ -499,6 +502,8 @@ fn onSequenceCompleted(this: *Execution, sequence: *ExecutionSequence) void {
                         .skip => .skip,
                         .fail_because_timeout => .timeout,
                         .fail_because_timeout_with_done_callback => .timeout,
+                        .fail_because_hook_timeout => .timeout,
+                        .fail_because_hook_timeout_with_done_callback => .timeout,
                         .todo => .todo,
                         .skipped_because_label => .skipped_because_label,
                         .fail_because_failing_test_passed => .fail,

@@ -42,13 +42,15 @@ function enqueueChunks(
   }
 }
 
+type NonNullishReactNode = Exclude<React.ReactNode, null | undefined>;
+
 // The initial RSC payload is put into inline <script> tags that follow the pattern
 // `(self.__bun_f ??= []).push(chunk)`, which is converted into a ReadableStream
 // here for React hydration. Since inline scripts are executed immediately, and
 // this file is loaded asynchronously, the `__bun_f` becomes a clever way to
 // stream the arbitrary data while HTML is loading. In a static build, this is
 // setup as an array with one string.
-let rscPayload = createFromReadableStream(
+let rscPayload: Promise<NonNullishReactNode> | NonNullishReactNode = createFromReadableStream<NonNullishReactNode>(
   new ReadableStream({
     start(controller) {
       const bunF = (self.__bun_f ??= []);
@@ -76,12 +78,16 @@ let rscPayload = createFromReadableStream(
   }),
 );
 
+function isThenableRSCPayload(payload: typeof rscPayload): payload is Promise<NonNullishReactNode> {
+  return payload !== null && typeof payload === "object" && "then" in payload;
+}
+
 // This is a function component that uses the `use` hook, which unwraps a
 // promise.  The promise results in a component containing suspense boundaries.
 // This is the same logic that happens on the server, except there is also a
 // hook to update the promise when the client navigates. The `Root` component
 // also updates CSS files when navigating between routes.
-let setPage: React.Dispatch<React.SetStateAction<Promise<React.ReactNode>>>;
+let setPage: React.Dispatch<React.SetStateAction<Promise<NonNullishReactNode> | NonNullishReactNode>>;
 let abortOnRender: AbortController | undefined;
 const Root = () => {
   setPage = React.useState(rscPayload)[1];
@@ -101,7 +107,7 @@ const Root = () => {
   });
 
   // Unwrap the promise if it is one
-  return rscPayload.then ? React.use(rscPayload) : rscPayload;
+  return isThenableRSCPayload(rscPayload) ? React.use(rscPayload) : rscPayload;
 };
 
 hydrateRoot(document, <Root />, {
@@ -116,7 +122,7 @@ const cachedPages = new Map<number, Page>();
 // const defaultPageExpiryTime = 1000 * 60 * 5; // 5 minutes
 interface Page {
   css: string[];
-  element: Promise<React.ReactNode>;
+  element: NonNullishReactNode;
 }
 
 const firstPageId = Date.now();

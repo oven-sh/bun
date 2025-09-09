@@ -285,33 +285,37 @@ $> bun-after test hook-timeouts
 
 (TODO)
 
-# Complete before merge:
+# Add features:
 
 - [ ] add back vm.auto_killer.kill() https://github.com/oven-sh/bun/blob/973fa98796a3be79b48f0d078485b5833d956593/src/bun.js/test/jest.zig#L1690
-- [ ] add tests for re-entry in different scenerios (timeout, done callback, ...) using waitForPromise in expect()
-- [ ] validate junit output does not regress (make sure the generated xml files are identical to existing behaviour)
-- [ ] add tests for debugger.test_reporter_agent reporting, maybe using `bun-debug x bun-inspect-echo` or using the existing setup but fixing it
-- [ ] validate uses of sequence.entry_index (entry_index can be >= entries_end)
-- [ ] add retry/run-multiple-times back
-- [ ] test passing bad values to describe()/test()
+- [ ] add retry/repeat back
 - [ ] make sure ScopeFunctions class can finalize (see napi_handle_scope NapiHandleScopeImpl as an example)
   - currently, it never calls its finalize method because it no longer extends from finalize
 - [ ] make sure DoneCallback class can finalize, same as above
-- [ ] `test("rerun me", () => { console.log("run one time!"); });` `--rerun-each=3`. works 1, no message 2, fails 3
 - [ ] make BunTest into a gc object so you can't deinit it while a .then() is still active
-- [ ] add tests & pass existing tests
+- [ ] fix `test("rerun me", () => { console.log("run one time!"); });` `--rerun-each=3`. works 1, no message 2, fails 3. note that existing behaviour is similar?
+
+# Add tests:
+
+- [ ] add tests for re-entry in different scenerios (timeout, done callback, ...) using waitForPromise in expect()
+- [ ] validate junit output does not regress (make sure the generated xml files are identical to existing behaviour)
+- [ ] add tests for debugger.test_reporter_agent reporting, maybe using `bun-debug x bun-inspect-echo` or using the existing setup but fixing it
+- [ ] test passing bad values to describe()/test()
 - [ ] move the testing files into being real behaviour tests
-- [ ] search for TODOs in the diff and fix them all
+
+# Final validation:
+
+- [ ] validate uses of sequence.entry_index (entry_index can be >= entries_end)
 - [ ] replace asserts with runtime throws or debug-only asserts (waitForPromise breaks many expectations)
+- [ ] search for TODOs in the diff and fix them all
 - [ ] check the todo list in https://linear.app/oven/issue/ENG-20152/new-buntest, confirm it fixes all those issues (or doesn't make them worse). add reproductions
 - [ ] look in file:///Users/pfg/Dev/Node/bun-coverage/coverage-html/src/bun.js/test/jest.zig.gcov.html and find things to remove
 - [ ] disable the logs by default
-- [ ] remove TestId stuff
 - [ ] remove TODO.md
-- [ ] check if there is an issue closed for "when a timeout triggers on a function with a done callback because the done callback was never called, note in the error that the function must call the done callback"
-  - it is this issue: https://github.com/oven-sh/bun/issues/8288, but there is no default timeout on tests so the new error is never seen
-  - jest has a default timeout on hooks. we should also.
-  - jest also allows passing the config parameter for hooks.
+
+# Other:
+
+- [x] remove TestId stuff
 - [x] when a timeout triggers on a function with a done callback because the done callback was never called, note in the error that the function must call the done callback
 - [x] support skipping execution if a preload hook fails
 - [x] is there a breaking change for:
@@ -384,26 +388,11 @@ $> bun-after test hook-timeouts
 # Code quality:
 
 - [ ] setting both result and maybe_skip is not ideal, maybe there should be a function to do both at once?
-- [x] rename sequence.index to sequence.active_index because it is misleading.
 - [ ] try using a linked list rather than arraylist for describe/test children, see how it affects performance
 - [ ] consider modifying the junit reporter to print the whole describe tree rather than exploring the execution tree (if that's what it's doing? either way it needs to include tests that are filtered out)
-- [x] concurrent tests have an n^2 problem because each time a test completes it needs to loop over every test to advance.
-  - this shouldn't be necessary, it should be possible to step the current execution sequence and only check if we need to advance if the current sequence is done.
-  - or even keep a number of how many sequences are complete and only advance once that number is equal to the number of sequences
-  - if we have 1,000,000 concurrent tests, there is no need to be looping over all 1,000,000 every time any of them completes
-  - with the current n^2 behaviour, it is 2.13x slower to run 20,000 empty async concurrent tests than 1,000,000 empty async regular tests. that's 50x less tests taking twice as long to run.
-  - now that we have the new thing this can be fixed. fix it.
-  - this is fixed now. running 1,000,000 empty async concurrent tests is now 1.08x slower than 1,000,000 empty async regular tests
-    - empty noasync
-    - 1.17x slower: empty async
-    - 1.25x slower: empty concurrent
-    - 1.34x slower: 1.2.20 empty noasync
-    - 1.38x slower: 1.2.0 empty async
 - [ ] consider a memory pool for describescope/executionentry. test if it improves performance.
 - [ ] consider making RefDataValue methods return the reason for failure rather than ?value. that way we can improve error messages. the reason could be a string or it could be a defined error set
 - [ ] instead of 'description orelse (unnamed)', let's have description default to 'unnamed' and not free it if it === the global that defines that
-- [x] in test_command.zig, it has `const converted_status: TestRunner.Test.Status = switch (status) {`. instead, change junit writeTestCase to accept the new status type.
-- [x] BunTestFile is called buntest. what is BunTest called? rename these. maybe BunTestFile -> BunTest and BunTest -> BunTestAllFiles? or BunTestRoot?
 - [ ] need to weakly hold BunTestFile from ref()
   - two tests for comparing performance
     - 1: as-is
@@ -427,8 +416,23 @@ $> bun-after test hook-timeouts
   - an alternative option is making BunTestFile a jsobject that holds a jsarray rather than protect/unprotect ← do the c++ class
 - [ ] strong.list should only have one jsvalue (or be removed fully)
 
-- [x] Add private fields in SafeStrong.zig
 - [ ] Add a phase before ordering results that inherits properties to the parents. (eg inherit only from the child and inherit has_callback from the child. and has_callback can be on describe/test individually rather than on base). then we won't have that happening in an init() function (terrible!)
+- [x] rename sequence.index to sequence.active_index because it is misleading.
+- [x] concurrent tests have an n^2 problem because each time a test completes it needs to loop over every test to advance.
+  - this shouldn't be necessary, it should be possible to step the current execution sequence and only check if we need to advance if the current sequence is done.
+  - or even keep a number of how many sequences are complete and only advance once that number is equal to the number of sequences
+  - if we have 1,000,000 concurrent tests, there is no need to be looping over all 1,000,000 every time any of them completes
+  - with the current n^2 behaviour, it is 2.13x slower to run 20,000 empty async concurrent tests than 1,000,000 empty async regular tests. that's 50x less tests taking twice as long to run.
+  - now that we have the new thing this can be fixed. fix it.
+  - this is fixed now. running 1,000,000 empty async concurrent tests is now 1.08x slower than 1,000,000 empty async regular tests
+    - empty noasync
+    - 1.17x slower: empty async
+    - 1.25x slower: empty concurrent
+    - 1.34x slower: 1.2.20 empty noasync
+    - 1.38x slower: 1.2.0 empty async
+- [x] in test_command.zig, it has `const converted_status: TestRunner.Test.Status = switch (status) {`. instead, change junit writeTestCase to accept the new status type.
+- [x] BunTestFile is called buntest. what is BunTest called? rename these. maybe BunTestFile -> BunTest and BunTest -> BunTestAllFiles? or BunTestRoot?
+- [x] Add private fields in SafeStrong.zig
 - [x] In Collection.zig, consider inlining enqueueDescribeCallback/enqueueTestCallback/enqueueHookCallback to their callsites?
 - [x] In Execution.zig, rename order: ..., order_index to groups, group_index for consistency.
 - [x] ~~In Execution.zig, change (start, end) to (start, len)~~ did not do this, (start, end) works better for this use-case
@@ -443,7 +447,6 @@ $> bun-after test hook-timeouts
 - [ ] expect_call_count/expect_assertions is confusing. rename to `expect_calls`, `assert_expect_calls`. or something.
 - [ ] Should make line_no be an enum with a none option and a function to get if line nombers are enabled
 - [ ] limit the number of concurrent tests that run at once
-
 - [ ] looks like we don't need to use file_id anymore (remove `bun.jsc.Jest.Jest.runner.?.getOrPutFile(file_path).file_id;`, store the file path directly)
 - [ ] CallbackWithArguments is copied like 3 times which copies the arguments list 3 times
 - [x] toMatchInlineSnapshot should not call addCount() because it both adds count and determines the name and value_ptr for a non-inline snapshot. we only need to add the count.

@@ -1029,7 +1029,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toBeOneOf(expected: T): void;
+    toBeOneOf(expected: Iterable<T>): void;
     toBeOneOf<X = T>(expected: NoInfer<Iterable<X>>): void;
 
     /**

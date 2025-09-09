@@ -1185,8 +1185,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 return null;
             }
 
-            ws.send_buffer.ensureTotalCapacity(2048) catch bun.outOfMemory();
-            ws.receive_buffer.ensureTotalCapacity(2048) catch bun.outOfMemory();
+            bun.handleOom(ws.send_buffer.ensureTotalCapacity(2048));
+            bun.handleOom(ws.receive_buffer.ensureTotalCapacity(2048));
             ws.poll_ref.ref(globalThis.bunVM());
 
             const buffered_slice: []u8 = buffered_data[0..buffered_data_len];
@@ -1554,7 +1554,7 @@ const Copy = union(enum) {
     }
 };
 
-const log = Output.scoped(.WebSocketClient, false);
+const log = Output.scoped(.WebSocketClient, .visible);
 
 const string = []const u8;
 

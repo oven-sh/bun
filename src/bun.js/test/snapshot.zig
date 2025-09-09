@@ -201,7 +201,7 @@ pub const Snapshots = struct {
         try gpres.value_ptr.append(value);
     }
 
-    const inline_snapshot_dbg = bun.Output.scoped(.inline_snapshot, false);
+    const inline_snapshot_dbg = bun.Output.scoped(.inline_snapshot, .visible);
     pub fn writeInlineSnapshots(this: *Snapshots) !bool {
         var arena_backing = bun.ArenaAllocator.init(this.allocator);
         defer arena_backing.deinit();

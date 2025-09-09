@@ -14,7 +14,7 @@ pub fn toJS(
 
 const bun = @import("bun");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
-const Data = @import("../Data.zig").Data;
+const Data = @import("../../shared/Data.zig").Data;
 
 const int_types = @import("./int_types.zig");
 const short = int_types.short;

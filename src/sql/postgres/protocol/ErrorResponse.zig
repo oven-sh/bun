@@ -33,7 +33,6 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSValue {
     var b = bun.StringBuilder{};
     defer b.deinit(bun.default_allocator);
 
-    // Pre-calculate capacity to avoid reallocations
     for (this.messages.items) |*msg| {
         b.cap += switch (msg.*) {
             inline else => |m| m.utf8ByteLength(),
@@ -41,13 +40,14 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSValue {
     }
     b.allocate(bun.default_allocator) catch {};
 
-    // Build a more structured error message
     var severity: String = String.dead;
     var code: String = String.dead;
     var message: String = String.dead;
     var detail: String = String.dead;
     var hint: String = String.dead;
     var position: String = String.dead;
+    var internalPosition: String = String.dead;
+    var internal: String = String.dead;
     var where: String = String.dead;
     var schema: String = String.dead;
     var table: String = String.dead;
@@ -66,6 +66,8 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSValue {
             .detail => |str| detail = str,
             .hint => |str| hint = str,
             .position => |str| position = str,
+            .internal_position => |str| internalPosition = str,
+            .internal => |str| internal = str,
             .where => |str| where = str,
             .schema => |str| schema = str,
             .table => |str| table = str,
@@ -106,44 +108,49 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSValue {
         }
     }
 
-    const possible_fields = .{
-        .{ "detail", detail, void },
-        .{ "hint", hint, void },
-        .{ "column", column, void },
-        .{ "constraint", constraint, void },
-        .{ "datatype", datatype, void },
-        // in the past this was set to i32 but postgres returns a strings lets keep it compatible
-        .{ "errno", code, void },
-        .{ "position", position, i32 },
-        .{ "schema", schema, void },
-        .{ "table", table, void },
-        .{ "where", where, void },
-    };
-    const error_code: jsc.Error =
-        // https://www.postgresql.org/docs/8.1/errcodes-appendix.html
-        if (code.eqlComptime("42601"))
-            .POSTGRES_SYNTAX_ERROR
-        else
-            .POSTGRES_SERVER_ERROR;
-    const err = error_code.fmt(globalObject, "{s}", .{b.allocatedSlice()[0..b.len]});
+    const createPostgresError = @import("../AnyPostgresError.zig").createPostgresError;
 
-    inline for (possible_fields) |field| {
-        if (!field.@"1".isEmpty()) {
-            const value = brk: {
-                if (field.@"2" == i32) {
-                    if (field.@"1".toInt32()) |val| {
-                        break :brk jsc.JSValue.jsNumberFromInt32(val);
-                    }
-                }
+    const errno = if (!code.isEmpty()) code.byteSlice() else null;
+    const error_code = if (code.eqlComptime("42601")) // syntax error - https://www.postgresql.org/docs/8.1/errcodes-appendix.html
+        "ERR_POSTGRES_SYNTAX_ERROR"
+    else
+        "ERR_POSTGRES_SERVER_ERROR";
 
-                break :brk field.@"1".toJS(globalObject);
-            };
+    const detail_slice = if (detail.isEmpty()) null else detail.byteSlice();
+    const hint_slice = if (hint.isEmpty()) null else hint.byteSlice();
+    const severity_slice = if (severity.isEmpty()) null else severity.byteSlice();
+    const position_slice = if (position.isEmpty()) null else position.byteSlice();
+    const internalPosition_slice = if (internalPosition.isEmpty()) null else internalPosition.byteSlice();
+    const internalQuery_slice = if (internal.isEmpty()) null else internal.byteSlice();
+    const where_slice = if (where.isEmpty()) null else where.byteSlice();
+    const schema_slice = if (schema.isEmpty()) null else schema.byteSlice();
+    const table_slice = if (table.isEmpty()) null else table.byteSlice();
+    const column_slice = if (column.isEmpty()) null else column.byteSlice();
+    const dataType_slice = if (datatype.isEmpty()) null else datatype.byteSlice();
+    const constraint_slice = if (constraint.isEmpty()) null else constraint.byteSlice();
+    const file_slice = if (file.isEmpty()) null else file.byteSlice();
+    const line_slice = if (line.isEmpty()) null else line.byteSlice();
+    const routine_slice = if (routine.isEmpty()) null else routine.byteSlice();
 
-            err.put(globalObject, jsc.ZigString.static(field.@"0"), value);
-        }
-    }
-
-    return err;
+    return createPostgresError(globalObject, b.allocatedSlice()[0..b.len], .{
+        .code = error_code,
+        .errno = errno,
+        .detail = detail_slice,
+        .hint = hint_slice,
+        .severity = severity_slice,
+        .position = position_slice,
+        .internalPosition = internalPosition_slice,
+        .internalQuery = internalQuery_slice,
+        .where = where_slice,
+        .schema = schema_slice,
+        .table = table_slice,
+        .column = column_slice,
+        .dataType = dataType_slice,
+        .constraint = constraint_slice,
+        .file = file_slice,
+        .line = line_slice,
+        .routine = routine_slice,
+    }) catch |e| globalObject.takeError(e);
 }
 
 const std = @import("std");

@@ -1205,6 +1205,7 @@ if(NOT BUN_CPP_ONLY)
   endif()
 
   if(bunStrip)
+    # First, strip bun-profile.exe to create bun.exe
     register_command(
       TARGET
         ${bun}
@@ -1225,6 +1226,48 @@ if(NOT BUN_CPP_ONLY)
       OUTPUTS
         ${BUILD_PATH}/${bunStripExe}
     )
+    
+    # Then sign both executables on Windows
+    if(WIN32 AND ENABLE_WINDOWS_CODESIGNING)
+      set(SIGN_SCRIPT "${CMAKE_SOURCE_DIR}/.buildkite/scripts/sign-windows.ps1")
+      
+      # Verify signing script exists
+      if(NOT EXISTS "${SIGN_SCRIPT}")
+        message(FATAL_ERROR "Windows signing script not found: ${SIGN_SCRIPT}")
+      endif()
+      
+      # Use PowerShell for Windows code signing (native Windows, no path issues)
+      find_program(POWERSHELL_EXECUTABLE 
+        NAMES pwsh.exe powershell.exe
+        PATHS 
+          "C:/Program Files/PowerShell/7"
+          "C:/Program Files (x86)/PowerShell/7"
+          "C:/Windows/System32/WindowsPowerShell/v1.0"
+        DOC "Path to PowerShell executable"
+      )
+      
+      if(NOT POWERSHELL_EXECUTABLE)
+        set(POWERSHELL_EXECUTABLE "powershell.exe")
+      endif()
+      
+      message(STATUS "Using PowerShell executable: ${POWERSHELL_EXECUTABLE}")
+      
+      # Sign both bun-profile.exe and bun.exe after stripping
+      register_command(
+        TARGET
+          ${bun}
+        TARGET_PHASE
+          POST_BUILD
+        COMMENT
+          "Code signing bun-profile.exe and bun.exe with DigiCert KeyLocker"
+        COMMAND
+          "${POWERSHELL_EXECUTABLE}" "-NoProfile" "-ExecutionPolicy" "Bypass" "-File" "${SIGN_SCRIPT}" "-BunProfileExe" "${BUILD_PATH}/${bunExe}" "-BunExe" "${BUILD_PATH}/${bunStripExe}"
+        CWD
+          ${CMAKE_SOURCE_DIR}
+        SOURCES
+          ${BUILD_PATH}/${bunStripExe}
+      )
+    endif()
   endif()
 
   # somehow on some Linux systems we need to disable ASLR for ASAN-instrumented binaries to run

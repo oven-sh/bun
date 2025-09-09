@@ -575,6 +575,50 @@ declare module "bun" {
     getex(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
+     * Get the value of a key and set its expiration in seconds
+     * @param key The key to get
+     * @param ex Set the specified expire time, in seconds
+     * @param seconds The number of seconds until expiration
+     * @returns Promise that resolves with the value of the key, or null if the key doesn't exist
+     */
+    getex(key: RedisClient.KeyLike, ex: "EX", seconds: number): Promise<string | null>;
+
+    /**
+     * Get the value of a key and set its expiration in milliseconds
+     * @param key The key to get
+     * @param px Set the specified expire time, in milliseconds
+     * @param milliseconds The number of milliseconds until expiration
+     * @returns Promise that resolves with the value of the key, or null if the key doesn't exist
+     */
+    getex(key: RedisClient.KeyLike, px: "PX", milliseconds: number): Promise<string | null>;
+
+    /**
+     * Get the value of a key and set its expiration at a specific Unix timestamp in seconds
+     * @param key The key to get
+     * @param exat Set the specified Unix time at which the key will expire, in seconds
+     * @param timestampSeconds The Unix timestamp in seconds
+     * @returns Promise that resolves with the value of the key, or null if the key doesn't exist
+     */
+    getex(key: RedisClient.KeyLike, exat: "EXAT", timestampSeconds: number): Promise<string | null>;
+
+    /**
+     * Get the value of a key and set its expiration at a specific Unix timestamp in milliseconds
+     * @param key The key to get
+     * @param pxat Set the specified Unix time at which the key will expire, in milliseconds
+     * @param timestampMilliseconds The Unix timestamp in milliseconds
+     * @returns Promise that resolves with the value of the key, or null if the key doesn't exist
+     */
+    getex(key: RedisClient.KeyLike, pxat: "PXAT", timestampMilliseconds: number): Promise<string | null>;
+
+    /**
+     * Get the value of a key and remove its expiration
+     * @param key The key to get
+     * @param persist Remove the expiration from the key
+     * @returns Promise that resolves with the value of the key, or null if the key doesn't exist
+     */
+    getex(key: RedisClient.KeyLike, persist: "PERSIST"): Promise<string | null>;
+
+    /**
      *  Ping the server
      *  @returns Promise that resolves with "PONG" if the server is reachable, or throws an error if the server is not reachable
      */

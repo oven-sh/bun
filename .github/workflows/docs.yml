@@ -6,6 +6,8 @@ on:
       - "docs/**"
       - "packages/bun-types/**.d.ts"
       - "CONTRIBUTING.md"
+      - "src/cli/install.sh"
+      - "src/cli/install.ps1"
     branches:
       - main
 

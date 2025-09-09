@@ -11,7 +11,7 @@ pub const ThreadPool = struct {
     workers_assignments_lock: bun.Mutex = .{},
     v2: *BundleV2,
 
-    const debug = Output.scoped(.ThreadPool, false);
+    const debug = Output.scoped(.ThreadPool, .visible);
 
     const IOThreadPool = struct {
         var thread_pool: ThreadPoolLib = undefined;
@@ -82,7 +82,7 @@ pub const ThreadPool = struct {
     pub fn init(v2: *BundleV2, worker_pool: ?*ThreadPoolLib) !ThreadPool {
         const pool = worker_pool orelse blk: {
             const cpu_count = bun.getThreadCount();
-            const pool = try v2.graph.allocator.create(ThreadPoolLib);
+            const pool = try v2.allocator().create(ThreadPoolLib);
             pool.* = .init(.{ .max_threads = cpu_count });
             debug("{d} workers", .{cpu_count});
             break :blk pool;
@@ -103,7 +103,7 @@ pub const ThreadPool = struct {
     pub fn deinit(this: *ThreadPool) void {
         if (this.worker_pool_is_owned) {
             this.worker_pool.deinit();
-            this.v2.graph.allocator.destroy(this.worker_pool);
+            this.v2.allocator().destroy(this.worker_pool);
         }
         if (usesIOPool()) {
             IOThreadPool.release();
@@ -193,6 +193,7 @@ pub const ThreadPool = struct {
 
         worker.* = .{
             .ctx = this.v2,
+            .heap = undefined,
             .allocator = undefined,
             .thread = ThreadPoolLib.Thread.current,
         };
@@ -202,7 +203,7 @@ pub const ThreadPool = struct {
     }
 
     pub const Worker = struct {
-        heap: ThreadLocalArena = ThreadLocalArena{},
+        heap: ThreadLocalArena,
 
         /// Thread-local memory allocator
         /// All allocations are freed in `deinit` at the very end of bundling.
@@ -284,7 +285,7 @@ pub const ThreadPool = struct {
 
             this.has_created = true;
             Output.Source.configureThread();
-            this.heap = ThreadLocalArena.init() catch unreachable;
+            this.heap = ThreadLocalArena.init();
             this.allocator = this.heap.allocator();
 
             const allocator = this.allocator;

@@ -66,7 +66,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         tombstones: bun.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
 
         pub fn init(ctx: *Ctx, fs: *bun.fs.FileSystem, verbose: bool, clear_screen_flag: bool) *Watcher {
-            const reloader = bun.default_allocator.create(Reloader) catch bun.outOfMemory();
+            const reloader = bun.handleOom(bun.default_allocator.create(Reloader));
             reloader.* = .{
                 .ctx = ctx,
                 .verbose = Environment.enable_logs or verbose,
@@ -86,7 +86,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
         fn debug(comptime fmt: string, args: anytype) void {
             if (Environment.enable_logs) {
-                Output.scoped(.hot_reloader, false)(fmt, args);
+                Output.scoped(.hot_reloader, .visible)(fmt, args);
             } else {
                 Output.prettyErrorln("<cyan>watcher<r><d>:<r> " ++ fmt, args);
             }
@@ -193,7 +193,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     return;
             }
 
-            var reloader = bun.default_allocator.create(Reloader) catch bun.outOfMemory();
+            var reloader = bun.handleOom(bun.default_allocator.create(Reloader));
             reloader.* = .{
                 .ctx = this,
                 .verbose = Environment.enable_logs or if (@hasField(Ctx, "log")) this.log.level.atLeast(.info) else false,

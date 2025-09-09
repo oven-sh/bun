@@ -319,7 +319,7 @@ pub fn loadFromDir(
                     Output.panic("failed to convert binary lockfile to text lockfile: {s}", .{@errorName(err)});
                 };
 
-                buffered_writer.flush() catch bun.outOfMemory();
+                bun.handleOom(buffered_writer.flush());
 
                 const text_lockfile_bytes = writer_buf.list.items;
 
@@ -617,7 +617,7 @@ pub fn cleanWithLogger(
     // preinstall state before linking stage.
     manager.ensurePreinstallStateListCapacity(old.packages.len);
     var preinstall_state = manager.preinstall_state;
-    var old_preinstall_state = preinstall_state.clone(old.allocator) catch bun.outOfMemory();
+    var old_preinstall_state = bun.handleOom(preinstall_state.clone(old.allocator));
     defer old_preinstall_state.deinit(old.allocator);
     @memset(preinstall_state.items, .unknown);
 

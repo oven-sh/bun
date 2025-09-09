@@ -1836,7 +1836,6 @@ fn OutOfRangeFormatter(comptime T: type) type {
     } else if (T == bun.String) {
         return BunStringOutOfRangeFormatter;
     }
-
     return IntOutOfRangeFormatter;
 }
 

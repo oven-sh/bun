@@ -30,10 +30,6 @@ const Self = @This();
 
 internal_state: if (enabled) State else void = if (enabled) .{},
 
-/// A value that does not alias any other thread ID.
-/// See `Thread/Mutex/Recursive.zig` in the Zig standard library.
-const invalid_thread_id = std.math.maxInt(Thread.Id);
-
 const OptionalThreadId = struct {
     inner: Thread.Id,
 
@@ -62,6 +58,10 @@ const State = struct {
     /// The ID of the thread that first acquired the lock (the "owner thread").
     thread_id: std.atomic.Value(Thread.Id) = .init(invalid_thread_id),
 
+    /// Stack trace of the first time the owner thread acquired the lock (that is, when it became
+    /// the owner).
+    owner_trace: if (traces_enabled) StoredTrace else void = if (traces_enabled) StoredTrace.empty,
+
     /// Number of nested calls to `lockShared`/`lockExclusive` performed on the owner thread.
     /// Only accessed on the owner thread.
     owned_count: u32 = 0,
@@ -74,23 +74,43 @@ const State = struct {
     /// (read/write) access.
     const exclusive = std.math.maxInt(u32);
 
-    /// Acquire the lock for shared (read-only) access.
-    fn lockShared(self: *State) void {
+    fn getOrBecomeOwner(self: *State) Thread.Id {
         const current_id = Thread.getCurrentId();
         // .monotonic is okay because we don't need to synchronize-with other threads; we just need
         // to make sure that only one thread succeeds in setting the value.
-        const id = self.thread_id.cmpxchgStrong(
+        return self.thread_id.cmpxchgStrong(
             invalid_thread_id,
             current_id,
             .monotonic,
             .monotonic,
-        ) orelse current_id;
-        if (id == current_id) {
+        ) orelse {
+            if (comptime traces_enabled) {
+                self.owner_trace = StoredTrace.capture(@returnAddress());
+            }
+            return current_id;
+        };
+    }
+
+    fn showTrace(self: *State) void {
+        if (comptime !traces_enabled) return;
+        bun.Output.err("race condition", "`CriticalSection` first entered here:", .{});
+        bun.crash_handler.dumpStackTrace(
+            self.owner_trace.trace(),
+            .{ .frame_count = 10, .stop_at_jsc_llint = true },
+        );
+    }
+
+    /// Acquire the lock for shared (read-only) access.
+    fn lockShared(self: *State) void {
+        const current_id = Thread.getCurrentId();
+        const owner_id = self.getOrBecomeOwner();
+        if (owner_id == current_id) {
             self.owned_count += 1;
         } else if (self.count.fetchAdd(1, .monotonic) == exclusive) {
+            self.showTrace();
             std.debug.panic(
                 "race condition: thread {} tried to read data being modified by {}",
-                .{ current_id, OptionalThreadId.init(id) },
+                .{ current_id, OptionalThreadId.init(owner_id) },
             );
         }
     }
@@ -98,28 +118,25 @@ const State = struct {
     /// Acquire the lock for exclusive (read/write) access.
     fn lockExclusive(self: *State) void {
         const current_id = Thread.getCurrentId();
-        // .monotonic is okay because we don't need to synchronize-with other threads; we just need
-        // to make sure that only one thread succeeds in setting the value.
-        const id = self.thread_id.cmpxchgStrong(
-            invalid_thread_id,
-            current_id,
-            .monotonic,
-            .monotonic,
-        ) orelse current_id;
-        if (id == current_id) {
+        const owner_id = self.getOrBecomeOwner();
+        if (owner_id == current_id) {
             // .monotonic is okay because concurrent access is an error.
             switch (self.count.swap(exclusive, .monotonic)) {
                 0, exclusive => {},
-                else => std.debug.panic(
-                    "race condition: thread {} tried to modify data being read by {}",
-                    .{ current_id, OptionalThreadId.init(id) },
-                ),
+                else => {
+                    self.showTrace();
+                    std.debug.panic(
+                        "race condition: thread {} tried to modify data being read by {}",
+                        .{ current_id, OptionalThreadId.init(owner_id) },
+                    );
+                },
             }
             self.owned_count += 1;
         } else {
+            self.showTrace();
             std.debug.panic(
                 "race condition: thread {} tried to modify data being accessed by {}",
-                .{ current_id, OptionalThreadId.init(id) },
+                .{ current_id, OptionalThreadId.init(owner_id) },
             );
         }
     }
@@ -129,13 +146,13 @@ const State = struct {
         const current_id = Thread.getCurrentId();
         // .monotonic is okay because this value shouldn't change until all locks are released, and
         // we currently hold a lock.
-        const id = self.thread_id.load(.monotonic);
+        const owner_id = self.thread_id.load(.monotonic);
 
-        // It's possible for this thread to be the owner (`id == current_id`) and for `owned_count`
-        // to be 0, if this thread originally wasn't the owner, but became the owner when the
-        // original owner released all of its locks. In this case, some of the lock count for this
-        // thread is still in `self.count` rather than `self.owned_count`.
-        if (id == current_id and self.owned_count > 0) {
+        // It's possible for this thread to be the owner (`owner_id == current_id`) and for
+        // `owned_count` to be 0, if this thread originally wasn't the owner, but became the owner
+        // when the original owner released all of its locks. In this case, some of the lock count
+        // for this thread is still in `self.count` rather than `self.owned_count`.
+        if (owner_id == current_id and self.owned_count > 0) {
             self.owned_count -= 1;
             if (self.owned_count == 0) {
                 // .monotonic is okay because:
@@ -181,7 +198,11 @@ pub fn end(self: *Self) void {
 }
 
 const bun = @import("bun");
+const invalid_thread_id = @import("./thread_id.zig").invalid;
+const StoredTrace = bun.crash_handler.StoredTrace;
+
 const enabled = bun.Environment.ci_assert;
+const traces_enabled = bun.Environment.isDebug;
 
 const std = @import("std");
 const Thread = std.Thread;

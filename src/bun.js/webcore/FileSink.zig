@@ -27,7 +27,7 @@ run_pending_later: FlushPendingTask = .{},
 /// Currently, only used when `stdin` in `Bun.spawn` is a ReadableStream.
 readable_stream: jsc.WebCore.ReadableStream.Strong = .{},
 
-const log = Output.scoped(.FileSink, false);
+const log = Output.scoped(.FileSink, .visible);
 
 pub const RefCount = bun.ptr.RefCount(FileSink, "ref_count", deinit, .{});
 pub const ref = RefCount.ref;

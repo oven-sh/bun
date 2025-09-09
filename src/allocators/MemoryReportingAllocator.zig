@@ -1,6 +1,6 @@
 const MemoryReportingAllocator = @This();
 
-const log = bun.Output.scoped(.MEM, false);
+const log = bun.Output.scoped(.MEM, .visible);
 
 child_allocator: std.mem.Allocator,
 memory_cost: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),

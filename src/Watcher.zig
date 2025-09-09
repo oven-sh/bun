@@ -2,7 +2,7 @@
 
 const Watcher = @This();
 
-const DebugLogScope = bun.Output.Scoped(.watcher, false);
+const DebugLogScope = bun.Output.Scoped(.watcher, .visible);
 const log = DebugLogScope.log;
 
 // This will always be [max_count]WatchEvent,
@@ -32,7 +32,7 @@ ctx: *anyopaque,
 onFileUpdate: *const fn (this: *anyopaque, events: []WatchEvent, changed_files: []?[:0]u8, watchlist: WatchList) void,
 onError: *const fn (this: *anyopaque, err: bun.sys.Error) void,
 
-thread_lock: bun.DebugThreadLock = bun.DebugThreadLock.unlocked,
+thread_lock: bun.safety.ThreadLock = .initUnlocked(),
 
 pub const max_count = 128;
 pub const requires_file_descriptors = switch (Environment.os) {
@@ -322,7 +322,7 @@ fn appendFileAssumeCapacity(
     const watchlist_id = this.watchlist.len;
 
     const file_path_: string = if (comptime clone_file_path)
-        bun.asByteSlice(this.allocator.dupeZ(u8, file_path) catch bun.outOfMemory())
+        bun.asByteSlice(bun.handleOom(this.allocator.dupeZ(u8, file_path)))
     else
         file_path;
 
@@ -409,7 +409,7 @@ fn appendDirectoryAssumeCapacity(
     };
 
     const file_path_: string = if (comptime clone_file_path)
-        bun.asByteSlice(this.allocator.dupeZ(u8, file_path) catch bun.outOfMemory())
+        bun.asByteSlice(bun.handleOom(this.allocator.dupeZ(u8, file_path)))
     else
         file_path;
 
@@ -529,7 +529,7 @@ pub fn appendFileMaybeLock(
             }
         }
     }
-    this.watchlist.ensureUnusedCapacity(this.allocator, 1 + @as(usize, @intCast(@intFromBool(parent_watch_item == null)))) catch bun.outOfMemory();
+    bun.handleOom(this.watchlist.ensureUnusedCapacity(this.allocator, 1 + @as(usize, @intCast(@intFromBool(parent_watch_item == null)))));
 
     if (autowatch_parent_dir) {
         parent_watch_item = parent_watch_item orelse switch (this.appendDirectoryAssumeCapacity(dir_fd, parent_dir, parent_dir_hash, clone_file_path)) {
@@ -595,7 +595,7 @@ pub fn addDirectory(
         return .{ .result = @truncate(idx) };
     }
 
-    this.watchlist.ensureUnusedCapacity(this.allocator, 1) catch bun.outOfMemory();
+    bun.handleOom(this.watchlist.ensureUnusedCapacity(this.allocator, 1));
 
     return this.appendDirectoryAssumeCapacity(fd, file_path, hash, clone_file_path);
 }

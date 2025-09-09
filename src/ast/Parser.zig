@@ -446,7 +446,7 @@ pub const Parser = struct {
         if (p.options.bundle) {
             // The bundler requires a part for generated module wrappers. This
             // part must be at the start as it is referred to by index.
-            before.append(js_ast.Part{}) catch bun.outOfMemory();
+            bun.handleOom(before.append(js_ast.Part{}));
         }
 
         // --inspect-brk
@@ -460,7 +460,7 @@ pub const Parser = struct {
                 js_ast.Part{
                     .stmts = debugger_stmts,
                 },
-            ) catch bun.outOfMemory();
+            ) catch |err| bun.handleOom(err);
         }
 
         // When "using" declarations appear at the top level, we change all TDZ
@@ -713,7 +713,7 @@ pub const Parser = struct {
                     var import_part_stmts = remaining_stmts[0..1];
                     remaining_stmts = remaining_stmts[1..];
 
-                    p.module_scope.generated.push(p.allocator, deferred_import.namespace.ref.?) catch bun.outOfMemory();
+                    bun.handleOom(p.module_scope.generated.push(p.allocator, deferred_import.namespace.ref.?));
 
                     import_part_stmts[0] = Stmt.alloc(
                         S.Import,

@@ -271,19 +271,25 @@ describe("AbortSignal", () => {
       expect(target.reason!.name).toBe("AbortError");
     });
 
-    expect(async () => {
-      async function manualAbort() {
-        await sleep(10);
-        controller.abort();
-      }
+    async function manualAbort() {
+      await sleep(10);
+      controller.abort();
+    }
+
+    try {
       await Promise.all([fetch(server.url, { signal: signal }).then(res => res.text()), manualAbort()]);
-    }).toThrow(new DOMException("The operation was aborted."));
+      expect.unreachable();
+    } catch (e) {
+      expect(e?.message).toEqual("The operation was aborted.");
+      expect(e?.name).toEqual("AbortError");
+      expect(e?.constructor.name).toEqual("DOMException");
+    }
   });
 
   it("AbortErrorWhileUploading", async () => {
     const controller = new AbortController();
 
-    expect(async () => {
+    try {
       await fetch(`http://localhost:${server.port}`, {
         method: "POST",
         body: new ReadableStream({
@@ -295,7 +301,12 @@ describe("AbortSignal", () => {
         }),
         signal: controller.signal,
       });
-    }).toThrow(new DOMException("The operation was aborted."));
+      expect.unreachable();
+    } catch (ex: any) {
+      expect(ex?.message).toEqual("The operation was aborted.");
+      expect(ex?.name).toEqual("AbortError");
+      expect(ex?.constructor.name).toEqual("DOMException");
+    }
   });
 
   it("TimeoutError", async () => {
@@ -313,6 +324,8 @@ describe("AbortSignal", () => {
       expect.unreachable();
     } catch (ex: any) {
       expect(ex.name).toBe("TimeoutError");
+      expect(ex.message).toBe("The operation timed out.");
+      expect(ex.constructor.name).toBe("DOMException");
     }
   });
 

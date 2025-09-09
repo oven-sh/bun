@@ -65,10 +65,10 @@ pub fn downloadSlice(
             if (size_ > 0) {
                 end -= 1;
             }
-            break :brk std.fmt.allocPrint(bun.default_allocator, "bytes={}-{}", .{ offset, end }) catch bun.outOfMemory();
+            break :brk bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "bytes={}-{}", .{ offset, end }));
         }
         if (offset == 0) break :brk null;
-        break :brk std.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}) catch bun.outOfMemory();
+        break :brk bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}));
     };
 
     S3SimpleRequest.executeSimpleS3Request(this, .{
@@ -104,61 +104,65 @@ pub fn listObjects(
 ) void {
     var search_params: bun.ByteList = .{};
 
-    search_params.append(bun.default_allocator, "?") catch bun.outOfMemory();
+    bun.handleOom(search_params.append(bun.default_allocator, "?"));
 
     if (listOptions.continuation_token) |continuation_token| {
         var buff: [1024]u8 = undefined;
-        const encoded = S3Credentials.encodeURIComponent(continuation_token, &buff, true) catch bun.outOfMemory();
-        search_params.appendFmt(bun.default_allocator, "continuation-token={s}", .{encoded}) catch bun.outOfMemory();
+        const encoded = S3Credentials.encodeURIComponent(continuation_token, &buff, true) catch |err|
+            std.debug.panic("unexpected error from S3Credentials.encodeURIComponent: {}", .{err});
+        bun.handleOom(search_params.appendFmt(bun.default_allocator, "continuation-token={s}", .{encoded}));
     }
 
     if (listOptions.delimiter) |delimiter| {
         var buff: [1024]u8 = undefined;
-        const encoded = S3Credentials.encodeURIComponent(delimiter, &buff, true) catch bun.outOfMemory();
+        const encoded = S3Credentials.encodeURIComponent(delimiter, &buff, true) catch |err|
+            std.debug.panic("unexpected error from S3Credentials.encodeURIComponent: {}", .{err});
 
         if (listOptions.continuation_token != null) {
-            search_params.appendFmt(bun.default_allocator, "&delimiter={s}", .{encoded}) catch bun.outOfMemory();
+            bun.handleOom(search_params.appendFmt(bun.default_allocator, "&delimiter={s}", .{encoded}));
         } else {
-            search_params.appendFmt(bun.default_allocator, "delimiter={s}", .{encoded}) catch bun.outOfMemory();
+            bun.handleOom(search_params.appendFmt(bun.default_allocator, "delimiter={s}", .{encoded}));
         }
     }
 
     if (listOptions.encoding_type != null) {
         if (listOptions.continuation_token != null or listOptions.delimiter != null) {
-            search_params.append(bun.default_allocator, "&encoding-type=url") catch bun.outOfMemory();
+            bun.handleOom(search_params.append(bun.default_allocator, "&encoding-type=url"));
         } else {
-            search_params.append(bun.default_allocator, "encoding-type=url") catch bun.outOfMemory();
+            bun.handleOom(search_params.append(bun.default_allocator, "encoding-type=url"));
         }
     }
 
     if (listOptions.fetch_owner) |fetch_owner| {
         if (listOptions.continuation_token != null or listOptions.delimiter != null or listOptions.encoding_type != null) {
-            search_params.appendFmt(bun.default_allocator, "&fetch-owner={}", .{fetch_owner}) catch bun.outOfMemory();
+            bun.handleOom(search_params.appendFmt(bun.default_allocator, "&fetch-owner={}", .{fetch_owner}));
         } else {
-            search_params.appendFmt(bun.default_allocator, "fetch-owner={}", .{fetch_owner}) catch bun.outOfMemory();
+            bun.handleOom(search_params.appendFmt(bun.default_allocator, "fetch-owner={}", .{fetch_owner}));
         }
     }
 
     if (listOptions.continuation_token != null or listOptions.delimiter != null or listOptions.encoding_type != null or listOptions.fetch_owner != null) {
-        search_params.append(bun.default_allocator, "&list-type=2") catch bun.outOfMemory();
+        bun.handleOom(search_params.append(bun.default_allocator, "&list-type=2"));
     } else {
-        search_params.append(bun.default_allocator, "list-type=2") catch bun.outOfMemory();
+        bun.handleOom(search_params.append(bun.default_allocator, "list-type=2"));
     }
 
     if (listOptions.max_keys) |max_keys| {
-        search_params.appendFmt(bun.default_allocator, "&max-keys={}", .{max_keys}) catch bun.outOfMemory();
+        bun.handleOom(search_params.appendFmt(bun.default_allocator, "&max-keys={}", .{max_keys}));
     }
 
     if (listOptions.prefix) |prefix| {
         var buff: [1024]u8 = undefined;
-        const encoded = S3Credentials.encodeURIComponent(prefix, &buff, true) catch bun.outOfMemory();
-        search_params.appendFmt(bun.default_allocator, "&prefix={s}", .{encoded}) catch bun.outOfMemory();
+        const encoded = S3Credentials.encodeURIComponent(prefix, &buff, true) catch |err|
+            std.debug.panic("unexpected error from S3Credentials.encodeURIComponent: {}", .{err});
+        bun.handleOom(search_params.appendFmt(bun.default_allocator, "&prefix={s}", .{encoded}));
     }
 
     if (listOptions.start_after) |start_after| {
         var buff: [1024]u8 = undefined;
-        const encoded = S3Credentials.encodeURIComponent(start_after, &buff, true) catch bun.outOfMemory();
-        search_params.appendFmt(bun.default_allocator, "&start-after={s}", .{encoded}) catch bun.outOfMemory();
+        const encoded = S3Credentials.encodeURIComponent(start_after, &buff, true) catch |err|
+            std.debug.panic("unexpected error from S3Credentials.encodeURIComponent: {}", .{err});
+        bun.handleOom(search_params.appendFmt(bun.default_allocator, "&start-after={s}", .{encoded}));
     }
 
     const result = this.signRequest(.{
@@ -176,7 +180,7 @@ pub fn listObjects(
 
     search_params.deinitWithAllocator(bun.default_allocator);
 
-    const headers = bun.http.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
+    const headers = bun.handleOom(bun.http.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator));
 
     const task = bun.new(S3HttpSimpleTask, .{
         .http = undefined,
@@ -288,9 +292,9 @@ pub fn writableStream(
     const task = bun.new(MultiPartUpload, .{
         .ref_count = .initExactRefs(2), // +1 for the stream
         .credentials = this,
-        .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
-        .proxy = if (proxy_url.len > 0) bun.default_allocator.dupe(u8, proxy_url) catch bun.outOfMemory() else "",
-        .content_type = if (content_type) |ct| bun.default_allocator.dupe(u8, ct) catch bun.outOfMemory() else null,
+        .path = bun.handleOom(bun.default_allocator.dupe(u8, path)),
+        .proxy = if (proxy_url.len > 0) bun.handleOom(bun.default_allocator.dupe(u8, proxy_url)) else "",
+        .content_type = if (content_type) |ct| bun.handleOom(bun.default_allocator.dupe(u8, ct)) else null,
         .storage_class = storage_class,
 
         .callback = @ptrCast(&Wrapper.callback),
@@ -326,7 +330,7 @@ pub const S3UploadStreamWrapper = struct {
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
     pub const ResumableSink = @import("../bun.js/webcore/ResumableSink.zig").ResumableS3UploadSink;
-    const log = bun.Output.scoped(.S3UploadStream, false);
+    const log = bun.Output.scoped(.S3UploadStream, .visible);
 
     ref_count: RefCount,
 
@@ -357,7 +361,7 @@ pub const S3UploadStreamWrapper = struct {
 
     pub fn writeRequestData(this: *@This(), data: []const u8) bool {
         log("writeRequestData {}", .{data.len});
-        return this.task.writeBytes(data, false) catch bun.outOfMemory();
+        return bun.handleOom(this.task.writeBytes(data, false));
     }
 
     pub fn writeEndRequest(this: *@This(), err: ?jsc.JSValue) void {
@@ -379,7 +383,7 @@ pub const S3UploadStreamWrapper = struct {
                 });
             }
         } else {
-            _ = this.task.writeBytes("", true) catch bun.outOfMemory();
+            _ = bun.handleOom(this.task.writeBytes("", true));
         }
     }
 
@@ -463,9 +467,9 @@ pub fn uploadStream(
     const task = bun.new(MultiPartUpload, .{
         .ref_count = .initExactRefs(2), // +1 for the stream ctx (only deinit after task and context ended)
         .credentials = this,
-        .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
-        .proxy = if (proxy_url.len > 0) bun.default_allocator.dupe(u8, proxy_url) catch bun.outOfMemory() else "",
-        .content_type = if (content_type) |ct| bun.default_allocator.dupe(u8, ct) catch bun.outOfMemory() else null,
+        .path = bun.handleOom(bun.default_allocator.dupe(u8, path)),
+        .proxy = if (proxy_url.len > 0) bun.handleOom(bun.default_allocator.dupe(u8, proxy_url)) else "",
+        .content_type = if (content_type) |ct| bun.handleOom(bun.default_allocator.dupe(u8, ct)) else null,
         .callback = @ptrCast(&S3UploadStreamWrapper.resolve),
         .callback_context = undefined,
         .globalThis = globalThis,
@@ -514,10 +518,10 @@ pub fn downloadStream(
             if (size_ > 0) {
                 end -= 1;
             }
-            break :brk std.fmt.allocPrint(bun.default_allocator, "bytes={}-{}", .{ offset, end }) catch bun.outOfMemory();
+            break :brk bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "bytes={}-{}", .{ offset, end }));
         }
         if (offset == 0) break :brk null;
-        break :brk std.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}) catch bun.outOfMemory();
+        break :brk bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}));
     };
 
     var result = this.signRequest(.{
@@ -537,13 +541,13 @@ pub fn downloadStream(
     const headers = brk: {
         if (range) |range_| {
             const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });
-            break :brk bun.http.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator) catch bun.outOfMemory();
+            break :brk bun.handleOom(bun.http.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator));
         } else {
-            break :brk bun.http.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
+            break :brk bun.handleOom(bun.http.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator));
         }
     };
     const proxy = proxy_url orelse "";
-    const owned_proxy = if (proxy.len > 0) bun.default_allocator.dupe(u8, proxy) catch bun.outOfMemory() else "";
+    const owned_proxy = if (proxy.len > 0) bun.handleOom(bun.default_allocator.dupe(u8, proxy)) else "";
     const task = S3HttpDownloadStreamingTask.new(.{
         .http = undefined,
         .sign_result = result,
@@ -666,7 +670,7 @@ pub fn readableStream(
                 .ptr = .{ .Bytes = &reader.context },
                 .value = readable_value,
             }, globalThis),
-            .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
+            .path = bun.handleOom(bun.default_allocator.dupe(u8, path)),
             .global = globalThis,
         }),
     );

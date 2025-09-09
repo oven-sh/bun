@@ -374,9 +374,6 @@ pub const JSValkeyClient = struct {
 
         this.client.status = .connecting;
 
-        // Set retry to 0 to avoid incremental backoff from previous attempts
-        this.client.retry_attempts = 0;
-
         // Ref the poll to keep event loop alive during connection
         this.poll_ref.disable();
         this.poll_ref = .{};
@@ -853,7 +850,7 @@ const Options = struct {
     }
 };
 
-const debug = bun.Output.scoped(.RedisJS, false);
+const debug = bun.Output.scoped(.RedisJS, .visible);
 
 const Command = @import("./ValkeyCommand.zig");
 const std = @import("std");

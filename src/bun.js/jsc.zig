@@ -82,6 +82,7 @@ pub const Exception = @import("./bindings/Exception.zig").Exception;
 pub const SourceProvider = @import("./bindings/SourceProvider.zig").SourceProvider;
 pub const CatchScope = @import("./bindings/CatchScope.zig").CatchScope;
 pub const ExceptionValidationScope = @import("./bindings/CatchScope.zig").ExceptionValidationScope;
+pub const MarkedArgumentBuffer = @import("./bindings/MarkedArgumentBuffer.zig").MarkedArgumentBuffer;
 
 // JavaScript-related
 pub const Errorable = @import("./bindings/Errorable.zig").Errorable;
@@ -163,7 +164,7 @@ pub const API = bun.api;
 /// Deprecated: Use `bun.api.node`
 pub const Node = bun.api.node;
 
-const log = bun.Output.scoped(.JSC, true);
+const log = bun.Output.scoped(.JSC, .hidden);
 pub inline fn markBinding(src: std.builtin.SourceLocation) void {
     log("{s} ({s}:{d})", .{ src.fn_name, src.file, src.line });
 }

@@ -1913,6 +1913,25 @@ const EVP_MD* getDigestByName(const WTF::StringView name, bool ignoreSHA512_224)
         return EVP_md5();
     }
 
+    if (WTF::startsWithIgnoringASCIICase(name, "rsa-sha"_s)) {
+        auto bits = name.substring(7);
+        if (WTF::equalIgnoringASCIICase(bits, "1"_s)) {
+            return EVP_sha1();
+        }
+        if (WTF::equalIgnoringASCIICase(bits, "224"_s)) {
+            return EVP_sha224();
+        }
+        if (WTF::equalIgnoringASCIICase(bits, "256"_s)) {
+            return EVP_sha256();
+        }
+        if (WTF::equalIgnoringASCIICase(bits, "384"_s)) {
+            return EVP_sha384();
+        }
+        if (WTF::equalIgnoringASCIICase(bits, "512"_s)) {
+            return EVP_sha512();
+        }
+    }
+
     if (WTF::startsWithIgnoringASCIICase(name, "sha"_s)) {
         auto remain = name.substring(3);
         if (remain.startsWith('-')) {

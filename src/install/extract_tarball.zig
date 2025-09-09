@@ -197,7 +197,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         if (needs_to_decompress) {
             zlib_pool.data.list.clearRetainingCapacity();
             var zlib_entry = try Zlib.ZlibReaderArrayList.init(tgz_bytes, &zlib_pool.data.list, default_allocator);
-            zlib_entry.readAll() catch |err| {
+            zlib_entry.readAll(true) catch |err| {
                 log.addErrorFmt(
                     null,
                     logger.Loc.Empty,

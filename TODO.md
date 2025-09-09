@@ -287,6 +287,7 @@ $> bun-after test hook-timeouts
 
 # Add features:
 
+- [ ] drain microtasks / tick? between callback calls?
 - [ ] add back vm.auto_killer.kill() https://github.com/oven-sh/bun/blob/973fa98796a3be79b48f0d078485b5833d956593/src/bun.js/test/jest.zig#L1690
 - [ ] add retry/repeat back
 - [ ] make sure ScopeFunctions class can finalize (see napi_handle_scope NapiHandleScopeImpl as an example)
@@ -396,6 +397,7 @@ $> bun-after test hook-timeouts
 - [ ] consider a memory pool for describescope/executionentry. test if it improves performance.
 - [ ] consider making RefDataValue methods return the reason for failure rather than ?value. that way we can improve error messages. the reason could be a string or it could be a defined error set
 - [ ] instead of 'description orelse (unnamed)', let's have description default to 'unnamed' and not free it if it === the global that defines that
+- [ ] switch to bun.ptr.shared weak ptr
 - [ ] need to weakly hold BunTestFile from ref()
   - two tests for comparing performance
     - 1: as-is

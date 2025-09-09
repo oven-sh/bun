@@ -933,6 +933,44 @@ describe("bundler", () => {
     target: "bun",
   });
 
+  itBundled("minify/ArrayConstructorWithNumberAndMinifyWhitespace", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(new Array(0));
+        capture(new Array(1));
+        capture(new Array(2));
+        capture(new Array(3));
+        capture(new Array(4));
+        capture(new Array(5));
+        capture(new Array(6));
+        capture(new Array(7));
+        capture(new Array(8));
+        capture(new Array(9));
+        capture(new Array(10));
+        capture(new Array(11));
+        capture(new Array(4.5));
+      `,
+    },
+    capture: [
+      "[]", // new Array() -> []
+      "[,]", // new Array(1) -> [undefined]
+      "[,,]", // new Array(2) -> [undefined, undefined]
+      "[,,,]", // new Array(3) -> [undefined, undefined, undefined]
+      "[,,,,]", // new Array(4) -> [undefined, undefined, undefined, undefined]
+      "[,,,,,]", // new Array(5) -> [undefined x 5]
+      "[,,,,,,]", // new Array(6) -> [undefined x 6]
+      "[,,,,,,,]", // new Array(7) -> [undefined x 7]
+      "[,,,,,,,,]", // new Array(8) -> [undefined x 8]
+      "[,,,,,,,,,]", // new Array(9) -> [undefined x 9]
+      "[,,,,,,,,,,]", // new Array(10) -> [undefined x 10]
+      "Array(11)", // new Array(11) -> Array(11)
+      "Array(4.5)", // new Array(4.5) is Array(4.5) because it's not an integer
+    ],
+    minifySyntax: true,
+    minifyWhitespace: true,
+    target: "bun",
+  });
+
   itBundled("minify/GlobalConstructorSemanticsPreserved", {
     files: {
       "/entry.js": /* js */ `

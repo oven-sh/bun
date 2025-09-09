@@ -114,18 +114,12 @@ const SQL: typeof Bun.SQL = function SQL(
   ) {
     try {
       let flags = connectionInfo.bigint ? SQLQueryFlags.bigint : SQLQueryFlags.none;
-      
+
       if ((values?.length ?? 0) === 0) {
         flags |= SQLQueryFlags.simple;
       }
-      
-      return new Query(
-        strings,
-        values,
-        flags,
-        queryFromPoolHandler,
-        pool,
-      );
+
+      return new Query(strings, values, flags, queryFromPoolHandler, pool);
     } catch (err) {
       return Promise.$reject(err);
     }
@@ -188,11 +182,11 @@ const SQL: typeof Bun.SQL = function SQL(
       let flags = connectionInfo.bigint
         ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.bigint
         : SQLQueryFlags.allowUnsafeTransaction;
-      
+
       if ((values?.length ?? 0) === 0) {
         flags |= SQLQueryFlags.simple;
       }
-      
+
       const query = new Query(
         strings,
         values,

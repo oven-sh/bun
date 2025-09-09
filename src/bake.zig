@@ -286,10 +286,9 @@ pub const Framework = struct {
                 .{ .code = @embedFile("bun-framework-react/server.tsx") },
                 .{ .code = @embedFile("bun-framework-react/ssr.tsx") },
             } else &.{
-                // Cannot use .import because resolution must happen from the user's POV
-                .{ .code = bun.runtimeEmbedFile(.src, "../packages/bun-framework-react/client.tsx") },
-                .{ .code = bun.runtimeEmbedFile(.src, "../packages/bun-framework-react/server.tsx") },
-                .{ .code = bun.runtimeEmbedFile(.src, "../packages/bun-framework-react/ssr.tsx") },
+                .{ .code = bun.runtimeEmbedFile(.codegen, "bun-framework-react/client.tsx") },
+                .{ .code = bun.runtimeEmbedFile(.codegen, "bun-framework-react/server.tsx") },
+                .{ .code = bun.runtimeEmbedFile(.codegen, "bun-framework-react/ssr.tsx") },
             }) catch bun.outOfMemory(),
         };
     }

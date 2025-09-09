@@ -366,7 +366,6 @@ set(BUN_BAKE_RUNTIME_OUTPUTS
   ${CODEGEN_PATH}/bun-framework-react/.copied
 )
 
-# Copy entire bun-framework-react package to codegen directory
 add_custom_command(
   OUTPUT
     ${CODEGEN_PATH}/bun-framework-react/.copied
@@ -379,11 +378,7 @@ add_custom_command(
   DEPENDS
     ${CWD}/packages/bun-framework-react/client.tsx
     ${CWD}/packages/bun-framework-react/server.tsx
-    ${CWD}/packages/bun-framework-react/ssr.tsx
-    ${CWD}/packages/bun-framework-react/index.ts
-    ${CWD}/packages/bun-framework-react/bake.private.d.ts
     ${CWD}/packages/bun-framework-react/package.json
-    ${CWD}/packages/bun-framework-react/tsconfig.json
   COMMENT
     "Copying bun-framework-react package to codegen"
 )
@@ -588,12 +583,7 @@ set(BUN_ZIG_GENERATED_SOURCES
   ${BUN_CPP_OUTPUTS}
 )
 
-# In debug builds, these are not embedded, but rather referenced at runtime.
-if (DEBUG)
-  list(APPEND BUN_ZIG_GENERATED_SOURCES ${CODEGEN_PATH}/bake_empty_file)
-else()
-  list(APPEND BUN_ZIG_GENERATED_SOURCES ${BUN_BAKE_RUNTIME_OUTPUTS})
-endif()
+list(APPEND BUN_ZIG_GENERATED_SOURCES ${BUN_BAKE_RUNTIME_OUTPUTS})
 
 if (TEST)
   set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-test.o)

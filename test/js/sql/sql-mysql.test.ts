@@ -880,7 +880,7 @@ if (docker) {
             } catch (e) {
               expect(e).toBeInstanceOf(Error);
               expect(e.code).toBe("ERR_MYSQL_CONNECTION_TIMEOUT");
-              expect(e.message).toMatch(/Connection timed out after 200ms/);
+              expect(e.message).toMatch(/Connection timeout after 200ms/);
             } finally {
               sql.close();
               server.close();

@@ -405,8 +405,6 @@ async function readCssMetadata(stream: ReadableStream<Uint8Array<ArrayBuffer>>) 
       location.reload();
     }
   }
-  DEBUG.ASSERT(header !== undefined);
-  DEBUG.ASSERT(header[0] !== undefined);
   if (header[0] > 0) {
     const cssRaw = (await reader.read(new Uint8Array(header[0]))).value;
     if (!cssRaw) {
@@ -470,8 +468,6 @@ async function readCssMetadataFallback(stream: ReadableStream<Uint8Array<ArrayBu
         i += len;
         size -= len;
       }
-      DEBUG.ASSERT(chunk);
-      DEBUG.ASSERT(len !== undefined);
       if (chunk.byteLength > len) {
         chunks.unshift(chunk.subarray(len));
       }
@@ -483,7 +479,6 @@ async function readCssMetadataFallback(stream: ReadableStream<Uint8Array<ArrayBu
   if (header === 0) {
     currentCssList = [];
   } else {
-    DEBUG.ASSERT(header !== undefined);
     currentCssList = td.decode(await readChunk(header)).split("\n");
   }
   if (chunks.length === 0) {

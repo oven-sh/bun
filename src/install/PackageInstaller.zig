@@ -1380,17 +1380,18 @@ pub const PackageInstaller = struct {
     pub fn installPackage(
         this: *PackageInstaller,
         dep_id: DependencyID,
-        pkg_id: PackageID,
         log_level: Options.LogLevel,
     ) void {
-        const name = this.names[pkg_id];
-        const resolution = &this.resolutions[pkg_id];
+        const package_id = this.lockfile.buffers.resolutions.items[dep_id];
+
+        const name = this.names[package_id];
+        const resolution = &this.resolutions[package_id];
 
         const needs_verify = true;
         const is_pending_package_install = false;
         this.installPackageWithNameAndResolution(
             dep_id,
-            pkg_id,
+            package_id,
             log_level,
             name,
             resolution,

@@ -2332,15 +2332,12 @@ it("should install tarball with tarball dependencies", async () => {
 
   // Create simple test tarballs
   const tmpDir = tmpdirSync();
-  
+
   // Create child package
   const childDir = join(tmpDir, "child");
   await mkdir(childDir, { recursive: true });
-  await writeFile(
-    join(childDir, "package.json"),
-    JSON.stringify({ name: "test-child", version: "1.0.0" })
-  );
-  
+  await writeFile(join(childDir, "package.json"), JSON.stringify({ name: "test-child", version: "1.0.0" }));
+
   // Create child tarball
   const { exited: childTarExited } = spawn({
     cmd: ["tar", "-czf", join(tmpDir, "child.tgz"), "-C", tmpDir, "child"],
@@ -2376,9 +2373,9 @@ it("should install tarball with tarball dependencies", async () => {
       dependencies: {
         "test-child": `${server_url}/child.tgz`,
       },
-    })
+    }),
   );
-  
+
   // Create parent tarball
   const { exited: parentTarExited } = spawn({
     cmd: ["tar", "-czf", join(tmpDir, "parent.tgz"), "-C", tmpDir, "parent"],
@@ -2413,7 +2410,7 @@ it("should install tarball with tarball dependencies", async () => {
   expect(err).not.toContain("404");
 
   expect(await exited).toBe(0);
-  
+
   // Verify both packages were installed
   await access(join(add_dir, "node_modules", "test-parent"));
   await access(join(add_dir, "node_modules", "test-child"));

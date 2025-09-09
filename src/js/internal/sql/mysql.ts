@@ -378,34 +378,63 @@ class PooledMySQLConnection {
   }
 
   #onClose(err) {
-    let wrappedErr = err;
-    this.state = PooledConnectionState.closed;
-    this.connection = null;
-    this.adapter.readyConnections.delete(this);
-    const queries = new Set(this.queries);
-    this.queries.clear();
-    this.queryCount = 0;
-    this.flags &= ~PooledConnectionFlags.reserved;
-    const onFinish = this.onFinish;
-    const connectionInfo = this.connectionInfo;
+    // let wrappedErr = err;
+    // this.state = PooledConnectionState.closed;
+    // this.connection = null;
+    // this.adapter.readyConnections.delete(this);
+    // const queries = new Set(this.queries);
+    // this.queries.clear();
+    // this.queryCount = 0;
+    // this.flags &= ~PooledConnectionFlags.reserved;
+    // const onFinish = this.onFinish;
+    // const connectionInfo = this.connectionInfo;
+
+    // if (err) {
+    //   wrappedErr = wrapError(err);
+    // }
+
+    // this.storedError = wrappedErr;
+
+    // // notify all queries that the connection is closed
+    // for (const onClose of queries) {
+    //   onClose(wrappedErr);
+    // }
+
+    // if (onFinish) {
+    //   onFinish(wrappedErr);
+    // }
+
+    // if (connectionInfo?.onclose) {
+    //   connectionInfo.onclose(wrappedErr);
+    // }
+
+    // this.adapter.release(this, true);
 
     if (err) {
-      wrappedErr = wrapError(err);
+      err = wrapError(err);
     }
+    const connectionInfo = this.connectionInfo;
+    if (connectionInfo?.onclose) {
+      connectionInfo.onclose(err);
+    }
+    this.state = PooledConnectionState.closed;
+    this.connection = null;
+    this.storedError = err;
 
-    this.storedError = wrappedErr;
+    // remove from ready connections if its there
+    this.adapter.readyConnections.delete(this);
+    const queries = new Set(this.queries);
+    this.queries?.clear?.();
+    this.queryCount = 0;
+    this.flags &= ~PooledConnectionFlags.reserved;
 
     // notify all queries that the connection is closed
     for (const onClose of queries) {
-      onClose(wrappedErr);
+      onClose(err);
     }
-
+    const onFinish = this.onFinish;
     if (onFinish) {
-      onFinish(wrappedErr);
-    }
-
-    if (connectionInfo?.onclose) {
-      connectionInfo.onclose(wrappedErr);
+      onFinish(err);
     }
 
     this.adapter.release(this, true);

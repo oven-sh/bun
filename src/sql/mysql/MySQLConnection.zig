@@ -389,15 +389,19 @@ pub fn failFmt(this: *@This(), error_code: AnyMySQLError.Error, comptime fmt: [:
     this.failWithJSValue(err);
 }
 pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
-    defer this.updateHasPendingActivity();
-    this.stopTimers();
     if (this.status == .failed) return;
+
+    this.stopTimers();
+    this.ref();
+    defer {
+        // we defer the refAndClose so the on_close will be called first before we reject the pending requests
+        this.refAndClose(value);
+        this.updateHasPendingActivity();
+        this.deref();
+    }
+
     this.setStatus(.failed);
 
-    this.ref();
-    defer this.deref();
-    // we defer the refAndClose so the on_close will be called first before we reject the pending requests
-    defer this.refAndClose(value);
     const on_close = this.consumeOnCloseCallback(this.globalObject) orelse return;
 
     const loop = this.vm.eventLoop();
@@ -418,8 +422,7 @@ pub fn fail(this: *MySQLConnection, message: []const u8, err: AnyMySQLError.Erro
 }
 
 pub fn onClose(this: *MySQLConnection) void {
-    var vm = this.vm;
-    defer vm.drainMicrotasks();
+    defer this.deref();
     this.fail("Connection closed", error.ConnectionClosed);
 }
 
@@ -1025,6 +1028,7 @@ pub fn onOpen(this: *MySQLConnection, socket: Socket) void {
     this.setupMaxLifetimeTimerIfNecessary();
     this.resetConnectionTimeout();
     this.socket = socket;
+    this.ref(); // one ref for the socket
     if (socket == .SocketTCP) {
         // when upgrading to TLS the onOpen callback will be called again and at this moment we dont wanna to change the status to handshaking
         this.setStatus(.handshaking);

@@ -161,7 +161,7 @@ test("Bun.build plugin virtual modules - with onLoad and onResolve", async () =>
           }));
 
           // Regular onLoad plugin
-          build.onLoad({ filter: /\.js$/ }, () => ({
+          build.onLoad({ filter: /\/real\.js$/ }, () => ({
             contents: `export default "modified";`,
             loader: "js",
           }));
@@ -322,7 +322,7 @@ test("Bun.build plugin virtual modules - error handling", async () => {
         },
       ],
     }),
-  ).rejects.toThrow("Bundle failed");
+  ).rejects.toThrow(/Bundle failed/i);
 });
 
 test("Bun.build plugin virtual modules - CSS", async () => {

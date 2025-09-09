@@ -561,7 +561,7 @@ export function runOnLoadPlugins(
             throw new TypeError('Virtual module must return an object with "contents" property');
           }
 
-          var { contents, loader = defaultLoader } = result;
+          var { contents, loader = "js" } = result;
 
           if (!(typeof contents === "string")) {
             throw new TypeError('Virtual module must return an object with "contents" as a string');

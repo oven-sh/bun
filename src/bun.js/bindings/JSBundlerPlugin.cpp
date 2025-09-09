@@ -1,3 +1,4 @@
+#include "root.h"
 #include "JSBundlerPlugin.h"
 
 #include "BunProcess.h"
@@ -155,13 +156,13 @@ void BundlerPlugin::tombstone()
         delete virtualModules;
         virtualModules = nullptr;
     }
-    virtualModulesList.clear();
+    // virtualModulesList will be cleaned up by destructor
 }
 
 void BundlerPlugin::visitAdditionalChildren(JSC::JSCell* cell, JSC::SlotVisitor& visitor)
 {
-    deferredPromises.visit(visitor);
-    virtualModulesList.visit(visitor);
+    deferredPromises.visit(cell, visitor);
+    virtualModulesList.visit(cell, visitor);
 }
 
 static const HashTableValue JSBundlerPluginHashTable[] = {

@@ -291,7 +291,7 @@ describe("@types/bun integration test", () => {
         files: { "my-test.test.ts": code }, // no reference to bun-types/test-globals
       });
 
-      expect(emptyInterfaces).toEqual(new Set()); // should still have no empty interfaces
+      expect(emptyInterfaces).toEqual(new Set<string>()); // should still have no empty interfaces
       expect(diagnostics).toEqual([
         {
           "code": 2582,
@@ -367,7 +367,7 @@ describe("@types/bun integration test", () => {
       },
     });
 
-    expect(emptyInterfaces).toEqual(new Set());
+    expect(emptyInterfaces).toEqual(new Set<string>());
     expect(diagnostics).toEqual([]);
   });
 
@@ -380,7 +380,7 @@ describe("@types/bun integration test", () => {
       },
     });
 
-    expect(emptyInterfaces).toEqual(new Set());
+    expect(emptyInterfaces).toEqual(new Set<string>());
     expect(diagnostics).toEqual([
       // This is expected because we, of course, can't check that our tsx file is passing
       // when tsx is turned off...

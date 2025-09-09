@@ -232,7 +232,7 @@ pub fn onConnectionTimeout(this: *@This()) bun.api.Timer.EventLoopTimer.Arm {
         .authenticating,
         .authentication_awaiting_pk,
         => {
-            this.failFmt(error.ConnectionTimedOut, "Connection timed out after {} (during authentication)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt(error.ConnectionTimedOut, "Connection ttimeout after {} (during authentication)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
     }
     return .disarm;
@@ -774,7 +774,7 @@ fn SocketHandler(comptime ssl: bool) type {
 }
 
 pub fn onTimeout(this: *MySQLConnection) void {
-    this.fail("Connection timed out", error.ConnectionTimedOut);
+    this.fail("Connection timeout", error.ConnectionTimedOut);
 }
 
 pub fn onDrain(this: *MySQLConnection) void {

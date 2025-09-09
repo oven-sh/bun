@@ -178,6 +178,7 @@ pub fn onJSError(this: *@This(), err: jsc.JSValue, globalObject: *jsc.JSGlobalOb
     const JSErrorTask = struct {
         value: jsc.JSValue,
         err: jsc.JSValue,
+        task: jsc.AnyTask,
         global: *jsc.JSGlobalObject,
 
         pub fn run(task: *@This()) void {
@@ -197,14 +198,15 @@ pub fn onJSError(this: *@This(), err: jsc.JSValue, globalObject: *jsc.JSGlobalOb
     };
     err.protect();
     targetValue.protect();
-    const task = jsc.AnyTask.New(JSErrorTask, JSErrorTask.run).init(
-        bun.new(JSErrorTask, .{
-            .value = err,
-            .err = targetValue,
-            .global = globalObject,
-        }),
-    );
-    event_loop.enqueueTask(.init(task));
+    const error_task = bun.new(JSErrorTask, .{
+        .value = err,
+        .err = targetValue,
+        .global = globalObject,
+        .task = undefined,
+    });
+
+    error_task.task = jsc.AnyTask.New(JSErrorTask, JSErrorTask.run).init(error_task);
+    event_loop.enqueueTask(.init(&error_task.task));
 }
 pub fn getTarget(this: *@This(), globalObject: *jsc.JSGlobalObject, clean_target: bool) jsc.JSValue {
     const thisValue = this.thisValue.tryGet() orelse return .zero;

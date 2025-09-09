@@ -381,6 +381,7 @@ pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
         value: JSValue,
         on_close: JSValue,
         global: *jsc.JSGlobalObject,
+        task: jsc.AnyTask,
 
         pub fn run(task: *@This()) void {
             defer {
@@ -393,12 +394,14 @@ pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
     };
     value.protect();
     on_close.protect();
-    const task = jsc.AnyTask.New(JSErrorTask, JSErrorTask.run).init(bun.new(JSErrorTask, .{
+    const error_task = bun.new(JSErrorTask, .{
         .value = value,
         .on_close = on_close,
         .global = globalObject,
-    }));
-    loop.enqueueTask(.init(task));
+        .task = undefined,
+    });
+    error_task.task = jsc.AnyTask.New(JSErrorTask, JSErrorTask.run).init(error_task);
+    loop.enqueueTask(.init(&error_task.task));
 }
 
 pub fn fail(this: *MySQLConnection, message: []const u8, err: AnyMySQLError.Error) void {

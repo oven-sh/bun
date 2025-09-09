@@ -145,7 +145,7 @@ const firstPageId = Date.now();
     });
   });
 
-  if (document.startViewTransition as unknown) {
+  if (document.startViewTransition !== undefined) {
     // View transitions are used by navigations to ensure that the page rerender
     // all happens in one operation. Additionally, developers may animate
     // different elements. The default fade animation is disabled so that the

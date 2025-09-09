@@ -367,23 +367,38 @@ pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
     if (this.status == .failed) return;
     this.setStatus(.failed);
 
+    const globalObject = this.globalObject;
     this.ref();
     defer this.deref();
     // we defer the refAndClose so the on_close will be called first before we reject the pending requests
     defer this.refAndClose(value);
-    const on_close = this.consumeOnCloseCallback(this.globalObject) orelse return;
+    const on_close = this.consumeOnCloseCallback(globalObject) orelse return;
 
     const loop = this.vm.eventLoop();
     loop.enter();
     defer loop.exit();
-    _ = on_close.call(
-        this.globalObject,
-        .js_undefined,
-        &[_]JSValue{
-            value.toError() orelse value,
-            this.getQueriesArray(),
-        },
-    ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
+    const JSErrorTask = struct {
+        value: JSValue,
+        on_close: JSValue,
+        global: *jsc.JSGlobalObject,
+
+        pub fn run(task: *@This()) void {
+            defer {
+                task.value.unprotect();
+                task.on_close.unprotect();
+                bun.destroy(task);
+            }
+            _ = task.on_close.call(task.global, .js_undefined, &.{task.value}) catch |ex| task.global.reportActiveExceptionAsUnhandled(ex);
+        }
+    };
+    value.protect();
+    on_close.protect();
+    const task = jsc.AnyTask.New(JSErrorTask, JSErrorTask.run).init(bun.new(JSErrorTask, .{
+        .value = value,
+        .on_close = on_close,
+        .global = globalObject,
+    }));
+    loop.enqueueTask(.init(task));
 }
 
 pub fn fail(this: *MySQLConnection, message: []const u8, err: AnyMySQLError.Error) void {

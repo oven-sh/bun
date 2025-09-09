@@ -173,12 +173,38 @@ pub fn onJSError(this: *@This(), err: jsc.JSValue, globalObject: *jsc.JSGlobalOb
     }
 
     var vm = jsc.VirtualMachine.get();
-    const function = vm.rareData().mysql_context.onQueryRejectFn.get().?;
+
     const event_loop = vm.eventLoop();
-    event_loop.runCallback(function, globalObject, thisValue, &.{
-        targetValue.toError() orelse targetValue,
-        err,
-    });
+    const JSErrorTask = struct {
+        value: jsc.JSValue,
+        err: jsc.JSValue,
+        global: *jsc.JSGlobalObject,
+
+        pub fn run(task: *@This()) void {
+            defer {
+                task.value.unprotect();
+                task.err.unprotect();
+                bun.destroy(task);
+            }
+            const global = task.global;
+            const function = global.bunVM().rareData().mysql_context.onQueryRejectFn.get().?;
+
+            _ = function.call(global, .js_undefined, &.{
+                task.err.toError() orelse task.err,
+                task.value,
+            }) catch |ex| global.reportActiveExceptionAsUnhandled(ex);
+        }
+    };
+    err.protect();
+    targetValue.protect();
+    const task = jsc.AnyTask.New(JSErrorTask, JSErrorTask.run).init(
+        bun.new(JSErrorTask, .{
+            .value = err,
+            .err = targetValue,
+            .global = globalObject,
+        }),
+    );
+    event_loop.enqueueTask(.init(task));
 }
 pub fn getTarget(this: *@This(), globalObject: *jsc.JSGlobalObject, clean_target: bool) jsc.JSValue {
     const thisValue = this.thisValue.tryGet() orelse return .zero;

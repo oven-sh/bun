@@ -1,3 +1,6 @@
+import fact from "./file.json";
+console.log(fact);
+
 import * as test from "bun:test";
 test.describe;
 test.it;
@@ -397,7 +400,7 @@ Bun.serve({
 
     return new Response(body, {
       headers,
-      status: statuses[Math.floor(Math.random() * statuses.length)],
+      status: statuses[Math.floor(Math.random() * statuses.length)] ?? 200,
     });
   },
 });
@@ -431,7 +434,7 @@ serve({
 
     return new Response(body, {
       headers,
-      status: statuses[Math.floor(Math.random() * statuses.length)],
+      status: statuses[Math.floor(Math.random() * statuses.length)] ?? 200,
     });
   },
 });
@@ -451,3 +454,9 @@ Bun.serve({
     cert,
   },
 });
+
+const signal = AbortSignal.timeout(1000);
+expectType(signal).is<AbortSignal>();
+expectType(signal.aborted).is<boolean>();
+
+expectType(RegExp.escape("foo.bar")).is<string>();

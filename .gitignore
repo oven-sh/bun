@@ -186,6 +186,7 @@ scratch*.{js,ts,tsx,cjs,mjs}
 
 *.bun-build
 
-# autocopied in build script
-packages/bun-types/CLAUDE.md
 scripts/lldb-inline
+
+# We regenerate these in all the build scripts
+cmake/sources/*.txt

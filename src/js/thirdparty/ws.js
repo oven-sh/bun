@@ -1288,7 +1288,7 @@ class WebSocketServer extends EventEmitter {
    */
   handleUpgrade(req, socket, head, cb) {
     // socket is actually fake so we use internal http_res
-    const response = socket._httpMessage;
+    const response = socket._httpMessage || socket[kBunInternals];
 
     // socket.on("error", socketOnError);
 

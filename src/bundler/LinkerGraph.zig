@@ -129,7 +129,7 @@ pub fn addPartToFile(
 
                     entry.value_ptr.* = .init(list.items);
                 } else {
-                    entry.value_ptr.* = BabyList(u32).fromSlice(self.graph.allocator, &.{self.part_id}) catch bun.outOfMemory();
+                    entry.value_ptr.* = BabyList(u32).fromSlice(self.graph.allocator, &.{self.part_id}) catch |err| bun.handleOom(err);
                 }
             } else {
                 entry.value_ptr.push(self.graph.allocator, self.part_id) catch unreachable;
@@ -227,6 +227,7 @@ pub fn load(
     sources: []const Logger.Source,
     server_component_boundaries: ServerComponentBoundary.List,
     dynamic_import_entry_points: []const Index.Int,
+    entry_point_original_names: *const IndexStringMap,
 ) !void {
     const scb = server_component_boundaries.slice();
     try this.files.setCapacity(this.allocator, sources.len);
@@ -262,7 +263,14 @@ pub fn load(
                 bun.assert(source.index.get() == i.get());
             }
             entry_point_kinds[source.index.get()] = EntryPoint.Kind.user_specified;
-            path_string.* = bun.PathString.init(source.path.text);
+
+            // Check if this entry point has an original name (from virtual entry resolution)
+            if (entry_point_original_names.get(i.get())) |original_name| {
+                path_string.* = bun.PathString.init(original_name);
+            } else {
+                path_string.* = bun.PathString.init(source.path.text);
+            }
+
             source_index.* = source.index.get();
         }
 
@@ -311,13 +319,12 @@ pub fn load(
             for (this.reachable_files) |source_id| {
                 for (import_records_list[source_id.get()].slice()) |*import_record| {
                     if (import_record.source_index.isValid() and this.is_scb_bitset.isSet(import_record.source_index.get())) {
-                        import_record.source_index = Index.init(
-                            scb.getReferenceSourceIndex(import_record.source_index.get()) orelse
-                                // If this gets hit, might be fine to switch this to `orelse continue`
-                                // not confident in this assertion
-                                Output.panic("Missing SCB boundary for file #{d}", .{import_record.source_index.get()}),
-                        );
-                        bun.assert(import_record.source_index.isValid()); // did not generate
+                        // Only rewrite if this is an original SCB file, not a reference file
+                        if (scb.getReferenceSourceIndex(import_record.source_index.get())) |ref_index| {
+                            import_record.source_index = Index.init(ref_index);
+                            bun.assert(import_record.source_index.isValid()); // did not generate
+                        }
+                        // If it's already a reference file, leave it as-is
                     }
                 }
             }
@@ -346,9 +353,9 @@ pub fn load(
 
     {
         var input_symbols = js_ast.Symbol.Map.initList(js_ast.Symbol.NestedList.init(this.ast.items(.symbols)));
-        var symbols = input_symbols.symbols_for_source.clone(this.allocator) catch bun.outOfMemory();
+        var symbols = bun.handleOom(input_symbols.symbols_for_source.clone(this.allocator));
         for (symbols.slice(), input_symbols.symbols_for_source.slice()) |*dest, src| {
-            dest.* = src.clone(this.allocator) catch bun.outOfMemory();
+            dest.* = bun.handleOom(src.clone(this.allocator));
         }
         this.symbols = js_ast.Symbol.Map.initList(symbols);
     }
@@ -429,7 +436,7 @@ pub const File = struct {
     entry_point_chunk_index: u32 = std.math.maxInt(u32),
 
     line_offset_table: bun.sourcemap.LineOffsetTable.List = .empty,
-    quoted_source_contents: ?[]u8 = null,
+    quoted_source_contents: Owned(?[]u8) = .initNull(),
 
     pub fn isEntryPoint(this: *const File) bool {
         return this.entry_point_kind.isEntryPoint();
@@ -452,6 +459,7 @@ const Environment = bun.Environment;
 const ImportRecord = bun.ImportRecord;
 const MultiArrayList = bun.MultiArrayList;
 const Output = bun.Output;
+const Owned = bun.ptr.Owned;
 
 const js_ast = bun.ast;
 const Symbol = js_ast.Symbol;
@@ -461,6 +469,7 @@ const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 
 const EntryPoint = bun.bundle_v2.EntryPoint;
 const Index = bun.bundle_v2.Index;
+const IndexStringMap = bun.bundle_v2.IndexStringMap;
 const JSAst = bun.bundle_v2.JSAst;
 const JSMeta = bun.bundle_v2.JSMeta;
 const Logger = bun.bundle_v2.Logger;

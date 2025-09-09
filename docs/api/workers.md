@@ -1,5 +1,5 @@
 {% callout %}
-**🚧** — The `Worker` API is still experimental and should not be considered ready for production.
+**🚧** — The `Worker` API is still experimental (particularly for terminating workers). We are actively working on improving this.
 {% /callout %}
 
 [`Worker`](https://developer.mozilla.org/en-US/docs/Web/API/Worker) lets you start and communicate with a new JavaScript instance running on a separate thread while sharing I/O resources with the main thread.
@@ -121,6 +121,59 @@ Messages are automatically enqueued until the worker is ready, so there is no ne
 ## Messages with `postMessage`
 
 To send messages, use [`worker.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Worker/postMessage) and [`self.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage). This leverages the [HTML Structured Clone Algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm).
+
+### Performance optimizations
+
+Bun includes optimized fast paths for `postMessage` to dramatically improve performance for common data types:
+
+**String fast path** - When posting pure string values, Bun bypasses the structured clone algorithm entirely, achieving significant performance gains with no serialization overhead.
+
+**Simple object fast path** - For plain objects containing only primitive values (strings, numbers, booleans, null, undefined), Bun uses an optimized serialization path that stores properties directly without full structured cloning.
+
+The simple object fast path activates when the object:
+
+- Is a plain object with no prototype chain modifications
+- Contains only enumerable, configurable data properties
+- Has no indexed properties or getter/setter methods
+- All property values are primitives or strings
+
+With these fast paths, Bun's `postMessage` performs **2-241x faster** because the message length no longer has a meaningful impact on performance.
+
+**Bun (with fast paths):**
+
+```
+postMessage({ prop: 11 chars string, ...9 more props }) - 648ns
+postMessage({ prop: 14 KB string, ...9 more props })    - 719ns
+postMessage({ prop: 3 MB string, ...9 more props })     - 1.26µs
+```
+
+**Node.js v24.6.0 (for comparison):**
+
+```
+postMessage({ prop: 11 chars string, ...9 more props }) - 1.19µs
+postMessage({ prop: 14 KB string, ...9 more props })    - 2.69µs
+postMessage({ prop: 3 MB string, ...9 more props })     - 304µs
+```
+
+```js
+// String fast path - optimized
+postMessage("Hello, worker!");
+
+// Simple object fast path - optimized
+postMessage({
+  message: "Hello",
+  count: 42,
+  enabled: true,
+  data: null,
+});
+
+// Complex objects still work but use standard structured clone
+postMessage({
+  nested: { deep: { object: true } },
+  date: new Date(),
+  buffer: new ArrayBuffer(8),
+});
+```
 
 ```js
 // On the worker thread, `postMessage` is automatically "routed" to the parent thread.

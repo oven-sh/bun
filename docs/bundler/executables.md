@@ -408,16 +408,119 @@ $ bun build --compile --asset-naming="[name].[ext]" ./index.ts
 
 To trim down the size of the executable a little, pass `--minify` to `bun build --compile`. This uses Bun's minifier to reduce the code size. Overall though, Bun's binary is still way too big and we need to make it smaller.
 
+## Using Bun.build() API
+
+You can also generate standalone executables using the `Bun.build()` JavaScript API. This is useful when you need programmatic control over the build process.
+
+### Basic usage
+
+```js
+await Bun.build({
+  entrypoints: ["./app.ts"],
+  outdir: "./dist",
+  compile: {
+    target: "bun-windows-x64",
+    outfile: "myapp.exe",
+  },
+});
+```
+
+### Windows metadata with Bun.build()
+
+When targeting Windows, you can specify metadata through the `windows` object:
+
+```js
+await Bun.build({
+  entrypoints: ["./app.ts"],
+  outdir: "./dist",
+  compile: {
+    target: "bun-windows-x64",
+    outfile: "myapp.exe",
+    windows: {
+      title: "My Application",
+      publisher: "My Company Inc",
+      version: "1.2.3.4",
+      description: "A powerful application built with Bun",
+      copyright: "© 2024 My Company Inc",
+      hideConsole: false, // Set to true for GUI applications
+      icon: "./icon.ico", // Path to icon file
+    },
+  },
+});
+```
+
+### Cross-compilation with Bun.build()
+
+You can cross-compile for different platforms:
+
+```js
+// Build for multiple platforms
+const platforms = [
+  { target: "bun-windows-x64", outfile: "app-windows.exe" },
+  { target: "bun-linux-x64", outfile: "app-linux" },
+  { target: "bun-darwin-arm64", outfile: "app-macos" },
+];
+
+for (const platform of platforms) {
+  await Bun.build({
+    entrypoints: ["./app.ts"],
+    outdir: "./dist",
+    compile: platform,
+  });
+}
+```
+
 ## Windows-specific flags
 
-When compiling a standalone executable on Windows, there are two platform-specific options that can be used to customize metadata on the generated `.exe` file:
+When compiling a standalone executable for Windows, there are several platform-specific options that can be used to customize the generated `.exe` file:
 
-- `--windows-icon=path/to/icon.ico` to customize the executable file icon.
-- `--windows-hide-console` to disable the background terminal, which can be used for applications that do not need a TTY.
+### Visual customization
+
+- `--windows-icon=path/to/icon.ico` - Set the executable file icon
+- `--windows-hide-console` - Disable the background terminal window (useful for GUI applications)
+
+### Metadata customization
+
+You can embed version information and other metadata into your Windows executable:
+
+- `--windows-title <STR>` - Set the product name (appears in file properties)
+- `--windows-publisher <STR>` - Set the company name
+- `--windows-version <STR>` - Set the version number (e.g. "1.2.3.4")
+- `--windows-description <STR>` - Set the file description
+- `--windows-copyright <STR>` - Set the copyright information
+
+#### Example with all metadata flags:
+
+```sh
+bun build --compile ./app.ts \
+  --outfile myapp.exe \
+  --windows-title "My Application" \
+  --windows-publisher "My Company Inc" \
+  --windows-version "1.2.3.4" \
+  --windows-description "A powerful application built with Bun" \
+  --windows-copyright "© 2024 My Company Inc"
+```
+
+This metadata will be visible in Windows Explorer when viewing the file properties:
+
+1. Right-click the executable in Windows Explorer
+2. Select "Properties"
+3. Go to the "Details" tab
+
+#### Version string format
+
+The `--windows-version` flag accepts version strings in the following formats:
+
+- `"1"` - Will be normalized to "1.0.0.0"
+- `"1.2"` - Will be normalized to "1.2.0.0"
+- `"1.2.3"` - Will be normalized to "1.2.3.0"
+- `"1.2.3.4"` - Full version format
+
+Each version component must be a number between 0 and 65535.
 
 {% callout %}
 
-These flags currently cannot be used when cross-compiling because they depend on Windows APIs.
+These flags currently cannot be used when cross-compiling because they depend on Windows APIs. They are only available when building on Windows itself.
 
 {% /callout %}
 

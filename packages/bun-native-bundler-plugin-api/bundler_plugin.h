@@ -18,9 +18,11 @@ typedef enum {
   BUN_LOADER_BASE64 = 10,
   BUN_LOADER_DATAURL = 11,
   BUN_LOADER_TEXT = 12,
+  BUN_LOADER_HTML = 17,
+  BUN_LOADER_YAML = 18,
 } BunLoader;
 
-const BunLoader BUN_LOADER_MAX = BUN_LOADER_TEXT;
+const BunLoader BUN_LOADER_MAX = BUN_LOADER_YAML;
 
 typedef struct BunLogOptions {
   size_t __struct_size;

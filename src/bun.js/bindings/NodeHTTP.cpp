@@ -150,7 +150,7 @@ public:
         if (!context) return false;
         auto* data = (uWS::HttpContextData<true>*)us_socket_context_ext(is_ssl, context);
         if (!data) return false;
-        return data->isAuthorized();
+        return data->flags.isAuthorized;
     }
     ~JSNodeHTTPServerSocket()
     {
@@ -1036,6 +1036,11 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
                 data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
                 res->writeMark();
             }
+        }
+
+        // Prevent automatic Date header insertion when user provides one
+        if (header.key == WebCore::HTTPHeaderName::Date) {
+            data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
         }
         writeResponseHeader<isSSL>(res, name, value);
     }

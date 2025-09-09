@@ -3644,6 +3644,15 @@ pub fn editWin32BinarySubsystem(fd: bun.sys.File, subsystem: Subsystem) !void {
 
 pub const rescle = struct {
     extern fn rescle__setIcon([*:0]const u16, [*:0]const u16) c_int;
+    extern fn rescle__setWindowsMetadata(
+        [*:0]const u16, // exe_path
+        ?[*:0]const u16, // icon_path (nullable)
+        ?[*:0]const u16, // title (nullable)
+        ?[*:0]const u16, // publisher (nullable)
+        ?[*:0]const u16, // version (nullable)
+        ?[*:0]const u16, // description (nullable)
+        ?[*:0]const u16, // copyright (nullable)
+    ) c_int;
 
     pub fn setIcon(exe_path: [*:0]const u16, icon: [*:0]const u16) !void {
         comptime bun.assert(bun.Environment.isWindows);
@@ -3651,6 +3660,97 @@ pub const rescle = struct {
         return switch (status) {
             0 => {},
             else => error.IconEditError,
+        };
+    }
+
+    pub fn setWindowsMetadata(
+        exe_path: [*:0]const u16,
+        icon: ?[]const u8,
+        title: ?[]const u8,
+        publisher: ?[]const u8,
+        version: ?[]const u8,
+        description: ?[]const u8,
+        copyright: ?[]const u8,
+    ) !void {
+        comptime bun.assert(bun.Environment.isWindows);
+
+        // Validate version string format if provided
+        if (version) |v| {
+            // Empty version string is invalid
+            if (v.len == 0) {
+                return error.InvalidVersionFormat;
+            }
+
+            // Basic validation: check format and ranges
+            var parts_count: u32 = 0;
+            var iter = std.mem.tokenizeAny(u8, v, ".");
+            while (iter.next()) |part| : (parts_count += 1) {
+                if (parts_count >= 4) {
+                    return error.InvalidVersionFormat;
+                }
+                const num = std.fmt.parseInt(u16, part, 10) catch {
+                    return error.InvalidVersionFormat;
+                };
+                // u16 already ensures value is 0-65535
+                _ = num;
+            }
+            if (parts_count == 0) {
+                return error.InvalidVersionFormat;
+            }
+        }
+
+        // Allocate UTF-16 strings
+        const allocator = bun.default_allocator;
+
+        // Icon is a path, so use toWPathNormalized with proper buffer handling
+        var icon_buf: bun.OSPathBuffer = undefined;
+        const icon_w = if (icon) |i| brk: {
+            const path_w = bun.strings.toWPathNormalized(&icon_buf, i);
+            // toWPathNormalized returns a slice into icon_buf, need to null-terminate it
+            const buf_u16 = bun.reinterpretSlice(u16, &icon_buf);
+            buf_u16[path_w.len] = 0;
+            break :brk buf_u16[0..path_w.len :0];
+        } else null;
+
+        const title_w = if (title) |t| try bun.strings.toUTF16AllocForReal(allocator, t, false, true) else null;
+        defer if (title_w) |tw| allocator.free(tw);
+
+        const publisher_w = if (publisher) |p| try bun.strings.toUTF16AllocForReal(allocator, p, false, true) else null;
+        defer if (publisher_w) |pw| allocator.free(pw);
+
+        const version_w = if (version) |v| try bun.strings.toUTF16AllocForReal(allocator, v, false, true) else null;
+        defer if (version_w) |vw| allocator.free(vw);
+
+        const description_w = if (description) |d| try bun.strings.toUTF16AllocForReal(allocator, d, false, true) else null;
+        defer if (description_w) |dw| allocator.free(dw);
+
+        const copyright_w = if (copyright) |cr| try bun.strings.toUTF16AllocForReal(allocator, cr, false, true) else null;
+        defer if (copyright_w) |cw| allocator.free(cw);
+
+        const status = rescle__setWindowsMetadata(
+            exe_path,
+            if (icon_w) |iw| iw.ptr else null,
+            if (title_w) |tw| tw.ptr else null,
+            if (publisher_w) |pw| pw.ptr else null,
+            if (version_w) |vw| vw.ptr else null,
+            if (description_w) |dw| dw.ptr else null,
+            if (copyright_w) |cw| cw.ptr else null,
+        );
+        return switch (status) {
+            0 => {},
+            -1 => error.FailedToLoadExecutable,
+            -2 => error.FailedToSetIcon,
+            -3 => error.FailedToSetProductName,
+            -4 => error.FailedToSetCompanyName,
+            -5 => error.FailedToSetDescription,
+            -6 => error.FailedToSetCopyright,
+            -7 => error.FailedToSetFileVersion,
+            -8 => error.FailedToSetProductVersion,
+            -9 => error.FailedToSetFileVersionString,
+            -10 => error.FailedToSetProductVersionString,
+            -11 => error.InvalidVersionFormat,
+            -12 => error.FailedToCommit,
+            else => error.WindowsMetadataEditError,
         };
     }
 };

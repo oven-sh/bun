@@ -521,7 +521,7 @@ pub fn processSubtree(
         switch (hoisted) {
             .dependency_loop, .hoisted => continue,
             .placement => |dest| {
-                dependency_lists[dest.id].append(builder.allocator, dep_id) catch bun.outOfMemory();
+                bun.handleOom(dependency_lists[dest.id].append(builder.allocator, dep_id));
                 trees[dest.id].dependencies.len += 1;
                 if (builder.resolution_lists[pkg_id].len > 0) {
                     try builder.queue.writeItem(.{

@@ -135,20 +135,18 @@ error: console.error an error
       at <file>:NN:NN
       at loadAndEvaluateModule (N:NN)
 
-  41 | console.groupEnd(); // Extra
-42 | console.groupEnd(); // Extra
-43 | 
-44 | class NamedError extends Error {
-45 |   constructor(message) {
-46 |     super(message);
-         ^
+  53 | console.log("Regular log");
+54 | console.info("Info log");
+55 | console.warn("Warning log");
+56 | console.warn(new Error("console.warn an error"));
+57 | console.error(new Error("console.error an error"));
+58 | console.error(new NamedError("console.error a named error"));
+                   ^
 NamedError: console.error a named error
-      at new NamedError (<file>:NN:NN)
       at <file>:NN:NN
       at loadAndEvaluateModule (N:NN)
 
   NamedError: console.warn a named error
-      at new NamedError (<file>:NN:NN)
       at <file>:NN:NN
       at loadAndEvaluateModule (N:NN)
 

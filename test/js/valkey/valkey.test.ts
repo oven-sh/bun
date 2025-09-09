@@ -4,23 +4,21 @@ import {
   ConnectionType,
   createClient,
   ctx,
-  //DEFAULT_REDIS_URL,
+  DEFAULT_REDIS_URL,
   expectType,
   isEnabled,
   randomCoinFlip,
 } from "./test-utils";
 
 describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
-  //beforeEach(async () => {
-  //  if (ctx.redis?.connected) {
-  //    ctx.redis.close?.();
-  //  }
-  //  ctx.redis = createClient(ConnectionType.TCP);
+  beforeEach(async () => {
+    if (ctx.redis?.connected) {
+      ctx.redis.close?.();
+    }
+    ctx.redis = createClient(ConnectionType.TCP);
 
-  //  await ctx.redis.send("FLUSHALL", ["SYNC"]);
-  //});
-
-  const DEFAULT_REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
+    await ctx.redis.send("FLUSHALL", ["SYNC"]);
+  });
 
   const connectedRedis = async () => {
     const redis = new RedisClient(DEFAULT_REDIS_URL);

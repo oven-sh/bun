@@ -187,6 +187,73 @@ test("compare dead code elimination: --target=bun vs --target=node", async () =>
   expect(nodeBundle).toContain("process.versions.node");
 });
 
+test("dead code elimination for typeof Bun checks with --target=bun", async () => {
+  using dir = tempDir("bun-typeof-dce", {
+    "index.js": `
+      // Test typeof Bun checks
+      if (typeof Bun !== "undefined") {
+        exports.test1 = "bun-typeof";
+      } else {
+        exports.test1 = "not-bun-typeof";
+        require("fs").writeFileSync("typeof-fail.txt", "should not exist");
+      }
+      
+      // Test typeof globalThis.Bun checks
+      if (typeof globalThis.Bun !== "undefined") {
+        exports.test2 = "bun-typeof-global";
+      } else {
+        exports.test2 = "not-bun-typeof-global";
+        require("fs").writeFileSync("typeof-global-fail.txt", "should not exist");
+      }
+      
+      // Test reverse order
+      if ("undefined" === typeof Bun) {
+        exports.test3 = "not-bun-reverse";
+        require("fs").writeFileSync("reverse-fail.txt", "should not exist");
+      } else {
+        exports.test3 = "bun-reverse";
+      }
+      
+      // Test != instead of !==
+      if (typeof Bun != "undefined") {
+        exports.test4 = "bun-loose-ne";
+      } else {
+        exports.test4 = "not-bun-loose-ne";
+      }
+    `,
+  });
+
+  // Build with --target=bun
+  await using bundleProc = Bun.spawn({
+    cmd: [bunExe(), "build", "index.js", "--target=bun", "--outfile=bundle.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const bundleCode = await bundleProc.exited;
+  expect(bundleCode).toBe(0);
+
+  const bundled = await Bun.file(String(dir) + "/bundle.js").text();
+
+  // All "not-bun" branches should be eliminated
+  expect(bundled).not.toContain("not-bun-typeof");
+  expect(bundled).not.toContain("not-bun-typeof-global");
+  expect(bundled).not.toContain("not-bun-reverse");
+  expect(bundled).not.toContain("not-bun-loose-ne");
+  
+  // None of the fail files should be referenced
+  expect(bundled).not.toContain("typeof-fail.txt");
+  expect(bundled).not.toContain("typeof-global-fail.txt");
+  expect(bundled).not.toContain("reverse-fail.txt");
+
+  // The "bun" branches should remain
+  expect(bundled).toContain("bun-typeof");
+  expect(bundled).toContain("bun-typeof-global");
+  expect(bundled).toContain("bun-reverse");
+  expect(bundled).toContain("bun-loose-ne");
+});
+
 test("--target=bun does not hardcode runtime values", async () => {
   using dir = tempDir("bun-no-hardcode", {
     "index.js": `

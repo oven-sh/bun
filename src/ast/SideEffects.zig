@@ -764,6 +764,110 @@ pub const SideEffects = enum(u1) {
                 }
             }
         }
+        
+        // Check for typeof Bun patterns in binary expressions
+        if (exp == .e_binary) {
+            const e_ = exp.e_binary;
+            switch (e_.op) {
+                .bin_strict_eq, .bin_strict_ne, .bin_loose_eq, .bin_loose_ne => {
+                    // Check for typeof Bun !== "undefined" or typeof Bun === "undefined"
+                    if (e_.left.data == .e_unary) {
+                        const unary = e_.left.data.e_unary;
+                        if (unary.op == .un_typeof) {
+                            // Handle typeof identifier (e.g., typeof Bun)
+                            if (unary.value.data == .e_identifier) {
+                                const ident = unary.value.data.e_identifier;
+                                if (p.define.forIdentifier(p.loadNameFromRef(ident.ref))) |define| {
+                                    if (define.is_truthy()) {
+                                        // Bun is truthy, so typeof Bun is NOT "undefined"
+                                        if (e_.right.data == .e_string) {
+                                            const str = e_.right.data.e_string;
+                                            if (str.eqlComptime("undefined")) {
+                                                // typeof Bun === "undefined" -> false
+                                                // typeof Bun !== "undefined" -> true
+                                                const is_not_equal = e_.op == .bin_strict_ne or e_.op == .bin_loose_ne;
+                                                return Result{ .ok = true, .value = is_not_equal, .side_effects = .could_have_side_effects };
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // Handle typeof dot expression (e.g., typeof globalThis.Bun)
+                            if (unary.value.data == .e_dot) {
+                                const dot = unary.value.data.e_dot;
+                                if (p.define.dots.get(dot.name)) |parts| {
+                                    for (parts) |*define| {
+                                        if (p.isDotDefineMatch(unary.value, define.parts)) {
+                                            if (define.data.is_truthy()) {
+                                                // globalThis.Bun is truthy, so typeof globalThis.Bun is NOT "undefined"
+                                                if (e_.right.data == .e_string) {
+                                                    const str = e_.right.data.e_string;
+                                                    if (str.eqlComptime("undefined")) {
+                                                        // typeof globalThis.Bun === "undefined" -> false
+                                                        // typeof globalThis.Bun !== "undefined" -> true
+                                                        const is_not_equal = e_.op == .bin_strict_ne or e_.op == .bin_loose_ne;
+                                                        return Result{ .ok = true, .value = is_not_equal, .side_effects = .could_have_side_effects };
+                                                    }
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Also check the reverse: "undefined" === typeof Bun
+                    if (e_.right.data == .e_unary) {
+                        const unary = e_.right.data.e_unary;
+                        if (unary.op == .un_typeof) {
+                            // Handle typeof identifier (e.g., typeof Bun)
+                            if (unary.value.data == .e_identifier) {
+                                const ident = unary.value.data.e_identifier;
+                                if (p.define.forIdentifier(p.loadNameFromRef(ident.ref))) |define| {
+                                    if (define.is_truthy()) {
+                                        // Bun is truthy, so typeof Bun is NOT "undefined"
+                                        if (e_.left.data == .e_string) {
+                                            const str = e_.left.data.e_string;
+                                            if (str.eqlComptime("undefined")) {
+                                                // "undefined" === typeof Bun -> false
+                                                // "undefined" !== typeof Bun -> true
+                                                const is_not_equal = e_.op == .bin_strict_ne or e_.op == .bin_loose_ne;
+                                                return Result{ .ok = true, .value = is_not_equal, .side_effects = .could_have_side_effects };
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // Handle typeof dot expression (e.g., typeof globalThis.Bun)
+                            if (unary.value.data == .e_dot) {
+                                const dot = unary.value.data.e_dot;
+                                if (p.define.dots.get(dot.name)) |parts| {
+                                    for (parts) |*define| {
+                                        if (p.isDotDefineMatch(unary.value, define.parts)) {
+                                            if (define.data.is_truthy()) {
+                                                // globalThis.Bun is truthy, so typeof globalThis.Bun is NOT "undefined"
+                                                if (e_.left.data == .e_string) {
+                                                    const str = e_.left.data.e_string;
+                                                    if (str.eqlComptime("undefined")) {
+                                                        // "undefined" === typeof globalThis.Bun -> false
+                                                        // "undefined" !== typeof globalThis.Bun -> true
+                                                        const is_not_equal = e_.op == .bin_strict_ne or e_.op == .bin_loose_ne;
+                                                        return Result{ .ok = true, .value = is_not_equal, .side_effects = .could_have_side_effects };
+                                                    }
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
 
         return toBooleanWithoutDCECheck(exp);
     }

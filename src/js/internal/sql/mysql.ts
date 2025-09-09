@@ -386,6 +386,7 @@ class PooledMySQLConnection {
     this.queries.clear();
     this.queryCount = 0;
     this.flags &= ~PooledConnectionFlags.reserved;
+    const onFinish = this.onFinish;
     const connectionInfo = this.connectionInfo;
 
     if (err) {
@@ -398,7 +399,7 @@ class PooledMySQLConnection {
     for (const onClose of queries) {
       onClose(wrappedErr);
     }
-    const onFinish = this.onFinish;
+
     if (onFinish) {
       onFinish(wrappedErr);
     }

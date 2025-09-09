@@ -2061,7 +2061,6 @@ pub const Resolver = struct {
                                             .root_request_id = 0,
                                         },
                                         null,
-                                        manager.options.do.prefetch_resolved_tarballs,
                                     ) catch |enqueue_download_err| return .{ .failure = enqueue_download_err };
 
                                 return .{

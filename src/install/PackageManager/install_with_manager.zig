@@ -597,8 +597,6 @@ pub fn installWithManager(
                     }
                 }
             }
-
-            manager.options.do.prefetch_resolved_tarballs = true;
         }
     }
 

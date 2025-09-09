@@ -1,9 +1,12 @@
 #pragma once
 #include "root.h"
 #include "headers-handwritten.h"
+#include "BunBuiltinNames.h"
+#include "WebCoreJSBuiltins.h"
 
 namespace Bun {
 using namespace JSC;
+using namespace WebCore;
 
 // Forward declaration
 class JSBakeResponse;
@@ -14,6 +17,7 @@ struct BakeAdditionsToGlobalObject {
     void visit(Visitor& visitor)
     {
         this->m_JSBakeResponseClassStructure.visit(visitor);
+        visitor.append(this->m_wrapComponent);
     }
 
     void initialize()
@@ -22,6 +26,17 @@ struct BakeAdditionsToGlobalObject {
             [](LazyClassStructure::Initializer& init) {
                 Bun::setupJSBakeResponseClassStructure(init);
             });
+    }
+
+    JSC::JSFunction* wrapComponent(JSGlobalObject* globalObject)
+    {
+        auto* function = m_wrapComponent.get();
+        if (!function) {
+            auto& vm = globalObject->vm();
+            function = JSC::JSFunction::create(vm, globalObject, WebCore::bakeSSRResponseWrapComponentCodeGenerator(vm), globalObject);
+            m_wrapComponent.set(vm, globalObject, function);
+        }
+        return function;
     }
 
     template<typename T>
@@ -43,8 +58,9 @@ struct BakeAdditionsToGlobalObject {
     }
 
     LazyClassStructure m_JSBakeResponseClassStructure;
-    // LazyPropertyOfGlobalObject<JSC::Symbol> m_reactLegacyElementSymbol;
-    // LazyPropertyOfGlobalObject<JSC::Symbol> m_reactElementSymbol;
+
+private:
+    WriteBarrier<JSFunction> m_wrapComponent;
 };
 
 } // namespace Bun

@@ -1511,24 +1511,37 @@ pub fn definesFromTransformOptions(
             }));
         }
         
-        // Define process.isBun as true for dead code elimination
-        // This is a clean way to detect Bun runtime without breaking other checks
-        if (!user_defines.contains("process.isBun")) {
-            _ = try user_defines.getOrPutValue(
-                "process.isBun",
-                "true",
-            );
-        }
+        // For --target=bun, mark these as truthy for DCE without replacing values
+        // This enables dead code elimination while preserving runtime values
         
-        // Mark process.versions.bun as truthy for DCE without replacing the value
-        // This allows if (process.versions.bun) to be eliminated but preserves
-        // the actual value for version comparisons like process.versions.bun === "1.2.21"
+        // process.versions.bun - truthy for DCE, actual version at runtime
         if (!user_defines.contains("process.versions.bun")) {
             _ = try environment_defines.getOrPutValue("process.versions.bun", .init(.{
                 .is_truthy = true,
                 .valueless = true,
                 .original_name = "process.versions.bun",
-                .value = .{ .e_undefined = .{} },  // Value is not used when is_truthy is set
+                .value = .{ .e_undefined = .{} },
+            }));
+        }
+        
+        // globalThis.Bun - truthy for DCE, actual object at runtime  
+        if (!user_defines.contains("globalThis.Bun")) {
+            _ = try environment_defines.getOrPutValue("globalThis.Bun", .init(.{
+                .is_truthy = true,
+                .valueless = true,
+                .original_name = "globalThis.Bun",
+                .value = .{ .e_undefined = .{} },
+            }));
+        }
+        
+        // Bun global - truthy for DCE, actual object at runtime
+        // This needs special handling as a single identifier (not a dot property)
+        if (!user_defines.contains("Bun")) {
+            _ = try environment_defines.getOrPutValue("Bun", .init(.{
+                .is_truthy = true,
+                .valueless = true,
+                .original_name = "Bun",
+                .value = .{ .e_undefined = .{} },
             }));
         }
     }

@@ -63,18 +63,37 @@ test("dead code elimination for process.versions.bun with --target=bun", async (
   expect(bundled).not.toContain("isBrowser");
 });
 
-test("dead code elimination for typeof Bun checks with --target=bun", async () => {
-  using dir = tempDir("bun-typeof-dce", {
+test("dead code elimination for all Bun detection patterns with --target=bun", async () => {
+  using dir = tempDir("bun-all-patterns-dce", {
     "index.js": `
-      // Note: We can't eliminate typeof Bun checks because Bun global is complex
-      // Users should use process.versions.bun instead for dead code elimination
-      if (typeof Bun !== "undefined") {
-        console.log("Has Bun global");
-        exports.hasBun = true;
+      // Test 1: Direct Bun global checks
+      if (Bun) {
+        exports.test1 = "bun-direct";
       } else {
-        console.log("No Bun global");
-        exports.hasBun = false;
+        exports.test1 = "not-bun-direct";
+        require("fs").writeFileSync("direct-fail.txt", "should not exist");
       }
+      
+      // Test 2: globalThis.Bun checks
+      if (globalThis.Bun) {
+        exports.test2 = "bun-globalThis";
+      } else {
+        exports.test2 = "not-bun-globalThis";
+        require("fs").writeFileSync("globalThis-fail.txt", "should not exist");
+      }
+      
+      // Test 3: process.versions.bun checks
+      if (process.versions.bun) {
+        exports.test3 = "bun-versions";
+      } else {
+        exports.test3 = "not-bun-versions";
+        require("fs").writeFileSync("versions-fail.txt", "should not exist");
+      }
+      
+      // Test 4: Verify actual values are preserved (not replaced with constants)
+      exports.bunVersion = process.versions.bun;
+      exports.bunGlobal = Bun;
+      exports.bunGlobalThis = globalThis.Bun;
     `,
   });
 
@@ -99,8 +118,25 @@ test("dead code elimination for typeof Bun checks with --target=bun", async () =
   // Read the bundled output
   const bundled = await Bun.file(String(dir) + "/bundle.js").text();
 
-  // Both branches should still be present because we don't define Bun global
-  expect(bundled).toContain("Bun");
+  // All "not-bun" branches should be eliminated
+  expect(bundled).not.toContain("not-bun-direct");
+  expect(bundled).not.toContain("not-bun-globalThis");
+  expect(bundled).not.toContain("not-bun-versions");
+  
+  // None of the fail files should be referenced
+  expect(bundled).not.toContain("direct-fail.txt");
+  expect(bundled).not.toContain("globalThis-fail.txt");
+  expect(bundled).not.toContain("versions-fail.txt");
+
+  // The "bun" branches should remain
+  expect(bundled).toContain("bun-direct");
+  expect(bundled).toContain("bun-globalThis");
+  expect(bundled).toContain("bun-versions");
+  
+  // The actual values should still be referenced (not replaced with constants)
+  expect(bundled).toContain("exports.bunVersion = process.versions.bun");
+  expect(bundled).toContain("exports.bunGlobal = Bun");
+  expect(bundled).toContain("exports.bunGlobalThis = globalThis.Bun");
 });
 
 test("compare dead code elimination: --target=bun vs --target=node", async () => {
@@ -151,32 +187,44 @@ test("compare dead code elimination: --target=bun vs --target=node", async () =>
   expect(nodeBundle).toContain("process.versions.node");
 });
 
-test("dead code elimination with --compile", async () => {
-  using dir = tempDir("compile-dce", {
+test("--target=bun does not hardcode runtime values", async () => {
+  using dir = tempDir("bun-no-hardcode", {
     "index.js": `
-      if (process.versions.bun) {
-        console.log("Running in Bun");
-      } else {
-        console.log("Not running in Bun");
+      // These values should NOT be replaced with constants
+      exports.platform = process.platform;
+      exports.arch = process.arch;
+      exports.bunVersion = process.versions.bun;
+      exports.nodeVersion = process.versions.node;
+      exports.bunObject = Bun;
+      
+      // But DCE should still work for conditionals
+      if (!process.versions.bun) {
+        exports.shouldNotExist = "this should be eliminated";
       }
     `,
   });
 
-  // Build with --compile (which should define process.versions.bun)
-  await using compileProc = Bun.spawn({
-    cmd: [bunExe(), "build", "index.js", "--compile", "--outfile=app"],
+  // Build with --target=bun
+  await using bundleProc = Bun.spawn({
+    cmd: [bunExe(), "build", "index.js", "--target=bun", "--outfile=bundle.js"],
     env: bunEnv,
     cwd: String(dir),
     stderr: "pipe",
   });
 
-  const compileCode = await compileProc.exited;
+  const bundleCode = await bundleProc.exited;
+  expect(bundleCode).toBe(0);
+
+  const bundled = await Bun.file(String(dir) + "/bundle.js").text();
+
+  // Values should be preserved, not replaced with constants
+  // Check that the actual runtime values are used (not hardcoded strings)
+  expect(bundled).toContain("process.platform");
+  expect(bundled).toContain("process.arch");
+  expect(bundled).toContain("process.versions.bun");
+  expect(bundled).toContain("Bun");
   
-  // Note: --compile requires downloading binaries which may not work in test environment
-  // This test is mainly to document the expected behavior
-  if (compileCode === 0) {
-    // If compile succeeded, check that the binary was created
-    const stats = await Bun.file(String(dir) + "/app").exists();
-    expect(stats).toBe(true);
-  }
+  // But DCE should still eliminate dead code
+  expect(bundled).not.toContain("shouldNotExist");
+  expect(bundled).not.toContain("this should be eliminated");
 });

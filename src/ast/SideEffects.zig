@@ -753,6 +753,17 @@ pub const SideEffects = enum(u1) {
                 }
             }
         }
+        
+        // Check if this is an identifier with an is_truthy define
+        if (exp == .e_identifier) {
+            const e_ = exp.e_identifier;
+            if (p.define.forIdentifier(p.loadNameFromRef(e_.ref))) |define| {
+                if (define.is_truthy()) {
+                    // This identifier is marked as truthy for DCE purposes
+                    return Result{ .ok = true, .value = true, .side_effects = .could_have_side_effects };
+                }
+            }
+        }
 
         return toBooleanWithoutDCECheck(exp);
     }

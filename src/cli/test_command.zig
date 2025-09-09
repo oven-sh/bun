@@ -698,10 +698,10 @@ pub const CommandLineReporter = struct {
                     .fail_because_failing_test_passed => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n", colors)) catch {},
                     .fail_because_todo_passed => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` if tested behavior now works<r>\n", colors)) catch {},
                     .fail_because_expected_assertion_count, .fail_because_expected_has_assertions => {}, // printed above
-                    .fail_because_timeout => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test timed out.<r>\n", colors)) catch {},
+                    .fail_because_timeout => writer.print(comptime Output.prettyFmt("  <d>^<r> <red>this test timed out after {d}ms.<r>\n", colors), .{test_entry.timeout}) catch {},
                     .fail_because_hook_timeout => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>a beforeEach/afterEach hook timed out for this test.<r>\n", colors)) catch {},
-                    .fail_because_timeout_with_done_callback => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the test callback function<r>\n", colors)) catch {},
-                    .fail_because_hook_timeout_with_done_callback => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>a beforeEach/afterEach hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the test callback function<r>\n", colors)) catch {},
+                    .fail_because_timeout_with_done_callback => writer.print(comptime Output.prettyFmt("  <d>^<r> <red>this test timed out after {d}ms, before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the test callback function<r>\n", colors), .{test_entry.timeout}) catch {},
+                    .fail_because_hook_timeout_with_done_callback => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>a beforeEach/afterEach hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n", colors)) catch {},
                 },
             }
         }

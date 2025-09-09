@@ -33,8 +33,7 @@ pub const KnownGlobal = enum {
         return js_ast.Expr.init(E.Call, call, loc);
     }
 
-    pub noinline fn minifyGlobalConstructor(allocator: std.mem.Allocator, noalias e: *E.New, symbols: []const Symbol, loc: logger.Loc) ?js_ast.Expr {
-        _ = allocator;
+    pub noinline fn minifyGlobalConstructor(allocator: std.mem.Allocator, noalias e: *E.New, symbols: []const Symbol, loc: logger.Loc, minify_whitespace: bool) ?js_ast.Expr {
         const id = if (e.target.data == .e_identifier) e.target.data.e_identifier.ref else return null;
         const symbol = &symbols[id.innerIndex()];
         if (symbol.kind != .unbound)
@@ -42,7 +41,7 @@ pub const KnownGlobal = enum {
 
         const constructor = map.get(symbol.original_name) orelse return null;
 
-        switch (constructor) {
+        return switch (constructor) {
             // Error constructors can be called without 'new' with identical behavior
             .Error, .TypeError, .SyntaxError, .RangeError, .ReferenceError, .EvalError, .URIError, .AggregateError => {
                 // Convert `new Error(...)` to `Error(...)` to save bytes
@@ -81,49 +80,72 @@ pub const KnownGlobal = enum {
             .Array => {
                 const n = e.args.len;
 
-                if (n == 0) {
-                    // new Array() -> []
-                    return js_ast.Expr.init(E.Array, E.Array{}, loc);
-                }
+                return switch (n) {
+                    0 => {
+                        // new Array() -> []
+                        return js_ast.Expr.init(E.Array, E.Array{}, loc);
+                    },
+                    1 => {
+                        // For single argument, only convert to literal if we're SURE it's not a number
+                        const arg = e.args.ptr[0];
 
-                // new Array(1, 2, 3) -> [1, 2, 3]
-                // But NOT new Array(3) which creates an array with 3 empty slots
-                if (n > 1) {
-                    return js_ast.Expr.init(E.Array, .{ .items = e.args }, loc);
-                }
+                        // Check if it's an object or array literal first
+                        switch (arg.data) {
+                            .e_object, .e_array => {
+                                // new Array({}) -> [{}], new Array([1]) -> [[1]]
+                                // These are definitely not numbers, safe to convert
+                                return js_ast.Expr.init(E.Array, .{ .items = e.args }, loc);
+                            },
+                            else => {},
+                        }
 
-                // For single argument, only convert to literal if we're SURE it's not a number
-                if (n == 1) {
-                    const arg = e.args.ptr[0];
-
-                    // Check if it's an object or array literal first
-                    switch (arg.data) {
-                        .e_object, .e_array => {
-                            // new Array({}) -> [{}], new Array([1]) -> [[1]]
-                            // These are definitely not numbers, safe to convert
-                            return js_ast.Expr.init(E.Array, .{ .items = e.args }, loc);
-                        },
-                        else => {},
-                    }
-
-                    // For other types, check via knownPrimitive
-                    const primitive = arg.knownPrimitive();
-                    // Only convert if we know for certain it's not a number
-                    // unknown could be a number at runtime, so we must preserve Array() call
-                    switch (primitive) {
-                        .null, .undefined, .boolean, .string, .bigint => {
-                            // These are definitely not numbers, safe to convert
-                            return js_ast.Expr.init(E.Array, .{ .items = e.args }, loc);
-                        },
-                        .number, .unknown, .mixed => {
-                            // Could be a number, preserve Array() call
-                            return callFromNew(e, loc);
-                        },
-                    }
-                }
-
-                // For new Array(number), just remove 'new'
-                return callFromNew(e, loc);
+                        // For other types, check via knownPrimitive
+                        const primitive = arg.knownPrimitive();
+                        // Only convert if we know for certain it's not a number
+                        // unknown could be a number at runtime, so we must preserve Array() call
+                        switch (primitive) {
+                            .null, .undefined, .boolean, .string, .bigint => {
+                                // These are definitely not numbers, safe to convert
+                                return js_ast.Expr.init(E.Array, .{ .items = e.args }, loc);
+                            },
+                            .number => {
+                                const val = arg.data.e_number.value;
+                                if (
+                                // only want this with whitespace minification
+                                minify_whitespace and
+                                    (val == 0 or
+                                        val == 1 or
+                                        val == 2 or
+                                        val == 3 or
+                                        val == 4 or
+                                        val == 5 or
+                                        val == 6 or
+                                        val == 7 or
+                                        val == 8 or
+                                        val == 9 or
+                                        val == 10))
+                                {
+                                    const arg_loc = arg.loc;
+                                    var list = e.args.listManaged(allocator);
+                                    list.clearRetainingCapacity();
+                                    bun.handleOom(list.appendNTimes(js_ast.Expr{ .data = js_parser.Prefill.Data.EMissing, .loc = arg_loc }, @intFromFloat(val)));
+                                    return js_ast.Expr.init(E.Array, .{ .items = .fromList(list) }, loc);
+                                }
+                                return callFromNew(e, loc);
+                            },
+                            .unknown, .mixed => {
+                                // Could be a number, preserve Array() call
+                                return callFromNew(e, loc);
+                            },
+                        }
+                    },
+                    // > 1
+                    else => {
+                        // new Array(1, 2, 3) -> [1, 2, 3]
+                        // But NOT new Array(3) which creates an array with 3 empty slots
+                        return js_ast.Expr.init(E.Array, .{ .items = e.args }, loc);
+                    },
+                };
             },
 
             .Function => {
@@ -319,7 +341,7 @@ pub const KnownGlobal = enum {
                 }
                 return null;
             },
-        }
+        };
     }
 };
 
@@ -331,5 +353,6 @@ const bun = @import("bun");
 const logger = bun.logger;
 
 const js_ast = bun.ast;
+const js_parser = bun.js_parser;
 const E = js_ast.E;
 const Symbol = js_ast.Symbol;

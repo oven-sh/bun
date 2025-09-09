@@ -383,7 +383,7 @@ class PooledMySQLConnection {
     this.connection = null;
     this.adapter.readyConnections.delete(this);
     const queries = new Set(this.queries);
-    this.queries?.clear?.();
+    this.queries.clear();
     this.queryCount = 0;
     this.flags &= ~PooledConnectionFlags.reserved;
     const connectionInfo = this.connectionInfo;

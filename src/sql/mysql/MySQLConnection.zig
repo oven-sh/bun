@@ -403,14 +403,8 @@ pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
     const loop = this.vm.eventLoop();
     loop.enter();
     defer loop.exit();
-    _ = on_close.call(
-        this.globalObject,
-        .js_undefined,
-        &[_]JSValue{
-            value.toError() orelse value,
-            this.getQueriesArray(),
-        },
-    ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
+
+    this.globalObject.queueMicrotask(on_close, &[_]JSValue{ value.toError() orelse value, this.getQueriesArray() });
 }
 
 pub fn fail(this: *MySQLConnection, message: []const u8, err: AnyMySQLError.Error) void {

@@ -346,10 +346,13 @@ class PooledMySQLConnection {
   /// queryCount is used to indicate the number of queries using the connection, if a connection is reserved or if its a transaction queryCount will be 1 independently of the number of queries
   queryCount: number = 0;
 
-  #onConnected(err, _) {
+  #onConnected(err, connection) {
     if (err) {
       err = wrapError(err);
+    } else {
+      this.connection = connection;
     }
+
     const connectionInfo = this.connectionInfo;
     if (connectionInfo?.onconnect) {
       connectionInfo.onconnect(err);
@@ -388,6 +391,7 @@ class PooledMySQLConnection {
     // this.flags &= ~PooledConnectionFlags.reserved;
     // const onFinish = this.onFinish;
     // const connectionInfo = this.connectionInfo;
+    // const adapter = this.adapter;
 
     // if (err) {
     //   wrappedErr = wrapError(err);
@@ -408,7 +412,7 @@ class PooledMySQLConnection {
     //   connectionInfo.onclose(wrappedErr);
     // }
 
-    // this.adapter.release(this, true);
+    // adapter.release(this, true);
 
     if (err) {
       err = wrapError(err);
@@ -447,12 +451,8 @@ class PooledMySQLConnection {
     this.#startConnection();
   }
 
-  async #startConnection() {
-    this.connection = await PooledMySQLConnection.createConnection(
-      this.connectionInfo,
-      (...args) => this.#onConnected(...args),
-      (...args) => this.#onClose(...args),
-    );
+  #startConnection() {
+    PooledMySQLConnection.createConnection(this.connectionInfo, this.#onConnected.bind(this), this.#onClose.bind(this));
   }
 
   onClose(onClose: (err: Error) => void) {

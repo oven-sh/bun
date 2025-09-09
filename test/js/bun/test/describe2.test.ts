@@ -52,7 +52,7 @@ test("describe/test", async () => {
     (fail) this test times out
       ^ this test timed out.
     (fail) this test times out with done
-      ^ this test timed out before the done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
+      ^ this test timed out before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
     (pass) addition 1 + 2 = 3
     (pass) addition 2 + 3 = 5
     (pass) addition 3 + 4 = 7
@@ -107,7 +107,7 @@ test("describe/test", async () => {
     (fail) this test times out
       ^ this test timed out.
     (fail) this test times out with done
-      ^ this test timed out before the done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
+      ^ this test timed out before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
     (fail) expect.assertions
     (fail) done parameter > done combined with promise > fails when completion is not incremented
     (fail) done parameter > second call of done callback still triggers error

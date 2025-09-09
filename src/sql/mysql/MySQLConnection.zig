@@ -758,7 +758,7 @@ pub fn onDrain(this: *MySQLConnection) void {
 
 pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var vm = globalObject.bunVM();
-    const arguments = callframe.arguments();
+    const arguments = callframe.argumentsAsArray(15);
     const hostname_str = try arguments[0].toBunString(globalObject);
     defer hostname_str.deref();
     const port = try arguments[1].coerce(i32, globalObject);
@@ -780,6 +780,19 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     };
 
     const tls_object = arguments[6];
+
+    const options_str = try arguments[7].toBunString(globalObject);
+    defer options_str.deref();
+
+    const path_str = try arguments[8].toBunString(globalObject);
+    defer path_str.deref();
+
+    const on_connect = arguments[9];
+    const on_close = arguments[10];
+    const idle_timeout = arguments[11].toInt32();
+    const connection_timeout = arguments[12].toInt32();
+    const max_lifetime = arguments[13].toInt32();
+    const use_unnamed_prepared_statements = arguments[14].asBoolean();
 
     var tls_config: jsc.API.ServerConfig.SSLConfig = .{};
     var tls_ctx: ?*uws.SocketContext = null;
@@ -833,12 +846,6 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     var options: []const u8 = "";
     var path: []const u8 = "";
 
-    const options_str = try arguments[7].toBunString(globalObject);
-    defer options_str.deref();
-
-    const path_str = try arguments[8].toBunString(globalObject);
-    defer path_str.deref();
-
     const options_buf: []u8 = brk: {
         var b = bun.StringBuilder{};
         b.cap += username_str.utf8ByteLength() + 1 + password_str.utf8ByteLength() + 1 + database_str.utf8ByteLength() + 1 + options_str.utf8ByteLength() + 1 + path_str.utf8ByteLength() + 1;
@@ -866,13 +873,6 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
 
         break :brk b.allocatedSlice();
     };
-
-    const on_connect = arguments[9];
-    const on_close = arguments[10];
-    const idle_timeout = arguments[11].toInt32();
-    const connection_timeout = arguments[12].toInt32();
-    const max_lifetime = arguments[13].toInt32();
-    const use_unnamed_prepared_statements = arguments[14].asBoolean();
 
     var ptr = try bun.default_allocator.create(MySQLConnection);
 

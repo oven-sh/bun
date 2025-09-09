@@ -346,7 +346,7 @@ class PooledMySQLConnection {
   /// queryCount is used to indicate the number of queries using the connection, if a connection is reserved or if its a transaction queryCount will be 1 independently of the number of queries
   queryCount: number = 0;
 
-  __onConnected(err, _) {
+  #onConnected(err, _) {
     if (err) {
       err = wrapError(err);
     }
@@ -377,7 +377,7 @@ class PooledMySQLConnection {
     this.adapter.release(this, true);
   }
 
-  __onClose(err) {
+  #onClose(err) {
     if (err) {
       err = wrapError(err);
     }
@@ -418,8 +418,8 @@ class PooledMySQLConnection {
   async #startConnection() {
     this.connection = await PooledMySQLConnection.createConnection(
       this.connectionInfo,
-      (...args) => this.__onConnected(...args),
-      (...args) => this.__onClose(...args),
+      (...args) => this.#onConnected(...args),
+      (...args) => this.#onClose(...args),
     );
   }
 
@@ -484,7 +484,7 @@ class PooledMySQLConnection {
   }
 }
 
-export class MySQLAdapter
+class MySQLAdapter
   implements
     DatabaseAdapter<PooledMySQLConnection, $ZigGeneratedClasses.MySQLConnection, $ZigGeneratedClasses.MySQLQuery>
 {
@@ -1177,9 +1177,11 @@ export class MySQLAdapter
   }
 }
 
-export default {
+const defaultExport = {
   MySQLAdapter,
   SQLCommand,
   commandToString,
   detectCommand,
 };
+
+export default defaultExport;

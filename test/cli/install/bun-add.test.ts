@@ -2329,15 +2329,6 @@ it("should install tarball with tarball dependencies", async () => {
   // This test verifies that tarballs containing dependencies that are also tarballs
   // can be installed correctly. Regression test for URL corruption bug.
 
-  // Need to update the parent tarball to use the actual server URL
-  const parentPkgJson = {
-    name: "tarball-parent",
-    version: "0.0.1",
-    dependencies: {
-      "tarball-child": "http://localhost:6789/tarball-child-0.0.1.tgz",
-    },
-  };
-
   // Create a temporary parent tarball with the correct server URL
   const tmpDir = tmpdirSync();
   const pkgDir = join(tmpDir, "package");
@@ -2358,8 +2349,15 @@ it("should install tarball with tarball dependencies", async () => {
 
   const server_url = server.url.href.replace(/\/+$/, "");
 
-  // Update parent package.json with actual server URL
-  parentPkgJson.dependencies["tarball-child"] = `${server_url}/tarball-child-0.0.1.tgz`;
+  // Create parent package.json with the actual server URL
+  const parentPkgJson = {
+    name: "tarball-parent",
+    version: "0.0.1",
+    dependencies: {
+      "tarball-child": `${server_url}/tarball-child-0.0.1.tgz`,
+    },
+  };
+
   await writeFile(join(pkgDir, "package.json"), JSON.stringify(parentPkgJson, null, 2));
 
   // Create the parent tarball

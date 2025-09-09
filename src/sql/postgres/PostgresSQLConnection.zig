@@ -326,7 +326,7 @@ pub fn failWithJSValue(this: *PostgresSQLConnection, value: JSValue) void {
         this.globalObject,
         this.js_value,
         &[_]JSValue{
-            value,
+            value.toError() orelse value,
             this.getQueriesArray(),
         },
     ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);

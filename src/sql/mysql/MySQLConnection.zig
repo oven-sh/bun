@@ -404,7 +404,11 @@ pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
     loop.enter();
     defer loop.exit();
 
-    this.globalObject.queueMicrotask(on_close, &[_]JSValue{ value.toError() orelse value, this.getQueriesArray() });
+    const js_error = value.toError() orelse value;
+    js_error.ensureStillAlive();
+    const queries_array = this.getQueriesArray();
+    queries_array.ensureStillAlive();
+    this.globalObject.queueMicrotask(on_close, &[_]JSValue{ js_error, queries_array });
 }
 
 pub fn fail(this: *MySQLConnection, message: []const u8, err: AnyMySQLError.Error) void {

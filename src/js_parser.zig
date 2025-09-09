@@ -445,11 +445,6 @@ pub const ExprIn = struct {
     is_immediately_assigned_to_decl: bool = false,
 
     property_access_for_method_call_maybe_should_replace_with_undefined: bool = false,
-    
-    // True when we're visiting the test expression of a conditional (if/while/ternary/etc)
-    // This allows defines marked as "conditional_only" to be replaced in these contexts
-    // while preserving the original expression elsewhere
-    is_conditional_test: bool = false,
 };
 
 // This function exists to tie all of these checks together in one place

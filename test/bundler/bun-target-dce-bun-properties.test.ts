@@ -205,3 +205,56 @@ test("typeof checks on Bun properties don't trigger DCE", async () => {
   expect(bundled).toContain("spawn-is-function");
   expect(bundled).toContain("spawn-not-function");
 });
+
+test("DCE limitation: const patterns don't trigger DCE (constant propagation not implemented)", async () => {
+  using dir = tempDir("dce-const-limitation", {
+    "index.js": `
+      // These patterns currently DO NOT trigger DCE
+      // because constant propagation is not implemented
+      
+      const isBun = typeof Bun !== "undefined";
+      if (!isBun) {
+        exports.test1 = "not-bun-const";
+      } else {
+        exports.test1 = "is-bun-const";
+      }
+      
+      const hasBun = !!process.versions.bun;
+      if (hasBun) {
+        exports.test2 = "has-bun-const";
+      } else {
+        exports.test2 = "no-bun-const";
+      }
+      
+      // Direct checks DO trigger DCE (for comparison)
+      if (typeof Bun !== "undefined") {
+        exports.test3 = "bun-direct";
+      } else {
+        exports.test3 = "not-bun-direct";
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "index.js", "--target=bun", "--outfile=bundle.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  expect(await proc.exited).toBe(0);
+  const bundled = await Bun.file(String(dir) + "/bundle.js").text();
+
+  // Const patterns - both branches remain (limitation)
+  expect(bundled).toContain("not-bun-const");
+  expect(bundled).toContain("is-bun-const");
+  expect(bundled).toContain("has-bun-const");
+  expect(bundled).toContain("no-bun-const");
+  
+  // Direct pattern - DCE works
+  expect(bundled).toContain("bun-direct");
+  expect(bundled).not.toContain("not-bun-direct");
+  
+  // This is a known limitation - constant propagation would be needed
+  // to make const patterns work with DCE
+});

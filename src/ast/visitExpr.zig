@@ -918,8 +918,7 @@ pub fn VisitExpr(
                 const e_ = expr.data.e_if;
                 const is_call_target = @as(Expr.Data, p.call_target) == .e_if and expr.data.e_if == p.call_target.e_if;
 
-                // Visit the test expression with is_conditional_test = true
-                e_.test_ = p.visitExprInOut(e_.test_, ExprIn{ .is_conditional_test = true });
+                e_.test_ = p.visitExpr(e_.test_);
 
                 e_.test_ = SideEffects.simplifyBoolean(p, e_.test_);
 

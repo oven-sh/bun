@@ -169,6 +169,8 @@ pub fn installIsolatedPackages(
             );
 
             queue_deps: {
+                defer peer_dep_ids.clearRetainingCapacity();
+                
                 if (packages_to_install) |packages| {
                     if (node_id == .root) { // TODO: print an error when scanner is actually a dependency of a workspace (we should not support this)
                         for (dep_ids_sort_buf.items) |dep_id| {
@@ -193,7 +195,6 @@ pub fn installIsolatedPackages(
                     }
                 }
 
-                peer_dep_ids.clearRetainingCapacity();
                 for (dep_ids_sort_buf.items) |dep_id| {
                     if (Tree.isFilteredDependencyOrWorkspace(
                         dep_id,

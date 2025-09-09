@@ -1591,35 +1591,37 @@ fn NewPrinter(
         // Check if a binary expression is in a numeric context (safe to use == instead of ===)
         fn isNumericContext(p: *Printer, e: *E.Binary) bool {
             _ = p;
-            // Check if comparing with numeric literal 0
-            const is_left_zero = switch (e.left.data) {
-                .e_number => |num| num.value == 0,
-                else => false,
-            };
-            const is_right_zero = switch (e.right.data) {
-                .e_number => |num| num.value == 0,
-                else => false,
-            };
             
-            // Check for bitwise operations that produce numbers
-            const is_left_bitwise = switch (e.left.data) {
-                .e_binary => |bin| switch (bin.op) {
-                    .bin_bitwise_and, .bin_bitwise_or, .bin_bitwise_xor,
-                    .bin_shl, .bin_shr, .bin_u_shr => true,
-                    else => false,
-                },
-                else => false,
-            };
-            const is_right_bitwise = switch (e.right.data) {
-                .e_binary => |bin| switch (bin.op) {
-                    .bin_bitwise_and, .bin_bitwise_or, .bin_bitwise_xor,
-                    .bin_shl, .bin_shr, .bin_u_shr => true,
-                    else => false,
-                },
-                else => false,
-            };
+            // Helper to check if an expression is guaranteed to be numeric
+            const isDefinitelyNumeric = struct {
+                fn check(expr: Expr) bool {
+                    return switch (expr.data) {
+                        .e_number => true, // Numeric literals are definitely numeric
+                        .e_unary => |un| switch (un.op) {
+                            // Unary numeric operators always return numbers
+                            .un_pos, .un_neg, .un_cpl => true,
+                            .un_post_dec, .un_post_inc, .un_pre_dec, .un_pre_inc => true,
+                            else => false,
+                        },
+                        .e_binary => |bin| switch (bin.op) {
+                            // Bitwise operators always return 32-bit integers
+                            .bin_bitwise_and, .bin_bitwise_or, .bin_bitwise_xor,
+                            .bin_shl, .bin_shr, .bin_u_shr => true,
+                            // Arithmetic operators always return numbers
+                            .bin_add, .bin_sub, .bin_mul, .bin_div, .bin_rem, .bin_pow => true,
+                            else => false,
+                        },
+                        else => false,
+                    };
+                }
+            }.check;
             
-            return is_left_zero or is_right_zero or is_left_bitwise or is_right_bitwise;
+            const left_is_numeric = isDefinitelyNumeric(e.left);
+            const right_is_numeric = isDefinitelyNumeric(e.right);
+            
+            // Safe to use == if at least one side is definitely numeric
+            // because == with a number coerces the other side to number
+            return left_is_numeric or right_is_numeric;
         }
 
         pub fn printRequireError(p: *Printer, text: string) void {

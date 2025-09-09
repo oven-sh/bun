@@ -725,35 +725,39 @@ describe("bundler", () => {
   itBundled("minify/StrictEqualToLooseEqualInNumericContext", {
     files: {
       "/entry.js": /* js */ `
-        // Should optimize in numeric contexts (comparing with 0)
+        // Should optimize - any numeric comparison
         const x = 5;
         capture((x & 7) === 0);
-        capture(0 === (x | 3));
-        capture((x ^ x) === 0);
+        capture(1 === (x | 3));
+        capture((x ^ 3) === 6);
         
-        // Should optimize bitwise operations
-        capture((x & (x - 1)) === 0);
-        capture((x << 2) === 0);
-        capture((x >> 1) === 0);
-        capture((x >>> 1) === 0);
+        // Should optimize - arithmetic operations
+        capture((x + 10) === 15);
+        capture((x * 2) === 10);
+        capture(1 === (x / 5));
         
-        // Should NOT optimize non-numeric contexts
-        capture("0" === 0);
-        capture(null === 0);
-        capture(someVar === 0);
+        // With variables - still optimizes if one side is numeric
+        capture((someVar & 0xFF) === 128);
+        capture(someVar === 42);
+        capture(100 === otherVar);
+        
+        // Should NOT optimize when neither side is definitely numeric
+        capture(someVar === otherVar);
+        capture("5" === "5");
       `,
     },
     capture: [
       "!1",  // (5 & 7) === 0 is false, constant folded
-      "!1",  // 0 === (5 | 3) is false, constant folded
-      "!0",  // (5 ^ 5) === 0 is true, constant folded
-      "!1",  // (5 & 4) === 0 is false, constant folded
-      "!1",  // (5 << 2) === 0 is false, constant folded
-      "!1",  // (5 >> 1) === 0 is false, constant folded
-      "!1",  // (5 >>> 1) === 0 is false, constant folded
-      "!1",  // "0" === 0 is false, constant folded
-      "!1",  // null === 0 is false, constant folded
-      "someVar == 0",  // Variable can't be constant folded
+      "!1",  // 1 === 7 is false, constant folded  
+      "!0",  // (5 ^ 3) === 6 is true, constant folded
+      "!0",  // 15 === 15 is true, constant folded
+      "!0",  // 10 === 10 is true, constant folded
+      "!0",  // 1 === 1 is true, constant folded
+      "(someVar & 255) == 128",  // Optimized to ==
+      "someVar == 42",  // Optimized to == (42 is numeric)
+      "otherVar == 100",  // Optimized to == (100 is numeric)
+      "someVar === otherVar",  // NOT optimized (neither side is definitely numeric)
+      "!0",  // "5" === "5" is true, constant folded
     ],
     minifySyntax: true,
   });

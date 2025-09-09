@@ -14,9 +14,9 @@ const td = new TextDecoder();
 const windowDebugKey = "$bake";
 
 interface WindowDebugObject {
-  navigate: (href: string, cacheId?: number) => Promise<void>;
-  onServerSideReload: (cb: () => void | Promise<void>) => Promise<void>;
-  readonly currentCssList: string[] | undefined;
+  navigate: typeof navigate;
+  onServerSideReload: typeof onServerSideReload;
+  readonly currentCssList: typeof currentCssList;
 }
 
 type WindowWithBakeDebugObject = { [key in typeof windowDebugKey]: WindowDebugObject };
@@ -163,7 +163,7 @@ let lastNavigationController: AbortController;
 // Client side navigation is implemented by updating the app's `useState` with a
 // new RSC payload promise. Callers of `navigate` are expected to manage history
 // state. A navigation id is used
-async function navigate(href: string, cacheId?: number) {
+async function navigate(href: string, cacheId?: number): Promise<void> {
   const thisNavigationId = ++lastNavigationId;
   const olderController = lastNavigationController;
 

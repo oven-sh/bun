@@ -31,20 +31,6 @@ describe("next-auth", () => {
         AUTH_SECRET: "I7Jiq12TSMlPlAzyVAT+HxYX7OQb/TTqIbfTTpr1rg8=",
       });
 
-      try {
-        const stat = require("node:fs").statSync("/tmp/mysql.sock");
-        console.log(stat);
-      } catch (e) {
-        console.log("couldnt stat mysql.sock", e);
-      }
-
-      try {
-        const file = await Bun.file("/tmp/mysql.sock").arrayBuffer();
-        console.log(file);
-      } catch (e) {
-        console.log("couldnt read mysql.sock", e);
-      }
-
       console.log(result.stdout);
       console.log(result.stderr);
       expect(result.stderr).toBe("");

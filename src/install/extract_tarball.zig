@@ -120,7 +120,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
     };
     const basename = brk: {
         var tmp = name;
-        
+
         // Handle URLs - extract just the filename from the URL
         if (strings.hasPrefixComptime(tmp, "https://") or strings.hasPrefixComptime(tmp, "http://")) {
             tmp = std.fs.path.basename(tmp);

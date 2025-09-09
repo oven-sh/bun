@@ -770,7 +770,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     const database_str = try arguments[4].toBunString(globalObject);
     defer database_str.deref();
     // TODO: update this to match MySQL.
-    const ssl_mode: SSLMode = switch (try arguments[5].coerce(globalObject, i32)) {
+    const ssl_mode: SSLMode = switch (try arguments[5].coerce(i32, globalObject)) {
         0 => .disable,
         1 => .prefer,
         2 => .require,
@@ -791,9 +791,9 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     defer on_connect.ensureStillAlive();
     const on_close = arguments[10];
     defer on_close.ensureStillAlive();
-    const idle_timeout = try arguments[11].coerce(globalObject, i32);
-    const connection_timeout = try arguments[12].coerce(globalObject, i32);
-    const max_lifetime = try arguments[13].coerce(globalObject, i32);
+    const idle_timeout = try arguments[11].coerce(i32, globalObject);
+    const connection_timeout = try arguments[12].coerce(i32, globalObject);
+    const max_lifetime = try arguments[13].coerce(i32, globalObject);
     const use_unnamed_prepared_statements = arguments[14].toBoolean();
 
     var tls_config: jsc.API.ServerConfig.SSLConfig = .{};

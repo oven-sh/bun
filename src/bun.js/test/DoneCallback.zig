@@ -11,7 +11,7 @@ const DoneCallbackTask = struct {
         defer this.ref.deref();
         const has_one_ref = this.ref.ref_count.hasOneRef();
         this.ref.buntest.bunTestDoneCallback(this.globalThis, this.ref.phase, has_one_ref) catch |e| {
-            this.ref.buntest.onUncaughtException(this.globalThis, this.globalThis.takeError(e), false, this.ref.phase);
+            this.ref.buntest.onUncaughtException(this.globalThis, this.globalThis.takeException(e), false, this.ref.phase);
         };
     }
 };

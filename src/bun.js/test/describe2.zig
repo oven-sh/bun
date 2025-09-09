@@ -364,12 +364,12 @@ pub const BunTest = struct {
         switch (this.phase) {
             .collection => {},
             .execution => this.execution.handleTimeout(vm.global) catch |e| {
-                this.onUncaughtException(vm.global, vm.global.takeError(e), false, .done);
+                this.onUncaughtException(vm.global, vm.global.takeException(e), false, .done);
             },
             .done => {},
         }
         this.run(vm.global) catch |e| {
-            this.onUncaughtException(vm.global, vm.global.takeError(e), false, .done);
+            this.onUncaughtException(vm.global, vm.global.takeException(e), false, .done);
         };
 
         return .disarm; // this won't disable the timer if .run() re-arms it
@@ -473,7 +473,7 @@ pub const BunTest = struct {
         }
 
         const result: ?jsc.JSValue = cfg.callback.callback.get().call(globalThis, .js_undefined, args.get()) catch |e| blk: {
-            this.onUncaughtException(globalThis, globalThis.takeError(e), false, cfg.data);
+            this.onUncaughtException(globalThis, globalThis.takeException(e), false, cfg.data);
             group.log("callTestCallback -> error", .{});
             break :blk null;
         };
@@ -509,7 +509,7 @@ pub const BunTest = struct {
     }
 
     /// called from the uncaught exception handler, or if a test callback rejects or throws an error
-    pub fn onUncaughtException(this: *BunTest, globalThis: *jsc.JSGlobalObject, result: jsc.JSValue, is_rejection: bool, user_data: RefDataValue) void {
+    pub fn onUncaughtException(this: *BunTest, globalThis: *jsc.JSGlobalObject, exception: jsc.JSValue, is_rejection: bool, user_data: RefDataValue) void {
         group.begin(@src());
         defer group.end();
 
@@ -536,7 +536,7 @@ pub const BunTest = struct {
             bun.Output.flush();
         }
         globalThis.bunVM().last_reported_error_for_dedupe = .zero;
-        globalThis.bunVM().runErrorHandlerWithDedupe(result, null);
+        globalThis.bunVM().runErrorHandlerWithDedupe(exception, null);
         bun.Output.flush();
         if (handle_status == .show_unhandled_error_between_tests or handle_status == .show_unhandled_error_in_describe) {
             bun.Output.prettyError("<r><d>-------------------------------<r>\n\n", .{});

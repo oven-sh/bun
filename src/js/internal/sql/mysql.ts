@@ -1179,7 +1179,6 @@ class MySQLAdapter
 
 const defaultExport = {
   MySQLAdapter,
-  SQLCommand,
   commandToString,
   detectCommand,
 };

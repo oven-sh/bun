@@ -1205,6 +1205,4 @@ export default {
   commandToString,
   detectCommand,
   PostgresAdapter,
-  PostgresQueryHandle,
-  SQLCommand,
 };

@@ -629,6 +629,9 @@ WTF::String Bun::formatStackTrace(
         sb.append("    at "_s);
 
         if (!functionName.isEmpty()) {
+            if (frame.isAsyncFrame()) {
+                sb.append("async "_s);
+            }
             sb.append(functionName);
             sb.append(" ("_s);
         }

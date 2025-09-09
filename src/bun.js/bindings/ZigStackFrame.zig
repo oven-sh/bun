@@ -6,6 +6,7 @@ pub const ZigStackFrame = extern struct {
     source_url: String,
     position: ZigStackFramePosition,
     code_type: ZigStackFrameCode,
+    is_async: bool,
 
     /// This informs formatters whether to display as a blob URL or not
     remapped: bool = false,
@@ -119,6 +120,7 @@ pub const ZigStackFrame = extern struct {
         function_name: String,
         code_type: ZigStackFrameCode,
         enable_color: bool,
+        is_async: bool,
 
         pub fn format(this: NameFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             const name = this.function_name;
@@ -141,9 +143,17 @@ pub const ZigStackFrame = extern struct {
                 .Function => {
                     if (!name.isEmpty()) {
                         if (this.enable_color) {
-                            try std.fmt.format(writer, comptime Output.prettyFmt("<r><b><i>{}<r>", true), .{name});
+                            if (this.is_async) {
+                                try std.fmt.format(writer, comptime Output.prettyFmt("<r><b><i>async {}<r>", true), .{name});
+                            } else {
+                                try std.fmt.format(writer, comptime Output.prettyFmt("<r><b><i>{}<r>", true), .{name});
+                            }
                         } else {
-                            try std.fmt.format(writer, "{}", .{name});
+                            if (this.is_async) {
+                                try std.fmt.format(writer, "async {}", .{name});
+                            } else {
+                                try std.fmt.format(writer, "{}", .{name});
+                            }
                         }
                     } else {
                         if (this.enable_color) {
@@ -178,10 +188,11 @@ pub const ZigStackFrame = extern struct {
         .code_type = .None,
         .source_url = .empty,
         .position = .invalid,
+        .is_async = false,
     };
 
     pub fn nameFormatter(this: *const ZigStackFrame, comptime enable_color: bool) NameFormatter {
-        return NameFormatter{ .function_name = this.function_name, .code_type = this.code_type, .enable_color = enable_color };
+        return NameFormatter{ .function_name = this.function_name, .code_type = this.code_type, .enable_color = enable_color, .is_async = this.is_async };
     }
 
     pub fn sourceURLFormatter(this: *const ZigStackFrame, root_path: string, origin: ?*const ZigURL, exclude_line_column: bool, comptime enable_color: bool) SourceURLFormatter {

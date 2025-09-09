@@ -4411,6 +4411,8 @@ static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalO
     if (!functionName.isEmpty()) {
         frame->function_name = Bun::toStringRef(functionName);
     }
+
+    frame->is_async = stackFrame->isAsyncFrame();
 }
 
 static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunString* source_lines,
@@ -4536,6 +4538,7 @@ public:
 
         bool isConstructor = false;
         bool isGlobalCode = false;
+        bool isAsync = false;
     };
 
     WTF::StringView stack;
@@ -4668,6 +4671,11 @@ public:
         if (functionName == "global code"_s) {
             functionName = StringView();
             frame.isGlobalCode = true;
+        }
+
+        if (functionName.startsWith("async "_s)) {
+            frame.isAsync = true;
+            functionName = functionName.substring(6);
         }
 
         if (functionName.startsWith("new "_s)) {

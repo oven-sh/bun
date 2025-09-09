@@ -311,6 +311,7 @@ $> bun-after test hook-timeouts
 - [ ] check the todo list in https://linear.app/oven/issue/ENG-20152/new-buntest, confirm it fixes all those issues (or doesn't make them worse). add reproductions
 - [ ] look in file:///Users/pfg/Dev/Node/bun-coverage/coverage-html/src/bun.js/test/jest.zig.gcov.html and find things to remove
 - [ ] disable the logs by default
+- [ ] audit and remove unneeded/outdated comments
 - [ ] remove TODO.md
 
 # Other:

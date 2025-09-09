@@ -68,7 +68,7 @@ pub const S3ListObjectsV2Result = struct {
     }
 
     pub fn toJS(this: @This(), globalObject: *JSGlobalObject) bun.JSError!JSValue {
-        const jsResult = JSValue.createEmptyObject(globalObject, 12);
+        const jsResult = JSValue.createEmptyObject(globalObject, 0);
 
         if (this.name) |name| {
             jsResult.put(globalObject, jsc.ZigString.static("name"), try bun.String.createUTF8ForJS(globalObject, name));
@@ -113,7 +113,7 @@ pub const S3ListObjectsV2Result = struct {
             const jsContents = try JSValue.createEmptyArray(globalObject, contents.items.len);
 
             for (contents.items, 0..) |item, i| {
-                const objectInfo = JSValue.createEmptyObject(globalObject, 1);
+                const objectInfo = JSValue.createEmptyObject(globalObject, 0);
                 objectInfo.put(globalObject, jsc.ZigString.static("key"), try bun.String.createUTF8ForJS(globalObject, item.key));
 
                 if (item.etag) |etag| {
@@ -141,7 +141,7 @@ pub const S3ListObjectsV2Result = struct {
                 }
 
                 if (item.owner) |owner| {
-                    const jsOwner = JSValue.createEmptyObject(globalObject, 2);
+                    const jsOwner = JSValue.createEmptyObject(globalObject, 0);
                     if (owner.id) |id| {
                         jsOwner.put(globalObject, jsc.ZigString.static("id"), try bun.String.createUTF8ForJS(globalObject, id));
                     }
@@ -163,7 +163,7 @@ pub const S3ListObjectsV2Result = struct {
             const jsCommonPrefixes = try JSValue.createEmptyArray(globalObject, common_prefixes.items.len);
 
             for (common_prefixes.items, 0..) |prefix, i| {
-                const jsPrefix = JSValue.createEmptyObject(globalObject, 1);
+                const jsPrefix = JSValue.createEmptyObject(globalObject, 0);
                 jsPrefix.put(globalObject, jsc.ZigString.static("prefix"), try bun.String.createUTF8ForJS(globalObject, prefix));
                 try jsCommonPrefixes.putIndex(globalObject, @intCast(i), jsPrefix);
             }

@@ -190,56 +190,12 @@ has_mutated_built_in_extensions: u32 = 0,
 
 initial_script_execution_context_identifier: i32,
 
-dev_server_async_local_storage: jsc.Strong.Optional = .empty,
-
-pub fn setAllowJSXInResponseConstructor(this: *VirtualMachine, value: bool) void {
-    // When enabled, we create an AsyncLocalStorage instance
-    // When disabled, we clear it
-    if (value) {
-        // We'll set this from JavaScript when we create the AsyncLocalStorage instance
-        // For now, just keep track of the flag internally
-    } else {
-        this.dev_server_async_local_storage.deinit();
-    }
-}
-
-pub fn allowJSXInResponseConstructor(this: *VirtualMachine) bool {
-    // Check if the AsyncLocalStorage instance exists
-    return this.dev_server_async_local_storage.has();
-}
+extern "C" fn Bake__getAsyncLocalStorage(globalObject: *JSGlobalObject) jsc.JSValue;
 
 pub fn getDevServerAsyncLocalStorage(this: *VirtualMachine) ?jsc.JSValue {
-    return this.dev_server_async_local_storage.get();
-}
-
-pub fn setDevServerAsyncLocalStorage(this: *VirtualMachine, global: *jsc.JSGlobalObject, value: jsc.JSValue) void {
-    if (value == .zero) {
-        this.dev_server_async_local_storage.deinit();
-    } else if (this.dev_server_async_local_storage.has()) {
-        this.dev_server_async_local_storage.set(global, value);
-    } else {
-        this.dev_server_async_local_storage = jsc.Strong.Optional.create(value, global);
-    }
-}
-
-// JavaScript binding to set the AsyncLocalStorage instance
-pub export fn VirtualMachine__setDevServerAsyncLocalStorage(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) jsc.JSValue {
-    const arguments = callframe.arguments_old(1).slice();
-    const vm = global.bunVM();
-
-    if (arguments.len < 1) {
-        _ = global.throwInvalidArguments("setDevServerAsyncLocalStorage expects 1 argument", .{}) catch {};
-        return .zero;
-    }
-
-    vm.setDevServerAsyncLocalStorage(global, arguments[0]);
-    return .js_undefined;
-}
-
-// JavaScript binding to get the AsyncLocalStorage instance
-pub export fn VirtualMachine__getDevServerAsyncLocalStorage(global: *jsc.JSGlobalObject, _: *jsc.CallFrame) jsc.JSValue {
-    const vm = global.bunVM();
-    return vm.getDevServerAsyncLocalStorage() orelse .js_undefined;
+    const jsvalue = Bake__getAsyncLocalStorage(this.global);
+    if (jsvalue.isEmptyOrUndefinedOrNull()) return null;
+    return jsvalue;
 }
 
 pub const ProcessAutoKiller = @import("./ProcessAutoKiller.zig");

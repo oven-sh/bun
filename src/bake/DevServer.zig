@@ -1201,6 +1201,8 @@ fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointLi
     }
 }
 
+extern "C" fn Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global: *bun.jsc.JSGlobalObject) bun.jsc.JSValue;
+
 fn onFrameworkRequestWithBundle(
     dev: *DevServer,
     route_bundle_index: RouteBundle.Index,
@@ -1269,29 +1271,11 @@ fn onFrameworkRequestWithBundle(
 
     const router_type = dev.router.typePtr(dev.router.routePtr(framework_bundle.route_index).type);
 
-    // FIXME: We should not create these on every single request
-    // Wrapper functions for AsyncLocalStorage that match JSHostFnZig signature
-    const SetAsyncLocalStorageWrapper = struct {
-        pub fn call(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-            return VirtualMachine.VirtualMachine__setDevServerAsyncLocalStorage(global, callframe);
-        }
-    };
-
-    const GetAsyncLocalStorageWrapper = struct {
-        pub fn call(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-            return VirtualMachine.VirtualMachine__getDevServerAsyncLocalStorage(global, callframe);
-        }
-    };
-
-    // Create the setter and getter functions for AsyncLocalStorage
-    const setAsyncLocalStorage = jsc.JSFunction.create(dev.vm.global, "setDevServerAsyncLocalStorage", SetAsyncLocalStorageWrapper.call, 1, .{});
-    const getAsyncLocalStorage = jsc.JSFunction.create(dev.vm.global, "getDevServerAsyncLocalStorage", GetAsyncLocalStorageWrapper.call, 0, .{});
-
     dev.server.?.onSavedRequest(
         req,
         resp,
         server_request_callback,
-        7,
+        6,
         .{
             // routerTypeMain
             router_type.server_file_string.get() orelse str: {
@@ -1358,10 +1342,8 @@ fn onFrameworkRequestWithBundle(
             },
             // params
             params_js_value,
-            // setDevServerAsyncLocalStorage function
-            setAsyncLocalStorage,
-            // getDevServerAsyncLocalStorage function
-            getAsyncLocalStorage,
+            // setAsyncLocalStorage
+            Bake__getEnsureAsyncLocalStorageInstanceJSFunction(dev.vm.global),
         },
     );
 }
@@ -2371,11 +2353,6 @@ pub fn finalizeBundle(
             .script_id = server_script_id,
         });
         defer dev.allocator().free(server_bundle);
-
-        // TODO: is this the best place to set this? Would it be better to
-        // transpile the server modules to replace `new Response(...)` with `new
-        // ResponseBake(...)`??
-        dev.vm.setAllowJSXInResponseConstructor(true);
 
         const server_modules = if (bun.take(&source_map_json)) |json| blk: {
             // This memory will be owned by the `DevServerSourceProvider` in C++

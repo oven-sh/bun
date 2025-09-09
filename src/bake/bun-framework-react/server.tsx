@@ -136,68 +136,9 @@ export async function render(
       ...responseOptions,
     });
   } else {
-    // FIXME: this is bad and could be done way better
-    // FIXME: why are we even doing stream stuff is `streaming=false`, is there a way to do RSC without stream
-
-    // Set up the render abort handler for non-streaming mode
-    if (als) {
-      const store = als.getStore();
-      if (store) {
-        /*
-        store.renderAbort = (path: string, params: Record<string, any> | null) => {
-          // Create the abort error
-          const abortError = new (globalThis as any).RenderAbortError(path, params);
-          // Abort the current render
-          signal.aborted = abortError;
-          signal.abort(abortError);
-          rscPayload.destroy(abortError);
-          throw abortError;
-        };
-        */
-      }
-    }
-
     // Buffer the entire response and return it all at once
     const htmlStream = renderToHtml(rscPayload, meta.modules, signal);
     const result = await htmlStream.bytes();
-
-    /*
-    const chunks: Uint8Array[] = [];
-    const reader = htmlStream.getReader();
-
-    try {
-      let keepGoing = true;
-      do {
-        const { done, value } = await reader.read();
-
-        // Check if the render was aborted with an error
-        if (signal.aborted) {
-          // For some reason in react-server-dom the `stream.on("error")`
-          // handler creates a new Error???
-          if (signal.aborted.message !== "Connection closed.") {
-            // For other errors, we can handle them here or re-throw
-            throw signal.aborted;
-          }
-        }
-
-        keepGoing = !done;
-        if (!done) {
-          chunks.push(value);
-        }
-      } while (keepGoing);
-    } finally {
-      reader.releaseLock();
-    }
-
-    // Combine all chunks into a single response
-    const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const chunk of chunks) {
-      result.set(chunk, offset);
-      offset += chunk.length;
-    }
-    */
 
     const opts = als?.getStore()?.responseOptions ?? { headers: {} };
     const { headers, ...response_options } = opts;

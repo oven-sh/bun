@@ -532,7 +532,7 @@ pub fn constructRedirect(
 
     const vm = globalThis.bunVM();
     // Check if dev_server_async_local_storage is set (indicating we're in Bun dev server)
-    if (vm.dev_server_async_local_storage.get()) |async_local_storage| {
+    if (vm.getDevServerAsyncLocalStorage()) |async_local_storage| {
         try assertStreamingDisabled(globalThis, async_local_storage, "Response.redirect");
         return ptr.toJSForSSR(globalThis, .redirect);
     }
@@ -550,8 +550,8 @@ pub fn constructRender(
     const arguments = callframe.arguments_old(2);
     const vm = globalThis.bunVM();
 
-    // Check if dev_server_async_local_storage is set
-    const async_local_storage = vm.dev_server_async_local_storage.get() orelse {
+    // Check if dev server async local_storage is set
+    const async_local_storage = vm.getDevServerAsyncLocalStorage() orelse {
         return globalThis.throwInvalidArguments("Response.render() is only available in the Bun dev server", .{});
     };
 
@@ -678,27 +678,14 @@ pub fn constructorImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFram
         // inside of a react component
         if (bake_ssr_has_jsx != null) {
             bake_ssr_has_jsx.?.* = 0;
-            if (globalThis.allowJSXInResponseConstructor() and try arguments[0].isJSXElement(globalThis)) {
+            if (try arguments[0].isJSXElement(globalThis)) {
                 const vm = globalThis.bunVM();
-                if (vm.dev_server_async_local_storage.get()) |async_local_storage| {
+                if (vm.getDevServerAsyncLocalStorage()) |async_local_storage| {
                     try assertStreamingDisabled(globalThis, async_local_storage, "new Response(<jsx />, { ... })");
                 }
                 bake_ssr_has_jsx.?.* = 1;
             }
             _ = this_value;
-            // const arg = arguments[0];
-            // // Check if it's a JSX element (object with $$typeof)
-            // if (try arg.isJSXElement(globalThis)) {
-            //     const vm = globalThis.bunVM();
-            //     if (vm.dev_server_async_local_storage.get()) |async_local_storage| {
-            //         try assertStreamingDisabled(globalThis, async_local_storage, "new Response(<jsx />, { ... })");
-            //     }
-
-            //     // Pass the response options (arguments[1]) to transformToReactElement
-            //     // so it can store them for later use when the component is rendered
-            //     const responseOptions = if (arguments[1].isObject()) adirectrguments[1] else .js_undefined;
-            //     try JSValue.transformToReactElementWithOptions(this_value, arg, responseOptions, globalThis);
-            // }
         }
     }
     var init: Init = (brk: {

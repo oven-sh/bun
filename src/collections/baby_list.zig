@@ -178,9 +178,10 @@ pub fn BabyList(comptime Type: type) type {
         /// Empties the `BabyList`.
         pub fn toOwnedSlice(this: *Self, allocator: std.mem.Allocator) OOM![]Type {
             if ((comptime safety_checks) and this.len != this.cap) this.assertOwned();
-            defer this.* = .empty;
             var list_ = this.listManaged(allocator);
-            return list_.toOwnedSlice();
+            const result = try list_.toOwnedSlice();
+            this.* = .empty;
+            return result;
         }
 
         pub fn moveToList(this: *Self) std.ArrayListUnmanaged(Type) {
@@ -269,8 +270,8 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn appendSliceAssumeCapacity(this: *Self, values: []const Type) void {
-            const tail = this.ptr[this.len .. this.len + values.len];
             bun.assert(this.cap >= this.len + @as(u32, @intCast(values.len)));
+            const tail = this.ptr[this.len .. this.len + values.len];
             bun.copy(Type, tail, values);
             this.len += @intCast(values.len);
             bun.assert(this.cap >= this.len);

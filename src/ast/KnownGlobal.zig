@@ -172,10 +172,8 @@ pub const KnownGlobal = enum {
 
                 if (n == 1) {
                     switch (e.args.ptr[0].data) {
-                        .e_null => {
-                            // "new WeakSet(null)" / "new WeakMap(null)" throws; do not mark pure
-                        },
-                        .e_undefined => {
+                        .e_null, .e_undefined => {
+                            // "new WeakSet(null)" is pure
                             // "new WeakSet(void 0)" is pure
                             e.can_be_unwrapped_if_unused = .if_unused;
                         },

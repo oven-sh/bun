@@ -294,6 +294,7 @@ $> bun-after test hook-timeouts
 - [ ] make sure DoneCallback class can finalize, same as above
 - [ ] make BunTest into a gc object so you can't deinit it while a .then() is still active
 - [ ] fix `test("rerun me", () => { console.log("run one time!"); });` `--rerun-each=3`. works 1, no message 2, fails 3. note that existing behaviour is similar?
+- [ ] bun test > support for Github Actions > should annotate a test timeout
 
 # Add tests:
 

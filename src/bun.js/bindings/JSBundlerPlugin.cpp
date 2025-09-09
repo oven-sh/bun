@@ -159,11 +159,7 @@ void BundlerPlugin::tombstone()
     // virtualModulesList will be cleaned up by destructor
 }
 
-void BundlerPlugin::visitAdditionalChildren(JSC::JSCell* cell, JSC::SlotVisitor& visitor)
-{
-    deferredPromises.visit(cell, visitor);
-    virtualModulesList.visit(cell, visitor);
-}
+// Template implementation moved to header file
 
 static const HashTableValue JSBundlerPluginHashTable[] = {
     { "addFilter"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_addFilter, 3 } },

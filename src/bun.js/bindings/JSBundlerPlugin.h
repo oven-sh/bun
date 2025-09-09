@@ -125,7 +125,12 @@ public:
     JSC::JSObject* getVirtualModule(const String& path);
     void addVirtualModule(JSC::VM& vm, JSC::JSCell* owner, const String& path, JSC::JSObject* moduleFunction);
     void tombstone();
-    void visitAdditionalChildren(JSC::JSCell*, JSC::SlotVisitor&);
+    template<typename Visitor>
+    void visitAdditionalChildren(JSC::JSCell* cell, Visitor& visitor)
+    {
+        deferredPromises.visit(cell, visitor);
+        virtualModulesList.visit(cell, visitor);
+    }
 
     BundlerPlugin(void* config, BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
         : addError(addError)

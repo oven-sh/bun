@@ -113,10 +113,16 @@ const SQL: typeof Bun.SQL = function SQL(
     values: any[],
   ) {
     try {
+      let flags = connectionInfo.bigint ? SQLQueryFlags.bigint : SQLQueryFlags.none;
+      
+      if ((values?.length ?? 0) === 0) {
+        flags |= SQLQueryFlags.simple;
+      }
+      
       return new Query(
         strings,
         values,
-        connectionInfo.bigint ? SQLQueryFlags.bigint : SQLQueryFlags.none,
+        flags,
         queryFromPoolHandler,
         pool,
       );
@@ -179,12 +185,18 @@ const SQL: typeof Bun.SQL = function SQL(
     transactionQueries: Set<Query<any, any>>,
   ) {
     try {
+      let flags = connectionInfo.bigint
+        ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.bigint
+        : SQLQueryFlags.allowUnsafeTransaction;
+      
+      if ((values?.length ?? 0) === 0) {
+        flags |= SQLQueryFlags.simple;
+      }
+      
       const query = new Query(
         strings,
         values,
-        connectionInfo.bigint
-          ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.bigint
-          : SQLQueryFlags.allowUnsafeTransaction,
+        flags,
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
         pool,
       );

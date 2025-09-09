@@ -71,7 +71,8 @@ pub const ZigStackFrame = extern struct {
                         const relative_path = strings.withoutLeadingPathSeparator(source_slice[this.root_path.len..]);
                         try writer.writeAll(comptime Output.prettyFmt("<d>", true));
                         try writer.writeAll(this.root_path);
-                        try writer.writeAll(comptime Output.prettyFmt(std.fs.path.sep_str ++ "<r><cyan>", true));
+                        try writer.writeByte(std.fs.path.sep);
+                        try writer.writeAll(comptime Output.prettyFmt("<r><cyan>", true));
                         try writer.writeAll(relative_path);
                     } else {
                         try writer.writeAll(source_slice);

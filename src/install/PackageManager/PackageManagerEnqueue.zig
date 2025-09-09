@@ -450,6 +450,11 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
 
     var name = dependency.realname();
 
+    // For tarballs with empty package_name, use the dependency name instead
+    if (dependency.version.tag == .tarball and name.isEmpty()) {
+        name = dependency.name;
+    }
+
     var name_hash = switch (dependency.version.tag) {
         .dist_tag, .git, .github, .npm, .tarball, .workspace => String.Builder.stringHash(this.lockfile.str(&name)),
         else => dependency.name_hash,

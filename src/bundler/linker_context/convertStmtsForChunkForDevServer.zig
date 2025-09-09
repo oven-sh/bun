@@ -47,7 +47,7 @@ pub fn convertStmtsForChunkForDevServer(
             continue;
         }
         // Make sure the printer gets the resolved path
-        if (record.source_index.isValid()) {
+        if (record.source_index.isValid() and record.tag != .runtime) {
             record.path = c.parse_graph.input_files.items(.source)[record.source_index.get()].path;
         }
     }
@@ -73,7 +73,7 @@ pub fn convertStmtsForChunkForDevServer(
                             .name_loc = stmt.loc,
                         }, stmt.loc),
                         .args = .init(try allocator.dupe(Expr, &.{Expr.init(E.String, .{
-                            .data = if (record.tag == .runtime) "bun:wrap" else record.path.pretty,
+                            .data = record.path.pretty,
                         }, record.range.loc)})),
                     }, stmt.loc);
 
@@ -172,5 +172,6 @@ const Stmt = js_ast.Stmt;
 const LinkerContext = bun.bundle_v2.LinkerContext;
 const StmtList = LinkerContext.StmtList;
 
+const Output = bun.Output;
 const Logger = bun.logger;
 const Loc = Logger.Loc;

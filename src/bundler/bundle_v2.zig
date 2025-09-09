@@ -2866,8 +2866,6 @@ pub const BundleV2 = struct {
                 }
             };
 
-            // "bun:app" is a synthetic module registered at runtime via registerSynthetic()
-            // We need to ensure it's included in the bundle so the runtime can register it
             if (strings.eqlComptime(import_record.path.text, "bun:app")) {
                 import_record.path.namespace = "bun";
                 import_record.tag = .runtime;

@@ -984,7 +984,9 @@ pub fn getWorkspaceFilters(manager: *PackageManager, original_cwd: []const u8) !
     []const WorkspaceFilter,
     bool,
 } {
-    var path_buf: bun.PathBuffer = undefined;
+    const path_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(path_buf);
+
     var workspace_filters: std.ArrayListUnmanaged(WorkspaceFilter) = .{};
     // only populated when subcommand is `.install`
     if (manager.subcommand == .install and manager.options.filter_patterns.len > 0) {
@@ -1031,7 +1033,7 @@ pub fn getWorkspaceFilters(manager: *PackageManager, original_cwd: []const u8) !
         }
     }
 
-    return .{ try workspace_filters.toOwnedSlice(manager.allocator), install_root_dependencies };
+    return .{ workspace_filters.items, install_root_dependencies };
 }
 
 const security_scanner = @import("./security_scanner.zig");

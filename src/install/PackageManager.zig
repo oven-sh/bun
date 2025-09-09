@@ -582,7 +582,7 @@ pub fn init(
     } else {
         // Avoid memcpy alias when source and dest are the same
         if (cwd_buf[0..].ptr != top_level_dir_no_trailing_slash.ptr) {
-            @memcpy(cwd_buf[0..top_level_dir_no_trailing_slash.len], top_level_dir_no_trailing_slash);
+            bun.copy(u8, cwd_buf[0..top_level_dir_no_trailing_slash.len], top_level_dir_no_trailing_slash);
         }
     }
 

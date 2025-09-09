@@ -433,7 +433,15 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     const fsinstance = try bun.fs.FileSystem.init(null);
 
     // these things are leaked because we are going to exit
-    var filter_instance = try FilterArg.FilterSet.init(ctx.allocator, ctx.filters, fsinstance.top_level_dir);
+    // When --workspaces is set, we want to match all workspace packages
+    // Otherwise use the provided filters
+    var filters_to_use = ctx.filters;
+    if (ctx.workspaces) {
+        // Use "*" as filter to match all packages in the workspace
+        filters_to_use = &.{"*"};
+    }
+
+    var filter_instance = try FilterArg.FilterSet.init(ctx.allocator, filters_to_use, fsinstance.top_level_dir);
     var patterns = std.ArrayList([]u8).init(ctx.allocator);
 
     // Find package.json at workspace root
@@ -453,6 +461,11 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         const dirpath = std.fs.path.dirname(package_json_path) orelse Global.crash();
         const path = bun.strings.withoutTrailingSlash(dirpath);
 
+        // When using --workspaces, skip the root package to prevent recursion
+        if (ctx.workspaces and strings.eql(path, resolve_root)) {
+            continue;
+        }
+
         const pkgjson = bun.PackageJSON.parse(&this_transpiler.resolver, dirpath, .invalid, null, .include_scripts, .main) orelse {
             Output.warn("Failed to read package.json\n", .{});
             continue;
@@ -465,8 +478,15 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
 
         const PATH = try RunCommand.configurePathForRunWithPackageJsonDir(ctx, dirpath, &this_transpiler, null, dirpath, ctx.debug.run_in_bun);
 
-        for (&[3][]const u8{ pre_script_name, script_name, post_script_name }) |name| {
-            const original_content = pkgscripts.get(name) orelse continue;
+        for (&[3][]const u8{ pre_script_name, script_name, post_script_name }, 0..) |name, i| {
+            const original_content = pkgscripts.get(name) orelse {
+                if (i == 1 and ctx.workspaces and !ctx.if_present) {
+                    Output.errGeneric("Missing '{s}' script at '{s}'", .{ script_name, path });
+                    Global.exit(1);
+                }
+
+                continue;
+            };
 
             var copy_script_capacity: usize = original_content.len;
             for (ctx.passthrough) |part| copy_script_capacity += 1 + part.len;
@@ -500,7 +520,15 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     }
 
     if (scripts.items.len == 0) {
-        Output.prettyErrorln("<r><red>error<r>: No packages matched the filter", .{});
+        if (ctx.if_present) {
+            // Exit silently with success when --if-present is set
+            Global.exit(0);
+        }
+        if (ctx.workspaces) {
+            Output.errGeneric("No workspace packages have script \"{s}\"", .{script_name});
+        } else {
+            Output.errGeneric("No packages matched the filter", .{});
+        }
         Global.exit(1);
     }
 
@@ -648,6 +676,7 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
+const strings = bun.strings;
 const transpiler = bun.transpiler;
 
 const CLI = bun.cli;

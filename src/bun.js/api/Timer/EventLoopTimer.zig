@@ -68,6 +68,7 @@ pub const Tag = if (Environment.isWindows) enum {
     AbortSignalTimeout,
     DateHeaderTimer,
     BunTest,
+    EventLoopDelayMonitor,
 
     pub fn Type(comptime T: Tag) type {
         return switch (T) {
@@ -92,6 +93,7 @@ pub const Tag = if (Environment.isWindows) enum {
             .AbortSignalTimeout => jsc.WebCore.AbortSignal.Timeout,
             .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
             .BunTest => jsc.Jest.describe2.BunTest,
+            .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
         };
     }
 } else enum {
@@ -114,6 +116,7 @@ pub const Tag = if (Environment.isWindows) enum {
     AbortSignalTimeout,
     DateHeaderTimer,
     BunTest,
+    EventLoopDelayMonitor,
 
     pub fn Type(comptime T: Tag) type {
         return switch (T) {
@@ -137,6 +140,7 @@ pub const Tag = if (Environment.isWindows) enum {
             .AbortSignalTimeout => jsc.WebCore.AbortSignal.Timeout,
             .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
             .BunTest => jsc.Jest.describe2.BunTest,
+            .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
         };
     }
 };
@@ -216,6 +220,11 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) Arm {
         .BunTest => {
             const container: *jsc.Jest.describe2.BunTest = @fieldParentPtr("timer", self);
             return container.bunTestTimeoutCallback(now, vm);
+        },
+        .EventLoopDelayMonitor => {
+            const monitor = @as(*jsc.API.Timer.EventLoopDelayMonitor, @fieldParentPtr("event_loop_timer", self));
+            monitor.onFire(vm, now);
+            return .disarm;
         },
         inline else => |t| {
             if (@FieldType(t.Type(), "event_loop_timer") != Self) {

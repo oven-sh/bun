@@ -2327,42 +2327,30 @@ it("should add multiple dependencies specified on command line", async () => {
 
 it("should install tarball with tarball dependencies", async () => {
   // This test verifies that tarballs containing dependencies that are also tarballs
-  // can be installed correctly. This was previously broken due to:
-  // 1. Temp directory names including the full URL (causing filesystem issues)
-  // 2. Empty package names preventing proper lookup during resolution
+  // can be installed correctly. Regression test for URL corruption bug.
   
-  // Prepare test tarballs
-  const prepDir = tmpdirSync();
+  // Need to update the parent tarball to use the actual server URL
+  const parentPkgJson = {
+    name: "tarball-parent",
+    version: "0.0.1",
+    dependencies: {
+      "tarball-child": "http://localhost:6789/tarball-child-0.0.1.tgz"
+    }
+  };
   
-  // Create child tarball first
-  const childPkgDir = join(prepDir, "child", "package");
-  await mkdir(childPkgDir, { recursive: true });
-  await writeFile(
-    join(childPkgDir, "package.json"),
-    JSON.stringify({
-      name: "child-package",
-      version: "1.0.0",
-    })
-  );
+  // Create a temporary parent tarball with the correct server URL
+  const tmpDir = tmpdirSync();
+  const pkgDir = join(tmpDir, "package");
+  await mkdir(pkgDir, { recursive: true });
   
-  // Use tar command to create child tarball
-  const { exited: childExited } = spawn({
-    cmd: ["tar", "-czf", join(prepDir, "child.tgz"), "-C", join(prepDir, "child"), "package"],
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  expect(await childExited).toBe(0);
-  
-  // Set up server to serve the tarballs
   using server = Bun.serve({
     port: 0,
     fetch(req) {
       const url = new URL(req.url);
-      if (url.pathname === "/child.tgz") {
-        return new Response(Bun.file(join(prepDir, "child.tgz")));
-      } else if (url.pathname === "/parent.tgz") {
-        // Create parent tarball with dependency on child (must be done after server starts)
-        return new Response(Bun.file(join(prepDir, "parent.tgz")));
+      if (url.pathname === "/tarball-child-0.0.1.tgz") {
+        return new Response(Bun.file(join(__dirname, "tarball-child-0.0.1.tgz")));
+      } else if (url.pathname === "/tarball-parent-0.0.1.tgz") {
+        return new Response(Bun.file(join(tmpDir, "tarball-parent-0.0.1.tgz")));
       }
       return new Response("Not found", { status: 404 });
     },
@@ -2370,39 +2358,31 @@ it("should install tarball with tarball dependencies", async () => {
   
   const server_url = server.url.href.replace(/\/+$/, "");
   
-  // Now create parent tarball with dependency on child
-  const parentPkgDir = join(prepDir, "parent", "package");
-  await mkdir(parentPkgDir, { recursive: true });
-  await writeFile(
-    join(parentPkgDir, "package.json"),
-    JSON.stringify({
-      name: "parent-package",
-      version: "1.0.0",
-      dependencies: {
-        "child-package": `${server_url}/child.tgz`,
-      },
-    })
-  );
+  // Update parent package.json with actual server URL
+  parentPkgJson.dependencies["tarball-child"] = `${server_url}/tarball-child-0.0.1.tgz`;
+  await writeFile(join(pkgDir, "package.json"), JSON.stringify(parentPkgJson, null, 2));
   
-  const { exited: parentExited } = spawn({
-    cmd: ["tar", "-czf", join(prepDir, "parent.tgz"), "-C", join(prepDir, "parent"), "package"],
+  // Create the parent tarball
+  const { exited: tarExited } = spawn({
+    cmd: ["tar", "-czf", join(tmpDir, "tarball-parent-0.0.1.tgz"), "-C", tmpDir, "package"],
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(await parentExited).toBe(0);
+  expect(await tarExited).toBe(0);
   
-  // Prepare test directory
   await writeFile(
     join(add_dir, "package.json"),
     JSON.stringify({
-      name: "test-tarball-deps",
+      name: "foo",
       version: "0.0.1",
-    })
+    }),
   );
   
-  // Run bun add with the parent tarball
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", `${server_url}/parent.tgz`],
+    cmd: [bunExe(), "add", `${server_url}/tarball-parent-0.0.1.tgz`],
     cwd: add_dir,
     stdout: "pipe",
     stdin: "pipe",
@@ -2411,19 +2391,37 @@ it("should install tarball with tarball dependencies", async () => {
   });
   
   const err = await new Response(stderr).text();
-  const out = await new Response(stdout).text();
-  
-  // Should not have URL corruption errors
+  if (err.includes("error:") || err.includes("failed to resolve")) {
+    console.error("Test failed with stderr:", err);
+  }
+  expect(err).not.toContain("error:");
   expect(err).not.toContain("failed to resolve");
   expect(err).toContain("Saved lockfile");
+  
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringMatching(/^bun add v1./),
+    "",
+    expect.stringMatching(/^installed tarball-parent@.*/),
+    "",
+    "2 packages installed",
+  ]);
+  
   expect(await exited).toBe(0);
   
-  // Both parent and child packages should be installed
+  // Check both packages are installed
   const nodeModules = await readdirSorted(join(add_dir, "node_modules"));
-  expect(nodeModules).toContain("parent-package");
-  expect(nodeModules).toContain("child-package");
+  expect(nodeModules).toContain("tarball-child");
+  expect(nodeModules).toContain("tarball-parent");
   
-  // Package.json should have the parent tarball as dependency
-  const pkg = await file(join(add_dir, "package.json")).json();
-  expect(pkg.dependencies).toHaveProperty("parent-package", `${server_url}/parent.tgz`);
+  // Check package.json has the dependency
+  expect(await file(join(add_dir, "package.json")).json()).toStrictEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      "tarball-parent": `${server_url}/tarball-parent-0.0.1.tgz`,
+    },
+  });
+  
+  // await access(join(add_dir, "bun.lockb"));
 });

@@ -516,7 +516,7 @@ class PooledMySQLConnection {
   }
 }
 
-export class MySQLAdapter
+class MySQLAdapter
   implements
     DatabaseAdapter<PooledMySQLConnection, $ZigGeneratedClasses.MySQLConnection, $ZigGeneratedClasses.MySQLQuery>
 {

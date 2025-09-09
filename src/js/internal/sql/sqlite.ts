@@ -293,7 +293,7 @@ function parseSQLQuery(query: string): SQLParsedInfo {
   return { command, firstKeyword, hasReturning };
 }
 
-export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
+class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
   private mode = SQLQueryResultMode.objects;
 
   private readonly sql: string;
@@ -807,4 +807,5 @@ export default {
   SQLCommand,
   commandToString,
   parseSQLQuery,
+  SQLiteQueryHandle,
 };

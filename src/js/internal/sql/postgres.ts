@@ -501,7 +501,7 @@ class PooledPostgresConnection {
   }
 }
 
-export class PostgresAdapter
+class PostgresAdapter
   implements
     DatabaseAdapter<
       PooledPostgresConnection,

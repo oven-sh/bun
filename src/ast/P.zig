@@ -5286,6 +5286,44 @@ pub fn NewParser_(
             };
         }
 
+        // Helper function to evaluate typeof for defined expressions
+        // Returns the typeof string if the expression can be evaluated, null otherwise
+        pub fn evaluateTypeofForDefine(noalias p: *P, expr: Expr) ?[]const u8 {
+            // Check if this is a defined identifier
+            if (expr.data == .e_identifier) {
+                const ident = expr.data.e_identifier;
+                const name = p.loadNameFromRef(ident.ref);
+                
+                if (p.define.forIdentifier(name)) |def| {
+                    // Use runtime_type if specified for typeof evaluation
+                    if (def.runtime_typeof_string()) |typeof_str| {
+                        return typeof_str;
+                    }
+                    // Otherwise check the actual value's type
+                    return SideEffects.typeof(def.value);
+                }
+            }
+            
+            // Check for dot expressions like typeof globalThis.Bun
+            if (expr.data == .e_dot) {
+                const dot = expr.data.e_dot;
+                if (p.define.dots.get(dot.name)) |parts| {
+                    for (parts) |*define| {
+                        if (p.isDotDefineMatch(expr, define.parts)) {
+                            // Use runtime_type if specified for typeof evaluation
+                            if (define.data.runtime_typeof_string()) |typeof_str| {
+                                return typeof_str;
+                            }
+                            // Otherwise check the actual value's type
+                            return SideEffects.typeof(define.data.value);
+                        }
+                    }
+                }
+            }
+            
+            return null;
+        }
+
         pub fn isDotDefineMatch(noalias p: *P, expr: Expr, parts: []const string) bool {
             switch (expr.data) {
                 .e_dot => |ex| {

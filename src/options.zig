@@ -1505,8 +1505,7 @@ pub fn definesFromTransformOptions(
     if (target.isBun()) {
         if (!user_defines.contains("window")) {
             _ = try environment_defines.getOrPutValue("window", .init(.{
-                .runtime_type = .undefined,
-                .valueless = true,
+                .valueless = false,
                 .original_name = "window",
                 .value = .{ .e_undefined = .{} },
             }));
@@ -1591,8 +1590,7 @@ pub fn definesFromTransformOptions(
     if (target.isNode()) {
         if (!user_defines.contains("window")) {
             _ = try environment_defines.getOrPutValue("window", .init(.{
-                .runtime_type = .undefined,
-                .valueless = true,
+                .valueless = false,
                 .original_name = "window",
                 .value = .{ .e_undefined = .{} },
             }));

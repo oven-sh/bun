@@ -122,6 +122,9 @@ if (typeof window !== "undefined") {
   exports.test18 = "window-missing";
 }
 
+// Test that typeof window returns "undefined" string
+exports.test18a = typeof window === "undefined" ? "typeof-window-undefined" : "typeof-window-defined";
+
 // ============ Const patterns (now fully working with const inlining!) ============
 const isBun = typeof Bun !== "undefined";
 if (!isBun) {
@@ -196,6 +199,7 @@ var require_HASH = __commonJS((exports) => {
   else
     exports.test17 = "node-version-missing";
   exports.test18 = "window-missing";
+  exports.test18a = "typeof-window-undefined";
   exports.test19 = "const-is-bun";
 });
 export default require_HASH();"

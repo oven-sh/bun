@@ -699,51 +699,11 @@ pub fn VisitExpr(
                     .un_typeof => {
                         const id_before = e_.value.data == .e_identifier;
                         
-                        // Check if this is a defined identifier BEFORE visiting it
-                        // This allows us to evaluate typeof for defined globals like Bun
-                        if (id_before) {
-                            const ident = e_.value.data.e_identifier;
-                            const name = p.loadNameFromRef(ident.ref);
-                            
-                            // Check if this identifier is defined
-                            if (p.define.forIdentifier(name)) |def| {
-                                // Use the runtime_type if specified for typeof evaluation
-                                if (def.runtime_typeof_string()) |typeof_str| {
-                                    return p.newExpr(E.String{ .data = typeof_str }, expr.loc);
-                                }
-                                // Otherwise check the actual value for typeof
-                                // This handles literal values and undefined correctly
-                                if (def.value == .e_undefined) {
-                                    return p.newExpr(E.String{ .data = "undefined" }, expr.loc);
-                                }
-                                if (SideEffects.typeof(def.value)) |typeof_str| {
-                                    return p.newExpr(E.String{ .data = typeof_str }, expr.loc);
-                                }
-                            }
-                        }
-                        
-                        // Check for dot expressions like typeof globalThis.Bun
-                        if (e_.value.data == .e_dot) {
-                            const dot = e_.value.data.e_dot;
-                            if (p.define.dots.get(dot.name)) |parts| {
-                                for (parts) |*define| {
-                                    if (p.isDotDefineMatch(e_.value, define.parts)) {
-                                        // Use the runtime_type if specified for typeof evaluation
-                                        if (define.data.runtime_typeof_string()) |typeof_str| {
-                                            return p.newExpr(E.String{ .data = typeof_str }, expr.loc);
-                                        }
-                                        // Otherwise check the actual value for typeof
-                                        // This handles literal values and undefined correctly
-                                        if (define.data.value == .e_undefined) {
-                                            return p.newExpr(E.String{ .data = "undefined" }, expr.loc);
-                                        }
-                                        if (SideEffects.typeof(define.data.value)) |typeof_str| {
-                                            return p.newExpr(E.String{ .data = typeof_str }, expr.loc);
-                                        }
-                                        break;
-                                    }
-                                }
-                            }
+                        // Evaluate typeof for defined values before visiting the expression
+                        // This allows us to determine types for globals like Bun at build time
+                        const typeof_result = p.evaluateTypeofForDefine(e_.value);
+                        if (typeof_result) |typeof_str| {
+                            return p.newExpr(E.String{ .data = typeof_str }, expr.loc);
                         }
                         
                         e_.value = p.visitExprInOut(e_.value, ExprIn{ .assign_target = e_.op.unaryAssignTarget() });
@@ -878,8 +838,7 @@ pub fn VisitExpr(
                         if (p.isDotDefineMatch(expr, define.parts)) {
                             if (in.assign_target == .none) {
                                 // Substitute user-specified defines
-                                // Skip replacement if is_truthy is set - we want to keep the original expression
-                                if (!define.data.valueless() and !define.data.is_truthy()) {
+                                if (!define.data.valueless()) {
                                     return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
                                 }
 

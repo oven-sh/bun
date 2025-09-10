@@ -1,5 +1,7 @@
 export {};
 
+type TODO = any;
+
 declare module "stream/web" {
   interface ReadableStream {
     /**
@@ -272,7 +274,7 @@ declare global {
     }
 
     interface HTTPParserConstructor {
-      new (): HTTPParser;
+      new (): TODO;
 
       REQUEST: 1;
       RESPONSE: 2;
@@ -297,32 +299,6 @@ declare global {
       kLenientOptionalCRBeforeLF: 256;
       kLenientSpacesAfterChunkSize: 512;
       kLenientAll: 1023;
-    }
-
-    interface HTTPParser {
-      close();
-      free();
-      remove();
-      execute();
-      finish();
-      initialize();
-      pause();
-      resume();
-      consume();
-      unconsume();
-      getCurrentBuffer();
-      duration();
-      headersCompleted();
-
-      _headers;
-      _url;
-      _consumed;
-      socket;
-      incoming;
-      outgoing;
-      maxHeaderPairs;
-      onIncoming;
-      joinDuplicateHeaders;
     }
   }
 }

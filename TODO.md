@@ -288,7 +288,8 @@ $> bun-after test hook-timeouts
 # Add features:
 
 - [x] `done` is missing `.call()`/`.apply()`
-- [ ] drain microtasks / tick? between callback calls? tickImmediateTasks()? for "unhandled errors between tests are reported"
+- [ ] `describe.skip()` is not displaying the tests it skipped; fix
+- [ ] drain microtasks / tick? between callback calls? tickImmediateTasks()? use a Task to queue callback execution? for "unhandled errors between tests are reported"
 - [ ] add back vm.auto_killer.kill() https://github.com/oven-sh/bun/blob/973fa98796a3be79b48f0d078485b5833d956593/src/bun.js/test/jest.zig#L1690
 - [ ] add retry/repeat back
 - [ ] make sure ScopeFunctions class can finalize (see napi_handle_scope NapiHandleScopeImpl as an example)
@@ -301,6 +302,15 @@ $> bun-after test hook-timeouts
 
 # Add tests:
 
+- [ ] regression test that this doesn't hang forever:
+  ```js
+  test("uncaught error", async () => {
+    setTimeout(() => {
+      throw new Error("uncaught error");
+    }, 1000);
+    await Bun.sleep(2000);
+  });
+  ```
 - [ ] what is existing behaviour for an uncaught exception? do we resume execution immediately or later?
 - [ ] add tests for re-entry in different scenerios (timeout, done callback, ...) using waitForPromise in expect()
 - [ ] validate junit output does not regress (make sure the generated xml files are identical to existing behaviour)

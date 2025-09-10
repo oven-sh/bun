@@ -186,6 +186,12 @@ services:
         name: console
     tmpfs:
       - /data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 1h  # Effectively disable after startup
+      timeout: 5s
+      retries: 30
+      start_period: 5s
 
   # WebSocket Autobahn Test Suite
   # NOTE: Autobahn requires port 9002 to match both internal and external ports

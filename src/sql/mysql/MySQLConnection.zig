@@ -422,7 +422,8 @@ fn refAndClose(this: *@This(), js_reason: ?jsc.JSValue) void {
 pub fn disconnect(this: *@This()) void {
     this.stopTimers();
     if (this.status == .connected) {
-        this.setStatus(.disconnected);
+        defer this.updateHasPendingActivity();
+        this.status = .disconnected;
         this.poll_ref.disable();
 
         const requests = this.requests.readableSlice(0);
@@ -945,7 +946,6 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         }
     }
     ptr.setStatus(.connecting);
-    ptr.updateHasPendingActivity();
     ptr.resetConnectionTimeout();
     ptr.poll_ref.ref(vm);
     const js_value = ptr.toJS(globalObject);
@@ -1009,7 +1009,7 @@ pub fn onOpen(this: *MySQLConnection, socket: Socket) void {
     this.socket = socket;
     if (socket == .SocketTCP) {
         // when upgrading to TLS the onOpen callback will be called again and at this moment we dont wanna to change the status to handshaking
-        this.setStatus(.handshaking);
+        this.status = .handshaking;
         this.ref(); // keep a ref for the socket
     }
     this.poll_ref.ref(this.vm);

@@ -3,12 +3,14 @@
 // applications on, and to showcase what features that Bake offers.
 /// <reference lib="dom" />
 import { onServerSideReload } from "bun:app/client";
-import * as React from "react";
+import { use, useLayoutEffect } from "react";
 import { flushSync } from "react-dom";
 import { hydrateRoot } from "react-dom/client";
 import { createFromReadableStream } from "react-server-dom-bun/client.browser";
+import { isThenable } from "./lib/util.ts";
+import { APP_RSC_PAYLOAD, type NonNullishReactNode } from "./client/react.ts";
+import { useStore } from "./client/simple-store.ts";
 
-const te = new TextEncoder();
 const td = new TextDecoder();
 
 const windowDebugKey = "$bake";
@@ -30,85 +32,15 @@ declare global {
 const cssFiles = new Map<string, { promise: Promise<void> | null; link: HTMLLinkElement }>();
 let currentCssList: string[] | undefined = undefined;
 
-function enqueueChunks(
-  controller: ReadableStreamDefaultController<Uint8Array<ArrayBuffer>>,
-  ...chunks: (string | Uint8Array<ArrayBuffer>)[]
-) {
-  for (let chunk of chunks) {
-    if (typeof chunk === "string") {
-      chunk = te.encode(chunk);
-    }
-    controller.enqueue(chunk);
-  }
-}
 
-type NonNullishReactNode = Exclude<React.ReactNode, null | undefined>;
+// let setPage: React.Dispatch<React.SetStateAction<Promise<NonNullishReactNode> | NonNullishReactNode>>;
+// let abortOnRender: AbortController | undefined;
+// const Root = () => {
+//   setPage = React.useState(rscPayload)[1];
 
-// The initial RSC payload is put into inline <script> tags that follow the pattern
-// `(self.__bun_f ??= []).push(chunk)`, which is converted into a ReadableStream
-// here for React hydration. Since inline scripts are executed immediately, and
-// this file is loaded asynchronously, the `__bun_f` becomes a clever way to
-// stream the arbitrary data while HTML is loading. In a static build, this is
-// setup as an array with one string.
-let rscPayload: Promise<NonNullishReactNode> | NonNullishReactNode = createFromReadableStream<NonNullishReactNode>(
-  new ReadableStream({
-    start(controller) {
-      const bunF = (self.__bun_f ??= []);
-      const originalPush = bunF.push.bind(bunF);
-
-      bunF.push = (...chunks: (string | Uint8Array<ArrayBuffer>)[]) => {
-        enqueueChunks(controller, ...chunks);
-        return originalPush(...chunks);
-      };
-
-      bunF.forEach(chunk => enqueueChunks(controller, chunk));
-
-      if (document.readyState === "loading") {
-        document.addEventListener(
-          "DOMContentLoaded",
-          () => {
-            controller.close();
-          },
-          { once: true },
-        );
-      } else {
-        controller.close();
-      }
-    },
-  }),
-);
-
-function isThenableRSCPayload(payload: typeof rscPayload): payload is Promise<NonNullishReactNode> {
-  return payload !== null && typeof payload === "object" && "then" in payload;
-}
-
-// This is a function component that uses the `use` hook, which unwraps a
-// promise.  The promise results in a component containing suspense boundaries.
-// This is the same logic that happens on the server, except there is also a
-// hook to update the promise when the client navigates. The `Root` component
-// also updates CSS files when navigating between routes.
-let setPage: React.Dispatch<React.SetStateAction<Promise<NonNullishReactNode> | NonNullishReactNode>>;
-let abortOnRender: AbortController | undefined;
-const Root = () => {
-  setPage = React.useState(rscPayload)[1];
-
-  // Layout effects are executed right before the browser paints,
-  // which is the perfect time to make CSS visible.
-  React.useLayoutEffect(() => {
-    if (abortOnRender) {
-      try {
-        abortOnRender.abort();
-        abortOnRender = undefined;
-      } catch {}
-    }
-    requestAnimationFrame(() => {
-      if (currentCssList) disableUnusedCssFiles();
-    });
-  });
-
-  // Unwrap the promise if it is one
-  return isThenableRSCPayload(rscPayload) ? React.use(rscPayload) : rscPayload;
-};
+//   // Unwrap the promise if it is one
+//   return isThenable(rscPayload) ? React.use(rscPayload) : rscPayload;
+// };
 
 hydrateRoot(document, <Root />, {
   onUncaughtError(e) {
@@ -304,69 +236,6 @@ function disableUnusedCssFiles() {
   }
 }
 
-// Instead of relying on a "<Link />" component, a global event listener on all
-// clicks can be used. Care must be taken to intercept only anchor elements that
-// did not have their default behavior prevented, non-left clicks, and more.
-//
-// This technique was inspired by SvelteKit which was inspired by https://github.com/visionmedia/page.js
-document.addEventListener("click", async (event, element = event.target as HTMLAnchorElement) => {
-  if (
-    event.button ||
-    event.which != 1 ||
-    event.metaKey ||
-    event.ctrlKey ||
-    event.shiftKey ||
-    event.altKey ||
-    event.defaultPrevented
-  )
-    return;
-
-  while (element && element !== document.body) {
-    // This handles shadow roots
-    if (element.nodeType === 11) element = (element as any).host;
-
-    // If the current tag is an anchor.
-    if (element.nodeName.toUpperCase() === "A" && element.hasAttribute("href")) {
-      let url;
-      try {
-        url = new URL(element instanceof SVGAElement ? element.href.baseVal : element.href, document.baseURI);
-      } catch {
-        // Bail out to browser logic
-        return;
-      }
-
-      let pathname = url.pathname;
-      if (pathname.endsWith("/")) {
-        pathname = pathname.slice(0, -1);
-      }
-
-      // Ignore if the link is external
-      if (url.origin !== origin || (element.getAttribute("rel") || "").split(/\s+/).includes("external")) {
-        return;
-      }
-
-      // TODO: consider `target` attribute
-
-      // Take no action at all if the url is the same page.
-      // However if there is a hash, don't call preventDefault()
-      if (pathname === location.pathname && url.search === location.search) {
-        return url.hash || event.preventDefault();
-      }
-
-      const href = url.href;
-      const newId = Date.now();
-      history.pushState(newId, "", href);
-      navigate(href, newId);
-
-      return event.preventDefault();
-    }
-
-    // Walk up the tree until an anchor or the body is found.
-    element = (element.assignedSlot ?? element.parentNode) as HTMLAnchorElement;
-  }
-});
-
-// Handle browser navigation events
 window.addEventListener("popstate", async event => {
   const state = typeof event.state === "number" ? event.state : undefined;
 
@@ -393,7 +262,8 @@ if (import.meta.env.DEV) {
 }
 
 async function readCssMetadata(stream: ReadableStream<Uint8Array<ArrayBuffer>>) {
-  let reader;
+  let reader: ReadableStreamBYOBReader;
+
   try {
     // Using BYOB reader allows reading an exact amount of bytes, which allows
     // passing the stream to react without creating a wrapped stream.
@@ -410,6 +280,7 @@ async function readCssMetadata(stream: ReadableStream<Uint8Array<ArrayBuffer>>) 
       location.reload();
     }
   }
+
   if (header[0] > 0) {
     const cssRaw = (await reader.read(new Uint8Array(header[0]))).value;
     if (!cssRaw) {
@@ -481,16 +352,20 @@ async function readCssMetadataFallback(stream: ReadableStream<Uint8Array<ArrayBu
     }
   };
   const header = new Uint32Array(await readChunk(4))[0];
+
   if (header === 0) {
     currentCssList = [];
-  } else {
+  } else if (header !== undefined) {
     currentCssList = td.decode(await readChunk(header)).split("\n");
+  } else {
+    throw new Error("Did not read all bytes! This is a bug in bun-framework-react");
   }
+
   if (chunks.length === 0) {
     return stream;
   }
   // New readable stream that includes the remaining data
-  return new ReadableStream({
+  return new ReadableStream<Uint8Array<ArrayBuffer>>({
     async start(controller) {
       for (const chunk of chunks) {
         controller.enqueue(chunk);

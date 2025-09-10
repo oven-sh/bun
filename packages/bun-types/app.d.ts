@@ -632,8 +632,8 @@ declare module "bun:app/client" {
    * fetch a non-html version of the updated page to perform a faster reload. If
    * not provided, the client will perform a hard reload.
    *
-   * Only one callback can be set. Calling this function will overwrite the
-   * previous callback, if set.
+   * Only one callback can be set. Calling this function will overwrite any
+   * previously set callback.
    */
   export function onServerSideReload(cb: () => void | Promise<void>): void;
 }

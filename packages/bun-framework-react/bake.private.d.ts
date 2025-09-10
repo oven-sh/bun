@@ -86,7 +86,7 @@ interface Window {
 // The following interfaces have been transcribed manually.
 
 declare module "react-server-dom-bun/client.browser" {
-  export function createFromReadableStream<T = any>(readable: ReadableStream<Uint8Array<ArrayBuffer>>): Promise<T>;
+  export function createFromReadableStream<T>(readable: ReadableStream<T>): Promise<T>;
 }
 
 declare module "react-server-dom-bun/client.node.unbundled.js" {

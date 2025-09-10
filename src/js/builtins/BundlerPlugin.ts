@@ -367,7 +367,7 @@ export function runSetupFunction(
       if (!self.virtualModules) {
         self.virtualModules = new Map();
       }
-      
+
       // Check for duplicate registration
       if (self.virtualModules.has(specifier)) {
         const prev = self.virtualModules.get(specifier);
@@ -376,7 +376,7 @@ export function runSetupFunction(
         }
         return this; // idempotent - same callback already registered
       }
-      
+
       self.virtualModules.set(specifier, callback);
 
       // Register the virtual module with the C++ side

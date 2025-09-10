@@ -424,7 +424,7 @@ test("Bun.build plugin virtual modules - duplicate registration throws", async (
               contents: `export default "first";`,
               loader: "js",
             }));
-            
+
             // Duplicate registration with different callback should throw
             expect(() => {
               build.module("duplicate-module", () => ({
@@ -432,7 +432,7 @@ test("Bun.build plugin virtual modules - duplicate registration throws", async (
                 loader: "js",
               }));
             }).toThrow('Virtual module "duplicate-module" is already registered');
-            
+
             // Same callback should be idempotent (not throw)
             const sameCallback = () => ({
               contents: `export default "first";`,
@@ -443,7 +443,7 @@ test("Bun.build plugin virtual modules - duplicate registration throws", async (
           },
         },
       ],
-    })
+    }),
   ).resolves.toHaveProperty("success", true);
 });
 

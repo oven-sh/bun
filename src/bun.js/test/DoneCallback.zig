@@ -26,14 +26,15 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
 
     const value = callFrame.argumentsAsArray(1)[0];
 
-    if (!value.isEmptyOrUndefinedOrNull()) {
-        globalThis.reportUncaughtExceptionFromError(globalThis.throwValue(value));
-    }
-
     if (this.called) {
         // in Bun 1.2.20, this is a no-op
         // in Jest, this is "Expected done to be called once, but it was called multiple times."
         // Vitest does not support done callbacks
+    } else {
+        // error is only reported for the first done() call
+        if (!value.isEmptyOrUndefinedOrNull()) {
+            globalThis.reportUncaughtExceptionFromError(globalThis.throwValue(value));
+        }
     }
     this.called = true;
     const ref = this.ref orelse return .js_undefined;

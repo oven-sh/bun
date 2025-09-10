@@ -1,10 +1,8 @@
 import { onServerSideReload } from "bun:app/client";
 import { hydrateRoot } from "react-dom/client";
 import { initialRscPayloadThen } from "./client/app.ts";
+import { router } from "./client/constants.ts";
 import { Root } from "./client/root.tsx";
-import { Router } from "./client/router.ts";
-
-const router = new Router();
 
 hydrateRoot(document, <Root />, {
   onUncaughtError(e) {
@@ -50,13 +48,8 @@ const firstPageId = Date.now();
   }
 }
 
-// Client side navigation is implemented by updating the app's `useState` with a
-// new RSC payload promise. Callers of `navigate` are expected to manage history
-// state. A navigation id is used
-
 window.addEventListener("popstate", async event => {
   const state = typeof event.state === "number" ? event.state : undefined;
-
   await router.navigate(location.href, state);
 });
 

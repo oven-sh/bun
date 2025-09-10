@@ -109,7 +109,7 @@ export class Router {
 
     // Save this promise so that pressing the back button in the browser navigates
     // to the same instance of the old page, instead of re-fetching it.
-    if (cacheId) {
+    if (cacheId !== undefined) {
       this.cachedPages.set(cacheId, {
         css: [...this.css.getList()],
         element: p,
@@ -124,21 +124,22 @@ export class Router {
     }
 
     // Tell react about the new page promise
-    if (document.startViewTransition as unknown) {
+    if (document.startViewTransition) {
       document.startViewTransition(() => {
         flushSync(() => {
-          if (thisNavigationId === this.lastNavigationId)
-            setAppState({
+          if (thisNavigationId === this.lastNavigationId) {
+            setAppState(old => ({
               rsc: p,
-              abortOnRender: olderController ?? undefined,
-            });
+              abortOnRender: olderController ?? old.abortOnRender,
+            }));
+          }
         });
       });
     } else {
-      setAppState({
+      setAppState(old => ({
         rsc: p,
-        abortOnRender: olderController ?? undefined,
-      });
+        abortOnRender: olderController ?? old.abortOnRender,
+      }));
     }
   }
 }

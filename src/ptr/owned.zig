@@ -60,6 +60,7 @@ pub fn OwnedIn(comptime Pointer: type, comptime Allocator: type) type {
                 }
             },
             .slice => struct {
+                /// Note: this creates *shallow* copies of `elem`.
                 pub fn alloc(count: usize, elem: Child) AllocError!Self {
                     return .allocIn(count, elem, bun.memory.initDefault(Allocator));
                 }
@@ -82,6 +83,7 @@ pub fn OwnedIn(comptime Pointer: type, comptime Allocator: type) type {
                 }
             },
             .slice => struct {
+                /// Note: this creates *shallow* copies of `elem`.
                 pub fn allocIn(count: usize, elem: Child, allocator_: Allocator) AllocError!Self {
                     const data = try bun.allocators.asStd(allocator_).alloc(Child, count);
                     @memset(data, elem);

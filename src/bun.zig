@@ -414,13 +414,11 @@ pub const StringHashMapUnowned = struct {
 pub const collections = @import("./collections.zig");
 pub const MultiArrayList = bun.collections.MultiArrayList;
 pub const BabyList = collections.BabyList;
-pub const OffsetList = collections.OffsetList;
+pub const ByteList = collections.ByteList; // alias of BabyList(u8)
+pub const OffsetByteList = collections.OffsetByteList;
 pub const bit_set = collections.bit_set;
 pub const HiveArray = collections.HiveArray;
 pub const BoundedArray = collections.BoundedArray;
-
-pub const ByteList = BabyList(u8);
-pub const OffsetByteList = OffsetList(u8);
 
 pub fn DebugOnly(comptime Type: type) type {
     if (comptime Environment.isDebug) {
@@ -3745,7 +3743,7 @@ pub const S3 = @import("./s3/client.zig");
 /// decommits it or the memory allocator reuses it for a new allocation.
 /// So if we're about to free something sensitive, we should zero it out first.
 pub fn freeSensitive(allocator: std.mem.Allocator, slice: anytype) void {
-    @memset(@constCast(slice), 0);
+    std.crypto.secureZero(std.meta.Child(@TypeOf(slice)), @constCast(slice));
     allocator.free(slice);
 }
 

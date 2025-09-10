@@ -122,7 +122,7 @@ pub const AuthState = union(enum) {
 };
 
 fn updateReferenceType(this: *MySQLConnection) void {
-    if (this.js_value.hasValue()) {
+    if (this.js_value.isNotEmpty()) {
         if (this.requests.readableLength() > 0 or (this.status != .disconnected and this.status != .failed)) {
             this.js_value.upgrade(this.globalObject);
             return;
@@ -1914,7 +1914,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 defer row.deinit(allocator);
                 try row.decode(allocator, reader);
 
-                const pending_value = MySQLQuery.js.pendingValueGetCached(request.thisValue.get()) orelse .zero;
+                const pending_value = (if (request.thisValue.tryGet()) |value| MySQLQuery.js.pendingValueGetCached(value) else .js_undefined) orelse .js_undefined;
 
                 // Process row data
                 const row_value = row.toJS(
@@ -1932,8 +1932,10 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 }
                 statement.result_count += 1;
 
-                if (pending_value == .zero) {
-                    MySQLQuery.js.pendingValueSetCached(request.thisValue.get(), this.globalObject, row_value);
+                if (pending_value.isEmptyOrUndefinedOrNull()) {
+                    if (request.thisValue.tryGet()) |value| {
+                        MySQLQuery.js.pendingValueSetCached(value, this.globalObject, row_value);
+                    }
                 }
             }
         },

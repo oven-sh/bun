@@ -8,19 +8,12 @@ pub const JSRef = union(enum) {
     }
 
     pub fn initStrong(value: jsc.JSValue, globalThis: *jsc.JSGlobalObject) @This() {
+        bun.assert(value != .zero);
         return .{ .strong = .create(value, globalThis) };
     }
 
     pub fn empty() @This() {
         return .{ .weak = .zero };
-    }
-
-    pub fn get(this: *const @This()) jsc.JSValue {
-        return switch (this.*) {
-            .weak => this.weak,
-            .strong => this.strong.get() orelse .zero,
-            .finalized => .zero,
-        };
     }
 
     pub fn tryGet(this: *const @This()) ?jsc.JSValue {
@@ -80,7 +73,15 @@ pub const JSRef = union(enum) {
         }
     }
 
-    pub fn hasValue(this: *const @This()) bool {
+    pub fn isEmpty(this: *const @This()) bool {
+        return switch (this.*) {
+            .weak => this.weak == .zero,
+            .strong => !this.strong.has(),
+            .finalized => true,
+        };
+    }
+
+    pub fn isNotEmpty(this: *const @This()) bool {
         return switch (this.*) {
             .weak => this.weak != .zero,
             .strong => this.strong.has(),

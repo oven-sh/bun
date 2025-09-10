@@ -73,12 +73,9 @@ pub fn onWriteFail(
     queries_array: JSValue,
 ) void {
     this.status = .fail;
-    const thisValue = this.thisValue.get();
+    const thisValue = this.thisValue.tryGet() orelse return;
     defer this.thisValue.deinit();
-    const targetValue = this.getTarget(globalObject, true);
-    if (thisValue == .zero or targetValue == .zero) {
-        return;
-    }
+    const targetValue = this.getTarget(globalObject, true) orelse return;
 
     const instance = AnyMySQLError.mysqlErrorToJS(globalObject, "Failed to bind query", err);
 
@@ -114,9 +111,9 @@ pub fn bindAndExecute(this: *MySQLQuery, writer: anytype, statement: *MySQLState
 }
 
 fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject: *jsc.JSGlobalObject) AnyMySQLError.Error!void {
-    const thisValue = this.thisValue.get();
-    const binding_value = js.bindingGetCached(thisValue) orelse .zero;
-    const columns_value = js.columnsGetCached(thisValue) orelse .zero;
+    const thisValue = this.thisValue.tryGet() orelse return error.InvalidState;
+    const binding_value = js.bindingGetCached(thisValue) orelse .js_undefined;
+    const columns_value = js.columnsGetCached(thisValue) orelse .js_undefined;
 
     var iter = try QueryBindingIterator.init(binding_value, columns_value, globalObject);
 
@@ -157,12 +154,9 @@ pub fn onJSError(this: *@This(), err: jsc.JSValue, globalObject: *jsc.JSGlobalOb
     this.ref();
     defer this.deref();
     this.status = .fail;
-    const thisValue = this.thisValue.get();
+    const thisValue = this.thisValue.tryGet() orelse return;
     defer this.thisValue.deinit();
-    const targetValue = this.getTarget(globalObject, true);
-    if (thisValue == .zero or targetValue == .zero) {
-        return;
-    }
+    const targetValue = this.getTarget(globalObject, true) orelse return;
 
     var vm = jsc.VirtualMachine.get();
     const function = vm.rareData().mysql_context.onQueryRejectFn.get().?;
@@ -177,9 +171,9 @@ pub fn onJSError(this: *@This(), err: jsc.JSValue, globalObject: *jsc.JSGlobalOb
         js_error,
     });
 }
-pub fn getTarget(this: *@This(), globalObject: *jsc.JSGlobalObject, clean_target: bool) jsc.JSValue {
-    const thisValue = this.thisValue.tryGet() orelse return .zero;
-    const target = js.targetGetCached(thisValue) orelse return .zero;
+pub fn getTarget(this: *@This(), globalObject: *jsc.JSGlobalObject, clean_target: bool) ?jsc.JSValue {
+    const thisValue = this.thisValue.tryGet() orelse return null;
+    const target = js.targetGetCached(thisValue) orelse return null;
     if (clean_target) {
         js.targetSetCached(thisValue, globalObject, .zero);
     }
@@ -214,20 +208,18 @@ pub fn onResult(this: *@This(), result_count: u64, globalObject: *jsc.JSGlobalOb
     this.ref();
     defer this.deref();
 
-    const thisValue = this.thisValue.get();
-    const targetValue = this.getTarget(globalObject, is_last);
     if (is_last) {
         this.status = .success;
     } else {
         this.status = .partial_response;
     }
+    const thisValue = this.thisValue.tryGet() orelse return;
+
     defer if (is_last) {
         allowGC(thisValue, globalObject);
         this.thisValue.deinit();
     };
-    if (thisValue == .zero or targetValue == .zero) {
-        return;
-    }
+    const targetValue = this.getTarget(globalObject, is_last) orelse return;
 
     const vm = jsc.VirtualMachine.get();
     const function = vm.rareData().mysql_context.onQueryResolveFn.get().?;

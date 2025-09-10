@@ -424,6 +424,61 @@ if (isDockerEnabled()) {
     expect(sql.options.database).toBe("bun@bun");
   });
 
+  test("Minimal reproduction of Bun.SQL PostgreSQL hang bug (#22395)", async () => {
+    for (let i = 0; i < 10; i++) {
+      await using sql = new SQL({
+        ...options,
+        idleTimeout: 10,
+        connectionTimeout: 10,
+        maxLifetime: 10,
+      });
+
+      const random_id = randomUUIDv7() + "test_hang";
+      // Setup: Create table with exclusion constraint
+      await sql`DROP TABLE IF EXISTS ${sql(random_id)} CASCADE`;
+      await sql`CREATE EXTENSION IF NOT EXISTS btree_gist`;
+      await sql`
+      CREATE TABLE ${sql(random_id)} (
+        id SERIAL PRIMARY KEY,
+        start_time TIMESTAMPTZ NOT NULL,
+        end_time TIMESTAMPTZ NOT NULL,
+        resource_id INT NOT NULL,
+        EXCLUDE USING gist (
+          resource_id WITH =,
+          tstzrange(start_time, end_time) WITH &&
+        )
+      )
+    `;
+
+      // Step 1: Insert a row (succeeds)
+      await sql`
+      INSERT INTO ${sql(random_id)} (start_time, end_time, resource_id)
+      VALUES ('2024-01-01 10:00:00', '2024-01-01 12:00:00', 1)
+    `;
+
+      // Step 2: Try to insert conflicting row (throws expected error)
+      try {
+        await sql`
+        INSERT INTO ${sql(random_id)} (start_time, end_time, resource_id)
+        VALUES (${"2024-01-01 11:00:00"}, ${"2024-01-01 13:00:00"}, ${1})
+      `;
+        expect.unreachable();
+      } catch {}
+
+      // Step 3: Try another query - THIS WILL HANG
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("TIMEOUT")), 200);
+      });
+
+      try {
+        const result = await Promise.race([sql`SELECT COUNT(*) FROM ${sql(random_id)}`, timeoutPromise]);
+        expect(result[0].count).toBe("1");
+      } catch (err: any) {
+        expect(err.message).not.toBe("TIMEOUT");
+      }
+    }
+  });
+
   test("Connects with no options", async () => {
     // we need at least the usename and port
     await using sql = postgres({ max: 1, port: container.port, username: login.username });

@@ -135,6 +135,10 @@
 #include <JavaScriptCore/VMInlines.h>
 #include "wtf-bindings.h"
 
+#if ASSERT_ENABLED
+#include <JavaScriptCore/IntegrityInlines.h>
+#endif
+
 #if OS(DARWIN)
 #if ASSERT_ENABLED
 #if !__has_feature(address_sanitizer)
@@ -2662,18 +2666,17 @@ extern "C" bool Bun__JSValue__isAsyncContextFrame(JSC::EncodedJSValue value)
     return jsDynamicCast<AsyncContextFrame*>(JSValue::decode(value)) != nullptr;
 }
 
-extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSContextRef ctx, JSC::EncodedJSValue object,
+extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue object,
     JSC::EncodedJSValue thisObject, size_t argumentCount,
-    const JSValueRef* arguments)
+    const JSC::EncodedJSValue* arguments)
 {
-    JSC::JSGlobalObject* globalObject = toJS(ctx);
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
 
     JSC::JSValue jsObject = JSValue::decode(object);
-    ASSERT(jsObject);
+    ASSERT_WITH_MESSAGE(jsObject, "Cannot call function with JSValue zero.");
 
     JSC::JSValue jsThisObject = JSValue::decode(thisObject);
 
@@ -2691,11 +2694,22 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSContextRef ctx, JSC::Encoded
 
     JSC::MarkedArgumentBuffer argList;
     argList.ensureCapacity(argumentCount);
-    for (size_t i = 0; i < argumentCount; i++)
-        argList.append(toJS(globalObject, arguments[i]));
+    for (size_t i = 0; i < argumentCount; i++) {
+#if ASSERT_ENABLED
+        if (JSC::JSValue::decode(arguments[i]).isCell()) {
+            JSC::Integrity::auditCellFully(vm, JSC::JSValue::decode(arguments[i]).asCell());
+        }
+#endif
+        argList.append(JSC::JSValue::decode(arguments[i]));
+    }
+
+#if ASSERT_ENABLED
+    JSC::Integrity::auditCellFully(vm, jsObject.asCell());
+#endif
 
     auto callData = getCallData(jsObject);
-    ASSERT(jsObject.isCallable());
+
+    ASSERT_WITH_MESSAGE(jsObject.isCallable(), "Function passed to .call must be callable.");
     ASSERT(callData.type != JSC::CallData::Type::None);
     if (callData.type == JSC::CallData::Type::None)
         return {};
@@ -6105,6 +6119,25 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
     if (microtaskArgs[3].isEmpty()) {
         microtaskArgs[3] = jsUndefined();
     }
+
+#if ASSERT_ENABLED
+    auto& vm = globalObject->vm();
+    if (microtaskArgs[0].isCell()) {
+        JSC::Integrity::auditCellFully(vm, microtaskArgs[0].asCell());
+        if (!microtaskArgs[0].inherits<AsyncContextFrame>()) {
+            ASSERT_WITH_MESSAGE(microtaskArgs[0].isCallable(), "queueMicrotask must be called with an async context frame or a callable.");
+        }
+    }
+    if (microtaskArgs[1].isCell()) {
+        JSC::Integrity::auditCellFully(vm, microtaskArgs[1].asCell());
+    }
+    if (microtaskArgs[2].isCell()) {
+        JSC::Integrity::auditCellFully(vm, microtaskArgs[2].asCell());
+    }
+    if (microtaskArgs[3].isCell()) {
+        JSC::Integrity::auditCellFully(vm, microtaskArgs[3].asCell());
+    }
+#endif
 
     globalObject->queueMicrotask(
         globalObject->performMicrotaskFunction(),

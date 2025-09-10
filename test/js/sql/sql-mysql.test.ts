@@ -44,7 +44,7 @@ if (docker) {
         env: image.env,
       },
       (port: number) => {
-        const options = {
+        const options: Bun.SQL.Options = {
           url: `mysql://root:bun@localhost:${port}`,
           max: 1,
           tls:
@@ -143,11 +143,13 @@ if (docker) {
             onconnect,
             onclose,
           });
-          expect(await sql`select 123 as x`).toEqual([{ x: 123 }]);
+          expect<[{ x: number }]>(await sql`select 123 as x`).toEqual([{ x: 123 }]);
           expect(onconnect).toHaveBeenCalledTimes(1);
           expect(onclose).not.toHaveBeenCalled();
           const err = await onClosePromise.promise;
-          expect(err.code).toBe(`ERR_MYSQL_IDLE_TIMEOUT`);
+          expect(err).toBeInstanceOf(SQL.SQLError);
+          expect(err).toBeInstanceOf(SQL.MySQLError);
+          expect((err as SQL.MySQLError).code).toBe(`ERR_MYSQL_IDLE_TIMEOUT`);
         });
 
         test("Max lifetime works", async () => {
@@ -162,8 +164,8 @@ if (docker) {
             onconnect,
             onclose,
           });
-          let error: any;
-          expect(await sql`select 1 as x`).toEqual([{ x: 1 }]);
+          let error: unknown;
+          expect<[{ x: number }]>(await sql`select 1 as x`).toEqual([{ x: 1 }]);
           expect(onconnect).toHaveBeenCalledTimes(1);
           try {
             while (true) {
@@ -177,7 +179,9 @@ if (docker) {
 
           expect(onclose).toHaveBeenCalledTimes(1);
 
-          expect(error.code).toBe(`ERR_MYSQL_LIFETIME_TIMEOUT`);
+          expect(error).toBeInstanceOf(SQL.SQLError);
+          expect(error).toBeInstanceOf(SQL.MySQLError);
+          expect((error as SQL.MySQLError).code).toBe(`ERR_MYSQL_LIFETIME_TIMEOUT`);
         });
 
         // Last one wins.

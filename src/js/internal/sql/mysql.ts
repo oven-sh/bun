@@ -381,39 +381,6 @@ class PooledMySQLConnection {
   }
 
   #onClose(err) {
-    // let wrappedErr = err;
-    // this.state = PooledConnectionState.closed;
-    // this.connection = null;
-    // this.adapter.readyConnections.delete(this);
-    // const queries = new Set(this.queries);
-    // this.queries.clear();
-    // this.queryCount = 0;
-    // this.flags &= ~PooledConnectionFlags.reserved;
-    // const onFinish = this.onFinish;
-    // const connectionInfo = this.connectionInfo;
-    // const adapter = this.adapter;
-
-    // if (err) {
-    //   wrappedErr = wrapError(err);
-    // }
-
-    // this.storedError = wrappedErr;
-
-    // // notify all queries that the connection is closed
-    // for (const onClose of queries) {
-    //   onClose(wrappedErr);
-    // }
-
-    // if (onFinish) {
-    //   onFinish(wrappedErr);
-    // }
-
-    // if (connectionInfo?.onclose) {
-    //   connectionInfo.onclose(wrappedErr);
-    // }
-
-    // adapter.release(this, true);
-
     if (err) {
       err = wrapError(err);
     }

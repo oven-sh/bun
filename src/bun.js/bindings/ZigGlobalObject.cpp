@@ -131,6 +131,7 @@
 #include "JSWebSocket.h"
 #include "JSWorker.h"
 #include "JSWritableStream.h"
+#include "JSXMLHttpRequest.h"
 #include "JSWritableStreamDefaultController.h"
 #include "JSWritableStreamDefaultWriter.h"
 #include "libusockets.h"
@@ -1510,6 +1511,7 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TransformStreamDefaultController)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(URLSearchParams);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WebSocket);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(Worker);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(XMLHttpRequest);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStreamDefaultController);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStreamDefaultWriter);

@@ -2753,3 +2753,42 @@ const Response = jsc.WebCore.Response;
 
 const Blob = jsc.WebCore.Blob;
 const AnyBlob = jsc.WebCore.Blob.Any;
+
+// XMLHttpRequest support - creates a FetchTasklet similar to Bun__fetch
+export fn Bun__XMLHttpRequest_create(
+    ctx: *jsc.JSGlobalObject,
+    method_str: [*:0]const u8,
+    url_str: [*:0]const u8,
+    headers_ptr: ?*anyopaque,
+    body_ptr: ?*anyopaque,
+    body_len: usize,
+) ?*anyopaque {
+    // This is a simplified version - full implementation would create FetchTasklet
+    // and handle the request similar to Bun__fetch
+    _ = ctx;
+    _ = method_str;
+    _ = url_str;
+    _ = headers_ptr;
+    _ = body_ptr;
+    _ = body_len;
+    
+    // TODO: Implement actual XMLHttpRequest fetch logic
+    return null;
+}
+
+export fn Bun__XMLHttpRequest_cancel(task: ?*anyopaque) void {
+    // TODO: Cancel the fetch task
+    _ = task;
+}
+
+export fn Bun__XMLHttpRequest_getStatus(task: ?*anyopaque) u16 {
+    // TODO: Get status from fetch task
+    _ = task;
+    return 0;
+}
+
+export fn Bun__XMLHttpRequest_getResponseHeaders(task: ?*anyopaque) [*:0]const u8 {
+    // TODO: Get response headers from fetch task
+    _ = task;
+    return "";
+}

@@ -746,7 +746,8 @@ declare module "bun" {
      *
      * Unsubscribing moves the channel back to a normal state out of the
      * subscription state if all channels have been unsubscribed from. For
-     * further details on the subscription state, see {@link subscribe `.subscribe()`}.
+     * further details on the subscription state, see
+     * {@link subscribe `.subscribe()`}.
      */
     unsubscribe(channel: string): Promise<void>;
 
@@ -772,9 +773,9 @@ declare module "bun" {
      * Unsubscribe from all registered Redis channels.
      *
      * The client will automatically re-enable pipelining if it was previously
-     * enabled. Unsubscribing moves the channel back to a normal state out of
-     * the
+     * enabled.
      *
+     * Unsubscribing moves the channel back to a normal state out of the
      * subscription state if all channels have been unsubscribed from. For
      * further details on the subscription state, see
      * {@link subscribe `.subscribe()`}.

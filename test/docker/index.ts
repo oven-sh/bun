@@ -98,8 +98,17 @@ class DockerComposeHelper {
       return;
     }
 
+    // Build the service if needed (for services like mysql_tls that need building)
+    if (service === "mysql_tls") {
+      const buildResult = await this.exec(["build", service]);
+      if (buildResult.exitCode !== 0) {
+        throw new Error(`Failed to build service ${service}: ${buildResult.stderr}`);
+      }
+    }
+
     // Start the service and wait for it to be healthy
-    const { exitCode, stderr } = await this.exec(["up", "-d", "--quiet-pull", "--wait", service]);
+    // Remove --quiet-pull to see pull progress and avoid confusion
+    const { exitCode, stderr } = await this.exec(["up", "-d", "--wait", service]);
     
     if (exitCode !== 0) {
       throw new Error(`Failed to start service ${service}: ${stderr}`);
@@ -299,6 +308,45 @@ class DockerComposeHelper {
     
     throw new Error(`TCP connection to ${host}:${port} timed out`);
   }
+
+  /**
+   * Pull all Docker images explicitly - useful for CI
+   */
+  async pullImages(): Promise<void> {
+    console.log("Pulling Docker images...");
+    const { exitCode, stderr } = await this.exec(["pull", "--ignore-pull-failures"]);
+    
+    if (exitCode !== 0) {
+      // Don't fail on pull errors since some services need building
+      console.warn(`Warning during image pull: ${stderr}`);
+    }
+  }
+
+  /**
+   * Build all services that need building - useful for CI
+   */
+  async buildServices(): Promise<void> {
+    console.log("Building Docker services...");
+    // Only mysql_tls needs building currently
+    const servicesToBuild = ["mysql_tls"];
+    
+    for (const service of servicesToBuild) {
+      console.log(`Building ${service}...`);
+      const { exitCode, stderr } = await this.exec(["build", service]);
+      
+      if (exitCode !== 0) {
+        throw new Error(`Failed to build ${service}: ${stderr}`);
+      }
+    }
+  }
+
+  /**
+   * Prepare all images (pull and build) - useful for CI
+   */
+  async prepareImages(): Promise<void> {
+    await this.pullImages();
+    await this.buildServices();
+  }
 }
 
 // Global instance
@@ -334,6 +382,18 @@ export async function down(): Promise<void> {
 
 export async function waitTcp(host: string, port: number, timeout?: number): Promise<void> {
   return getHelper().waitTcp(host, port, timeout);
+}
+
+export async function pullImages(): Promise<void> {
+  return getHelper().pullImages();
+}
+
+export async function buildServices(): Promise<void> {
+  return getHelper().buildServices();
+}
+
+export async function prepareImages(): Promise<void> {
+  return getHelper().prepareImages();
 }
 
 // Higher-level wrappers for tests

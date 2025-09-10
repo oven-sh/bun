@@ -396,6 +396,8 @@ $> bun-after test hook-timeouts
 
 # Code quality:
 
+- [ ] rather than JSC::InternalFunction for ScopeFunctions/DoneCallback, use JSBoundFunction (see an example in JSCommonJSModule). We will have one main function and the this value will store the data.
+  - can still use the bindings generator even. and then we get finalize back.
 - [ ] migrate RefData to bun.ptr.Strong
 - [ ] setting both result and maybe_skip is not ideal, maybe there should be a function to do both at once?
 - [ ] try using a linked list rather than arraylist for describe/test children, see how it affects performance

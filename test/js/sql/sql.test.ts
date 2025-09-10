@@ -4,12 +4,7 @@ import { bunEnv, bunExe, isCI, isDockerEnabled, tempDirWithFiles } from "harness
 import path from "path";
 const postgres = (...args) => new SQL(...args);
 
-import { exec } from "child_process";
 import net from "net";
-import { promisify } from "util";
-
-const execAsync = promisify(exec);
-const dockerCLI = Bun.which("docker") as string;
 
 const dir = tempDirWithFiles("sql-test", {
   "select-param.sql": `select $1 as x`,
@@ -19,85 +14,25 @@ const dir = tempDirWithFiles("sql-test", {
 function rel(filename: string) {
   return path.join(dir, filename);
 }
-async function findRandomPort() {
-  return new Promise<number>((resolve, reject) => {
-    // Create a server to listen on a random port
-    const server = net.createServer();
-    server.listen(0, () => {
-      const port = (server.address() as import("node:net").AddressInfo).port;
-      server.close(() => resolve(port));
-    });
-    server.on("error", reject);
-  });
-}
+// Use docker-compose infrastructure
+import * as dockerCompose from "../../docker/index.ts";
 
-async function waitForPostgres(port: number, count = 10) {
-  console.log(`Attempting to connect to postgres://postgres@localhost:${port}/postgres`);
-
-  for (let i = 0; i < count; i++) {
-    try {
-      const sql = new SQL(`postgres://postgres@localhost:${port}/postgres`, {
-        idle_timeout: 20,
-        max_lifetime: 60 * 30,
-      });
-
-      await sql`SELECT 1`;
-      await sql.end();
-      console.log("PostgreSQL is ready!");
-      return true;
-    } catch (error) {
-      console.log(`Waiting for PostgreSQL... (${i + 1}/${count})`, error);
-      if (error && typeof error === "object" && "stack" in error) {
-        console.log("Error stack:", error.stack);
-      }
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-  }
-  throw new Error("PostgreSQL failed to start");
-}
-
-async function startContainer(): Promise<{ port: number; containerName: string }> {
-  try {
-    // Build the Docker image
-    console.log("Building Docker image...");
-    const dockerfilePath = path.join(import.meta.dir, "docker", "Dockerfile");
-    await execAsync(`${dockerCLI} build --pull --rm -f "${dockerfilePath}" -t custom-postgres .`, {
-      cwd: path.join(import.meta.dir, "docker"),
-    });
-    const port = await findRandomPort();
-    const containerName = `postgres-test-${port}`;
-    // Check if container exists and remove it
-    try {
-      await execAsync(`${dockerCLI} rm -f ${containerName}`);
-    } catch (error) {
-      // Container might not exist, ignore error
-    }
-
-    // Start the container
-    await execAsync(`${dockerCLI} run -d --name ${containerName} -p ${port}:5432 custom-postgres`);
-
-    // Wait for PostgreSQL to be ready
-    await waitForPostgres(port);
-    return {
-      port,
-      containerName,
-    };
-  } catch (error) {
-    console.error("Error:", error);
-    process.exit(1);
-  }
+async function startContainer(): Promise<{ port: number; host: string }> {
+  const info = await dockerCompose.ensure("postgres_plain");
+  console.log("PostgreSQL container ready at:", info.host + ":" + info.ports[5432]);
+  return {
+    port: info.ports[5432],
+    host: info.host,
+  };
 }
 
 if (isDockerEnabled()) {
-  const container: { port: number; containerName: string } = await startContainer();
+  const container = await startContainer();
   afterAll(async () => {
-    try {
-      await execAsync(`${dockerCLI} stop -t 0 ${container.containerName}`);
-    } catch (error) {}
-
-    try {
-      await execAsync(`${dockerCLI} rm -f ${container.containerName}`);
-    } catch (error) {}
+    // Containers persist - managed by docker-compose
+    if (!process.env.BUN_KEEP_DOCKER) {
+      await dockerCompose.down();
+    }
   });
 
   // require("./bootstrap.js");
@@ -128,7 +63,7 @@ if (isDockerEnabled()) {
   // host replication all 127.0.0.1/32 trust
   // host replication all ::1/128 trust
   // --- Expected pg_hba.conf ---
-  process.env.DATABASE_URL = `postgres://bun_sql_test@localhost:${container.port}/bun_sql_test`;
+  process.env.DATABASE_URL = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
 
   const net = require("node:net");
   const fs = require("node:fs");
@@ -149,8 +84,8 @@ if (isDockerEnabled()) {
 
     // Create connection to the actual PostgreSQL container
     const containerSocket = net.createConnection({
-      host: login.host,
-      port: login.port,
+      host: container.host,
+      port: container.port,
     });
 
     // Handle container connection
@@ -204,12 +139,14 @@ if (isDockerEnabled()) {
 
   const login: Bun.SQL.PostgresOrMySQLOptions = {
     username: "bun_sql_test",
+    host: container.host,
     port: container.port,
     path: socketPath,
   };
 
   const login_domain_socket: Bun.SQL.PostgresOrMySQLOptions = {
     username: "bun_sql_test",
+    host: container.host,
     port: container.port,
     path: socketPath,
   };
@@ -217,12 +154,14 @@ if (isDockerEnabled()) {
   const login_md5: Bun.SQL.PostgresOrMySQLOptions = {
     username: "bun_sql_test_md5",
     password: "bun_sql_test_md5",
+    host: container.host,
     port: container.port,
   };
 
   const login_scram: Bun.SQL.PostgresOrMySQLOptions = {
     username: "bun_sql_test_scram",
     password: "bun_sql_test_scram",
+    host: container.host,
     port: container.port,
   };
 
@@ -230,6 +169,7 @@ if (isDockerEnabled()) {
     db: "bun_sql_test",
     username: login.username,
     password: login.password,
+    host: container.host,
     port: container.port,
     max: 1,
   };
@@ -481,7 +421,7 @@ if (isDockerEnabled()) {
 
   test("Connects with no options", async () => {
     // we need at least the usename and port
-    await using sql = postgres({ max: 1, port: container.port, username: login.username });
+    await using sql = postgres({ max: 1, host: container.host, port: container.port, username: login.username });
 
     const result = (await sql`select 1 as x`)[0].x;
     sql.close();

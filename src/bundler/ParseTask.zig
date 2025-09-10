@@ -1075,7 +1075,7 @@ fn runWithSourceCode(
 
     var transpiler = this.transpilerForTarget(task.known_target);
     errdefer transpiler.resetStore();
-    var resolver: *Resolver = &transpiler.resolver;
+    const resolver: *Resolver = &transpiler.resolver;
     const file_path = &task.path;
     const loader = task.loader orelse file_path.loader(&transpiler.options.loaders) orelse options.Loader.file;
 
@@ -1130,20 +1130,14 @@ fn runWithSourceCode(
     else
         .none;
 
-    if (
-    // separate_ssr_graph makes boundaries switch to client because the server file uses that generated file as input.
-    // this is not done when there is one server graph because it is easier for plugins to deal with.
-    (use_directive == .client and
+    if (use_directive == .client and
         task.known_target != .bake_server_components_ssr and
-        this.ctx.framework.?.server_components.?.separate_ssr_graph) or
-        // set the target to the client when bundling client-side files
-        ((transpiler.options.server_components or transpiler.options.dev_server != null) and
-            task.known_target == .browser))
+        this.ctx.framework.?.server_components.?.separate_ssr_graph and
+        task.known_target != .browser)
     {
-        transpiler = this.ctx.client_transpiler.?;
-        transpiler.allocator = this.allocator;
-        resolver = &transpiler.resolver;
-        bun.assert(transpiler.options.target == .browser);
+        // separate_ssr_graph makes boundaries switch to client because the server file uses that generated file as input.
+        // this is not done when there is one server graph because it is easier for plugins to deal with.
+        transpiler = this.transpilerForTarget(.browser);
     }
 
     const source = &Logger.Source{
@@ -1164,7 +1158,7 @@ fn runWithSourceCode(
     var opts = js_parser.Parser.Options.init(task.jsx, loader);
     opts.bundle = true;
     opts.warn_about_unbundled_modules = false;
-    opts.macro_context = &this.data.macro_context;
+    opts.macro_context = &transpiler.macro_context.?;
     opts.package_version = task.package_version;
 
     opts.features.allow_runtime = !source.index.isRuntime();

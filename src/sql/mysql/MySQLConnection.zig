@@ -401,7 +401,14 @@ pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
 
     const queries_array = this.getQueriesArray();
     queries_array.ensureStillAlive();
-    this.globalObject.queueMicrotask(on_close, &[_]JSValue{ js_error, queries_array });
+    _ = on_close.call(
+        this.globalObject,
+        .js_undefined,
+        &[_]JSValue{
+            js_error,
+            queries_array,
+        },
+    ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
 }
 
 pub fn fail(this: *MySQLConnection, message: []const u8, err: AnyMySQLError.Error) void {

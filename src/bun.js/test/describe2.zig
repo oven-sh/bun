@@ -59,7 +59,6 @@ pub const js_fns = struct {
                     group.log("genericHook in preload", .{});
 
                     _ = try bunTestRoot.hook_scope.appendHook(bunTestRoot.gpa, tag, args.callback, .{
-                        .line_no = 0,
                         .has_done_parameter = has_done_parameter,
                         .timeout = args.options.timeout,
                     }, .{});
@@ -69,7 +68,6 @@ pub const js_fns = struct {
                 switch (bunTest.phase) {
                     .collection => {
                         _ = try bunTest.collection.active_scope.appendHook(bunTest.gpa, tag, args.callback, .{
-                            .line_no = 0,
                             .has_done_parameter = has_done_parameter,
                             .timeout = args.options.timeout,
                         }, .{});
@@ -106,6 +104,7 @@ pub const BunTestRoot = struct {
             .only = .no,
             .has_callback = false,
             .test_id_for_debugger = 0,
+            .line_no = 0,
         });
         return .{
             .gpa = outer_gpa,
@@ -609,6 +608,7 @@ pub const BaseScopeCfg = struct {
     self_mode: ScopeMode = .normal,
     self_only: bool = false,
     test_id_for_debugger: i32 = 0,
+    line_no: u32 = 0,
     /// returns null if the other already has the value
     pub fn extend(this: BaseScopeCfg, other: BaseScopeCfg) ?BaseScopeCfg {
         var result = this;
@@ -643,6 +643,8 @@ pub const BaseScope = struct {
     has_callback: bool,
     /// this value is 0 unless the debugger is active and the scope has a debugger id
     test_id_for_debugger: i32,
+    /// only available if using junit reporter, otherwise 0
+    line_no: u32,
     pub fn init(this: BaseScopeCfg, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, parent: ?*DescribeScope, has_callback: bool, allow_update_parent: bool) BaseScope {
         if (allow_update_parent) {
             if (this.self_only and parent != null) parent.?.markContainsOnly(); // TODO: this is a bad thing to have in an init function.
@@ -656,6 +658,7 @@ pub const BaseScope = struct {
             .only = if (this.self_only) .yes else .no,
             .has_callback = has_callback,
             .test_id_for_debugger = this.test_id_for_debugger,
+            .line_no = this.line_no,
         };
     }
     pub fn deinit(this: BaseScope, gpa: std.mem.Allocator) void {
@@ -743,7 +746,6 @@ pub const DescribeScope = struct {
     }
 };
 pub const ExecutionEntryCfg = struct {
-    line_no: u32,
     /// std.math.maxInt(u32) = no timeout
     timeout: u32,
     has_done_parameter: bool,
@@ -751,8 +753,6 @@ pub const ExecutionEntryCfg = struct {
 pub const ExecutionEntry = struct {
     base: BaseScope,
     callback: ?CallbackWithArgs,
-    /// only available if using junit reporter, otherwise 0
-    line_no: u32,
     /// std.math.maxInt(u32) = no timeout
     timeout: u32,
     has_done_parameter: bool,
@@ -766,7 +766,6 @@ pub const ExecutionEntry = struct {
         const entry = bun.create(gpa, ExecutionEntry, .{
             .base = .init(base, gpa, name_not_owned, parent, cb != null, allow_update_parent),
             .callback = if (cb) |c| c.dupe(gpa) else null,
-            .line_no = cfg.line_no,
             .timeout = cfg.timeout,
             .has_done_parameter = cfg.has_done_parameter,
         });

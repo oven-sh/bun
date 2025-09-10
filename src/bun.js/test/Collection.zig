@@ -30,6 +30,7 @@ pub fn init(gpa: std.mem.Allocator, bun_test_root: *describe2.BunTestRoot) Colle
         .only = .no,
         .has_callback = false,
         .test_id_for_debugger = 0,
+        .line_no = 0,
     });
 
     return .{

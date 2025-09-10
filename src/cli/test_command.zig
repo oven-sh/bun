@@ -611,7 +611,7 @@ pub const CommandLineReporter = struct {
         var scopes_stack = bun.BoundedArray(*describe2.DescribeScope, 64).init(0) catch unreachable;
         var parent_: ?*describe2.DescribeScope = test_entry.base.parent;
         const assertions = sequence.expect_call_count;
-        const line_number = test_entry.line_no;
+        const line_number = test_entry.base.line_no;
 
         const file: []const u8 = if (bun.jsc.Jest.Jest.runner) |runner| runner.files.get(buntest.file_id).source.path.text else "";
 
@@ -797,7 +797,7 @@ pub const CommandLineReporter = struct {
 
                     while (describe_suite_index < needed_suites.items.len) {
                         const scope = needed_suites.items[describe_suite_index];
-                        bun.handleOom(junit.beginTestSuiteWithLine(scope.base.name orelse "", 2, false));
+                        bun.handleOom(junit.beginTestSuiteWithLine(scope.base.name orelse "", scope.base.line_no, false));
                         describe_suite_index += 1;
                     }
 

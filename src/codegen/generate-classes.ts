@@ -1108,12 +1108,6 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
     ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     thisObject->${cacheName}.set(vm, thisObject, JSValue::decode(encodedValue));
-#if ASSERT_ENABLED
-    JSValue decodedValue = JSValue::decode(encodedValue);
-    if (!decodedValue.isEmpty() && decodedValue.isCell()) {
-      JSC::Integrity::auditCellFully(vm, decodedValue.asCell());
-    }
-#endif
     RELEASE_AND_RETURN(throwScope, true);
 }`.trim(),
             );
@@ -1214,16 +1208,9 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    auto result = ${symbolName(typeName, proto[name].setter || proto[name].accessor.setter)}(thisObject->wrapped(),${
+    bool result = ${symbolName(typeName, proto[name].setter || proto[name].accessor.setter)}(thisObject->wrapped(),${
       !!proto[name].this ? " encodedThisValue, " : ""
     } lexicalGlobalObject, encodedValue);
-
-#if ASSERT_ENABLED
-    JSValue decodedValue = JSValue::decode(result);
-    if (!decodedValue.isEmpty() && decodedValue.isCell()) {
-      JSC::Integrity::auditCellFully(vm, decodedValue.asCell());
-    }
-#endif
     RELEASE_AND_RETURN(throwScope, result);
 }
 `,
@@ -1242,12 +1229,6 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
 
     JSObject *thisObject = asObject(thisValue);
     thisObject->putDirect(vm, attributeName, JSValue::decode(encodedValue), 0);
-#if ASSERT_ENABLED
-    JSValue decodedValue = JSValue::decode(encodedValue);
-    if (!decodedValue.isEmpty() && decodedValue.isCell()) {
-      JSC::Integrity::auditCellFully(vm, decodedValue.asCell());
-    }
-#endif
     return true;
 }
   `,

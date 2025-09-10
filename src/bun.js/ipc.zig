@@ -459,7 +459,7 @@ pub const SendQueue = struct {
         for (self.queue.items) |*item| item.deinit();
         self.queue.deinit();
         self.internal_msg_queue.deinit();
-        self.incoming.deinitWithAllocator(bun.default_allocator);
+        self.incoming.deinit(bun.default_allocator);
         if (self.waiting_for_ack) |*waiting| waiting.deinit();
 
         // if there is a close next tick task, cancel it so it doesn't get called and then UAF
@@ -1297,10 +1297,10 @@ pub const IPCHandlers = struct {
 
     pub const WindowsNamedPipe = struct {
         fn onReadAlloc(send_queue: *SendQueue, suggested_size: usize) []u8 {
-            var available = send_queue.incoming.available();
+            var available = send_queue.incoming.unusedCapacitySlice();
             if (available.len < suggested_size) {
                 bun.handleOom(send_queue.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size));
-                available = send_queue.incoming.available();
+                available = send_queue.incoming.unusedCapacitySlice();
             }
             log("NewNamedPipeIPCHandler#onReadAlloc {d}", .{suggested_size});
             return available.ptr[0..suggested_size];

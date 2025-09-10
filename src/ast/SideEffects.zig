@@ -153,7 +153,7 @@ pub const SideEffects = enum(u1) {
                         // "typeof x" must not be transformed into if "x" since doing so could
                         // cause an exception to be thrown. Instead we can just remove it since
                         // "typeof x" is special-cased in the standard to never throw.
-                        if (std.meta.activeTag(un.value.data) == .e_identifier) {
+                        if (un.value.data == .e_identifier and un.flags.was_originally_typeof_identifier) {
                             return null;
                         }
 
@@ -199,6 +199,10 @@ pub const SideEffects = enum(u1) {
                     // "toString" and/or "valueOf" to be called.
                     .bin_loose_eq,
                     .bin_loose_ne,
+                    .bin_lt,
+                    .bin_gt,
+                    .bin_le,
+                    .bin_ge,
                     => {
                         if (isPrimitiveWithSideEffects(bin.left.data) and isPrimitiveWithSideEffects(bin.right.data)) {
                             return Expr.joinWithComma(
@@ -207,13 +211,23 @@ pub const SideEffects = enum(u1) {
                                 p.allocator,
                             );
                         }
-                        // If one side is a number, the number can be printed as
-                        // `0` since the result being unused doesnt matter, we
-                        // only care to invoke the coercion.
-                        if (bin.left.data == .e_number) {
-                            bin.left.data = .{ .e_number = .{ .value = 0.0 } };
-                        } else if (bin.right.data == .e_number) {
-                            bin.right.data = .{ .e_number = .{ .value = 0.0 } };
+
+                        switch (bin.op) {
+                            .bin_loose_eq,
+                            .bin_loose_ne,
+                            => {
+                                // If one side is a number and the other side is a known primitive with side effects,
+                                // the number can be printed as `0` since the result being unused doesn't matter,
+                                // we only care to invoke the coercion.
+                                // We only do this optimization if the other side is a known primitive with side effects
+                                // to avoid corrupting shared nodes when the other side is an undefined identifier
+                                if (bin.left.data == .e_number) {
+                                    bin.left.data = .{ .e_number = .{ .value = 0.0 } };
+                                } else if (bin.right.data == .e_number) {
+                                    bin.right.data = .{ .e_number = .{ .value = 0.0 } };
+                                }
+                            },
+                            else => {},
                         }
                     },
 
@@ -259,7 +273,8 @@ pub const SideEffects = enum(u1) {
                         }
 
                         properties_slice = properties_slice[0..end];
-                        expr.data.e_object.properties = G.Property.List.init(properties_slice);
+                        expr.data.e_object.properties =
+                            G.Property.List.fromBorrowedSliceDangerous(properties_slice);
                         return expr;
                     }
                 }
@@ -297,16 +312,14 @@ pub const SideEffects = enum(u1) {
                 for (items) |item| {
                     if (item.data == .e_spread) {
                         var end: usize = 0;
-                        for (items) |item__| {
-                            const item_ = item__;
+                        for (items) |item_| {
                             if (item_.data != .e_missing) {
                                 items[end] = item_;
                                 end += 1;
                             }
-
-                            expr.data.e_array.items = ExprNodeList.init(items[0..end]);
-                            return expr;
                         }
+                        expr.data.e_array.items.shrinkRetainingCapacity(end);
+                        return expr;
                     }
                 }
 
@@ -443,7 +456,7 @@ pub const SideEffects = enum(u1) {
                     findIdentifiers(decl.binding, &decls);
                 }
 
-                local.decls.update(decls);
+                local.decls = .moveFromList(&decls);
                 return true;
             },
 
@@ -875,7 +888,6 @@ const js_ast = bun.ast;
 const Binding = js_ast.Binding;
 const E = js_ast.E;
 const Expr = js_ast.Expr;
-const ExprNodeList = js_ast.ExprNodeList;
 const Stmt = js_ast.Stmt;
 
 const G = js_ast.G;

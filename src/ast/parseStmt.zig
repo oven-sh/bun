@@ -493,9 +493,13 @@ pub fn ParseStmt(
         }
         fn t_var(p: *P, opts: *ParseStatementOptions, loc: logger.Loc) anyerror!Stmt {
             try p.lexer.next();
-            const decls = try p.parseAndDeclareDecls(.hoisted, opts);
+            var decls = try p.parseAndDeclareDecls(.hoisted, opts);
             try p.lexer.expectOrInsertSemicolon();
-            return p.s(S.Local{ .kind = .k_var, .decls = Decl.List.fromList(decls), .is_export = opts.is_export }, loc);
+            return p.s(S.Local{
+                .kind = .k_var,
+                .decls = Decl.List.moveFromList(&decls),
+                .is_export = opts.is_export,
+            }, loc);
         }
         fn t_const(p: *P, opts: *ParseStatementOptions, loc: logger.Loc) anyerror!Stmt {
             if (opts.lexical_decl != .allow_all) {
@@ -509,14 +513,18 @@ pub fn ParseStmt(
                 return p.parseTypescriptEnumStmt(loc, opts);
             }
 
-            const decls = try p.parseAndDeclareDecls(.constant, opts);
+            var decls = try p.parseAndDeclareDecls(.constant, opts);
             try p.lexer.expectOrInsertSemicolon();
 
             if (!opts.is_typescript_declare) {
                 try p.requireInitializers(.k_const, decls.items);
             }
 
-            return p.s(S.Local{ .kind = .k_const, .decls = Decl.List.fromList(decls), .is_export = opts.is_export }, loc);
+            return p.s(S.Local{
+                .kind = .k_const,
+                .decls = Decl.List.moveFromList(&decls),
+                .is_export = opts.is_export,
+            }, loc);
         }
         fn t_if(p: *P, _: *ParseStatementOptions, loc: logger.Loc) anyerror!Stmt {
             var current_loc = loc;
@@ -795,15 +803,17 @@ pub fn ParseStmt(
                     is_var = true;
                     try p.lexer.next();
                     var stmtOpts = ParseStatementOptions{};
-                    decls.update(try p.parseAndDeclareDecls(.hoisted, &stmtOpts));
-                    init_ = p.s(S.Local{ .kind = .k_var, .decls = Decl.List.fromList(decls) }, init_loc);
+                    var decls_list = try p.parseAndDeclareDecls(.hoisted, &stmtOpts);
+                    decls = .moveFromList(&decls_list);
+                    init_ = p.s(S.Local{ .kind = .k_var, .decls = decls }, init_loc);
                 },
                 // for (const )
                 .t_const => {
                     try p.lexer.next();
                     var stmtOpts = ParseStatementOptions{};
-                    decls.update(try p.parseAndDeclareDecls(.constant, &stmtOpts));
-                    init_ = p.s(S.Local{ .kind = .k_const, .decls = Decl.List.fromList(decls) }, init_loc);
+                    var decls_list = try p.parseAndDeclareDecls(.constant, &stmtOpts);
+                    decls = .moveFromList(&decls_list);
+                    init_ = p.s(S.Local{ .kind = .k_const, .decls = decls }, init_loc);
                 },
                 // for (;)
                 .t_semicolon => {},
@@ -1293,7 +1303,7 @@ pub fn ParseStmt(
                                             for (local.decls.slice()) |decl| {
                                                 try extractDeclsForBinding(decl.binding, &_decls);
                                             }
-                                            decls.update(_decls);
+                                            decls = .moveFromList(&_decls);
                                         },
                                         else => {},
                                     }

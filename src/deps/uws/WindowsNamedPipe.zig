@@ -79,10 +79,10 @@ fn onPipeClose(this: *WindowsNamedPipe) void {
 }
 
 fn onReadAlloc(this: *WindowsNamedPipe, suggested_size: usize) []u8 {
-    var available = this.incoming.available();
+    var available = this.incoming.unusedCapacitySlice();
     if (available.len < suggested_size) {
         bun.handleOom(this.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size));
-        available = this.incoming.available();
+        available = this.incoming.unusedCapacitySlice();
     }
     return available.ptr[0..suggested_size];
 }

@@ -237,7 +237,7 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                         var entry = try js
                             .imports_from_other_chunks
                             .getOrPutValue(c.allocator(), other_chunk_index, .{});
-                        try entry.value_ptr.push(c.allocator(), .{
+                        try entry.value_ptr.append(c.allocator(), .{
                             .ref = import_ref,
                         });
                     }
@@ -272,12 +272,10 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
             const dynamic_chunk_indices = chunk_meta.dynamic_imports.keys();
             std.sort.pdq(Index.Int, dynamic_chunk_indices, {}, std.sort.asc(Index.Int));
 
-            var imports = chunk.cross_chunk_imports.listManaged(c.allocator());
-            defer chunk.cross_chunk_imports.update(imports);
-            imports.ensureUnusedCapacity(dynamic_chunk_indices.len) catch unreachable;
-            const prev_len = imports.items.len;
-            imports.items.len += dynamic_chunk_indices.len;
-            for (dynamic_chunk_indices, imports.items[prev_len..]) |dynamic_chunk_index, *item| {
+            const new_imports = bun.handleOom(
+                chunk.cross_chunk_imports.writableSlice(c.allocator(), dynamic_chunk_indices.len),
+            );
+            for (dynamic_chunk_indices, new_imports) |dynamic_chunk_index, *item| {
                 item.* = .{
                     .import_kind = .dynamic,
                     .chunk_index = dynamic_chunk_index,
@@ -387,7 +385,7 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                             });
                         }
 
-                        cross_chunk_imports.push(c.allocator(), .{
+                        cross_chunk_imports.append(c.allocator(), .{
                             .import_kind = .stmt,
                             .chunk_index = cross_chunk_import.chunk_index,
                         }) catch unreachable;
@@ -397,7 +395,7 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                             .import_record_index = import_record_index,
                             .namespace_ref = Ref.None,
                         };
-                        cross_chunk_prefix_stmts.push(
+                        cross_chunk_prefix_stmts.append(
                             c.allocator(),
                             .{
                                 .data = .{

@@ -140,7 +140,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplemented,
 JSC_DEFINE_CUSTOM_GETTER(jsGetter_INSPECT_MAX_BYTES, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     auto globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    return JSValue::encode(jsDoubleNumber(globalObject->INSPECT_MAX_BYTES));
+    return JSValue::encode(jsNumber(globalObject->INSPECT_MAX_BYTES));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsSetter_INSPECT_MAX_BYTES, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
@@ -210,7 +210,7 @@ DEFINE_NATIVE_MODULE(NodeBuffer)
 
     put(JSC::Identifier::fromString(vm, "resolveObjectURL"_s), resolveObjectURL);
 
-    put(JSC::Identifier::fromString(vm, "isAscii"_s), JSC::JSFunction::create(vm, globalObject, 1, "isAscii"_s, jsBufferConstructorFunction_isAscii, ImplementationVisibility::Public, NoIntrinsic, jsBufferConstructorFunction_isUtf8));
+    put(JSC::Identifier::fromString(vm, "isAscii"_s), JSC::JSFunction::create(vm, globalObject, 1, "isAscii"_s, jsBufferConstructorFunction_isAscii, ImplementationVisibility::Public, NoIntrinsic, jsBufferConstructorFunction_isAscii));
 
     put(JSC::Identifier::fromString(vm, "isUtf8"_s), JSC::JSFunction::create(vm, globalObject, 1, "isUtf8"_s, jsBufferConstructorFunction_isUtf8, ImplementationVisibility::Public, NoIntrinsic, jsBufferConstructorFunction_isUtf8));
 }

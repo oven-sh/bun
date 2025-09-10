@@ -1761,7 +1761,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 // we can avoid streaming it and just send it all at once.
                                 if (byte_stream.has_received_last_chunk) {
                                     var byte_list = byte_stream.drain();
-                                    this.blob = .fromArrayList(byte_list.listManaged(bun.default_allocator));
+                                    this.blob = .fromArrayList(byte_list.moveToListManaged(bun.default_allocator));
                                     this.readable_stream_ref.deinit();
                                     this.doRenderBlob();
                                     return;
@@ -1771,7 +1771,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 this.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(stream, globalThis);
 
                                 this.byte_stream = byte_stream;
-                                this.response_buf_owned = byte_stream.drain().list();
+                                var response_buf = byte_stream.drain();
+                                this.response_buf_owned = response_buf.moveToList();
 
                                 // we don't set size here because even if we have a hint
                                 // uWebSockets won't let us partially write streaming content
@@ -1817,8 +1818,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 if (is_done) this.deref();
                 if (stream_needs_deinit) {
                     switch (stream_) {
-                        .owned_and_done => |*owned| owned.listManaged(allocator).deinit(),
-                        .owned => |*owned| owned.listManaged(allocator).deinit(),
+                        .owned_and_done => |*owned| owned.deinit(allocator),
+                        .owned => |*owned| owned.deinit(allocator),
                         else => unreachable,
                     }
                 }
@@ -2240,7 +2241,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 if (!last) {
                     readable.ptr.Bytes.onData(
                         .{
-                            .temporary = bun.ByteList.initConst(chunk),
+                            .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                         },
                         bun.default_allocator,
                     );
@@ -2256,7 +2257,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     readable.value.ensureStillAlive();
                     readable.ptr.Bytes.onData(
                         .{
-                            .temporary_and_done = bun.ByteList.initConst(chunk),
+                            .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                         },
                         bun.default_allocator,
                     );

@@ -78,7 +78,7 @@ test("err.line and err.column are set", () => {
         line: 3,
         column: 17,
         originalLine: 1,
-        originalColumn: 22,
+        originalColumn: 18,
       },
       null,
       2,

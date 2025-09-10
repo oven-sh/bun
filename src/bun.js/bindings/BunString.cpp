@@ -717,6 +717,21 @@ WTF::String BunString::toWTFString() const
     return WTF::String();
 }
 
+void BunString::appendToBuilder(WTF::StringBuilder& builder) const
+{
+    if (this->tag == BunStringTag::WTFStringImpl) {
+        builder.append(this->impl.wtf);
+        return;
+    }
+
+    if (this->tag == BunStringTag::ZigString || this->tag == BunStringTag::StaticZigString) {
+        Zig::appendToBuilder(this->impl.zig, builder);
+        return;
+    }
+
+    // append nothing for BunStringTag::Dead and BunStringTag::Empty
+}
+
 WTF::String BunString::toWTFString(ZeroCopyTag) const
 {
     if (this->tag == BunStringTag::ZigString) {

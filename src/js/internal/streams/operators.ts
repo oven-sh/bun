@@ -8,9 +8,9 @@ const { addAbortSignalNoValidate } = require("internal/streams/add-abort-signal"
 const { isWritable, isNodeStream } = require("internal/streams/utils");
 
 const MathFloor = Math.floor;
-const PromiseResolve = Promise.resolve.bind(Promise);
-const PromiseReject = Promise.reject.bind(Promise);
-const PromisePrototypeThen = Promise.prototype.then;
+const PromiseResolve = Promise.$resolve.bind(Promise);
+const PromiseReject = Promise.$reject.bind(Promise);
+const PromisePrototypeThen = $Promise.prototype.$then;
 const ArrayPrototypePush = Array.prototype.push;
 const NumberIsNaN = Number.isNaN;
 const ObjectDefineProperty = Object.defineProperty;

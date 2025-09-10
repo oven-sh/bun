@@ -49,7 +49,7 @@ test("verify we print error messages passed to done callbacks", () => {
     27 |   done(new Error(msg + "(sync)"));
     ^
     error: you should see this(sync)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:27:8)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:27:12)
     (fail) error done callback (sync)
     27 |   done(new Error(msg + "(sync)"));
     28 | });
@@ -59,7 +59,7 @@ test("verify we print error messages passed to done callbacks", () => {
     32 |   done(new Error(msg + "(async with await)"));
     ^
     error: you should see this(async with await)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:32:8)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:32:12)
     (fail) error done callback (async with await)
     32 |   done(new Error(msg + "(async with await)"));
     33 | });
@@ -69,7 +69,7 @@ test("verify we print error messages passed to done callbacks", () => {
     37 |   done(new Error(msg + "(async with Bun.sleep)"));
     ^
     error: you should see this(async with Bun.sleep)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:37:8)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:37:12)
     (fail) error done callback (async with Bun.sleep)
     37 |   done(new Error(msg + "(async with Bun.sleep)"));
     38 | });
@@ -79,7 +79,7 @@ test("verify we print error messages passed to done callbacks", () => {
     42 |     done(new Error(msg + "(async)"));
     ^
     error: you should see this(async)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:42:10)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:42:14)
     (fail) error done callback (async)
     43 |   });
     44 | });
@@ -89,7 +89,7 @@ test("verify we print error messages passed to done callbacks", () => {
     48 |     done(new Error(msg + "(async, setTimeout)"));
     ^
     error: you should see this(async, setTimeout)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:48:10)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:48:14)
     (fail) error done callback (async, setTimeout)
     49 |   }, 0);
     50 | });
@@ -99,7 +99,7 @@ test("verify we print error messages passed to done callbacks", () => {
     54 |     done(new Error(msg + "(async, setImmediate)"));
     ^
     error: you should see this(async, setImmediate)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:54:10)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:54:14)
     (fail) error done callback (async, setImmediate)
     55 |   });
     56 | });
@@ -109,7 +109,7 @@ test("verify we print error messages passed to done callbacks", () => {
     60 |     done(new Error(msg + "(async, nextTick)"));
     ^
     error: you should see this(async, nextTick)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:60:10)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:60:14)
     (fail) error done callback (async, nextTick)
     62 | });
     63 |
@@ -119,7 +119,7 @@ test("verify we print error messages passed to done callbacks", () => {
     67 |       done(new Error(msg + "(async, setTimeout, Promise.resolve)"));
     ^
     error: you should see this(async, setTimeout, Promise.resolve)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:67:12)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:67:16)
     (fail) error done callback (async, setTimeout, Promise.resolve)
     70 | });
     71 |
@@ -129,7 +129,7 @@ test("verify we print error messages passed to done callbacks", () => {
     75 |       done(new Error(msg + "(async, setImmediate, Promise.resolve)"));
     ^
     error: you should see this(async, setImmediate, Promise.resolve)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:75:12)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:75:16)
     (fail) error done callback (async, setImmediate, Promise.resolve)
 
     0 pass

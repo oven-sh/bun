@@ -175,9 +175,19 @@ pub fn RefCount(T: type, field_name: []const u8, destructor: anytype, options: O
 
         /// The count is 0 after the destructor is called.
         pub fn assertNoRefs(count: *const @This()) void {
-            if (enable_debug) {
+            if (comptime bun.Environment.ci_assert) {
                 bun.assert(count.raw_count == 0);
             }
+        }
+
+        /// Sets the ref count to 0 without running the destructor.
+        ///
+        /// Only use this if you're about to free the object (e.g., with `bun.destroy`).
+        ///
+        /// Don't modify the ref count or create any `RefPtr`s after calling this method.
+        pub fn clearWithoutDestructor(count: *@This()) void {
+            count.assertSingleThreaded();
+            count.raw_count = 0;
         }
 
         fn assertSingleThreaded(count: *@This()) void {
@@ -282,9 +292,21 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
 
         /// The count is 0 after the destructor is called.
         pub fn assertNoRefs(count: *const @This()) void {
-            if (enable_debug) {
+            if (comptime bun.Environment.ci_assert) {
                 bun.assert(count.raw_count.load(.seq_cst) == 0);
             }
+        }
+
+        /// Sets the ref count to 0 without running the destructor.
+        ///
+        /// Only use this if you're about to free the object (e.g., with `bun.destroy`).
+        ///
+        /// Don't modify the ref count or create any `RefPtr`s after calling this method.
+        pub fn clearWithoutDestructor(count: *@This()) void {
+            // This method should only be used if you're about the free the object. You shouldn't
+            // be freeing the object if other threads might be using it, and no memory order can
+            // help with that, so .monotonic is sufficient.
+            count.raw_count.store(0, .monotonic);
         }
 
         fn getRefCount(self: *T) *@This() {
@@ -389,12 +411,15 @@ pub fn RefPtr(T: type) type {
         }
 
         fn trackImpl(ref: @This(), scope: *AllocationScope, ret_addr: usize) void {
+            if (!comptime enable_debug) return;
             const debug = &ref.data.ref_count.debug;
-            debug.allocation_scope = &scope;
+            debug.lock.lock();
+            defer debug.lock.unlock();
+            debug.allocation_scope = scope;
             scope.trackExternalAllocation(
                 std.mem.asBytes(ref.data),
                 ret_addr,
-                .{ .ref_count = debug },
+                .{ .ptr = debug, .vtable = debug.getScopeExtraVTable() },
             );
         }
 
@@ -498,17 +523,25 @@ pub fn DebugData(thread_safe: bool) type {
             debug.map.clearAndFree(bun.default_allocator);
             debug.frees.clearAndFree(bun.default_allocator);
             if (debug.allocation_scope) |scope| {
-                _ = scope.trackExternalFree(data, ret_addr);
+                scope.trackExternalFree(data, ret_addr) catch {};
             }
         }
 
-        // Trait function for AllocationScope
-        pub fn onAllocationLeak(debug: *@This(), data: []u8) void {
+        fn onAllocationLeak(ptr: *anyopaque, data: []u8) void {
+            const debug: *@This() = @ptrCast(@alignCast(ptr));
             debug.lock.lock();
             defer debug.lock.unlock();
             const count = debug.count_pointer.?;
             debug.dump(null, data.ptr, if (thread_safe) count.load(.seq_cst) else count.*);
         }
+
+        fn getScopeExtraVTable(_: *@This()) *const allocation_scope.Extra.VTable {
+            return &scope_extra_vtable;
+        }
+
+        const scope_extra_vtable: allocation_scope.Extra.VTable = .{
+            .onAllocationLeak = onAllocationLeak,
+        };
     };
 }
 
@@ -561,6 +594,8 @@ const unique_symbol = opaque {};
 const std = @import("std");
 
 const bun = @import("bun");
-const AllocationScope = bun.AllocationScope;
 const assert = bun.assert;
 const enable_debug = bun.Environment.isDebug;
+
+const allocation_scope = bun.allocators.allocation_scope;
+const AllocationScope = allocation_scope.AllocationScope;

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
 import { promises as fs } from "fs";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 // Helper to ensure executable cleanup
@@ -18,11 +18,11 @@ function cleanup(outfile: string) {
 describe.skipIf(!isWindows)("Windows compile metadata", () => {
   describe("CLI flags", () => {
     test("all metadata flags via CLI", async () => {
-      const dir = tempDirWithFiles("windows-metadata-cli", {
+      using dir = tempDir("windows-metadata-cli", {
         "app.js": `console.log("Test app with metadata");`,
       });
 
-      const outfile = join(dir, "app-with-metadata.exe");
+      const outfile = join(String(dir), "app-with-metadata.exe");
       await using _cleanup = cleanup(outfile);
 
       await using proc = Bun.spawn({
@@ -30,7 +30,7 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
           bunExe(),
           "build",
           "--compile",
-          join(dir, "app.js"),
+          join(String(dir), "app.js"),
           "--outfile",
           outfile,
           "--windows-title",
@@ -78,11 +78,11 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
     });
 
     test("partial metadata flags", async () => {
-      const dir = tempDirWithFiles("windows-metadata-partial", {
+      using dir = tempDir("windows-metadata-partial", {
         "app.js": `console.log("Partial metadata test");`,
       });
 
-      const outfile = join(dir, "app-partial.exe");
+      const outfile = join(String(dir), "app-partial.exe");
       await using _cleanup = cleanup(outfile);
 
       await using proc = Bun.spawn({
@@ -90,7 +90,7 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
           bunExe(),
           "build",
           "--compile",
-          join(dir, "app.js"),
+          join(String(dir), "app.js"),
           "--outfile",
           outfile,
           "--windows-title",
@@ -122,12 +122,12 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
     });
 
     test("windows flags without --compile should error", async () => {
-      const dir = tempDirWithFiles("windows-no-compile", {
+      using dir = tempDir("windows-no-compile", {
         "app.js": `console.log("test");`,
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "build", join(dir, "app.js"), "--windows-title", "Should Fail"],
+        cmd: [bunExe(), "build", join(String(dir), "app.js"), "--windows-title", "Should Fail"],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
@@ -140,7 +140,7 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
     });
 
     test("windows flags with non-Windows target should error", async () => {
-      const dir = tempDirWithFiles("windows-wrong-target", {
+      using dir = tempDir("windows-wrong-target", {
         "app.js": `console.log("test");`,
       });
 
@@ -151,7 +151,7 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
           "--compile",
           "--target",
           "bun-linux-x64",
-          join(dir, "app.js"),
+          join(String(dir), "app.js"),
           "--windows-title",
           "Should Fail",
         ],
@@ -170,13 +170,13 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
 
   describe("Bun.build() API", () => {
     test("all metadata via Bun.build()", async () => {
-      const dir = tempDirWithFiles("windows-metadata-api", {
+      using dir = tempDir("windows-metadata-api", {
         "app.js": `console.log("API metadata test");`,
       });
 
       const result = await Bun.build({
-        entrypoints: [join(dir, "app.js")],
-        outdir: dir,
+        entrypoints: [join(String(dir), "app.js")],
+        outdir: String(dir),
         compile: {
           target: "bun-windows-x64",
           outfile: "app-api.exe",
@@ -217,13 +217,13 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
     });
 
     test("partial metadata via Bun.build()", async () => {
-      const dir = tempDirWithFiles("windows-metadata-api-partial", {
+      using dir = tempDir("windows-metadata-api-partial", {
         "app.js": `console.log("Partial API test");`,
       });
 
       const result = await Bun.build({
-        entrypoints: [join(dir, "app.js")],
-        outdir: dir,
+        entrypoints: [join(String(dir), "app.js")],
+        outdir: String(dir),
         compile: {
           target: "bun-windows-x64",
           outfile: "partial-api.exe",
@@ -254,12 +254,12 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
     });
 
     test("relative outdir with compile", async () => {
-      const dir = tempDirWithFiles("windows-relative-outdir", {
+      using dir = tempDir("windows-relative-outdir", {
         "app.js": `console.log("Relative outdir test");`,
       });
 
       const result = await Bun.build({
-        entrypoints: [join(dir, "app.js")],
+        entrypoints: [join(String(dir), "app.js")],
         outdir: "./out",
         compile: {
           target: "bun-windows-x64",
@@ -290,14 +290,23 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
     ];
 
     test.each(testVersionFormats)("version format: $input", async ({ input, expected }) => {
-      const dir = tempDirWithFiles(`windows-version-${input.replace(/\./g, "-")}`, {
+      using dir = tempDir(`windows-version-${input.replace(/\./g, "-")}`, {
         "app.js": `console.log("Version test");`,
       });
 
-      const outfile = join(dir, "version-test.exe");
+      const outfile = join(String(dir), "version-test.exe");
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", join(dir, "app.js"), "--outfile", outfile, "--windows-version", input],
+        cmd: [
+          bunExe(),
+          "build",
+          "--compile",
+          join(String(dir), "app.js"),
+          "--outfile",
+          outfile,
+          "--windows-version",
+          input,
+        ],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
@@ -314,7 +323,7 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
     });
 
     test("invalid version format should error gracefully", async () => {
-      const dir = tempDirWithFiles("windows-invalid-version", {
+      using dir = tempDir("windows-invalid-version", {
         "app.js": `console.log("Invalid version test");`,
       });
 
@@ -332,9 +341,9 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
             bunExe(),
             "build",
             "--compile",
-            join(dir, "app.js"),
+            join(String(dir), "app.js"),
             "--outfile",
-            join(dir, "test.exe"),
+            join(String(dir), "test.exe"),
             "--windows-version",
             version,
           ],
@@ -349,21 +358,123 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
     });
   });
 
-  describe("Edge cases", () => {
-    test("long strings in metadata", async () => {
-      const dir = tempDirWithFiles("windows-long-strings", {
-        "app.js": `console.log("Long strings test");`,
+  describe("Original Filename removal", () => {
+    test("Original Filename field should be empty", async () => {
+      using dir = tempDir("windows-original-filename", {
+        "app.js": `console.log("Original filename test");`,
       });
 
-      const longString = Buffer.alloc(255, "A").toString();
-      const outfile = join(dir, "long-strings.exe");
+      const outfile = join(String(dir), "test-original.exe");
+      await using _cleanup = cleanup(outfile);
 
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "build",
           "--compile",
-          join(dir, "app.js"),
+          join(String(dir), "app.js"),
+          "--outfile",
+          outfile,
+          "--windows-title",
+          "Test Application",
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+
+      // Check that Original Filename is empty (not "bun.exe")
+      const getMetadata = (field: string) => {
+        try {
+          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
+            encoding: "utf8",
+          }).trim();
+        } catch {
+          return "";
+        }
+      };
+
+      const originalFilename = getMetadata("OriginalFilename");
+      expect(originalFilename).toBe("");
+      expect(originalFilename).not.toBe("bun.exe");
+    });
+
+    test("Original Filename should be empty even with all metadata set", async () => {
+      using dir = tempDir("windows-original-filename-full", {
+        "app.js": `console.log("Full metadata test");`,
+      });
+
+      const outfile = join(String(dir), "full-metadata.exe");
+      await using _cleanup = cleanup(outfile);
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "--compile",
+          join(String(dir), "app.js"),
+          "--outfile",
+          outfile,
+          "--windows-title",
+          "Complete App",
+          "--windows-publisher",
+          "Test Publisher",
+          "--windows-version",
+          "5.4.3.2",
+          "--windows-description",
+          "Application with full metadata",
+          "--windows-copyright",
+          "© 2024 Test",
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+
+      const getMetadata = (field: string) => {
+        try {
+          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
+            encoding: "utf8",
+          }).trim();
+        } catch {
+          return "";
+        }
+      };
+
+      // Verify all custom metadata is set correctly
+      expect(getMetadata("ProductName")).toBe("Complete App");
+      expect(getMetadata("CompanyName")).toBe("Test Publisher");
+      expect(getMetadata("FileDescription")).toBe("Application with full metadata");
+      expect(getMetadata("ProductVersion")).toBe("5.4.3.2");
+
+      // But Original Filename should still be empty
+      const originalFilename = getMetadata("OriginalFilename");
+      expect(originalFilename).toBe("");
+      expect(originalFilename).not.toBe("bun.exe");
+    });
+  });
+
+  describe("Edge cases", () => {
+    test("long strings in metadata", async () => {
+      using dir = tempDir("windows-long-strings", {
+        "app.js": `console.log("Long strings test");`,
+      });
+
+      const longString = Buffer.alloc(255, "A").toString();
+      const outfile = join(String(dir), "long-strings.exe");
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "--compile",
+          join(String(dir), "app.js"),
           "--outfile",
           outfile,
           "--windows-title",
@@ -384,18 +495,18 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
     });
 
     test("special characters in metadata", async () => {
-      const dir = tempDirWithFiles("windows-special-chars", {
+      using dir = tempDir("windows-special-chars", {
         "app.js": `console.log("Special chars test");`,
       });
 
-      const outfile = join(dir, "special-chars.exe");
+      const outfile = join(String(dir), "special-chars.exe");
 
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "build",
           "--compile",
-          join(dir, "app.js"),
+          join(String(dir), "app.js"),
           "--outfile",
           outfile,
           "--windows-title",
@@ -433,18 +544,18 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
     });
 
     test("unicode in metadata", async () => {
-      const dir = tempDirWithFiles("windows-unicode", {
+      using dir = tempDir("windows-unicode", {
         "app.js": `console.log("Unicode test");`,
       });
 
-      const outfile = join(dir, "unicode.exe");
+      const outfile = join(String(dir), "unicode.exe");
 
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "build",
           "--compile",
-          join(dir, "app.js"),
+          join(String(dir), "app.js"),
           "--outfile",
           outfile,
           "--windows-title",
@@ -469,11 +580,11 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
     });
 
     test("empty strings in metadata", async () => {
-      const dir = tempDirWithFiles("windows-empty-strings", {
+      using dir = tempDir("windows-empty-strings", {
         "app.js": `console.log("Empty strings test");`,
       });
 
-      const outfile = join(dir, "empty.exe");
+      const outfile = join(String(dir), "empty.exe");
       await using _cleanup = cleanup(outfile);
 
       // Empty strings should be treated as not provided
@@ -482,7 +593,7 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
           bunExe(),
           "build",
           "--compile",
-          join(dir, "app.js"),
+          join(String(dir), "app.js"),
           "--outfile",
           outfile,
           "--windows-title",
@@ -505,18 +616,18 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
 
   describe("Combined with other compile options", () => {
     test("metadata with --windows-hide-console", async () => {
-      const dir = tempDirWithFiles("windows-metadata-hide-console", {
+      using dir = tempDir("windows-metadata-hide-console", {
         "app.js": `console.log("Hidden console test");`,
       });
 
-      const outfile = join(dir, "hidden-with-metadata.exe");
+      const outfile = join(String(dir), "hidden-with-metadata.exe");
 
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "build",
           "--compile",
-          join(dir, "app.js"),
+          join(String(dir), "app.js"),
           "--outfile",
           outfile,
           "--windows-hide-console",
@@ -577,23 +688,23 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
         0x00, // Offset
       ]);
 
-      const dir = tempDirWithFiles("windows-metadata-icon", {
+      using dir = tempDir("windows-metadata-icon", {
         "app.js": `console.log("Icon test");`,
         "icon.ico": icoHeader,
       });
 
-      const outfile = join(dir, "icon-with-metadata.exe");
+      const outfile = join(String(dir), "icon-with-metadata.exe");
 
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "build",
           "--compile",
-          join(dir, "app.js"),
+          join(String(dir), "app.js"),
           "--outfile",
           outfile,
           "--windows-icon",
-          join(dir, "icon.ico"),
+          join(String(dir), "icon.ico"),
           "--windows-title",
           "App with Icon",
           "--windows-version",
@@ -607,23 +718,21 @@ describe.skipIf(!isWindows)("Windows compile metadata", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       // Icon might fail but metadata should still work
-      if (exitCode === 0) {
-        const exists = await Bun.file(outfile).exists();
-        expect(exists).toBe(true);
+      const exists = await Bun.file(outfile).exists();
+      expect(exists).toBe(true);
 
-        const getMetadata = (field: string) => {
-          try {
-            return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
-              encoding: "utf8",
-            }).trim();
-          } catch {
-            return "";
-          }
-        };
+      const getMetadata = (field: string) => {
+        try {
+          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
+            encoding: "utf8",
+          }).trim();
+        } catch {
+          return "";
+        }
+      };
 
-        expect(getMetadata("ProductName")).toBe("App with Icon");
-        expect(getMetadata("ProductVersion")).toBe("2.0.0.0");
-      }
+      expect(getMetadata("ProductName")).toBe("App with Icon");
+      expect(getMetadata("ProductVersion")).toBe("2.0.0.0");
     });
   });
 });

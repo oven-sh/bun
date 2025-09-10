@@ -1563,7 +1563,11 @@ class OutputLineStream extends EventEmitter {
             this.lines.push(line);
             if (
               line.includes("============================================================") ||
-              line.includes("Allocation scope leaked")
+              line.includes("Allocation scope leaked") ||
+              line.includes("collection first used here") ||
+              line.includes("allocator mismatch") ||
+              line.includes("assertion failure") ||
+              line.includes("race condition")
             ) {
               // Tell consumers to wait for the process to exit
               this.panicked = true;

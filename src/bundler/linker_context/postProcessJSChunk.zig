@@ -43,7 +43,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
         };
 
         var cross_chunk_import_records = ImportRecord.List.initCapacity(worker.allocator, chunk.cross_chunk_imports.len) catch unreachable;
-        defer cross_chunk_import_records.deinitWithAllocator(worker.allocator);
+        defer cross_chunk_import_records.deinit(worker.allocator);
         for (chunk.cross_chunk_imports.slice()) |import_record| {
             cross_chunk_import_records.appendAssumeCapacity(
                 .{

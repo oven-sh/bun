@@ -352,7 +352,7 @@ pub fn stopTimers(this: *@This()) void {
 }
 
 pub fn getQueriesArray(this: *const @This()) JSValue {
-    return js.queriesGetCached(this.js_value) orelse .zero;
+    return js.queriesGetCached(this.js_value) orelse .js_undefined;
 }
 pub fn failFmt(this: *@This(), error_code: AnyMySQLError.Error, comptime fmt: [:0]const u8, args: anytype) void {
     const message = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, fmt, args));

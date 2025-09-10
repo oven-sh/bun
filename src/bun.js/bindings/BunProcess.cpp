@@ -90,6 +90,10 @@ typedef int mode_t;
 #endif
 #endif
 
+#if ASSERT_ENABLED
+#include <JavaScriptCore/IntegrityInlines.h>
+#endif
+
 #pragma mark - Node.js Process
 
 #if defined(__APPLE__)

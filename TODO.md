@@ -396,6 +396,7 @@ $> bun-after test hook-timeouts
 
 # Code quality:
 
+- [ ] migrate RefData to bun.ptr.Strong
 - [ ] setting both result and maybe_skip is not ideal, maybe there should be a function to do both at once?
 - [ ] try using a linked list rather than arraylist for describe/test children, see how it affects performance
 - [ ] consider modifying the junit reporter to print the whole describe tree rather than exploring the execution tree (if that's what it's doing? either way it needs to include tests that are filtered out)

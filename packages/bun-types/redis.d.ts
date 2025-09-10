@@ -717,7 +717,7 @@ declare module "bun" {
      * });
      * ```
      */
-    subscribe(channel: string, listener: RedisClient.PubSubListener<string>): Promise<number>;
+    subscribe(channel: string, listener: RedisClient.StringPubSubListener): Promise<number>;
 
     /**
      * Subscribe to multiple Redis channels.
@@ -733,7 +733,7 @@ declare module "bun" {
      * the subscribed channels. The listener will receive the message as the
      * first argument and the channel as the second argument.
      */
-    subscribe(channels: string[], listener: RedisClient.PubSubListener<string>): Promise<number>;
+    subscribe(channels: string[], listener: RedisClient.StringPubSubListener): Promise<number>;
 
     /**
      * Unsubscribe from a singular Redis channel.
@@ -765,7 +765,7 @@ declare module "bun" {
      * referential equality so you must pass the exact same listener instance as
      * when subscribing.
      */
-    unsubscribe(channel: string, listener: RedisClient.PubSubListener<string>): Promise<void>;
+    unsubscribe(channel: string, listener: RedisClient.StringPubSubListener): Promise<void>;
 
     /**
      * Unsubscribe from all registered Redis channels.

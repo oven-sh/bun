@@ -79,7 +79,7 @@ pub const JSRef = union(enum) {
         }
     }
 
-    pub fn hasValue(this: *@This()) bool {
+    pub fn hasValue(this: *const @This()) bool {
         return switch (this.*) {
             .weak => this.weak != .zero,
             .strong => this.strong.has(),

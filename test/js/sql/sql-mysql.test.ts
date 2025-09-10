@@ -596,14 +596,14 @@ for (const image of images) {
         });
 
         test("Support dynamic password function", async () => {
-          await using sql = new SQL({ ...options, password: () => "bun", max: 1 });
+          await using sql = new SQL({ ...options, password: () => image.password, max: 1 });
           return expect((await sql`select 1 as x`)[0].x).toBe(1);
         });
 
         test("Support dynamic async resolved password function", async () => {
           await using sql = new SQL({
             ...options,
-            password: () => Promise.resolve("bun"),
+            password: () => Promise.resolve(image.password),
             max: 1,
           });
           return expect((await sql`select 1 as x`)[0].x).toBe(1);
@@ -615,7 +615,7 @@ for (const image of images) {
             max: 1,
             password: async () => {
               await Bun.sleep(10);
-              return "bun";
+              return image.password;
             },
           });
           return expect((await sql`select 1 as x`)[0].x).toBe(1);

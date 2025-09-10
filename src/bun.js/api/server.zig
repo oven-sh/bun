@@ -2266,7 +2266,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return .{
                 .js_request = switch (create_js_request) {
                     .yes => request_object.toJS(this.globalThis),
-                    .bake => request_object.toJSForBake(this.globalThis, req),
+                    .bake => request_object.toJSForBake(this.globalThis, req) catch |err| this.globalThis.takeException(err),
                     .no => .zero,
                 },
                 .request_object = request_object,

@@ -5879,8 +5879,7 @@ const Tokenizer = struct {
     }
 
     pub inline fn sliceFrom(this: *Tokenizer, start: usize) []const u8 {
-        const position = this.getPosition();
-        return this.src[start..position];
+        return this.src[start..this.position];
     }
 };
 

@@ -62,9 +62,6 @@ export async function renderRoutesForProdStatic(
       pageModule,
       params,
     } satisfies Bake.RouteMetadata);
-    if (results === undefined) {
-      return true;
-    }
     if (results == null) {
       throw new Error(`Route ${JSON.stringify(sourceRouteFiles[i])} cannot be pre-rendered to a static page.`);
     }
@@ -154,13 +151,6 @@ export async function renderRoutesForProdStatic(
             }
           }
         } else {
-          // for (const params of paramGetter.pages) {
-          //   const failed = await callRouteGenerator(type, noClient, i, layouts, pageModule, params);
-          //   if (failed) {
-          //     return;
-          //   }
-          // }
-          // TODO: error signal here?
           await Promise.all(
             paramGetter.pages.map(params => {
               callRouteGenerator(type, noClient, i, layouts, pageModule, params);

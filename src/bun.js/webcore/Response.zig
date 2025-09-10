@@ -542,6 +542,10 @@ pub fn constructRedirect(
     return response_js;
 }
 
+pub export fn ResponseClass__constructRender(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
+    return @call(.always_inline, jsc.toJSHostFn(constructRender), .{ globalObject, callFrame });
+}
+
 /// This function is only available on JSBakeResponse
 pub fn constructRender(
     globalThis: *jsc.JSGlobalObject,

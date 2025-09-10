@@ -262,15 +262,18 @@ for (const image of images) {
         });
 
         test("Result is array", async () => {
+          await using sql = new SQL(options);
           expect(await sql`select 1`).toBeArray();
         });
 
         test("Create table", async () => {
+          await using sql = new SQL(options);
           await sql`create table test(id int)`;
           await sql`drop table test`;
         });
 
         test("Drop table", async () => {
+          await using sql = new SQL(options);
           await sql`create table test(id int)`;
           await sql`drop table test`;
           // Verify that table is dropped
@@ -279,27 +282,33 @@ for (const image of images) {
         });
 
         test("null", async () => {
+          await using sql = new SQL(options);
           expect((await sql`select ${null} as x`)[0].x).toBeNull();
         });
 
         test("Unsigned Integer", async () => {
+          await using sql = new SQL(options);
           expect((await sql`select ${0x7fffffff + 2} as x`)[0].x).toBe(2147483649);
         });
 
         test("Signed Integer", async () => {
+          await using sql = new SQL(options);
           expect((await sql`select ${-1} as x`)[0].x).toBe(-1);
           expect((await sql`select ${1} as x`)[0].x).toBe(1);
         });
 
         test("Double", async () => {
+          await using sql = new SQL(options);
           expect((await sql`select ${1.123456789} as x`)[0].x).toBe(1.123456789);
         });
 
         test("String", async () => {
+          await using sql = new SQL(options);
           expect((await sql`select ${"hello"} as x`)[0].x).toBe("hello");
         });
 
         test("MediumInt/Int24", async () => {
+          await using sql = new SQL(options);
           let random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
           await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a mediumint unsigned)`;
           await sql`INSERT INTO ${sql(random_name)} VALUES (${1})`;
@@ -310,6 +319,7 @@ for (const image of images) {
         });
 
         test("Boolean/TinyInt/BIT", async () => {
+          await using sql = new SQL(options);
           // Protocol will always return 0 or 1 for TRUE and FALSE when not using a table.
           expect((await sql`select ${false} as x`)[0].x).toBe(0);
           expect((await sql`select ${true} as x`)[0].x).toBe(1);
@@ -364,12 +374,14 @@ for (const image of images) {
         });
 
         test("Date", async () => {
+          await using sql = new SQL(options);
           const now = new Date();
           const then = (await sql`select ${now}  as x`)[0].x;
           expect(then).toEqual(now);
         });
 
         test("Timestamp", async () => {
+          await using sql = new SQL(options);
           {
             const result = (await sql`select DATE_ADD(FROM_UNIXTIME(0), INTERVAL -25 SECOND) as x`)[0].x;
             expect(result.getTime()).toBe(-25000);
@@ -389,6 +401,7 @@ for (const image of images) {
         });
 
         test("JSON", async () => {
+          await using sql = new SQL(options);
           const x = (await sql`select CAST(${{ a: "hello", b: 42 }} AS JSON) as x`)[0].x;
           expect(x).toEqual({ a: "hello", b: 42 });
 
@@ -405,6 +418,7 @@ for (const image of images) {
         });
 
         test("bulk insert nested sql()", async () => {
+          await using sql = new SQL(options);
           await sql`create table users (name text, age int)`;
           const users = [
             { name: "Alice", age: 25 },
@@ -423,10 +437,12 @@ for (const image of images) {
         });
 
         test("Escapes", async () => {
+          await using sql = new SQL(options);
           expect(Object.keys((await sql`select 1 as ${sql('hej"hej')}`)[0])[0]).toBe('hej"hej');
         });
 
         test("null for int", async () => {
+          await using sql = new SQL(options);
           const result = await sql`create table test (x int)`;
           expect(result.count).toBe(0);
           try {
@@ -499,16 +515,21 @@ for (const image of images) {
         });
 
         test("Helpers in Transaction", async () => {
+          await using sql = new SQL(options);
           const result = await sql.begin(async sql => await sql`select ${sql.unsafe("1 as x")}`);
           expect(result[0].x).toBe(1);
         });
 
         test("Undefined values throws", async () => {
+          await using sql = new SQL(options);
           const result = await sql`select ${undefined} as x`;
           expect(result[0].x).toBeNull();
         });
 
-        test("Null sets to null", async () => expect((await sql`select ${null} as x`)[0].x).toBeNull());
+        test("Null sets to null", async () => {
+          await using sql = new SQL(options);
+          expect((await sql`select ${null} as x`)[0].x).toBeNull();
+        });
 
         // Add code property.
         test("Throw syntax error", async () => {

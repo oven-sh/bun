@@ -1161,11 +1161,12 @@ pub fn processPackets(this: *MySQLConnection, comptime Context: type, reader: Ne
         // Read packet header
         const header = PacketHeader.decode(reader.peek()) orelse return AnyMySQLError.Error.ShortRead;
         const header_length = header.length;
+        const packet_length: usize = header_length + PacketHeader.size;
         debug("sequence_id: {d} header: {d}", .{ this.sequence_id, header_length });
         // Ensure we have the full packet
-        reader.ensureCapacity(header_length + PacketHeader.size) catch return AnyMySQLError.Error.ShortRead;
+        reader.ensureCapacity(packet_length) catch return AnyMySQLError.Error.ShortRead;
         // always skip the full packet, we dont care about padding or unreaded bytes
-        defer reader.setOffsetFromStart(header_length + PacketHeader.size);
+        defer reader.setOffsetFromStart(packet_length);
         reader.skip(PacketHeader.size);
 
         // Update sequence id

@@ -403,9 +403,17 @@ describe("Bun.build", () => {
   });
 
   test("module() is now supported", async () => {
+    const dir = tempDirWithFiles("module-api-test", {
+      "entry.js": `
+        import msg from "test-virtual-module";
+        console.log(msg);
+      `,
+    });
+
     // module() is now implemented and should not throw
     const result = await Bun.build({
-      entrypoints: [join(import.meta.dir, "./fixtures/trivial/bundle-ws.ts")],
+      entrypoints: [join(String(dir), "entry.js")],
+      outdir: String(dir),
       plugins: [
         {
           name: "test",
@@ -414,7 +422,7 @@ describe("Bun.build", () => {
             expect(typeof b.module).toBe("function");
             b.module("test-virtual-module", () => {
               return {
-                contents: "export default 'hello world';",
+                contents: "export default 'Hello from virtual module';",
                 loader: "js",
               };
             });

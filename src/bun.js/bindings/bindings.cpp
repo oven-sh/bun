@@ -2666,7 +2666,6 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     JSC::EncodedJSValue thisObject, size_t argumentCount,
     const JSC::EncodedJSValue* arguments)
 {
-    JSC::JSGlobalObject* globalObject = toJS(ctx);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 

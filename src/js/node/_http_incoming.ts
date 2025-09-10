@@ -247,14 +247,6 @@ IncomingMessage.prototype.setTimeout = function setTimeout(msecs, callback) {
   return this;
 };
 
-// Argument n cannot be factored out due to the overhead of
-// argument adaptor frame creation inside V8 in case that number of actual
-// arguments is different from expected arguments.
-// Ref: https://bugs.chromium.org/p/v8/issues/detail?id=10201
-// NOTE: Argument adapt frame issue might be solved in V8 engine v8.9.
-// Refactoring `n` out might be possible when V8 is upgraded to that
-// version.
-// Ref: https://v8.dev/blog/v8-release-89
 IncomingMessage.prototype._read = function _read(n) {
   if (this[kBunServer]) {
     if (!this._consuming) {

@@ -12,7 +12,6 @@ const {
 } = require("node:_http_common");
 const { kUniqueHeaders, parseUniqueHeadersOption, OutgoingMessage } = require("node:_http_outgoing");
 const Agent = require("node:_http_agent");
-const { Buffer } = require("node:buffer");
 const { urlToHttpOptions, isURL } = require("internal/url");
 const { kOutHeaders, kNeedDrain } = require("internal/http");
 const { validateInteger, validateBoolean } = require("internal/validators");

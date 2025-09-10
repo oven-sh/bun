@@ -130,7 +130,7 @@ function parserOnBody(b) {
   // Pretend this was the result of a stream._read call.
   if (!stream._dumped) {
     const ret = stream.push(b);
-    if (!ret) readStop(this.socket);
+    // if (!ret) readStop(this.socket);
   }
 }
 
@@ -224,7 +224,6 @@ function prepareError(err, parser, rawPacket) {
 }
 
 let warnedLenient = false;
-
 function isLenient() {
   if (insecureHTTPParser && !warnedLenient) {
     warnedLenient = true;

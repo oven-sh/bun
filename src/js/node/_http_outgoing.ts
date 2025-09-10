@@ -24,6 +24,8 @@ const {
   _checkIsHttpToken: checkIsHttpToken,
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
   chunkExpression: RE_TE_CHUNKED,
+  validateHeaderName,
+  validateHeaderValue,
 } = require("node:_http_common");
 const { validateString } = require("internal/validators");
 const { isUint8Array } = require("node:util/types");
@@ -690,22 +692,6 @@ function matchHeader(self, state, field, value) {
     case "keep-alive":
       self._defaultKeepAlive = false;
       break;
-  }
-}
-
-function validateHeaderName(name, label?) {
-  if (typeof name !== "string" || !name || !checkIsHttpToken(name)) {
-    throw $ERR_INVALID_HTTP_TOKEN(label || "Header name", name);
-  }
-}
-
-function validateHeaderValue(name, value) {
-  if (value === undefined) {
-    throw $ERR_HTTP_INVALID_HEADER_VALUE(value, name);
-  }
-  if (checkInvalidHeaderChar(value)) {
-    $debug('Header "%s" contains invalid characters', name);
-    throw $ERR_INVALID_CHAR("header content", name);
   }
 }
 

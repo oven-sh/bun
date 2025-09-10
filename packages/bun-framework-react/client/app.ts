@@ -1,6 +1,6 @@
-import type { ReactNode } from "react";
+import type { ReactNode, SetStateAction } from "react";
 import { createFromReadableStream } from "react-server-dom-bun/client.browser";
-import { store, type Store } from "./simple-store.ts";
+import { store, useStore, type Store } from "./simple-store.ts";
 
 export type NonNullishReactNode = Exclude<ReactNode, null | undefined>;
 export type RenderableRscPayload = Promise<NonNullishReactNode> | NonNullishReactNode;
@@ -20,13 +20,25 @@ function enqueueChunks(
   }
 }
 
+export interface AppState {
+  /**
+   * The renderable RSC payload
+   */
+  rsc: RenderableRscPayload;
+
+  /**
+   * A controller that aborts on the first render
+   */
+  abortOnRender?: AbortController | undefined;
+}
+
 // The initial RSC payload is put into inline <script> tags that follow the pattern
 // `(self.__bun_f ??= []).push(chunk)`, which is converted into a ReadableStream
 // here for React hydration. Since inline scripts are executed immediately, and
 // this file is loaded asynchronously, the `__bun_f` becomes a clever way to
 // stream the arbitrary data while HTML is loading. In a static build, this is
 // setup as an array with one string.
-const initialRscStream = createFromReadableStream(
+const initialRscPayload: Promise<NonNullishReactNode> = createFromReadableStream(
   new ReadableStream<NonNullishReactNode>({
     start(controller) {
       const bunF = (self.__bun_f ??= []);
@@ -54,4 +66,22 @@ const initialRscStream = createFromReadableStream(
   }),
 );
 
-export const APP_RSC_PAYLOAD: Store<RenderableRscPayload> = store(initialRscStream);
+const appStore: Store<AppState> = store<AppState>({
+  rsc: initialRscPayload,
+});
+
+export function setAppState(element: SetStateAction<AppState>): void {
+  appStore.write(element);
+}
+
+export function useAppState(): AppState {
+  return useStore(appStore);
+}
+
+export function getAppState(): AppState {
+  return appStore.read();
+}
+
+export function initialRscPayloadThen(then: (rsc: NonNullishReactNode) => void): void {
+  void initialRscPayload.then(then);
+}

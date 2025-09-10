@@ -1,10 +1,10 @@
-import { useSyncExternalStore } from "react";
+import { useSyncExternalStore, type SetStateAction } from "react";
 
 const UNINITIALIZED = {} as never;
 
 export interface Store<T> {
   read(): T;
-  write(value: T): void;
+  write(value: SetStateAction<T>): void;
   subscribe(callback: () => void): () => boolean;
 }
 
@@ -25,8 +25,11 @@ export function store<T>(init: T = UNINITIALIZED): Store<T> {
       return value;
     },
 
-    write(next: T) {
-      value = next;
+    write(next) {
+      const current = this.read();
+      const resolved = next instanceof Function ? next(current) : next;
+      if (Object.is(current, resolved)) return;
+      value = resolved;
       notify(subscribers);
     },
 

@@ -1,5 +1,5 @@
-import { devTest } from "../bake-harness";
 import { expect } from "bun:test";
+import { devTest } from "../bake-harness";
 
 // Basic test to verify request.cookies functionality
 devTest("request.cookies.get() basic functionality", {
@@ -60,7 +60,7 @@ devTest("request object is passed to SSR component", {
   async test(dev) {
     const response = await dev.fetch("/");
     const html = await response.text();
-    
+
     // The values appear with HTML comments in the rendered output
     expect(html).toContain("yes");
     expect(html).toContain("object");
@@ -97,13 +97,13 @@ devTest("request.cookies properties check", {
   async test(dev) {
     const response = await dev.fetch("/");
     const html = await response.text();
-    
+
     // Check what's actually available
     console.log("Cookie API availability:");
     console.log(html.match(/Has cookies: (yes|no)/)?.[1]);
     console.log(html.match(/Has get: (yes|no)/)?.[1]);
     console.log(html.match(/Has set: (yes|no)/)?.[1]);
-    
+
     // At minimum, we expect cookies object to exist
     // The values appear with HTML comments in the rendered output
     expect(html).toContain("yes");

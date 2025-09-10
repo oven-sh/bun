@@ -703,6 +703,7 @@ for (const image of images) {
         });
 
         test("unsafe", async () => {
+          await using sql = new SQL(options);
           await sql`create table test (x int)`;
           try {
             await sql.unsafe("insert into test values (?)", [1]);
@@ -737,12 +738,14 @@ for (const image of images) {
         });
 
         test("only allows one statement", async () => {
+          await using sql = new SQL(options);
           expect(await sql`select 1; select 2`.catch(e => e.message)).toBe(
             "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'select 2' at line 1",
           );
         });
 
         test("await sql() throws not tagged error", async () => {
+          await using sql = new SQL(options);
           try {
             await sql("select 1");
             expect.unreachable();
@@ -752,6 +755,7 @@ for (const image of images) {
         });
 
         test("sql().then throws not tagged error", async () => {
+          await using sql = new SQL(options);
           try {
             await sql("select 1").then(() => {
               /* noop */
@@ -763,6 +767,7 @@ for (const image of images) {
         });
 
         test("sql().catch throws not tagged error", async () => {
+          await using sql = new SQL(options);
           try {
             sql("select 1").catch(() => {
               /* noop */
@@ -774,6 +779,7 @@ for (const image of images) {
         });
 
         test("sql().finally throws not tagged error", async () => {
+          await using sql = new SQL(options);
           try {
             sql("select 1").finally(() => {
               /* noop */

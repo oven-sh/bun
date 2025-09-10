@@ -196,18 +196,17 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunT
     }
 }
 
-fn genericIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *CallFrame, cfg: describe2.BaseScopeCfg, name: []const u8, invert: bool) bun.JSError!JSValue {
+fn genericIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *CallFrame, conditional_cfg: describe2.BaseScopeCfg, name: []const u8, invert: bool) bun.JSError!JSValue {
     groupLog.begin(@src());
     defer groupLog.end();
 
-    const args = callFrame.arguments();
-    if (args.len != 1) return globalThis.throw("Expected 1 argument to {s}, got {d}", .{ name, args.len });
-    const condition = args[0];
+    const condition = callFrame.argumentsAsArray(1)[0];
+    if (condition.isUndefinedOrNull()) return globalThis.throw("Expected condition to be a boolean", .{});
     const cond = condition.toBoolean();
     if (cond != invert) {
-        return genericExtend(this, globalThis, addLineNumberToCfg(cfg, globalThis, callFrame), name);
+        return genericExtend(this, globalThis, addLineNumberToCfg(conditional_cfg, globalThis, callFrame), name);
     } else {
-        return create(globalThis, this.mode, this.each, addLineNumberToCfg(cfg, globalThis, callFrame));
+        return create(globalThis, this.mode, this.each, addLineNumberToCfg(this.cfg, globalThis, callFrame));
     }
 }
 fn genericExtend(this: *ScopeFunctions, globalThis: *JSGlobalObject, cfg: describe2.BaseScopeCfg, name: []const u8) bun.JSError!JSValue {

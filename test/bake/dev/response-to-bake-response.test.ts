@@ -2,22 +2,22 @@ import { test, expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import path from "node:path";
 
-test("Response -> SSRResponse transform in server components", async () => {
+test("Response -> Bun.SSRResponse transform in server components", async () => {
   const dir = tempDirWithFiles("response-transform", {
     "server-component.js": `
       export const mode = "ssr";
       export const streaming = false;
       
       export default async function ServerPage({ request }) {
-        // Response should be transformed to SSRResponse
+        // Response should be transformed to Bun.SSRResponse
         const response1 = new Response("Hello", { status: 200 });
         
-        // Response.redirect should be transformed to SSRResponse.redirect
+        // Response.redirect should be transformed to Bun.SSRResponse.redirect
         if (!request.userId) {
           return Response.redirect("/login");
         }
         
-        // Response.render should be transformed to SSRResponse.render
+        // Response.render should be transformed to Bun.SSRResponse.render
         if (request.page === "404") {
           return Response.render("/404");
         }
@@ -43,11 +43,11 @@ test("Response -> SSRResponse transform in server components", async () => {
       .env(bunEnv)
       .text();
 
-  // Check that Response was transformed to SSRResponse in server component
-  expect(serverResult).toContain("SSRResponse");
+  // Check that Response was transformed to Bun.SSRResponse in server component
+  expect(serverResult).toContain("Bun.SSRResponse");
   expect(serverResult).not.toContain("new Response");
-  expect(serverResult).toContain("SSRResponse.redirect");
-  expect(serverResult).toContain("SSRResponse.render");
+  expect(serverResult).toContain("Bun.SSRResponse.redirect");
+  expect(serverResult).toContain("Bun.SSRResponse.render");
 
   // Build client component (should not have the transform)
   const clientResult = await Bun.$`${bunExe()} build ${path.join(dir, "client-component.js")} --target=browser`
@@ -56,7 +56,7 @@ test("Response -> SSRResponse transform in server components", async () => {
 
   // Check that Response was NOT transformed in client component
   expect(clientResult).toContain("new Response");
-  expect(clientResult).not.toContain("SSRResponse");
+  expect(clientResult).not.toContain("Bun.SSRResponse");
 });
 
 test("Response identifier is transformed in various contexts", async () => {
@@ -93,10 +93,10 @@ test("Response identifier is transformed in various contexts", async () => {
 
   await Bun.$`echo ${result} > out.txt`;
   // Check various contexts
-  expect(result).toContain("new SSRResponse");
-  expect(result).toContain("instanceof SSRResponse");
-  expect(result).toContain("SSRResponse.prototype.status");
-  expect(result).toContain("SSRResponse.json");
+  expect(result).toContain("new Bun.SSRResponse");
+  expect(result).toContain("instanceof Bun.SSRResponse");
+  expect(result).toContain("Bun.SSRResponse.prototype.status");
+  expect(result).toContain("Bun.SSRResponse.json");
 });
 
 test("Response is not transformed when imported or shadowed", async () => {
@@ -108,7 +108,7 @@ test("Response is not transformed when imported or shadowed", async () => {
       import { Response } from "./custom-response";
       
       export default function Page() {
-        // Should use the imported Response, not transform to SSRResponse
+        // Should use the imported Response, not transform to Bun.SSRResponse
         const r = new Response();
         return r;
       }
@@ -144,9 +144,9 @@ test("Response is not transformed when imported or shadowed", async () => {
     .text();
 
   // When Response is imported, it should not be transformed
-  // The bundler will bundle the import, so we check that SSRResponse appears for the global Response
+  // The bundler will bundle the import, so we check that Bun.SSRResponse appears for the global Response
   // but the imported Response keeps its original behavior
-  expect(result1).not.toContain("SSRResponse");
+  expect(result1).not.toContain("Bun.SSRResponse");
 
   const result2 = await Bun.$`${bunExe()} build ${path.join(dir, "server2.js")} --target=bun --server-components`
     .env(bunEnv)
@@ -155,7 +155,7 @@ test("Response is not transformed when imported or shadowed", async () => {
   // Should preserve local variable
   expect(result2).toContain("return new CustomResponse");
   // But the inner function should have the transform
-  expect(result2).toContain("new SSRResponse");
+  expect(result2).toContain("new Bun.SSRResponse");
 });
 
 test("Response is NOT transformed in client components", async () => {
@@ -163,7 +163,7 @@ test("Response is NOT transformed in client components", async () => {
     "client-component.js": `
       "use client";
       
-      // Response should NOT be transformed to SSRResponse in client components
+      // Response should NOT be transformed to Bun.SSRResponse in client components
       const response = new Response("Client data", { 
         status: 200,
         headers: { "Content-Type": "text/plain" }
@@ -185,7 +185,7 @@ test("Response is NOT transformed in client components", async () => {
     "server-component.js": `
       export const mode = "ssr";
       
-      // This should be transformed to SSRResponse in server component
+      // This should be transformed to Bun.SSRResponse in server component
       const serverResponse = new Response("Server", { status: 200 });
       
       // Response static methods should be transformed
@@ -205,7 +205,7 @@ test("Response is NOT transformed in client components", async () => {
   expect(clientResult).toContain("Response.json");
   expect(clientResult).toContain("instanceof Response");
   expect(clientResult).toContain("Response.redirect");
-  expect(clientResult).not.toContain("SSRResponse");
+  expect(clientResult).not.toContain("Bun.SSRResponse");
 
   // Test 2: Server component - Response SHOULD be transformed
   const serverResult =
@@ -213,8 +213,8 @@ test("Response is NOT transformed in client components", async () => {
       .env(bunEnv as any)
       .text();
 
-  // Server component should have SSRResponse
-  expect(serverResult).toContain("SSRResponse");
+  // Server component should have Bun.SSRResponse
+  expect(serverResult).toContain("Bun.SSRResponse");
   expect(serverResult).not.toContain("new Response");
 });
 
@@ -240,5 +240,5 @@ test("Response is NOT transformed when Response is shadowed", async () => {
       .text();
 
   expect(serverResult).toContain('return new "ooga booga!"');
-  expect(serverResult).toContain("var lmao = new SSRResponse");
+  expect(serverResult).toContain("var lmao = new Bun.SSRResponse");
 });

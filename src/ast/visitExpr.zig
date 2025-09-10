@@ -97,6 +97,28 @@ pub fn VisitExpr(
                 e_.must_keep_due_to_with_stmt = result.is_inside_with_scope;
                 e_.ref = result.ref;
 
+                // Transform Response -> Bun.SSRResponse in bake contexts
+                if (!p.response_ref.isNull() and
+                    !p.ssr_response_ref.isNull() and
+                    result.ref.eql(p.response_ref) and
+                    // if `response_ref` already has a link then it means the
+                    // code bound `Response` to something else
+                    !p.symbols.items[p.response_ref.innerIndex()].hasLink())
+                {
+
+                    // Create Bun identifier
+                    const bun_ref = p.findSymbol(expr.loc, "Bun") catch unreachable;
+
+                    // Return Bun.SSRResponse
+                    return Expr.init(E.Dot, .{
+                        .target = p.newExpr(E.Identifier{
+                            .ref = bun_ref.ref,
+                        }, expr.loc),
+                        .name = "SSRResponse",
+                        .name_loc = expr.loc,
+                    }, expr.loc);
+                }
+
                 // Handle assigning to a constant
                 if (in.assign_target != .none) {
                     if (p.symbols.items[result.ref.innerIndex()].kind == .constant) { // TODO: silence this for runtime transpiler

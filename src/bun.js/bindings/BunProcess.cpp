@@ -3409,6 +3409,9 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& ar
     JSObject* nextTickFn = this->m_nextTickFunction.get();
     auto* frame = jsDynamicCast<AsyncContextFrame*>(args.at(0));
     if (frame) {
+#if ASSERT_ENABLED
+        JSC::Integrity::auditCellFully(vm, frame);
+#endif
         frame->run(globalObject, jsUndefined(), nextTickFn, args);
     } else {
         AsyncContextFrame::call(globalObject, nextTickFn, jsUndefined(), args);

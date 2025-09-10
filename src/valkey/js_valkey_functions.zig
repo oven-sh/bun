@@ -895,7 +895,6 @@ pub fn unsubscribe(
     return try sendUnsubscribeRequestAndCleanup(this, callframe.this(), globalObject, redis_channels.items);
 }
 
-// Wrapper functions that check subscriber mode before delegating to compile-generated functions
 pub fn bitcount(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     try requireNotSubscriber(this, @src().fn_name);
     return compile.@"(key: RedisKey)"("bitcount", "BITCOUNT", "key").call(this, globalObject, callframe);
@@ -918,7 +917,7 @@ pub fn getdel(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callfram
 
 pub fn getex(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("getex", "GETEX", "key").call(this, globalObject, callframe);
+    return compile.@"(...strings: string[])"("getex", "GETEX").call(this, globalObject, callframe);
 }
 
 pub fn hgetall(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {

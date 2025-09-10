@@ -9,7 +9,7 @@ pub const SubscriptionCtx = struct {
 
     pub fn init(parent: *JSValkeyClient, enable_offline_queue: bool, enable_auto_pipelining: bool) Self {
         const callback_map = jsc.JSMap.create(parent.globalObject);
-        ParentJS.gc.set(.subscriptionCallbackMap, parent.this_value.get(), parent.globalObject, callback_map.toJS(parent.globalObject));
+        ParentJS.gc.set(.subscriptionCallbackMap, parent.this_value.get(), parent.globalObject, callback_map);
 
         const self = Self{
             ._parent = parent,

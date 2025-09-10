@@ -1,13 +1,12 @@
-import { test, expect } from "bun:test";
 import { SQL } from "bun";
+import { expect, test } from "bun:test";
 import net from "net";
-import { bunEnv, bunExe } from "harness";
 
 test("PostgreSQL StringBuilder assertion - aggressive empty error test", async () => {
   const server = net.createServer(socket => {
     // Immediately send an error response with completely empty fields
     // This is more likely to trigger the assertion
-    socket.write(createPostgresPacket('E', Buffer.from("\0"))); // Terminator only
+    socket.write(createPostgresPacket("E", Buffer.from("\0"))); // Terminator only
     socket.destroy();
   });
 
@@ -26,14 +25,14 @@ test("PostgreSQL StringBuilder assertion - aggressive empty error test", async (
       sql`SELECT ${i}`.catch(err => {
         // We expect errors, just checking for crashes
         return null;
-      })
+      }),
     );
   }
-  
+
   await Promise.all(promises);
   await sql.close();
   server.close();
-  
+
   // If we get here without crashing, the test passes
   expect(true).toBe(true);
 });

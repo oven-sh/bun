@@ -133,7 +133,7 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSValue {
     const routine_slice = if (routine.isEmpty()) null else routine.byteSlice();
 
     const error_message = if (b.len > 0) b.allocatedSlice()[0..b.len] else "";
-    
+
     return createPostgresError(globalObject, error_message, .{
         .code = error_code,
         .errno = errno,

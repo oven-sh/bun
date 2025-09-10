@@ -241,13 +241,19 @@ pub fn onResult(this: *@This(), result_count: u64, globalObject: *jsc.JSGlobalOb
     const function = vm.rareData().mysql_context.onQueryResolveFn.get().?;
     const event_loop = vm.eventLoop();
     const tag: CommandTag = .{ .SELECT = result_count };
+    var queries_array = if (connection == .zero) .js_undefined else MySQLConnection.js.queriesGetCached(connection) orelse .js_undefined;
+    if (queries_array == .zero) {
+        queries_array = .js_undefined;
+    } else {
+        queries_array.ensureStillAlive();
+    }
 
     event_loop.runCallback(function, globalObject, thisValue, &.{
         targetValue,
         consumePendingValue(thisValue, globalObject) orelse .js_undefined,
         tag.toJSTag(globalObject),
         tag.toJSNumber(),
-        if (connection == .zero) .js_undefined else MySQLConnection.js.queriesGetCached(connection) orelse .js_undefined,
+        queries_array,
         JSValue.jsBoolean(is_last),
         JSValue.jsNumber(last_insert_id),
         JSValue.jsNumber(affected_rows),

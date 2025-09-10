@@ -1,5 +1,0 @@
-packages/bun-framework-react/bake.private.d.ts
-packages/bun-framework-react/client.tsx
-packages/bun-framework-react/index.ts
-packages/bun-framework-react/server.tsx
-packages/bun-framework-react/ssr.tsx

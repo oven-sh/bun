@@ -88,9 +88,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             const vm = global.bunVM();
 
             bun.assert(vm.event_loop_handle != null);
-            
+
             const extra_headers = NonUTF8Headers.init(header_names, header_values, header_count);
-            
+
             // Check if user provided a custom protocol for subprotocols validation
             var protocol_for_subprotocols = client_protocol.*;
             for (extra_headers.names, extra_headers.values) |name, value| {
@@ -662,12 +662,12 @@ fn buildRequestBody(
     extra_headers: NonUTF8Headers,
 ) std.mem.Allocator.Error![]u8 {
     const allocator = vm.allocator;
-    
+
     // Check for user overrides
     var user_host: ?jsc.ZigString = null;
     var user_key: ?jsc.ZigString = null;
     var user_protocol: ?jsc.ZigString = null;
-    
+
     for (extra_headers.names, extra_headers.values) |name, value| {
         const name_slice = name.slice();
         if (user_host == null and strings.eqlCaseInsensitiveASCII(name_slice, "host", true)) {
@@ -678,7 +678,7 @@ fn buildRequestBody(
             user_protocol = value;
         }
     }
-    
+
     // Validate and use user key, or generate a new one
     var encoded_buf: [24]u8 = undefined;
     const key = blk: {
@@ -690,7 +690,7 @@ fn buildRequestBody(
                 // Invalid base64, fall through to generate
                 break :blk std.base64.standard.Encoder.encode(&encoded_buf, &vm.rareData().nextUUID().bytes);
             };
-            
+
             if (decoded_len == 16) {
                 // Try to decode to verify it's valid base64
                 _ = std.base64.standard.Decoder.decode(&decoded_buf, k_slice) catch {
@@ -705,7 +705,7 @@ fn buildRequestBody(
         break :blk std.base64.standard.Encoder.encode(&encoded_buf, &vm.rareData().nextUUID().bytes);
     };
     const protocol = if (user_protocol) |p| p.slice() else client_protocol.slice();
-    
+
     const pathname_ = pathname.toSlice(allocator);
     const host_ = host.toSlice(allocator);
     defer {
@@ -723,7 +723,7 @@ fn buildRequestBody(
         .{ .name = "Sec-WebSocket-Key", .value = key },
         .{ .name = "Sec-WebSocket-Protocol", .value = protocol },
     };
-    
+
     const headers_ = static_headers[0 .. 1 + @as(usize, @intFromBool(protocol.len > 0))];
     const pico_headers = PicoHTTP.Headers{ .headers = headers_ };
 
@@ -731,7 +731,7 @@ fn buildRequestBody(
     var extra_headers_buf = std.ArrayList(u8).init(allocator);
     defer extra_headers_buf.deinit();
     const writer = extra_headers_buf.writer();
-    
+
     for (extra_headers.names, extra_headers.values) |name, value| {
         const name_slice = name.slice();
         if (strings.eqlCaseInsensitiveASCII(name_slice, "host", true) or
@@ -740,12 +740,13 @@ fn buildRequestBody(
             strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-version", true) or
             strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-extensions", true) or
             strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-key", true) or
-            strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-protocol", true)) {
+            strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-protocol", true))
+        {
             continue;
         }
         try std.fmt.format(writer, "{any}: {any}\r\n", .{ name, value });
     }
-    
+
     // Build request with user overrides
     if (user_host) |h| {
         return try std.fmt.allocPrint(
@@ -762,7 +763,7 @@ fn buildRequestBody(
             .{ pathname_.slice(), h, pico_headers, extra_headers_buf.items },
         );
     }
-    
+
     return try std.fmt.allocPrint(
         allocator,
         "GET {s} HTTP/1.1\r\n" ++

@@ -396,8 +396,8 @@ pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
         this.globalObject,
         .js_undefined,
         &[_]JSValue{
-            value.toError() orelse value,
-            this.getQueriesArray(),
+            js_error,
+            queries_array,
         },
     ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
 }

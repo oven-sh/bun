@@ -808,6 +808,7 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/main.js": `module.exports = 'main'`,
       "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
     },
+    mainFields: ["module", "main"],
     run: {
       stdout: "main main",
     },
@@ -832,6 +833,7 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/main.js": `module.exports = 'main'`,
       "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
     },
+    mainFields: ["module", "main"],
     run: {
       stdout: "main\nmain",
     },
@@ -880,6 +882,7 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/index.js": `module.exports = 'index'`,
       "/Users/user/project/node_modules/demo-pkg/module.js": `export default 'module'`,
     },
+    mainFields: ["module", "main"],
     run: {
       stdout: "index\nindex",
     },

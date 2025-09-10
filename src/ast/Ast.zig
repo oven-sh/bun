@@ -107,9 +107,9 @@ pub fn toJSON(self: *const Ast, _: std.mem.Allocator, stream: anytype) !void {
 /// Do not call this if it wasn't globally allocated!
 pub fn deinit(this: *Ast) void {
     // TODO: assert mimalloc-owned memory
-    if (this.parts.len > 0) this.parts.deinit(bun.default_allocator);
-    if (this.symbols.len > 0) this.symbols.deinit(bun.default_allocator);
-    if (this.import_records.len > 0) this.import_records.deinit(bun.default_allocator);
+    this.parts.deinit(bun.default_allocator);
+    this.symbols.deinit(bun.default_allocator);
+    this.import_records.deinit(bun.default_allocator);
 }
 
 pub const Class = G.Class;

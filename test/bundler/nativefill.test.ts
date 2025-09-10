@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
-test("nativefill replaces strip-ansi with Bun.stripAnsi when target is bun", async () => {
+test("nativefill replaces strip-ansi with Bun.stripANSI when target is bun", async () => {
   using dir = tempDir("nativefill-strip-ansi", {
     "index.js": `
       import stripAnsi from 'strip-ansi';
@@ -34,8 +34,8 @@ test("nativefill replaces strip-ansi with Bun.stripAnsi when target is bun", asy
   const outputFile = path.join(outdir, "index.js");
   const output = await Bun.file(outputFile).text();
 
-  // Should use Bun.stripAnsi, not the npm package
-  expect(output).toContain("Bun.stripAnsi");
+  // Should use Bun.stripANSI, not the npm package
+  expect(output).toContain("Bun.stripANSI");
   expect(output).not.toContain("node_modules");
 });
 
@@ -158,8 +158,8 @@ test("nativefill is disabled by default", async () => {
   const outputFile = path.join(outdir, "index.js");
   const output = await Bun.file(outputFile).text();
 
-  // Should NOT use Bun.stripAnsi since nativefill is disabled
-  expect(output).not.toContain("Bun.stripAnsi");
+  // Should NOT use Bun.stripANSI since nativefill is disabled
+  expect(output).not.toContain("Bun.stripANSI");
   // Should contain the actual module import
   expect(output).toContain("strip-ansi");
 });
@@ -208,8 +208,8 @@ test("nativefill fails when target is not bun", async () => {
   const outputFile = path.join(outdir, "index.js");
   const output = await Bun.file(outputFile).text();
 
-  // Should NOT use Bun.stripAnsi when target is not bun
-  expect(output).not.toContain("Bun.stripAnsi");
+  // Should NOT use Bun.stripANSI when target is not bun
+  expect(output).not.toContain("Bun.stripANSI");
   // Should contain the actual module import
   expect(output).toContain("strip-ansi");
 });
@@ -254,7 +254,7 @@ test("nativefill works with multiple imports", async () => {
   const output = await Bun.file(outputFile).text();
 
   // Should use all Bun native implementations
-  expect(output).toContain("Bun.stripAnsi");
+  expect(output).toContain("Bun.stripANSI");
   expect(output).toContain("Bun.stringWidth");
   expect(output).toContain("bun:sqlite");
   expect(output).not.toContain("node_modules");
@@ -299,8 +299,8 @@ test("nativefill works with JS API", async () => {
   const outputFile = path.join(String(dir), "out", "index.js");
   const output = await Bun.file(outputFile).text();
 
-  // Should use Bun.stripAnsi
-  expect(output).toContain("Bun.stripAnsi");
+  // Should use Bun.stripANSI
+  expect(output).toContain("Bun.stripANSI");
   expect(output).not.toContain("node_modules");
 });
 
@@ -350,7 +350,7 @@ test("nativefill correctly replaces imports in output", async () => {
   const output = await Bun.file(outputFile).text();
 
   // Verify all replacements are in the output
-  expect(output).toContain("Bun.stripAnsi");
+  expect(output).toContain("Bun.stripANSI");
   expect(output).toContain("Bun.stringWidth");
   expect(output).toContain("bun:sqlite");
 

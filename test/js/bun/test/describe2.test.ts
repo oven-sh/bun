@@ -187,3 +187,22 @@ test("describe/test", async () => {
     }
   `);
 });
+
+test("cross-file safety", async () => {
+  const result = await Bun.spawn({
+    cmd: [
+      bunExe(),
+      "test",
+      import.meta.dir + "/cross-file-safety/test1.ts",
+      import.meta.dir + "/cross-file-safety/test2.ts",
+    ],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const exitCode = await result.exited;
+  const stdout = await result.stdout.text();
+  const stderr = await result.stderr.text();
+  expect(stderr).toInclude("Snapshot matchers cannot be used outside of a test");
+  expect(exitCode).toBe(1);
+});

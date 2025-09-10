@@ -406,6 +406,47 @@ test("Bun.build plugin virtual modules - onLoad plugins still work", async () =>
   expect(output).toContain("by onLoad plugin");
 });
 
+test("Bun.build plugin virtual modules - duplicate registration throws", async () => {
+  using dir = tempDir("virtual-duplicate", {
+    "entry.js": `console.log("test");`,
+  });
+
+  await expect(
+    Bun.build({
+      entrypoints: [path.join(String(dir), "entry.js")],
+      outdir: String(dir),
+      plugins: [
+        {
+          name: "duplicate-test",
+          setup(build) {
+            // First registration
+            build.module("duplicate-module", () => ({
+              contents: `export default "first";`,
+              loader: "js",
+            }));
+            
+            // Duplicate registration with different callback should throw
+            expect(() => {
+              build.module("duplicate-module", () => ({
+                contents: `export default "second";`,
+                loader: "js",
+              }));
+            }).toThrow('Virtual module "duplicate-module" is already registered');
+            
+            // Same callback should be idempotent (not throw)
+            const sameCallback = () => ({
+              contents: `export default "first";`,
+              loader: "js",
+            });
+            build.module("another-module", sameCallback);
+            build.module("another-module", sameCallback); // Should not throw
+          },
+        },
+      ],
+    })
+  ).resolves.toHaveProperty("success", true);
+});
+
 test("Bun.build plugin virtual modules - virtual module as entrypoint", async () => {
   using dir = tempDir("virtual-entrypoint", {});
 

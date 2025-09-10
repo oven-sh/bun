@@ -367,7 +367,17 @@ export function runSetupFunction(
       if (!self.virtualModules) {
         self.virtualModules = new Map();
       }
-      self.virtualModules.$set(specifier, callback);
+      
+      // Check for duplicate registration
+      if (self.virtualModules.has(specifier)) {
+        const prev = self.virtualModules.get(specifier);
+        if (prev !== callback) {
+          throw new TypeError(`Virtual module "${specifier}" is already registered`);
+        }
+        return this; // idempotent - same callback already registered
+      }
+      
+      self.virtualModules.set(specifier, callback);
 
       // Register the virtual module with the C++ side
       self.addVirtualModule(specifier, callback);
@@ -422,9 +432,9 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
     var { onResolve, onLoad, virtualModules } = this;
 
     // Check for virtual modules first
-    if (virtualModules && virtualModules.$has(inputPath)) {
-      // Return the virtual module with file namespace (empty string means file)
-      this.onResolveAsync(internalID, inputPath, "", false);
+    if (virtualModules && virtualModules.has(inputPath)) {
+      // Return the virtual module with file namespace
+      this.onResolveAsync(internalID, inputPath, "file", false);
       return null;
     }
 
@@ -549,8 +559,8 @@ export function runOnLoadPlugins(
   const generateDefer = () => this.generateDeferPromise(internalID);
   var promiseResult = (async (internalID, path, namespace, isServerSide, defaultLoader, generateDefer) => {
     // Check for virtual modules first (file namespace and in virtualModules map)
-    if (this.virtualModules && this.virtualModules.$has(path) && (namespace === "file" || namespace === "")) {
-      const virtualModuleCallback = this.virtualModules.$get(path);
+    if (this.virtualModules && this.virtualModules.has(path) && namespace === "file") {
+      const virtualModuleCallback = this.virtualModules.get(path);
       if (virtualModuleCallback) {
         let result;
         try {

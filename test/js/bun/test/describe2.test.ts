@@ -23,8 +23,15 @@ test("describe/test", async () => {
 
     # Unhandled error between tests
     -------------------------------
+    45 |     });
+    46 |   });
+    47 |   describe("failed describe inner 2", () => {
+    48 |     console.log("failed describe inner 2");
+    49 |   });
+    50 |   throw "uh oh";
+                 ^
     error: uh oh
-    uh oh
+        at <anonymous> (file:NN:NN)
     -------------------------------
 
     error: uh oh
@@ -50,9 +57,9 @@ test("describe/test", async () => {
     (todo) failing todo passes
     (pass) failing failing passes
     (fail) this test times out
-      ^ this test timed out.
+      ^ this test timed out after 1ms.
     (fail) this test times out with done
-      ^ this test timed out before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
+      ^ this test timed out after 1ms, before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
     (pass) addition 1 + 2 = 3
     (pass) addition 2 + 3 = 5
     (pass) addition 3 + 4 = 7
@@ -71,8 +78,17 @@ test("describe/test", async () => {
     (pass) done parameter > delayed done
     (pass) done parameter > done combined with promise > done combined with promise, promise resolves first
     (pass) done parameter > done combined with promise > done combined with promise, done resolves first
+    219 |   });
+    220 |   describe("done combined with promise", () => {
+    221 |     let completion = 0;
+    222 |     beforeEach(() => (completion = 0));
+    223 |     afterEach(() => {
+    224 |       if (completion != 2) throw "completion is not 2";
+                                           ^
     error: completion is not 2
-    completion is not 2
+        at <anonymous> (file:NN:NN)
+        at promiseReactionJobWithoutPromiseUnwrapAsyncContext (file:NN:NN)
+        at promiseReactionJob (file:NN:NN)
     (fail) done parameter > done combined with promise > fails when completion is not incremented
     (pass) done parameter > done combined with promise error conditions > both error and done resolves first
     (pass) done parameter > done combined with promise error conditions > both error and promise resolves first
@@ -105,9 +121,9 @@ test("describe/test", async () => {
     (fail) LINE 68
       ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
     (fail) this test times out
-      ^ this test timed out.
+      ^ this test timed out after 1ms.
     (fail) this test times out with done
-      ^ this test timed out before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
+      ^ this test timed out after 1ms, before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
     (fail) expect.assertions
     (fail) done parameter > done combined with promise > fails when completion is not incremented
     (fail) done parameter > second call of done callback still triggers error

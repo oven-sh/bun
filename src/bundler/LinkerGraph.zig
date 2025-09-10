@@ -65,7 +65,7 @@ pub fn generateNewSymbol(this: *LinkerGraph, source_index: u32, kind: Symbol.Kin
             .kind = kind,
             .original_name = original_name,
         },
-    ) catch unreachable;
+    ) catch |err| bun.handleOom(err);
 
     this.ast.items(.module_scope)[source_index].generated.append(this.allocator, ref) catch |err|
         bun.handleOom(err);

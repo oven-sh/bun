@@ -423,7 +423,6 @@ pub fn fail(this: *MySQLConnection, message: []const u8, err: AnyMySQLError.Erro
 
 pub fn onEnd(this: *MySQLConnection) void {
     // no more socket
-    defer this.deref();
     this.fail("Connection closed", error.ConnectionClosed);
 }
 

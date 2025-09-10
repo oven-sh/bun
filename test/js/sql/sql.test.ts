@@ -4,8 +4,6 @@ import { bunEnv, bunExe, isCI, isDockerEnabled, tempDirWithFiles } from "harness
 import path from "path";
 const postgres = (...args) => new SQL(...args);
 
-import net from "net";
-
 const dir = tempDirWithFiles("sql-test", {
   "select-param.sql": `select $1 as x`,
   "select.sql": `select 1 as x`,

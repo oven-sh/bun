@@ -137,7 +137,7 @@ pub const Promise = struct {
         self.promise.resolve(globalObject, js_value);
     }
 
-    pub fn reject(self: *Promise, globalObject: *jsc.JSGlobalObject, jsvalue: JSError!jsc.JSValue) void {
+    pub fn reject(self: *Promise, globalObject: *jsc.JSGlobalObject, jsvalue: jsc.JSValue) void {
         self.promise.reject(globalObject, jsvalue);
     }
 
@@ -162,7 +162,6 @@ const protocol = @import("./valkey_protocol.zig");
 const std = @import("std");
 
 const bun = @import("bun");
-const JSError = bun.JSError;
 const jsc = bun.jsc;
 const node = bun.api.node;
 const Slice = jsc.ZigString.Slice;

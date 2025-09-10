@@ -13,7 +13,7 @@ pub const us_socket_t = opaque {
     };
 
     pub fn open(this: *us_socket_t, comptime is_ssl: bool, is_client: bool, ip_addr: ?[]const u8) void {
-        debug("us_socket_open({p}, is_client: {})", .{ this, is_client });
+        debug("us_socket_open({d}, is_client: {})", .{ @intFromPtr(this), is_client });
         const ssl = @intFromBool(is_ssl);
 
         if (ip_addr) |ip| {
@@ -25,22 +25,22 @@ pub const us_socket_t = opaque {
     }
 
     pub fn pause(this: *us_socket_t, ssl: bool) void {
-        debug("us_socket_pause({p})", .{this});
+        debug("us_socket_pause({d})", .{@intFromPtr(this)});
         c.us_socket_pause(@intFromBool(ssl), this);
     }
 
     pub fn @"resume"(this: *us_socket_t, ssl: bool) void {
-        debug("us_socket_resume({p})", .{this});
+        debug("us_socket_resume({d})", .{@intFromPtr(this)});
         c.us_socket_resume(@intFromBool(ssl), this);
     }
 
     pub fn close(this: *us_socket_t, ssl: bool, code: CloseCode) void {
-        debug("us_socket_close({p}, {s})", .{ this, @tagName(code) });
+        debug("us_socket_close({d}, {s})", .{ @intFromPtr(this), @tagName(code) });
         _ = c.us_socket_close(@intFromBool(ssl), this, code, null);
     }
 
     pub fn shutdown(this: *us_socket_t, ssl: bool) void {
-        debug("us_socket_shutdown({p})", .{this});
+        debug("us_socket_shutdown({d})", .{@intFromPtr(this)});
         c.us_socket_shutdown(@intFromBool(ssl), this);
     }
 
@@ -128,25 +128,25 @@ pub const us_socket_t = opaque {
 
     pub fn write(this: *us_socket_t, ssl: bool, data: []const u8) i32 {
         const rc = c.us_socket_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len));
-        debug("us_socket_write({p}, {d}) = {d}", .{ this, data.len, rc });
+        debug("us_socket_write({d}, {d}) = {d}", .{ @intFromPtr(this), data.len, rc });
         return rc;
     }
 
     pub fn writeFd(this: *us_socket_t, data: []const u8, file_descriptor: bun.FD) i32 {
         if (bun.Environment.isWindows) @compileError("TODO: implement writeFd on Windows");
         const rc = c.us_socket_ipc_write_fd(this, data.ptr, @intCast(data.len), file_descriptor.native());
-        debug("us_socket_ipc_write_fd({p}, {d}, {d}) = {d}", .{ this, data.len, file_descriptor.native(), rc });
+        debug("us_socket_ipc_write_fd({d}, {d}, {d}) = {d}", .{ @intFromPtr(this), data.len, file_descriptor.native(), rc });
         return rc;
     }
 
     pub fn write2(this: *us_socket_t, ssl: bool, first: []const u8, second: []const u8) i32 {
         const rc = c.us_socket_write2(@intFromBool(ssl), this, first.ptr, first.len, second.ptr, second.len);
-        debug("us_socket_write2({p}, {d}, {d}) = {d}", .{ this, first.len, second.len, rc });
+        debug("us_socket_write2({d}, {d}, {d}) = {d}", .{ @intFromPtr(this), first.len, second.len, rc });
         return rc;
     }
 
     pub fn rawWrite(this: *us_socket_t, ssl: bool, data: []const u8) i32 {
-        debug("us_socket_raw_write({p}, {d})", .{ this, data.len });
+        debug("us_socket_raw_write({d}, {d})", .{ @intFromPtr(this), data.len });
         return c.us_socket_raw_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len));
     }
 

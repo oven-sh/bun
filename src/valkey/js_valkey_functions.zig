@@ -1,19 +1,3 @@
-fn requireNotSubscriber(this: *const JSValkeyClient, function_name: []const u8) bun.JSError!void {
-    const fmt_string = "RedisClient.prototype.{s} cannot be called while in subscriber mode.";
-
-    if (this.isSubscriber()) {
-        return this.globalObject.throw(fmt_string, .{function_name});
-    }
-}
-
-fn requireSubscriber(this: *const JSValkeyClient, function_name: []const u8) bun.JSError!void {
-    const fmt_string = "RedisClient.prototype.{s} can only be called while in subscriber mode.";
-
-    if (!this.isSubscriber()) {
-        return this.globalObject.throw(fmt_string, .{function_name});
-    }
-}
-
 pub fn jsSend(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const command = try callframe.argument(0).toBunString(globalObject);
     defer command.deref();
@@ -57,8 +41,6 @@ pub fn jsSend(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callfram
 }
 
 pub fn get(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("get", "key", "string or buffer");
     };
@@ -79,8 +61,6 @@ pub fn get(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: 
 }
 
 pub fn getBuffer(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("getBuffer", "key", "string or buffer");
     };
@@ -101,8 +81,6 @@ pub fn getBuffer(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callf
 }
 
 pub fn set(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-
     const args_view = callframe.arguments();
     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
     var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
@@ -149,8 +127,6 @@ pub fn set(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: 
 }
 
 pub fn incr(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("incr", "key", "string or buffer");
     };
@@ -171,8 +147,6 @@ pub fn incr(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 }
 
 pub fn decr(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("decr", "key", "string or buffer");
     };
@@ -193,8 +167,6 @@ pub fn decr(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 }
 
 pub fn exists(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("exists", "key", "string or buffer");
     };
@@ -216,8 +188,6 @@ pub fn exists(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callfram
 }
 
 pub fn expire(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("expire", "key", "string or buffer");
     };
@@ -249,8 +219,6 @@ pub fn expire(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callfram
 }
 
 pub fn ttl(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("ttl", "key", "string or buffer");
     };
@@ -272,8 +240,6 @@ pub fn ttl(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: 
 
 // Implement srem (remove value from a set)
 pub fn srem(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("srem", "key", "string or buffer");
     };
@@ -299,8 +265,6 @@ pub fn srem(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 
 // Implement srandmember (get random member from set)
 pub fn srandmember(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("srandmember", "key", "string or buffer");
     };
@@ -322,8 +286,6 @@ pub fn srandmember(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, cal
 
 // Implement smembers (get all members of a set)
 pub fn smembers(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("smembers", "key", "string or buffer");
     };
@@ -345,8 +307,6 @@ pub fn smembers(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callfr
 
 // Implement spop (pop a random member from a set)
 pub fn spop(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("spop", "key", "string or buffer");
     };
@@ -368,8 +328,6 @@ pub fn spop(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 
 // Implement sadd (add member to a set)
 pub fn sadd(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("sadd", "key", "string or buffer");
     };
@@ -395,8 +353,6 @@ pub fn sadd(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 
 // Implement sismember (check if value is member of a set)
 pub fn sismember(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("sismember", "key", "string or buffer");
     };
@@ -423,8 +379,6 @@ pub fn sismember(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callf
 
 // Implement hmget (get multiple values from hash)
 pub fn hmget(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("hmget", "key", "string or buffer");
     };
@@ -472,8 +426,6 @@ pub fn hmget(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe
 
 // Implement hincrby (increment hash field by integer value)
 pub fn hincrby(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-
     const key = try callframe.argument(0).toBunString(globalObject);
     defer key.deref();
     const field = try callframe.argument(1).toBunString(globalObject);
@@ -504,8 +456,6 @@ pub fn hincrby(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callfra
 
 // Implement hincrbyfloat (increment hash field by float value)
 pub fn hincrbyfloat(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-
     const key = try callframe.argument(0).toBunString(globalObject);
     defer key.deref();
     const field = try callframe.argument(1).toBunString(globalObject);
@@ -536,8 +486,6 @@ pub fn hincrbyfloat(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, ca
 
 // Implement hmset (set multiple values in hash)
 pub fn hmset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-
     const key = try callframe.argument(0).toBunString(globalObject);
     defer key.deref();
 
@@ -630,494 +578,59 @@ pub fn ping(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
     return promise.toJS();
 }
 
-pub fn publish(
-    this: *JSValkeyClient,
-    globalObject: *jsc.JSGlobalObject,
-    callframe: *jsc.CallFrame,
-) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-
-    const args_view = callframe.arguments();
-    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-    var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
-    defer {
-        for (args.items) |*item| {
-            item.deinit();
-        }
-        args.deinit();
-    }
-
-    const arg0 = callframe.argument(0);
-    if (!arg0.isString()) {
-        return globalObject.throwInvalidArgumentType("publish", "channel", "string");
-    }
-    const channel = (try fromJS(globalObject, arg0)) orelse unreachable;
-
-    args.appendAssumeCapacity(channel);
-
-    const arg1 = callframe.argument(1);
-    if (!arg1.isString()) {
-        return globalObject.throwInvalidArgumentType("publish", "message", "string");
-    }
-    const message = (try fromJS(globalObject, arg1)) orelse unreachable;
-    args.appendAssumeCapacity(message);
-
-    const promise = this.send(
-        globalObject,
-        callframe.this(),
-        &.{
-            .command = "PUBLISH",
-            .args = .{ .args = args.items },
-        },
-    ) catch |err| {
-        return protocol.valkeyErrorToJS(globalObject, "Failed to send PUBLISH command", err);
-    };
-
-    return promise.toJS();
-}
-
-pub fn subscribe(
-    this: *JSValkeyClient,
-    globalObject: *jsc.JSGlobalObject,
-    callframe: *jsc.CallFrame,
-) bun.JSError!JSValue {
-    const channel_or_many, const handler_callback = callframe.argumentsAsArray(2);
-    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-    var redis_channels = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), 1);
-    defer {
-        for (redis_channels.items) |*item| {
-            item.deinit();
-        }
-        redis_channels.deinit();
-    }
-
-    if (!handler_callback.isCallable()) {
-        return globalObject.throwInvalidArgumentType("subscribe", "listener", "function");
-    }
-
-    // We now need to register the callback with our subscription context, which may or may not exist.
-    var subscription_ctx = this.getOrCreateSubscriptionCtxEnteringSubscriptionMode();
-
-    // The first argument given is the channel or may be an array of channels.
-    if (channel_or_many.isArray()) {
-        if ((try channel_or_many.getLength(globalObject)) == 0) {
-            return globalObject.throwInvalidArguments("subscribe requires at least one channel", .{});
-        }
-        try redis_channels.ensureTotalCapacity(try channel_or_many.getLength(globalObject));
-
-        var array_iter = try channel_or_many.arrayIterator(globalObject);
-        while (try array_iter.next()) |channel_arg| {
-            const channel = (try fromJS(globalObject, channel_arg)) orelse {
-                return globalObject.throwInvalidArgumentType("subscribe", "channel", "string");
-            };
-            redis_channels.appendAssumeCapacity(channel);
-
-            try subscription_ctx.upsertReceiveHandler(globalObject, channel_arg, handler_callback);
-        }
-    } else if (channel_or_many.isString()) {
-        // It is a single string channel
-        const channel = (try fromJS(globalObject, channel_or_many)) orelse {
-            return globalObject.throwInvalidArgumentType("subscribe", "channel", "string");
-        };
-        redis_channels.appendAssumeCapacity(channel);
-
-        try subscription_ctx.upsertReceiveHandler(globalObject, channel_or_many, handler_callback);
-    } else {
-        return globalObject.throwInvalidArgumentType("subscribe", "channel", "string or array");
-    }
-
-    const command: valkey.Command = .{
-        .command = "SUBSCRIBE",
-        .args = .{ .args = redis_channels.items },
-    };
-    const promise = this.send(
-        globalObject,
-        callframe.this(),
-        &command,
-    ) catch |err| {
-        // If we find an error, we need to clean up the subscription context.
-        this.deleteSubscriptionCtx();
-        return protocol.valkeyErrorToJS(globalObject, "Failed to send SUBSCRIBE command", err);
-    };
-
-    return promise.toJS();
-}
-
-/// Send redis the UNSUBSCRIBE RESP command and clean up anything necessary after the unsubscribe commoand.
-///
-/// The subscription context must exist when calling this function.
-fn sendUnsubscribeRequestAndCleanup(
-    this: *JSValkeyClient,
-    this_js: jsc.JSValue,
-    globalObject: *jsc.JSGlobalObject,
-    redis_channels: []JSArgument,
-) !jsc.JSValue {
-    // Send UNSUBSCRIBE command
-    const command: valkey.Command = .{
-        .command = "UNSUBSCRIBE",
-        .args = .{ .args = redis_channels },
-    };
-    const promise = this.send(
-        globalObject,
-        this_js,
-        &command,
-    ) catch |err| {
-        return protocol.valkeyErrorToJS(globalObject, "Failed to send UNSUBSCRIBE command", err);
-    };
-
-    // We do not delete the subscription context here, but rather when the
-    // onValkeyUnsubscribe callback is invoked.
-
-    return promise.toJS();
-}
-
-pub fn unsubscribe(
-    this: *JSValkeyClient,
-    globalObject: *jsc.JSGlobalObject,
-    callframe: *jsc.CallFrame,
-) bun.JSError!JSValue {
-    // Check if we're in subscription mode
-    try requireSubscriber(this, @src().fn_name);
-
-    const args_view = callframe.arguments();
-
-    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-    var redis_channels = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), 1);
-    defer {
-        for (redis_channels.items) |*item| {
-            item.deinit();
-        }
-        redis_channels.deinit();
-    }
-
-    // If no arguments, unsubscribe from all channels
-    if (args_view.len == 0) {
-        return try sendUnsubscribeRequestAndCleanup(this, callframe.this(), globalObject, redis_channels.items);
-    }
-
-    // The first argument can be a channel or an array of channels
-    const channel_or_many = callframe.argument(0);
-
-    // Get the subscription context
-    var subscription_ctx = this._subscription_ctx orelse {
-        return .js_undefined;
-    };
-
-    // Two arguments means .unsubscribe(channel, listener) is invoked.
-    if (callframe.arguments().len == 2) {
-        // In this case, the first argument is a channel string and the second
-        // argument is the handler to remove.
-        if (!channel_or_many.isString()) {
-            return globalObject.throwInvalidArgumentType(
-                "unsubscribe",
-                "channel",
-                "string",
-            );
-        }
-
-        const channel = channel_or_many;
-        const listener_cb = callframe.argument(1);
-
-        if (!listener_cb.isCallable()) {
-            return globalObject.throwInvalidArgumentType(
-                "unsubscribe",
-                "listener",
-                "function",
-            );
-        }
-
-        // Populate the redis_channels list with the single channel to
-        // unsubscribe from. This s important since this list is used to send
-        // the UNSUBSCRIBE command to redis. Without this, we would end up
-        // unsubscribing from all channels.
-        redis_channels.appendAssumeCapacity((try fromJS(globalObject, channel)) orelse {
-            return globalObject.throwInvalidArgumentType("unsubscribe", "channel", "string");
-        });
-
-        const remaining_listeners = subscription_ctx.removeReceiveHandler(globalObject, channel, listener_cb) catch {
-            return globalObject.throw(
-                "Failed to remove handler for channel {}",
-                .{channel.asString().getZigString(globalObject)},
-            );
-        } orelse {
-            // Listeners weren't present in the first place, so we can return a
-            // resolved promise.
-            const promise = jsc.JSPromise.create(globalObject);
-            promise.resolve(globalObject, .js_undefined);
-            return promise.toJS();
-        };
-
-        // In this case, we only want to send the unsubscribe command to redis if there are no more listeners for this
-        // channel.
-        if (remaining_listeners == 0) {
-            return try sendUnsubscribeRequestAndCleanup(this, callframe.this(), globalObject, redis_channels.items);
-        }
-
-        // Otherwise, in order to keep the API consistent, we need to return a resolved promise.
-        const promise = jsc.JSPromise.create(globalObject);
-        promise.resolve(globalObject, .js_undefined);
-
-        return promise.toJS();
-    }
-
-    if (channel_or_many.isArray()) {
-        if ((try channel_or_many.getLength(globalObject)) == 0) {
-            return globalObject.throwInvalidArguments(
-                "unsubscribe requires at least one channel",
-                .{},
-            );
-        }
-
-        try redis_channels.ensureTotalCapacity(try channel_or_many.getLength(globalObject));
-        // It is an array, so let's iterate over it
-        var array_iter = try channel_or_many.arrayIterator(globalObject);
-        while (try array_iter.next()) |channel_arg| {
-            const channel = (try fromJS(globalObject, channel_arg)) orelse {
-                return globalObject.throwInvalidArgumentType("unsubscribe", "channel", "string");
-            };
-            redis_channels.appendAssumeCapacity(channel);
-            // Clear the handlers for this channel
-            subscription_ctx.clearReceiveHandlers(globalObject, channel_arg);
-        }
-    } else if (channel_or_many.isString()) {
-        // It is a single string channel
-        const channel = (try fromJS(globalObject, channel_or_many)) orelse {
-            return globalObject.throwInvalidArgumentType("unsubscribe", "channel", "string");
-        };
-        redis_channels.appendAssumeCapacity(channel);
-        // Clear the handlers for this channel
-        subscription_ctx.clearReceiveHandlers(globalObject, channel_or_many);
-    } else {
-        return globalObject.throwInvalidArgumentType("unsubscribe", "channel", "string or array");
-    }
-
-    // Now send the unsubscribe command and clean up if necessary
-    return try sendUnsubscribeRequestAndCleanup(this, callframe.this(), globalObject, redis_channels.items);
-}
-
-pub fn bitcount(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("bitcount", "BITCOUNT", "key").call(this, globalObject, callframe);
-}
-
-pub fn dump(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("dump", "DUMP", "key").call(this, globalObject, callframe);
-}
-
-pub fn expiretime(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("expiretime", "EXPIRETIME", "key").call(this, globalObject, callframe);
-}
-
-pub fn getdel(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("getdel", "GETDEL", "key").call(this, globalObject, callframe);
-}
-
-pub fn getex(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(...strings: string[])"("getex", "GETEX").call(this, globalObject, callframe);
-}
-
-pub fn hgetall(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("hgetall", "HGETALL", "key").call(this, globalObject, callframe);
-}
-
-pub fn hkeys(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("hkeys", "HKEYS", "key").call(this, globalObject, callframe);
-}
-
-pub fn hlen(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("hlen", "HLEN", "key").call(this, globalObject, callframe);
-}
-
-pub fn hvals(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("hvals", "HVALS", "key").call(this, globalObject, callframe);
-}
-
-pub fn keys(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("keys", "KEYS", "key").call(this, globalObject, callframe);
-}
-
-pub fn llen(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("llen", "LLEN", "key").call(this, globalObject, callframe);
-}
-
-pub fn lpop(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("lpop", "LPOP", "key").call(this, globalObject, callframe);
-}
-
-pub fn persist(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("persist", "PERSIST", "key").call(this, globalObject, callframe);
-}
-
-pub fn pexpiretime(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("pexpiretime", "PEXPIRETIME", "key").call(this, globalObject, callframe);
-}
-
-pub fn pttl(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("pttl", "PTTL", "key").call(this, globalObject, callframe);
-}
-
-pub fn rpop(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("rpop", "RPOP", "key").call(this, globalObject, callframe);
-}
-
-pub fn scard(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("scard", "SCARD", "key").call(this, globalObject, callframe);
-}
-
-pub fn strlen(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("strlen", "STRLEN", "key").call(this, globalObject, callframe);
-}
-
-pub fn @"type"(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("type", "TYPE", "key").call(this, globalObject, callframe);
-}
-
-pub fn zcard(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("zcard", "ZCARD", "key").call(this, globalObject, callframe);
-}
-
-pub fn zpopmax(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("zpopmax", "ZPOPMAX", "key").call(this, globalObject, callframe);
-}
-
-pub fn zpopmin(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("zpopmin", "ZPOPMIN", "key").call(this, globalObject, callframe);
-}
-
-pub fn zrandmember(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey)"("zrandmember", "ZRANDMEMBER", "key").call(this, globalObject, callframe);
-}
-
-pub fn append(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey, value: RedisValue)"("append", "APPEND", "key", "value").call(this, globalObject, callframe);
-}
-pub fn getset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey, value: RedisValue)"("getset", "GETSET", "key", "value").call(this, globalObject, callframe);
-}
-pub fn lpush(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("lpush", "LPUSH").call(this, globalObject, callframe);
-}
-pub fn lpushx(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("lpushx", "LPUSHX").call(this, globalObject, callframe);
-}
-pub fn pfadd(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey, value: RedisValue)"("pfadd", "PFADD", "key", "value").call(this, globalObject, callframe);
-}
-pub fn rpush(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("rpush", "RPUSH").call(this, globalObject, callframe);
-}
-pub fn rpushx(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("rpushx", "RPUSHX").call(this, globalObject, callframe);
-}
-pub fn setnx(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey, value: RedisValue)"("setnx", "SETNX", "key", "value").call(this, globalObject, callframe);
-}
-pub fn zscore(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey, value: RedisValue)"("zscore", "ZSCORE", "key", "value").call(this, globalObject, callframe);
-}
-
-pub fn del(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey, ...args: RedisKey[])"("del", "DEL", "key").call(this, globalObject, callframe);
-}
-pub fn mget(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(key: RedisKey, ...args: RedisKey[])"("mget", "MGET", "key").call(this, globalObject, callframe);
-}
-
-pub fn script(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(...strings: string[])"("script", "SCRIPT").call(this, globalObject, callframe);
-}
-pub fn select(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(...strings: string[])"("select", "SELECT").call(this, globalObject, callframe);
-}
-pub fn spublish(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(...strings: string[])"("spublish", "SPUBLISH").call(this, globalObject, callframe);
-}
-pub fn smove(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(...strings: string[])"("smove", "SMOVE").call(this, globalObject, callframe);
-}
-pub fn substr(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(...strings: string[])"("substr", "SUBSTR").call(this, globalObject, callframe);
-}
-pub fn hstrlen(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(...strings: string[])"("hstrlen", "HSTRLEN").call(this, globalObject, callframe);
-}
-pub fn zrank(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(...strings: string[])"("zrank", "ZRANK").call(this, globalObject, callframe);
-}
-pub fn zrevrank(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
-    return compile.@"(...strings: string[])"("zrevrank", "ZREVRANK").call(this, globalObject, callframe);
-}
-
-pub fn duplicate(
-    this: *JSValkeyClient,
-    globalObject: *jsc.JSGlobalObject,
-    callframe: *jsc.CallFrame,
-) bun.JSError!JSValue {
-    // We ignore the arguments if the user provided any.
-    _ = callframe;
-
-    var new_client: *JSValkeyClient = try this.cloneWithoutConnecting();
-    var new_client_js = new_client.toJS(globalObject);
-    new_client.this_value = jsc.JSRef.initWeak(new_client_js);
-
-    // If the original client is already connected and not manually closed, start connecting the new client.
-    if (this.client.status == .connected and !this.client.flags.is_manually_closed) {
-        new_client.client.flags.connection_promise_returns_client = true;
-        new_client_js.protect();
-        return try new_client.doConnect(globalObject, new_client_js);
-    }
-
-    // Otherwise, we create a dummy promise to yield the unconnected client.
-    const promise = jsc.JSPromise.create(globalObject);
-    promise.resolve(globalObject, new_client_js);
-    return promise.toJS();
-}
-
+pub const bitcount = compile.@"(key: RedisKey)"("bitcount", "BITCOUNT", "key").call;
+pub const dump = compile.@"(key: RedisKey)"("dump", "DUMP", "key").call;
+pub const expiretime = compile.@"(key: RedisKey)"("expiretime", "EXPIRETIME", "key").call;
+pub const getdel = compile.@"(key: RedisKey)"("getdel", "GETDEL", "key").call;
+pub const getex = compile.@"(...strings: string[])"("getex", "GETEX").call;
+pub const hgetall = compile.@"(key: RedisKey)"("hgetall", "HGETALL", "key").call;
+pub const hkeys = compile.@"(key: RedisKey)"("hkeys", "HKEYS", "key").call;
+pub const hlen = compile.@"(key: RedisKey)"("hlen", "HLEN", "key").call;
+pub const hvals = compile.@"(key: RedisKey)"("hvals", "HVALS", "key").call;
+pub const keys = compile.@"(key: RedisKey)"("keys", "KEYS", "key").call;
+pub const llen = compile.@"(key: RedisKey)"("llen", "LLEN", "key").call;
+pub const lpop = compile.@"(key: RedisKey)"("lpop", "LPOP", "key").call;
+pub const persist = compile.@"(key: RedisKey)"("persist", "PERSIST", "key").call;
+pub const pexpiretime = compile.@"(key: RedisKey)"("pexpiretime", "PEXPIRETIME", "key").call;
+pub const pttl = compile.@"(key: RedisKey)"("pttl", "PTTL", "key").call;
+pub const rpop = compile.@"(key: RedisKey)"("rpop", "RPOP", "key").call;
+pub const scard = compile.@"(key: RedisKey)"("scard", "SCARD", "key").call;
+pub const strlen = compile.@"(key: RedisKey)"("strlen", "STRLEN", "key").call;
+pub const @"type" = compile.@"(key: RedisKey)"("type", "TYPE", "key").call;
+pub const zcard = compile.@"(key: RedisKey)"("zcard", "ZCARD", "key").call;
+pub const zpopmax = compile.@"(key: RedisKey)"("zpopmax", "ZPOPMAX", "key").call;
+pub const zpopmin = compile.@"(key: RedisKey)"("zpopmin", "ZPOPMIN", "key").call;
+pub const zrandmember = compile.@"(key: RedisKey)"("zrandmember", "ZRANDMEMBER", "key").call;
+
+pub const append = compile.@"(key: RedisKey, value: RedisValue)"("append", "APPEND", "key", "value").call;
+pub const getset = compile.@"(key: RedisKey, value: RedisValue)"("getset", "GETSET", "key", "value").call;
+pub const lpush = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("lpush", "LPUSH").call;
+pub const lpushx = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("lpushx", "LPUSHX").call;
+pub const pfadd = compile.@"(key: RedisKey, value: RedisValue)"("pfadd", "PFADD", "key", "value").call;
+pub const rpush = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("rpush", "RPUSH").call;
+pub const rpushx = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("rpushx", "RPUSHX").call;
+pub const setnx = compile.@"(key: RedisKey, value: RedisValue)"("setnx", "SETNX", "key", "value").call;
+pub const zscore = compile.@"(key: RedisKey, value: RedisValue)"("zscore", "ZSCORE", "key", "value").call;
+
+pub const del = compile.@"(key: RedisKey, ...args: RedisKey[])"("del", "DEL", "key").call;
+pub const mget = compile.@"(key: RedisKey, ...args: RedisKey[])"("mget", "MGET", "key").call;
+
+pub const publish = compile.@"(...strings: string[])"("publish", "PUBLISH").call;
+pub const script = compile.@"(...strings: string[])"("script", "SCRIPT").call;
+pub const select = compile.@"(...strings: string[])"("select", "SELECT").call;
+pub const spublish = compile.@"(...strings: string[])"("spublish", "SPUBLISH").call;
+pub const smove = compile.@"(...strings: string[])"("smove", "SMOVE").call;
+pub const substr = compile.@"(...strings: string[])"("substr", "SUBSTR").call;
+pub const hstrlen = compile.@"(...strings: string[])"("hstrlen", "HSTRLEN").call;
+pub const zrank = compile.@"(...strings: string[])"("zrank", "ZRANK").call;
+pub const zrevrank = compile.@"(...strings: string[])"("zrevrank", "ZREVRANK").call;
+pub const subscribe = compile.@"(...strings: string[])"("subscribe", "SUBSCRIBE").call;
 pub const psubscribe = compile.@"(...strings: string[])"("psubscribe", "PSUBSCRIBE").call;
+pub const unsubscribe = compile.@"(...strings: string[])"("unsubscribe", "UNSUBSCRIBE").call;
 pub const punsubscribe = compile.@"(...strings: string[])"("punsubscribe", "PUNSUBSCRIBE").call;
 pub const pubsub = compile.@"(...strings: string[])"("pubsub", "PUBSUB").call;
 
+// publish(channel: RedisValue, message: RedisValue)
 // script(subcommand: "LOAD", script: RedisValue)
 // select(index: number | string)
 // spublish(shardchannel: RedisValue, message: RedisValue)

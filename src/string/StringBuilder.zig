@@ -236,15 +236,6 @@ pub fn writable(this: *StringBuilder) []u8 {
     return ptr[this.len..this.cap];
 }
 
-/// Transfer ownership of the underlying memory to a slice.
-///
-/// After calling this, you are responsible for freeing the underlying memory.
-/// This StringBuilder should not be used after calling this function.
-pub fn moveToSlice(this: *StringBuilder, into_slice: *[]u8) void {
-    into_slice.* = this.allocatedSlice();
-    this.* = .{};
-}
-
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

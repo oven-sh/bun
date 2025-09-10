@@ -135,6 +135,10 @@
 #include <JavaScriptCore/VMInlines.h>
 #include "wtf-bindings.h"
 
+#if ASSERT_ENABLED
+#include <JavaScriptCore/IntegrityInlines.h>
+#endif
+
 #if OS(DARWIN)
 #if ASSERT_ENABLED
 #if !__has_feature(address_sanitizer)

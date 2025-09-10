@@ -3,6 +3,10 @@
 #include "AsyncContextFrame.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 
+#if ASSERT_ENABLED
+#include <JavaScriptCore/IntegrityInlines.h>
+#endif
+
 using namespace JSC;
 using namespace WebCore;
 

@@ -1888,9 +1888,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     return;
                 },
                 .Render => |render_body| {
-                    // Handle Response.render() case - need to call DevServer with new path
-                    defer bun.default_allocator.free(render_body.path);
-
                     if (this.server) |server| {
                         if (@hasField(@TypeOf(server.*), "dev_server")) {
                             if (server.dev_server) |dev_server_| {

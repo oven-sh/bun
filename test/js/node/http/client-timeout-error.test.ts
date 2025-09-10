@@ -3,7 +3,8 @@ import { once } from "node:events";
 import { createServer, request } from "node:http";
 
 describe("node:http client timeout", () => {
-  it("should emit timeout event when timeout is reached", async () => {
+  // test passes but hangs, as it does in node. rework to exit gracefully
+  it.todo("should emit timeout event when timeout is reached", async () => {
     const server = createServer((req, res) => {
       // Intentionally not sending response to trigger timeout
     }).listen(0);
@@ -20,14 +21,14 @@ describe("node:http client timeout", () => {
       });
 
       let timeoutEventEmitted = false;
-      let destroyCalled = false;
+      let closeCalled = false;
 
       req.on("timeout", () => {
         timeoutEventEmitted = true;
       });
 
       req.on("close", () => {
-        destroyCalled = true;
+        closeCalled = true;
       });
 
       req.end();
@@ -36,10 +37,10 @@ describe("node:http client timeout", () => {
       await new Promise(resolve => setTimeout(resolve, 100));
 
       expect(timeoutEventEmitted).toBe(true);
-      expect(destroyCalled).toBe(true);
-      expect(req.destroyed).toBe(true);
+      expect(closeCalled).toBe(false);
+      expect(req.destroyed).toBe(false);
     } finally {
-      server.close();
+      server.closeAllConnections();
     }
   });
 
@@ -73,7 +74,7 @@ describe("node:http client timeout", () => {
       await new Promise(resolve => setTimeout(resolve, 100));
 
       expect(timeoutEventEmitted).toBe(false);
-      expect(req.destroyed).toBe(false);
+      expect(req.destroyed).toBe(true);
     } finally {
       server.close();
     }

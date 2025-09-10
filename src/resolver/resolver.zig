@@ -4361,8 +4361,8 @@ const string = []const u8;
 
 const Dependency = @import("../install/dependency.zig");
 const DotEnv = @import("../env_loader.zig");
-const NodeFallbackModules = @import("../node_fallbacks.zig");
 const NativefillModules = @import("../nativefill.zig");
+const NodeFallbackModules = @import("../node_fallbacks.zig");
 const ResolvePath = @import("./resolve_path.zig");
 const ast = @import("../import_record.zig");
 const options = @import("../options.zig");

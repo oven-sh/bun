@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
@@ -17,7 +17,7 @@ test("nativefill replaces strip-ansi with Bun.stripAnsi when target is bun", asy
   });
 
   const outdir = path.join(String(dir), "out");
-  
+
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build", "./index.js", "--outdir", outdir, "--target", "bun", "--nativefill"],
     env: bunEnv,
@@ -26,18 +26,14 @@ test("nativefill replaces strip-ansi with Bun.stripAnsi when target is bun", asy
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
-  
+
   // Read the output file
   const outputFile = path.join(outdir, "index.js");
   const output = await Bun.file(outputFile).text();
-  
+
   // Should use Bun.stripAnsi, not the npm package
   expect(output).toContain("Bun.stripAnsi");
   expect(output).not.toContain("node_modules");
@@ -58,7 +54,7 @@ test("nativefill replaces string-width with Bun.stringWidth when target is bun",
   });
 
   const outdir = path.join(String(dir), "out");
-  
+
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build", "./index.js", "--outdir", outdir, "--target", "bun", "--nativefill"],
     env: bunEnv,
@@ -67,18 +63,14 @@ test("nativefill replaces string-width with Bun.stringWidth when target is bun",
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
-  
+
   // Read the output file
   const outputFile = path.join(outdir, "index.js");
   const output = await Bun.file(outputFile).text();
-  
+
   // Should use Bun.stringWidth, not the npm package
   expect(output).toContain("Bun.stringWidth");
   expect(output).not.toContain("node_modules");
@@ -100,7 +92,7 @@ test("nativefill replaces better-sqlite3 with bun:sqlite when target is bun", as
   });
 
   const outdir = path.join(String(dir), "out");
-  
+
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build", "./index.js", "--outdir", outdir, "--target", "bun", "--nativefill"],
     env: bunEnv,
@@ -109,18 +101,14 @@ test("nativefill replaces better-sqlite3 with bun:sqlite when target is bun", as
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
-  
+
   // Read the output file
   const outputFile = path.join(outdir, "index.js");
   const output = await Bun.file(outputFile).text();
-  
+
   // Should use bun:sqlite, not the npm package
   expect(output).toContain("bun:sqlite");
   expect(output).not.toContain("node_modules");
@@ -148,11 +136,11 @@ test("nativefill is disabled by default", async () => {
     stderr: "pipe",
     stdout: "pipe",
   });
-  
+
   await installProc.exited;
 
   const outdir = path.join(String(dir), "out");
-  
+
   // Build without --nativefill flag
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build", "./index.js", "--outdir", outdir, "--target", "bun"],
@@ -162,18 +150,14 @@ test("nativefill is disabled by default", async () => {
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
-  
+
   // Read the output file
   const outputFile = path.join(outdir, "index.js");
   const output = await Bun.file(outputFile).text();
-  
+
   // Should NOT use Bun.stripAnsi since nativefill is disabled
   expect(output).not.toContain("Bun.stripAnsi");
   // Should contain the actual module import
@@ -202,11 +186,11 @@ test("nativefill fails when target is not bun", async () => {
     stderr: "pipe",
     stdout: "pipe",
   });
-  
+
   await installProc.exited;
 
   const outdir = path.join(String(dir), "out");
-  
+
   // Try building with --nativefill but target is browser
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build", "./index.js", "--outdir", outdir, "--target", "browser", "--nativefill"],
@@ -216,18 +200,14 @@ test("nativefill fails when target is not bun", async () => {
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
-  
+
   // Read the output file
   const outputFile = path.join(outdir, "index.js");
   const output = await Bun.file(outputFile).text();
-  
+
   // Should NOT use Bun.stripAnsi when target is not bun
   expect(output).not.toContain("Bun.stripAnsi");
   // Should contain the actual module import
@@ -256,7 +236,7 @@ test("nativefill works with multiple imports", async () => {
   });
 
   const outdir = path.join(String(dir), "out");
-  
+
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build", "./index.js", "--outdir", outdir, "--target", "bun", "--nativefill"],
     env: bunEnv,
@@ -265,18 +245,14 @@ test("nativefill works with multiple imports", async () => {
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
-  
+
   // Read the output file
   const outputFile = path.join(outdir, "index.js");
   const output = await Bun.file(outputFile).text();
-  
+
   // Should use all Bun native implementations
   expect(output).toContain("Bun.stripAnsi");
   expect(output).toContain("Bun.stringWidth");
@@ -315,18 +291,14 @@ test("nativefill works with JS API", async () => {
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
-  
+
   // Read the output file
   const outputFile = path.join(String(dir), "out", "index.js");
   const output = await Bun.file(outputFile).text();
-  
+
   // Should use Bun.stripAnsi
   expect(output).toContain("Bun.stripAnsi");
   expect(output).not.toContain("node_modules");
@@ -355,7 +327,7 @@ test("nativefill correctly replaces imports in output", async () => {
   });
 
   const outdir = path.join(String(dir), "out");
-  
+
   // Build with nativefill
   await using buildProc = Bun.spawn({
     cmd: [bunExe(), "build", "./test.js", "--outdir", outdir, "--target", "bun", "--nativefill"],
@@ -376,12 +348,12 @@ test("nativefill correctly replaces imports in output", async () => {
   // Check the output file contains the replacements
   const outputFile = path.join(outdir, "test.js");
   const output = await Bun.file(outputFile).text();
-  
+
   // Verify all replacements are in the output
   expect(output).toContain("Bun.stripAnsi");
   expect(output).toContain("Bun.stringWidth");
   expect(output).toContain("bun:sqlite");
-  
+
   // Verify the npm packages are not referenced as imports
   expect(output).not.toContain("node_modules");
   // The names might appear in comments, but shouldn't be imported from npm packages

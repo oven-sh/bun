@@ -643,7 +643,7 @@ fn getCodeForParseTaskWithoutPlugins(
                 const module_name = file_path.text["/bun-nativefill/".len..];
                 const dot_index = std.mem.indexOfScalar(u8, module_name, '.') orelse module_name.len;
                 const base_name = module_name[0..dot_index];
-                
+
                 if (NativefillModules.Map.get(base_name)) |source| {
                     break :brk .{
                         .contents = source.contents,

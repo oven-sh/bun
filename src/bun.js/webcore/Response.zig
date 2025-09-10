@@ -616,12 +616,12 @@ pub fn constructError(
     return response.toJS(globalThis);
 }
 
-pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_value: jsc.JSValue) bun.JSError!*Response {
-    return constructorImpl(globalThis, callframe, this_value, null);
+pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Response {
+    return constructorImpl(globalThis, callframe, null);
 }
 
-pub fn ResponseClass__constructForSSR(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, thisValue: jsc.JSValue, bake_ssr_has_jsx: ?*c_int) callconv(jsc.conv) ?*anyopaque {
-    return @as(*Response, Response.constructorForSSR(globalObject, callFrame, thisValue, bake_ssr_has_jsx) catch |err| switch (err) {
+pub fn ResponseClass__constructForSSR(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, bake_ssr_has_jsx: ?*c_int) callconv(jsc.conv) ?*anyopaque {
+    return @as(*Response, Response.constructorForSSR(globalObject, callFrame, bake_ssr_has_jsx) catch |err| switch (err) {
         error.JSError => return null,
         error.OutOfMemory => {
             globalObject.throwOutOfMemory() catch {};
@@ -634,11 +634,11 @@ comptime {
     @export(&ResponseClass__constructForSSR, .{ .name = "ResponseClass__constructForSSR" });
 }
 
-pub fn constructorForSSR(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_value: jsc.JSValue, bake_ssr_has_jsx: ?*c_int) bun.JSError!*Response {
-    return constructorImpl(globalThis, callframe, this_value, bake_ssr_has_jsx);
+pub fn constructorForSSR(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, bake_ssr_has_jsx: ?*c_int) bun.JSError!*Response {
+    return constructorImpl(globalThis, callframe, bake_ssr_has_jsx);
 }
 
-pub fn constructorImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_value: jsc.JSValue, bake_ssr_has_jsx: ?*c_int) bun.JSError!*Response {
+pub fn constructorImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, bake_ssr_has_jsx: ?*c_int) bun.JSError!*Response {
     var arguments = callframe.argumentsAsArray(2);
 
     if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
@@ -685,7 +685,6 @@ pub fn constructorImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFram
                 }
                 bake_ssr_has_jsx.?.* = 1;
             }
-            _ = this_value;
         }
     }
     var init: Init = (brk: {

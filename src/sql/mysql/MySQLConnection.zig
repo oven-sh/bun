@@ -382,7 +382,7 @@ pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
     this.status = .failed;
 
     const on_close = this.consumeOnCloseCallback(this.globalObject) orelse return;
-
+    on_close.ensureStillAlive();
     const loop = this.vm.eventLoop();
     loop.enter();
     defer loop.exit();
@@ -391,7 +391,15 @@ pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
     js_error.ensureStillAlive();
     const queries_array = this.getQueriesArray();
     queries_array.ensureStillAlive();
-    this.globalObject.queueMicrotask(on_close, &[_]JSValue{ js_error, queries_array });
+    // this.globalObject.queueMicrotask(on_close, &[_]JSValue{ js_error, queries_array });
+    _ = on_close.call(
+        this.globalObject,
+        .js_undefined,
+        &[_]JSValue{
+            value.toError() orelse value,
+            this.getQueriesArray(),
+        },
+    ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
 }
 
 pub fn fail(this: *MySQLConnection, message: []const u8, err: AnyMySQLError.Error) void {
@@ -1316,6 +1324,7 @@ pub fn setStatus(this: *@This(), status: ConnectionState) void {
     switch (status) {
         .connected => {
             const on_connect = this.consumeOnConnectCallback(this.globalObject) orelse return;
+            on_connect.ensureStillAlive();
             var js_value = this.js_value;
             if (js_value == .zero) {
                 js_value = .js_undefined;

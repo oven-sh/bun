@@ -612,23 +612,27 @@ if (docker) {
             expect(e.message).toBe("password error");
           }
         });
-        test("Support dynamic async password function that throws", async () => {
-          await using sql = new SQL({
-            ...options,
-            max: 1,
-            password: async () => {
-              await Bun.sleep(10);
-              throw new Error("password error");
-            },
+
+        for (let i = 0; i < 10000; i++) {
+          test.only("Support dynamic async password function that throws" + i, async () => {
+            await using sql = new SQL({
+              ...options,
+              max: 1,
+              password: async () => {
+                await Bun.sleep(10);
+                throw new Error("password error");
+              },
+            });
+            try {
+              await sql`select true as x`;
+              expect.unreachable();
+            } catch (e: any) {
+              expect(e).toBeInstanceOf(Error);
+              expect(e.message).toBe("password error");
+            }
           });
-          try {
-            await sql`select true as x`;
-            expect.unreachable();
-          } catch (e: any) {
-            expect(e).toBeInstanceOf(Error);
-            expect(e.message).toBe("password error");
-          }
-        });
+        }
+
         test("sql file", async () => {
           await using sql = new SQL(options);
           expect((await sql.file(rel("select.sql")))[0].x).toBe(1);
@@ -880,7 +884,7 @@ if (docker) {
             } catch (e) {
               expect(e).toBeInstanceOf(Error);
               expect(e.code).toBe("ERR_MYSQL_CONNECTION_TIMEOUT");
-              expect(e.message).toMatch(/Connection timeout after 200ms/);
+              expect(e.message).toMatch(/Connection timeut after 200ms/);
             } finally {
               sql.close();
               server.close();

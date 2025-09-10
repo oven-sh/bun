@@ -34,6 +34,7 @@ pub const Error = error{
     UnexpectedPacket,
     ShortRead,
     UnknownError,
+    InvalidState,
 };
 
 pub fn mysqlErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, err: Error) JSValue {
@@ -66,6 +67,7 @@ pub fn mysqlErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, e
         error.FailedToEncryptPassword => "ERR_MYSQL_FAILED_TO_ENCRYPT_PASSWORD",
         error.InvalidPublicKey => "ERR_MYSQL_INVALID_PUBLIC_KEY",
         error.UnknownError => "ERR_MYSQL_UNKNOWN_ERROR",
+        error.InvalidState => "ERR_MYSQL_INVALID_STATE",
         error.JSError => {
             return globalObject.takeException(error.JSError);
         },

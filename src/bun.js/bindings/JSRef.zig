@@ -23,7 +23,7 @@ pub const JSRef = union(enum) {
         };
     }
 
-    pub fn tryGet(this: *@This()) ?jsc.JSValue {
+    pub fn tryGet(this: *const @This()) ?jsc.JSValue {
         return switch (this.*) {
             .weak => if (this.weak != .zero) this.weak else null,
             .strong => this.strong.get(),
@@ -62,6 +62,29 @@ pub const JSRef = union(enum) {
                 bun.debugAssert(false);
             },
         }
+    }
+
+    pub fn downgrade(this: *@This()) void {
+        switch (this.*) {
+            .weak => {},
+            .strong => |*strong| {
+                const value = strong.get() orelse .zero;
+                value.ensureStillAlive();
+                strong.deinit();
+                this.* = .{ .weak = value };
+            },
+            .finalized => {
+                bun.debugAssert(false);
+            },
+        }
+    }
+
+    pub fn hasValue(this: *@This()) bool {
+        return switch (this.*) {
+            .weak => this.weak != .zero,
+            .strong => this.strong.has(),
+            .finalized => false,
+        };
     }
 
     pub fn deinit(this: *@This()) void {

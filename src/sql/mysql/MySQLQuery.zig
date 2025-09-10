@@ -1,5 +1,5 @@
 const MySQLQuery = @This();
-const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 
 statement: ?*MySQLStatement = null,
 query: bun.String = bun.String.empty,
@@ -42,10 +42,6 @@ pub const Status = enum(u8) {
     }
 };
 
-pub fn hasPendingActivity(this: *@This()) bool {
-    return this.ref_count.load(.monotonic) > 1;
-}
-
 pub fn deinit(this: *@This()) void {
     this.thisValue.deinit();
     if (this.statement) |statement| {
@@ -66,11 +62,7 @@ pub fn finalize(this: *@This()) void {
         this.statement = null;
     }
 
-    if (this.thisValue == .weak) {
-        // clean up if is a weak reference, if is a strong reference we need to wait until the query is done
-        // if we are a strong reference, here is probably a bug because GC'd should not happen
-        this.thisValue.weak = .zero;
-    }
+    this.thisValue.deinit();
     this.deref();
 }
 
@@ -373,7 +365,7 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
         return globalObject.throw("connection must be a MySQLConnection", .{});
     };
 
-    connection.poll_ref.ref(globalObject.bunVM());
+    defer connection.updateRef();
     var query = arguments[1];
 
     if (!query.isObject()) {

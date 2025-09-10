@@ -9,7 +9,7 @@ for (const type of types) {
       construct: true,
       finalize: true,
       configurable: false,
-      hasPendingActivity: true,
+      hasPendingActivity: type === "PostgresSQL",
       klass: {
         //   escapeString: {
         //     fn: "escapeString",
@@ -60,7 +60,6 @@ for (const type of types) {
       construct: true,
       finalize: true,
       configurable: false,
-
       JSType: "0b11101110",
       klass: {},
       proto: {

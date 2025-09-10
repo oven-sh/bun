@@ -1505,6 +1505,7 @@ pub fn definesFromTransformOptions(
     if (target.isBun()) {
         if (!user_defines.contains("window")) {
             _ = try environment_defines.getOrPutValue("window", .init(.{
+                .runtime_type = .undefined,
                 .valueless = true,
                 .original_name = "window",
                 .value = .{ .e_undefined = .{} },
@@ -1519,31 +1520,31 @@ pub fn definesFromTransformOptions(
         // For --target=bun, mark these as truthy for DCE without replacing values
         // This enables dead code elimination while preserving runtime values
         
-        // process.versions.bun - truthy for DCE, actual version at runtime
+        // process.versions.bun - string type for DCE, actual version at runtime
         if (!user_defines.contains("process.versions.bun")) {
             _ = try environment_defines.getOrPutValue("process.versions.bun", .init(.{
-                .is_truthy = true,
+                .runtime_type = .string,
                 .valueless = true,
                 .original_name = "process.versions.bun",
                 .value = .{ .e_undefined = .{} },
             }));
         }
         
-        // globalThis.Bun - truthy for DCE, actual object at runtime  
+        // globalThis.Bun - object type for DCE, actual object at runtime  
         if (!user_defines.contains("globalThis.Bun")) {
             _ = try environment_defines.getOrPutValue("globalThis.Bun", .init(.{
-                .is_truthy = true,
+                .runtime_type = .object,
                 .valueless = true,
                 .original_name = "globalThis.Bun",
                 .value = .{ .e_undefined = .{} },
             }));
         }
         
-        // Bun global - truthy for DCE, actual object at runtime
+        // Bun global - object type for DCE, actual object at runtime
         // This needs special handling as a single identifier (not a dot property)
         if (!user_defines.contains("Bun")) {
             _ = try environment_defines.getOrPutValue("Bun", .init(.{
-                .is_truthy = true,
+                .runtime_type = .object,
                 .valueless = true,
                 .original_name = "Bun",
                 .value = .{ .e_undefined = .{} },
@@ -1590,6 +1591,7 @@ pub fn definesFromTransformOptions(
     if (target.isNode()) {
         if (!user_defines.contains("window")) {
             _ = try environment_defines.getOrPutValue("window", .init(.{
+                .runtime_type = .undefined,
                 .valueless = true,
                 .original_name = "window",
                 .value = .{ .e_undefined = .{} },

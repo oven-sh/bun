@@ -707,15 +707,15 @@ pub fn VisitExpr(
                             
                             // Check if this identifier is defined
                             if (p.define.forIdentifier(name)) |def| {
-                                // For truthy defines (like Bun in --target=bun), return "object"
-                                if (def.is_truthy()) {
-                                    return p.newExpr(E.String{ .data = "object" }, expr.loc);
+                                // Use the runtime_type if specified for typeof evaluation
+                                if (def.runtime_typeof_string()) |typeof_str| {
+                                    return p.newExpr(E.String{ .data = typeof_str }, expr.loc);
                                 }
-                                // For undefined defines (like Bun in --target=browser), return "undefined"
+                                // Otherwise check the actual value for typeof
+                                // This handles literal values and undefined correctly
                                 if (def.value == .e_undefined) {
                                     return p.newExpr(E.String{ .data = "undefined" }, expr.loc);
                                 }
-                                // For other literal values, check their typeof
                                 if (SideEffects.typeof(def.value)) |typeof_str| {
                                     return p.newExpr(E.String{ .data = typeof_str }, expr.loc);
                                 }
@@ -728,15 +728,15 @@ pub fn VisitExpr(
                             if (p.define.dots.get(dot.name)) |parts| {
                                 for (parts) |*define| {
                                     if (p.isDotDefineMatch(e_.value, define.parts)) {
-                                        // For truthy defines (like globalThis.Bun in --target=bun), return "object"
-                                        if (define.data.is_truthy()) {
-                                            return p.newExpr(E.String{ .data = "object" }, expr.loc);
+                                        // Use the runtime_type if specified for typeof evaluation
+                                        if (define.data.runtime_typeof_string()) |typeof_str| {
+                                            return p.newExpr(E.String{ .data = typeof_str }, expr.loc);
                                         }
-                                        // For undefined defines (like globalThis.Bun in --target=browser), return "undefined"
+                                        // Otherwise check the actual value for typeof
+                                        // This handles literal values and undefined correctly
                                         if (define.data.value == .e_undefined) {
                                             return p.newExpr(E.String{ .data = "undefined" }, expr.loc);
                                         }
-                                        // For other literal values, check their typeof
                                         if (SideEffects.typeof(define.data.value)) |typeof_str| {
                                             return p.newExpr(E.String{ .data = typeof_str }, expr.loc);
                                         }

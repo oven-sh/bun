@@ -320,7 +320,7 @@ $> bun-after test hook-timeouts
 - [ ] (maybe flaky) test/bake/dev/hot.test.ts
 - [ ] (maybe flaky) test/js/node/test/parallel/test-file-write-stream4.js
 - [ ] test/js/bun/util/inspect-error.test.js
-- [ ] test/js/bun/test/done-async.test.ts
+- [x] test/js/bun/test/done-async.test.ts
 - [ ] test/cli/test/bun-test.test.ts
 - [ ] test/integration/bun-types/bun-types.test.ts
 - [ ] test/js/web/fetch/abort-signal-leak.test.ts

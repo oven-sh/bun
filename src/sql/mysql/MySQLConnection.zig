@@ -370,11 +370,10 @@ pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
     defer {
         // we defer the refAndClose so the on_close will be called first before we reject the pending requests
         this.refAndClose(value);
-        this.updateHasPendingActivity();
         this.deref();
     }
 
-    this.setStatus(.failed);
+    this.status = .failed;
 
     const on_close = this.consumeOnCloseCallback(this.globalObject) orelse return;
 

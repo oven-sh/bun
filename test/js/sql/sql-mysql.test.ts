@@ -43,9 +43,9 @@ if (docker) {
         image: image.image,
         env: image.env,
       },
-      (port: number) => {
+      (container: { port: number; host: string }) => {
         const options: Bun.SQL.Options = {
-          url: `mysql://root:bun@localhost:${port}`,
+          url: `mysql://root:bun@${container.host}:${container.port}`,
           max: 1,
           tls:
             image.name === "MySQL with TLS"

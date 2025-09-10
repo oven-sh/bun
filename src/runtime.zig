@@ -168,6 +168,7 @@ pub const Runtime = struct {
 
         minify_syntax: bool = false,
         minify_identifiers: bool = false,
+        minify_whitespace: bool = false,
         dead_code_elimination: bool = true,
 
         set_breakpoint_on_first_line: bool = false,

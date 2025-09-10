@@ -5,8 +5,8 @@ channel: bun.ByteList = .{},
 payload: bun.ByteList = .{},
 
 pub fn deinit(this: *@This()) void {
-    this.channel.deinitWithAllocator(bun.default_allocator);
-    this.payload.deinitWithAllocator(bun.default_allocator);
+    this.channel.clearAndFree(bun.default_allocator);
+    this.payload.clearAndFree(bun.default_allocator);
 }
 
 pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {

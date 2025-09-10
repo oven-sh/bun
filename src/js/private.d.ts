@@ -12,9 +12,11 @@ declare function $bundleError(...message: any[]): never;
 
 declare module "bun" {
   namespace SQL.__internal {
-    type Define<T, K extends keyof T = never> = T & {
-      [Key in K | "adapter"]: NonNullable<T[Key]>;
-    } & {};
+    type Define<T, K extends keyof T = never> = T extends any
+      ? T & {
+          [Key in K | "adapter"]: NonNullable<T[Key]>;
+        } & {}
+      : never;
 
     type Adapter = NonNullable<Bun.SQL.Options["adapter"]>;
 
@@ -24,16 +26,15 @@ declare module "bun" {
     type DefinedSQLiteOptions = Define<Bun.SQL.SQLiteOptions, "filename">;
 
     /**
-     * Represents the result of the `parseOptions()` function in the postgres path
+     * Represents the result of the `parseOptions()` function in the postgres, mysql or mariadb path
      */
-    type DefinedPostgresOptions = Define<Bun.SQL.PostgresOptions, "max" | "prepare" | "max"> & {
+    type DefinedPostgresOrMySQLOptions = Define<Bun.SQL.PostgresOrMySQLOptions, "max" | "prepare" | "max"> & {
       sslMode: import("internal/sql/shared").SSLMode;
       query: string;
     };
 
-    type DefinedMySQLOptions = DefinedPostgresOptions;
-
-    type DefinedOptions = DefinedSQLiteOptions | DefinedPostgresOptions | DefinedMySQLOptions;
+    type DefinedOptions = DefinedSQLiteOptions | DefinedPostgresOrMySQLOptions;
+    type OptionsWithDefinedAdapter = Define<Bun.SQL.Options, "adapter">;
   }
 }
 

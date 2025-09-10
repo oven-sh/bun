@@ -1,5 +1,3 @@
-import type * as s from "stream";
-
 // Users may override the global fetch implementation, so we need to ensure these are the originals.
 const bindings = $cpp("NodeFetch.cpp", "createNodeFetchInternalBinding");
 const WebResponse: typeof globalThis.Response = bindings[0];
@@ -147,22 +145,16 @@ class Request extends WebRequest {
  * like `.json()` or `.text()`, which is faster in Bun's native fetch, vs `node-fetch` going
  * through `node:http`, a node stream, then processing the data.
  */
-async function fetch(url: any, init?: RequestInit & { body?: any }) {
-  // input node stream -> web stream
-  let body: s.Readable | undefined = init?.body;
-  if (body) {
-    const chunks: any = [];
-    const { Readable } = require("node:stream");
-    if (body instanceof Readable) {
-      // TODO: Bun fetch() doesn't support ReadableStream at all.
-      for await (const chunk of body) {
-        chunks.push(chunk);
-      }
-      init = { ...init, body: new Blob(chunks) };
-    }
-  }
+async function fetch(
+  // eslint-disable-next-line no-unused-vars
+  url: any,
 
-  const response = await nativeFetch(url, init);
+  // eslint-disable-next-line no-unused-vars
+  init?: RequestInit & { body?: any },
+) {
+  // Since `body` accepts async iterables
+  // We don't need to convert the Readable body into a ReadableStream.
+  const response = await nativeFetch.$apply(undefined, arguments);
   Object.setPrototypeOf(response, ResponsePrototype);
   return response;
 }

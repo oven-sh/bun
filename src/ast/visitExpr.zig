@@ -852,6 +852,7 @@ pub fn VisitExpr(
                                                     E.Unary{
                                                         .op = e_.op,
                                                         .value = comma.right,
+                                                        .flags = e_.flags,
                                                     },
                                                     comma.right.loc,
                                                 ),
@@ -1540,7 +1541,9 @@ pub fn VisitExpr(
                 }
 
                 if (p.options.features.minify_syntax) {
-                    KnownGlobal.maybeMarkConstructorAsPure(e_, p.symbols.items);
+                    if (KnownGlobal.minifyGlobalConstructor(p.allocator, e_, p.symbols.items, expr.loc, p.options.features.minify_whitespace)) |minified| {
+                        return minified;
+                    }
                 }
                 return expr;
             }

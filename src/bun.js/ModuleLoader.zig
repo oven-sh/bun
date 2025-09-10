@@ -1947,7 +1947,8 @@ export fn Bun__transpileVirtualModule(
 ) bool {
     jsc.markBinding(@src());
     const jsc_vm = globalObject.bunVM();
-    bun.assert(jsc_vm.plugin_runner != null);
+    // Plugin runner is not required for virtual modules created via build.module()
+    // bun.assert(jsc_vm.plugin_runner != null);
 
     var specifier_slice = specifier_ptr.toUTF8(jsc_vm.allocator);
     const specifier = specifier_slice.slice();

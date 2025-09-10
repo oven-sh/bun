@@ -1926,7 +1926,7 @@ describe("bundler", () => {
       `,
     },
     format: "iife",
-    todo: true,
+    minifySyntax: true,
     dce: true,
   });
   itBundled("dce/RemoveUnusedImports", {

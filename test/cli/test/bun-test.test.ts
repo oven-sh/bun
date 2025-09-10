@@ -228,7 +228,7 @@ describe("bun test", () => {
   describe("--only", () => {
     test("should run nested describe.only when enabled", () => {
       const stderr = runTest({
-        args: ["--only"],
+        args: [],
         input: `
             import { test, describe } from "bun:test";
             describe("outer", () => {
@@ -244,6 +244,7 @@ describe("bun test", () => {
               })
             })
             `,
+        env: { CI: "false" },
       });
       expect(stderr).toContain("reachable");
       expect(stderr).not.toContain("unreachable");
@@ -251,7 +252,7 @@ describe("bun test", () => {
     });
     test("should skip non-only tests when enabled", () => {
       const stderr = runTest({
-        args: ["--only"],
+        args: [],
         input: `
           import { test, describe } from "bun:test";
           test("test #1", () => {
@@ -287,6 +288,7 @@ describe("bun test", () => {
             });
           });
         `,
+        env: { CI: "false" },
       });
       expect(stderr).toContain("reachable");
       expect(stderr).not.toContain("unreachable");

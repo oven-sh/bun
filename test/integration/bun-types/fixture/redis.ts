@@ -10,16 +10,14 @@ const listener: Bun.RedisClient.StringPubSubListener = (message, channel) => {
   expectType(message).is<string>();
   expectType(channel).is<string>();
 };
-
-const bufferListener: Bun.RedisClient.BufferPubSubListener = (message, channel) => {
-  expectType(message).is<Uint8Array<ArrayBuffer>>();
-  expectType(channel).is<string>();
-};
-
 Bun.redis.subscribe("hello", listener);
 
-// @ts-expect-error cannot buffer subscribe without buffer mode (not implemented yet)
-Bun.redis.subscribe("hello", bufferListener);
+// Buffer subscriptions are not yet implemented
+// const bufferListener: Bun.RedisClient.BufferPubSubListener = (message, channel) => {
+//   expectType(message).is<Uint8Array<ArrayBuffer>>();
+//   expectType(channel).is<string>();
+// };
+// Bun.redis.subscribe("hello", bufferListener);
 
 expectType(
   copy.subscribe("hello", message => {

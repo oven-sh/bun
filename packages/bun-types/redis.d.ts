@@ -52,9 +52,10 @@ declare module "bun" {
 
   export namespace RedisClient {
     type KeyLike = string | ArrayBufferView | Blob;
-    type PubSubListener<Message> = (message: Message, channel: string) => void;
-    type StringPubSubListener = PubSubListener<string>;
-    type BufferPubSubListener = PubSubListener<Uint8Array<ArrayBuffer>>;
+    type StringPubSubListener = (message: string, channel: string) => void;
+
+    // Buffer subscriptions are not yet implemented
+    // type BufferPubSubListener = (message: Uint8Array<ArrayBuffer>, channel: string) => void;
   }
 
   export class RedisClient {

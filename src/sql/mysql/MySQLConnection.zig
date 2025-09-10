@@ -21,7 +21,7 @@ poll_ref: bun.Async.KeepAlive = .{},
 globalObject: *jsc.JSGlobalObject,
 vm: *jsc.VirtualMachine,
 
-pending_activity_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 js_value: JSValue = .js_undefined,
 
 server_version: bun.ByteList = .{},
@@ -123,13 +123,19 @@ pub const AuthState = union(enum) {
 };
 
 pub fn hasPendingActivity(this: *MySQLConnection) bool {
-    return this.pending_activity_count.load(.acquire) > 0;
+    return this.has_pending_activity.load(.acquire);
 }
 
 fn updateHasPendingActivity(this: *MySQLConnection) void {
-    const a: u32 = if (this.requests.readableLength() > 0) 1 else 0;
-    const b: u32 = if (this.status != .disconnected and this.status != .failed) 1 else 0;
-    this.pending_activity_count.store(a + b, .release);
+    if (this.requests.readableLength() > 0) {
+        this.has_pending_activity.store(true, .release);
+        return;
+    }
+    if (this.status != .disconnected and this.status != .failed) {
+        this.has_pending_activity.store(true, .release);
+        return;
+    }
+    this.has_pending_activity.store(false, .release);
 }
 
 fn hasDataToSend(this: *@This()) bool {
@@ -1325,7 +1331,7 @@ pub fn setStatus(this: *@This(), status: ConnectionState) void {
 
 pub fn updateRef(this: *@This()) void {
     this.updateHasPendingActivity();
-    if (this.pending_activity_count.raw > 0) {
+    if (this.has_pending_activity.raw) {
         this.poll_ref.ref(this.vm);
     } else {
         this.poll_ref.unref(this.vm);

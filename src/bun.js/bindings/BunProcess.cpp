@@ -3411,12 +3411,10 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& ar
 
     ASSERT(!args.isEmpty());
     JSObject* nextTickFn = this->m_nextTickFunction.get();
+    ASSERT(nextTickFn);
     auto* frame = jsDynamicCast<AsyncContextFrame*>(args.at(0));
     if (frame) {
-#if ASSERT_ENABLED
-        JSC::Integrity::auditCellFully(vm, frame);
-#endif
-        frame->run(globalObject, jsUndefined(), nextTickFn, args);
+        frame->run(globalObject, nextTickFn, jsUndefined(), args);
     } else {
         AsyncContextFrame::call(globalObject, nextTickFn, jsUndefined(), args);
     }

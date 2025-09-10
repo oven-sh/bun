@@ -59,15 +59,16 @@ pub fn generateNewSymbol(this: *LinkerGraph, source_index: u32, kind: Symbol.Kin
     ref.tag = .symbol;
 
     // TODO: will this crash on resize due to using threadlocal mimalloc heap?
-    source_symbols.push(
+    source_symbols.append(
         this.allocator,
         .{
             .kind = kind,
             .original_name = original_name,
         },
-    ) catch unreachable;
+    ) catch |err| bun.handleOom(err);
 
-    this.ast.items(.module_scope)[source_index].generated.push(this.allocator, ref) catch unreachable;
+    this.ast.items(.module_scope)[source_index].generated.append(this.allocator, ref) catch |err|
+        bun.handleOom(err);
     return ref;
 }
 
@@ -98,7 +99,7 @@ pub fn addPartToFile(
 ) !u32 {
     var parts: *Part.List = &graph.ast.items(.parts)[id];
     const part_id = @as(u32, @truncate(parts.len));
-    try parts.push(graph.allocator, part);
+    try parts.append(graph.allocator, part);
     var top_level_symbol_to_parts_overlay: ?*TopLevelSymbolToParts = null;
 
     const Iterator = struct {
@@ -127,12 +128,12 @@ pub fn addPartToFile(
                     list.appendSliceAssumeCapacity(original_parts.slice());
                     list.appendAssumeCapacity(self.part_id);
 
-                    entry.value_ptr.* = .init(list.items);
+                    entry.value_ptr.* = .fromOwnedSlice(list.items);
                 } else {
                     entry.value_ptr.* = BabyList(u32).fromSlice(self.graph.allocator, &.{self.part_id}) catch |err| bun.handleOom(err);
                 }
             } else {
-                entry.value_ptr.push(self.graph.allocator, self.part_id) catch unreachable;
+                bun.handleOom(entry.value_ptr.append(self.graph.allocator, self.part_id));
             }
         }
     };
@@ -144,7 +145,7 @@ pub fn addPartToFile(
         .top_level_symbol_to_parts_overlay = &top_level_symbol_to_parts_overlay,
     };
 
-    js_ast.DeclaredSymbol.forEachTopLevelSymbol(&parts.ptr[part_id].declared_symbols, &ctx, Iterator.next);
+    js_ast.DeclaredSymbol.forEachTopLevelSymbol(&parts.mut(part_id).declared_symbols, &ctx, Iterator.next);
 
     return part_id;
 }
@@ -352,7 +353,9 @@ pub fn load(
     }
 
     {
-        var input_symbols = js_ast.Symbol.Map.initList(js_ast.Symbol.NestedList.init(this.ast.items(.symbols)));
+        var input_symbols = js_ast.Symbol.Map.initList(
+            js_ast.Symbol.NestedList.fromBorrowedSliceDangerous(this.ast.items(.symbols)),
+        );
         var symbols = bun.handleOom(input_symbols.symbols_for_source.clone(this.allocator));
         for (symbols.slice(), input_symbols.symbols_for_source.slice()) |*dest, src| {
             dest.* = bun.handleOom(src.clone(this.allocator));
@@ -409,6 +412,26 @@ pub fn load(
             } });
         }
         dest.* = resolved;
+    }
+}
+
+/// Transfers ownership of the AST to the graph allocator.
+/// This is valid only if all allocators are `MimallocArena`s.
+pub fn takeAstOwnership(this: *LinkerGraph) void {
+    const ast = this.ast.slice();
+    const heap: bun.allocators.MimallocArena.Borrowed = .downcast(this.allocator);
+    if (comptime !bun.collections.baby_list.safety_checks) return;
+    for (ast.items(.import_records)) |*import_records| {
+        import_records.transferOwnership(heap);
+    }
+    for (ast.items(.parts)) |*parts| {
+        parts.transferOwnership(heap);
+        for (parts.slice()) |*part| {
+            part.dependencies.transferOwnership(heap);
+        }
+    }
+    for (ast.items(.symbols)) |*symbols| {
+        symbols.transferOwnership(heap);
     }
 }
 

@@ -483,7 +483,7 @@ pub inline fn deepClone(comptime T: type, this: *const T, allocator: Allocator) 
         @compileError(@typeName(T) ++ " does not have a deepClone() function");
     }
 
-    return T.deepClone(this, allocator);
+    return this.deepClone(allocator);
 }
 
 pub inline fn tryFromAngle(comptime T: type, angle: Angle) ?T {

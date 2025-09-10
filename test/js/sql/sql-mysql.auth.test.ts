@@ -9,15 +9,15 @@ describeWithContainer(
     env: {},
     args: [],
   },
-  (container) => {
+  container => {
     // Create getters that will be evaluated when the test runs
     const getUrl = () => `mysql://root:bun@${container.host}:${container.port}/bun_sql_test`;
-    
+
     test("should be able to connect with mysql_native_password auth plugin", async () => {
       console.log("Container info in test:", container);
-      const sql = new SQL({ 
+      const sql = new SQL({
         url: getUrl(),
-        max: 1
+        max: 1,
       });
       const result = await sql`select 1 as x`;
       expect(result).toEqual([{ x: 1 }]);
@@ -26,9 +26,9 @@ describeWithContainer(
 
     test("should be able to switch auth plugin", async () => {
       {
-        const sql = new SQL({ 
+        const sql = new SQL({
           url: getUrl(),
-          max: 1
+          max: 1,
         });
 
         await sql`DROP USER IF EXISTS caching@'%';`.simple();

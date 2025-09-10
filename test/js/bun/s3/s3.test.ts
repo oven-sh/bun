@@ -41,16 +41,18 @@ const allCredentials: S3Credentials[] = [
 if (isDockerEnabled()) {
   // Use docker-compose to start MinIO
   const minioInfo = await dockerCompose.ensure("minio");
-  
+
   // Wait for MinIO to be ready
   await Bun.sleep(2_000);
-  
+
   // Get container name for docker exec
-  const containerName = child_process.execSync(
-    `docker ps --filter "ancestor=minio/minio:latest" --filter "status=running" --format "{{.Names}}" | head -1`,
-    { encoding: "utf-8" }
-  ).trim();
-  
+  const containerName = child_process
+    .execSync(
+      `docker ps --filter "ancestor=minio/minio:latest" --filter "status=running" --format "{{.Names}}" | head -1`,
+      { encoding: "utf-8" },
+    )
+    .trim();
+
   if (containerName) {
     // Create a bucket using mc inside the container
     child_process.spawnSync(dockerCLI, [`exec`, containerName, `mc`, `mb`, `data/buntest`], {

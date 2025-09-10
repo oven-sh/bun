@@ -381,38 +381,67 @@ class PooledMySQLConnection {
   }
 
   #onClose(err) {
-    let wrappedErr = err;
-    this.state = PooledConnectionState.closed;
-    this.connection = null;
-    this.adapter.readyConnections.delete(this);
-    const queries = new Set(this.queries);
-    this.queries.clear();
-    this.queryCount = 0;
-    this.flags &= ~PooledConnectionFlags.reserved;
-    const onFinish = this.onFinish;
-    const connectionInfo = this.connectionInfo;
-    const adapter = this.adapter;
+    // let wrappedErr = err;
+    // this.state = PooledConnectionState.closed;
+    // this.connection = null;
+    // this.adapter.readyConnections.delete(this);
+    // const queries = new Set(this.queries);
+    // this.queries.clear();
+    // this.queryCount = 0;
+    // this.flags &= ~PooledConnectionFlags.reserved;
+    // const onFinish = this.onFinish;
+    // const connectionInfo = this.connectionInfo;
+    // const adapter = this.adapter;
+
+    // if (err) {
+    //   wrappedErr = wrapError(err);
+    // }
+
+    // this.storedError = wrappedErr;
+
+    // // notify all queries that the connection is closed
+    // for (const onClose of queries) {
+    //   onClose(wrappedErr);
+    // }
+
+    // if (onFinish) {
+    //   onFinish(wrappedErr);
+    // }
+
+    // if (connectionInfo?.onclose) {
+    //   connectionInfo.onclose(wrappedErr);
+    // }
+
+    // adapter.release(this, true);
 
     if (err) {
-      wrappedErr = wrapError(err);
+      err = wrapError(err);
     }
+    const connectionInfo = this.connectionInfo;
+    if (connectionInfo?.onclose) {
+      connectionInfo.onclose(err);
+    }
+    this.state = PooledConnectionState.closed;
+    this.connection = null;
+    this.storedError = err;
 
-    this.storedError = wrappedErr;
+    // remove from ready connections if its there
+    this.adapter.readyConnections.delete(this);
+    const queries = new Set(this.queries);
+    this.queries?.clear?.();
+    this.queryCount = 0;
+    this.flags &= ~PooledConnectionFlags.reserved;
 
     // notify all queries that the connection is closed
     for (const onClose of queries) {
-      onClose(wrappedErr);
+      onClose(err);
     }
-
+    const onFinish = this.onFinish;
     if (onFinish) {
-      onFinish(wrappedErr);
+      onFinish(err);
     }
 
-    if (connectionInfo?.onclose) {
-      connectionInfo.onclose(wrappedErr);
-    }
-
-    adapter.release(this, true);
+    this.adapter.release(this, true);
   }
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedMySQLOptions, adapter: MySQLAdapter) {

@@ -15,7 +15,7 @@ pub const JSRef = union(enum) {
         return .{ .weak = .zero };
     }
 
-    pub fn get(this: *@This()) jsc.JSValue {
+    pub fn get(this: *const @This()) jsc.JSValue {
         return switch (this.*) {
             .weak => this.weak,
             .strong => this.strong.get() orelse .zero,

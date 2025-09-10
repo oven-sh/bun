@@ -229,6 +229,6 @@ export default [
       punsubscribe: { fn: "punsubscribe" },
       pubsub: { fn: "pubsub" },
     },
-    values: ["onconnect", "onclose", "connectionPromise", "hello", "subscriptionCallbackMap"],
+    values: ["onconnect", "onclose", "connectionPromise", "hello"],
   }),
 ];

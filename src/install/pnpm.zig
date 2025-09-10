@@ -282,6 +282,8 @@ pub fn migratePnpmLockfile(
     this.initEmpty(allocator);
     Install.initializeStore();
 
+    bun.analytics.Features.pnpm_migration += 1;
+
     var arena = bun.ArenaAllocator.init(allocator);
     defer arena.deinit();
 

@@ -2618,7 +2618,22 @@ pub const Data = union(Tag) {
             .e_undefined,
             .e_inlined_enum,
             => true,
-            .e_string => |str| str.next == null,
+            .e_string => |str| {
+                // Only inline short strings to avoid code bloat when used multiple times
+                // Longer strings would increase bundle size if duplicated
+                //
+                // TODO: Ideally we'd check use_count_estimate and always inline single-use
+                // strings regardless of size, but usage counts aren't available at the time
+                // we decide what to track as const values. A future optimization could:
+                // 1. Track ALL const values for comparison evaluation
+                // 2. Decide at usage time whether to inline based on size AND usage count
+                //
+                // For now, 20 characters is a reasonable threshold that handles common cases
+                // like flags ("production"), features ("enabled"), and short identifiers
+                // while avoiding duplication of long strings like error messages
+                if (str.next != null) return false; // No template literals
+                return str.data.len <= 20;
+            },
             .e_array => |array| array.was_originally_macro,
             .e_object => |object| object.was_originally_macro,
             else => false,

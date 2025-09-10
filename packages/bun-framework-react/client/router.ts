@@ -28,7 +28,7 @@ export class Router {
     this.cachedPages.set(id, page);
   }
 
-  async navigate(href: string, cacheId?: number): Promise<void> {
+  async navigate(href: string, cacheId: number | undefined): Promise<void> {
     const thisNavigationId = ++this.lastNavigationId;
     const olderController = this.lastNavigationController;
 
